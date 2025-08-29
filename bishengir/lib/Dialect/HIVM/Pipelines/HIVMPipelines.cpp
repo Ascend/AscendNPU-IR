@@ -96,6 +96,7 @@ bufferizationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(
         tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
+    pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;

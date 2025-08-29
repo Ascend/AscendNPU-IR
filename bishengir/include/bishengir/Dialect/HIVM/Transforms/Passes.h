@@ -257,6 +257,8 @@ createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});
 /// non-contiguous.
 std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
+std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
