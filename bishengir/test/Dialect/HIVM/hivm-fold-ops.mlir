@@ -364,7 +364,7 @@ func.func @test_memref_cumsum(%arg0 : memref<3x1xf32>,
   // CHECK: hivm.hir.copy ins(%[[arg0:.*]] : memref<3x1xf32>) outs(%[[arg1:.*]] : memref<3x1xf32>)
   hivm.hir.vcumsum ins(%arg0 : memref<3x1xf32>)
                    outs(%arg1: memref<3x1xf32>)
-                   cum_dims = [1]
+                   cum_dims = [1] reverse = false
   return
 }
 
@@ -376,7 +376,7 @@ func.func @test_memref_cumprod(%arg0 : memref<1x3xf32>,
   // CHECK: hivm.hir.copy ins(%[[arg0:.*]] : memref<1x3xf32>) outs(%[[arg1:.*]] : memref<1x3xf32>)
   hivm.hir.vcumsum ins(%arg0 : memref<1x3xf32>)
                    outs(%arg1: memref<1x3xf32>)
-                   cum_dims = [0]
+                   cum_dims = [0] reverse = false
   return
 }
 
@@ -389,7 +389,7 @@ func.func @test_memref_cumsum_one_dim_non_one(%src : memref<3x1xf32>,
   // CHECK: hivm.hir.vcumsum ins(%[[src:.*]] : memref<3x1xf32>) outs(%[[dst:.*]] : memref<3x1xf32>)
   hivm.hir.vcumsum ins(%src : memref<3x1xf32>)
                    outs(%dst : memref<3x1xf32>)
-                   cum_dims = [0]
+                   cum_dims = [0] reverse = false
   return
 }
 
@@ -402,7 +402,7 @@ func.func @test_memref_cumprod_one_dim_non_one(%src : memref<2x5xf32>,
   // CHECK: hivm.hir.vcumprod ins(%[[src:.*]] : memref<2x5xf32>) outs(%[[dst:.*]] : memref<2x5xf32>)
   hivm.hir.vcumprod ins(%src : memref<2x5xf32>)
                     outs(%dst : memref<2x5xf32>)
-                    cum_dims = [0]
+                    cum_dims = [0] reverse = false
   return
 }
 
@@ -415,7 +415,7 @@ func.func @test_tensor_cumsum_one_dim(
   // CHECK-NOT: hivm.hir.vcumsum
   %0 = hivm.hir.vcumsum ins(%src4 : tensor<1x1xf32>)
                         outs(%dst4 : tensor<1x1xf32>)
-                        cum_dims = [0] -> tensor<1x1xf32>
+                        cum_dims = [0] reverse = false -> tensor<1x1xf32>
   return %0 : tensor<1x1xf32>
 }
 
@@ -428,7 +428,7 @@ func.func @test_tensor_cumprod_one_dim(
   // CHECK-NOT: hivm.hir.vcumprod
   %0 = hivm.hir.vcumprod ins(%src5 : tensor<1x1xf32>)
                          outs(%dst5 : tensor<1x1xf32>)
-                         cum_dims = [0] -> tensor<1x1xf32>
+                         cum_dims = [0] reverse = false -> tensor<1x1xf32>
   return %0 : tensor<1x1xf32>
 } 
 
@@ -440,7 +440,7 @@ func.func @test_tensor_cumsum_non_one_dim(
   %arg1 : tensor<3x4xf32>) -> tensor<3x4xf32> {
   %0 = hivm.hir.vcumsum ins(%arg0 : tensor<3x4xf32>)
                         outs(%arg1 : tensor<3x4xf32>)
-                        cum_dims = [0] -> tensor<3x4xf32>
+                        cum_dims = [0] reverse = false -> tensor<3x4xf32>
   return %0 : tensor<3x4xf32>
 }
 
@@ -453,7 +453,7 @@ func.func @test_tensor_cumprod_non_one_dim(
 // CHECK: hivm.hir.vcumprod ins(%[[arg0:.*]] : tensor<2x5xf32>) outs(%[[arg1:.*]] : tensor<2x5xf32>)
 %0 = hivm.hir.vcumprod ins(%arg0 : tensor<2x5xf32>)
                        outs(%arg1 : tensor<2x5xf32>)
-                       cum_dims = [0] -> tensor<2x5xf32>
+                       cum_dims = [0] reverse = false -> tensor<2x5xf32>
   return %0 : tensor<2x5xf32>
 }
 

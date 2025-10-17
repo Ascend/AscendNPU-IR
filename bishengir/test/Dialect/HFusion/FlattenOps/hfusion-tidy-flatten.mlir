@@ -1288,7 +1288,7 @@ func.func @test_gather_flatten(%src: tensor<2x4x32xf32>, %idx: tensor<2x1x32xi32
 // CHECK-LABEL: test_cumsum_mid(
 // CHECK: tensor<4x2x6x4x8xf16> into tensor<8x6x32xf16>
 func.func @test_cumsum_mid(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf16> {
-  %0 = hfusion.cumsum %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [2] -> tensor<4x2x6x4x8xf16>
+  %0 = hfusion.cumsum %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [2] reverse = false -> tensor<4x2x6x4x8xf16>
   return %0 : tensor<4x2x6x4x8xf16>
 }
 
@@ -1296,7 +1296,7 @@ func.func @test_cumsum_mid(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf16
 // CHECK-LABEL: test_cumsum_first(
 // CHECK: tensor<4x2x6x4x8xf16> into tensor<4x384xf16>
 func.func @test_cumsum_first(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf16> {
-  %0 = hfusion.cumsum %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [0] -> tensor<4x2x6x4x8xf16>
+  %0 = hfusion.cumsum %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [0] reverse = false -> tensor<4x2x6x4x8xf16>
   return %0 : tensor<4x2x6x4x8xf16>
 }
 
@@ -1304,7 +1304,7 @@ func.func @test_cumsum_first(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf
 // CHECK-LABEL: test_cumprod_mid(
 // CHECK: tensor<4x2x6x4x8xf16> into tensor<48x4x8xf16>
 func.func @test_cumprod_mid(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf16> {
-  %0 = hfusion.cumprod %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [3] -> tensor<4x2x6x4x8xf16>
+  %0 = hfusion.cumprod %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [3] reverse = false -> tensor<4x2x6x4x8xf16>
   return %0 : tensor<4x2x6x4x8xf16>
 }
 
@@ -1312,7 +1312,7 @@ func.func @test_cumprod_mid(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf1
 // CHECK-LABEL: test_cumprod_last(
 // CHECK: tensor<4x2x6x4x8xf16> into tensor<192x8xf16>
 func.func @test_cumprod_last(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf16> {
-  %0 = hfusion.cumprod %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [4] -> tensor<4x2x6x4x8xf16>
+  %0 = hfusion.cumprod %arg0 : tensor<4x2x6x4x8xf16> cum_dims = [4] reverse = false -> tensor<4x2x6x4x8xf16>
   return %0 : tensor<4x2x6x4x8xf16>
 }
 
@@ -1320,7 +1320,7 @@ func.func @test_cumprod_last(%arg0: tensor<4x2x6x4x8xf16>) -> tensor<4x2x6x4x8xf
 // CHECK-LABEL: test_cumprod_0(
 // CHECK: tensor<1x1x4x2x6x4x8xf16> into tensor<1x1536xf16>
 func.func @test_cumprod_0(%arg0: tensor<1x1x4x2x6x4x8xf16>) -> tensor<1x1x4x2x6x4x8xf16> {
-  %0 = hfusion.cumprod %arg0 : tensor<1x1x4x2x6x4x8xf16> cum_dims = [0] -> tensor<1x1x4x2x6x4x8xf16>
+  %0 = hfusion.cumprod %arg0 : tensor<1x1x4x2x6x4x8xf16> cum_dims = [0] reverse = false -> tensor<1x1x4x2x6x4x8xf16>
   return %0 : tensor<1x1x4x2x6x4x8xf16>
 }
 
@@ -1328,6 +1328,6 @@ func.func @test_cumprod_0(%arg0: tensor<1x1x4x2x6x4x8xf16>) -> tensor<1x1x4x2x6x
 // CHECK-LABEL: test_cumprod_2(
 // CHECK: tensor<1x1x4x1xf16> into tensor<4xf16>
 func.func @test_cumprod_2(%arg0: tensor<1x1x4x1xf16>) -> tensor<1x1x4x1xf16> {
-  %0 = hfusion.cumprod %arg0 : tensor<1x1x4x1xf16> cum_dims = [2] -> tensor<1x1x4x1xf16>
+  %0 = hfusion.cumprod %arg0 : tensor<1x1x4x1xf16> cum_dims = [2] reverse = false -> tensor<1x1x4x1xf16>
   return %0 : tensor<1x1x4x1xf16>
 }

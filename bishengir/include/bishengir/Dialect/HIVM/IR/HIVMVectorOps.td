@@ -1580,9 +1580,9 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
     ]> {
   let summary = "Vector Cumprod Op";
   let description = [{
-    Calculate the cumulative product of each element along the specified axis 
-    of `src`. Each element along the specified axis in the output of cumprod 
-    contains the product of all elements from the first element to the current 
+    Calculate the cumulative product of each element along the specified axis
+    of `src`. Each element along the specified axis in the output of cumprod
+    contains the product of all elements from the first element to the current
     position in the original `src`.
 
     Constraints:
@@ -1592,25 +1592,28 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
     Arguments:
       * `src`: the tensor/memref from which to calculate the cumulative sum
       * `dst`: the tensor/memref to store elements
-      * `cum_dims`: specifies the dimension along which to calculate the 
+      * `cum_dims`: specifies the dimension along which to calculate the
                     cumulative product.
+      * `reverse`: specifies the direction of the cumulative product.
 
     Examples:
     ```mlir
-    hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
-    %result = hivm.hir.vcumprod ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
+    %result = hivm.hir.vcumprod ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
     ```
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
                        ConfinedAttr<DenseI64ArrayAttr,
-                         [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims
+                         [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
     `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
     (`->` type($result)^)?
   }];
   let hasCanonicalizer = 1;
@@ -1636,9 +1639,9 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
     ]> {
   let summary = "Vector Cumsum Op";
   let description = [{
-    Calculate the cumulative sum of each element along the specified axis of 
-    `src`. Each element along the specified axis in the output of cumsum 
-    contains the sum of all elements from the first element to the current 
+    Calculate the cumulative sum of each element along the specified axis of
+    `src`. Each element along the specified axis in the output of cumsum
+    contains the sum of all elements from the first element to the current
     position in the original `src`.
 
     Constraints:
@@ -1650,23 +1653,26 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
       * `dst`: the tensor/memref to store elements
       * `cum_dims`: specifies the dimension along which to calculate the
                     cumulative sum.
+      * `reverse`: specifies the direction of the cumulative sum.
 
     Examples:
     ```mlir
-    hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
-    %result = hivm.hir.vcumsum ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
+    %result = hivm.hir.vcumsum ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
     ```
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
                        ConfinedAttr<DenseI64ArrayAttr,
-                         [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims
+                         [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
     `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
     (`->` type($result)^)?
   }];
   let hasCanonicalizer = 1;

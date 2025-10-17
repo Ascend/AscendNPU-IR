@@ -882,7 +882,7 @@ func.func @transpose_with_unit(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_b
 // CHECK-SAME: memref<4xf16
 // CHECK-NEXT: return
 func.func @triton_cumsum_2(%arg0: memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) {
-  hivm.hir.vcumsum ins(%arg0 : memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) outs(%arg1: memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%arg0 : memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) outs(%arg1: memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   return
 }
 
@@ -894,7 +894,7 @@ func.func @triton_cumsum_2(%arg0: memref<1x1x4x1xf16, strided<[4, 4, 1, 1]>, #hi
 // CHECK-SAME: memref<3x4xf16
 // CHECK-NEXT: return
 func.func @triton_cumprod_0(%arg0: memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>, %arg1: memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) {
-  hivm.hir.vcumsum ins(%arg0 : memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) outs(%arg1: memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%arg0 : memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) outs(%arg1: memref<3x1x4x1xf16, strided<[4, 4, 1, 1]>, #hivm.address_space<ub>>) cum_dims = [0] reverse = false
   return
 }
 

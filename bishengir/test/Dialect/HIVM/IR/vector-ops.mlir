@@ -1241,12 +1241,12 @@ func.func @test_cumsum_memref(%src : memref<2x?x?xf32>, %dst : memref<2x?x?xf32>
   %s64 = memref.alloc() : memref<2x16xi64>
   %f16 = memref.alloc() : memref<2x16xf16>
   %f32 = memref.alloc() : memref<2x16xf32>
-  hivm.hir.vcumsum ins(%s16 : memref<2x16xi16>) outs(%s16 : memref<2x16xi16>) cum_dims = [0]
-  hivm.hir.vcumsum ins(%s32 : memref<2x16xi32>) outs(%s32 : memref<2x16xi32>) cum_dims = [1]
-  hivm.hir.vcumsum ins(%s64 : memref<2x16xi64>) outs(%s64 : memref<2x16xi64>) cum_dims = [1]
-  hivm.hir.vcumsum ins(%f16 : memref<2x16xf16>) outs(%f16 : memref<2x16xf16>) cum_dims = [0]
-  hivm.hir.vcumsum ins(%f32 : memref<2x16xf32>) outs(%f32 : memref<2x16xf32>) cum_dims = [1]
-  hivm.hir.vcumsum ins(%src : memref<2x?x?xf32>) outs(%dst : memref<2x?x?xf32>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%s16 : memref<2x16xi16>) outs(%s16 : memref<2x16xi16>) cum_dims = [0] reverse = false
+  hivm.hir.vcumsum ins(%s32 : memref<2x16xi32>) outs(%s32 : memref<2x16xi32>) cum_dims = [1] reverse = false
+  hivm.hir.vcumsum ins(%s64 : memref<2x16xi64>) outs(%s64 : memref<2x16xi64>) cum_dims = [1] reverse = false
+  hivm.hir.vcumsum ins(%f16 : memref<2x16xf16>) outs(%f16 : memref<2x16xf16>) cum_dims = [0] reverse = false
+  hivm.hir.vcumsum ins(%f32 : memref<2x16xf32>) outs(%f32 : memref<2x16xf32>) cum_dims = [1] reverse = false
+  hivm.hir.vcumsum ins(%src : memref<2x?x?xf32>) outs(%dst : memref<2x?x?xf32>) cum_dims = [2] reverse = false
   return
 }
 
@@ -1258,12 +1258,12 @@ func.func @test_cumprod_memref(%src : memref<2x?x?xf32>, %dst : memref<2x?x?xf32
   %s64 = memref.alloc() : memref<2x16xi64>
   %f16 = memref.alloc() : memref<2x16xf16>
   %f32 = memref.alloc() : memref<2x16xf32>
-  hivm.hir.vcumprod ins(%s16 : memref<2x16xi16>) outs(%s16 : memref<2x16xi16>) cum_dims = [0]
-  hivm.hir.vcumprod ins(%s32 : memref<2x16xi32>) outs(%s32 : memref<2x16xi32>) cum_dims = [1]
-  hivm.hir.vcumprod ins(%s64 : memref<2x16xi64>) outs(%s64 : memref<2x16xi64>) cum_dims = [0]
-  hivm.hir.vcumprod ins(%f16 : memref<2x16xf16>) outs(%f16 : memref<2x16xf16>) cum_dims = [0]
-  hivm.hir.vcumprod ins(%f32 : memref<2x16xf32>) outs(%f32 : memref<2x16xf32>) cum_dims = [1]
-  hivm.hir.vcumprod ins(%src : memref<2x?x?xf32>) outs(%dst : memref<2x?x?xf32>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%s16 : memref<2x16xi16>) outs(%s16 : memref<2x16xi16>) cum_dims = [0] reverse = false
+  hivm.hir.vcumprod ins(%s32 : memref<2x16xi32>) outs(%s32 : memref<2x16xi32>) cum_dims = [1] reverse = false
+  hivm.hir.vcumprod ins(%s64 : memref<2x16xi64>) outs(%s64 : memref<2x16xi64>) cum_dims = [0] reverse = false
+  hivm.hir.vcumprod ins(%f16 : memref<2x16xf16>) outs(%f16 : memref<2x16xf16>) cum_dims = [0] reverse = false
+  hivm.hir.vcumprod ins(%f32 : memref<2x16xf32>) outs(%f32 : memref<2x16xf32>) cum_dims = [1] reverse = false
+  hivm.hir.vcumprod ins(%src : memref<2x?x?xf32>) outs(%dst : memref<2x?x?xf32>) cum_dims = [2] reverse = false
   return
 }
 
@@ -1275,12 +1275,12 @@ func.func @test_cumsum_tensor(%src : tensor<2x?x?xf32>, %dst : tensor<2x?x?xf32>
   %s64 = tensor.empty() : tensor<2x16xi64>
   %f16 = tensor.empty() : tensor<2x16xf16>
   %f32 = tensor.empty() : tensor<2x16xf32>
-  %res1 = hivm.hir.vcumsum ins(%s16 : tensor<2x16xi16>) outs(%s16 : tensor<2x16xi16>) cum_dims = [0] -> tensor<2x16xi16>
-  %res2 = hivm.hir.vcumsum ins(%s32 : tensor<2x16xi32>) outs(%s32 : tensor<2x16xi32>) cum_dims = [1] -> tensor<2x16xi32>
-  %res3 = hivm.hir.vcumsum ins(%s64 : tensor<2x16xi64>) outs(%s64 : tensor<2x16xi64>) cum_dims = [0] -> tensor<2x16xi64>
-  %res4 = hivm.hir.vcumsum ins(%f16 : tensor<2x16xf16>) outs(%f16 : tensor<2x16xf16>) cum_dims = [0] -> tensor<2x16xf16>
-  %res5 = hivm.hir.vcumsum ins(%f32 : tensor<2x16xf32>) outs(%f32 : tensor<2x16xf32>) cum_dims = [1] -> tensor<2x16xf32>
-  %res6 = hivm.hir.vcumsum ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] -> tensor<2x?x?xf32>
+  %res1 = hivm.hir.vcumsum ins(%s16 : tensor<2x16xi16>) outs(%s16 : tensor<2x16xi16>) cum_dims = [0] reverse = false -> tensor<2x16xi16>
+  %res2 = hivm.hir.vcumsum ins(%s32 : tensor<2x16xi32>) outs(%s32 : tensor<2x16xi32>) cum_dims = [1] reverse = false -> tensor<2x16xi32>
+  %res3 = hivm.hir.vcumsum ins(%s64 : tensor<2x16xi64>) outs(%s64 : tensor<2x16xi64>) cum_dims = [0] reverse = false -> tensor<2x16xi64>
+  %res4 = hivm.hir.vcumsum ins(%f16 : tensor<2x16xf16>) outs(%f16 : tensor<2x16xf16>) cum_dims = [0] reverse = false -> tensor<2x16xf16>
+  %res5 = hivm.hir.vcumsum ins(%f32 : tensor<2x16xf32>) outs(%f32 : tensor<2x16xf32>) cum_dims = [1] reverse = false -> tensor<2x16xf32>
+  %res6 = hivm.hir.vcumsum ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] reverse = false -> tensor<2x?x?xf32>
   return
 }
 
@@ -1292,11 +1292,11 @@ func.func @test_cumprod_tensor(%src : tensor<2x?x?xf32>, %dst : tensor<2x?x?xf32
   %s64 = tensor.empty() : tensor<2x16xi64>
   %f16 = tensor.empty() : tensor<2x16xf16>
   %f32 = tensor.empty() : tensor<2x16xf32>
-  %res1 = hivm.hir.vcumprod ins(%s16 : tensor<2x16xi16>) outs(%s16 : tensor<2x16xi16>) cum_dims = [0] -> tensor<2x16xi16>
-  %res2 = hivm.hir.vcumprod ins(%s32 : tensor<2x16xi32>) outs(%s32 : tensor<2x16xi32>) cum_dims = [1] -> tensor<2x16xi32>
-  %res3 = hivm.hir.vcumprod ins(%s64 : tensor<2x16xi64>) outs(%s64 : tensor<2x16xi64>) cum_dims = [1] -> tensor<2x16xi64>
-  %res4 = hivm.hir.vcumprod ins(%f16 : tensor<2x16xf16>) outs(%f16 : tensor<2x16xf16>) cum_dims = [0] -> tensor<2x16xf16>
-  %res5 = hivm.hir.vcumprod ins(%f32 : tensor<2x16xf32>) outs(%f32 : tensor<2x16xf32>) cum_dims = [1] -> tensor<2x16xf32>
-  %res6 = hivm.hir.vcumprod ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] -> tensor<2x?x?xf32>
+  %res1 = hivm.hir.vcumprod ins(%s16 : tensor<2x16xi16>) outs(%s16 : tensor<2x16xi16>) cum_dims = [0] reverse = false -> tensor<2x16xi16>
+  %res2 = hivm.hir.vcumprod ins(%s32 : tensor<2x16xi32>) outs(%s32 : tensor<2x16xi32>) cum_dims = [1] reverse = false -> tensor<2x16xi32>
+  %res3 = hivm.hir.vcumprod ins(%s64 : tensor<2x16xi64>) outs(%s64 : tensor<2x16xi64>) cum_dims = [1] reverse = false -> tensor<2x16xi64>
+  %res4 = hivm.hir.vcumprod ins(%f16 : tensor<2x16xf16>) outs(%f16 : tensor<2x16xf16>) cum_dims = [0] reverse = false -> tensor<2x16xf16>
+  %res5 = hivm.hir.vcumprod ins(%f32 : tensor<2x16xf32>) outs(%f32 : tensor<2x16xf32>) cum_dims = [1] reverse = false -> tensor<2x16xf32>
+  %res6 = hivm.hir.vcumprod ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] reverse = false -> tensor<2x?x?xf32>
   return
 }

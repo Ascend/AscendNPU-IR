@@ -181,10 +181,10 @@ module {
 // -----
 module {
   func.func @test_lift_cumsum_op(%src: memref<2x25xi16, strided<[800, 32]>>, %dst: memref<2x25xi16, strided<[800, 32]>>) {
-    // CHECK: hivm.hir.vcumsum ins(%{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>) outs(%{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>) cum_dims = [0]
+    // CHECK: hivm.hir.vcumsum ins(%{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>) outs(%{{.*}} : memref<2x25x1xi16, strided<[800, 32, 1]>>) cum_dims = [0] reverse = false
     hivm.hir.vcumsum ins(%src : memref<2x25xi16, strided<[800, 32]>>)
                      outs(%dst : memref<2x25xi16, strided<[800, 32]>>)
-                     cum_dims = [0]
+                     cum_dims = [0] reverse = false
     return
   }
 }
