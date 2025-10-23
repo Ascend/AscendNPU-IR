@@ -163,6 +163,28 @@ endif()
 add_custom_target(bishengir-doc)
 set_target_properties(bishengir-doc PROPERTIES FOLDER "BiShengIR/Docs")
 
+
+# If BISHENGIR_VERSION_* is specified, use it, if not use LLVM_VERSION_*.
+if(NOT DEFINED BISHENGIR_VERSION_MAJOR)
+  set(BISHENGIR_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
+endif()
+if(NOT DEFINED BISHENGIR_VERSION_MINOR)
+  set(BISHENGIR_VERSION_MINOR ${LLVM_VERSION_MINOR})
+endif()
+if(NOT DEFINED BISHENGIR_VERSION_PATCHLEVEL)
+  set(BISHENGIR_VERSION_PATCHLEVEL ${LLVM_VERSION_PATCH})
+endif()
+if(NOT DEFINED BISHENGIR_VERSION_SUFFIX)
+  set(BISHENGIR_VERSION_SUFFIX ${LLVM_VERSION_SUFFIX})
+endif()
+set(BISHENGIR_VERSION "${BISHENGIR_VERSION_MAJOR}.${BISHENGIR_VERSION_MINOR}.${BISHENGIR_VERSION_PATCHLEVEL}${BISHENGIR_VERSION_SUFFIX}")
+message(STATUS "BISHENGIR version: ${BISHENGIR_VERSION}")
+
+# Configure the Version.inc file.
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/bishengir/Version/Version.inc.in
+  ${CMAKE_CURRENT_BINARY_DIR}/include/bishengir/Version/Version.inc)
+
 add_subdirectory(tools/bishengir-hfusion-ods-gen)
 add_subdirectory(lib)
 add_subdirectory(include/bishengir)
