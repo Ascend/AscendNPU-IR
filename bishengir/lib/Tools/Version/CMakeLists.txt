@@ -31,7 +31,7 @@ set_source_files_properties("${vcs_version_inc}"
              HEADER_FILE_ONLY TRUE)
 
 # Configure the Version.inc file.
-set(version_inc "${BISHENGIR_BINARY_DIR}/include/bishengir/Version/Version.inc")
+set(version_inc "${BISHENGIR_BINARY_DIR}/bishengir/include/bishengir/Version/Version.inc")
 
 configure_file(
   ${BISHENGIR_SRC_DIR}/include/bishengir/Version/Version.inc.in
