@@ -211,20 +211,18 @@ std::string bishengir::getBiShengInstallPath() {
 }
 
 mlir::LogicalResult bishengir::handleDiagnostic(const mlir::Diagnostic &diag) {
-  auto &os = (diag.getSeverity() == mlir::DiagnosticSeverity::Error)
-            ? llvm::errs()
-            : llvm::outs();
+  auto &os = llvm::outs();
   auto loc = diag.getLocation();
-  if(!llvm::isa<mlir::UnknownLoc>(loc)) {
+  if (!llvm::isa<mlir::UnknownLoc>(loc)) {
     os << loc << ": ";
   }
 
   // Handle warning.
-  if(diag.getSeverity() == mlir::DiagnosticSeverity::Warning) {
+  if (diag.getSeverity() == mlir::DiagnosticSeverity::Warning) {
     os << "warning: " << diag.str() << "\n";
     return mlir::success();
   }
 
-  // Any other severity - treat as success.
-  return mlir::success();
+  // Any other severity - treat as failure.
+  return mlir::failure();
 }
