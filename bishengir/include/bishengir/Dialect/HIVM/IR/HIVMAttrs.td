@@ -863,6 +863,13 @@ def HIVM_StorageAligned : HIVM_Attr<"StorageAligned", "storage_aligned"> {
   }];
 }
 
+def HIVM_EnableSavingUb : HIVM_Attr<"EnableSavingUb", "enable_saving_ub"> {
+  let description = [{
+    If a module is tagged with this attribute, it means the operations with less memory
+    usage will be used whenever possible. e.g : enablevcg vector reduce
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//

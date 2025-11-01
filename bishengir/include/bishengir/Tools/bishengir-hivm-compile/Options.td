@@ -61,6 +61,14 @@ def EnableTritonKernelCompile : FeatureControlOptions<
   let passGroup = ["HIVM", "HFUSION_TO_HIVM"];
 }
 
+def EnableUbufSaving : FeatureControlOptions<
+  "Enable ub buffer saving mode.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM", "HFUSION_TO_HIVM"];
+}
+
 def EnableHIVMCompile : FeatureControlOptions<
   "Enable BiShengHIR HIVM compilation.",
   "bool",
