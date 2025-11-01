@@ -223,7 +223,7 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
 def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "true"
+  "false"
 > {
   let emitGetterSetter = 0;
   bit isSharedWithDownstreamToolchain = 1;
@@ -390,7 +390,7 @@ def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<
 def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
   "Enable balancing during cv-pipelining.",
   "bool",
-  "true"
+  "false"
 >;
 
 def EnableHIVMAutoStorageAlign : HIVMOptimizationControlOptions<
