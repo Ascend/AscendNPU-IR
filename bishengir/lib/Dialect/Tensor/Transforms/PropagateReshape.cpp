@@ -61,6 +61,7 @@ void PropagateReshapePass::runOnOperation() {
   patterns.add<SwapCollapseExpand>(context);
   patterns.add<PropagateExpandUp>(context, forHIVM);
   patterns.add<PropagateCollapseDown>(context, forHIVM);
+  patterns.add<memref::SwapMemrefCollapseExpand>(context);
   patterns.add<memref::PropagateMemrefExpandUp>(context);
   patterns.add<memref::PropagateMemrefCollapseDown>(context);
 

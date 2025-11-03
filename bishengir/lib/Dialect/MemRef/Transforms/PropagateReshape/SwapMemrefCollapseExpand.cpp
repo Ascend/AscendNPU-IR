@@ -1,4 +1,4 @@
-//===- SwapCollapseExpand.cpp ---------------------------------------------===//
+//===- SwapMemrefCollapseExpand.cpp ---------------------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,36 +20,47 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/SwapCollapseExpand.h"
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/MemRef/Transforms/PropagateReshape.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
-#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #define DEBUG_TYPE "propagate-reshape"
 namespace mlir {
-namespace tensor {
-using namespace mlir::hfusion;
-using namespace mlir::tensor::reshape_utils;
-using namespace mlir::hfusion::reshape_utils;
+namespace memref {
 using namespace mlir::utils::debugger;
 
+// %b = collapse %a
+// <AxBxCxDxExFxG> -> <AxBCDxExFG>
+// [[0], [1, 2, 3], [4], [5, 6]]
+// %c = expand %b
+// <AxBCDxExFG> -> <AxBCDxE1xE2xFG>
+// [[0], [1], [2, 3], [4]]
+//
+// |
+// v
+//
+// %tmp = expand %a
+// <AxBxCxDxExFxG> -> <AxBxCxDxE1xE2xFxG>
+// [[0], [1], [2], [3], [4, 5], [6], [7]]
+// %c = collapse %tmp
+// <AxBxCxDxE1xE2xFxG> -> <AxBCDxE1xE2xFG>
+// [[0], [1, 2, 3], [4], [5], [6, 7]]
+
 LogicalResult
-SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
-                                    PatternRewriter &rewriter) const {
-  auto collapseOp = expandOp.getSrc().getDefiningOp<tensor::CollapseShapeOp>();
+SwapMemrefCollapseExpand::matchAndRewrite(memref::ExpandShapeOp expandOp,
+                                          PatternRewriter &rewriter) const {
+  auto collapseOp = expandOp.getSrc().getDefiningOp<memref::CollapseShapeOp>();
   if (!collapseOp)
     return failure();
   auto *definedCollapse = collapseOp.getSrc().getDefiningOp();
-  if (!definedCollapse || isStopPropagatable(definedCollapse))
+  if (!definedCollapse || reshape_utils::isStopPropagatable(definedCollapse))
     return failure();
   if (llvm::all_of(expandOp->getUsers(),
-                   [&](Operation *op) { return isOutOp(op); })) {
+                   [&](Operation *op) { return reshape_utils::isOutOp(op); })) {
     return failure();
   }
   LLVM_DEBUG(llvm::dbgs() << "Trying to swap collapse expand here\n";);
@@ -61,7 +72,7 @@ SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   auto expandShapeResult = utils::getShape(expandOp.getResult().getType());
   SmallVector<int64_t> newExpandShape;
   bool reassociationsDone = false;
-  if (!::mlir::reshape_utils::areReassociationsCompatible(
+  if (!reshape_utils::areReassociationsCompatible(
           collapseReassoc, expandReassoc, newReassociationExpand,
           newReassociationCollapse, collapseSourceShape, expandShapeResult,
           newExpandShape)) {
@@ -80,19 +91,32 @@ SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
     return failure();
   }
 
-  renumberReassociation(newReassociationExpand);
-  renumberReassociation(newReassociationCollapse);
+  utils::renumberReassociation(newReassociationExpand);
+  utils::renumberReassociation(newReassociationCollapse);
   rewriter.setInsertionPointAfter(expandOp);
-  auto newExpandType =
-      RankedTensorType::get(newExpandShape, getElementTypeOrSelf(expandOp));
-  auto newExpandOp = rewriter.create<tensor::ExpandShapeOp>(
-      collapseOp.getLoc(), newExpandType, collapseOp.getSrc(),
+  auto newExpandType = memref::ExpandShapeOp::computeExpandedType(
+      cast<MemRefType>(collapseOp.getSrc().getType()), newExpandShape,
       newReassociationExpand);
-  auto newCollapseOp = rewriter.create<tensor::CollapseShapeOp>(
-      expandOp.getLoc(), expandOp.getResult().getType(),
-      newExpandOp.getResult(), newReassociationCollapse);
+  if (failed(newExpandType) ||
+      !memref::CollapseShapeOp::isGuaranteedCollapsible(
+          *newExpandType, newReassociationCollapse)) {
+    LLVM_DEBUG(llvm::dbgs() << "type conversion failed\n";);
+    return failure();
+  }
+  auto newCollapseType = memref::CollapseShapeOp::computeCollapsedType(
+      *newExpandType, newReassociationCollapse);
+  if (newCollapseType != expandOp.getResult().getType()) {
+    LLVM_DEBUG(llvm::dbgs() << "stride is not compatible\n";);
+    return failure();
+  }
+  auto newExpandOp = rewriter.create<memref::ExpandShapeOp>(
+      collapseOp.getLoc(), *newExpandType, collapseOp.getSrc(),
+      newReassociationExpand);
+  auto newCollapseOp = rewriter.create<memref::CollapseShapeOp>(
+      expandOp.getLoc(), newCollapseType, newExpandOp.getResult(),
+      newReassociationCollapse);
   rewriter.replaceAllUsesWith(expandOp, newCollapseOp.getResult());
   return success();
 }
-} // namespace tensor
+} // namespace memref
 } // namespace mlir

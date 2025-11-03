@@ -53,8 +53,7 @@ struct IsLLVMContainer<T, std::void_t<decltype(std::declval<T>().begin()),
     : std::true_type {};
 
 // Type trait to check if T supports indexing
-template <typename T, typename = void>
-struct HasSubscript : std::false_type {};
+template <typename T, typename = void> struct HasSubscript : std::false_type {};
 
 template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
@@ -124,8 +123,7 @@ std::string to_string(const T &container, int indent, bool useEndl) {
 // (4-TRUNC) int -> float
 // (5-RINT ) int -> int
 // (6-RINT ) others
-template <typename T>
-T selectRoundMode(Type inType, Type outType) {
+template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32()) {
       return T::RINT;
@@ -373,8 +371,7 @@ llvm::SmallVector<Value> getTensorOrMemrefShapeDims(PatternRewriter &rewriter,
                                                     Location loc, Value source);
 
 /// Extract the arith value of the arith.constant.
-template <typename T>
-FailureOr<T> getArithConstantOpValue(Value value) {
+template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   auto constOp = dyn_cast<arith::ConstantOp>(value.getDefiningOp());
   if (constOp == nullptr) {
     return failure();
@@ -444,8 +441,7 @@ SmallVector<int> collectAlignUnits(ArrayRef<int32_t> alignDims,
   return alignUnits;
 }
 
-template <typename IRType, typename CType>
-bool isConst(TypedAttr v, CType t) {
+template <typename IRType, typename CType> bool isConst(TypedAttr v, CType t) {
   if constexpr (std::is_same_v<IRType, FloatAttr>) {
     auto srcTypeAttr = dyn_cast_or_null<FloatAttr>(v);
     return srcTypeAttr == FloatAttr::get(v.getType(), static_cast<double>(t));
@@ -515,6 +511,14 @@ bool isZeroDimensionOp(Operation *op);
 bool isMarkedAsElementwiseUnaryOp(Operation *op);
 
 bool isAllParallelOp(Operation *op);
+
+bool areReassociationsCompatible(
+    ArrayRef<ReassociationIndices> collapseReassoc,
+    ArrayRef<ReassociationIndices> expandReassoc,
+    SmallVector<ReassociationIndices> &supposedExpand,
+    SmallVector<ReassociationIndices> &supposedCollapse,
+    ArrayRef<int64_t> collapseSourceShape, ArrayRef<int64_t> expandShapeResult,
+    SmallVector<int64_t> &newExpandShape);
 
 } // namespace reshape_utils
 } // namespace mlir

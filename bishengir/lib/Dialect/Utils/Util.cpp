@@ -15,13 +15,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "bishengir/Dialect/Utils/Util.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -179,8 +179,8 @@ Value createEmptyOpWithTargetElemType(
                                                          targetElemType);
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   }
-  return memref::createMemRefAllocOpWithTargetElemType(builder, loc, source,
-                                                       targetElemType, std::move(layout));
+  return memref::createMemRefAllocOpWithTargetElemType(
+      builder, loc, source, targetElemType, std::move(layout));
 }
 
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
@@ -1014,6 +1014,40 @@ bool isLegalOp(Operation *op) {
 
 bool isReturnOp(Operation *op) {
   return isa<func::ReturnOp, bufferization::MaterializeInDestinationOp>(op);
+}
+
+bool areReassociationsCompatible(
+    ArrayRef<ReassociationIndices> collapseReassoc,
+    ArrayRef<ReassociationIndices> expandReassoc,
+    SmallVector<ReassociationIndices> &supposedExpand,
+    SmallVector<ReassociationIndices> &supposedCollapse,
+    ArrayRef<int64_t> collapseSourceShape, ArrayRef<int64_t> expandShapeResult,
+    SmallVector<int64_t> &newExpandShape) {
+  // Check if collapse and expand reassociations are inverses of each other
+  if (collapseReassoc.size() != expandReassoc.size())
+    return false;
+  for (size_t i = 0; i < collapseReassoc.size(); ++i) {
+    bool isCollapsing = collapseReassoc[i].size() > 1;
+    bool isExpanding = expandReassoc[i].size() > 1;
+    if (isCollapsing && isExpanding) {
+      return false;
+    }
+    if (isExpanding) {
+      for (auto el : expandReassoc[i]) {
+        assert(el >= 0 && static_cast<size_t>(el) < expandShapeResult.size());
+        newExpandShape.push_back(expandShapeResult[el]);
+        supposedCollapse.push_back({-1});
+      }
+      supposedExpand.push_back(expandReassoc[i]);
+    } else {
+      for (auto el : collapseReassoc[i]) {
+        newExpandShape.push_back(collapseSourceShape[el]);
+        supposedExpand.push_back({-1});
+      }
+      supposedCollapse.push_back(collapseReassoc[i]);
+    }
+  }
+  return true;
 }
 
 } // namespace reshape_utils

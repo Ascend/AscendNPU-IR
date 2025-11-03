@@ -45,6 +45,17 @@ public:
   LogicalResult matchAndRewrite(memref::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override;
 };
+
+// Pattern to swap collapse and expand shape operations when beneficial
+class SwapMemrefCollapseExpand
+    : public mlir::OpRewritePattern<memref::ExpandShapeOp> {
+public:
+  explicit SwapMemrefCollapseExpand(MLIRContext *context)
+      : OpRewritePattern<memref::ExpandShapeOp>(context, /*benefit=*/1) {}
+
+  LogicalResult matchAndRewrite(memref::ExpandShapeOp expandOp,
+                                PatternRewriter &rewriter) const override;
+};
 } // namespace memref
 } // namespace mlir
 

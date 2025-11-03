@@ -81,3 +81,18 @@ func.func @test_collapse_down_memref_strided(%arg0: i64 {hacc.arg_type = #hacc.a
   }
   return
 }
+
+// -----
+
+// CHECK: Valid
+// CHECK-LABEL: @test_swap_collapse_expand
+func.func @test_swap_collapse_expand(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xbf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg2: memref<?xbf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}) {
+  %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [16, 128, 3], strides: [384, 3, 1] : memref<?xbf16, #hivm.address_space<gm>> to memref<16x128x3xbf16, #hivm.address_space<gm>>
+  %alloc = memref.alloc() : memref<128x16x3xbf16, #hivm.address_space<ub>>
+  %collapse_shape = memref.collapse_shape %alloc [[0, 1, 2]] : memref<128x16x3xbf16, #hivm.address_space<ub>> into memref<6144xbf16, #hivm.address_space<ub>>
+  %expand_shape = memref.expand_shape %collapse_shape [[0, 1, 2]] output_shape [16, 128, 3] : memref<6144xbf16, #hivm.address_space<ub>> into memref<16x128x3xbf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%reinterpret_cast : memref<16x128x3xbf16, #hivm.address_space<gm>>) outs(%expand_shape : memref<16x128x3xbf16, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [128, 16, 3], strides: [48, 3, 1] : memref<?xbf16, #hivm.address_space<gm>> to memref<128x16x3xbf16, #hivm.address_space<gm>>
+  hivm.hir.store ins(%alloc : memref<128x16x3xbf16, #hivm.address_space<ub>>) outs(%reinterpret_cast_2 : memref<128x16x3xbf16, #hivm.address_space<gm>>)
+  return
+}
