@@ -1335,19 +1335,21 @@ def VFlipOp : HIVM_VectorOp<"vflip",
      // Will automatically use the default uniform reassociation impl
      UniformReassociationFlattenTrait,
      DeclareOpInterfaceMethods<FlattenInterface,
-                               ["getLimitedAxes"]>
+                               ["getLimitedAxes", "adjustTargetDimensions"]>
     ]> {
   let summary = "Vector Flip Op";
   let description = [{
     Flips a tensor along the last dimension.
   }];
   let arguments = (ins TensorOrMemref:$src,
-                       TensorOrMemref:$dst
+                       TensorOrMemref:$dst,
+                       I64Attr:$flip_axis
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    `flip_axis` `=` $flip_axis
     (`->` type($result)^)?
   }];
   let extraClassDeclaration = vectorOpBaseDecls # [{

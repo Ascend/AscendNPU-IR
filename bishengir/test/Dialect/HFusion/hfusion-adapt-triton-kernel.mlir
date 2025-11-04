@@ -143,3 +143,14 @@ func.func @sort_kernel_2d(%arg0: memref<512x8xf32>) -> (tensor<512x8xf32>) {
   %1 = call @triton_sort(%0, %c1_i64, %true) : (tensor<512x8xf32>, i64, i1) -> tensor<512x8xf32>
   return %1 : tensor<512x8xf32>
 }
+
+// -----
+// CHECK-LABEL: @flip_kernel_2d
+// CHECK: hfusion.flip
+func.func private @triton_flip(tensor<512x8xf32>, i64) -> tensor<512x8xf32>
+func.func @flip_kernel_2d(%arg0: memref<512x8xf32>) -> (tensor<512x8xf32>) {
+  %c1_i64 = arith.constant 1 : i64
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<512x8xf32>
+  %1 = call @triton_flip(%0, %c1_i64) : (tensor<512x8xf32>, i64) -> tensor<512x8xf32>
+  return %1 : tensor<512x8xf32>
+}

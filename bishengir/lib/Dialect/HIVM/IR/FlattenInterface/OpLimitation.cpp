@@ -97,8 +97,8 @@ SmallVector<int64_t> VArangeOp::getLimitedAxes() {
 
 SmallVector<int64_t> VFlipOp::getLimitedAxes() {
   SmallVector<int64_t> limitedAxes = computeElementwiseLimitation(*this);
-  // limit for last dimension
-  limitedAxes.push_back(this->getRank(&this->getDstMutable()) - 1);
+  // limit for flip_axis dimension
+  limitedAxes.push_back(this->getFlipAxis());
   return limitedAxes;
 }
 

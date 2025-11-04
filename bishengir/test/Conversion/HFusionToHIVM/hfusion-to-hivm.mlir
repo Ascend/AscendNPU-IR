@@ -766,9 +766,9 @@ func.func @test_interleave() -> tensor<4x2x128xf16> {
 // -----
 // CHECK-LABEL: func.func @test_flip
 func.func @test_flip()-> tensor<4x8x8xf32> {
-  // CHECK: %{{.*}} = hivm.hir.vflip ins(%{{.*}} : tensor<4x8x8xf32>) outs(%{{.*}} : tensor<4x8x8xf32>) -> tensor<4x8x8xf32>
+  // CHECK: %{{.*}} = hivm.hir.vflip ins(%{{.*}} : tensor<4x8x8xf32>) outs(%{{.*}} : tensor<4x8x8xf32>) flip_axis = 2 -> tensor<4x8x8xf32>
   %0 = tensor.empty() : tensor<4x8x8xf32>
-  %1 = hfusion.flip %0 : tensor<4x8x8xf32> -> tensor<4x8x8xf32>
+  %1 = hfusion.flip %0 : tensor<4x8x8xf32> flip_axis = 2 -> tensor<4x8x8xf32>
   return %1 : tensor<4x8x8xf32>
 }
 // -----

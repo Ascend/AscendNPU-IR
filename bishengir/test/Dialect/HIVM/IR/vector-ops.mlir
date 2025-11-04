@@ -1167,6 +1167,7 @@ func.func @test_vflip_op_memref() {
   %dst = memref.alloc() : memref<2x16xf16>
   hivm.hir.vflip ins(%src: memref<2x16xf16>)
                 outs(%dst : memref<2x16xf16>)
+                flip_axis = 1
   return
 }
 

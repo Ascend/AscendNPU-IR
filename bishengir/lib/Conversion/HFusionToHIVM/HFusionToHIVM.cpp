@@ -890,7 +890,8 @@ struct HFusionToHIVMFlipOp : public OpRewritePattern<hfusion::FlipOp> {
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
     auto hivmFlipOp = rewriter.create<hivm::VFlipOp>(
-        op->getLoc(), op->getResultTypes(), op.getInput(), dsts[0]);
+        op->getLoc(), op->getResultTypes(), op.getInput(), dsts[0],
+        op.getFlipAxis());
     rewriter.replaceOp(op, hivmFlipOp);
     return success();
   }

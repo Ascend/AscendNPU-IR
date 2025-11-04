@@ -98,6 +98,15 @@ void VConcatOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   setDim(adjustedDims[0]);
 }
 
+void VFlipOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+                                     const FlattenResult &result) {
+  auto& atd = result.adjustedTargetDims;
+  auto& otd = result.originalTargetDims;
+  if (auto it = std::find(otd.begin(), otd.end(), getFlipAxis()); it != otd.end()) {
+      setFlipAxis(atd[std::distance(otd.begin(), it)]);
+  }
+}
+
 namespace mlir::hivm::detail {
 void adjustElementwiseTargetDimensions(OpBuilder &builder, HIVMStructuredOp op,
                                        const FlattenResult &result) {

@@ -311,6 +311,39 @@ struct TritonSortToHFusionSortPattern : public OpRewritePattern<func::CallOp> {
   }
 };
 
+struct TritonFlipToHFusionFlipPattern : public OpRewritePattern<func::CallOp> {
+  using OpRewritePattern<func::CallOp>::OpRewritePattern;
+
+  static constexpr StringRef flipFuncName = "triton_flip";
+  LogicalResult matchAndRewrite(func::CallOp callOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcOp =
+        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    auto funcName = funcOp.getSymName();
+    if (!funcName.starts_with(flipFuncName)) {
+      return rewriter.notifyMatchFailure(
+          callOp,
+          funcName + " does not starts with the prefix " + flipFuncName);
+    }
+
+    auto loc = callOp.getLoc();
+    Value src = callOp.getOperand(0);
+    Value flipAxisVals = callOp.getOperand(1);
+    auto flipAxis = mlir::utils::getArithConstantOpValue<int64_t>(flipAxisVals);
+    if (failed(flipAxis)) {
+      return callOp->emitError("Failed to extract the value of arith.constant"
+                               "defining the Flip axis.");
+    }
+
+    auto srcTy = cast<RankedTensorType>(src.getType());
+    auto flipOp = rewriter.create<hfusion::FlipOp>(loc, srcTy, src, *flipAxis);
+    rewriter.replaceOp(callOp, flipOp);
+    rewriter.eraseOp(funcOp);
+
+    return success();
+  }
+};
+
 struct TritonBindSubBlockAttrToHFusionPattern
     : public OpRewritePattern<scf::ForOp> {
   using OpRewritePattern<scf::ForOp>::OpRewritePattern;
@@ -351,7 +384,8 @@ void AdaptTritonKernelPass::runOnOperation() {
       .add<TritonPrintToHFusionPrintPattern, TritonAssertToHFusionAssertPattern,
            TritonGatherToHFusionGatherPattern, TritonCumToHFusionCumPattern,
            TritonBindSubBlockAttrToHFusionPattern,
-           TritonSortToHFusionSortPattern>(patterns.getContext());
+           TritonSortToHFusionSortPattern, TritonFlipToHFusionFlipPattern>(
+          patterns.getContext());
   if (failed(applyPatternsGreedily(module, std::move(patterns)))) {
     signalPassFailure();
     return;

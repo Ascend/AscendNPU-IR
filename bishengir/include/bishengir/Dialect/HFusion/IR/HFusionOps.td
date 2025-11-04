@@ -202,10 +202,15 @@ def FlipOp : HFusion_Op<"flip", [Pure, Commutative, AllTypesMatch<["output"]>]> 
       currently only final dimension supported.
   }];
 
-  let arguments = (ins AnyTypeOf<[AnyRankedTensor]>:$input);
+  let arguments = (ins AnyTypeOf<[AnyRankedTensor]>:$input,
+                   I64Attr:$flip_axis);
   let results = (outs AnyTypeOf<[AnyRankedTensor]>:$output);
 
-  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($output)";
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `flip_axis` `=` $flip_axis
+    `->` type($output)
+  }];
 }
 
 //===----------------------------------------------------------------------===//

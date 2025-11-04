@@ -158,18 +158,6 @@ func.func @test_ldexpDh(%arg0 : tensor<6x6xf16>, %arg1 : tensor<6x6xf16>) -> ten
 
 // -----
 
-func.func private @__hmf_flipf(f32, i32) -> f32 attributes {llvm.readnone}
-func.func @test_flip(%arg0 : tensor<4x8x8xf32>, %arg1 : tensor<4x8x8xi32>) -> tensor<4x8x8xf32> {
-  // CHECK:       %[[RET:.*]] = hfusion.flip
-  %0 = arith.constant 2 : i32
-  %1 = tensor.empty() : tensor<4x8x8xi32>
-  %2 = linalg.fill ins(%0 : i32) outs(%1 : tensor<4x8x8xi32>) -> tensor<4x8x8xi32>
-  %ret = linalg.map { func.call {callee = @__hmf_flipf} } ins(%arg0, %2 : tensor<4x8x8xf32>, tensor<4x8x8xi32>) outs(%arg0 : tensor<4x8x8xf32>)
-  return %ret : tensor<4x8x8xf32>
-}
-
-// -----
-
 
 // CHECK-LABEL: func.func @test_atomic_add
 #map = affine_map<(d0) -> (d0)>
