@@ -334,8 +334,6 @@ constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
 
-bool isFromFunctionArg(mlir::Value v);
-
 // Returns if the given source MemRef type is collapsible with the specified
 // reassociation indices. This function works as a strict extension based
 // on `memref::CollapseShapeOp::isGuaranteedCollapsible`, which has weak

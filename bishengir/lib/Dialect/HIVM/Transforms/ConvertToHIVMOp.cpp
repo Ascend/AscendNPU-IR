@@ -151,8 +151,8 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
     }
   }
   // TODO: change TA to create hivm.load/store op directly
-  auto implicitTransposeAttr =
-      utils::getAnnotateOpWithAttr(copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
+  auto implicitTransposeAttr = utils::getAnnotateOpWithAttr(
+      copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
   if (implicitTransposeAttr.has_value()) {
     loadOp.setMayImplicitTransposeWithLastAxis(true);
   }
@@ -165,9 +165,21 @@ bool isAllocLikeOrGMPointerCastOp(Value v) {
 }
 
 bool isFromGMSpace(Value v) {
-  auto defOp =
-      utils::tracebackMemRef(v, isAllocLikeOrGMPointerCastOp).getDefiningOp();
-  return defOp == nullptr || isa<hivm::PointerCastOp>(defOp);
+  bool result = true;
+  SmallVector<Value> targetOPVec =
+      utils::tracebackMemRefVecByTargetFn(v, isAllocLikeOrGMPointerCastOp);
+  for (int i = 1; i < targetOPVec.size(); i++) {
+    assert(isa<hivm::PointerCastOp>(targetOPVec[i].getDefiningOp()) ==
+           isa<hivm::PointerCastOp>(targetOPVec[i - 1].getDefiningOp()));
+  }
+  for (auto targetOP : targetOPVec) {
+    auto defOp = targetOP.getDefiningOp();
+    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp)) {
+      result = false;
+      break;
+    }
+  }
+  return result;
 }
 
 struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
@@ -187,8 +199,8 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
       auto storeOp = rewriter.replaceOpWithNewOp<hivm::StoreOp>(
           copyOp, TypeRange(), src, dst);
       // TODO: change TA to create hivm.load/store op directly
-      auto implicitTransposeAttr =
-          utils::getAnnotateOpWithAttr(copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
+      auto implicitTransposeAttr = utils::getAnnotateOpWithAttr(
+          copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
       if (implicitTransposeAttr.has_value()) {
         storeOp.setMayImplicitTransposeWithLastAxis(true);
       }

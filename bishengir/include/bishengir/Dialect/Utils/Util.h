@@ -29,8 +29,8 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
 #include <numeric>
-#define CEIL_FACTOR(x, y) (((x) + ((y)-1)) / (y) * (y))
-#define CEIL_DIV(x, y) (((x) + ((y)-1)) / (y))
+#define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
+#define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
 #define UINT8_WIDTH 8
 namespace mlir {
 namespace utils {
@@ -344,11 +344,18 @@ int checkDefsAllWithCondition(Value v,
 int checkDefsAnyWithCondition(Value v,
                               const std::function<int(Operation *op)> &condFn);
 
+/// Try to trace back the current mermef-typed value to the source values.
+SmallVector<Value> tracebackMemRefVec(Value memrefVal);
+
+/// Try to trace back the current mermef-typed value to the target source
+/// values.
+SmallVector<Value>
+tracebackMemRefVecByTargetFn(Value memrefVal,
+                             std::function<bool(Value)> targetFn);
+
 /// Try to trace back the current mermef-typed value to the source value.
 /// This function always return a value.
 Value tracebackMemRef(Value memrefVal);
-
-Value tracebackMemRef(Value memrefVal, std::function<bool(Value)> targetFn);
 
 /// Try to trace back the current mermef-typed value to the source
 /// `mermef.alloc`.
