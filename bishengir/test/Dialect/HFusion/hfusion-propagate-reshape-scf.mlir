@@ -1,5 +1,5 @@
 // REQUIRES: asserts
-// RUN: bishengir-opt %s --propagate-reshape --cse --canonicalize --valid-propagate --debug-only="propagate-valid-check" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --propagate-reshape --cse --canonicalize-ext --valid-propagate --debug-only="propagate-valid-check" -split-input-file | FileCheck %s
 
 // CHECK: Valid
 // CHECK-LABEL: func.func @scf_for_propagate

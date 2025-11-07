@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --lower-hfusion-pipeline="enable-triton-kernel-compile=true" --cse --canonicalize | FileCheck %s
+// RUN: bishengir-opt %s --lower-hfusion-pipeline="enable-triton-kernel-compile=true" --cse --canonicalize-ext | FileCheck %s
 
 // CHECK-LABEL: @triton_collapse_transpose(
 // CHECK: %[[VAL_24:.*]] = linalg.transpose

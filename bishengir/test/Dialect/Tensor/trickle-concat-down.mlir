@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --trickle-concat-down --cse --canonicalize --split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --trickle-concat-down --cse --canonicalize-ext --split-input-file | FileCheck %s
 
 // CHECK-LABEL: test_concat
 // CHECK: elemwise_unary

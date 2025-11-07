@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hfusion-cache-io-for-return-arg %s -cse -canonicalize -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -hfusion-cache-io-for-return-arg %s -cse -canonicalize-ext -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_single_reshape
 // CHECK-SAME: %[[arg0:.*]]: tensor<16x16xf32> {hacc.cached_io}

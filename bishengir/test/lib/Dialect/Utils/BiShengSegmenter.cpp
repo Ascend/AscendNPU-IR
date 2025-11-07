@@ -17,6 +17,7 @@
 #include "Test/TestPasses.h"
 
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -132,7 +133,11 @@ struct BiShengSegmenterPass
   LogicalResult optimizeFunction(func::FuncOp funcOp) {
     PassManager pm(funcOp.getContext());
     pm.addPass(createCSEPass());
-    pm.addPass(createCanonicalizerPass());
+    CanonicalizerOptions options;
+    SmallVector<std::string> disabledPatterns(
+        {"ReinterpretCastConstantArgumentFolder"});
+    options.disabledPatterns = disabledPatterns;
+    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
     return pm.run(funcOp);
   }
 

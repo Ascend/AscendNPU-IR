@@ -1,5 +1,5 @@
-// RUN: bishengir-opt --one-shot-bufferize="dialect-filter=hfusion,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -canonicalize -cse -split-input-file %s | FileCheck %s
-// RUN: bishengir-opt --one-shot-bufferize="bufferize-function-boundaries" -canonicalize -cse -split-input-file %s | FileCheck %s --check-prefix=ONE-SHOT
+// RUN: bishengir-opt --one-shot-bufferize="dialect-filter=hfusion,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -canonicalize-ext -cse -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --one-shot-bufferize="bufferize-function-boundaries" -canonicalize-ext -cse -split-input-file %s | FileCheck %s --check-prefix=ONE-SHOT
 
 // CHECK-LABEL:   func @basic(
 // CHECK-SAME:                %[[TENSOR:.*]]: tensor<4xf32>) -> tensor<4xf32> {

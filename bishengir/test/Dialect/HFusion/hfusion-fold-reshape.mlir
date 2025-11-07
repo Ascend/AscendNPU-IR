@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --canonicalize --cse --split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --canonicalize-ext --cse --split-input-file | FileCheck %s
 
 // CHECK: multi_reshape_args(%[[ARG0:.*]]: tensor<32x1024x1x1xf32>)
 // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[ARG0]] {{\[\[}}0], [1, 2, 3]] : tensor<32x1024x1x1xf32> into tensor<32x1024xf32>

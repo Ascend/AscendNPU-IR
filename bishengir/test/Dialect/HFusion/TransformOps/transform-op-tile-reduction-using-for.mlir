@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -transform-interpreter -canonicalize -cse -verify-diagnostics -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -transform-interpreter -canonicalize-ext -cse -verify-diagnostics -split-input-file | FileCheck %s
 
 func.func @reduction_tile(%arg0: tensor<?x?xf32>, %arg1: tensor<?xf32>) -> tensor<?xf32> {
   %reduced = linalg.reduce { arith.addf } ins(%arg0 : tensor<?x?xf32>) outs(%arg1 : tensor<?xf32>) dimensions = [1]

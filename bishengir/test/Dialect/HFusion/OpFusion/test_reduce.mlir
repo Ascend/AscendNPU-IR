@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -split-input-file \
 // RUN:   -pass-pipeline="builtin.module(  \
-// RUN:     canonicalize,                  \
+// RUN:     canonicalize-ext,                  \
 // RUN:     func.func(hfusion-outline-single-op))" | FileCheck %s
 
 // RUN: bishengir-opt --test-assign-fusion-kind --fusion-kind="ANY_PBR" --hfusion-fuse-ops -split-input-file %s | FileCheck %s --check-prefix=ANYPBR

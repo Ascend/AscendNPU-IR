@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --merge-consecutive-insert-extract-slice --split-input-file --cse --canonicalize | FileCheck %s
+// RUN: bishengir-opt %s --merge-consecutive-insert-extract-slice --split-input-file --cse --canonicalize-ext | FileCheck %s
 
 // CHECK-LABEL: @test_merge_consecutive_extract_slices_0(
 // CHECK-DAG: %[[slice0:.*]] = tensor.extract_slice

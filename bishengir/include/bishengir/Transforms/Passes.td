@@ -19,6 +19,7 @@
 #define BISHENGIR_TRANSFORMS_PASSES_H
 
 include "mlir/Pass/PassBase.td"
+include "mlir/Rewrite/PassUtil.td"
 
 def CanonicalizeModule : Pass<"canonicalize-module", "mlir::ModuleOp"> {
   let summary = "CanonicalizeModule operations";
@@ -60,6 +61,10 @@ def DeadFunctionElimination : Pass<"dead-func-elimination", "mlir::ModuleOp"> {
       3. Provids a mechanism to specify which functions to remove.
   }];
   let constructor = "bishengir::createDeadFunctionEliminationPass()";
+}
+
+def ExtendedCanonicalizer : Pass<"canonicalize-ext"> {
+  let constructor = "bishengir::createExtendedCanonicalizerPass()";
 }
 
 #endif //BISHENGIR_TRANSFORMS_PASSES_H

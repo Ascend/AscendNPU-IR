@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --propagate-reshape="for-hivm=true" --cse --canonicalize -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --propagate-reshape="for-hivm=true" --cse --canonicalize-ext -split-input-file | FileCheck %s
 
 // CHECK: diamond_brc_binary(
 // CHECK: tensor.expand_shape

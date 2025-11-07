@@ -1,9 +1,9 @@
 // RUN: bishengir-opt -split-input-file %s                        \
 // RUN:   -pass-pipeline="builtin.module(                         \
 // RUN:     func.func(linalg-fold-unit-extent-dims,               \
-// RUN:     canonicalize,cse,propagate-reshape,cse,               \
-// RUN:     canonicalize,hfusion-flatten-ops{flatten-mode=tidy},  \
-// RUN:     fold-tensor-empty,cse,canonicalize))" | FileCheck %s
+// RUN:     canonicalize-ext,cse,propagate-reshape,cse,               \
+// RUN:     canonicalize-ext,hfusion-flatten-ops{flatten-mode=tidy},  \
+// RUN:     fold-tensor-empty,cse,canonicalize-ext))" | FileCheck %s
 
 // CHECK-LABEL: main_multi_LAST_AXIS_PBR_0(
 // CHECK-NOT: ?x1x1x256

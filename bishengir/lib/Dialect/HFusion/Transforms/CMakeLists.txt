@@ -79,4 +79,5 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   MLIRTransformDialectTransforms
   MLIRPass
   BiShengIRHFusionUtils
+  BiShengIRTransform
 )

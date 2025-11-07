@@ -1,13 +1,13 @@
 // RUN: bishengir-opt %s                              \
 // RUN:   -pass-pipeline="builtin.module(func.func(   \
 // RUN:      hfusion-flatten-ops{flatten-mode=tidy}), \
-// RUN:      canonicalize)"                           \
+// RUN:      canonicalize-ext)"                           \
 // RUN:   -split-input-file | FileCheck %s
 
 // RUN: bishengir-opt %s                                                        \
 // RUN:   -pass-pipeline="builtin.module(func.func(                             \
 // RUN:      hfusion-flatten-ops{flatten-mode=tidy multi-dynamic-shape=false}), \
-// RUN:      canonicalize)"                                                     \
+// RUN:      canonicalize-ext)"                                                     \
 // RUN:   -split-input-file | FileCheck %s --check-prefix=MULTI-FALSE
 
 // CHECK-LABEL: func.func @broadcast_mul_reduce(

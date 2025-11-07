@@ -1,7 +1,7 @@
 // RUN: bishengir-opt -allow-unregistered-dialect -optimize-dps-op-with-yielded-insert-slice %s | FileCheck %s
 // RUN: bishengir-opt -allow-unregistered-dialect \
 // RUN:   -optimize-dps-op-with-yielded-insert-slice \
-// RUN:   -one-shot-bufferize=allow-unknown-ops -cse -canonicalize %s | FileCheck %s -check-prefix=CHECK-ONE-SHOT
+// RUN:   -one-shot-bufferize=allow-unknown-ops -cse -canonicalize-ext %s | FileCheck %s -check-prefix=CHECK-ONE-SHOT
 
 func.func @optimize_dps_inits(%lb: index, %ub: index, %step: index) -> tensor<64xf32> {
   %c0 = arith.constant 0 : index

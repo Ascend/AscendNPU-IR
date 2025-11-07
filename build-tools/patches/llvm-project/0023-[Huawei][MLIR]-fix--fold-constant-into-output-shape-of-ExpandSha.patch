@@ -94,31 +94,6 @@ index 000000000000..6a41629e8335
 +
 +} // namespace mlir
 \ No newline at end of file
-diff --git a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-index 8753d26d9bd1..2063dc82f0e2 100644
---- a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-+++ b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-@@ -23,6 +23,10 @@
- #include "llvm/ADT/STLExtras.h"
- #include "llvm/ADT/SmallBitVector.h"
- 
-+#if BSPUB_DAVINCI_BISHENGIR
-+#include "mlir/Dialect/Utils/ExpandShapeUtils.h"
-+#endif
-+
- using namespace mlir;
- using namespace mlir::memref;
- 
-@@ -2570,6 +2574,9 @@ LogicalResult ExpandShapeOp::verify() {
- void ExpandShapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                                 MLIRContext *context) {
-   results.add<
-+#if BSPUB_DAVINCI_BISHENGIR
-+      FoldConstantDimOfOutputShape<ExpandShapeOp, CastOp>,
-+#endif
-       ComposeReassociativeReshapeOps<ExpandShapeOp, ReshapeOpKind::kExpand>,
-       ComposeExpandOfCollapseOp<ExpandShapeOp, CollapseShapeOp>>(context);
- }
 diff --git a/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp b/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp
 index 0751ffc419cb..f0ce375e9ad2 100644
 --- a/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp

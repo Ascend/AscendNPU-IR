@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -canonicalize -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -canonicalize-ext -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @fuse_consecutive_reduce_ops_success
 // linalg.reduce ins({{.*}} : tensor<1x4x2047x2047xf32>) outs({{.*}} : tensor<2047xf32>) dimensions = {{\[}}0, 1, 2]

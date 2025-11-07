@@ -1,4 +1,4 @@
-// RUN: mlir-opt %s -split-input-file -canonicalize="test-convergence" | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -canonicalize-ext="test-convergence" | FileCheck %s
 
 
 // CHECK-LABEL: expand_shape_identity_fold

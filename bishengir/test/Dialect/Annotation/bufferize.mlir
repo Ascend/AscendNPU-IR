@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --one-shot-bufferize="dialect-filter=annotation,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -canonicalize -cse -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --one-shot-bufferize="dialect-filter=annotation,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -canonicalize-ext -cse -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func @mark
 // CHECK-SAME:     %[[t1:.*]]: tensor<?xf32>, %[[t2:.*]]: tensor<?xf32>

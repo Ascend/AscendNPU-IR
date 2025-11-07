@@ -1,5 +1,5 @@
-// RUN: bishengir-opt %s --bubble-up-extract-slice --split-input-file --cse --canonicalize | FileCheck %s
-// RUN: bishengir-opt %s --bubble-up-extract-slice="aggressive=true" --split-input-file --cse --canonicalize | FileCheck %s -check-prefix=CHECK-AGGRESSIVE
+// RUN: bishengir-opt %s --bubble-up-extract-slice --split-input-file --cse --canonicalize-ext | FileCheck %s
+// RUN: bishengir-opt %s --bubble-up-extract-slice="aggressive=true" --split-input-file --cse --canonicalize-ext | FileCheck %s -check-prefix=CHECK-AGGRESSIVE
 
 // CHECK-LABEL: @reduce_example(
 // CHECK: reduce

@@ -1,4 +1,4 @@
-// RUN: mlir-opt %s -transform-interpreter --cse --canonicalize -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -transform-interpreter --cse --canonicalize-ext -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: mlir-opt %s -transform-interpreter -split-input-file -verify-diagnostics | FileCheck %s --check-prefix CHECK-NOCLEANUP
 
 // CHECK: func.func @fuse_1st_for_into_2nd([[A:%.*]]: {{.*}}, [[B:%.*]]: {{.*}}

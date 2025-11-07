@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -canonicalize -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -canonicalize-ext -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @expand_transpose_fold(
 // CHECK-NOT: tensor.expand_shape

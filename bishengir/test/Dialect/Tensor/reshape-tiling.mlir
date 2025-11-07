@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -transform-interpreter -canonicalize -cse -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -transform-interpreter -canonicalize-ext -cse -split-input-file | FileCheck %s
 
 module attributes {transform.with_named_sequence} {
   transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {

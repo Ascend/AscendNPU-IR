@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -transform-interpreter -split-input-file -canonicalize -cse %s | FileCheck %s
+// RUN: bishengir-opt -transform-interpreter -split-input-file -canonicalize-ext -cse %s | FileCheck %s
 
 func.func @elemwise(%arg0 : memref<?x?xf32>, %arg1 : memref<?x?xf32>,
   %arg2 : memref<?x?xf32>) {

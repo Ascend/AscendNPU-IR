@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --transform-interpreter --cse --canonicalize | FileCheck %s
+// RUN: bishengir-opt %s --transform-interpreter --cse --canonicalize-ext | FileCheck %s
 
 // CHECK: scf.for
 // CHECK: scf.for

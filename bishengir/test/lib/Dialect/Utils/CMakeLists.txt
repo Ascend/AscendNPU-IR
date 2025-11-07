@@ -11,7 +11,7 @@ add_bishengir_library(BiShengIRTestDialectUtils
   MLIRFuncDialect
   BiShengIRHIVMDialect
   MLIRTensorUtils
-  MLIRTransforms
+  BiShengIRTransform
 )
 
 target_include_directories(BiShengIRTestDialectUtils PRIVATE ${BISHENGIR_SRC_DIR}/test/lib/Dialect)

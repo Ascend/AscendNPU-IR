@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -canonicalize -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -canonicalize-ext -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func @test_hoist_same_yield(
 // CHECK-SAME: {{.*}}: memref<?x1xf16>, {{.*}}: memref<1x?xf16>, %[[arg2:.*]]: memref<?x?xf16>,

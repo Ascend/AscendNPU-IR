@@ -1,7 +1,7 @@
 // RUN: bishengir-opt %s                              \
 // RUN:   -pass-pipeline="builtin.module(func.func(   \
 // RUN:      hfusion-flatten-ops{flatten-mode=tidy}), \
-// RUN:      cse, canonicalize)"                      \
+// RUN:      cse, canonicalize-ext)"                      \
 // RUN:   -split-input-file | FileCheck %s
 
 // CHECK-NOT: tensor.collapse_shape

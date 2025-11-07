@@ -115,18 +115,3 @@ index ddbf0c5e932f..326cb8e3de3c 100644
  } // namespace linalg
  } // namespace mlir
  
-diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-index 41117853b9f6..7faf7d536b20 100644
---- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-+++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-@@ -3295,7 +3295,9 @@ void LinalgDialect::getCanonicalizationPatterns(
- #if BSPUB_DAVINCI_BISHENGIR
-   results.add<EraseDeadLinalgOp, FoldTensorCastConsumerOp,
-               InferStaticShapeOfOperands,
--              SimplifySplatDenseForBinary<linalg::ElemwiseBinaryOp>>(
-+              SimplifySplatDenseForBinary<linalg::ElemwiseBinaryOp>,
-+              InlineDenseSplatToGenericRegion<linalg::ElemwiseBinaryOp>,
-+              InlineDenseSplatToGenericRegion<linalg::ElemwiseUnaryOp>>(
-       getContext());
- #else
-   results.add<EraseDeadLinalgOp, FoldTensorCastConsumerOp,

@@ -15,4 +15,5 @@ add_bishengir_dialect_library(BiShengIRHFusionPipelines
   BiShengIRMathToHFusion
   BiShengIRLinalgToHFusion
   BiShengIRGPUToHFusion
+  BiShengIRTransform
 )

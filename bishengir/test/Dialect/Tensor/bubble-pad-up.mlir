@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --bubble-pad-up --cse --canonicalize --split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --bubble-pad-up --cse --canonicalize-ext --split-input-file | FileCheck %s
 
 // CHECK-LABEL: test_pad
 // CHECK: pad

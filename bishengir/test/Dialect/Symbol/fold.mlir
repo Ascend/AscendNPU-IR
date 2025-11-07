@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -canonicalize -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -canonicalize-ext -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: test_fold
 // CHECK: %[[S1:.*]] = symbol.symbolic_int @[[S1]]

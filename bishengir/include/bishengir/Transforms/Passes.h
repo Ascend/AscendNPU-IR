@@ -27,6 +27,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassOptions.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace bishengir {
 #define GEN_PASS_DECL
@@ -55,6 +56,10 @@ std::unique_ptr<mlir::Pass> createDeadFunctionEliminationPass(
 /// Eliminate functions that are known to be dead.
 void eliminateDeadFunctions(mlir::ModuleOp module,
                             const DeadFunctionEliminationOptions &options);
+
+/// Create a pass for external canonicalization
+std::unique_ptr<mlir::Pass>
+createExtendedCanonicalizerPass(const mlir::CanonicalizerOptions &options = {});
 
 //===----------------------------------------------------------------------===//
 // Registration

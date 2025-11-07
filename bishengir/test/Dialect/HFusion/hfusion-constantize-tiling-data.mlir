@@ -1,5 +1,5 @@
 // RUN: bishengir-opt -hfusion-constantize-tiling-data --cse --split-input-file %s -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
-// RUN: bishengir-opt -hfusion-constantize-tiling-data --cse -canonicalize --split-input-file %s -verify-diagnostics -allow-unregistered-dialect | FileCheck %s --check-prefix=CANON
+// RUN: bishengir-opt -hfusion-constantize-tiling-data --cse -canonicalize-ext --split-input-file %s -verify-diagnostics -allow-unregistered-dialect | FileCheck %s --check-prefix=CANON
 #map = affine_map<(d0, d1) -> (d0, d1)>
 #map1 = affine_map<(d0) -> (d0)>
 module {

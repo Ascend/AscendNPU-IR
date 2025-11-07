@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -canonicalize -allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -canonicalize-ext -allow-unregistered-dialect | FileCheck %s
 
 func.func @fold_buffer_size_mark_for_static_alloc(%d : index) {
   %alloc = memref.alloc(%d) : memref<?xf32>

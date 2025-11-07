@@ -5,4 +5,6 @@ add_bishengir_dialect_library(BiShengIRTorchPipelines
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Conversion/TorchToHFusion
   ${TORCH_MLIR_INCLUDE_DIRS}
 
+  LINK_LIBS PUBLIC
+  BiShengIRTransform
 )

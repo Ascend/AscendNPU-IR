@@ -46,23 +46,3 @@ index 1d1323bf4dbc..ddbf0c5e932f 100644
  } // namespace linalg
  } // namespace mlir
  
-diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-index 9471aaf57d76..41117853b9f6 100644
---- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-+++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-@@ -3292,8 +3292,15 @@ LogicalResult WinogradOutputTransformOp::verify() {
- 
- void LinalgDialect::getCanonicalizationPatterns(
-     RewritePatternSet &results) const {
-+#if BSPUB_DAVINCI_BISHENGIR
-+  results.add<EraseDeadLinalgOp, FoldTensorCastConsumerOp,
-+              InferStaticShapeOfOperands,
-+              SimplifySplatDenseForBinary<linalg::ElemwiseBinaryOp>>(
-+      getContext());
-+#else
-   results.add<EraseDeadLinalgOp, FoldTensorCastConsumerOp,
-               InferStaticShapeOfOperands>(getContext());
-+#endif
- }
- 
- Operation *LinalgDialect::materializeConstant(OpBuilder &builder,

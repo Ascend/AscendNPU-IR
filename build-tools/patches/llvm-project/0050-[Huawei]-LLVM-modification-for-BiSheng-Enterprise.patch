@@ -167,18 +167,6 @@ index bc6a891c8654..ad256ae47cd3 100644
  
 +
  #endif // STRUCTURED_OPS_UTILS
-diff --git a/mlir/include/mlir/Transforms/Passes.h b/mlir/include/mlir/Transforms/Passes.h
-index 26492db968ed..83ccaf5d06f3 100644
---- a/mlir/include/mlir/Transforms/Passes.h
-+++ b/mlir/include/mlir/Transforms/Passes.h
-@@ -51,6 +51,7 @@ class GreedyRewriteConfig;
- /// Creates an instance of the Canonicalizer pass, configured with default
- /// settings (which can be overridden by pass options on the command line).
- std::unique_ptr<Pass> createCanonicalizerPass();
-+std::unique_ptr<Pass> createCanonicalizerPass(const CanonicalizerOptions &options);
- 
- #if BSPUB_DAVINCI_BISHENGIR
- std::unique_ptr<Pass>
 diff --git a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp b/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
 index aa5eb95a3d22..0a0df8a7e1c2 100644
 --- a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
@@ -263,14 +251,13 @@ diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/
 index 44cc4b09757b..4fb9371c6919 100644
 --- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
 +++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-@@ -10,14 +10,13 @@
+@@ -10,13 +10,12 @@
  //
  //===----------------------------------------------------------------------===//
  
 -#include "mlir/Dialect/Linalg/IR/Linalg.h"
 -
  #include "mlir/AsmParser/AsmParser.h"
- #include "mlir/Config/mlir-config.h"
  #include "mlir/Dialect/Affine/IR/AffineOps.h"
  #include "mlir/Dialect/Arith/IR/Arith.h"
  #include "mlir/Dialect/Arith/Utils/Utils.h"
@@ -279,7 +266,7 @@ index 44cc4b09757b..4fb9371c6919 100644
  #include "mlir/Dialect/Math/IR/Math.h"
  #include "mlir/Dialect/MemRef/IR/MemRef.h"
  #include "mlir/Dialect/SCF/IR/SCF.h"
-@@ -35,7 +34,6 @@
+@@ -34,7 +33,6 @@
  #include "mlir/IR/OperationSupport.h"
  #include "mlir/IR/PatternMatch.h"
  #include "mlir/Interfaces/InferTypeOpInterface.h"
@@ -287,7 +274,7 @@ index 44cc4b09757b..4fb9371c6919 100644
  #include "llvm/ADT/DenseMap.h"
  #include "llvm/ADT/SmallSet.h"
  #include "llvm/ADT/StringSet.h"
-@@ -851,6 +849,7 @@ public:
+@@ -850,6 +848,7 @@ public:
  struct FoldFillWithCopy : OpRewritePattern<linalg::CopyOp> {
    using OpRewritePattern<linalg::CopyOp>::OpRewritePattern;
  

@@ -36,6 +36,8 @@ Value createMemRefAllocOpWithTargetElemType(
     OpBuilder &builder, Location loc, Value source, Type targetElemType,
     std::optional<MemRefLayoutAttrInterface> layout = std::nullopt);
 
+void getExtendedCanonicalizationPatterns(mlir::RewritePatternSet &results);
+
 } // namespace memref
 } // namespace mlir
 

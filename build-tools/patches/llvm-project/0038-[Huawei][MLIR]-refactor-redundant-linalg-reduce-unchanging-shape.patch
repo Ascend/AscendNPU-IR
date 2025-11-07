@@ -151,15 +151,3 @@ index de0ffb00be11..b95ac7d49416 100644
 +    }
 +  }
 +}
-diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-index 7faf7d536b20..fec04da25da7 100644
---- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-+++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
-@@ -1828,6 +1828,7 @@ struct MergeConsecutiveReduceOp : OpRewritePattern<linalg::ReduceOp> {
- void ReduceOp::getCanonicalizationPatterns(RewritePatternSet &results,
-                                            MLIRContext *context) {
-   results.add<MergeConsecutiveReduceOp>(context);
-+  results.add<RefactorRedundantReduceLikeOp<linalg::ReduceOp>>(context);
- }
- 
- #endif // BSPUB_DAVINCI_BISHENGIR

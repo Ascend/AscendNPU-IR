@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfo.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Transforms/Passes.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -556,10 +557,12 @@ DenseMap<TilingKey, func::FuncOp> TilingInfo::getTilingKey2KernelMap() {
 LogicalResult TilingInfo::trySimplifyTilingFunc() {
   // Simplify host tiling func
   PassManager pm(hostTilingFunc_->getContext());
-  CanonicalizerOptions options;
-  options.enableExtendedPattern = true;
   pm.addPass(memref::createResolveRankedShapeTypeResultDimsPass());
-  pm.addPass(createCanonicalizerPass());
+  CanonicalizerOptions options;
+  SmallVector<std::string> disabledPatterns(
+      {"ReinterpretCastConstantArgumentFolder"});
+  options.disabledPatterns = disabledPatterns;
+  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
   pm.addPass(createCSEPass());
 
   if (failed(pm.run(hostTilingFunc_)))

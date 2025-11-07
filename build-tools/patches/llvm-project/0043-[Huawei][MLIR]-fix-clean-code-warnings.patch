@@ -110,25 +110,6 @@ index 930328f675ea..66d1f88b6b02 100644
  };
  } // namespace
  
-diff --git a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-index 2063dc82f0e2..ec890aa2a6ca 100644
---- a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-+++ b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
-@@ -2235,8 +2235,12 @@ struct ReinterpretCastReturnTypeCanonicalizer {
-                         ArrayRef<OpFoldResult> mixedOffsets,
-                         ArrayRef<OpFoldResult> mixedSizes,
-                         ArrayRef<OpFoldResult> mixedStrides) {
--    SmallVector<int64_t> staticOffsets, staticSizes, staticStrides;
--    SmallVector<Value> dynamicOffsets, dynamicSizes, dynamicStrides;
-+    SmallVector<int64_t> staticOffsets;
-+    SmallVector<int64_t> staticSizes;
-+    SmallVector<int64_t> staticStrides;
-+    SmallVector<Value> dynamicOffsets;
-+    SmallVector<Value> dynamicSizes;
-+    SmallVector<Value> dynamicStrides;
-     dispatchIndexOpFoldResults(mixedOffsets, dynamicOffsets, staticOffsets);
-     dispatchIndexOpFoldResults(mixedSizes, dynamicSizes, staticSizes);
-     dispatchIndexOpFoldResults(mixedStrides, dynamicStrides, staticStrides);
 diff --git a/mlir/lib/Dialect/SCF/Utils/Utils.cpp b/mlir/lib/Dialect/SCF/Utils/Utils.cpp
 index d6cb74961bb1..bf62f7477207 100644
 --- a/mlir/lib/Dialect/SCF/Utils/Utils.cpp

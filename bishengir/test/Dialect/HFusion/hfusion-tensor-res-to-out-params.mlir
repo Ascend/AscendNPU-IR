@@ -1,6 +1,6 @@
-// RUN: bishengir-opt -canonicalize --hfusion-tensor-results-to-out-params -split-input-file %s | FileCheck %s
-// RUN: bishengir-opt -canonicalize --hfusion-tensor-results-to-out-params="include-symbols=target" -split-input-file %s | FileCheck %s -check-prefix=CHECK-INCLUDE-SYM
-// RUN: bishengir-opt -canonicalize --hfusion-tensor-results-to-out-params="enable-manage-host-resources=true" -split-input-file %s | FileCheck %s -check-prefix=CHECK-HOST-RESOURCE
+// RUN: bishengir-opt -canonicalize-ext --hfusion-tensor-results-to-out-params -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -canonicalize-ext --hfusion-tensor-results-to-out-params="include-symbols=target" -split-input-file %s | FileCheck %s -check-prefix=CHECK-INCLUDE-SYM
+// RUN: bishengir-opt -canonicalize-ext --hfusion-tensor-results-to-out-params="enable-manage-host-resources=true" -split-input-file %s | FileCheck %s -check-prefix=CHECK-HOST-RESOURCE
 
 module {
   // CHECK-LABEL: @test

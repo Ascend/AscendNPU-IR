@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -split-input-file \
 // RUN:   -pass-pipeline="builtin.module(  \
-// RUN:     canonicalize,                  \
+// RUN:     canonicalize-ext,                  \
 // RUN:     func.func(hfusion-outline-single-op))" | FileCheck %s
 
 // RUN: bishengir-opt --hfusion-fuse-ops="move-out-to-param=true" %s --split-input-file | FileCheck %s --check-prefix=CHECK-FUSE-MOVEPARAM-TRUE

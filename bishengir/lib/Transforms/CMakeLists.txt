@@ -1,6 +1,7 @@
 add_bishengir_library(BiShengIRTransform
   CanonicalizeModule.cpp
   DeadFunctionElimination.cpp
+  ExtendedCanonicalizer.cpp
   LowerToCPUBackend.cpp
   Transforms.cpp
 
@@ -9,4 +10,8 @@ add_bishengir_library(BiShengIRTransform
 
   DEPENDS
   BiShengIRTransformsPassIncGen
+
+  LINK_LIBS PUBLIC
+  BiShengIRLinalgCanonicalizations
+  BiShengIRMemRefDialect
 )

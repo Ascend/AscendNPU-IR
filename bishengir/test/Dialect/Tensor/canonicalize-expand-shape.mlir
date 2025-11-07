@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -canonicalize -cse -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -canonicalize-ext -cse -split-input-file | FileCheck %s
 
 // -----
 module {

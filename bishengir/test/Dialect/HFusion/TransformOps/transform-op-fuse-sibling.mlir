@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -transform-interpreter -canonicalize -cse --split-input-file  --verify-diagnostics -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -transform-interpreter -canonicalize-ext -cse --split-input-file  --verify-diagnostics -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK-LABEL: func.func @fuse_parallel_loops_from_tiled_reductions
 // CHECK: scf.for

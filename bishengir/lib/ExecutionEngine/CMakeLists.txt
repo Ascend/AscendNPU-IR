@@ -26,6 +26,7 @@ add_bishengir_extension_library(BiShengIRExecutionEngineTransforms
   ${dialect_libs}
   BiShengIRHACCUtils
   MLIRPass
+  BiShengIRTransform
 )
 
 # When -fPIC is not provided, shared libraries cannot be built if it links against

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --canonicalize="enable-extended-patterns=true" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --canonicalize-ext -split-input-file | FileCheck %s
 
 // CHECK-LABEL: func @reinterpret_constant_arg_folder_unranked_memref
 func.func @reinterpret_constant_arg_folder_unranked_memref(%arg0 : memref<*xf16>) -> memref<?xf16, strided<[?], offset: ?>> {
