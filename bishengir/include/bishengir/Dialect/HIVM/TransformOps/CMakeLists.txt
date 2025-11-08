@@ -1,0 +1,6 @@
+set(LLVM_TARGET_DEFINITIONS HIVMTransformOps.td)
+mlir_tablegen(HIVMTransformOps.h.inc -gen-op-decls)
+mlir_tablegen(HIVMTransformOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(BiShengIRHIVMTransformOpsIncGen)
+add_bishengir_doc(HIVMTransformOps HIVMTransformOps Dialects/ -gen-op-doc)
+add_dependencies(mlir-headers BiShengIRHIVMTransformOpsIncGen)

@@ -27,15 +27,14 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
-#include "bishengir/Config/bishengir-config.h"
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/HACC/IR/HACC.h"
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/DecomposeOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
@@ -55,9 +54,7 @@ namespace bishengir {
 inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format off
   registry.insert<mlir::annotation::AnnotationDialect,
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
                   mlir::hacc::HACCDialect,
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
                   mlir::hfusion::HFusionDialect,
                   mlir::hivm::HIVMDialect,
                   mlir::mathExt::MathExtDialect,
@@ -73,16 +70,15 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format on
 #endif
 
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   // Register all external models.
-  // TODO: separate to bishengir::registerAllDialectExternalModels for better modularity
+  mlir::hivm::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::annotation::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerTilingInterfaceExternalModels(registry);
   mlir::hfusion::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerDecomposeInterfaceExternalModels(registry);
+  mlir::hivm::registerTilingInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);
   bishengir::bufferization::registerTilingInterfaceExternalModels(registry);
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 }
 
 /// Append all the bishengir-specific dialects to the registry contained in the

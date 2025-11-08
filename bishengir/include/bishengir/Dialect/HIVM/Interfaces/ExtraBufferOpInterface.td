@@ -33,10 +33,7 @@ def ExtraBufferOpInterface : OpInterface<"ExtraBufferOpInterface"> {
       }],
       /*retTy=*/"llvm::LogicalResult",
       /*methodName=*/"allocExtraBuffersIfPossible",
-      /*args=*/(ins),
-      /*defaultImplementation=*/[{
-        llvm_unreachable("Not implemented.");
-      }]
+      /*args=*/(ins)
     >,
     InterfaceMethod<
       /*desc=*/[{
@@ -65,10 +62,7 @@ def ExtraBufferOpInterface : OpInterface<"ExtraBufferOpInterface"> {
       }],
       /*retTy=*/"bool",
       /*methodName=*/"shouldAllocExtraBufferForScalarOrOTFBrc",
-      /*args=*/(ins),
-      /*defaultImplementation=*/[{
-        llvm_unreachable("Not implemented.");
-      }]
+      /*args=*/(ins)
     >,
   ];
 }

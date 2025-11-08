@@ -1,11 +1,6 @@
-set(tblgen_feat_list)
-if(BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  list(APPEND tblgen_feat_list -DBISHENGIR_BUILD_STANDALONE_IR_ONLY)
-endif()
-
 set(LLVM_TARGET_DEFINITIONS HIVMOps.td)
-mlir_tablegen(HIVMDialect.h.inc -gen-dialect-decls -dialect=hivm ${tblgen_feat_list})
-mlir_tablegen(HIVMDialect.cpp.inc -gen-dialect-defs -dialect=hivm ${tblgen_feat_list})
+mlir_tablegen(HIVMDialect.h.inc -gen-dialect-decls -dialect=hivm)
+mlir_tablegen(HIVMDialect.cpp.inc -gen-dialect-defs -dialect=hivm)
 mlir_tablegen(HIVMOps.h.inc -gen-op-decls)
 mlir_tablegen(HIVMOps.cpp.inc -gen-op-defs)
 add_public_tablegen_target(BiShengIRHIVMIncGen)

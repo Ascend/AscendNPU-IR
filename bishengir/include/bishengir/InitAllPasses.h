@@ -30,6 +30,7 @@
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
+#include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -89,6 +90,7 @@ inline void registerAllPasses() {
 
   // Dialect pipelines
   bishengir::registerBiShengIRCompilePass();
+  mlir::hivm::registerLowerHIVMPipelines();
   mlir::hivm::registerConvertToHIVMPipelines();
   mlir::hfusion::registerLowerHFusionPipelines();
 

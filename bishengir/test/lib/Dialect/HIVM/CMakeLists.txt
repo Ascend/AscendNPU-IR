@@ -1,6 +1,7 @@
 # Exclude tests from libMLIR.so
 add_bishengir_library(BiShengIRTestDialectHIVM
   TestFlattenInterface.cpp
+  TestHIVMDimensionAnalyzer.cpp
 
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
