@@ -46,10 +46,27 @@ static void handleIfElse(scf::IfOp ifOp, OpResult ifResult,
 static void handleLoops(LoopLikeOpInterface loop, BlockArgument iterArg,
                         SetVector<Value> &equivalenceSet,
                         SmallVector<Value> &dfsStack) {
-  equivalenceSet.insert(loop.getTiedLoopResult(iterArg));
-  equivalenceSet.insert(iterArg);
-  dfsStack.push_back(loop.getTiedLoopYieldedValue(iterArg)->get());
-  dfsStack.push_back(loop.getTiedLoopInit(iterArg)->get());
+  // Since loop ops may or may not have induction var as block argument, we try
+  // to offset the arg number
+  unsigned argNo = iterArg.getArgNumber();
+  unsigned resultNo = argNo - (iterArg.getParentBlock()->getNumArguments() -
+                               loop.getInits().size());
+
+  equivalenceSet.insert(loop->getResult(resultNo));
+
+  for (Region *region : loop.getLoopRegions()) {
+    assert(region->getBlocks().size() == 1 &&
+           "Expecting loop regions to only have one block");
+    Block &body = region->getBlocks().front();
+    equivalenceSet.insert(body.getArgument(argNo));
+    Operation *terminator = body.getTerminator();
+    if (auto condOp = dyn_cast<scf::ConditionOp>(terminator))
+      dfsStack.push_back(condOp.getArgs()[resultNo]);
+    else
+      dfsStack.push_back(terminator->getOperand(resultNo));
+  }
+
+  dfsStack.push_back(loop.getInits()[resultNo]);
 }
 
 /// Try to use proof by contradiction to prove whether or not the block arg
