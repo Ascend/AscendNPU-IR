@@ -41,6 +41,25 @@ StringRef getHIVMCName() {
   return kBiShengIRHIVMBinaryName;
 }
 
+#ifndef BISHENGIR_PUBLISH
+std::vector<std::string>
+getCompatibleOptions(const std::vector<std::string> &arguments) {
+  std::vector<std::string> result;
+  DenseSet<std::string> skipArgs = {"debug", "debug-only",
+                                    "mlir-print-ir-before-all",
+                                    "mlir-print-ir-after-all"};
+  for (const std::string &arg : arguments) {
+    StringRef argRef = arg;
+    std::string trimArg = argRef.trim().ltrim('-').str();
+    if (skipArgs.contains(trimArg)) {
+      continue;
+    }
+    result.push_back(arg);
+  }
+  return result;
+}
+#endif
+
 LogicalResult runExternalHIVMC(ModuleOp module,
                                const BiShengIRHIVMCompileMainConfig &config) {
   TempDirectoriesStore tempDirsStore;
@@ -68,6 +87,10 @@ LogicalResult runExternalHIVMC(ModuleOp module,
 
   arguments.emplace_back("-o");
   arguments.push_back(outputFile);
+
+#ifndef BISHENGIR_PUBLISH
+  arguments = getCompatibleOptions(arguments);
+#endif
 
   SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
   if (failed(execute(getHIVMCName(), getBiShengInstallPath(), argumentsRef))) {
