@@ -190,7 +190,7 @@ def EnableAutoMultiBuffer : BiShengIRHIVMCompileOpt<
 def LimitAutoMultiBufferOnlyForLocalBuffer : BiShengIRHIVMCompileOpt<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HIVM"];
   let compileOptionCategories = ["generalOptCategory"];

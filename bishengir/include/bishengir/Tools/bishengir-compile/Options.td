@@ -231,7 +231,7 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
 def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "false"
+  "true"
 > {
   let emitGetterSetter = 0;
   bit isSharedWithDownstreamToolchain = 1;
