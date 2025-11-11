@@ -98,6 +98,10 @@ createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});
 std::unique_ptr<Pass>
 createInjectSyncPass(const InjectSyncOptions &options = {});
 
+/// Create a pass to graph sync solver.
+std::unique_ptr<Pass>
+createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
+
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
 createInjectBlockSyncPass(const InjectBlockSyncOptions &options = {});

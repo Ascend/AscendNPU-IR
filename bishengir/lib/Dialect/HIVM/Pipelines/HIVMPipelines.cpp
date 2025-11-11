@@ -90,7 +90,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createInlineFixpipePass());
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
-    pm.nest<func::FuncOp>().addPass(mlir::hivm::createInsertLoadStoreForMixCVPass());
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForMixCVPass());
   }
 
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
@@ -98,7 +99,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createInlineFixpipePass());
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
-    pm.nest<func::FuncOp>().addPass(mlir::hivm::createInsertLoadStoreForMixCVPass());
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForMixCVPass());
     pm.addPass(createInsertWorkSpaceForMixCVPass());
     pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
   }
@@ -122,7 +124,8 @@ static void hivmPreBufferizationOptimizationPipeline(
         hivmPipelineOptions.limitAutoMultiBufferBuffer;
     multiBufferOptions.workspaceMultiBufferNum =
         hivmPipelineOptions.setWorkspaceMultibuffer;
-    pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
+    pm.addNestedPass<func::FuncOp>(
+        createMarkMultiBufferPass(multiBufferOptions));
   }
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -158,7 +161,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   blockSyncOption.disableAutoInjectBlockSync =
       hivmPipelineOptions.disableAutoInjectBlockSync;
   pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
-  if (hivmPipelineOptions.enableTritonKernelCompile && !hivmPipelineOptions.disableAutoCVWorkSpaceManage)
+  if (hivmPipelineOptions.enableTritonKernelCompile &&
+      !hivmPipelineOptions.disableAutoCVWorkSpaceManage)
     // Must place after plan-workspace-memory
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
   pm.addPass(mlir::createMemrefExtLoweringPass());
@@ -280,13 +284,19 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
-  InjectSyncOptions syncOptions;
-  syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
-  syncOptions.assumeAliveLoops = hivmPipelineOptions.enableHIVMAssumeAliveLoops;
-  if (hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
-    syncOptions.syncMode = SyncMode::BARRIERALL;
-  }
-  if (!hivmPipelineOptions.disableHIVMAutoInjectSync) {
+  if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
+      !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
+    GraphSyncSolverOptions gssOptions;
+    gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
+    pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
+  } else if (!hivmPipelineOptions.disableHIVMAutoInjectSync) {
+    InjectSyncOptions syncOptions;
+    syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
+    syncOptions.assumeAliveLoops =
+        hivmPipelineOptions.enableHIVMAssumeAliveLoops;
+    if (hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
+      syncOptions.syncMode = SyncMode::BARRIERALL;
+    }
     pm.nest<func::FuncOp>().addPass(createInjectSyncPass(syncOptions));
   }
   pm.nest<func::FuncOp>().addPass(createAddFFTSToSyncBlockSetOpPass());

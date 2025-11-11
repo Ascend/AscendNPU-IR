@@ -1031,6 +1031,18 @@ Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
                                                loopInfoVec, modular);
 }
 
+Value mlir::hivm::createNestedIndexModular(OpBuilder &builder,
+                                           LoopLikeOpInterface loopOp,
+                                           int modular) {
+  auto loopInfoVec = getLoopsInfo(loopOp);
+  // Insert at the beginning of the For loop.
+  auto forOp = dyn_cast<scf::ForOp>(loopOp.getOperation());
+  assert(forOp != nullptr);
+  builder.setInsertionPointToStart(forOp.getBody());
+  return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
+                                               loopInfoVec, modular);
+}
+
 Value createNestedIndexForOp(OpBuilder &builder, Operation *operation) {
   LoopLikeOpInterface parentLoop =
       operation->getParentOfType<LoopLikeOpInterface>();
