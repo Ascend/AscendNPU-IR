@@ -1,5 +1,4 @@
-// REQUIRES: enable-lir-compile
-// RUN: bishengir-compile -enable-lir-compile=true %s
+// RUN: bishengir-compile %s
 
 module @M attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
   func.func @mul_add_mix_aic(%arg0: memref<64x64xf16>,

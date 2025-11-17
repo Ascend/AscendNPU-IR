@@ -1,6 +1,5 @@
-// REQUIRES: enable-lir-compile
-// RUN: bishengir-compile -enable-lir-compile=true -enable-hfusion-compile=true -enable-hivm-inject-barrier-all-sync -enable-triton-kernel-compile %s
-// RUN: bishengir-compile -enable-lir-compile=true -enable-hfusion-compile=true -enable-triton-kernel-compile %s
+// RUN: bishengir-compile -enable-hfusion-compile=true -enable-hivm-inject-barrier-all-sync -enable-triton-kernel-compile %s
+// RUN: bishengir-compile -enable-hfusion-compile=true -enable-triton-kernel-compile %s
 
 #map = affine_map<(d0) -> (d0)>
 module {

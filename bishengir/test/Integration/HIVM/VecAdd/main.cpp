@@ -16,12 +16,11 @@
 
 // REQUIRES: enable-lir-compile
 
-// DEFINE: %{compile_lir} = -enable-lir-compile=true
 // DEFINE: %{compile_hivm} = -enable-hivm-compile=true
 // DEFINE: %{source_mlir} = \
 // DEFINE:   "%bishengir_src_root/test/Integration/HIVM/VecAdd/add.mlir"
 
-// RUN: bishengir-compile %{compile_lir} %{compile_hivm} \
+// RUN: bishengir-compile %{compile_hivm} \
 // RUN:   -o kernel.o %{source_mlir}
 // RUN: bishengir-npu-hivm-vec-add 2>&1 | FileCheck %s
 

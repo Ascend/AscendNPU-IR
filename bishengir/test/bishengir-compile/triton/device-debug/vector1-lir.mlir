@@ -1,5 +1,4 @@
-// REQUIRES: enable-lir-compile
-// RUN: bishengir-compile --enable-lir-compile=true --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true %s
+// RUN: bishengir-compile --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true %s
 
 module {
   func.func private @triton_print_0(tensor<8xf32>) attributes {hex = false, prefix = " x: "}

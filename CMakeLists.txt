@@ -205,9 +205,9 @@ if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY AND MLIR_ENABLE_BINDINGS_PYTHON)
   # respect that.
   if(NOT BISHENGIR_PYTHON_PACKAGES_DIR)
     set(BISHENGIR_PYTHON_PACKAGES_DIR
-        "${CMAKE_CURRENT_BINARY_DIR}/python_packages")
+        "${CMAKE_CURRENT_BINARY_DIR}/bishengir/python_packages")
   endif()
-  add_subdirectory(python)
+  add_subdirectory(bishengir/python)
 endif()
 
 if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
