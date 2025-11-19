@@ -31,6 +31,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
@@ -44,6 +45,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 namespace mlir {
@@ -1267,6 +1269,96 @@ public:
     }
 
     rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
+struct NormalizeArgMinMaxOp : OpRewritePattern<hfusion::ReduceWithIndexOp> {
+  using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    Value src = op.getInputs()[0];
+
+    // In this pattern we do not remove/replace reduce operation
+    // so infinity application happens. To avoid infinity pattern
+    // match I've added this attribute to check that reduce op
+    // is already visited
+    // (such way was already introduced in HIVMDecompose)
+    static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
+        "already_denaned";
+    if (op->hasAttr(kAlreadyInitalizeInit)) {
+      return failure();
+    }
+
+    Type elemType = getElementTypeOrSelf(src);
+    if (elemType.isInteger()) {
+      return failure();
+    }
+
+    rewriter.setInsertionPointAfter(op);
+    Location loc = op.getLoc();
+    auto kind = op.getReduceKind();
+    auto leftTie = op.getTieBreakLeftAttr();
+    auto dims = op.getDimensions();
+    bool isMin = kind.getReduceWithIndexKind() == ReduceWithIndexKind::MIN;
+
+    auto infSign = isMin ? -1 : 1;
+    double signedInf = infSign * std::numeric_limits<double>::infinity();
+
+    auto infValue =
+        utils::createConstantOp<double>(rewriter, loc, elemType, signedInf);
+    auto zeroValue =
+        utils::createConstantOp<double>(rewriter, loc, elemType, 0.);
+
+    auto srcMask = utils::createEmptyOpWithTargetElemType(rewriter, loc, src,
+                                                          rewriter.getI1Type());
+    auto srcNanMask =
+        rewriter.create<hfusion::IsNanOp>(loc, srcMask.getType(), src)
+            .getResult();
+
+    auto srcNanMasked = utils::createEmptyOp(rewriter, loc, src);
+    srcNanMasked = rewriter.create<hfusion::SelectOp>(
+        loc, TypeRange(srcNanMasked),
+        ValueRange({srcNanMask, infValue, zeroValue}),
+        ValueRange(srcNanMasked)).getResults()[0];
+
+    auto srcNanVals = utils::createEmptyOp(rewriter, loc, op.getResults()[0]);
+    auto srcNanIdxs = utils::createEmptyOp(rewriter, loc, op.getResults()[1]);
+    auto srcNanReduceOp = rewriter.create<hfusion::ReduceWithIndexOp>(
+        loc, TypeRange{srcNanVals.getType(), srcNanIdxs.getType()},
+        /*input*/ ValueRange{srcNanMasked},
+        /*outputValue&Index*/
+        ValueRange{srcNanVals, srcNanIdxs}, kind, leftTie, dims);
+    srcNanVals = srcNanReduceOp.getResults()[0];
+    srcNanIdxs = srcNanReduceOp.getResults()[1];
+
+    auto valsMask = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, srcNanVals, rewriter.getI1Type());
+    auto valsInfMask =
+        rewriter.create<hfusion::IsInfOp>(loc, valsMask.getType(), srcNanVals)
+            .getResult();
+
+    auto newOutput = utils::createEmptyOp(rewriter, loc, srcNanIdxs);
+    auto finalSelectOp = rewriter.create<hfusion::SelectOp>(
+        loc, TypeRange(newOutput),
+        ValueRange({valsInfMask, srcNanIdxs, op.getResults()[1]}),
+        ValueRange(newOutput));
+
+    rewriter.replaceAllUsesExcept(op.getResults()[1], finalSelectOp.getResults()[0],
+                                  finalSelectOp);
+    rewriter.modifyOpInPlace(op, [&]() {
+      op->setAttr(kAlreadyInitalizeInit, UnitAttr::get(op->getContext()));
+    });
+    rewriter.modifyOpInPlace(srcNanReduceOp, [&]() {
+      srcNanReduceOp->setAttr(kAlreadyInitalizeInit,
+                              UnitAttr::get(op->getContext()));
+    });
+
     return success();
   }
 };
@@ -5898,6 +5990,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeMulExtOp>(patterns.getContext());
   patterns.add<NormalizeDivSIandDivUIOp>(patterns.getContext());
   patterns.add<NormalizeCmpVne>(patterns.getContext());
+  patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
 }
