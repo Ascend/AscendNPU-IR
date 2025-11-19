@@ -313,7 +313,7 @@ func.func @test_minimumf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> te
 // CHECK-LABEL: func.func @test_trunci_i64_i32
 func.func @test_trunci_i64_i32(%arg0 : tensor<6x6xi64>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<truncwithoverflow>}
   %ret = arith.trunci %arg0 : tensor<6x6xi64> to tensor<6x6xi32>
   return %ret : tensor<6x6xi32>
 }
