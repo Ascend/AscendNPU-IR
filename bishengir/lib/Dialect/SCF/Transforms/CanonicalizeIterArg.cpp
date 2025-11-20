@@ -17,6 +17,7 @@
 
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -138,6 +139,90 @@ static bool isIterArgUnchanged(LoopLikeOpInterface loop, BlockArgument arg,
   return true;
 }
 
+static bool isNoEffect(Operation *op) {
+  if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
+    SmallVector<MemoryEffects::EffectInstance, 4> effects;
+    mei.getEffects(effects);
+    return effects.empty();
+  }
+  // If op has no interface, Assume no Effects.
+  return true;
+}
+
+static bool isInLoopBody(Value x, Block *body) {
+  if (!body)
+    return false;
+  if (auto barg = dyn_cast<BlockArgument>(x))
+    return barg.getOwner() == body;
+  if (auto *defOp = x.getDefiningOp())
+    return defOp->getBlock() == body;
+  return false;
+}
+
+static LogicalResult
+isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
+                  SmallPtrSetImpl<Operation *> &tobeDeletedOps) {
+  SmallVector<Value, 8> worklist;
+  SmallPtrSet<Value, 16> visitedVals;
+  worklist.push_back(yield);
+  visitedVals.insert(yield);
+
+  SmallPtrSet<Operation *, 16> visitedOps;
+
+  while (!worklist.empty()) {
+    Value cur = worklist.pop_back_val();
+    if (cur == allowedIterArg)
+      continue; // reach only accepted leaf
+
+    Operation *def = cur.getDefiningOp();
+    if (!def)
+      return failure();
+
+    if (def->getBlock() != body)
+      return failure();
+
+    // No memory effects.
+    if (!isNoEffect(def))
+      return failure();
+
+    visitedOps.insert(def);
+    for (Value operand : def->getOperands()) {
+      if (!isInLoopBody(operand, body)) {
+        continue; // ignore outside loop constants
+      }
+
+      if (visitedVals.insert(operand).second) // avoid double visit
+        worklist.push_back(operand);
+    }
+  }
+  // cannot delete iter arg if used elsewhere
+  for (OpOperand &use : allowedIterArg.getUses()) {
+    Operation *user = use.getOwner();
+    if (!visitedOps.contains(user)) {
+      if (!(isa<scf::YieldOp>(user) &&
+            body->getArgument(use.getOperandNumber() + 1) == allowedIterArg))
+        return failure();
+    }
+  }
+  // visited ops to be deleted should only be used in current trace chain
+  for (Operation *op : visitedOps) {
+    for (Value res : op->getResults()) {
+      for (OpOperand &use : res.getUses()) {
+        Operation *user = use.getOwner();
+        if (!visitedOps.contains(user)) {
+          if (!(isa<scf::YieldOp>(user) &&
+                body->getArgument(use.getOperandNumber() + 1) ==
+                    allowedIterArg))
+            return failure();
+        }
+      }
+    }
+  }
+
+  tobeDeletedOps.insert(visitedOps.begin(), visitedOps.end());
+  return success();
+}
+
 namespace {
 
 template <typename LoopT>
@@ -185,6 +270,105 @@ public:
   }
 };
 
+template <typename LoopT>
+struct RemoveDeadIterArgPattern : public OpRewritePattern<LoopT> {
+public:
+  using OpRewritePattern<LoopT>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(LoopT forOp, mlir::PatternRewriter &rewriter) const override {
+    unsigned numResults = forOp.getNumResults();
+    if (numResults == 0)
+      return failure();
+    Block *body = forOp.getBody();
+    auto yield = cast<scf::YieldOp>(body->getTerminator());
+
+    SmallVector<unsigned, 4> removableIdxs;
+    SmallVector<SmallPtrSet<Operation *, 8>, 4> opsToErasePerIdx;
+
+    for (unsigned i = 0, e = numResults; i < e; ++i) {
+      Value res = forOp.getResult(i);
+      if (!res.use_empty())
+        continue;
+      BlockArgument iterArg = body->getArgument(i + 1); // iterarg[i]
+      Value yielded = yield.getOperand(i);
+
+      SmallPtrSet<Operation *, 8> tobeDeletedOps;
+      if (failed(isIterationIndependent(yielded, body, iterArg, tobeDeletedOps)))
+        continue;
+
+      removableIdxs.push_back(i);
+      opsToErasePerIdx.emplace_back(std::move(tobeDeletedOps));
+    }
+
+    if (removableIdxs.empty())
+      return failure();
+
+    // have to rewrite for op with new types
+    llvm::SmallBitVector keep(numResults, true);
+    for (unsigned idx : removableIdxs)
+      keep.reset(idx);
+    SmallVector<Type, 4> newResultTypes;
+    for (unsigned i = 0; i < numResults; ++i)
+      if (keep.test(i))
+        newResultTypes.push_back(forOp.getResult(i).getType());
+    SmallVector<Value, 4> newInitArgs;
+    newInitArgs.reserve(forOp.getInitArgs().size());
+    for (auto [i, init] : llvm::enumerate(forOp.getInitArgs()))
+      if (keep.test(i))
+        newInitArgs.push_back(init);
+    rewriter.setInsertionPoint(forOp);
+    auto newFor = rewriter.create<scf::ForOp>(
+        forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
+        forOp.getStep(), newInitArgs,
+        [&](OpBuilder &b, Location loc, Value iv, ValueRange newIterArgs) {
+          // Map and Clone block
+          IRMapping mapping;
+          mapping.map(forOp.getInductionVar(), iv);
+
+          unsigned newIdx = 0;
+          for (unsigned i = 0; i < numResults; ++i) {
+            if (keep.test(i)) {
+              mapping.map(forOp.getRegionIterArgs()[i], newIterArgs[newIdx++]);
+            }
+          }
+
+          SmallPtrSet<Operation *, 16> deletableAll;
+          for (auto &set : opsToErasePerIdx)
+            deletableAll.insert(set.begin(), set.end());
+
+          for (Operation &op : forOp.getBody()->without_terminator()) {
+            if (deletableAll.contains(&op))
+              continue;
+            b.clone(op, mapping);
+          }
+
+          auto oldYield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+          SmallVector<Value, 4> newYieldOperands;
+          newYieldOperands.reserve(newResultTypes.size());
+          for (unsigned i = 0; i < numResults; ++i) {
+            if (!keep.test(i))
+              continue;
+            Value mapped = mapping.lookupOrNull(oldYield.getOperand(i));
+            if (!mapped)
+              mapped = oldYield.getOperand(i); // safe fallback
+            newYieldOperands.push_back(mapped);
+          }
+          b.create<scf::YieldOp>(loc, newYieldOperands);
+        });
+    SmallVector<Value, 4> newResults(newFor.getResults().begin(),
+                                     newFor.getResults().end());
+    unsigned newIdx = 0;
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (keep.test(i)) {
+        forOp.getResult(i).replaceAllUsesWith(newResults[newIdx++]);
+      }
+    }
+
+    rewriter.eraseOp(forOp);
+    return success();
+  }
+};
+
 struct CanonicalizeIterArgPass
     : public impl::CanonicalizeIterArgBase<CanonicalizeIterArgPass> {
   using Base::Base;
@@ -193,7 +377,8 @@ struct CanonicalizeIterArgPass
     RewritePatternSet patterns(context);
     tensor::populateFoldTensorEmptyPatterns(patterns);
     patterns.insert<CanonicalizeIterArgPattern<scf::ForOp>,
-                    CanonicalizeIterArgPattern<scf::WhileOp>>(
+                    CanonicalizeIterArgPattern<scf::WhileOp>,
+                    RemoveDeadIterArgPattern<scf::ForOp>>(
         patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       return signalPassFailure();
