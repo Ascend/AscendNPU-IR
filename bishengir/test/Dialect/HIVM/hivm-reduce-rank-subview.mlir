@@ -37,15 +37,15 @@ func.func @simple_vreduce(%src: memref<1x10x1x10xf32>, %dst: memref<1x1x1x1xf32>
 
 // -----
 // CHECK-LABEL: multiple_init_vreduce
-// CHECK: %[[SRC:.*]]: memref<1x10x1x10xf32>, %[[DST:.*]]: memref<1x1x1x1xf32>, %[[DST2:.*]]: memref<1x1x1x1xi32>)
+// CHECK: %[[SRC:.*]]: memref<1x10x1x10xf32>, %[[DST:.*]]: memref<1x1x1x10xf32>, %[[DST2:.*]]: memref<1x1x1x10xi32>)
 // CHECK: %[[SUBVIEW_SRC:.*]] = memref.subview %[[SRC]][0, 0, 0, 0] [1, 10, 1, 10] [1, 1, 1, 1] : memref<1x10x1x10xf32> to memref<10x10xf32, strided<[10, 1]>>
-// CHECK: %[[SUBVIEW_DST1:.*]] = memref.subview %[[DST]][0, 0, 0, 0] [1, 1, 1, 1] [1, 1, 1, 1] : memref<1x1x1x1xf32> to memref<1x1xf32, strided<[1, 1]>>
-// CHECK: %[[SUBVIEW_DST2:.*]] = memref.subview %[[DST2]][0, 0, 0, 0] [1, 1, 1, 1] [1, 1, 1, 1] : memref<1x1x1x1xi32> to memref<1x1xi32, strided<[1, 1]>>
-// CHECK: hivm.hir.vreduce <max_with_index_left> ins(%[[SUBVIEW_SRC]] : memref<10x10xf32, strided<[10, 1]>>) outs(%[[SUBVIEW_DST1]], %[[SUBVIEW_DST2]] : memref<1x1xf32, strided<[1, 1]>>, memref<1x1xi32, strided<[1, 1]>>) reduce_dims = [0, 1]
-func.func @multiple_init_vreduce(%src: memref<1x10x1x10xf32>, %dst: memref<1x1x1x1xf32>, %dst2 : memref<1x1x1x1xi32>) {
+// CHECK: %[[SUBVIEW_DST1:.*]] = memref.subview %[[DST]][0, 0, 0, 0] [1, 1, 1, 10] [1, 1, 1, 1] : memref<1x1x1x10xf32> to memref<1x10xf32, strided<[10, 1]>>
+// CHECK: %[[SUBVIEW_DST2:.*]] = memref.subview %[[DST2]][0, 0, 0, 0] [1, 1, 1, 10] [1, 1, 1, 1] : memref<1x1x1x10xi32> to memref<1x10xi32, strided<[10, 1]>>
+// CHECK: hivm.hir.vreduce <max_with_index_left> ins(%[[SUBVIEW_SRC]] : memref<10x10xf32, strided<[10, 1]>>) outs(%[[SUBVIEW_DST1]], %[[SUBVIEW_DST2]] : memref<1x10xf32, strided<[10, 1]>>, memref<1x10xi32, strided<[10, 1]>>) reduce_dims = [0]
+func.func @multiple_init_vreduce(%src: memref<1x10x1x10xf32>, %dst: memref<1x1x1x10xf32>, %dst2 : memref<1x1x1x10xi32>) {
   hivm.hir.vreduce <max_with_index_left> ins(%src: memref<1x10x1x10xf32>)
-                         outs(%dst, %dst2: memref<1x1x1x1xf32>, memref<1x1x1x1xi32>)
-                         reduce_dims = [1, 3]
+                         outs(%dst, %dst2: memref<1x1x1x10xf32>, memref<1x1x1x10xi32>)
+                         reduce_dims = [1]
   return
 }
 

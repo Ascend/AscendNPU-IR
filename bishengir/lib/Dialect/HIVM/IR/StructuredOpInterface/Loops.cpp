@@ -98,13 +98,15 @@ ArrayAttr VBrcOp::getIndexingMaps() {
   Builder builder(getContext());
   int64_t rank = getRankFromShapedTypeValue(getDpsInits()[0]);
   SmallVector<AffineExpr, 4> broadcastExprs;
-  DenseSet<int64_t> broadcastDims(getBroadcastDims().begin(),
-                                  getBroadcastDims().end());
-  for (int i = 0; i < rank; i++) {
-    if (broadcastDims.contains(i)) {
-      broadcastExprs.push_back(builder.getAffineConstantExpr(1));
-    } else {
-      broadcastExprs.push_back(builder.getAffineDimExpr(i));
+  if (isa<ShapedType>(getDpsInputs()[0].getType())) {
+    DenseSet<int64_t> broadcastDims(getBroadcastDims().begin(),
+                                    getBroadcastDims().end());
+    for (int i = 0; i < rank; i++) {
+      if (broadcastDims.contains(i)) {
+        broadcastExprs.push_back(builder.getAffineConstantExpr(0));
+      } else {
+        broadcastExprs.push_back(builder.getAffineDimExpr(i));
+      }
     }
   }
   AffineMap broadcastMap =
@@ -253,7 +255,9 @@ ArrayAttr VReduceOp::getIndexingMaps() {
   }
   AffineMap outputMap =
       AffineMap::get(rank, 0, outputExprs, builder.getContext());
-  return builder.getAffineMapArrayAttr({inputMap, outputMap});
+  SmallVector<AffineMap> maps(getIndices() ? 2 : 1, inputMap);
+  maps.append(getNumDpsInits() - (getTempBuffer() ? 1 : 0), outputMap);
+  return builder.getAffineMapArrayAttr(maps);
 }
 
 //===----------------------------------------------------------------------===//

@@ -176,6 +176,58 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         nullptr, may_implicit_transpose_with_last_axis);
 }
 
+static LogicalResult verifyPadMode(LoadOp op) {
+  ShapedType srcOperType = op.getSrcOperandType();
+  ShapedType dstOperType = op.getDstOperandType();
+  auto srcShape = srcOperType.getShape();
+  auto dstShape = dstOperType.getShape();
+
+  auto padModeAttr = op.getPadMode();
+  if (!padModeAttr || padModeAttr->getPadmode() == PadMode::PadNull) {
+    // if not set padmode, means dst/src shape is the same
+    if (failed(verifyCompatibleShape(srcShape, dstShape))) {
+      return op.emitOpError(
+          "if pad_mode is not set, src and dst shape should be the same!");
+    }
+
+    if (op.getPadValue()) {
+      return op.emitOpError(
+          "if pad_mode is not set, pad_value should not be set!");
+    }
+  }
+
+  auto padval = op.getPadValue();
+  if (padModeAttr) {
+    // check pad value
+    PadMode pm = padModeAttr->getPadmode();
+    if (pm == PadMode::PadValue && !padval) {
+      return op.emitOpError("if padmode is PadValue, pad_value is required!");
+    }
+
+    if (pm == PadMode::PadFirstElem && padval) {
+      return op.emitOpError(
+          "if padmode is PadFirstElem, pad_value should not be set!");
+    }
+
+    if (failed(
+            verifyCompatibleShape(srcShape.drop_back(), dstShape.drop_back())))
+      return op.emitOpError() << "only the last dimension can be different";
+
+    if (!ShapedType::isDynamic(srcShape.back()) &&
+        !ShapedType::isDynamic(dstShape.back()) &&
+        dstShape.back() < srcShape.back())
+      return op.emitOpError() << "dst last dimension cannot be less than src's";
+  }
+
+  // check padval dtype
+  if (padval && padval.getType() != dstOperType.getElementType()) {
+    return op.emitOpError(
+        "dtype of pad_value and element type of dst/src should be the same!");
+  }
+
+  return success();
+}
+
 LogicalResult LoadOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
@@ -189,33 +241,12 @@ LogicalResult LoadOp::verify() {
     return emitOpError("src and dst should have a known number of dimensions!");
   }
 
-  auto srcShape = srcOperType.getShape();
-  auto dstShape = dstOperType.getShape();
   if (srcOperType.getRank() != dstOperType.getRank()) {
     return emitOpError("src and dst should have the same dimensions!");
   }
 
-  // if not set padmode, means dst/src shape is the same
-  auto padModeAttr = getPadMode();
-  if (!padModeAttr && failed(verifyCompatibleShape(srcShape, dstShape))) {
-    return emitOpError(
-        "if pad_mode is not set, src and dst shape should be the same!");
-  }
-
-  // check pad value
-  auto padval = getPadValue();
-  if (padModeAttr) {
-    PadMode pm = padModeAttr->getPadmode();
-    if (pm == PadMode::PadValue && !padval) {
-      return emitOpError("if padmode is PadValue, pad_value is required!");
-    }
-  }
-
-  // check padval dtype
-  if (padval && padval.getType() != dstOperType.getElementType()) {
-    return emitOpError(
-        "dtype of pad_value and element type of dst/src should be the same!");
-  }
+  if (failed(verifyPadMode(*this)))
+    return failure();
 
   // check mem space in case of memref
   if (hasPureBufferSemantics()) {
@@ -302,7 +333,9 @@ LogicalResult StoreOp::verify() {
     return emitOpError("src and dst should have a known number of dimensions!");
   }
 
-  if (srcOperType.getRank() != dstOperType.getRank()) {
+  if (srcOperType.getRank() != dstOperType.getRank() ||
+      failed(verifyCompatibleShape(srcOperType.getShape(),
+                                   dstOperType.getShape()))) {
     return emitOpError("src and dst should have the same dimensions!");
   }
 

@@ -37,8 +37,7 @@ using namespace mlir::hivm;
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
 
 namespace {
-template <typename HIVMOP>
-LogicalResult verifyCumOp(HIVMOP op) {
+template <typename HIVMOP> LogicalResult verifyCumOp(HIVMOP op) {
   ArrayRef<int64_t> cumDims = op.getCumDims();
   ShapedType srcType = cast<ShapedType>(op.getSrc().getType());
   if (cumDims.empty()) {
@@ -278,6 +277,93 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         reduce_dims, indices);
 }
 
+static LogicalResult verifyVReduceDims(VReduceOp op) {
+  SmallVector<int64_t> reduceDims(op.getReduceDims());
+  const auto srcVecType = cast<ShapedType>(op.getSrc().getType());
+  const auto dstVecType = cast<ShapedType>(op.getDstValue().getType());
+
+  if (reduceDims.empty()) {
+    return op.emitOpError() << "have empty reduce dims array";
+  }
+  if (static_cast<int64_t>(reduceDims.size()) > srcVecType.getRank()) {
+    return op.emitOpError() << "have too many indices in the reduce dims array";
+  }
+
+  for (int64_t idx : reduceDims) {
+    if (idx < 0 || idx >= dstVecType.getRank()) {
+      return op.emitOpError()
+             << "have invalid index '" << idx << "' inside reduce dims array";
+    }
+    if (dstVecType.getDimSize(idx) != 1) {
+      return op.emitOpError()
+             << "invalid dst vector shape, 'DstVecDim[" << idx << "]' != 1\n";
+    }
+  }
+
+  if (srcVecType.getRank() != dstVecType.getRank()) {
+    return op.emitOpError() << "have src and dst with different ranks";
+  }
+  llvm::sort(reduceDims);
+  auto constReduceDims = ArrayRef(reduceDims);
+  for (auto reduceDim = constReduceDims.begin(),
+            srcDim = srcVecType.getShape().begin(),
+            dstDim = dstVecType.getShape().begin();
+       srcDim != srcVecType.getShape().end(); ++srcDim, ++dstDim) {
+    const auto idx = srcDim - srcVecType.getShape().begin();
+
+    if (reduceDim != constReduceDims.end() && idx == *reduceDim) {
+      ++reduceDim;
+      continue;
+    }
+
+    if (failed(verifyCompatibleDims({*srcDim, *dstDim}))) {
+      return op.emitOpError()
+             << "have dim at index " << idx << " different between src and dst";
+    }
+  }
+
+  return success();
+}
+
+static LogicalResult verifyVReduceArith(VReduceOp op) {
+  const auto srcVecType = cast<ShapedType>(op.getSrc().getType());
+  const auto dstVecType = cast<ShapedType>(op.getDstValue().getType());
+  auto arith = op.getArithAttr();
+  if (util::isArgminOrArgmax(arith.getReduceOp())) {
+    if (op.getDst().size() != 2)
+      return op.emitOpError()
+             << "with index should have exactly 2 destination operands";
+
+    if (op.getReduceDims().size() > 1)
+      return op.emitOpError()
+             << "with index should have exactly 1 reduce dimension";
+
+    if (!op.getDstIndex()) {
+      return op.emitOpError() << "dst index must be defined for min_with_index "
+                                 "and max_with_index";
+    }
+    if (failed(verifyCompatibleShape(
+            cast<ShapedType>(op.getDstIndex().getType()).getShape(),
+            dstVecType.getShape()))) {
+      return op.emitOpError()
+             << "dst index shape should be compatible with dst value";
+    }
+    if (!getElementTypeOrSelf(op.getDstIndex().getType()).isInteger(32)) {
+      return op.emitOpError() << "invalid dst index elemtype";
+    }
+  } else {
+    if (op.getDst().size() != 1)
+      return op.emitOpError() << "should have exactly 1 destination operand";
+
+    if (llvm::is_contained({ReduceOperation::andi, ReduceOperation::ori,
+                            ReduceOperation::xori},
+                           arith.getReduceOp()) &&
+        !getElementTypeOrSelf(srcVecType).isInteger())
+      return op.emitOpError() << "elemtype should be an integer";
+  }
+  return success();
+}
+
 LogicalResult VReduceOp::verify() {
   // tmpBuf can be null
   auto tmpBuf = getTempBuffer();
@@ -285,42 +371,10 @@ LogicalResult VReduceOp::verify() {
     return emitOpError() << "temp_buffer'rank should be one";
   }
 
-  ArrayRef<int64_t> reduceDims = this->getReduceDims();
-  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
-  ShapedType dstVecType = cast<ShapedType>(getDstValue().getType());
+  if (failed(verifyVReduceDims(*this)))
+    return failure();
 
-  if (reduceDims.empty()) {
-    return emitOpError() << "have empty reduce dims array";
-  }
-  if (static_cast<int64_t>(reduceDims.size()) > srcVecType.getRank()) {
-    return emitOpError() << "have too many indices in the reduce dims array";
-  }
-
-  for (int64_t idx : reduceDims) {
-    if (idx < 0 || idx >= dstVecType.getRank()) {
-      return emitOpError() << "have invalid index '" << idx
-                           << "' inside reduce dims array";
-    }
-    if (dstVecType.getDimSize(idx) != 1) {
-      return emitOpError() << "invalid dst vector shape, 'DstVecDim[" << idx
-                           << "]' != 1\n";
-    }
-  }
-  auto arith = getArithAttr();
-  if (util::isArgminOrArgmax(arith.getReduceOp())) {
-    if (!getDstIndex()) {
-      return emitOpError() << "dst index must be defined for min_with_index "
-                              "and max_with_index";
-    }
-    if (!getElementTypeOrSelf(getDstIndex().getType()).isInteger(32)) {
-      return emitOpError() << "invalid dst index elemtype";
-    }
-  } else if (arith.getReduceOp() == hivm::ReduceOperation::xori) {
-    if (!getElementTypeOrSelf(srcVecType).isInteger()) {
-      return emitOpError() << "invalid elemtype for xori";
-    }
-  }
-  return success();
+  return verifyVReduceArith(*this);
 }
 
 Attribute VReduceOp::getInit() {

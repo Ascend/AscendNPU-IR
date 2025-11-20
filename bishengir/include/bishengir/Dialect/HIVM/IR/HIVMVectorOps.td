@@ -52,7 +52,7 @@ class HIVM_VectorOp<string mnemonic, list<Trait> traits = [],
 // HIVM Elementwise N-ary Vector Ops
 //===----------------------------------------------------------------------===//
 
-class HIVM_ElementwiseNaryOp<string mnemonic, list<Trait> traits = []>
+class HIVM_ElementwiseNaryOp<string mnemonic, list<Trait> traits = [], Type srcType = AnyType>
     : HIVM_VectorOp<mnemonic, !listconcat([AttrSizedOperandSegments,
                                            HIVMOpSameOperandsAndResultRank,
                                            UniformReassociationFlattenTrait,
@@ -70,15 +70,18 @@ class HIVM_ElementwiseNaryOp<string mnemonic, list<Trait> traits = []>
       3. The input/init operands and result have the same rank.
       4. The first input is vector-only.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
+  dag extraArguments = (ins);
+  let arguments = !con((ins Variadic<srcType>:$src,
+                       Variadic<AnyShaped>:$dst), extraArguments, (ins
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
+  ));
   let results = (outs Variadic<AnyRankedTensor>:$result);
+  string extraAssemblyFormat = "";
   let assemblyFormat = [{
       attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
       (`outs` `(` $dst^  `:` type($dst) `)`)?
+      }] # extraAssemblyFormat # [{
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?
@@ -107,9 +110,9 @@ class HIVM_ElementwiseNaryOp<string mnemonic, list<Trait> traits = []>
 // HIVM Elementwise Unary Vector Ops
 //===----------------------------------------------------------------------===//
 
-class HIVM_ElementwiseUnaryOp<string mnemonic, list<Trait> traits = []> :
+class HIVM_ElementwiseUnaryOp<string mnemonic, list<Trait> traits = [], Type srcType = AnyType> :
   HIVM_ElementwiseNaryOp<mnemonic,
-                         !listconcat([ElementwiseNaryOpTrait<1>], traits)>;
+                         !listconcat([ElementwiseNaryOpTrait<1>], traits), srcType>;
 
 def VExpOp : HIVM_ElementwiseUnaryOp<"vexp",
     [SameOperandsElementType,
@@ -466,12 +469,8 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
         | i1   | f16  | rint                                              |
         | i1   | f32  | rint                                              |
   }];
-  let arguments = (ins Variadic<AnyShaped>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<HIVM_RoundModeAttr, "RoundMode::RINT">:$round_mode,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer,
+                            DefaultValuedAttr<HIVM_RoundModeAttr, "RoundMode::RINT">:$round_mode
   );
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
@@ -483,14 +482,9 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
                    CArg<"ArrayRef<int64_t> ", "{}">:$transpose,
                    CArg<"ArrayRef<int64_t>", "{}">:$broadcast)>
   ];
-  let assemblyFormat = [{
-      attr-dict `ins` `(` $src `:` type($src) `)`
-      `outs` `(` $dst  `:` type($dst) `)`
+  let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
       (`round_mode` `=` $round_mode^)?
-      (`broadcast` `=` $broadcast^)?
-      (`transpose` `=` $transpose^)?
-      (`->` type($result)^)?
     }];
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = elemwiseOpBaseDecls # [{
@@ -506,9 +500,9 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
 // HIVM Elementwise Binary Vector Ops
 //===----------------------------------------------------------------------===//
 
-class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = []> :
+class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = [], Type srcType = AnyType> :
   HIVM_ElementwiseNaryOp<mnemonic,
-                         !listconcat([ElementwiseNaryOpTrait<2>], traits)>;
+                         !listconcat([ElementwiseNaryOpTrait<2>], traits), srcType>;
 
 def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
     [SameOperandsElementType,
@@ -608,12 +602,7 @@ def VSubOp
       1. The input/init operands and result have the same element type.
       2. Support both Vector-Vector and Vector-Scalar operation.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer);
   let builders = [
     OpBuilder<(ins "TypeRange":$result,
                    "ValueRange":$src,
@@ -621,13 +610,8 @@ def VSubOp
                    CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
                    CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>
   ];
-  let assemblyFormat = [{
-      attr-dict `ins` `(` $src `:` type($src) `)`
-      `outs` `(` $dst  `:` type($dst) `)`
+  let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
-      (`broadcast` `=` $broadcast^)?
-      (`transpose` `=` $transpose^)?
-      (`->` type($result)^)?
     }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -645,12 +629,7 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
       1. The input/init operands and result have the same element type.
       2. Support only Vector-Vector operation.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer);
   let builders = [
     OpBuilder<(ins "TypeRange":$result,
                    "ValueRange":$src,
@@ -658,13 +637,8 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
                    CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
                    CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>
   ];
-  let assemblyFormat = [{
-      attr-dict `ins` `(` $src `:` type($src) `)`
-      `outs` `(` $dst  `:` type($dst) `)`
+  let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
-      (`broadcast` `=` $broadcast^)?
-      (`transpose` `=` $transpose^)?
-      (`->` type($result)^)?
     }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -807,26 +781,16 @@ def VXorOp : HIVM_ElementwiseBinaryOp<"vxor",
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>
-    ]> {
+    ], AnyShaped> {
   let summary = "Elementwise Binary Vector Xor Op";
   let description = baseClassDescription # [{
     Additional constraints:
       1. The input/init operands and result have the same element type.
       2. Support only Vector-Vector operation.
   }];
-  let arguments = (ins Variadic<AnyShaped>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer);
+  let extraAssemblyFormat = [{
     (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
-    (`broadcast` `=` $broadcast^)?
-    (`transpose` `=` $transpose^)?
-    (`->` type($result)^)?
   }];
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
@@ -899,23 +863,16 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
       3. If `round` is set to true, rounding is applied during arithmetic
          shift right.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedOptionalAttr<BoolAttr, "true">:$round,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
   let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
       "ValueRange":$dst, "BoolAttr":$round,
       CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
       CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-      `outs` `(` $dst  `:` type($dst) `)`
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer,
+                            DefaultValuedOptionalAttr<BoolAttr, "true">:$round
+  );
+  let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
       (`round` `:` $round^ )?
-      (`->` type($result)^)?
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -941,17 +898,9 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
         |-------------------|-------------------------|
         | GE/GT/LE/LT/NE/EQ | f16, f32, i16, i32, i64 |
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       DefaultValuedAttr<HIVM_CmpModeAttr, "CompareMode::EQ">:$compare_mode,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst  `:` type($dst) `)`
+  let extraArguments = (ins DefaultValuedAttr<HIVM_CmpModeAttr, "CompareMode::EQ">:$compare_mode);
+  let extraAssemblyFormat = [{
     (`compare_mode` `=` $compare_mode^)?
-    (`->` type($result)^)?
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -968,17 +917,9 @@ def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
       1. The input/init operands and result have the same element type.
       2. Support both Vector-Vector and Vector-Scalar operation.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer);
+  let extraAssemblyFormat = [{
     (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
-    (`->` type($result)^)?
   }];
   let builders = [
     OpBuilder<(ins "TypeRange":$result,"ValueRange":$src,"ValueRange":$dst)>
@@ -1011,17 +952,9 @@ def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
       1. The input vectors and output vector must have the same ranks.
       2. The element type of indicator vector must be bool.
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       Variadic<AnyShaped>:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
-                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
-  );
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-      `outs` `(` $dst  `:` type($dst) `)`
+  let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer);
+  let extraAssemblyFormat = [{
     (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
-    (`->` type($result)^)?
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls ;
 }

@@ -40,7 +40,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-//For function inliner support
+// For function inliner support
 #include "mlir/Transforms/InliningUtils.h"
 
 #include <numeric>
@@ -205,6 +205,14 @@ LogicalResult PointerCastOp::verify() {
   auto addrs = getAddrs();
   if (addrs.empty()) {
     return emitOpError("addrs of PointerCastOp should not be empty!");
+  }
+
+  if (const std::size_t dynDims = getResult().getType().getNumDynamicDims(),
+      dynDimValues = getDynamicSizes().size();
+      dynDims != dynDimValues) {
+    return emitOpError() << "expected " << dynDims
+                         << " dynamic size operands, but found "
+                         << dynDimValues;
   }
 
   return success();
@@ -422,4 +430,3 @@ std::string hivm::detail::getTypeName(Location loc, Type type) {
   emitError(loc, "unsupported type: ") << type;
   return unknown;
 }
-
