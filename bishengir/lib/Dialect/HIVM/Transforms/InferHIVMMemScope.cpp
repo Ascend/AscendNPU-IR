@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/InferHIVMMemScope.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -403,17 +404,17 @@ hivm::inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
   return success();
 }
 
-LogicalResult hivm::inferAndPropagateUbufMemScope(memref::AllocOp op) {
+LogicalResult hivm::inferAndPropagateMemScopeForAlloc(memref::AllocOp op, hivm::AddressSpace space) {
   LDBG("Begin infer and propagate memory scope for: " << *op);
   auto memorySpace = op.getType().getMemorySpace();
-  if (memorySpace)
+  if (memorySpace) {
     return success();
+  }
 
   MemScopeInferAndPropagateHelper helper;
-  auto ubSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::UB);
-  if (failed(helper.Run(op, ubSpaceAttr))) {
-    return op->emitOpError("Failed to propagate memory scope ub for allocOp");
+  auto spaceAttr = AddressSpaceAttr::get(op->getContext(), space);
+  if (failed(helper.Run(op, spaceAttr))) {
+    return op->emitOpError("Failed to propagate memory scope for allocOp");
   }
   return success();
 }
@@ -450,11 +451,19 @@ void InferHIVMMemScopePass::runOnOperation() {
         signalPassFailure();
     });
 
-    // Finally, set the remaining memory scope in the device kernel to UB.
-    func->walk([&](memref::AllocOp op) {
-      if (failed(hivm::inferAndPropagateUbufMemScope(op)))
-        signalPassFailure();
-    });
+    // Finally, set the remaining memory scope in the device kernel.
+    auto funcCoreType = queryFuncCoreType(func);
+    if (funcCoreType.has_value()) {
+      hivm::AddressSpace space = hivm::AddressSpace::UB;
+      if (funcCoreType.value() == TFuncCoreType::AIC) {
+        space = hivm::AddressSpace::L1;
+      }
+      func->walk([&](memref::AllocOp op) {
+        if (failed(hivm::inferAndPropagateMemScopeForAlloc(op, space))) {
+          signalPassFailure();
+        }
+      });
+    }
   }
 
   for (auto func : deviceFuncList) {

@@ -27,13 +27,13 @@ module {
 // CHECK-SAME: %[[C:.*]]: memref<*xf32, #hivm.address_space<gm>>
 // CHECK-SAME: %[[M:.*]]: index, %[[N:.*]]: index, %[[K:.*]]: index
 module {
-  func.func @test_infer_mem_scope_complicated(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: memref<*xf16>, %arg4: memref<*xf16>, %arg5: memref<*xf32>, %arg6: index, %arg7: index, %arg8: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  func.func @test_infer_mem_scope_complicated(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: memref<*xf16>, %arg4: memref<*xf16>, %arg5: memref<*xf32>, %arg6: index, %arg7: index, %arg8: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %c0 = arith.constant 0 : index
     // CHECK: #hivm.address_space<cc>
     %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32>
     %reinterpret_cast = memref.reinterpret_cast %arg5 to offset: [%c0], sizes: [128, 128], strides: [1, 1] : memref<*xf32> to memref<128x128xf32, strided<[?, ?], offset: ?>>
     %alloc_0 = memref.alloc() : memref<128x128xf16>
-    // CHECK: (memref<128x128xf16, #hivm.address_space<ub>>) -> ()
+    // CHECK: (memref<128x128xf16, #hivm.address_space<cbuf>>) -> ()
     "some_op"(%alloc_0) : (memref<128x128xf16>) -> ()
     // CHECK: scf.for
     // CHECK-SAME: -> (memref<128x128xf32, #hivm.address_space<cc>>)
@@ -90,7 +90,7 @@ func.func private @extern_device_func(memref<?xf32>, memref<?xf32>, memref<?xf32
 
 module {
   func.func private @fused_kernel_0(i64, memref<16xf32>, memref<16xf32>) -> memref<16xf32> attributes {hacc.function_kind = #hacc.function_kind<DEVICE>}
-  func.func @fused_kernel_1(%arg0: i64, %arg1: memref<16xf32>, %arg2: memref<16xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  func.func @fused_kernel_1(%arg0: i64, %arg1: memref<16xf32>, %arg2: memref<16xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     // CHECK: #hivm.address_space<ub>
     %alloc = memref.alloc() {alignment = 64 : i64} : memref<16xf32>
     return
@@ -117,7 +117,6 @@ func.func private @extern_host_func(memref<?xf32>, memref<?xf32>, memref<?xf32>)
 
 // CHECK: func.func @test_scf_if_0
 // CHECK: scf.if
-// CHECK-SAME: hivm.address_space<ub>>
 func.func @test_scf_if_0(%arg0: memref<19xf32>, %arg1: memref<17xf32>, %arg2: index, %arg3: index) {
   %c0 = arith.constant 0 : index
   %cst = arith.constant 5.000000e+00 : f32
@@ -144,7 +143,7 @@ func.func @test_scf_if_0(%arg0: memref<19xf32>, %arg1: memref<17xf32>, %arg2: in
 #map = affine_map<()[s0] -> (s0 + 32)>
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
   // CHECK-LABEL: test_scf_yield
-  func.func @test_scf_yield(%arg2: memref<?xf32>, %arg3: memref<?xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  func.func @test_scf_yield(%arg2: memref<?xf32>, %arg3: memref<?xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %cst = arith.constant 0.000000e+00 : f32
     %c96_i32 = arith.constant 96 : i32
     %c32_i32 = arith.constant 32 : i32
@@ -209,7 +208,7 @@ func.func @test_arith_select_cast(%arg0: memref<64x32xi1>, %arg1: i32, %arg2: me
 
 // CHECK-LABEL: test_infer_mem_scope_while
 module {
-  func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %true = arith.constant true
     %false = arith.constant false
     // CHECK:           %[[VAL_3:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
@@ -233,7 +232,7 @@ module {
 
 // CHECK-LABEL: test_infer_mem_scope_while
 module {
-  func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  func.func @test_infer_mem_scope_while(%arg0 : memref<128xi32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %true = arith.constant true
     %false = arith.constant false
     // CHECK:           %[[VAL_3:.*]] = memref.alloc() {alignment = 64 : i64} : memref<128xi32, #hivm.address_space<ub>>
@@ -249,6 +248,19 @@ module {
     ^bb0(%arg1: memref<128xi32>, %arg2: i1):
       scf.yield %arg1, %arg2 : memref<128xi32>, i1
     }
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: test_infer_mem_scope_set_cbuf_for_aic_func_unused_alloc
+module {
+  func.func @test_infer_mem_scope_set_cbuf_for_aic_func_unused_alloc() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    // CHECK: #hivm.address_space<cbuf>
+    %alloc = memref.alloc() : memref<8x16xf32>
+    // CHECK: #hivm.address_space<cbuf>
+    annotation.mark %alloc {MayImplicitTransposeWithLastAxis} : memref<8x16xf32>
     return
   }
 }
