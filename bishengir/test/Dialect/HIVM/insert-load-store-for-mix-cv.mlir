@@ -283,6 +283,7 @@ func.func @insert_load_between_vector_and_load(%arg0: memref<16x16xf16>, %arg1: 
   %4 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) init_out_buffer = false -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
 }
+
 // -----
 // CHECK-LABEL: @collapse
 func.func @collapse(%arg0: memref<2x8x16xf16>, %arg1: memref<16x16xf16>) -> tensor<16x16xf32> {
@@ -297,5 +298,22 @@ func.func @collapse(%arg0: memref<2x8x16xf16>, %arg1: memref<16x16xf16>) -> tens
   // CHECK: %[[LOAD:.*]] =  hivm.hir.load ins(%[[STORE]] : tensor<16x16xf16>)
   annotation.mark %collapsed {maybeUnCollapsibleReshape} : tensor<16x16xf16>
   %3 = hivm.hir.mmadL1 ins(%collapsed, %1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %3 : tensor<16x16xf32>
+}
+
+// -----
+// CHECK-LABEL: @insert_store_load_for_attr_parallel_loop
+func.func @insert_store_load_for_attr_parallel_loop(%arg0: memref<16x16xf16>, %arg1: memref<16x16xf16>) -> tensor<16x16xf32> {
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf16>
+  %1 = bufferization.to_tensor %arg1 restrict writable {gather_load} : memref<16x16xf16>
+  // CHECK: %[[TENSORB:.*]] = bufferization.to_tensor %{{.*}} restrict writable {gather_load} : memref<16x16xf16>
+  // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16x16xf16>
+  // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%[[TENSORB:.*]] : tensor<16x16xf16>) outs(%[[EMPTY0:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE:.*]] : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>)
+  %2 = tensor.empty() : tensor<16x16xf32>
+  %3 = hivm.hir.mmadL1 ins(%0, %1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %3 : tensor<16x16xf32>
 }

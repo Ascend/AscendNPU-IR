@@ -341,6 +341,12 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp>
       if (maybeAnnotateOp.has_value()) {
         consumerOperands.push_back(&operand);
       }
+
+      if (maybeAnnotateOp.has_value()) {
+        consumerOperands.push_back(&operand);
+      } else if (toTensorOp->getAttr("gather_load") != nullptr) {
+        consumerOperands.push_back(&operand);
+      }
     }
     return insertLoadStoreOp(rewriter, op.getLoc(), consumerOperands,
                              InsertMode::LoadAndStore);
