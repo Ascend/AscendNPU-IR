@@ -6,6 +6,7 @@ add_subdirectory(MathExt)
 add_subdirectory(MemRef)
 add_subdirectory(MemRefExt)
 add_subdirectory(SCF)
+add_subdirectory(Scope)
 add_subdirectory(Symbol)
 add_subdirectory(Tensor)
 
