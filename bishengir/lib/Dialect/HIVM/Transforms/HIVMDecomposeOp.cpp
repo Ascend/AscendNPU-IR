@@ -75,7 +75,7 @@ static LogicalResult castSrcToF16ToDst(hivm::VCastOp &op,
 
   hivm::VCastOp castF16ToDst = rewriter.create<hivm::VCastOp>(
       op.getLoc(), dstTypeRange, srcF16, op.getSingleDst(),
-      op.getRoundModeAttr(), transpose, broadcast);
+      op.getRoundModeAttr(), op.getCastAttr(), transpose, broadcast);
 
   rewriter.replaceOp(op, castF16ToDst);
   return success();
@@ -459,7 +459,8 @@ struct VCmpOpLowering : OpRewritePattern<VCmpOp> {
         IntegerType::get(op.getContext(), 1));
     auto roundingAttr = rewriter.getAttr<hivm::RoundModeAttr>(rounding);
     rewriter.create<hivm::VCastOp>(op.getLoc(), TypeRange(op.getODSResults(0)),
-                                   tmpAlloc, op.getDst(), roundingAttr);
+                                   tmpAlloc, op.getDst(), roundingAttr,
+                                   hivm::TypeFnAttr{});
 
     // step 3: VCmpOp output memref i1 to i8
     rewriter.modifyOpInPlace(
@@ -577,7 +578,7 @@ struct VReduceAnyLowering : public OpRewritePattern<hivm::VReduceOp> {
 
     auto tmpVCastI8ToI1Op = rewriter.create<hivm::VCastOp>(
         op.getLoc(), dstTypeRange, tmpVCastI8ToI1Opsrc, op.getDst(),
-        roundingAttr);
+        roundingAttr, hivm::TypeFnAttr{});
 
     rewriter.replaceOp(op, tmpVCastI8ToI1Op);
     return success();
@@ -647,7 +648,7 @@ struct VReduceAllLowering : public OpRewritePattern<hivm::VReduceOp> {
 
     auto tmpVCastI8ToI1Op = rewriter.create<hivm::VCastOp>(
         op.getLoc(), dstTypeRange, tmpVCastI8ToI1Opsrc, op.getDst(),
-        roundingAttr);
+        roundingAttr, hivm::TypeFnAttr{});
 
     rewriter.replaceOp(op, tmpVCastI8ToI1Op);
     return success();

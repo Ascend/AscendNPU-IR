@@ -5,7 +5,6 @@ endif()
 
 add_bishengir_dialect_library(BiShengIRHFusionDialect
   HFusionDialect.cpp
-  HFusionImpl.cpp
   HFusionOps.cpp
 
   ADDITIONAL_HEADER_DIRS

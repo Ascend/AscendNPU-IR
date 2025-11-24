@@ -102,8 +102,8 @@ module {
 
 // -----
 // CHECK-LABEL: fold_cast(
-// CHECK: cast
-// CHECK-NOT: cast
+// CHECK: hfusion.cast
+// CHECK-NOT: hfusion.cast
 func.func @fold_cast(%arg0: tensor<1x32768x3584xbf16>, %arg1: tensor<1x32768x1xi1>) ->  tensor<1x32768x1xbf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = tensor.empty() : tensor<1x32768x1xbf16>
   %1 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%arg1 : tensor<1x32768x1xi1>) outs(%0 : tensor<1x32768x1xbf16>) -> tensor<1x32768x1xbf16>
@@ -133,7 +133,7 @@ module {
 // -----
 
 // CHECK-LABEL: @legalize_tensor_chain
-// CHECK: hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<24x9xi8>) outs(%{{.*}} : tensor<24x9xi8>) -> tensor<24x9xi8>
+// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<24x9xi8>) outs(%{{.*}} : tensor<24x9xi8>) -> tensor<24x9xi8>
 func.func @legalize_tensor_chain(%arg0: tensor<24x9xi1>) -> tensor<3x2x1x12x3xi1> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %expanded = tensor.expand_shape %arg0 [[0, 1, 2, 3], [4, 5]] output_shape [3, 2, 1, 4, 3, 3] : tensor<24x9xi1> into tensor<3x2x1x4x3x3xi1>
   %collapsed_2 = tensor.collapse_shape %expanded [[0], [1], [2], [3, 4], [5]] : tensor<3x2x1x4x3x3xi1> into tensor<3x2x1x12x3xi1>

@@ -1751,9 +1751,10 @@ public:
 
 static Value castInToF32ToOut(hfusion::CastOp &op, PatternRewriter &rewriter) {
   auto dstTy = getElementTypeOrSelf(op.getDpsInitOperand(0)->get());
-  auto castSrcToF32 =
-      castTo(rewriter, op.getDpsInputOperand(0)->get(), rewriter.getF32Type());
-  auto castF32ToOut = hfusion::castTo(rewriter, castSrcToF32, dstTy);
+  auto castSrcToF32 = castTo(rewriter, op.getDpsInputOperand(0)->get(),
+                             rewriter.getF32Type(), op.getCast());
+  auto castF32ToOut =
+      hfusion::castTo(rewriter, castSrcToF32, dstTy, TypeFn::cast_signed);
   return castF32ToOut;
 }
 
@@ -1762,10 +1763,8 @@ static Value castSrcToFp16ToTargetType(hfusion::CastOp &op, Type targetType,
                                        PatternRewriter &rewriter) {
   Type f16Type = rewriter.getF16Type();
   Value dpsInput = op.getDpsInputOperand(0)->get();
-  auto castSrcToF16 = castTo(rewriter, dpsInput, f16Type);
-
-  auto castF16ToTargetType = castTo(rewriter, castSrcToF16, targetType);
-  return castF16ToTargetType;
+  auto castSrcToF16 = castTo(rewriter, dpsInput, f16Type, op.getCast());
+  return castTo(rewriter, castSrcToF16, targetType, TypeFn::cast_signed);
 }
 
 // i64/i8 -> i1
@@ -1812,7 +1811,8 @@ static Value castI8ToI64(hfusion::CastOp &op, PatternRewriter &rewriter) {
   Value i8ToF32Result =
       castSrcToFp16ToTargetType(op, rewriter.getF32Type(), rewriter);
   Type i64Type = rewriter.getIntegerType(64);
-  auto castF32ToDst = castTo(rewriter, i8ToF32Result, i64Type);
+  auto castF32ToDst =
+      castTo(rewriter, i8ToF32Result, i64Type, TypeFn::cast_signed);
   return castF32ToDst;
 }
 
@@ -1874,93 +1874,94 @@ LogicalResult handleSaturateOverFlowMode(hfusion::CastOp op,
   hfusion::CastMode castMode = getCastMode(op);
   Value castValue = op.getInputs()[0];
   auto outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
+  hfusion::TypeFn castIntegerType = op.getCast();
 
   switch (castMode) {
   case hfusion::CastMode::F32TOI16:
-    castValue =
-        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+    castValue = hfusion::castTo(rewriter, castValue, outType,
+                                hfusion::RoundMode::TRUNC, std::nullopt,
+                                /*enableOverflow=*/false, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::F32TOI8:
     // step 1: cast f32 to f16 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 2: cast f16 to i8 in TRUNC mode
-    castValue =
-        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+    castValue = hfusion::castTo(rewriter, castValue, outType,
+                                hfusion::RoundMode::TRUNC, std::nullopt,
+                                /*enableOverflow=*/false, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::F16TOI8:
-    castValue =
-        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+    castValue = hfusion::castTo(rewriter, castValue, outType,
+                                hfusion::RoundMode::TRUNC, std::nullopt,
+                                /*enableOverflow=*/false, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I64TOI32:
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::RINT,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I64TOI16:
     // step 1: cast i32 to f32 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 2: cast f32 to i16 in TRUNC mode
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I64TOI8:
     // step 1: cast i32 to f32 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 2: cast f32 to f16 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 3: cast f16 to i8 in TRUNC mode
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I32TOI16:
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::RINT,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I32TOI8:
     // step 1: cast i32 to f32 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 2: cast f32 to f16 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 3: cast f16 to i8 in TRUNC mode
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   case hfusion::CastMode::I16TOI8:
     // step 1: cast i16 to f16 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false);
     // step 2: cast f16 to i8 in TRUNC mode
     castValue =
         hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
-                        std::nullopt, /*enableOverflow*/ false);
+                        std::nullopt, /*enableOverflow=*/false);
     rewriter.replaceOp(op, castValue);
     return success();
   }
@@ -1970,6 +1971,7 @@ LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
                                       PatternRewriter &rewriter) {
   auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
   auto outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
+  auto castIntegerType = op.getCast();
 
   const bool isF32ToI16 = inType.isF32() && outType.isInteger(16);
   const bool isF32ToI8 = inType.isF32() && outType.isInteger(8);
@@ -1984,7 +1986,8 @@ LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
   if (isF32ToI16 && op.getEnableOverflow()) {
     // step1: cast f32 to i32 in TRUNC mode
     Value castI32Value = hfusion::castTo(
-        rewriter, castValue, rewriter.getI32Type(), hfusion::RoundMode::TRUNC);
+        rewriter, castValue, rewriter.getI32Type(), hfusion::RoundMode::TRUNC,
+        std::nullopt, true, castIntegerType);
     // step2: cast i32 to i16
     castValue = hfusion::castTo(rewriter, castI32Value, rewriter.getI16Type(),
                                 hfusion::RoundMode::TRUNCWITHOVERFLOW);
@@ -1993,7 +1996,8 @@ LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
   } else if (isF32ToI8) {
     // step 1: cast f32 to i32 in TRUNC mode
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getI32Type(),
-                                hfusion::RoundMode::TRUNC);
+                                hfusion::RoundMode::TRUNC, std::nullopt, true,
+                                castIntegerType);
     // step 2: cast i32 to i8 in TRUNCWITHOVERFLOW mode
     castValue = hfusion::castTo(rewriter, castValue, outType,
                                 hfusion::RoundMode::TRUNCWITHOVERFLOW);
@@ -2004,7 +2008,7 @@ LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
         rewriter, castValue, getElementTypeOrSelf(outType));
     castValue = hfusion::castTo(rewriter, overflowResult, outType,
                                 hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false);
+                                /*enableOverflow=*/false, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI64ToI16 || isI64ToI8) {

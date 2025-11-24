@@ -4,12 +4,12 @@
 func.func @test_elemwise_unary_ops(
   %src : tensor<6x4xbf16>, %dst : tensor<6x4xbf16>) -> tensor<6x4xbf16> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<6x4xf32>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_6:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_6:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: return %[[VAL_6]] : tensor<6x4xbf16>
   %res = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
     ins(%src : tensor<6x4xbf16>)
@@ -24,19 +24,19 @@ func.func @test_elemwise_unary_ops(
 func.func @test_two_elemwise_unary_ops(%arg0 : tensor<6x4xbf16>, %dst : tensor<6x4xbf16>) -> tensor<6x4xbf16> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xbf16>
   // CHECK: %[[VAL_1:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_2]] : tensor<6x4xf32>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_9:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_8]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_9:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_8]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_10:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_11:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_10]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_11:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_10]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_12:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%[[VAL_9]] : tensor<6x4xf32>) outs(%[[VAL_11]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_13:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_14:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_12]] : tensor<6x4xf32>) outs(%[[VAL_13]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_14:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_12]] : tensor<6x4xf32>) outs(%[[VAL_13]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: return %[[VAL_14]] : tensor<6x4xbf16>
   %0 = tensor.empty() : tensor<6x4xbf16>
   %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%arg0 : tensor<6x4xbf16>) outs(%0 : tensor<6x4xbf16>) -> tensor<6x4xbf16>
@@ -50,29 +50,29 @@ func.func @test_two_elemwise_unary_ops(%arg0 : tensor<6x4xbf16>, %dst : tensor<6
 func.func @test_three_elemwise_ops(%arg0 : tensor<6x4xbf16>, %arg1 : tensor<6x4xbf16>, %dst : tensor<6x4xbf16>) -> tensor<6x4xbf16> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xbf16>
   // CHECK: %[[VAL_1:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_2]] : tensor<6x4xf32>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<6x4xbf16>
   // CHECK: %[[VAL_9:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_10:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_9]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_10:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_9]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_11:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_12:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_8]] : tensor<6x4xbf16>) outs(%[[VAL_11]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_12:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_8]] : tensor<6x4xbf16>) outs(%[[VAL_11]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_13:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%[[VAL_10]] : tensor<6x4xf32>) outs(%[[VAL_12]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_14:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_15:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_13]] : tensor<6x4xf32>) outs(%[[VAL_14]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_15:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_13]] : tensor<6x4xf32>) outs(%[[VAL_14]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: %[[VAL_16:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_17:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_16]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_17:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_16]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_18:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_19:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_15]] : tensor<6x4xbf16>) outs(%[[VAL_18]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_19:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_15]] : tensor<6x4xbf16>) outs(%[[VAL_18]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_20:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_21:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg2 : tensor<6x4xbf16>) outs(%[[VAL_20]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_21:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg2 : tensor<6x4xbf16>) outs(%[[VAL_20]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_22:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_17]], %[[VAL_19]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%[[VAL_21]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_23:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_24:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_22]] : tensor<6x4xf32>) outs(%[[VAL_23]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_24:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_22]] : tensor<6x4xf32>) outs(%[[VAL_23]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: return %[[VAL_24]] : tensor<6x4xbf16>
   %0 = tensor.empty() : tensor<6x4xbf16>
   %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%arg0 : tensor<6x4xbf16>) outs(%0 : tensor<6x4xbf16>) -> tensor<6x4xbf16>
@@ -88,19 +88,19 @@ func.func @test_three_elemwise_ops(%arg0 : tensor<6x4xbf16>, %arg1 : tensor<6x4x
 func.func @test_elemwise_broadcast_ops(%src : tensor<6x4xbf16>, %dst : tensor<6x4x3xbf16>) -> tensor<6x4x3xbf16> {
   // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xbf16>
   // CHECK: %[[VAL_1:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_2:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_4:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_5:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_2]] : tensor<6x4xf32>) outs(%[[VAL_4]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_6:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK: %[[VAL_7:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_5]] : tensor<6x4xf32>) outs(%[[VAL_6]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK: %[[VAL_9:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_8]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK: %[[VAL_9:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xbf16>) outs(%[[VAL_8]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK: %[[VAL_10:.*]] = tensor.empty() : tensor<6x4x3xf32>
-  // CHECK: %[[VAL_11:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4x3xbf16>) outs(%[[VAL_10]] : tensor<6x4x3xf32>) -> tensor<6x4x3xf32>
+  // CHECK: %[[VAL_11:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4x3xbf16>) outs(%[[VAL_10]] : tensor<6x4x3xf32>) -> tensor<6x4x3xf32>
   // CHECK: %[[VAL_BRC:.*]] = linalg.broadcast ins(%[[VAL_9]] : tensor<6x4xf32>) outs(%[[VAL_11]] : tensor<6x4x3xf32>) dimensions = [2]
   // CHECK: %[[VAL_12:.*]] = tensor.empty() : tensor<6x4x3xbf16>
-  // CHECK: %[[VAL_13:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_BRC]] : tensor<6x4x3xf32>) outs(%[[VAL_12]] : tensor<6x4x3xbf16>) -> tensor<6x4x3xbf16>
+  // CHECK: %[[VAL_13:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_BRC]] : tensor<6x4x3xf32>) outs(%[[VAL_12]] : tensor<6x4x3xbf16>) -> tensor<6x4x3xbf16>
   // CHECK: return %[[VAL_13]] : tensor<6x4x3xbf16>
 	%0 = tensor.empty() : tensor<6x4xbf16>
   %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%src : tensor<6x4xbf16>) outs(%0 : tensor<6x4xbf16>) -> tensor<6x4xbf16>
@@ -114,21 +114,21 @@ func.func @test_elemwise_broadcast_ops(%src : tensor<6x4xbf16>, %dst : tensor<6x
 func.func @test_elemwise_reduce_ops(%arg0 : tensor<6x4xbf16>, %arg1 : tensor<6x4xbf16>, %dst : tensor<6xbf16>) -> tensor<6xbf16> {
   // CHECK:  %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xbf16>
   // CHECK:  %[[VAL_1:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK:  %[[VAL_2:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK:  %[[VAL_2:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_1]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK:  %[[VAL_3:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK:  %[[VAL_4:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK:  %[[VAL_4:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_3]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK:  %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK:  %[[VAL_6:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK:  %[[VAL_6:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_0]] : tensor<6x4xbf16>) outs(%[[VAL_5]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK:  %[[VAL_7:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_2]], %[[VAL_4]] : tensor<6x4xf32>, tensor<6x4xf32>) outs(%6 : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK:  %[[VAL_8:.*]] = tensor.empty() : tensor<6x4xbf16>
-  // CHECK:  %[[VAL_9:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xf32>) outs(%[[VAL_8]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+  // CHECK:  %[[VAL_9:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_7]] : tensor<6x4xf32>) outs(%[[VAL_8]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
   // CHECK:  %[[VAL_10:.*]] = tensor.empty() : tensor<6x4xf32>
-  // CHECK:  %[[VAL_11:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_9]] : tensor<6x4xbf16>) outs(%[[VAL_10]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+  // CHECK:  %[[VAL_11:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_9]] : tensor<6x4xbf16>) outs(%[[VAL_10]] : tensor<6x4xf32>) -> tensor<6x4xf32>
   // CHECK:  %[[VAL_12:.*]] = tensor.empty() : tensor<6xf32>
-  // CHECK:  %[[VAL_13:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg2 : tensor<6xbf16>) outs(%[[VAL_12]] : tensor<6xf32>) -> tensor<6xf32>
+  // CHECK:  %[[VAL_13:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg2 : tensor<6xbf16>) outs(%[[VAL_12]] : tensor<6xf32>) -> tensor<6xf32>
   // CHECK:  %[[VAL_REDUCE:.*]] = linalg.reduce { arith.addf } ins(%[[VAL_11]] : tensor<6x4xf32>) outs(%[[VAL_13]] : tensor<6xf32>) dimensions = [1]
   // CHECK:  %[[VAL_14:.*]] = tensor.empty() : tensor<6xbf16>
-  // CHECK:  %[[VAL_15:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_REDUCE]] : tensor<6xf32>) outs(%[[VAL_14]] : tensor<6xbf16>) -> tensor<6xbf16>
+  // CHECK:  %[[VAL_15:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_REDUCE]] : tensor<6xf32>) outs(%[[VAL_14]] : tensor<6xbf16>) -> tensor<6xbf16>
   // CHECK:  return %[[VAL_15]] : tensor<6xbf16>
   %0 = tensor.empty() : tensor<6x4xbf16>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg1 : tensor<6x4xbf16>, tensor<6x4xbf16>) outs(%0 : tensor<6x4xbf16>) -> tensor<6x4xbf16>
@@ -146,16 +146,16 @@ func.func @test_elemwise_unary_dynamic_shape_ops(
   // CHECK: %dim = tensor.dim %arg0, %c0 : tensor<?x?xbf16>
   // CHECK: %dim_0 = tensor.dim %arg0, %c1 : tensor<?x?xbf16>
   // CHECK: %[[VAL_0:.*]] = tensor.empty(%dim, %dim_0) : tensor<?x?xf32>
-  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<?x?xbf16>) outs(%[[VAL_0]] : tensor<?x?xf32>) -> tensor<?x?xf32>
+  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<?x?xbf16>) outs(%[[VAL_0]] : tensor<?x?xf32>) -> tensor<?x?xf32>
   // CHECK: %dim_1 = tensor.dim %arg1, %c0 : tensor<?x?xbf16>
   // CHECK: %dim_2 = tensor.dim %arg1, %c1 : tensor<?x?xbf16>
   // CHECK: %[[VAL_2:.*]] = tensor.empty(%dim_1, %dim_2) : tensor<?x?xf32>
-  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<?x?xbf16>) outs(%[[VAL_2]] : tensor<?x?xf32>) -> tensor<?x?xf32>
+  // CHECK: %[[VAL_3:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<?x?xbf16>) outs(%[[VAL_2]] : tensor<?x?xf32>) -> tensor<?x?xf32>
   // CHECK: %[[VAL_4:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[VAL_1]] : tensor<?x?xf32>) outs(%[[VAL_3]] : tensor<?x?xf32>) -> tensor<?x?xf32>
   // CHECK: %dim_3 = tensor.dim %4, %c0 : tensor<?x?xf32>
   // CHECK: %dim_4 = tensor.dim %4, %c1 : tensor<?x?xf32>
   // CHECK: %[[VAL_5:.*]] = tensor.empty(%dim_3, %dim_4) : tensor<?x?xbf16>
-  // CHECK: %[[VAL_6:.*]] =  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_4]] : tensor<?x?xf32>) outs(%[[VAL_5]] : tensor<?x?xbf16>) -> tensor<?x?xbf16>
+  // CHECK: %[[VAL_6:.*]] =  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_4]] : tensor<?x?xf32>) outs(%[[VAL_5]] : tensor<?x?xbf16>) -> tensor<?x?xbf16>
   // CHECK: return %[[VAL_6]] : tensor<?x?xbf16>
   %res = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
     ins(%src : tensor<?x?xbf16>)

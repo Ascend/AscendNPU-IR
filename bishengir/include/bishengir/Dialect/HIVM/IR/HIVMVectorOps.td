@@ -470,21 +470,25 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
         | i1   | f32  | rint                                              |
   }];
   let extraArguments = (ins Optional<AnyMemRef>:$temp_buffer,
-                            DefaultValuedAttr<HIVM_RoundModeAttr, "RoundMode::RINT">:$round_mode
+                            DefaultValuedAttr<HIVM_RoundModeAttr, "RoundMode::RINT">:$round_mode,
+                            DefaultValuedAttr<HIVM_TypeFnAttr, "TypeFn::cast_signed">:$cast
   );
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
                    "hivm::RoundModeAttr":$round_mode,
+                   "hivm::TypeFnAttr":$cast,
                    CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
                    CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>,
     OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
                    CArg<"hivm::RoundMode", "RoundMode::RINT">:$round_mode,
+                   CArg<"hivm::TypeFn", "TypeFn::cast_signed">:$cast,
                    CArg<"ArrayRef<int64_t> ", "{}">:$transpose,
                    CArg<"ArrayRef<int64_t>", "{}">:$broadcast)>
   ];
   let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
       (`round_mode` `=` $round_mode^)?
+      (`cast` `=` $cast^)?
     }];
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = elemwiseOpBaseDecls # [{

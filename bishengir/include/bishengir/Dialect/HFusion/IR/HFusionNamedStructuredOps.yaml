@@ -307,6 +307,10 @@ structured_op: !HFusionStructuredOpConfig
     name: enable_overflow
     kind: enable_overflow_attr
     default_fn: true
+  - !HFusionOperandDefConfig
+    name: cast
+    kind: type_fn_attr
+    default_fn: cast_signed
   indexing_maps: !HFusionIndexingMapsConfig
     static_indexing_maps:
     - affine_map<() -> ()>

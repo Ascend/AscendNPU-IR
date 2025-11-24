@@ -223,21 +223,53 @@ struct ElementwiseOpToHFusionCast : OpRewritePattern<CastOp> {
     llvm_unreachable("unsupported arith op to hfusion");
   }
 
+  static hfusion::TypeFn selectCast(CastOp op) {
+    if (isa<arith::ExtUIOp>(op)) {
+      auto concreteOp = cast<arith::ExtUIOp>(op);
+      auto inType = getElementTypeOrSelf(concreteOp.getIn().getType());
+      auto outType = getElementTypeOrSelf(concreteOp.getOut().getType());
+
+      const bool isI8ToI32 = inType.isInteger(8) && outType.isInteger(32);
+      const bool isI8ToI16 = inType.isInteger(8) && outType.isInteger(16);
+
+      // Now we support unsigned casts only from uint8
+      // All casts from uint8 are performed using intermediate float cast
+      // So now we just need to now that source is signed/unsigned
+      // In future, we need to support both cast_from_sign, cast_to_sign
+      // parameters
+      if (isI8ToI16 || isI8ToI32) {
+        return hfusion::TypeFn::cast_unsigned;
+      }
+      return hfusion::TypeFn::cast_signed;
+    }
+
+    if (isa<arith::FPToUIOp>(op) || isa<arith::UIToFPOp>(op))
+      return hfusion::TypeFn::cast_unsigned;
+    return hfusion::TypeFn::cast_signed;
+  }
+
   LogicalResult matchAndRewrite(CastOp op,
                                 PatternRewriter &rewriter) const final {
     if (!operateOnTensors(op))
       return failure();
+
     SmallVector<Value> dsts;
     if (failed(
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
     Value src = op.getOperand();
+
     hfusion::RoundMode rounding = selectRoundMode(op);
     auto roundingAttr = rewriter.getAttr<hfusion::RoundModeAttr>(rounding);
     auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                           roundingAttr);
+
+    hfusion::TypeFn casting = selectCast(op);
+    auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(casting);
+    auto typeAttr = rewriter.getNamedAttr("cast", castAttr);
+
     rewriter.replaceOpWithNewOp<hfusion::CastOp>(
-        op, ValueRange{src}, ValueRange{dsts}, ArrayRef{modeAttr});
+        op, ValueRange{src}, ValueRange{dsts}, ArrayRef{modeAttr, typeAttr});
     return success();
   }
 };

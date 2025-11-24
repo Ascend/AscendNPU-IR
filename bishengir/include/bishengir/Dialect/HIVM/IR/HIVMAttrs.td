@@ -350,6 +350,27 @@ def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {
 }
 
 //===----------------------------------------------------------------------===//
+// Cast for VCastOp
+//===----------------------------------------------------------------------===//
+
+def HIVM_cast_signed : I32EnumAttrCase<"cast_signed", 0>;
+def HIVM_cast_unsigned : I32EnumAttrCase<"cast_unsigned", 1>;
+def HIVM_bitcast : I32EnumAttrCase<"bitcast", 2>;
+
+def HIVM_TypeFnEnum : HIVM_I32Enum<
+  "TypeFn", "Cast for VCastOp", [
+    HIVM_cast_signed,
+    HIVM_cast_unsigned,
+    HIVM_bitcast
+  ]>;
+
+def HIVM_TypeFnAttr : HIVM_I32EnumAttr<"cast", HIVM_TypeFnEnum> {
+  let description = [{
+    HIVM cast attribute.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Compare Mode for VCmpOp
 //===----------------------------------------------------------------------===//
 

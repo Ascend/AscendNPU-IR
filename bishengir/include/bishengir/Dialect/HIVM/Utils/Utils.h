@@ -36,6 +36,7 @@
 #include "llvm/Support/Debug.h"
 
 #include <cassert>
+#include <cstdint>
 #include <queue>
 #include <set>
 #include <type_traits>
@@ -384,6 +385,15 @@ LogicalResult getUnAlignSizeInfo(
   std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 namespace util {
+enum class BitWidth : uint32_t {
+  B1 = 1,
+  B4 = 4,
+  B8 = 8,
+  B16 = 16,
+  B32 = 32,
+  B64 = 64,
+};
+  
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
 const static int vectorBlockSizeBit = 256;
@@ -413,6 +423,12 @@ bool isLastDimContiguous(Value operand);
 /// Check if the operation is hivm::PointerCastOp with GM space
 /// Used to check if it is lowered from triton::IntToPtrOp
 bool isGMPointerCastOp(Operation *op);
+
+bool isArgminOrArgmax(ReduceOperation op);
+
+/// Return the elementType as string for library call name.
+std::string getTypeName(Location loc, Type type,
+                        hivm::TypeFn casting = hivm::TypeFn::cast_signed);
 
 } // namespace util
 } // namespace hivm

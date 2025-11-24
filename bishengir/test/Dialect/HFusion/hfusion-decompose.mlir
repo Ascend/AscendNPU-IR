@@ -83,7 +83,7 @@ func.func @test_decompose_gather(%src:tensor<4x16x16x16x8xf16>, %idx:tensor<4x16
 // CHECK-LABEL: test_decompose_gather_idx64
 func.func @test_decompose_gather_idx64(%src: tensor<4x64xf32>, %idx: tensor<4x32xi64>) -> tensor<4x32xf32> {
   %init = tensor.empty() : tensor<4x32xf32>
-  // CHECK:  hfusion.cast {enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
+  // CHECK:  hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
   %res = hfusion.gather ins(%src, %idx : tensor<4x64xf32>, tensor<4x32xi64>) outs(%init : tensor<4x32xf32>) axis = 1 -> tensor<4x32xf32>
   return %res : tensor<4x32xf32>
 }
