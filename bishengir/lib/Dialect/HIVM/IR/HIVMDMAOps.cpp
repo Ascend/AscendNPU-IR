@@ -29,6 +29,8 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 
+#include "bishengir/Config/bishengir-config.h"
+
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
 
@@ -395,19 +397,20 @@ static LogicalResult checkCopyOpMemSpace(CopyOp &op) {
     auto srcAddrSpace = srcAddrSpaceAttr.getAddressSpace();
     auto dstAddrSpace = dstAddrSpaceAttr.getAddressSpace();
 
-    bool isGmtoUb =
-        srcAddrSpace == AddressSpace::GM && dstAddrSpace == AddressSpace::UB;
-    bool isUbtoGm =
-        srcAddrSpace == AddressSpace::UB && dstAddrSpace == AddressSpace::GM;
-    bool isUbtoUb =
-        srcAddrSpace == AddressSpace::UB && dstAddrSpace == AddressSpace::UB;
-    bool isGmtoL1 =
-        srcAddrSpace == AddressSpace::GM && dstAddrSpace == AddressSpace::L1;
-
-    if (!isGmtoUb && !isUbtoGm && !isUbtoUb && !isGmtoL1) {
-      return op.emitOpError(
-          "only support copy gm to ub or copy ub to gm or copy gm to l1 or "
-          "copy ub to ub currently!");
+    static DenseSet<std::pair<AddressSpace, AddressSpace>> kCopySupported{
+        {std::make_pair(AddressSpace::GM, AddressSpace::UB)},
+        {std::make_pair(AddressSpace::UB, AddressSpace::GM)},
+        {std::make_pair(AddressSpace::UB, AddressSpace::UB)},
+        {std::make_pair(AddressSpace::GM, AddressSpace::L1)},
+    };
+#if BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+    kCopySupported.insert({std::make_pair(AddressSpace::UB, AddressSpace::L1)});
+#endif
+    if (!kCopySupported.count(std::make_pair(srcAddrSpace, dstAddrSpace))) {
+      auto srcStr = stringifyAddressSpace(srcAddrSpace).str();
+      auto dstStr = stringifyAddressSpace(dstAddrSpace).str();
+      return op.emitOpError()
+             << "Unsupported copy from " << srcStr << " to " << dstStr << "!";
     }
   }
 

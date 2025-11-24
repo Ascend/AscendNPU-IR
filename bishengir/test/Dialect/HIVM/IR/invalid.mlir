@@ -40,7 +40,7 @@ func.func @test_invalid_convert_layout(%arg : memref<128x128xf16, strided<[?, ?]
 func.func @incorrect_copy_op_gm_gm() {
   %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<gm>>
   %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<gm>>
-  // expected-error@+1 {{'hivm.hir.copy' op only support copy gm to ub or copy ub to gm or copy gm to l1 or copy ub to ub currently!}}
+  // expected-error@+1 {{'hivm.hir.copy' op Unsupported copy from gm to gm!}}
   hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<gm>>)
                 outs(%dst : memref<16x16xf16, #hivm.address_space<gm>>)
   return
