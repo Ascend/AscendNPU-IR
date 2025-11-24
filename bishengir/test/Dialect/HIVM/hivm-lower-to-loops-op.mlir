@@ -837,7 +837,7 @@ func.func @test_reduce_max_ar_b64() {
 
 // -----
 func.func @test_reduce_min_with_index_int64() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 9223372036854775807 : i64
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -870,7 +870,7 @@ func.func @test_reduce_min_with_index_int64() {
 
 // -----
 func.func @test_reduce_min_with_index_int32() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 2147483647 : i32
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -903,7 +903,7 @@ func.func @test_reduce_min_with_index_int32() {
 
 // -----
 func.func @test_reduce_min_with_index_int16() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 32767 : i16
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -936,7 +936,7 @@ func.func @test_reduce_min_with_index_int16() {
 
 // -----
 func.func @test_reduce_max_with_index_int64() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -9223372036854775808 : i64
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -969,7 +969,7 @@ func.func @test_reduce_max_with_index_int64() {
 
 // -----
 func.func @test_reduce_max_with_index_int32() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -2147483648 : i32
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1002,7 +1002,7 @@ func.func @test_reduce_max_with_index_int32() {
 
 // -----
 func.func @test_reduce_max_with_index_int16() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -32768 : i16
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1035,7 +1035,7 @@ func.func @test_reduce_max_with_index_int16() {
 
 // -----
 func.func @test_reduce_min_with_index_int64_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 9223372036854775807 : i64
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1074,7 +1074,7 @@ func.func @test_reduce_min_with_index_int64_with_index_input() {
 
 // -----
 func.func @test_reduce_min_with_index_int32_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 2147483647 : i32
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1113,7 +1113,7 @@ func.func @test_reduce_min_with_index_int32_with_index_input() {
 
 // -----
 func.func @test_reduce_min_with_index_int16_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant 32767 : i16
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1152,7 +1152,7 @@ func.func @test_reduce_min_with_index_int16_with_index_input() {
 
 // -----
 func.func @test_reduce_max_with_index_int64_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -9223372036854775808 : i64
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1191,7 +1191,7 @@ func.func @test_reduce_max_with_index_int64_with_index_input() {
 
 // -----
 func.func @test_reduce_max_with_index_int32_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -2147483648 : i32
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index
@@ -1230,7 +1230,7 @@ func.func @test_reduce_max_with_index_int32_with_index_input() {
 
 // -----
 func.func @test_reduce_max_with_index_int16_with_index_input() {
-  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant -1 : i32
+  // CHECK: %[[CST_INDEX_INIT:.*]] = arith.constant 0 : i32
   // CHECK: %[[CST_VALUE_INIT:.*]] = arith.constant -32768 : i16
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST0:.*]] = arith.constant 0 : index

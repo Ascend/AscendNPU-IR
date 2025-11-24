@@ -719,7 +719,7 @@ void insertReduceInitialization(RewriterBase &rewriter, hivm::VReduceOp op,
   auto arith = op.getArithAttr().getReduceOp();
   if (util::isArgminOrArgmax(arith)) {
     auto constIndexInit = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), IntegerAttr::get(rewriter.getI32Type(), -1));
+        op->getLoc(), IntegerAttr::get(rewriter.getI32Type(), 0));
     rewriter.create<memref::StoreOp>(op->getLoc(), constIndexInit,
                                      op.getDpsInits()[1], dstIndexes);
   }
