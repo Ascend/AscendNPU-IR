@@ -32,6 +32,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -266,6 +267,39 @@ struct InsertLoadStoreOpBetweenVectorAndCube
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
       if (traceDefOp<OpType>(operand.get()).has_value()) {
+        consumerOperands.push_back(&operand);
+      }
+    }
+    return insertLoadStoreOp(rewriter, op.getLoc(), consumerOperands,
+                             InsertMode::LoadAndStore);
+  }
+};
+
+template <typename OpType>
+struct InsertLoadStoreOpBetweenCrossLoopVectorAndCube
+    : public OpRewritePattern<hivm::MmadL1Op> {
+  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+                                PatternRewriter &rewriter) const override {
+    llvm::SmallVector<OpOperand *> consumerOperands;
+    for (OpOperand &operand : op->getOpOperands()) {
+      if (!isa<BlockArgument>(operand.get())) {
+        continue;
+      }
+
+      auto scfForOp = dyn_cast<scf::ForOp>(op->getParentOp());
+      if (!scfForOp) {
+        continue;
+      }
+
+      auto blockArg = cast<BlockArgument>(operand.get());
+      auto *yield = scfForOp.getTiedLoopYieldedValue(blockArg);
+      if (!yield) {
+        continue;
+      }
+      
+      if (traceDefOp<OpType>(yield->get()).has_value()) {
         consumerOperands.push_back(&operand);
       }
     }
@@ -568,7 +602,8 @@ template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<OpType>,
                InsertStoreOpBetweenVectorAndLoad<OpType>,
-               InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>>(
+               InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
+               InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType>>(
       patterns.getContext());
 }
 

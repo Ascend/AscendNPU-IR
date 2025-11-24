@@ -317,3 +317,28 @@ func.func @insert_store_load_for_attr_parallel_loop(%arg0: memref<16x16xf16>, %a
   %3 = hivm.hir.mmadL1 ins(%0, %1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %3 : tensor<16x16xf32>
 }
+
+// -----
+// CHECK-LABEL: @insert_load_store_between_cross_loop_vector_and_cube
+module {
+  func.func @insert_load_store_between_cross_loop_vector_and_cube(%arg0: tensor<128x64xf32>, %arg1: tensor<64x64xf32>) -> tensor<128x64xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %cst = arith.constant 3.200000e+01 : f32
+    %c8_i32 = arith.constant 8 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c0_i32 = arith.constant 0 : i32
+    %1 = scf.for %arg2 = %c0_i32 to %c32_i32 step %c8_i32 iter_args(%arg3 = %arg0) -> (tensor<128x64xf32>)  : i32 {
+      // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%arg3 : tensor<128x64xf32>) outs(%1 : tensor<128x64xf32>) -> tensor<128x64xf32>
+      // %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<128x64xf32>) outs(%3 : tensor<128x64xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<128x64xf32>
+      // %6 = hivm.hir.mmadL1 ins(%[[LOAD]], %arg1, %true, %c0, %c0, %c0 : tensor<128x64xf32>, tensor<64x64xf32>, i1, index, index, index) outs(%5 : tensor<128x64xf32>) -> tensor<128x64xf32>
+
+      %2 = tensor.empty() : tensor<128x64xf32>
+      %3 = hivm.hir.mmadL1 ins(%arg3, %arg1, %true, %c0, %c0, %c0 : tensor<128x64xf32>, tensor<64x64xf32>, i1, index, index, index) outs(%2 : tensor<128x64xf32>) -> tensor<128x64xf32>
+      %4 = tensor.empty() : tensor<128x64xf32>
+      %5 = hivm.hir.vadd ins(%3, %cst : tensor<128x64xf32>, f32) outs(%4 : tensor<128x64xf32>) -> tensor<128x64xf32>
+      scf.yield %5 : tensor<128x64xf32>
+    }
+    return %1 : tensor<128x64xf32>
+  }
+}
