@@ -272,7 +272,7 @@ func.func @test_fptosi_f32_i32(%arg0 : tensor<6x6xf32>) -> tensor<6x6xi32> {
 // CHECK-LABEL: func.func @test_sitofp_i32_f32
 func.func @test_sitofp_i32_f32(%arg0 : tensor<6x6xi32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
   %ret = arith.sitofp %arg0 : tensor<6x6xi32> to tensor<6x6xf32>
   return %ret : tensor<6x6xf32>
 }

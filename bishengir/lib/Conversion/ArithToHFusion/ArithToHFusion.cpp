@@ -208,10 +208,10 @@ struct ElementwiseOpToHFusionCast : OpRewritePattern<CastOp> {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
       }
       return hfusion::RoundMode::RINT;
-    } else if (isa<arith::ExtSIOp>(op) || isa<arith::ExtUIOp>(op)) {
+    } else if (isa<arith::ExtSIOp>(op) || isa<arith::ExtUIOp>(op) ||
+               isa<arith::SIToFPOp>(op) || isa<arith::UIToFPOp>(op)) {
       return hfusion::RoundMode::RINT;
-    } else if (isa<arith::FPToSIOp>(op) || isa<arith::SIToFPOp>(op) ||
-               isa<arith::FPToUIOp>(op) || isa<arith::UIToFPOp>(op)) {
+    } else if (isa<arith::FPToSIOp>(op) || isa<arith::FPToUIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
       }
