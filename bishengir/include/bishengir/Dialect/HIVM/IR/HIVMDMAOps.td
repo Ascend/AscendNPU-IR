@@ -271,6 +271,7 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>
 ]> {
   let summary = "HIVM data copy operation from L0C to L1 or Global Memory";
+#ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let description = [{
     Fixpipe is pipeline that performing data movement from L0C to OUT or L1,
     with on-the-fly fixed function of pre-stage quantization,
@@ -278,6 +279,21 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
 
     Additionally, Fixpipe is also capable of layout transform.
   }];
+#else
+  let description = [{
+    Fixpipe is pipeline that performing data movement from L0C to OUT or L1,
+    with on-the-fly fixed function of pre-stage quantization,
+    pre-stage ReLU, element-wise add, post-stage ReLU, post-stage quantization.
+
+    Additionally, Fixpipe is also capable of layout transform.
+
+    ### Attributes
+
+    #### `dual_dst_mode`
+    HIVM dual destination mode control. dual destination mode can be enabled only when nz2nd or normal data
+    movement mode is enabled, and data movement is being performed from L0C to UB. Only supported on Ascend910_95 series.
+  }];
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let arguments = (ins AnyShaped:$src,
                        AnyShaped:$dst,
                        Arg<Optional<I1>, [{
@@ -285,6 +301,10 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        OptionalAttr<UnitAttr>:$enable_nz2nd,
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+                       DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
+                         "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                        DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
                          "FixpipePreQuantMode::NO_QUANT">:$pre_quant,
                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
@@ -304,8 +324,23 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
                     CArg<"UnitAttr", "nullptr">:$enable_nz2nd, CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
                     CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+    >,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd,
+                    CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
+                    CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+    >,
+    OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
+                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd,
+                    CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
+                    CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
     >
   ];
+#ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
@@ -313,6 +348,17 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
     (`->` type($result_tensor)^)?
   }];
+#else
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`dual_dst_mode` `=` $dual_dst_mode^)?
+    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
+    (`->` type($result_tensor)^)?
+  }];
+  let hasVerifier = 1; // verify parameter according to hardware version
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
     int needFixpipePreFuse();

@@ -34,6 +34,10 @@ endif()
 option(BISHENGIR_BUILD_STANDALONE_IR_ONLY
   "Experimental feature. If set, only build IR definitions." OFF)
 
+# The BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES option is used to enable A5 features that are currently unpublished.
+option(BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+  "Experimental feature. If set, enable A5 unpublished features." OFF)
+
 # Only enable execution engine if the native target is available.
 if (${LLVM_NATIVE_ARCH} IN_LIST LLVM_TARGETS_TO_BUILD)
   set(MLIR_ENABLE_EXECUTION_ENGINE 1)

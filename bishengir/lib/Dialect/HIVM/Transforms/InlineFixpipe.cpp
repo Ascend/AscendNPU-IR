@@ -15,10 +15,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This pass converts ops to hivm.fixpipe .
+// This pass converts ops to hivm.fixpipe.
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -137,10 +138,17 @@ public:
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
     LDBG("Replacing fix pipe for " << op);
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+    auto res = rewriter.create<FixpipeOp>(	
+        op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),	
+        /*src=*/insertAfterOp->getResult(resultIndx),	
+        /*dst=*/fixpipeInit, rewriter.getUnitAttr());
+#else
     auto res = rewriter.create<FixpipeOp>(
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/insertAfterOp->getResult(resultIndx),
-        /*dst=*/fixpipeInit, rewriter.getUnitAttr());
+        /*dst=*/fixpipeInit, rewriter.getUnitAttr(), FixpipeDualDstModeAttr{});
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
     op->setAttr(fixpipeAlreadyInserted, rewriter.getBoolAttr(true));
     rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
                                   res.getResultTensor(), res);
@@ -393,10 +401,18 @@ private:
           utils::createEmptyOp(rewriter, scfForOp->getLoc(), fixpipeResTensor);
       auto quantModeAttr = fixPipeOp.getPreQuantAttr();
       auto reluModeAttr = fixPipeOp.getPreReluAttr();
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+      auto newFixpipeOp = rewriter.create<FixpipeOp>(	
+          fixPipeOp.getLoc(), TypeRange{fixpipeInit},	
+          scfForOp->getResult(idx.value()), fixpipeInit, rewriter.getUnitAttr(),
+          quantModeAttr, reluModeAttr);
+#else
       auto newFixpipeOp = rewriter.create<FixpipeOp>(
           fixPipeOp.getLoc(), TypeRange{fixpipeInit},
           scfForOp->getResult(idx.value()), fixpipeInit, rewriter.getUnitAttr(),
+          FixpipeDualDstModeAttr{},
           quantModeAttr, reluModeAttr);
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
       rewriter.replaceAllUsesExcept(scfForOp->getResult(idx.value()),
                                     newFixpipeOp.getResultTensor(),
                                     newFixpipeOp);
@@ -444,11 +460,17 @@ public:
 
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, op->getLoc(), maybeMmadRes);
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+    auto fixpipeOp = rewriter.create<FixpipeOp>(	
+        op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),	
+        /*src=*/maybeMmadRes,	
+        /*dst=*/fixpipeInit, rewriter.getUnitAttr());
+#else
     auto fixpipeOp = rewriter.create<FixpipeOp>(
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/maybeMmadRes,
-        /*dst=*/fixpipeInit, rewriter.getUnitAttr());
-
+        /*dst=*/fixpipeInit, rewriter.getUnitAttr(), FixpipeDualDstModeAttr{});
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
     rewriter.replaceOpWithNewOp<DebugOp>(
         op, op.getDebugtype(), op.getPrefix(), op.getHex(),
         fixpipeOp.getResultTensor(),

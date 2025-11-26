@@ -37,6 +37,9 @@
 /* If set, only build IR definitions. */
 #cmakedefine01 BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
+/* If set, enable A5 unpublished features. */
+#cmakedefine01 BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+
 /* Specifies BiShengIR vendor information. */
 #cmakedefine BISHENGIR_VENDOR "${BISHENGIR_VENDOR}"
 

@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
@@ -562,19 +563,54 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value dst,
                       UnitAttr enable_nz2nd, FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ Value{},
-        enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ UnitFlagAttr{});
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, pre_quant, pre_relu, channel_split,	
+        /*unit_flag_mode=*/nullptr);
+#else
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, /*dual_dst_mode=*/nullptr, pre_quant, pre_relu, channel_split,
+        /*unit_flag_mode=*/nullptr);
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 }
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Type result, Value src, Value dst, UnitAttr enable_nz2nd,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ Value{},
-        enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ UnitFlagAttr{});
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, pre_quant, pre_relu, channel_split,	
+        /*unit_flag_mode=*/nullptr);
+#else
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, /*dual_dst_mode=*/nullptr, pre_quant, pre_relu, channel_split,
+        /*unit_flag_mode=*/nullptr);
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 }
+
+#if BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      UnitAttr enable_nz2nd,
+                      FixpipeDualDstModeAttr dual_dst_mode,
+                      FixpipePreQuantModeAttr pre_quant,
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, dual_dst_mode, pre_quant, pre_relu, channel_split,
+        /*unit_flag_mode=*/nullptr);
+}
+
+void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      Type result, Value src, Value dst, UnitAttr enable_nz2nd,
+                      FixpipeDualDstModeAttr dual_dst_mode,
+                      FixpipePreQuantModeAttr pre_quant,
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+        enable_nz2nd, dual_dst_mode, pre_quant, pre_relu, channel_split,
+        /*unit_flag_mode=*/nullptr);
+}
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 
 enum FixpipeState {
   Init = -1,
@@ -611,3 +647,23 @@ int FixpipeOp::getFixpipeState() {
 
   return FixpipeState::Init;
 }
+
+#if BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+LogicalResult FixpipeOp::verify() {
+  // TODO: check that the nz2nd mode is enabled before the dual_dst_mode.
+  // check src and dst of dual_dst_mode.
+  auto dualDstModeAttr = getDualDstModeAttr();
+  if (dualDstModeAttr) {
+    auto dualDstMode = dualDstModeAttr.getDualDstMode();
+    auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
+    auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
+    bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
+    if (hasScopeValue && dualDstMode != FixpipeDualDstMode::NO_DUAL &&
+        (srcScope != hivm::AddressSpace::L0C || dstScope != hivm::AddressSpace::UB))
+      return emitOpError(
+        "if dual_dst_mode is enabled, the data movement must be performed from L0C to UB!");
+  }
+
+  return success();
+}
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
