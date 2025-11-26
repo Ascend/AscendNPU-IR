@@ -26,6 +26,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Transforms/Passes.h"
+#include "llvm/ADT/STLExtras.h"
 
 #define DEBUG_TYPE "hivm-mark-stride-align"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -92,7 +93,8 @@ std::optional<int> getLastUnContinuousDim(
         return !isLastMemrefDimUnitStride(memRefType);
       })) {
     LDBG("last dim stride is not 1\n");
-    return getLastNotUnitDim(origMemRefTypes, continuousReassociations.back());
+    return getLastNotUnitDim(origMemRefTypes, continuousReassociations,
+                             continuousReassociations.size() - 1);
   }
 
   if (continuousReassociations.size() == 1) {
@@ -101,9 +103,8 @@ std::optional<int> getLastUnContinuousDim(
   }
 
   assert(continuousReassociations.size() > 1);
-  return getLastNotUnitDim(
-      origMemRefTypes,
-      continuousReassociations[continuousReassociations.size() - 2]);
+  return getLastNotUnitDim(origMemRefTypes, continuousReassociations,
+                           continuousReassociations.size() - 2);
 }
 
 bool isAllRank0(const SmallVectorImpl<MemRefType> &memrefTypes) {

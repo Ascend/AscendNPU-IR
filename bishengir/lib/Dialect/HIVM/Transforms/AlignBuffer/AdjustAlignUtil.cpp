@@ -38,7 +38,8 @@ std::optional<int> getPrevUncontiguousDim(
   }
 
   return getLastNotUnitDim(origMemRefTypes,
-                           flattenReassociations[flattenAlignDim - 1]);
+                           flattenReassociations,
+                           flattenAlignDim - 1);
 }
 
 bool isAlreadyAligned(MemRefType memrefType, int32_t alignDim) {
@@ -133,16 +134,23 @@ getMapedAlignDim(std::optional<int32_t> alignDim,
   return std::nullopt;
 }
 
-std::optional<int>
+std::optional<int32_t>
 getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
-                  ReassociationIndices reassociations) {
-  for (auto index : llvm::reverse(reassociations)) {
-    if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
-          return memRefType.getShape()[index] == 1;
-        })) {
-      continue;
+                  llvm::ArrayRef<ReassociationIndices> continuousReassociations,
+                  int64_t startIdx) {
+  assert(startIdx < (int64_t)continuousReassociations.size());
+  
+  for (; startIdx >= 0; startIdx--) {
+    const auto& reassociations = continuousReassociations[startIdx];
+    
+    for (auto index : llvm::reverse(reassociations)) {
+      if (llvm::all_of(memRefTypes, [index](MemRefType memRefType) {
+            return memRefType.getShape()[index] == 1;
+          })) {
+        continue;
+      }
+      return index;
     }
-    return index;
   }
   return std::nullopt;
 }

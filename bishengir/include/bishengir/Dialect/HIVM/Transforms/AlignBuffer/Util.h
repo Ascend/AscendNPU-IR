@@ -121,9 +121,10 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
 LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                             const Location loc, Value from,
                                             Value to);
-std::optional<int>
+std::optional<int32_t>
 getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
-                  ReassociationIndices reassociations);
+                  llvm::ArrayRef<ReassociationIndices> continuousReassociations,
+                  int64_t startIdx);
 std::optional<int32_t> adjustAlignDim(Operation *op, Value operand,
                                       std::optional<int32_t> alignDim);
 std::pair<llvm::SmallVector<int32_t>, llvm::SmallVector<int32_t>>
