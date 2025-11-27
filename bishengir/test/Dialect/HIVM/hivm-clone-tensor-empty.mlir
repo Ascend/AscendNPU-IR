@@ -91,3 +91,24 @@ func.func @test_sink_empty() -> tensor<16xf32>{
   
   return %ret : tensor<16xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @rewrite_tensor_before_use
+// CHECK: scf.for %[[IV:.*]] = %c0 to %c4096 step %c1
+// CHECK:   %[[EMP:.*]] = tensor.empty() : tensor<1xi32>
+// CHECK:   %[[INS:.*]] = tensor.insert %c42_i32 into %[[EMP]][%c0] : tensor<1xi32>
+
+func.func @rewrite_tensor_before_use(%arg0: memref<?xi32>) {
+  %c42_i32 = arith.constant 42 : i32
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4096 = arith.constant 4096 : index
+  %7 = tensor.empty() : tensor<1xi32>
+  scf.for %arg1 = %c0 to %c4096 step %c1 {
+    %inserted = tensor.insert %c42_i32 into %7[%c0] : tensor<1xi32>
+    %reinterpret_cast =
+      memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+      hivm.hir.store ins(%inserted : tensor<1xi32>) outs(%reinterpret_cast : memref<1xi32, strided<[1], offset: ?>>)
+    }
+  return
+}
