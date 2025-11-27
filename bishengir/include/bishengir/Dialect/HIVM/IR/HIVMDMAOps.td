@@ -207,12 +207,14 @@ def CopyOp : HIVM_DmaOp<"copy", [
 ]> {
   let summary = "HIVM data copy operation";
   let description = [{
-    Copy the data between local memory hierarchies. Currently only
-    support copying from unified buffer to unified buffer.
+    Copy the data between local memory hierarchies.
+    Currently support:
+      - UB to UB
+      - UB to L1 (for Ascend910_95 series)
 
     Examples:
     ```mlir
-    hivm.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
     ```
 
     Constraints:
@@ -270,12 +272,16 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   HIVMUnitFlagEnabledInterface,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>
 ]> {
-  let summary = "HIVM data copy operation from L0C to L1 or Global Memory";
+  let summary = "HIVM data copy operation from L0C to other memory hierarchies.";
 #ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let description = [{
-    Fixpipe is pipeline that performing data movement from L0C to OUT or L1,
+    Fixpipe is pipeline that performing data movement from L0C to other memory hierarchies,
     with on-the-fly fixed function of pre-stage quantization,
     pre-stage ReLU, element-wise add, post-stage ReLU, post-stage quantization.
+    Currently support:
+      - L0C to OUT
+      - L0C to L1
+      - L0C to UB (for Ascend910_95 series)
 
     Additionally, Fixpipe is also capable of layout transform.
   }];

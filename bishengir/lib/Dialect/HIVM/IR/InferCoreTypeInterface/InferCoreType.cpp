@@ -271,19 +271,18 @@ std::optional<TCoreType> CopyOp::inferCoreType() {
     auto toAddrSpace =
         dyn_cast_or_null<hivm::AddressSpaceAttr>(dstMemRefTy.getMemorySpace());
     if (fromAddrSpace && toAddrSpace) {
-      bool isGMToUB =
-          fromAddrSpace.getAddressSpace() == hivm::AddressSpace::GM &&
-          toAddrSpace.getAddressSpace() == hivm::AddressSpace::UB;
-      bool isUBToGM =
-          fromAddrSpace.getAddressSpace() == hivm::AddressSpace::UB &&
-          toAddrSpace.getAddressSpace() == hivm::AddressSpace::GM;
+      static const std::set<std::pair<hivm::AddressSpace, hivm::AddressSpace>>
+          vectorTypeSet{
+              std::pair{hivm::AddressSpace::GM, hivm::AddressSpace::UB},
+              std::pair{hivm::AddressSpace::UB, hivm::AddressSpace::GM},
+              std::pair{hivm::AddressSpace::UB, hivm::AddressSpace::UB},
+              std::pair{hivm::AddressSpace::UB, hivm::AddressSpace::L1},
+          };
 
-      bool isUBToUB =
-          fromAddrSpace.getAddressSpace() == hivm::AddressSpace::UB &&
-          toAddrSpace.getAddressSpace() == hivm::AddressSpace::UB;
-
-      return (isGMToUB || isUBToGM || isUBToUB) ? TCoreType::VECTOR
-                                                : TCoreType::CUBE;
+      return vectorTypeSet.count(std::pair{fromAddrSpace.getAddressSpace(),
+                                           toAddrSpace.getAddressSpace()})
+                 ? TCoreType::VECTOR
+                 : TCoreType::CUBE;
     }
   }
 

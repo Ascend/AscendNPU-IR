@@ -42,6 +42,7 @@ PIPE CopyOp::getPipe() {
       {std::make_pair(AddressSpace::UB, AddressSpace::UB), PIPE::PIPE_V},
       {std::make_pair(AddressSpace::L0C, AddressSpace::GM), PIPE::PIPE_FIX},
       {std::make_pair(AddressSpace::GM, AddressSpace::L1), PIPE::PIPE_MTE2},
+      {std::make_pair(AddressSpace::UB, AddressSpace::L1), PIPE::PIPE_MTE3},
   };
 
   auto nowSrcDstSpace =
