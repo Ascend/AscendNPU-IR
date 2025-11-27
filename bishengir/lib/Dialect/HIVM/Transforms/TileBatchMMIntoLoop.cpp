@@ -256,7 +256,12 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
 
     rewriter.create<hivm::FixpipeOp>(
         originFixpipe.getLoc(), Type{}, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getEnableNz2ndAttr(),
+        /*dst=*/fixpipeDst,
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+        originFixpipe.getEnableNz2ndAttr(),
+#else
+        originFixpipe.getDmaModeAttr(),
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
         originFixpipe.getPreQuantAttr(), originFixpipe.getPreReluAttr(),
         originFixpipe.getChannelSplitAttr());
   } else if (isa<mlir::TensorType>(oriFixpipeDst.getType())) {
@@ -274,7 +279,12 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
 
     auto newfixpipe = rewriter.create<hivm::FixpipeOp>(
         originFixpipe.getLoc(), resultType, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getEnableNz2ndAttr(),
+        /*dst=*/fixpipeDst,
+#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
+        originFixpipe.getEnableNz2ndAttr(),
+#else
+        originFixpipe.getDmaModeAttr(),
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
         originFixpipe.getPreQuantAttr(), originFixpipe.getPreReluAttr(),
         originFixpipe.getChannelSplitAttr());
 
