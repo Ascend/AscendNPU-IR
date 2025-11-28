@@ -1349,10 +1349,12 @@ struct NormalizeArgMinMaxOp : OpRewritePattern<hfusion::ReduceWithIndexOp> {
             .getResult();
 
     auto srcNanMasked = utils::createEmptyOp(rewriter, loc, src);
-    srcNanMasked = rewriter.create<hfusion::SelectOp>(
-        loc, TypeRange(srcNanMasked),
-        ValueRange({srcNanMask, infValue, zeroValue}),
-        ValueRange(srcNanMasked)).getResults()[0];
+    srcNanMasked = rewriter
+                       .create<hfusion::SelectOp>(
+                           loc, TypeRange(srcNanMasked),
+                           ValueRange({srcNanMask, infValue, zeroValue}),
+                           ValueRange(srcNanMasked))
+                       .getResults()[0];
 
     auto srcNanVals = utils::createEmptyOp(rewriter, loc, op.getResults()[0]);
     auto srcNanIdxs = utils::createEmptyOp(rewriter, loc, op.getResults()[1]);
@@ -1376,8 +1378,8 @@ struct NormalizeArgMinMaxOp : OpRewritePattern<hfusion::ReduceWithIndexOp> {
         ValueRange({valsInfMask, srcNanIdxs, op.getResults()[1]}),
         ValueRange(newOutput));
 
-    rewriter.replaceAllUsesExcept(op.getResults()[1], finalSelectOp.getResults()[0],
-                                  finalSelectOp);
+    rewriter.replaceAllUsesExcept(op.getResults()[1],
+                                  finalSelectOp.getResults()[0], finalSelectOp);
     rewriter.modifyOpInPlace(op, [&]() {
       op->setAttr(kAlreadyInitalizeInit, UnitAttr::get(op->getContext()));
     });
@@ -2615,48 +2617,11 @@ public:
       return failure();
     }
 
-    // step 1: mask sign bit.
-    // 1. vdup(7FFF) : (I32/I16)
     auto loc = op->getLoc();
-    auto maskedSignValue = maskSignBit(rewriter, loc, input);
+    auto *itselfCmp = createCmpOp(rewriter, loc, op.getInput(), op.getInput(),
+                                  CompareFn::vne);
+    rewriter.replaceOp(op, itselfCmp);
 
-    // step 2: compared with negtive Infinity
-    // 3.vadd(input, input, neg_inf_bitcast_as_int).
-    auto minusInfValue = minusInfConstValue(rewriter, loc, maskedSignValue);
-
-    // step3: change temp result to 1 which is > 1
-    // vmin(input, input, 1) : (I32/I16)
-    Type castType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
-    arith::ConstantOp posOneOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 1));
-    auto minOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::min_signed,
-            ValueRange{minusInfValue, posOneOp->getResults()[0]},
-            ValueRange{minusInfValue});
-
-    // step4. change temp result to 0 which is < 0
-    // vmax(input, input, 0) : (I32/I16)
-    arith::ConstantOp zeroOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 0));
-    auto maxOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::max_signed,
-            ValueRange({minOp->getResults()[0], zeroOp->getResults()[0]}),
-            minOp->getResults()[0]);
-
-    // step5. cast int32 to int1
-    // cast(input, i32 -> i1)
-    auto roundingAttr =
-        rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
-    auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
-                                          roundingAttr);
-    hfusion::CastOp castToDst = rewriter.create<hfusion::CastOp>(
-        loc, TypeRange(op.getOutput()), maxOp->getResults()[0], op.getOutput(),
-        modeAttr);
-    rewriter.replaceOp(op, castToDst);
     return success();
   }
 };
