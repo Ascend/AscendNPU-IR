@@ -324,15 +324,6 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
-                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd, CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
-    >,
-    OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
-                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd, CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-    >,
-    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
 #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
@@ -348,10 +339,9 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
 #else
                     CArg<"UnitAttr", "nullptr">:$enable_nz2nd,
-#endif
-                    CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
 #endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+                    CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
     >
   ];
 #ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
