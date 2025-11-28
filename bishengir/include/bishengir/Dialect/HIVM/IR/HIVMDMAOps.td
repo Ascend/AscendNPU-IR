@@ -310,7 +310,7 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
 #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-                       DefaultValueAttr<HIVM_FixpipeDMAModeAttr,
+                       DefaultValuedAttr<HIVM_FixpipeDMAModeAttr,
                          "FixpipeDMAMode::NZ2NZ">:$dma_mode,
                        DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
                          "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
