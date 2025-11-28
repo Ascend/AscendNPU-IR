@@ -549,6 +549,13 @@ struct DuplicateTensorExtractForCube
     extractOp.getOperation()->setAttr(visitedLabel,
                                       rewriter.getI32IntegerAttr(1));
 
+    // if the extractOp is in for loop, and the for loop is gather_load,
+    // the for loop should be atomic, don't insert any other op.
+    auto forOp = extractOp->getParentOfType<scf::ForOp>();
+    if (forOp && forOp->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name)) {
+      return failure();
+    }
+
     // only process cases with vector sources
     Value originTensor = extractOp.getTensor();
     if (getElementTypeOrSelf(originTensor) == rewriter.getI1Type()) {
