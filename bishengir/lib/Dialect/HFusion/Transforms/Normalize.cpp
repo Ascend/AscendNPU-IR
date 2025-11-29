@@ -315,175 +315,271 @@ static Value tayler(PatternRewriter &rewriter, Location loc, Value x,
 }
 
 namespace mlir::hfusion {
-// normalize sin(x) to sinTayler(norm(x,x_round,0.0))*sign(x_round), where
-// round_x=round(input_x*(1/pi))
-struct NormalizeSinOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+template <class Derived>
+class NormalizeTrigBase : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
+  explicit NormalizeTrigBase(MLIRContext *ctx, PatternBenefit benefit = 1)
+      : OpRewritePattern<hfusion::ElemwiseUnaryOp>(ctx, benefit) {}
   LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
                                 PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
+    if (!op.hasPureTensorSemantics())
       return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::sin) {
+    if (op.getFun() != Derived::kUnaryFn)
       return failure();
-    }
 
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    // round_x=round(input_x*(1/pi))
-    // 1/pi=0.3183098733425140380859375
+    // ---------- FP16 → FP32 ----------
+    auto inTy = getElementTypeOrSelf(op.getInputs()[0].getType());
     Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      // TODO: remove cast after enable automatical high precision computing
+    if (inTy.isF16())
       input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
                               hfusion::RoundMode::ROUND);
-    }
+
     auto loc = op->getLoc();
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto elementType = getElementTypeOrSelf(input.getType());
-    auto piRecOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1 / (double)M_PI));
-    auto inputDivPi =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul, ValueRange{input, piRecOp},
-            ValueRange(emptyOp))
-            ->getResult(0);
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
 
-    auto xRound = hfusion::castTo(rewriter, inputDivPi, rewriter.getF32Type(),
-                                  hfusion::RoundMode::ROUND);
+    // Phase‑1 & Phase‑2
+    auto roundInputs = static_cast<const Derived *>(this)->PrepRoundInput(
+        rewriter, loc, input, empty);
+    auto xFixed = static_cast<const Derived *>(this)->CalculateXFixed(
+        rewriter, loc, input, roundInputs, empty);
 
-    // norm_x = x-round(x/pi)*(pi1+pi2+pi3+pi4+pi5)+offset
-    // (pi1+pi2+pi3+pi4+pi5) approximates pi
-    const llvm::SmallVector<double> piApproParams = {
-        3.140625, 0.0009670257568359375, 6.2771141529083251953125e-7,
-        1.21644916362129151821136474609375e-10,
-        -1.0290623200529979163359041220560e-13};
-    auto normInput = norm(rewriter, loc, input, xRound, piApproParams, 0.0);
+    // Phase‑3 & Phase‑4
+    auto sign = CalculateSign(rewriter, loc, roundInputs[0], empty);
+    auto result = static_cast<const Derived *>(this)->CalculateResult(
+        rewriter, loc, sign, xFixed, empty);
 
-    // x_res = sinTayler(norm_x)
+    // ---------- post process ----------
+    Value finalRes =
+        static_cast<const Derived *>(this)->postProcess(rewriter, loc, result);
 
-    auto sinTaylerNorm =
-        tayler<hfusion::TaylerMode::SIN>(rewriter, loc, normInput, 5);
+    // ---------- FP32 → FP16 ----------
+    if (inTy.isF16())
+      finalRes = hfusion::castTo(rewriter, finalRes, rewriter.getF16Type(),
+                                 hfusion::RoundMode::ROUND);
 
-    // sign(round_x)=floor(x_round/2)*4- x_round*(2)+1
-    auto signX = sign<hfusion::TaylerMode::SIN>(rewriter, loc, xRound);
-
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::mul,
-                    ValueRange{sinTaylerNorm, signX}, ValueRange(emptyOp))
-                    ->getResult(0);
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
+    rewriter.replaceOp(op, finalRes);
     return success();
+  }
+
+protected:
+  template <mlir::linalg::BinaryFn T>
+  Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value inp1,
+                          Value inp2, Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, T, ValueRange({inp1, inp2}), out)
+        ->getResult(0);
+  }
+
+  // a*b + c
+  Value mulAdd(PatternRewriter &rewriter, Location loc, Value a, Value b,
+               Value c, Value out) const {
+    auto mul =
+        createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, a, b, out);
+    return createLinalgBinOp<linalg::BinaryFn::add>(rewriter, loc, mul, c, out);
+  }
+
+  // c - a*b
+  Value subMul(PatternRewriter &rewriter, Location loc, Value a, Value b,
+               Value c, Value out) const {
+    auto mul =
+        createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, a, b, out);
+    return createLinalgBinOp<linalg::BinaryFn::sub>(rewriter, loc, c, mul, out);
+  }
+
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+  // ---------- Phase‑3 ----------
+  Value CalculateSign(PatternRewriter &rewriter, Location loc, Value roundInput,
+                      Value &empty) const {
+    // kover2 = roundInput * HALF
+    auto kover2 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, roundInput, f32Const(rewriter, loc, trig::HALF), empty);
+    // floor(kover2)
+    auto koverFloor = hfusion::castTo(rewriter, kover2, rewriter.getF32Type(),
+                                      hfusion::RoundMode::FLOOR);
+    // koverFloor * FOUR
+    auto koverFloorM4 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, koverFloor, f32Const(rewriter, loc, trig::FOUR), empty);
+    // k2 = roundInput * NEG_TWO
+    auto k2 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, roundInput, f32Const(rewriter, loc, trig::NEG_TWO),
+        empty);
+    // sign = koverFloorM4 + k2 + ONE
+    auto tmp = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, koverFloorM4, k2, empty);
+    return createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, tmp, f32Const(rewriter, loc, trig::ONE), empty);
+  }
+  // ---------- Phase‑4 ----------
+  virtual Value CalculateResult(PatternRewriter &rewriter, Location loc,
+                                Value sign, Value xFixed, Value &empty) const {
+    // xPow = xFixed * xFixed
+    auto xPow = createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, xFixed,
+                                                         xFixed, empty);
+
+    // (xPow * RES_MUL_SCA) + RES_ADD_UP
+    auto res =
+        mulAdd(rewriter, loc, xPow, f32Const(rewriter, loc, trig::RES_MUL_SCA),
+               f32Const(rewriter, loc, trig::RES_ADD_UP), empty);
+
+    // (res * xPow) + coeff
+    res = mulAdd(rewriter, loc, res, xPow,
+                 f32Const(rewriter, loc, trig::COEF_2), empty);
+    res = mulAdd(rewriter, loc, res, xPow,
+                 f32Const(rewriter, loc, trig::COEF_3), empty);
+    res = mulAdd(rewriter, loc, res, xPow, f32Const(rewriter, loc, trig::ONE),
+                 empty);
+
+    // res * xFixed * sign
+    res = createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, res, xFixed,
+                                                   empty);
+    return createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, res, sign,
+                                                    empty);
+  };
+
+  // Phase‑1
+  virtual SmallVector<Value> PrepRoundInput(PatternRewriter &rewriter,
+                                            Location loc, Value input,
+                                            Value &empty) const = 0;
+
+  // Phase‑2
+  virtual Value CalculateXFixed(PatternRewriter &rewriter, Location loc,
+                                Value input, SmallVector<Value> roundInputs,
+                                Value &empty) const = 0;
+
+  virtual Value postProcess(PatternRewriter &rewriter, Location loc,
+                            Value input) const {
+    return input;
   }
 };
 
-/// normalize cos(x)
-/// cos(x) = sin(x+pi/2)
-///        = sinTayler(norm(x+pi/2,x_round,0.0))*sign(x_round),
-/// where
-/// round_x = round((x+pi/2)*(1/pi))
-///         = sinTayler(norm(x,x_round,pi/2))*sign(x_round),
-/// where
-/// round_x = round(x*(1/pi)+0.5)
-
-struct NormalizeCosOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  Value computeRoundX(PatternRewriter &rewriter, Location loc,
-                      Value input) const {
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto elementType = getElementTypeOrSelf(input.getType());
-    auto piRecOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1 / (double)M_PI));
-    auto inputDivPi =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul, ValueRange{input, piRecOp},
-            ValueRange(emptyOp))
-            ->getResult(0);
-    auto halfOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 0.5));
-    auto inputInit =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{inputDivPi, halfOp}, ValueRange(emptyOp))
-            ->getResult(0);
-
-    return hfusion::castTo(rewriter, inputInit, rewriter.getF32Type(),
-                           hfusion::RoundMode::ROUND);
+/// normalize sin(x) implementation
+/// Sin value precision is improved by using various precision levels of PI
+/// Using an assortment of arithmetic operations, the Taylor expansion is
+/// mimicked to calculate the value of Sin(X) where X is in radians.
+struct NormalizeSinOp : public NormalizeTrigBase<NormalizeSinOp> {
+  using NormalizeTrigBase<NormalizeSinOp>::NormalizeTrigBase;
+  static constexpr hfusion::UnaryFn kUnaryFn = hfusion::UnaryFn::sin;
+  // ---------- Phase‑1 ----------
+  SmallVector<Value> PrepRoundInput(PatternRewriter &rewriter, Location loc,
+                                    Value input, Value &empty) const override {
+    // input * PI_FOR_X_DIV
+    auto vmul = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, input, f32Const(rewriter, loc, trig::PI_FOR_X_DIV),
+        empty);
+    // vmul * ONE_OVER_2048
+    auto vmul0 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, vmul, f32Const(rewriter, loc, trig::ONE_OVER_2048),
+        empty);
+    // rounding
+    auto roundPiDiv = hfusion::castTo(rewriter, vmul, rewriter.getF32Type(),
+                                      hfusion::RoundMode::ROUND);
+    auto roundPiDiv0 = hfusion::castTo(rewriter, vmul0, rewriter.getF32Type(),
+                                       hfusion::RoundMode::ROUND);
+    // roundPiDiv1 = roundPiDiv - roundPiDiv0 * CONST_2048
+    roundPiDiv0 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, roundPiDiv0, f32Const(rewriter, loc, trig::CONST_2048),
+        empty);
+    auto roundPiDiv1 = createLinalgBinOp<linalg::BinaryFn::sub>(
+        rewriter, loc, roundPiDiv, roundPiDiv0, empty);
+    return {roundPiDiv, roundPiDiv0, roundPiDiv1};
   }
 
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
+  // ---------- Phase‑2 ----------
+  Value CalculateXFixed(PatternRewriter &rewriter, Location loc, Value input,
+                        SmallVector<Value> roundInputs,
+                        Value &empty) const override {
+    const float coeffs[4] = {trig::PI_0, trig::PI_1, trig::PI_2, trig::PI_3};
+    Value xFixed = input;
+    for (int i = 0; i < 4; ++i) {
+      // xFixed = xFixed - roundPiDivx * PI_X
+      xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, coeffs[i]),
+                      roundInputs[1], xFixed, empty);
+      xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, coeffs[i]),
+                      roundInputs[2], xFixed, empty);
     }
+    return xFixed;
+  }
+};
 
-    if (op.getFun() != hfusion::UnaryFn::cos) {
-      return failure();
-    }
+/// normalize cos(x) implementation
+/// Cos value precision is improved by using various precision levels of PI
+/// Using an assortment of arithmetic operations, the Taylor expansion is
+/// mimicked to calculate the value of Cos(X) where X is in radians.
+struct NormalizeCosOp : public NormalizeTrigBase<NormalizeCosOp> {
+  using NormalizeTrigBase<NormalizeCosOp>::NormalizeTrigBase;
+  static constexpr hfusion::UnaryFn kUnaryFn = hfusion::UnaryFn::cos;
 
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
+  // ---------- Phase‑1 ----------
+  SmallVector<Value> PrepRoundInput(PatternRewriter &rewriter, Location loc,
+                                    Value input, Value &empty) const override {
+    // input * COS_PI_FOR_X_DIV
+    auto vmul = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, input, f32Const(rewriter, loc, trig::PI_FOR_X_DIV),
+        empty);
+    // vmul + COS_HALF
+    auto vmul1 = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, vmul, f32Const(rewriter, loc, trig::HALF), empty);
+    // vmul * COS_ONE_OVER_2048
+    auto vmul0 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, vmul, f32Const(rewriter, loc, trig::ONE_OVER_2048),
+        empty);
+    // rounding
+    auto roundPiDiv = hfusion::castTo(rewriter, vmul1, rewriter.getF32Type(),
+                                      hfusion::RoundMode::ROUND);
+    auto roundPiDiv0 = hfusion::castTo(rewriter, vmul0, rewriter.getF32Type(),
+                                       hfusion::RoundMode::ROUND);
+    // roundPiDiv1 = roundPiDiv - roundPiDiv0 * COS_CONST_2048
+    roundPiDiv0 = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, roundPiDiv0, f32Const(rewriter, loc, trig::CONST_2048),
+        empty);
+    auto roundPiDiv1 = createLinalgBinOp<linalg::BinaryFn::sub>(
+        rewriter, loc, roundPiDiv, roundPiDiv0, empty);
+    return {roundPiDiv, roundPiDiv0, roundPiDiv1};
+  }
+  // ---------- Phase‑2 ----------
+  Value CalculateXFixed(PatternRewriter &rewriter, Location loc, Value input,
+                        SmallVector<Value> roundInputs,
+                        Value &empty) const override {
+    Value xFixed = input;
 
-    Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
-    }
+    // xFixed = xFixed - roundPiDivx * PI_X
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_0),
+                    roundInputs[1], xFixed, empty);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_0),
+                    roundInputs[2], xFixed, empty);
 
-    // step 1: compute round_x
-    // round_x = round(input_x*(1/pi)+0.5)
-    auto loc = op->getLoc();
-    auto xRound = computeRoundX(rewriter, loc, input);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_1),
+                    roundInputs[1], xFixed, empty);
+    xFixed = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, xFixed, f32Const(rewriter, loc, trig::COS_PI_DOWN),
+        empty);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_1),
+                    roundInputs[2], xFixed, empty);
 
-    // step 2: compute norm(x, x_round, pi/2)
-    const llvm::SmallVector<double> piApproParams = {
-        3.140625, 0.0009670257568359375, 6.2771141529083251953125e-7,
-        1.21644916362129151821136474609375e-10,
-        -1.0290623200529979163359041220560e-13};
-    auto normInput =
-        norm(rewriter, loc, input, xRound, piApproParams, (double)M_PI / 2);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_2),
+                    roundInputs[1], xFixed, empty);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_2),
+                    roundInputs[2], xFixed, empty);
 
-    // step 3: sinTayler(norm(x,x_round,pi/2))
-    auto cosTayler =
-        tayler<hfusion::TaylerMode::SIN>(rewriter, loc, normInput, 5);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_3),
+                    roundInputs[1], xFixed, empty);
+    xFixed = subMul(rewriter, loc, f32Const(rewriter, loc, trig::PI_3),
+                    roundInputs[2], xFixed, empty);
 
-    // step 4: compute sign(x_round)
-    auto signX = sign<hfusion::TaylerMode::SIN>(rewriter, loc, xRound);
-
-    // step 5: compute cos(x) = sinTayler(norm(x,x_round,pi/2))*sign(x_round)
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::mul,
-                    ValueRange{cosTayler, signX}, ValueRange(emptyOp))
-                    ->getResult(0);
-
-    if (inType.isF16()) {
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
-    return success();
+    xFixed = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, xFixed,
+        f32Const(rewriter, loc, trig::COS_PI_RESDOWN_ADDS_NEG), empty);
+    return xFixed;
+  }
+  Value postProcess(PatternRewriter &rewriter, Location loc,
+                    Value input) const override {
+    return ClipInput(rewriter, loc, input, trig::COS_CLIP_HIGH,
+                     trig::COS_CLIP_LOW);
   }
 };
 

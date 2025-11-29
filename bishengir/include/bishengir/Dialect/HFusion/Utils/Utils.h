@@ -308,6 +308,32 @@ hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 bool hasDynamicShapeOperand(Operation *op);
 
 } // namespace util
+
+namespace trig {
+const float PI_FOR_X_DIV = 3.1830987334251404e-01f;
+const float ONE_OVER_2048 = 4.8828125000000000e-04f;
+const float CONST_2048 = 2.0480000000000000e+03f;
+
+const float HALF = 5.0e-01f;
+const float FOUR = 4.0e+00f;
+const float NEG_TWO = -2.0e+00f;
+const float ONE = 1.0e+00f;
+
+const float PI_0 = 3.1416015625000000e+00f;
+const float PI_1 = -8.9071691036224365e-06f;
+const float PI_2 = -1.7412276065442711e-09f;
+const float PI_3 = 1.2446743939339977e-13f;
+
+const float RES_MUL_SCA = 2.6049265215988271e-06f;
+const float RES_ADD_UP = -1.9808944489341229e-04f;
+const float COEF_2 = 8.3330497145652771e-03f;
+const float COEF_3 = -1.6666658222675323e-01f;
+
+const float COS_PI_DOWN = 1.57079637050628662e+00f;
+const float COS_PI_RESDOWN_ADDS_NEG = -4.37113900018937e-08f;
+const float COS_CLIP_LOW = -1.0f;
+const float COS_CLIP_HIGH = 1.0f;
+} // namespace trig
 } // namespace hfusion
 } // namespace mlir
 
