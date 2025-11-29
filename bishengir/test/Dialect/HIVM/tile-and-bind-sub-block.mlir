@@ -1075,6 +1075,29 @@ module {
 }
 
 // -----
+// CHECK-LABEL:   func.func @simple_testcase_safely_revert(
+// CHECK:           %[[VAL_3:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_4:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vreduce <sum> ins(%[[random1:.*]] : tensor<6xf32>) outs(%[[random2:.*]] : tensor<1xf32>) reduce_dims = [0] -> tensor<1xf32>
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.get_sub_block_idx -> i64
+// CHECK:           %[[VAL_7:.*]] = arith.index_cast %[[VAL_6]] : i64 to index
+// CHECK:           %[[VAL_8:.*]] = arith.cmpi eq, %[[VAL_7]], %[[VAL_3]] : index
+// CHECK:           scf.if %[[VAL_8]] {
+// CHECK:             hivm.hir.store ins(%[[VAL_5]] : tensor<1xf32>) outs(%[[VAL_4:.*]] : memref<1xf32>)
+// CHECK:           } {limit_sub_block_id0}
+// CHECK:           return
+// CHECK:         }
+module {
+  func.func @simple_testcase_safely_revert(%arg0: tensor<6xf32>, %arg1: memref<1xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %0 = tensor.empty() : tensor<1xf32>
+    %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<6xf32>) outs(%0 : tensor<1xf32>) reduce_dims = [0] -> tensor<1xf32>
+    // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
+    hivm.hir.store ins(%1 : tensor<1xf32>) outs(%arg1 : memref<1xf32>)
+    return
+  }
+}
+
+// -----
 // CHECK-LABEL:   func.func @simple_testcase_store_with_result(
 // CHECK:           %[[VAL_5:.*]] = tensor.empty() : tensor<64xf32>
 // CHECK:           %[[VAL_6:.*]] = scf.for %[[VAL_7:.*]] = %[[VAL_3:.*]] to %[[VAL_2:.*]] step %[[VAL_4:.*]] iter_args(%[[VAL_8:.*]] = %[[VAL_0:.*]]) -> (tensor<64xf32>) {

@@ -411,7 +411,28 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   patterns.add<TileAndSliceStore>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
-  return applyPatternsGreedily(func, std::move(patterns), config);
+  if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
+    return failure();
+  }
+  bool changed = false;
+  func->walk([&](Operation *op) {
+    if (!isa<tensor::ExtractSliceOp>(op)) {
+      return WalkResult::advance();
+    }
+    auto extractSliceOp = cast<tensor::ExtractSliceOp>(op);
+    
+    if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice)) {
+      changed = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  if (!changed) {
+    return failure();
+  }
+  
+  return success();
 }
 
 /// Attempts to tile and bind sub-blocks within a function
