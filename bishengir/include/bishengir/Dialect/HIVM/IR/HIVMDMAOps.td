@@ -357,6 +357,9 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
     (`->` type($result_tensor)^)?
   }];
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+  let hasVerifier = 1; // verify parameter according to hardware version
+#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
     int needFixpipePreFuse();
