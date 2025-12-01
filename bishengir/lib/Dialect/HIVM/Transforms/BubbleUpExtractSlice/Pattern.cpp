@@ -251,7 +251,7 @@ Operation *BubbleUpPattern::getDefOpForInsertionPoint(OpOperand &opr) const {
 bool BroadcastBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<hivm::VBrcOp>(sourceOp) && !isDynamicSlice(sliceOp);
+  return isa_and_nonnull<hivm::VBrcOp>(sourceOp);
 }
 
 LogicalResult
@@ -262,8 +262,7 @@ BroadcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!broadcastOp)
     return failure();
 
-  auto outputType =
-      dyn_cast<RankedTensorType>(broadcastOp.getResult().front().getType());
+  auto outputType = dyn_cast<RankedTensorType>(broadcastOp.getDst().getType());
 
   // Get the positions of the input dimensions in the output
   auto broadcastDimMask =
@@ -324,7 +323,7 @@ BroadcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 bool ReduceBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<hivm::VReduceOp>(sourceOp) && !isDynamicSlice(sliceOp);
+  return isa_and_nonnull<hivm::VReduceOp>(sourceOp);
 }
 
 LogicalResult ReduceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
@@ -350,9 +349,6 @@ LogicalResult ReduceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   // Compute the input offsets and sizes
 
   auto inputShape = inputType.getShape();
-  if (ShapedType::isDynamicShape(inputShape))
-    return rewriter.notifyMatchFailure(reduceOp,
-                                       "better dynamic analysis is needed");
 
   auto inputSizes = sliceSizes;
   for (unsigned i = 0; i < rank; ++i) {

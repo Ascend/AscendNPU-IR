@@ -1,13 +1,13 @@
 // RUN: bishengir-opt %s  --hivm-bubble-up-extract-slice --split-input-file -verify-diagnostics  | FileCheck %s
 
-// CHECK-LABEL:   func.func @bubble_up_hivm(
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_1d_static(
 // CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4xf32>) -> tensor<2xf32> {
 // CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
 // CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2xf32>
 // CHECK:           %[[VAL_3:.*]] = hivm.hir.vln ins(%[[VAL_1]] : tensor<2xf32>) outs(%[[VAL_2]] : tensor<2xf32>) -> tensor<2xf32>
 // CHECK:           return %[[VAL_3]] : tensor<2xf32>
 // CHECK:         }
-func.func @bubble_up_hivm(%arg0: tensor<4xf32>) -> tensor<2xf32> {
+func.func @bubble_up_hivm_unary_1d_static(%arg0: tensor<4xf32>) -> tensor<2xf32> {
     %cst = arith.constant 0.000000e+00 : f32
     %0 = tensor.empty() :  tensor<4xf32>
     %29 = hivm.hir.vln ins(%arg0: tensor<4xf32>) outs(%0  : tensor<4xf32>) -> tensor<4xf32>
@@ -16,14 +16,348 @@ func.func @bubble_up_hivm(%arg0: tensor<4xf32>) -> tensor<2xf32> {
 }
 
 // -----
-// CHECK-LABEL:   func.func @bubble_up_hivm_reduce2(
-// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<1x2xf32> {
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_1d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
 // CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_2:.*]] = tensor.empty(%[[SIZE]]) : tensor<?xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vln ins(%[[VAL_1]] : tensor<?xf32>) outs(%[[VAL_2]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_3]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_unary_1d_dyn(%arg0: tensor<5xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() :  tensor<5xf32>
+  %1 = hivm.hir.vln ins(%arg0: tensor<5xf32>) outs(%0 : tensor<5xf32>) -> tensor<5xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<5xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_1d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?xf32>, %[[VAL_1:.*]]: tensor<?xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.vln ins(%[[VAL_2]] : tensor<?xf32>) outs(%[[VAL_3]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_4]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_unary_1d_dyn2(%arg0: tensor<?xf32>, %0: tensor<?xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vln ins(%arg0: tensor<?xf32>) outs(%0 : tensor<?xf32>) -> tensor<?xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<?xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_2d_static(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4x8xf32>) -> tensor<2x8xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2x8xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vln ins(%[[VAL_1]] : tensor<2x8xf32>) outs(%[[VAL_2]] : tensor<2x8xf32>) -> tensor<2x8xf32>
+// CHECK:           return %[[VAL_3]] : tensor<2x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_unary_2d_static(%arg0: tensor<4x8xf32>) -> tensor<2x8xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() :  tensor<4x8xf32>
+    %29 = hivm.hir.vln ins(%arg0: tensor<4x8xf32>) outs(%0  : tensor<4x8xf32>) -> tensor<4x8xf32>
+    %extracted_slice = tensor.extract_slice %29[1,0] [2,8] [1,1] {to_be_bubbled_slice} : tensor<4x8xf32> to tensor<2x8xf32>
+    return %extracted_slice : tensor<2x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_2d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_2:.*]] = tensor.empty(%[[SIZE]]) : tensor<?x8xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vln ins(%[[VAL_1]] : tensor<?x8xf32>) outs(%[[VAL_2]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_3]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_unary_2d_dyn(%arg0: tensor<5x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() :  tensor<5x8xf32>
+  %1 = hivm.hir.vln ins(%arg0: tensor<5x8xf32>) outs(%0 : tensor<5x8xf32>) -> tensor<5x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<5x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_unary_2d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?x8xf32>, %[[VAL_1:.*]]: tensor<?x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.vln ins(%[[VAL_2]] : tensor<?x8xf32>) outs(%[[VAL_3]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_4]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_unary_2d_dyn2(%arg0: tensor<?x8xf32>, %0: tensor<?x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vln ins(%arg0: tensor<?x8xf32>) outs(%0 : tensor<?x8xf32>) -> tensor<?x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<?x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_1d_static(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4xf32>, %[[VAL_1:.*]]: tensor<4xf32>) -> tensor<2xf32> {
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_4:.*]] = tensor.empty() : tensor<2xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vadd ins(%[[VAL_2]], %[[VAL_3]] : tensor<2xf32>, tensor<2xf32>) outs(%[[VAL_4]] : tensor<2xf32>) -> tensor<2xf32>
+// CHECK:           return %[[VAL_5]] : tensor<2xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_1d_static(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<2xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<4xf32>
+    %29 = hivm.hir.vadd ins(%arg0, %arg1: tensor<4xf32>, tensor<4xf32>) outs(%0: tensor<4xf32>) -> tensor<4xf32>
+    %extracted_slice = tensor.extract_slice %29[1] [2] [1] {to_be_bubbled_slice} : tensor<4xf32> to tensor<2xf32>
+    return %extracted_slice : tensor<2xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_1d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5xf32>, %[[VAL_1:.*]]: tensor<5xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_4:.*]] = tensor.empty(%[[SIZE]]) : tensor<?xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vadd ins(%[[VAL_2]], %[[VAL_3]] : tensor<?xf32>, tensor<?xf32>) outs(%[[VAL_4]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_5]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_1d_dyn(%arg0: tensor<5xf32>, %arg1: tensor<5xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5xf32>
+  %1 = hivm.hir.vadd ins(%arg0, %arg1: tensor<5xf32>, tensor<5xf32>) outs(%0: tensor<5xf32>) -> tensor<5xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<5xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_1d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?xf32>, %[[VAL_1:.*]]: tensor<?xf32>, %[[VAL_2:.*]]: tensor<?xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vadd ins(%[[VAL_3]], %[[VAL_4]] : tensor<?xf32>, tensor<?xf32>) outs(%[[VAL_5]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_6]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_1d_dyn2(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>, %0: tensor<?xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vadd ins(%arg0, %arg1: tensor<?xf32>, tensor<?xf32>) outs(%0: tensor<?xf32>) -> tensor<?xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<?xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_2d_static(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4x8xf32>, %[[VAL_1:.*]]: tensor<4x8xf32>) -> tensor<2x8xf32> {
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_4:.*]] = tensor.empty() : tensor<2x8xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vadd ins(%[[VAL_2]], %[[VAL_3]] : tensor<2x8xf32>, tensor<2x8xf32>) outs(%[[VAL_4]] : tensor<2x8xf32>) -> tensor<2x8xf32>
+// CHECK:           return %[[VAL_5]] : tensor<2x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_2d_static(%arg0: tensor<4x8xf32>, %arg1: tensor<4x8xf32>) -> tensor<2x8xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<4x8xf32>
+    %29 = hivm.hir.vadd ins(%arg0, %arg1: tensor<4x8xf32>, tensor<4x8xf32>) outs(%0: tensor<4x8xf32>) -> tensor<4x8xf32>
+    %extracted_slice = tensor.extract_slice %29[1,0] [2,8] [1,1] {to_be_bubbled_slice} : tensor<4x8xf32> to tensor<2x8xf32>
+    return %extracted_slice : tensor<2x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_2d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5x8xf32>, %[[VAL_1:.*]]: tensor<5x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_4:.*]] = tensor.empty(%[[SIZE]]) : tensor<?x8xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vadd ins(%[[VAL_2]], %[[VAL_3]] : tensor<?x8xf32>, tensor<?x8xf32>) outs(%[[VAL_4]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_5]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_2d_dyn(%arg0: tensor<5x8xf32>, %arg1: tensor<5x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5x8xf32>
+  %1 = hivm.hir.vadd ins(%arg0, %arg1: tensor<5x8xf32>, tensor<5x8xf32>) outs(%0: tensor<5x8xf32>) -> tensor<5x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<5x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_binary_2d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?x8xf32>, %[[VAL_1:.*]]: tensor<?x8xf32>, %[[VAL_2:.*]]: tensor<?x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vadd ins(%[[VAL_3]], %[[VAL_4]] : tensor<?x8xf32>, tensor<?x8xf32>) outs(%[[VAL_5]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_6]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_binary_2d_dyn2(%arg0: tensor<?x8xf32>, %arg1: tensor<?x8xf32>, %0: tensor<?x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vadd ins(%arg0, %arg1: tensor<?x8xf32>, tensor<?x8xf32>) outs(%0: tensor<?x8xf32>) -> tensor<?x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<?x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_1d_static(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4xi1>, %[[VAL_1:.*]]: tensor<4xf32>, %[[VAL_2:.*]]: tensor<4xf32>) -> tensor<2xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = tensor.empty() : tensor<2xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.vsel ins(%[[VAL_3]], %[[VAL_4]], %[[VAL_5]] : tensor<2xi1>, tensor<2xf32>, tensor<2xf32>) outs(%[[VAL_6]] : tensor<2xf32>) -> tensor<2xf32>
+// CHECK:           return %[[VAL_7]] : tensor<2xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_1d_static(%arg0: tensor<4xi1>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>) -> tensor<2xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<4xf32>
+    %29 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<4xi1>, tensor<4xf32>, tensor<4xf32>) outs(%0: tensor<4xf32>) -> tensor<4xf32>
+    %extracted_slice = tensor.extract_slice %29[1] [2] [1] {to_be_bubbled_slice} : tensor<4xf32> to tensor<2xf32>
+    return %extracted_slice : tensor<2xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_1d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5xi1>, %[[VAL_1:.*]]: tensor<5xf32>, %[[VAL_2:.*]]: tensor<5xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = tensor.empty(%[[SIZE]]) : tensor<?xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.vsel ins(%[[VAL_3]], %[[VAL_4]], %[[VAL_5]] : tensor<?xi1>, tensor<?xf32>, tensor<?xf32>) outs(%[[VAL_6]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_7]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_1d_dyn(%arg0: tensor<5xi1>, %arg1: tensor<5xf32>, %arg2: tensor<5xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5xf32>
+  %1 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<5xi1>, tensor<5xf32>, tensor<5xf32>) outs(%0: tensor<5xf32>) -> tensor<5xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<5xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_1d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?xi1>, %[[VAL_1:.*]]: tensor<?xf32>, %[[VAL_2:.*]]: tensor<?xf32>, %[[VAL_3:.*]]: tensor<?xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_6:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_7:.*]] = tensor.extract_slice %[[VAL_3]]
+// CHECK:           %[[VAL_8:.*]] = hivm.hir.vsel ins(%[[VAL_4]], %[[VAL_5]], %[[VAL_6]] : tensor<?xi1>, tensor<?xf32>, tensor<?xf32>) outs(%[[VAL_7]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:           return %[[VAL_8]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_1d_dyn2(%arg0: tensor<?xi1>, %arg1: tensor<?xf32>, %arg2: tensor<?xf32>, %0: tensor<?xf32>, %offset: index, %size: index) -> tensor<?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<?xi1>, tensor<?xf32>, tensor<?xf32>) outs(%0: tensor<?xf32>) -> tensor<?xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<?xf32> to tensor<?xf32>
+  return %extracted_slice : tensor<?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_2d_static(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<4x8xi1>, %[[VAL_1:.*]]: tensor<4x8xf32>, %[[VAL_2:.*]]: tensor<4x8xf32>) -> tensor<2x8xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = tensor.empty() : tensor<2x8xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.vsel ins(%[[VAL_3]], %[[VAL_4]], %[[VAL_5]] : tensor<2x8xi1>, tensor<2x8xf32>, tensor<2x8xf32>) outs(%[[VAL_6]] : tensor<2x8xf32>) -> tensor<2x8xf32>
+// CHECK:           return %[[VAL_7]] : tensor<2x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_2d_static(%arg0: tensor<4x8xi1>, %arg1: tensor<4x8xf32>, %arg2: tensor<4x8xf32>) -> tensor<2x8xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<4x8xf32>
+    %29 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<4x8xi1>, tensor<4x8xf32>, tensor<4x8xf32>) outs(%0: tensor<4x8xf32>) -> tensor<4x8xf32>
+    %extracted_slice = tensor.extract_slice %29[1,0] [2,8] [1,1] {to_be_bubbled_slice} : tensor<4x8xf32> to tensor<2x8xf32>
+    return %extracted_slice : tensor<2x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_2d_dyn(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<5x8xi1>, %[[VAL_1:.*]]: tensor<5x8xf32>, %[[VAL_2:.*]]: tensor<5x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_6:.*]] = tensor.empty(%[[SIZE]]) : tensor<?x8xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.vsel ins(%[[VAL_3]], %[[VAL_4]], %[[VAL_5]] : tensor<?x8xi1>, tensor<?x8xf32>, tensor<?x8xf32>) outs(%[[VAL_6]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_7]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_2d_dyn(%arg0: tensor<5x8xi1>, %arg1: tensor<5x8xf32>, %arg2: tensor<5x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5x8xf32>
+  %1 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<5x8xi1>, tensor<5x8xf32>, tensor<5x8xf32>) outs(%0: tensor<5x8xf32>) -> tensor<5x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<5x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_ternary_2d_dyn2(
+// CHECK-SAME:                                  %[[VAL_0:.*]]: tensor<?x8xi1>, %[[VAL_1:.*]]: tensor<?x8xf32>, %[[VAL_2:.*]]: tensor<?x8xf32>, %[[VAL_3:.*]]: tensor<?x8xf32>, %[[OFFSET:.*]]: index, %[[SIZE:.*]]: index)
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_0]]
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_1]]
+// CHECK:           %[[VAL_6:.*]] = tensor.extract_slice %[[VAL_2]]
+// CHECK:           %[[VAL_7:.*]] = tensor.extract_slice %[[VAL_3]]
+// CHECK:           %[[VAL_8:.*]] = hivm.hir.vsel ins(%[[VAL_4]], %[[VAL_5]], %[[VAL_6]] : tensor<?x8xi1>, tensor<?x8xf32>, tensor<?x8xf32>) outs(%[[VAL_7]] : tensor<?x8xf32>) -> tensor<?x8xf32>
+// CHECK:           return %[[VAL_8]] : tensor<?x8xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_ternary_2d_dyn2(%arg0: tensor<?x8xi1>, %arg1: tensor<?x8xf32>, %arg2: tensor<?x8xf32>, %0: tensor<?x8xf32>, %offset: index, %size: index) -> tensor<?x8xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vsel ins(%arg0, %arg1, %arg2: tensor<?x8xi1>, tensor<?x8xf32>, tensor<?x8xf32>) outs(%0: tensor<?x8xf32>) -> tensor<?x8xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,8] [1,1] {to_be_bubbled_slice}: tensor<?x8xf32> to tensor<?x8xf32>
+  return %extracted_slice : tensor<?x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_1d_static(
+// CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<5xf32>) -> tensor<1xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.empty() : tensor<1xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_0]] : tensor<5xf32>) outs(%[[VAL_1]] : tensor<1xf32>) reduce_dims = [0] -> tensor<1xf32>
+// CHECK:           return %[[VAL_2]] : tensor<1xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_1d_static(%arg0: tensor<5xf32>) -> tensor<1xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<1xf32>
+    %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5xf32>) outs(%0 : tensor<1xf32>) reduce_dims = [0] -> tensor<1xf32>
+    return %51 : tensor<1xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_static_dim1_1(
+// CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<2x1xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, 0] [2, 4] [1, 1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<2x4xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2x1xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_1]] : tensor<2x4xf32>) outs(%[[VAL_2]] : tensor<2x1xf32>) reduce_dims = [1] -> tensor<2x1xf32>
+// CHECK:           return %[[VAL_3]] : tensor<2x1xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_static_dim1_1(%arg0: tensor<5x4xf32>) -> tensor<2x1xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<5x1xf32>
+    %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%0 : tensor<5x1xf32>) reduce_dims = [1] -> tensor<5x1xf32>
+    %extracted_slice = tensor.extract_slice %51[0, 0] [2,1] [1,1] {to_be_bubbled_slice} : tensor<5x1xf32> to tensor<2x1xf32>
+    return %extracted_slice : tensor<2x1xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_static_dim1_2(
+// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<2xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2x1xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_1]] : tensor<2x4xf32>) outs(%[[VAL_2]] : tensor<2x1xf32>) reduce_dims = [1] -> tensor<2x1xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.collapse_shape %[[VAL_3]] {{\[\[}}0, 1]] : tensor<2x1xf32> into tensor<2xf32>
+// CHECK:           return %[[VAL_4]] : tensor<2xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_static_dim1_2(%arg0: tensor<5x4xf32>) -> tensor<2xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<5xf32>
+    %expanded = tensor.expand_shape %0 [[0, 1]] output_shape [5, 1] : tensor<5xf32> into tensor<5x1xf32>
+    %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%expanded : tensor<5x1xf32>) reduce_dims = [1] -> tensor<5x1xf32>
+    %collapsed = tensor.collapse_shape %51 [[0, 1]] : tensor<5x1xf32> into tensor<5xf32>
+
+    %extracted_slice = tensor.extract_slice %collapsed[0] [2] [1] {to_be_bubbled_slice} : tensor<5xf32> to tensor<2xf32>
+    return %extracted_slice : tensor<2xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_static_dim0(
+// CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<1x2xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, 0] [5, 2] [1, 1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<5x2xf32>
 // CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<1x2xf32>
 // CHECK:           %[[VAL_3:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_1]] : tensor<5x2xf32>) outs(%[[VAL_2]] : tensor<1x2xf32>) reduce_dims = [0] -> tensor<1x2xf32>
 // CHECK:           return %[[VAL_3]] : tensor<1x2xf32>
 // CHECK:         }
-func.func @bubble_up_hivm_reduce2(%arg0: tensor<5x4xf32>) -> tensor<1x2xf32> {
+func.func @bubble_up_hivm_reduce_2d_static_dim0(%arg0: tensor<5x4xf32>) -> tensor<1x2xf32> {
     %cst = arith.constant 0.000000e+00 : f32
     %0 = tensor.empty() : tensor<1x4xf32>
     %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%0 : tensor<1x4xf32>) reduce_dims = [0] -> tensor<1x4xf32>
@@ -31,20 +365,290 @@ func.func @bubble_up_hivm_reduce2(%arg0: tensor<5x4xf32>) -> tensor<1x2xf32> {
     return %extracted_slice : tensor<1x2xf32>
 }
 
-// -----
-// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc(
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_static_1(
+// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<1xf32>) -> tensor<5xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.empty() : tensor<5xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.vbrc ins(%[[VAL_0]] : tensor<1xf32>) outs(%[[VAL_1]] : tensor<5xf32>) broadcast_dims = [0] -> tensor<5xf32>
+// CHECK:           return %[[VAL_2]] : tensor<5xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_static_1(%arg0: tensor<1xf32>) -> tensor<5xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<5xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%0 : tensor<5xf32>) broadcast_dims = [0] -> tensor<5xf32>
+    return %35 : tensor<5xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_static_2(
+// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<1x4xf32>) -> tensor<1x2xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, 0] [1, 2] [1, 1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x2xf32>
+// CHECK:           return %[[VAL_1]] : tensor<1x2xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_static_2(%arg0: tensor<1x4xf32>) -> tensor<1x2xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<1x4xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<1x4xf32>) broadcast_dims = [0] -> tensor<1x4xf32>
+    %extracted_slice = tensor.extract_slice %35[0, 0] [1, 2] [1,1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x2xf32>
+    return %extracted_slice : tensor<1x2xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_static_3(
+// CHECK-SAME:                                    %arg0: tensor<1x1x1xf32>) -> tensor<1x2x3xf32> {
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<1x2x3xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%arg0 : tensor<1x1x1xf32>) outs(%[[EMPTY]] : tensor<1x2x3xf32>) broadcast_dims = [1, 2] -> tensor<1x2x3xf32>
+// CHECK:           return %[[VBRC]] : tensor<1x2x3xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_static_3(%arg0: tensor<1x1x1xf32>) -> tensor<1x2x3xf32> {
+    %0 = tensor.empty() : tensor<2x3x4xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x1x1xf32>) outs(%0 : tensor<2x3x4xf32>) broadcast_dims = [0, 1, 2] -> tensor<2x3x4xf32>
+    %extracted_slice = tensor.extract_slice %35[0,0,0] [1,2,3] [1,1,1] {to_be_bubbled_slice} : tensor<2x3x4xf32> to tensor<1x2x3xf32>
+    return %extracted_slice : tensor<1x2x3xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_static_4(
+// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<1x0x3xf32>) -> tensor<4x0x2xf32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, 0, 0] [1, 0, 2] [1, 1, 1] {to_be_bubbled_slice} : tensor<1x0x3xf32> to tensor<1x0x2xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<4x0x2xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vbrc ins(%[[VAL_1]] : tensor<1x0x2xf32>) outs(%[[VAL_2]] : tensor<4x0x2xf32>) broadcast_dims = [0] -> tensor<4x0x2xf32>
+// CHECK:           return %[[VAL_3]] : tensor<4x0x2xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_static_4(%arg0: tensor<1x0x3xf32>) -> tensor<4x0x2xf32> {
+    %0 = tensor.empty() : tensor<4x0x3xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x0x3xf32>) outs(%0 : tensor<4x0x3xf32>) broadcast_dims = [0] -> tensor<4x0x3xf32>
+    %extracted_slice = tensor.extract_slice %35[0,0,0] [4,0,2] [1,1,1] {to_be_bubbled_slice} : tensor<4x0x3xf32> to tensor<4x0x2xf32>
+    return %extracted_slice : tensor<4x0x2xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_static_5(
 // CHECK-SAME:                                   %[[VAL_0:.*]]: tensor<1x4xf32>) -> tensor<5x2xf32> {
 // CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
 // CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<5x2xf32>
 // CHECK:           %[[VAL_3:.*]] = hivm.hir.vbrc ins(%[[VAL_1]] : tensor<1x2xf32>) outs(%[[VAL_2]] : tensor<5x2xf32>) broadcast_dims = [0] -> tensor<5x2xf32>
 // CHECK:           return %[[VAL_3]] : tensor<5x2xf32>
 // CHECK:         }
-func.func @bubble_up_hivm_vbrc(%arg0: tensor<1x4xf32>) -> tensor<5x2xf32> {
+func.func @bubble_up_hivm_vbrc_static_5(%arg0: tensor<1x4xf32>) -> tensor<5x2xf32> {
     %cst = arith.constant 0.000000e+00 : f32
     %0 = tensor.empty() : tensor<5x4xf32>
     %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<5x4xf32>) broadcast_dims = [0] -> tensor<5x4xf32>
     %extracted_slice = tensor.extract_slice %35[0, 0] [5, 2] [1,1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<5x2xf32>
     return %extracted_slice : tensor<5x2xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_brcOTF_op_static(
+// CHECK-SAME:                                    %[[VAL_0:.*]]: tensor<1x16x1x16xf32>,
+// CHECK-SAME:                                    %[[VAL_1:.*]]: tensor<16x16x1x1xf32>,
+// CHECK-SAME:                                    %[[VAL_2:.*]]: index) -> tensor<16x8x16x16xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]][0, %[[VAL_2]], 0, 0] [1, 8, 1, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<1x16x1x16xf32> to tensor<1x8x1x16xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]][0, %[[VAL_2]], 0, 0] [16, 8, 1, 1] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x1x1xf32> to tensor<16x8x1x1xf32>
+// CHECK:           %[[VAL_5:.*]] = tensor.empty() : tensor<16x8x16x16xf32>
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vmul ins(%[[VAL_3]], %[[VAL_4]] : tensor<1x8x1x16xf32>, tensor<16x8x1x1xf32>) outs(%[[VAL_5]] : tensor<16x8x16x16xf32>) broadcast = [0, 2, 3] -> tensor<16x8x16x16xf32>
+// CHECK:           return %[[VAL_6]] : tensor<16x8x16x16xf32>
+// CHECK:         }
+func.func @bubble_up_brcOTF_op_static(%arg0: tensor<1x16x1x16xf32>, %arg1: tensor<16x16x1x1xf32>, %57: index) ->tensor<16x8x16x16xf32> {
+  %0 = tensor.empty() : tensor<16x16x16x16xf32>
+  %1 = hivm.hir.vmul ins(%arg0, %arg1 : tensor<1x16x1x16xf32>, tensor<16x16x1x1xf32>) outs(%0 : tensor<16x16x16x16xf32>) broadcast = [0, 2, 3] -> tensor<16x16x16x16xf32>
+  %extracted_slice_12 = tensor.extract_slice %1[0, %57, 0, 0] [16, 8, 16, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x16x16xf32> to tensor<16x8x16x16xf32>
+  return %extracted_slice_12 : tensor<16x8x16x16xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_dim0_dyn_1(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<5x5xf32>,
+// CHECK-SAME:                                                %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                                %[[VAL_2:.*]]: index) -> tensor<1x?xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]][0, %[[VAL_1]]] [5, %[[VAL_2]]] [1, 1] {to_be_bubbled_slice} : tensor<5x5xf32> to tensor<5x?xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.empty(%[[VAL_2]]) : tensor<1x?xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_3]] : tensor<5x?xf32>) outs(%[[VAL_4]] : tensor<1x?xf32>) reduce_dims = [0] -> tensor<1x?xf32>
+// CHECK:           return %[[VAL_5]] : tensor<1x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_dim0_dyn_1(%arg0: tensor<5x5xf32>, %offset: index, %size: index) -> tensor<1x?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<1x5xf32>
+  %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x5xf32>) outs(%0 : tensor<1x5xf32>) reduce_dims = [0] -> tensor<1x5xf32>
+  %extracted_slice = tensor.extract_slice %1[0, %offset] [1, %size] [1, 1] {to_be_bubbled_slice} : tensor<1x5xf32> to tensor<1x?xf32>
+  return %extracted_slice : tensor<1x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_dim0_dyn_2(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<5x?xf32>,
+// CHECK-SAME:                                                %[[VAL_1:.*]]: tensor<1x?xf32>,
+// CHECK-SAME:                                                %[[VAL_2:.*]]: index,
+// CHECK-SAME:                                                %[[VAL_3:.*]]: index) -> tensor<1x?xf32> {
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_0]][0, %[[VAL_2]]] [5, %[[VAL_3]]] [1, 1] {to_be_bubbled_slice} : tensor<5x?xf32> to tensor<5x?xf32>
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_1]][0, %[[VAL_2]]] [1, %[[VAL_3]]] [1, 1] {to_be_bubbled_slice} : tensor<1x?xf32> to tensor<1x?xf32>
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_4]] : tensor<5x?xf32>) outs(%[[VAL_5]] : tensor<1x?xf32>) reduce_dims = [0] -> tensor<1x?xf32>
+// CHECK:           return %[[VAL_6]] : tensor<1x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_dim0_dyn_2(%arg0: tensor<5x?xf32>, %0 : tensor<1x?xf32>, %offset: index, %size: index) -> tensor<1x?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x?xf32>) outs(%0 : tensor<1x?xf32>) reduce_dims = [0] -> tensor<1x?xf32>
+  %extracted_slice = tensor.extract_slice %1[0, %offset] [1, %size] [1, 1] {to_be_bubbled_slice} : tensor<1x?xf32> to tensor<1x?xf32>
+  return %extracted_slice : tensor<1x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_dim1_dyn_1(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<5x4xf32>,
+// CHECK-SAME:                                                %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                                %[[VAL_2:.*]]: index) -> tensor<?x1xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]][%[[VAL_1]], 0] [%[[VAL_2]], 4] [1, 1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<?x4xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.empty(%[[VAL_2]]) : tensor<?x1xf32>
+// CHECK:           %[[VAL_5:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_3]] : tensor<?x4xf32>) outs(%[[VAL_4]] : tensor<?x1xf32>) reduce_dims = [1] -> tensor<?x1xf32>
+// CHECK:           return %[[VAL_5]] : tensor<?x1xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_dim1_dyn_1(%arg0: tensor<5x4xf32>, %offset: index, %size: index) -> tensor<?x1xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5x1xf32>
+  %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%0 : tensor<5x1xf32>) reduce_dims = [1] -> tensor<5x1xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset, 0] [%size, 1] [1, 1] {to_be_bubbled_slice} : tensor<5x1xf32> to tensor<?x1xf32>
+  return %extracted_slice : tensor<?x1xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_reduce_2d_dim1_dyn_2(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<?x4xf32>,
+// CHECK-SAME:                                                %[[VAL_1:.*]]: tensor<?x1xf32>,
+// CHECK-SAME:                                                %[[VAL_2:.*]]: index,
+// CHECK-SAME:                                                %[[VAL_3:.*]]: index) -> tensor<?x1xf32> {
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_0]][%[[VAL_2]], 0] [%[[VAL_3]], 4] [1, 1] {to_be_bubbled_slice} : tensor<?x4xf32> to tensor<?x4xf32>
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_1]][%[[VAL_2]], 0] [%[[VAL_3]], 1] [1, 1] {to_be_bubbled_slice} : tensor<?x1xf32> to tensor<?x1xf32>
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_4]] : tensor<?x4xf32>) outs(%[[VAL_5]] : tensor<?x1xf32>) reduce_dims = [1] -> tensor<?x1xf32>
+// CHECK:           return %[[VAL_6]] : tensor<?x1xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_reduce_2d_dim1_dyn_2(%arg0: tensor<?x4xf32>, %0 : tensor<?x1xf32>, %offset: index, %size: index) -> tensor<?x1xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<?x4xf32>) outs(%0 : tensor<?x1xf32>) reduce_dims = [1] -> tensor<?x1xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset, 0] [%size, 1] [1, 1] {to_be_bubbled_slice} : tensor<?x1xf32> to tensor<?x1xf32>
+  return %extracted_slice : tensor<?x1xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_0(
+// CHECK-SAME:                                       %[[VAL_0:.*]]: tensor<1x4xf32>,
+// CHECK-SAME:                                       %[[OFFSET0:.*]]: index, %[[OFFSET1:.*]]: index, %[[SIZE0:.*]]: index, %[[SIZE1:.*]]: index)
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:           %[[VAL_2:.*]] = tensor.empty(%[[SIZE0]], %[[SIZE1]]) : tensor<?x?xf32>
+// CHECK:           %[[VAL_3:.*]] = hivm.hir.vbrc ins(%[[VAL_1]] : tensor<1x?xf32>) outs(%[[VAL_2]] : tensor<?x?xf32>) broadcast_dims = [0] -> tensor<?x?xf32>
+// CHECK:           return %[[VAL_3]] : tensor<?x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_0(%arg0: tensor<1x4xf32>, %offset0: index, %offset1: index, %size0: index, %size1: index) -> tensor<?x?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<5x4xf32>
+  %1 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<5x4xf32>) broadcast_dims = [0] -> tensor<5x4xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset0, %offset1] [%size0, %size1] [1,1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<?x?xf32>
+  return %extracted_slice : tensor<?x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_1(
+// CHECK-SAME:                                          %arg0: tensor<1x4xf32>, %arg1: tensor<?x4xf32>, %arg2: index, %arg3: index, %arg4: index, %arg5: index) -> tensor<?x?xf32> {
+// CHECK:           %[[SLICE_IN:.*]] = tensor.extract_slice %arg0[0, %arg3] [1, %arg5] [1, 1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x?xf32>
+// CHECK:           %[[SLICE_OUT:.*]] = tensor.extract_slice %arg1[%arg2, %arg3] [%arg4, %arg5] [1, 1] {to_be_bubbled_slice} : tensor<?x4xf32> to tensor<?x?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[SLICE_IN]] : tensor<1x?xf32>) outs(%[[SLICE_OUT]] : tensor<?x?xf32>) broadcast_dims = [0] -> tensor<?x?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_1(%arg0: tensor<1x4xf32>,%0 : tensor<?x4xf32>, %offset0: index, %offset1: index, %size0: index, %size1: index) -> tensor<?x?xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  
+  %1 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<?x4xf32>) broadcast_dims = [0] -> tensor<?x4xf32>
+  %extracted_slice = tensor.extract_slice %1[%offset0, %offset1] [%size0, %size1] [1,1] {to_be_bubbled_slice} : tensor<?x4xf32> to tensor<?x?xf32>
+  return %extracted_slice : tensor<?x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_2(
+// CHECK-SAME:                                          %arg0: tensor<1xf32>, %arg1: index, %arg2: index) -> tensor<?xf32> {
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg2) : tensor<?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%[[EMPTY]] : tensor<?xf32>) broadcast_dims = [0] -> tensor<?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_2(%arg0: tensor<1xf32>,%offset0: index, %size0: index) -> tensor<?xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<5xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%0 : tensor<5xf32>) broadcast_dims = [0] -> tensor<5xf32>
+    %extracted_slice = tensor.extract_slice %35[%offset0] [%size0] [1] {to_be_bubbled_slice} : tensor<5xf32> to tensor<?xf32>
+    return %extracted_slice : tensor<?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_3(
+// CHECK-SAME:                                          %arg0: tensor<1xf32>, %arg1: tensor<?xf32>, %arg2: index, %arg3: index) -> tensor<?xf32> {
+// CHECK:           %[[SLICE:.*]] = tensor.extract_slice %arg1[%arg2] [%arg3] [1] {to_be_bubbled_slice} : tensor<?xf32> to tensor<?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%[[SLICE]] : tensor<?xf32>) broadcast_dims = [0] -> tensor<?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_3(%arg0: tensor<1xf32>,%0 : tensor<?xf32>, %offset0: index, %size0: index) -> tensor<?xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1xf32>) outs(%0 : tensor<?xf32>) broadcast_dims = [0] -> tensor<?xf32>
+    %extracted_slice = tensor.extract_slice %35[%offset0] [%size0] [1] {to_be_bubbled_slice} : tensor<?xf32> to tensor<?xf32>
+    return %extracted_slice : tensor<?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_4(
+// CHECK-SAME:                                    %arg0: tensor<1x4xf32>, %arg1: index, %arg2: index) -> tensor<1x?xf32> {
+// CHECK:           %[[SLICE:.*]] = tensor.extract_slice %arg0[0, %arg1] [1, %arg2] [1, 1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x?xf32>
+// CHECK:           return %[[SLICE]] : tensor<1x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_4(%arg0: tensor<1x4xf32>, %offset0: index, %size0: index) -> tensor<1x?xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<1x4xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<1x4xf32>) broadcast_dims = [0] -> tensor<1x4xf32>
+    %extracted_slice = tensor.extract_slice %35[0, %offset0] [1, %size0] [1,1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x?xf32>
+    return %extracted_slice : tensor<1x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_dyn_5(
+// CHECK-SAME:                                    %arg0: tensor<1x1x1xf32>, %arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: index) -> tensor<?x?x?xf32> {
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg4, %arg5, %arg6) : tensor<?x?x?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%arg0 : tensor<1x1x1xf32>) outs(%[[EMPTY]] : tensor<?x?x?xf32>) broadcast_dims = [0, 1, 2] -> tensor<?x?x?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?x?x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_dyn_5(%arg0: tensor<1x1x1xf32>,%offset0: index, %offset1: index,%offset2: index, %size0: index, %size1: index, %size2: index) -> tensor<?x?x?xf32> {
+    %0 = tensor.empty() : tensor<2x3x4xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x1x1xf32>) outs(%0 : tensor<2x3x4xf32>) broadcast_dims = [0, 1, 2] -> tensor<2x3x4xf32>
+    %extracted_slice = tensor.extract_slice %35[%offset0,%offset1,%offset2] [%size0,%size1,%size2] [1,1,1] {to_be_bubbled_slice} : tensor<2x3x4xf32> to tensor<?x?x?xf32>
+    return %extracted_slice : tensor<?x?x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_6(
+// CHECK-SAME:                                    %arg0: tensor<1x0x3xf32>, %arg1: index, %arg2: index, %arg3: index, %arg4: index) -> tensor<?x0x?xf32> {
+// CHECK:           %[[SLICE:.*]] = tensor.extract_slice %arg0[0, 0, %arg2] [1, 0, %arg4] [1, 1, 1] {to_be_bubbled_slice} : tensor<1x0x3xf32> to tensor<1x0x?xf32>
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg3, %arg4) : tensor<?x0x?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[SLICE]] : tensor<1x0x?xf32>) outs(%[[EMPTY]] : tensor<?x0x?xf32>) broadcast_dims = [0] -> tensor<?x0x?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?x0x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_6(%arg0: tensor<1x0x3xf32>, %offset0: index,%offset1: index, %size0: index, %size1: index) -> tensor<?x0x?xf32> {
+    %0 = tensor.empty() : tensor<4x0x3xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x0x3xf32>) outs(%0 : tensor<4x0x3xf32>) broadcast_dims = [0] -> tensor<4x0x3xf32>
+    %extracted_slice = tensor.extract_slice %35[%offset0,0, %offset1][%size0,0,%size1] [1,1,1] {to_be_bubbled_slice} : tensor<4x0x3xf32> to tensor<?x0x?xf32>
+    return %extracted_slice : tensor<?x0x?xf32>
+}
+
+// CHECK-LABEL:   func.func @bubble_up_hivm_vbrc_7(
+// CHECK-SAME:                                    %arg0: tensor<1x4xf32>, %arg1: index, %arg2: index, %arg3: index, %arg4: index) -> tensor<?x?xf32> {
+// CHECK:           %[[SLICE:.*]] = tensor.extract_slice %arg0[0, %arg2] [1, %arg4] [1, 1] {to_be_bubbled_slice} : tensor<1x4xf32> to tensor<1x?xf32>
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg3, %arg4) : tensor<?x?xf32>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[SLICE]] : tensor<1x?xf32>) outs(%[[EMPTY]] : tensor<?x?xf32>) broadcast_dims = [0] -> tensor<?x?xf32>
+// CHECK:           return %[[VBRC]] : tensor<?x?xf32>
+// CHECK:         }
+func.func @bubble_up_hivm_vbrc_7(%arg0: tensor<1x4xf32>, %offset0: index,%offset1: index, %size0: index, %size1: index) -> tensor<?x?xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<5x4xf32>
+    %35 = hivm.hir.vbrc ins(%arg0 : tensor<1x4xf32>) outs(%0 : tensor<5x4xf32>) broadcast_dims = [0] -> tensor<5x4xf32>
+    %extracted_slice = tensor.extract_slice %35[%offset0, %offset1] [%size0,%size1] [1,1] {to_be_bubbled_slice} : tensor<5x4xf32> to tensor<?x?xf32>
+    return %extracted_slice : tensor<?x?xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_brcOTF_op(
+// CHECK-SAME:                              %arg0: tensor<1x16x1x16xf32>, %arg1: tensor<16x16x1x1xf32>, %arg2: index, %arg3: index, %arg4: index, %arg5: index, %arg6: index, %arg7: index, %arg8: index, %arg9: index) -> tensor<?x?x?x?xf32> {
+// CHECK:           %[[SLICE0:.*]] = tensor.extract_slice %arg0[0, %arg3, 0, %arg5] [1, %arg7, 1, %arg9] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<1x16x1x16xf32> to tensor<1x?x1x?xf32>
+// CHECK:           %[[SLICE1:.*]] = tensor.extract_slice %arg1[%arg2, %arg3, 0, 0] [%arg6, %arg7, 1, 1] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x1x1xf32> to tensor<?x?x1x1xf32>
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg6, %arg7, %arg8, %arg9) : tensor<?x?x?x?xf32>
+// CHECK:           %[[VMUL:.*]] = hivm.hir.vmul ins(%[[SLICE0]], %[[SLICE1]] : tensor<1x?x1x?xf32>, tensor<?x?x1x1xf32>) outs(%[[EMPTY]] : tensor<?x?x?x?xf32>) broadcast = [0, 2, 3] -> tensor<?x?x?x?xf32>
+// CHECK:           return %[[VMUL]] : tensor<?x?x?x?xf32>
+// CHECK:         }
+func.func @bubble_up_brcOTF_op(
+     %arg0: tensor<1x16x1x16xf32>,%arg1: tensor<16x16x1x1xf32>, %offset0: index,%offset1: index,%offset2: index,%offset3: index, %size0: index, %size1: index, %size2: index, %size3: index) ->tensor<?x?x?x?xf32> {
+  %0 = tensor.empty() : tensor<16x16x16x16xf32>
+  %1 = hivm.hir.vmul ins(%arg0, %arg1 : tensor<1x16x1x16xf32>, tensor<16x16x1x1xf32>) outs(%0 : tensor<16x16x16x16xf32>) broadcast = [0, 2, 3] -> tensor<16x16x16x16xf32>
+  %extracted_slice_12 = tensor.extract_slice %1[%offset0, %offset1,%offset2, %offset3] [%size0,%size1, %size2,%size3] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x16x16xf32> to tensor<?x?x?x?xf32>
+  return %extracted_slice_12 : tensor<?x?x?x?xf32>
 }
 
 // -----
@@ -54,7 +658,6 @@ func.func @bubble_up_hivm_vbrc(%arg0: tensor<1x4xf32>) -> tensor<5x2xf32> {
 // CHECK:           %[[VAL_2:.*]] = tensor.collapse_shape %[[VAL_1]] {{\[\[}}0, 1]] : tensor<32x1xf32> into tensor<32xf32>
 // CHECK:           return %[[VAL_2]] : tensor<32xf32>
 // CHECK:         }
-
 func.func @bubble_up_collapse_shape(%arg0: tensor<64x1xf32>) -> tensor<32xf32> {
   %collapsed = tensor.collapse_shape %arg0 [[0, 1]] : tensor<64x1xf32> into tensor<64xf32>
   %extracted_slice_10 = tensor.extract_slice %collapsed[0] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
@@ -105,64 +708,6 @@ func.func @bubble_up_for_loop3(%arg0: tensor<64x32xf32>, %arg1: tensor<32x16xf32
   } {to_be_tiled_op}
   %extracted_slice_10 = tensor.extract_slice %result#0[0, 0] [32, 32] [1, 1] {to_be_bubbled_slice} : tensor<64x32xf32> to tensor<32x32xf32>
   return  %extracted_slice_10  , %result#1 : tensor<32x32xf32>, index
-}
-
-// -----
-// CHECK-LABEL:   func.func @bubble_up_hivm_reduce1(
-// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<2xf32> {
-// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
-// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2x1xf32>
-// CHECK:           %[[VAL_3:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_1]] : tensor<2x4xf32>) outs(%[[VAL_2]] : tensor<2x1xf32>) reduce_dims = [1] -> tensor<2x1xf32>
-// CHECK:           %[[VAL_4:.*]] = tensor.collapse_shape %[[VAL_3]] {{\[\[}}0, 1]] : tensor<2x1xf32> into tensor<2xf32>
-// CHECK:           return %[[VAL_4]] : tensor<2xf32>
-// CHECK:         }
-func.func @bubble_up_hivm_reduce1(%arg0: tensor<5x4xf32>) -> tensor<2xf32> {
-    %cst = arith.constant 0.000000e+00 : f32
-    %0 = tensor.empty() : tensor<5xf32>
-    %expanded = tensor.expand_shape %0 [[0, 1]] output_shape [5, 1] : tensor<5xf32> into tensor<5x1xf32>
-    %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%expanded : tensor<5x1xf32>) reduce_dims = [1] -> tensor<5x1xf32>
-    %collapsed = tensor.collapse_shape %51 [[0, 1]] : tensor<5x1xf32> into tensor<5xf32>
-
-    %extracted_slice = tensor.extract_slice %collapsed[0] [2] [1] {to_be_bubbled_slice} : tensor<5xf32> to tensor<2xf32>
-    return %extracted_slice : tensor<2xf32>
-}
-
-// -----
-// CHECK-LABEL:   func.func @bubble_up_hivm_reduce(
-// CHECK-SAME:                                     %[[VAL_0:.*]]: tensor<5x4xf32>) -> tensor<2xf32> {
-// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice
-// CHECK:           %[[VAL_2:.*]] = tensor.empty() : tensor<2x1xf32>
-// CHECK:           %[[VAL_3:.*]] = hivm.hir.vreduce <sum> ins(%[[VAL_1]] : tensor<2x4xf32>) outs(%[[VAL_2]] : tensor<2x1xf32>) reduce_dims = [1] -> tensor<2x1xf32>
-// CHECK:           %[[VAL_4:.*]] = tensor.collapse_shape %[[VAL_3]] {{\[\[}}0, 1]] : tensor<2x1xf32> into tensor<2xf32>
-// CHECK:           return %[[VAL_4]] : tensor<2xf32>
-// CHECK:         }
-func.func @bubble_up_hivm_reduce(%arg0: tensor<5x4xf32>) -> tensor<2xf32> {
-    %cst = arith.constant 0.000000e+00 : f32
-    %0 = tensor.empty() : tensor<5xf32>
-    %expanded = tensor.expand_shape %0 [[0, 1]] output_shape [5, 1] : tensor<5xf32> into tensor<5x1xf32>
-    %51 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<5x4xf32>) outs(%expanded : tensor<5x1xf32>) reduce_dims = [1] -> tensor<5x1xf32>
-    %collapsed = tensor.collapse_shape %51 [[0, 1]] : tensor<5x1xf32> into tensor<5xf32>
-
-    %extracted_slice = tensor.extract_slice %collapsed[0] [2] [1] {to_be_bubbled_slice} : tensor<5xf32> to tensor<2xf32>
-    return %extracted_slice : tensor<2xf32>
-}
-
-// -----
-// CHECK-LABEL:   func.func @bubble_up_brcOTF_op(
-// CHECK-SAME:                                    %[[VAL_0:.*]]: tensor<1x16x1x16xf32>,
-// CHECK-SAME:                                    %[[VAL_1:.*]]: tensor<16x16x1x1xf32>,
-// CHECK-SAME:                                    %[[VAL_2:.*]]: index) -> tensor<16x8x16x16xf32> {
-// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]][0, %[[VAL_2]], 0, 0] [1, 8, 1, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<1x16x1x16xf32> to tensor<1x8x1x16xf32>
-// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]][0, %[[VAL_2]], 0, 0] [16, 8, 1, 1] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x1x1xf32> to tensor<16x8x1x1xf32>
-// CHECK:           %[[VAL_5:.*]] = tensor.empty() : tensor<16x8x16x16xf32>
-// CHECK:           %[[VAL_6:.*]] = hivm.hir.vmul ins(%[[VAL_3]], %[[VAL_4]] : tensor<1x8x1x16xf32>, tensor<16x8x1x1xf32>) outs(%[[VAL_5]] : tensor<16x8x16x16xf32>) broadcast = [0, 2, 3] -> tensor<16x8x16x16xf32>
-// CHECK:           return %[[VAL_6]] : tensor<16x8x16x16xf32>
-// CHECK:         }
-func.func @bubble_up_brcOTF_op(%arg0: tensor<1x16x1x16xf32>, %arg1: tensor<16x16x1x1xf32>, %57: index) ->tensor<16x8x16x16xf32> {
-  %0 = tensor.empty() : tensor<16x16x16x16xf32>
-  %1 = hivm.hir.vmul ins(%arg0, %arg1 : tensor<1x16x1x16xf32>, tensor<16x16x1x1xf32>) outs(%0 : tensor<16x16x16x16xf32>) broadcast = [0, 2, 3] -> tensor<16x16x16x16xf32>
-  %extracted_slice_12 = tensor.extract_slice %1[0, %57, 0, 0] [16, 8, 16, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : tensor<16x16x16x16xf32> to tensor<16x8x16x16xf32>
-  return %extracted_slice_12 : tensor<16x8x16x16xf32>
 }
 
 // -----
