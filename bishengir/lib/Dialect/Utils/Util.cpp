@@ -241,10 +241,36 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   return returnOp;
 }
 
+SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
+  SmallVector<Value> values;
+  auto resNum = operand.getOperandNumber();
+  TypeSwitch<Operation *>(op)
+      .Case<scf::IfOp>([&](scf::IfOp ifOp) {
+        values.push_back(ifOp.getResult(resNum));
+      })
+      .Case<scf::ForOp>([&](scf::ForOp forOp) {
+        values.push_back(forOp.getResult(resNum));
+        values.push_back(forOp.getRegionIterArg(resNum));
+      })
+      .Case<scf::WhileOp>([&](scf::WhileOp whileOp) {
+        values.push_back(whileOp.getResult(resNum));
+        values.push_back(whileOp.getBefore().front().getArgument(resNum));
+        values.push_back(whileOp.getAfter().front().getArgument(resNum));
+      })
+      .Default([&](Operation *otherOp){
+        llvm_unreachable("unsupported loop like op!");
+      });
+
+  return values;
+}
+
 std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp,
+checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
                            const std::function<bool(Operation *op)> &condFn,
                            const std::function<bool(Operation *op)> &skipFn) {
+  if (!visited.insert(v).second)
+    return std::nullopt;
+  
   // Flag initialization is nullopt which means we can't infer flag now
   std::optional<bool> flag = std::nullopt;
 
@@ -267,7 +293,7 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
 
     // For all skipped ops, just continue searching its result
     for (auto opRes : op->getResults()) {
-      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn);
+      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, visited, condFn, skipFn);
       if (!resCheck.has_value())
         continue;
 
@@ -276,18 +302,25 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
 
       flag = true;
     }
-    if (isa<scf::YieldOp>(op)) {
-      auto resNum = use.getOperandNumber();
+    if (isa<scf::YieldOp, scf::ConditionOp>(op)) {
       Operation *parentOp = op->getParentOp();
       assert(parentOp && "parent op cannot be nullptr");
-      auto resCheck = checkUsersAllWithCondition(parentOp->getResult(resNum),
-                                                 rootOp, condFn, skipFn);
-      if (!resCheck.has_value())
+      auto aliasValues = getAliasValues(parentOp, use);
+      SmallVector<std::optional<bool>> coreTypes;
+      llvm::transform(aliasValues, std::back_inserter(coreTypes), [&](Value &v) {
+        return checkUsersAllWithCondition(v, rootOp, visited, condFn, skipFn);
+      });
+
+      if (llvm::all_of(coreTypes, [&](std::optional<bool> &maybeCoreType) {
+            return !maybeCoreType.has_value();
+          }))
         continue;
-
-      if (!resCheck.value())
+      
+      if (llvm::any_of(coreTypes, [&](std::optional<bool> &maybeCoreType) {
+            return maybeCoreType.has_value() && !maybeCoreType.value();
+          }))
         return false;
-
+      
       flag = true;
     }
   }
