@@ -75,6 +75,16 @@ def GetSubBlockNumOp : HIVM_Op<"get_sub_block_num", [Pure, CubeVectorCoreTypeTra
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
+def GetSysCntOp : HIVM_Op<"get_sys_cnt", [Pure, CubeVectorCoreTypeTrait]> {
+  let summary = "Get sys cnt of the current device";
+  let description = [{
+    This op get the sys cnt of the current device.
+    This op will be lowered to `GetSysCntInstrOp`.
+  }];
+  let results = (outs I64:$result);
+  let assemblyFormat = "attr-dict `->` type($result)";
+}
+
 def SetMaskNormOp : HIVM_Op<"set_mask_norm"> {
   let summary = "hivm set mask norm";
   let assemblyFormat = "attr-dict";
