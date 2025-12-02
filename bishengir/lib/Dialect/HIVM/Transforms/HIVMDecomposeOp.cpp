@@ -953,13 +953,21 @@ class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
   LogicalResult matchAndRewrite(hivm::StoreOp op,
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    if (op.isAtomic() && getElementTypeOrSelf(op.getDstOperandType()) == rewriter.getI64Type()) {
-      return decomposeEltwiseAtomic(op, rewriter, loc);
+    auto elemType = getElementTypeOrSelf(op.getDstOperandType());
+    auto atomicKind = op.getAtomicKind();
+    if (op.isAtomic()) {
+      if (elemType.isInteger(64))
+        return decomposeEltwiseAtomic(op, rewriter, loc);
+      if (*atomicKind == hivm::AtomicKind::UMAX ||
+          *atomicKind == hivm::AtomicKind::UMIN) {
+        assert(elemType.getIntOrFloatBitWidth() == 8);
+        return decomposeEltwiseAtomic(op, rewriter, loc, /*isUnsigned=*/true);
+      }
     }
     if (!op.isSWAtomic()) {
       return failure();
     }
-    switch (op.getAtomicKind().value()) {
+    switch (atomicKind.value()) {
     case hivm::AtomicKind::AND:
     case hivm::AtomicKind::OR:
     case hivm::AtomicKind::XOR:
@@ -981,8 +989,8 @@ private:
   ///
   /// sync_block_unlock(% lock_var)
   LogicalResult decomposeEltwiseAtomic(hivm::StoreOp op,
-                                       PatternRewriter &rewriter,
-                                       Location loc) const {
+                                       PatternRewriter &rewriter, Location loc,
+                                       bool isUnsigned = false) const {
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
 
     // 1. insert sync_block_lock
@@ -995,6 +1003,20 @@ private:
     auto dst = op.getDst();
     rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB);
 
+    if (isUnsigned) {
+      hivm::RoundMode rounding = mlir::utils::selectRoundMode<hivm::RoundMode>(
+          getElementTypeOrSelf(dst), rewriter.getF16Type());
+      auto roundingAttr = rewriter.getAttr<hivm::RoundModeAttr>(rounding);
+      hivm::TypeFn typeFn = hivm::TypeFn::cast_unsigned;
+      auto typeFnAttr = rewriter.getAttr<hivm::TypeFnAttr>(typeFn);
+      src = castTo(rewriter, src.getLoc(), src, roundingAttr,
+                   rewriter.getF16Type(), typeFnAttr)
+                .getSingleDst();
+      tmpUB = castTo(rewriter, src.getLoc(), tmpUB, roundingAttr,
+                     rewriter.getF16Type(), typeFnAttr)
+                  .getSingleDst();
+    }
+
     // 3. do eltwise vv between src and tmp(and/or/xor)
     auto resUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
     auto eltwiseOp = createEltwiseOpByAtomicKind(
@@ -1002,6 +1024,17 @@ private:
         op.getAtomicKind().value());
     if (!eltwiseOp.has_value()) {
       return op.emitError("not support block-sync atomic kind!!");
+    }
+
+    if (isUnsigned) {
+      hivm::RoundMode rounding = mlir::utils::selectRoundMode<hivm::RoundMode>(
+          rewriter.getF16Type(), getElementTypeOrSelf(dst));
+      auto roundingAttr = rewriter.getAttr<hivm::RoundModeAttr>(rounding);
+      hivm::TypeFn typeFn = hivm::TypeFn::cast_unsigned;
+      auto typeFnAttr = rewriter.getAttr<hivm::TypeFnAttr>(typeFn);
+      resUB = castTo(rewriter, src.getLoc(), resUB, roundingAttr,
+                     getElementTypeOrSelf(dst), typeFnAttr)
+                  .getSingleDst();
     }
 
     // 4. store tmp to dst
@@ -1046,8 +1079,8 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     // step2: condition = vcmp(dst, expected_val)
     //        dst = vsel(condition, new_val, dst)
     // create condition alloc
-    auto condUB = createTmpBufferOrTensorWithTargetType(
-        rewriter, loc, src0, rewriter.getI1Type());
+    auto condUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src0,
+                                                        rewriter.getI1Type());
     auto compareAttr =
         rewriter.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::EQ);
     rewriter.create<hivm::VCmpOp>(op.getLoc(), TypeRange(),

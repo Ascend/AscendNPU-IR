@@ -573,6 +573,8 @@ def HIVM_ATOMIC_OR : I32EnumAttrCase<"OR", 5, "or">;
 def HIVM_ATOMIC_XOR : I32EnumAttrCase<"XOR", 6, "xor">;
 def HIVM_ATOMIC_CAS : I32EnumAttrCase<"CAS", 7, "or">;
 def HIVM_ATOMIC_XCHG : I32EnumAttrCase<"XCHG", 8, "xor">;
+def HIVM_ATOMIC_UMAX : I32EnumAttrCase<"UMAX", 9, "umax">;
+def HIVM_ATOMIC_UMIN : I32EnumAttrCase<"UMIN", 10, "umin">;
 
 def HIVM_AtomicKindEnum : HIVM_I32Enum<
   "AtomicKind", "Atomic Operation Kind for StoreOp", [
@@ -585,6 +587,8 @@ def HIVM_AtomicKindEnum : HIVM_I32Enum<
     HIVM_ATOMIC_XOR,
     HIVM_ATOMIC_CAS,
     HIVM_ATOMIC_XCHG,
+    HIVM_ATOMIC_UMAX,
+    HIVM_ATOMIC_UMIN,
   ]>;
 
 def HIVM_AtomicKindAttr : HIVM_I32EnumAttr<"atomic_kind", HIVM_AtomicKindEnum> {
