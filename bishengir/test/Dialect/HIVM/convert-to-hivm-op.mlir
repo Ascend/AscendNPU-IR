@@ -113,3 +113,41 @@ func.func @test_dynamic_offset_memref_copy(%arg0 : index, %arg1 : memref<1024xi6
   %0 = bufferization.to_tensor %alloc restrict writable : memref<1024xi64>
   return %0 : tensor<1024xi64>
 }
+
+// -----
+// CHECK-LABEL: @test_load_with_mask_other_memref_collapse_shape
+func.func @test_load_with_mask_other_memref_collapse_shape(
+  %arg0 : index, %arg1 : memref<1024xi64, strided<[1]>>, %arg2 : i1) -> tensor<1024x1xi64> {
+  %c0 = arith.constant 0 : index
+  %alloc = memref.alloc() : memref<1024x1xi64>
+  %collapse_shape = memref.collapse_shape %alloc [[0, 1]] : memref<1024x1xi64> into memref<1024xi64>
+  %c-1_i64 = arith.constant -1 : i64
+  scf.if %arg2 {
+    hivm.hir.vbrc ins(%c-1_i64 : i64) outs(%collapse_shape : memref<1024xi64>)
+  }
+  %subview = memref.subview %arg1[%arg0] [%c0] [1] : memref<1024xi64, strided<[1], offset: 0>> to memref<?xi64, strided<[1], offset: ?>>
+  %subview_0 = memref.subview %collapse_shape[%arg0] [%c0] [1] : memref<1024xi64> to memref<?xi64, strided<[1], offset: ?>>
+  // CHECK: hivm.hir.load ins(%subview : memref<?xi64, strided<[1], offset: ?>>) outs(%subview_0 : memref<?xi64, strided<[1], offset: ?>>) pad_mode = <PadValue> pad_value = %c-1_i64 : i64 left_padding_num = %arg0 : index init_out_buffer = true init_condition = %arg2 : i1 may_implicit_transpose_with_last_axis = false
+  memref.copy %subview, %subview_0 : memref<?xi64, strided<[1], offset: ?>> to memref<?xi64, strided<[1], offset: ?>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<1024x1xi64>
+  return %0 : tensor<1024x1xi64>
+}
+
+// -----
+// CHECK-LABEL: @test_load_with_mask_other_memref_expand_shape
+func.func @test_load_with_mask_other_memref_expand_shape(
+  %arg0 : index, %arg1 : memref<1024x1xi64, strided<[1, 1]>>, %arg2 : i1) -> tensor<1024xi64> {
+  %c10 = arith.constant 10 : index
+  %alloc = memref.alloc() : memref<1024xi64>
+  %expand_shape = memref.expand_shape %alloc [[0, 1]] output_shape [1024, 1] : memref<1024xi64> into memref<1024x1xi64>
+  %c-1_i64 = arith.constant -1 : i64
+  scf.if %arg2 {
+    hivm.hir.vbrc ins(%c-1_i64 : i64) outs(%expand_shape : memref<1024x1xi64>)
+  }
+  %subview = memref.subview %arg1[%arg0, 0] [%c10, 1] [1, 1] : memref<1024x1xi64, strided<[1, 1], offset: 0>> to memref<?x1xi64, strided<[1, 1], offset: ?>>
+  %subview_0 = memref.subview %expand_shape[%arg0, 0] [%c10, 1] [1, 1] : memref<1024x1xi64> to memref<?x1xi64, strided<[1, 1], offset: ?>>
+  // CHECK: hivm.hir.load ins(%subview : memref<?x1xi64, strided<[1, 1], offset: ?>>) outs(%subview_0 : memref<?x1xi64, strided<[1, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %c-1_i64 : i64 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 may_implicit_transpose_with_last_axis = false
+  memref.copy %subview, %subview_0 : memref<?x1xi64, strided<[1, 1], offset: ?>> to memref<?x1xi64, strided<[1, 1], offset: ?>>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<1024xi64>
+  return %0 : tensor<1024xi64>
+}

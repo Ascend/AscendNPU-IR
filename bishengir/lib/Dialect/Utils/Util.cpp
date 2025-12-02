@@ -551,6 +551,28 @@ bool utils::isAllocLikeOp(Operation *op) {
   return isa<memref::AllocOp>(op) || isa<memref::AllocaOp>(op);
 }
 
+bool utils::isCollapseShapeOp(Value val) {
+  return isCollapseShapeOp(val.getDefiningOp());
+}
+
+bool utils::isCollapseShapeOp(Operation *op) {
+  if (op == nullptr) {
+    return false;
+  }
+  return isa<memref::CollapseShapeOp>(op);
+}
+
+bool utils::isExpandShapeOp(Value val) {
+  return isExpandShapeOp(val.getDefiningOp());
+}
+
+bool utils::isExpandShapeOp(Operation *op) {
+  if (op == nullptr) {
+    return false;
+  }
+  return isa<memref::ExpandShapeOp>(op);
+}
+
 memref::ViewOp
 utils::createAllocWithSettingBufferSize(Operation *op, int64_t bufferSize,
                                         RewriterBase &opBuilder) {
@@ -925,6 +947,13 @@ std::optional<memref::AllocOp> utils::tracebackMemRefToAlloc(Value memrefVal) {
   return utils::isAllocLikeOp(tracedValue)
              ? tracedValue.getDefiningOp<memref::AllocOp>()
              : std::optional<memref::AllocOp>();
+}
+
+SmallVector<Value> utils::tracebackMemRefAllocAndAlias(Value memrefVal) {
+  return utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
+    return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||
+           utils::isExpandShapeOp(val);
+  });
 }
 
 namespace reshape_utils {
