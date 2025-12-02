@@ -282,6 +282,9 @@ SmallVector<std::optional<Operation *>>
 getAnnotateOpWithAttrForEachOperand(const SmallVectorImpl<Value> &operands,
                                     StringRef name);
 
+/// erase trivially deadops from the back to front.
+void eraseTriviallyDeadOps(ArrayRef<Operation *> ops);
+
 /// get value according to the indices of every dimension
 Value getScalarValue(
     RewriterBase &rewriter, Location loc, Value v,

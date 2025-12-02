@@ -130,6 +130,14 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+void eraseTriviallyDeadOps(ArrayRef<Operation *> ops) {
+  for (auto I = ops.rbegin(), E = ops.rend(); I != E;) {
+    Operation *curOp = *I;
+    ++I;
+    if (isOpTriviallyDead(curOp))
+      curOp->erase();
+  }
+}
 
 Value getScalarValue(RewriterBase &rewriter, Location loc, Value v,
                      std::optional<const llvm::SmallVector<Value> *> indices) {

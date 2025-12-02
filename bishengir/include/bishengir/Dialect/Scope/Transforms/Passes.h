@@ -1,4 +1,4 @@
-//===- Scope.h - Scope Dialect -----------------------------------*- C++-*-===//
+//===- Passes.h - Pass Entrypoints ------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,30 +14,30 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// This header file defines prototypes that expose pass constructors.
+//
+//===----------------------------------------------------------------------===//
+#ifndef BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_H
+#define BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_H
 
-#ifndef BISHENGIR_DIALECT_SCOPE_IR_SCOPE_H
-#define BISHENGIR_DIALECT_SCOPE_IR_SCOPE_H
+#include "mlir/Pass/Pass.h"
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+namespace mlir {
+#define GEN_PASS_DECL
+#include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
+namespace scope {
 
-#include "mlir/IR/Dialect.h"
-#include "mlir/IR/OpDefinition.h"
-#include "mlir/IR/OpImplementation.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
+/// Create a pass to outline scope within ScopeOp's region
+std::unique_ptr<Pass> createOutlineScopePass();
 
 //===----------------------------------------------------------------------===//
-// Scope Dialect
+// Registration
 //===----------------------------------------------------------------------===//
+/// Generate the code for registering passes.
+#define GEN_PASS_REGISTRATION
+#include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
+} // namespace scope
+} // namespace mlir
 
-#include "bishengir/Dialect/Scope/IR/ScopeDialect.h.inc"
-
-//===----------------------------------------------------------------------===//
-// Scope Dialect Operations
-//===----------------------------------------------------------------------===//
-
-#define GET_OP_CLASSES
-#include "bishengir/Dialect/Scope/IR/ScopeOps.h.inc"
-
-#endif // BISHENGIR_DIALECT_SCOPE_IR_SCOPE_H
+#endif // BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_H

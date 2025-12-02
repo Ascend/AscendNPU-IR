@@ -34,6 +34,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
@@ -70,6 +71,7 @@ inline void registerAllPasses() {
   mlir::scf::registerBiShengIRSCFPasses();
   mlir::hacc::registerHACCPasses();
   mlir::symbol::registerSymbolPasses();
+  mlir::scope::registerScopePasses();
 
   // Transforms passes
   bishengir::registerBiShengIRTransformPasses();
