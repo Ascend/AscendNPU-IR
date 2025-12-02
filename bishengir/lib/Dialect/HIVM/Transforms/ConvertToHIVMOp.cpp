@@ -50,11 +50,12 @@ namespace {
 // Patterns that convert ops from other dialects to HIVM ops.
 //===---------------------------------------------------------------------===//
 
-std::optional<Value> getPadValue(std::optional<memref::AllocOp> maybeAlloc) {
-  if (!maybeAlloc.has_value())
+std::optional<Value>
+getPadValueForSingleValue(std::optional<Operation *> allocOpAlias) {
+  if (!allocOpAlias.has_value())
     return std::nullopt;
 
-  for (auto *user : maybeAlloc.value()->getUsers()) {
+  for (auto *user : allocOpAlias.value()->getUsers()) {
     if (llvm::isa_and_nonnull<hivm::VBrcOp>(user) &&
         user->getOperand(0).getType().isIntOrFloat()) {
       return user->getOperand(0);
@@ -63,16 +64,40 @@ std::optional<Value> getPadValue(std::optional<memref::AllocOp> maybeAlloc) {
   return std::nullopt;
 }
 
-std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
-                                   std::optional<memref::AllocOp> maybeAlloc) {
-  if (!maybeAlloc.has_value())
+std::optional<Value> getPadValue(const SmallVector<Value> &allocOpAliases) {
+  for (const auto &allocOpAlias : allocOpAliases) {
+    auto defOp = allocOpAlias.getDefiningOp();
+    auto padValue = getPadValueForSingleValue(defOp);
+    if (padValue.has_value()) {
+      return padValue;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Value>
+getLeftPadNumForSingleValue(PatternRewriter &rewriter,
+                            std::optional<Operation *> allocOpAlias) {
+  if (!allocOpAlias.has_value())
     return std::nullopt;
 
-  for (auto *user : maybeAlloc.value()->getUsers()) {
+  for (auto *user : allocOpAlias.value()->getUsers()) {
     if (auto subviewOp = llvm::dyn_cast<memref::SubViewOp>(user)) {
       auto offsets = subviewOp.getMixedOffsets();
       return mlir::getValueOrCreateConstantIndexOp(
           rewriter, subviewOp->getLoc(), offsets.back());
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
+                                   const SmallVector<Value> &allocOpAliases) {
+  for (const auto &allocOpAlias : allocOpAliases) {
+    auto defOp = allocOpAlias.getDefiningOp();
+    auto leftPadValue = getLeftPadNumForSingleValue(rewriter, defOp);
+    if (leftPadValue.has_value()) {
+      return leftPadValue;
     }
   }
   return std::nullopt;
@@ -100,8 +125,8 @@ getInitInfo(Operation *op, hivm::LoadOp loadOp) {
 }
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
-getUniqueInitInfo(std::optional<memref::AllocOp> maybeAlloc,
-                  hivm::LoadOp loadOp) {
+getUniqueInitInfoForSingleValue(std::optional<Operation *> maybeAlloc,
+                                hivm::LoadOp loadOp) {
   if (!maybeAlloc.has_value())
     return {std::nullopt, std::nullopt};
 
@@ -124,12 +149,32 @@ getUniqueInitInfo(std::optional<memref::AllocOp> maybeAlloc,
   return {initOp, initCondition};
 }
 
+std::pair<std::optional<Operation *>, std::optional<Value>>
+getUniqueInitInfo(const SmallVector<Value> &allocOpAliases,
+                  hivm::LoadOp loadOp) {
+  for (const auto &allocOpAlias : allocOpAliases) {
+    auto defOp = allocOpAlias.getDefiningOp();
+    auto [inlineInitOp, inlineInitCond] =
+        getUniqueInitInfoForSingleValue(defOp, loadOp);
+    if (inlineInitOp.has_value() || inlineInitCond.has_value()) {
+      return {inlineInitOp, inlineInitCond};
+    }
+  }
+  return {std::nullopt, std::nullopt};
+}
+
 LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
                                          PatternRewriter &rewriter) {
   Value dst = copyOp.getTarget();
-  auto maybeAlloc = utils::tracebackMemRefToAlloc(dst);
-  auto maybePadValue = getPadValue(maybeAlloc);
-  auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc);
+  // We need to trace alloc op and its alias for the following case:
+  // %alloc = ...
+  // %collapse_shape = memref.collapse_shape %alloc
+  // scf.if {
+  //   hivm.vbrc ins(...) outs(%collapse_shape)
+  // }
+  auto allocOpAliases = utils::tracebackMemRefAllocAndAlias(dst);
+  auto maybePadValue = getPadValue(allocOpAliases);
+  auto maybeLeftPadNum = getLeftPadNum(rewriter, allocOpAliases);
 
   auto loadOp = rewriter.create<hivm::LoadOp>(copyOp->getLoc(), TypeRange(),
                                               copyOp.getSource(), dst);
@@ -141,7 +186,8 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
         rewriter.getAttr<hivm::PadModeAttr>(hivm::PadMode::PadValue);
     loadOp.setPadModeAttr(padModeAttr);
     loadOp.getPadValueMutable().assign(maybePadValue.value());
-    auto [inlineInitOp, inlineInitCond] = getUniqueInitInfo(maybeAlloc, loadOp);
+    auto [inlineInitOp, inlineInitCond] =
+        getUniqueInitInfo(allocOpAliases, loadOp);
     if (inlineInitOp.has_value()) {
       loadOp.setInitOutBuffer(true);
       rewriter.eraseOp(inlineInitOp.value());
@@ -154,12 +200,12 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   // TODO: change TA to create hivm.load/store op directly
   Value allocRef = utils::tracebackMemRef(copyOp.getTarget());
   auto implicitTransposeAttrForAlloc = utils::getAnnotateOpWithAttr(
-    allocRef, "MayImplicitTransposeWithLastAxis");
+      allocRef, "MayImplicitTransposeWithLastAxis");
   // We require the attribute to be marked on AllocOp
   if (implicitTransposeAttrForAlloc.has_value()) {
     loadOp.setMayImplicitTransposeWithLastAxis(true);
   }
- 
+
   rewriter.replaceOp(copyOp, loadOp);
   return success();
 }
