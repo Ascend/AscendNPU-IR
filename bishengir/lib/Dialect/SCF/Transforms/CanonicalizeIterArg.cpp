@@ -131,8 +131,16 @@ static bool isIterArgUnchanged(LoopLikeOpInterface loop, BlockArgument arg,
 
     // Add values defined by the loop to tentative list, and trace values used
     // by the loop
-    if (opResult)
-      innerArg = innerLoop.getTiedLoopRegionIterArg(opResult);
+    if (opResult) {
+      // getTiedLoopRegionIterArg doesn't work on while loops, so we use a more
+      // general way to get the tied iter arg
+      Block *innerBlk =
+          &innerLoop.getLoopRegions().front()->getBlocks().front();
+      unsigned offset =
+          innerBlk->getNumArguments() - innerLoop.getRegionIterArgs().size();
+      unsigned argNum = opResult.getResultNumber() + offset;
+      innerArg = innerBlk->getArgument(argNum);
+    }
 
     handleLoops(innerLoop, innerArg, equivalenceSet, dfsStack);
   }
