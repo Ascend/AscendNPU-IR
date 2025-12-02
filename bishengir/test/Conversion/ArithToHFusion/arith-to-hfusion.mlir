@@ -212,7 +212,7 @@ func.func @test_minf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> tensor
 // CHECK-LABEL: func.func @test_truncf_f32_f16
 func.func @test_truncf_f32_f16(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf16> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.truncf %arg0 : tensor<6x6xf32> to tensor<6x6xf16>
   return %ret : tensor<6x6xf16>
 }
@@ -222,7 +222,7 @@ func.func @test_truncf_f32_f16(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf16> {
 // CHECK-LABEL: func.func @test_truncf_f32_bf16
 func.func @test_truncf_f32_bf16(%arg0 : tensor<6x6xf32>) -> tensor<6x6xbf16> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.truncf %arg0 : tensor<6x6xf32> to tensor<6x6xbf16>
   return %ret : tensor<6x6xbf16>
 }
@@ -232,7 +232,7 @@ func.func @test_truncf_f32_bf16(%arg0 : tensor<6x6xf32>) -> tensor<6x6xbf16> {
 // CHECK-LABEL: func.func @test_extf_f16_f32
 func.func @test_extf_f16_f32(%arg0 : tensor<6x6xf16>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.extf %arg0 : tensor<6x6xf16> to tensor<6x6xf32>
   return %ret : tensor<6x6xf32>
 }
@@ -242,7 +242,7 @@ func.func @test_extf_f16_f32(%arg0 : tensor<6x6xf16>) -> tensor<6x6xf32> {
 // CHECK-LABEL: func.func @test_extf_bf16_f32
 func.func @test_extf_bf16_f32(%arg0 : tensor<6x6xbf16>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.extf %arg0 : tensor<6x6xbf16> to tensor<6x6xf32>
   return %ret : tensor<6x6xf32>
 }
@@ -252,7 +252,7 @@ func.func @test_extf_bf16_f32(%arg0 : tensor<6x6xbf16>) -> tensor<6x6xf32> {
 // CHECK-LABEL: func.func @test_extui_i1_i8
 func.func @test_extui_i1_i8(%arg0 : tensor<6x6xi1>) -> tensor<6x6xi8> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.extui %arg0 : tensor<6x6xi1> to tensor<6x6xi8>
   return %ret : tensor<6x6xi8>
 }
@@ -262,7 +262,7 @@ func.func @test_extui_i1_i8(%arg0 : tensor<6x6xi1>) -> tensor<6x6xi8> {
 // CHECK-LABEL: func.func @test_fptosi_f32_i32
 func.func @test_fptosi_f32_i32(%arg0 : tensor<6x6xf32>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<trunc>}
   %ret = arith.fptosi %arg0 : tensor<6x6xf32> to tensor<6x6xi32>
   return %ret : tensor<6x6xi32>
 }
@@ -272,7 +272,7 @@ func.func @test_fptosi_f32_i32(%arg0 : tensor<6x6xf32>) -> tensor<6x6xi32> {
 // CHECK-LABEL: func.func @test_sitofp_i32_f32
 func.func @test_sitofp_i32_f32(%arg0 : tensor<6x6xi32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
   %ret = arith.sitofp %arg0 : tensor<6x6xi32> to tensor<6x6xf32>
   return %ret : tensor<6x6xf32>
 }
@@ -313,7 +313,7 @@ func.func @test_minimumf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> te
 // CHECK-LABEL: func.func @test_trunci_i64_i32
 func.func @test_trunci_i64_i32(%arg0 : tensor<6x6xi64>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<truncwithoverflow>}
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>}
   %ret = arith.trunci %arg0 : tensor<6x6xi64> to tensor<6x6xi32>
   return %ret : tensor<6x6xi32>
 }

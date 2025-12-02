@@ -91,7 +91,7 @@ VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
   } else if (isI8) {
     // Convert F16 -> I8 by VCast
     b.create<hivm::VCastOp>(getLoc(), TypeRange(), castedDst, getDst(),
-                            dstRoundAttr);
+                            dstRoundAttr, hivm::TypeFnAttr{});
   } else {
     return failure();
   }
@@ -299,7 +299,7 @@ decomposeTensorDeinterleave(VDeinterleaveOp &op, mlir::OpBuilder &b) {
     hivm::VCastOp sndCast = b.create<hivm::VCastOp>(
         loc, /*resultType = i8 resultType*/ op.getResult()[idx].getType(),
         /*src = f16 temp*/ newOpResult,
-        /*dst = i8 dst*/ op.getDst()[idx], bwdRound);
+        /*dst = i8 dst*/ op.getDst()[idx], bwdRound, hivm::TypeFnAttr{});
     sndCastResults[idx] = sndCast.getResult()[0];
   }
 
@@ -345,7 +345,8 @@ decomposeMemRefDeinterleave(VDeinterleaveOp &op, mlir::OpBuilder &b) {
   for (const auto &[idx, newOpResult] : llvm::enumerate(newDestRange)) {
     b.create<hivm::VCastOp>(loc, TypeRange({}),
                             /*src = f16 temp*/ newOpResult,
-                            /*dst = i8 dst*/ op.getDst()[idx], bwdRound);
+                            /*dst = i8 dst*/ op.getDst()[idx], bwdRound,
+                            hivm::TypeFnAttr{});
   }
 
   return SmallVector<Value>();

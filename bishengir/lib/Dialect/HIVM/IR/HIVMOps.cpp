@@ -365,19 +365,6 @@ static void printDPSResults(OpAsmPrinter &p, TypeRange resultTypes) {
   p.printOptionalArrowTypeList(resultTypes);
 }
 
-namespace {
-bool shouldMapToUnsigned(IntegerType::SignednessSemantics val) {
-  switch (val) {
-  case IntegerType::Signless:
-  case IntegerType::Signed:
-    return false;
-  case IntegerType::Unsigned:
-    return true;
-  }
-  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
-}
-} // namespace
-
 void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
                                             ValueRange inputs,
                                             ValueRange outputs) {
@@ -387,46 +374,3 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
   printDPSResults(p, op->getResultTypes());
 }
 
-std::string hivm::detail::getTypeName(Location loc, Type type) {
-  std::string unknown = "UNKNOWN";
-  if (auto iType = dyn_cast<IntegerType>(type)) {
-    switch (iType.getWidth()) {
-    case 1:
-      return "bool";
-    case 4:
-    case 8:
-    case 16:
-    case 32:
-    case 64:
-      if (shouldMapToUnsigned(iType.getSignedness()))
-        return "uint" + std::to_string(iType.getWidth()) + "_t";
-      else
-        return "int" + std::to_string(iType.getWidth()) + "_t";
-    default:
-      emitError(loc, "unrecognized integer type: ") << type;
-      return unknown;
-    }
-  }
-  if (auto fType = dyn_cast<FloatType>(type)) {
-    switch (fType.getWidth()) {
-    case 16:
-      if (fType.isF16()) {
-        return "half";
-      } else if (fType.isBF16()) {
-        return "bfloat16_t";
-      } else {
-        emitError(loc, "unrecognized float type: ") << type;
-        return unknown;
-      }
-    case 32:
-      return "float";
-    case 64:
-      return "double";
-    default:
-      emitError(loc, "unrecognized float type: ") << type;
-      return unknown;
-    }
-  }
-  emitError(loc, "unsupported type: ") << type;
-  return unknown;
-}

@@ -18,6 +18,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"

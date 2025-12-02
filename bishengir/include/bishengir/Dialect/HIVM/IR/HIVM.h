@@ -118,8 +118,6 @@ ParseResult parseHIVMStructuredDPSOp(OpAsmParser &parser,
 void printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op, ValueRange inputs,
                               ValueRange outputs);
 
-/// Return the elementType as string for library call name.
-std::string getTypeName(Location loc, Type type);
 } // namespace detail
 
 /// Populates rules for lowering HIVM AddressSpaceAttribute to integer

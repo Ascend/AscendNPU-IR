@@ -178,18 +178,18 @@ LogicalResult VBrcOp::verify() {
 
 void VCastOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     TypeRange result, ValueRange src, ValueRange dst,
-                    hivm::RoundModeAttr round_mode, DenseI64ArrayAttr transpose,
-                    DenseI64ArrayAttr broadcast) {
+                    hivm::RoundModeAttr round_mode, hivm::TypeFnAttr cast,
+                    DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
-        round_mode, transpose, broadcast);
+        round_mode, cast, transpose, broadcast);
 }
 
 void VCastOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     TypeRange result, ValueRange src, ValueRange dst,
-                    hivm::RoundMode round_mode, ArrayRef<int64_t> transpose,
-                    ArrayRef<int64_t> broadcast) {
+                    hivm::RoundMode round_mode, hivm::TypeFn cast,
+                    ArrayRef<int64_t> transpose, ArrayRef<int64_t> broadcast) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
-        round_mode, transpose, broadcast);
+        round_mode, cast, transpose, broadcast);
 }
 
 std::string VCastOp::getCastName(bool withMode) {
@@ -198,9 +198,12 @@ std::string VCastOp::getCastName(bool withMode) {
   ShapedType dstVcastType = cast<ShapedType>(getSingleDst().getType());
   auto srcElemType = srcVcastType.getElementType();
   auto dstElemType = dstVcastType.getElementType();
-  castName.append(hivm::detail::getTypeName(this->getLoc(), srcElemType));
+  hivm::TypeFn casting = this->getCast();
+  castName.append(
+      util::getTypeName(this->getLoc(), srcElemType, casting));
   castName.append("_to_");
-  castName.append(hivm::detail::getTypeName(this->getLoc(), dstElemType));
+  castName.append(
+      util::getTypeName(this->getLoc(), dstElemType, casting));
   if (withMode) {
     castName.append("_");
     castName.append(stringifyRoundMode((*this).getRoundMode()));

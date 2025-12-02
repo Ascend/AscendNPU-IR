@@ -161,15 +161,27 @@ hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
   }
 }
 
+hivm::TypeFn mapCastHFusionToHiVM(hfusion::TypeFn casting) {
+  switch (casting) {
+  case hfusion::TypeFn::cast_signed:
+    return hivm::TypeFn::cast_signed;
+  case hfusion::TypeFn::cast_unsigned:
+    return hivm::TypeFn::cast_unsigned;
+  case hfusion::TypeFn::bitcast:
+    return hivm::TypeFn::bitcast;
+  }
+}
+
 template <>
 Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
-  hfusion::RoundMode hsRndMode = cast<hfusion::CastOp>(op).getRoundMode();
-  hivm::RoundMode hvRndMode = mapRoundModeHFusionToHiVM(hsRndMode);
+  auto castOp = cast<hfusion::CastOp>(op);
+  hivm::RoundMode roundMode = mapRoundModeHFusionToHiVM(castOp.getRoundMode());
+  hivm::TypeFn casting = mapCastHFusionToHiVM(castOp.getCast());
 
   return b.create<hivm::VCastOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
                                  dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                 hvRndMode);
+                                 roundMode, casting);
 }
 
 Operation *convertUnaryLinalgOp(ElemwiseOpConvertor &b, linalg::UnaryFn kind) {

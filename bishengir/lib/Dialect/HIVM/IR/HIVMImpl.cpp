@@ -369,7 +369,7 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
-      loc, resultTypeRange, src, targetTensor, roundMode);
+      loc, resultTypeRange, src, targetTensor, roundMode, hivm::TypeFnAttr{});
   return VCastOp;
 }
 
