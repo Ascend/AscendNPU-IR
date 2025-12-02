@@ -172,7 +172,8 @@ createEltwiseOpByAtomicKind(OpBuilder &builder, Location loc,
 
 /// Create castOP to specified element type.
 mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
-                           hivm::RoundModeAttr roundMode, Type targetElemType);
+                           hivm::RoundModeAttr roundMode, Type targetElemType,
+                           hivm::TypeFnAttr typeFnAttr = {});
 
 /// To retrieve real mmad perChannel bias from implicit broadcast and so on
 Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);

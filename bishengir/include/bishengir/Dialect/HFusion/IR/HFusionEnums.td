@@ -160,6 +160,8 @@ def AtomicKind : I32EnumAttr<"AtomicKind", "", [
   I32EnumAttrCase<"XOR", 6, "xor">,
   I32EnumAttrCase<"CAS", 7, "cas">,
   I32EnumAttrCase<"XCHG", 8, "xchg">,
+  I32EnumAttrCase<"UMAX", 9, "umax">,
+  I32EnumAttrCase<"UMIN", 10, "umin">,
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

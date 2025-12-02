@@ -401,7 +401,7 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
     return;
   }
   auto srcAllocMemref = srcAlloc.value().getMemref();
-  auto elemType = getElementTypeOrSelf(srcAllocMemref.getType());
+  auto elemType = getElementTypeOrSelf(tmpAllocOp.getMemref());
   auto srcAllocShape = srcAllocMemref.getType().getShape();
   auto i8TypeWidth = builder.getI8Type().getIntOrFloatBitWidth();
   auto maybeStaticTotalSize =

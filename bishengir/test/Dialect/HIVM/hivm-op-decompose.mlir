@@ -1008,7 +1008,7 @@ module {
   func.func @test_decompose_vbrc_mark_buffer_size_static(%2 : index, %3 : index) {
   // CHECK: %[[alloc_1:.*]] = memref.alloc() : memref<32768xi8>
   // CHECK: %[[alloc_2:.*]] = memref.alloc(%arg1) : memref<1x?x4096xf32>
-  // CHECK: annotation.mark %[[alloc_2]] {buffer_size_in_byte = 32768 : i64} : memref<1x?x4096xf32>
+  // CHECK: annotation.mark %[[alloc_2]] {buffer_size_in_byte = 131072 : i64} : memref<1x?x4096xf32>
     %c0 = arith.constant 0: index
     %src = memref.alloc() : memref<1x1x4096xf32>
     %alloc_0 = memref.alloc() : memref<32768xi8>
@@ -1822,5 +1822,51 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
   %alloc_1 = memref.alloc() : memref<8x4x2x4x4xi32>
    %reinterpret_cast_2 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [8, 4, 2, 4, 4], strides: [128, 32, 16, 4, 1] : memref<?xi32> to memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>
   hivm.hir.atomic_cas ins(%alloc, %alloc_1 : memref<8x4x2x4x4xi32>, memref<8x4x2x4x4xi32>) outs(%reinterpret_cast_2 : memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>)
+  return
+}
+
+// -----
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>) init_out_buffer = false
+// CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vcast ins(%{{.*}} : memref<16xi8>) outs(%[[ALLOC1]] : memref<16xf16>) cast = <cast_unsigned>
+// CHECK: %[[ALLOC2:.*]]  = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vcast ins(%[[ALLOC0]] : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xf16>) cast = <cast_unsigned>
+// CHECK: %[[ALLOC3:.*]]  = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vmax ins(%[[ALLOC1]], %[[ALLOC2]] : memref<16xf16>, memref<16xf16>) outs(%[[ALLOC3]] : memref<16xf16>)
+// CHECK: %[[ALLOC4:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.vcast ins(%[[ALLOC3]] : memref<16xf16>) outs(%[[ALLOC4]] : memref<16xi8>) round_mode = <trunc> cast = <cast_unsigned>
+// CHECK: hivm.hir.store ins(%[[ALLOC4]] : memref<16xi8>) outs(%arg2 : memref<16xi8>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: return
+func.func @test_decompose_atomic_max_ui8(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>) {
+  %alloc = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%alloc : memref<16xi8>)
+  hivm.hir.store ins(%alloc : memref<16xi8>) outs(%arg2 : memref<16xi8>) atomic = <umax>
+  return
+}
+
+// -----
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>) init_out_buffer = false
+// CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vcast ins(%{{.*}} : memref<16xi8>) outs(%[[ALLOC1]] : memref<16xf16>) cast = <cast_unsigned>
+// CHECK: %[[ALLOC2:.*]]  = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vcast ins(%[[ALLOC0]] : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xf16>) cast = <cast_unsigned>
+// CHECK: %[[ALLOC3:.*]]  = memref.alloc() : memref<16xf16>
+// CHECK: hivm.hir.vmin ins(%[[ALLOC1]], %[[ALLOC2]] : memref<16xf16>, memref<16xf16>) outs(%[[ALLOC3]] : memref<16xf16>)
+// CHECK: %[[ALLOC4:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.vcast ins(%[[ALLOC3]] : memref<16xf16>) outs(%[[ALLOC4]] : memref<16xi8>) round_mode = <trunc> cast = <cast_unsigned>
+// CHECK: hivm.hir.store ins(%[[ALLOC4]] : memref<16xi8>) outs(%arg2 : memref<16xi8>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: return
+func.func @test_decompose_atomic_min_ui8(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>) {
+  %alloc = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%alloc : memref<16xi8>)
+  hivm.hir.store ins(%alloc : memref<16xi8>) outs(%arg2 : memref<16xi8>) atomic = <umin>
   return
 }

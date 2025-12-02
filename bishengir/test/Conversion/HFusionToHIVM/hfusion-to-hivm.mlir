@@ -920,3 +920,27 @@ func.func @storage_align() -> (i32, f32, f32) {
 
   return %result1, %result2, %result3 : i32, f32, f32
 }
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_max_ui8
+module {
+  func.func @test_atomic_max_ui8(%arg0: memref<?xi8> {tt.divisibility = 16 : i32}, %arg1: memref<?xi8> {tt.divisibility = 16 : i32}) {
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8>
+    %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8>
+    // CHECK: hivm.hir.store ins(%{{.*}} : memref<256xi8>) outs(%{{.*}} : memref<256xi8>) atomic = <umax>
+    hfusion.store {atomic_kind = #hfusion.atomic_kind<umax>} ins(%reinterpret_cast : memref<256xi8>) outs(%reinterpret_cast_1 : memref<256xi8>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_min_ui8
+module {
+  func.func @test_atomic_min_ui8(%arg0: memref<?xi8> {tt.divisibility = 16 : i32}, %arg1: memref<?xi8> {tt.divisibility = 16 : i32}) {
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8>
+    %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8>
+    // CHECK: hivm.hir.store ins(%{{.*}} : memref<256xi8>) outs(%{{.*}} : memref<256xi8>) atomic = <umin>
+    hfusion.store {atomic_kind = #hfusion.atomic_kind<umin>} ins(%reinterpret_cast : memref<256xi8>) outs(%reinterpret_cast_1 : memref<256xi8>)
+    return
+  }
+}

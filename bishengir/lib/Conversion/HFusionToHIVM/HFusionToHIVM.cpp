@@ -691,6 +691,12 @@ hivm::AtomicKind mapAtomicKindHFusionToHiVM(hfusion::AtomicKind hsAtKind) {
   case (hfusion::AtomicKind::XOR):
     hvAtKind = hivm::AtomicKind::XOR;
     break;
+  case (hfusion::AtomicKind::UMAX):
+    hvAtKind = hivm::AtomicKind::UMAX;
+    break;
+  case (hfusion::AtomicKind::UMIN):
+    hvAtKind = hivm::AtomicKind::UMIN;
+    break;
   default:
     llvm_unreachable("Unsupported atomic kind");
   }
