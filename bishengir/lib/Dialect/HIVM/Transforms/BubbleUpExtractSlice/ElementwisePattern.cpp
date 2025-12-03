@@ -57,7 +57,7 @@ struct SliceParameters {
   SmallVector<OpFoldResult> strides;
 };
 
-// This function refer on the implmentation of linalg bubbleUpExtractSlice.
+// This function refer on the implementation of linalg bubbleUpExtractSlice.
 static SliceParameters
 computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
                        ArrayRef<OpFoldResult> tileSizes, AffineMap map,
@@ -195,7 +195,7 @@ computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
   return sliceParams;
 }
 
-// This function refer on the implmentation of linalg bubbleUpExtractSlice.
+// This function refer on the implementation of linalg bubbleUpExtractSlice.
 static SmallVector<std::optional<SliceParameters>> computeAllSliceParameters(
     OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
     ValueRange valuesToTile, ArrayRef<OpFoldResult> ivs,
@@ -247,7 +247,7 @@ static SmallVector<std::optional<SliceParameters>> computeAllSliceParameters(
   return allSliceParams;
 }
 
-// This function refer on the implmentation of linalg bubbleUpExtractSlice.
+// This function refer on the implementation of linalg bubbleUpExtractSlice.
 static Value materializeTiledShape(OpBuilder &builder, Location loc,
                                    Value valueToTile,
                                    const SliceParameters &sliceParams) {
@@ -274,7 +274,7 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
   return sliceOp->getResult(0);
 }
 
-// This function refer on the implmentation of linalg bubbleUpExtractSlice.
+// This function refer on the implementation of linalg bubbleUpExtractSlice.
 SmallVector<Value>
 makeTiledShapes(OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
                 ValueRange valuesToTile, ArrayRef<OpFoldResult> ivs,
@@ -296,10 +296,6 @@ makeTiledShapes(OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
 }
 } // namespace
 
-static bool isDynamicSlice(tensor::ExtractSliceOp op) {
-  return ShapedType::isDynamicShape(op.getStaticSizes());
-}
-
 bool ElementwiseBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   // Check if source is a block argument of a for loop
@@ -309,8 +305,7 @@ bool ElementwiseBubbleUpStrategy::isSupportedOperation(
   }
   bool isValidElementwise =
       (isElemwiseNaryOpImpl(sourceOp) ||
-       isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp>(sourceOp)) &&
-      !isDynamicSlice(sliceOp);
+       isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp>(sourceOp));
   return isValidElementwise;
 }
 
