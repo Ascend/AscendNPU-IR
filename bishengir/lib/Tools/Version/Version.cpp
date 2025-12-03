@@ -84,7 +84,7 @@ std::string getBiShengIRFullRepositoryVersion() {
         OS << ' ';
       OS << Revision;
     }
-    OS << ')';
+    OS << ' ' << BISHENGIR_BUILD_DATE << ')';
   }
   // Support LLVM in a separate repository.
   std::string LLVMRev = getLLVMRevision();
