@@ -21,8 +21,12 @@
 
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/FileUtilities.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/VersionTuple.h"
+#include <set>
+#include <vector>
 
 #define DEBUG_TYPE "bishengir-compile"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -39,24 +43,58 @@ StringRef getHIVMCName() {
   return kBiShengIRHIVMBinaryName;
 }
 
-#ifndef BISHENGIR_PUBLISH
-std::vector<std::string>
-getCompatibleOptions(const std::vector<std::string> &arguments) {
+std::vector<std::string> skipOptions(const std::vector<std::string> &options,
+                                     const std::set<std::string> &skip) {
   std::vector<std::string> result;
-  DenseSet<std::string> skipArgs = {"debug", "debug-only",
-                                    "mlir-print-ir-before-all",
-                                    "mlir-print-ir-after-all"};
-  for (const std::string &arg : arguments) {
+  for (const std::string &arg : options) {
     StringRef argRef = arg;
-    std::string trimArg = argRef.trim().ltrim('-').str();
-    if (skipArgs.contains(trimArg)) {
+    SmallVector<StringRef> parts;
+    argRef.split(parts, '=');
+    if (parts.empty()) {
+      continue;
+    }
+    std::string trimArg = parts[0].trim().ltrim('-').str();
+    if (skip.count(trimArg) != 0) {
       continue;
     }
     result.push_back(arg);
   }
   return result;
 }
+
+std::vector<std::string>
+skipDebugOptions(const std::vector<std::string> &options) {
+  std::set<std::string> debugOptions = {"debug", "debug-only",
+                                        "mlir-print-ir-before-all",
+                                        "mlir-print-ir-after-all"};
+  return skipOptions(options, debugOptions);
+}
+
+std::vector<std::string>
+getCompatibleOptions(const std::vector<std::string> &arguments,
+                     const BiShengIRCompileMainConfig &config) {
+  std::vector<std::string> options = arguments;
+#ifndef BISHENGIR_PUBLISH
+  // if enabled, skip debug options for compatibility.
+  options = skipDebugOptions(options);
 #endif
+  // TODO: support hivmc compatibility for different versions
+  auto version = bishengir::parseHIVMCVersion(config.getHIVMCVersion());
+  if (!version.has_value() || version.value().empty()) {
+    // null or empty version means we are using unknown or legacy hivmc
+    // 1. legacy hivmc does not support debug or print
+    options = skipDebugOptions(options);
+    // 2. legacy hivmc has to manually enable triton compile pipeline
+    if (config.getEnableTritonKernelCompile()) {
+      options.push_back("--enable-triton-kernel-compile=true");
+    }
+    // 3. legacy hivmc has some unsupported options
+    std::set<std::string> unsupported = {"enable-lir-compile",
+                                         "enable-cpu-trace-intrinsic"};
+    options = skipOptions(options, unsupported);
+  }
+  return options;
+}
 
 LogicalResult runExternalHIVMC(ModuleOp module,
                                const BiShengIRCompileMainConfig &config) {
@@ -87,9 +125,7 @@ LogicalResult runExternalHIVMC(ModuleOp module,
   arguments.emplace_back("-o");
   arguments.push_back(outputFile);
 
-#ifndef BISHENGIR_PUBLISH
-  arguments = getCompatibleOptions(arguments);
-#endif
+  arguments = getCompatibleOptions(arguments, config);
 
   SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
   if (failed(execute(getHIVMCName(), getBiShengInstallPath(), argumentsRef))) {
@@ -107,6 +143,19 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
+
+  // Resolve hivmc backward compatibility
+  auto versionMaybe = detectHIVMCVersion(getHIVMCName());
+  if (versionMaybe.has_value()) {
+    llvm::VersionTuple hivmcVersion = versionMaybe.value();
+    config.setHIVMCVersion(hivmcVersion.getAsString());
+  } else {
+    // Not return failure directly to support run compile without hivmc.
+    // Let user to specify hivmc version by commandline.
+    llvm::dbgs() << "[WARNING] Failed to detect hivmc version for backward "
+                    "compatibility\n";
+  }
+
   // Collect diagnostics and emit them afterwards because we have tuning
   // mechanism.
   auto handlerID = diagEngine.registerHandler([&](Diagnostic &diag) {

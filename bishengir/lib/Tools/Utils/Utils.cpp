@@ -24,9 +24,11 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/VersionTuple.h"
 #include "llvm/Support/raw_ostream.h"
 
 #define DEBUG_TYPE "bishengir-tools-utils"
@@ -152,7 +154,9 @@ bishengir::getTempFile(const std::string &outputFile,
 }
 
 LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
-                                 SmallVectorImpl<StringRef> &arguments) {
+                                 SmallVectorImpl<StringRef> &arguments,
+                                 std::optional<llvm::StringRef> outputFile,
+                                 unsigned timeoutSeconds) {
   std::string binPath;
   if (!installPath.empty()) {
     if (auto binPathOrErr =
@@ -182,7 +186,11 @@ LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
     llvm::dbgs() << "\n";
   });
 
-  if (llvm::sys::ExecuteAndWait(binPath, arguments) != 0) {
+  SmallVector<std::optional<StringRef>> redirects = {
+      /*stdin(0)=*/std::nullopt, /*stdout(1)=*/outputFile,
+      /*stderr(2)=*/std::nullopt};
+  if (llvm::sys::ExecuteAndWait(binPath, arguments, /*Env=*/std::nullopt,
+                                /*Redirects=*/redirects) != 0) {
     llvm::errs() << "[ERROR] Executing: ";
     llvm::interleave(
         arguments, llvm::errs(),
@@ -191,6 +199,78 @@ LogicalResult bishengir::execute(StringRef binName, StringRef installPath,
     return failure();
   }
   return success();
+}
+
+std::optional<llvm::VersionTuple>
+bishengir::parseHIVMCVersion(llvm::StringRef content) {
+  llvm::VersionTuple version;
+  bool fail = version.tryParse(content.trim());
+  if (!fail) {
+    return version;
+  }
+  return std::nullopt;
+}
+
+std::optional<llvm::VersionTuple>
+bishengir::parseHIVMCVersion(ArrayRef<StringRef> items) {
+  for (StringRef item : items) {
+    auto version = bishengir::parseHIVMCVersion(item);
+    if (version.has_value()) {
+      return version;
+    }
+  }
+  return std::nullopt;
+}
+
+llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
+  SmallVector<StringRef> lines;
+  int maxSplit = 100;
+  content.split(lines, '\n', maxSplit, /*KeepEmpty=*/false);
+  for (StringRef line : lines) {
+    // expected line to parse should contains "hivmc" and "version"
+    if (!line.contains_insensitive("hivmc") ||
+        !line.contains_insensitive("version")) {
+      continue;
+    }
+    SmallVector<StringRef> items;
+    content.split(items, ' ', maxSplit, /*KeepEmpty=*/false);
+    auto version = bishengir::parseHIVMCVersion(items);
+    if (version.has_value()) {
+      return version.value();
+    }
+  }
+  return llvm::VersionTuple();
+}
+
+std::optional<llvm::VersionTuple>
+bishengir::detectHIVMCVersion(StringRef hivmcName) {
+
+  TempDirectoriesStore tempDirsStore;
+  auto fileHandler = getTempFile("version.out", tempDirsStore);
+  if (!fileHandler) {
+    llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to "
+                    "detect hivmc version.\n";
+    return std::nullopt;
+  }
+  std::string fileName = fileHandler->outputFilename();
+  fileHandler->os().flush();
+
+  SmallVector<StringRef> args{"", "--version"};
+  StringRef outputFile = fileHandler->getFilename();
+  if (failed(execute(hivmcName, getBiShengInstallPath(), args, outputFile))) {
+    llvm::dbgs() << "[ERROR] Failed to run `hivmc --version`.\n";
+    return std::nullopt;
+  }
+
+  std::string errorMsg;
+  std::unique_ptr<llvm::MemoryBuffer> buffer =
+      mlir::openInputFile(fileName, &errorMsg);
+  if (!buffer) {
+    llvm::dbgs() << "[ERROR] Failed to open file: " << fileName << "\n";
+    return std::nullopt;
+  }
+
+  return findHIVMCVersion(buffer->getBuffer());
 }
 
 std::string bishengir::getBiShengInstallPath() {

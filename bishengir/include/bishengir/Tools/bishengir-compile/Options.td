@@ -509,6 +509,14 @@ def AllowUnregisteredDialects : BiShengIRCompileOpt<
   "false"
 >;
 
+def HIVMCVersion : BiShengIRCompileOpt<
+  "Version string for hivmc to resolve backward compatibility.",
+  "std::string",
+  ""
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def HIVMCArgs : BiShengIRCompileListOpt<
   "List of arguments passed to hivmc.",
   "std::string"
