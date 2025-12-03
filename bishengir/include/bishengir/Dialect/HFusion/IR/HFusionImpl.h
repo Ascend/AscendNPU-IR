@@ -63,6 +63,11 @@ Value castTo(OpBuilder &builder, Value src, Type targetElemType,
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
   hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
+/// Cast `src` value to the specified element type.
+/// provided rounding_mode and cast sign
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+    hfusion::RoundMode roundMode, hfusion::TypeFn castIntegerType);
+
 } // namespace hfusion
 } // namespace mlir
 
