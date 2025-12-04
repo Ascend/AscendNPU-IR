@@ -414,3 +414,13 @@ func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_
   hivm.hir.store ins(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: func @test_vtranspose_unalignment
+// CHECK: annotation.mark
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
+func.func @test_vtranspose_unalignment(%arg0: memref<1x2x1x3xf32, #hivm.address_space<ub>>, %arg1: memref<1x2x1x3xf32, #hivm.address_space<ub>>) attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  hivm.hir.vtranspose ins(%arg0 : memref<1x2x1x3xf32, #hivm.address_space<ub>>) outs(%arg1 : memref<1x2x1x3xf32, #hivm.address_space<ub>>) permutation = [2, 1, 0, 3]
+  return
+}
