@@ -146,7 +146,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
   }
 
   if (inType.isInteger() && isa<mlir::FloatType>(outType)) {
-    return T::TRUNC;
+    return T::RINT;
   }
 
   if (inType.isInteger() && outType.isInteger()) {
