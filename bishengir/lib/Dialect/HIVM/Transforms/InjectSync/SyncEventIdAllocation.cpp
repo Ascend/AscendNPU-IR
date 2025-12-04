@@ -769,20 +769,20 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
   } else {
     endIndex = 0;
   }
-  for (int id = static_cast<int>(setSync->GetSyncIRIndex()); id >= endIndex;
-       id--) {
-    auto *tmpIr = syncIR[id].get();
+  for (int loopId = static_cast<int>(setSync->GetSyncIRIndex()); loopId >= endIndex;
+       loopId--) {
+    auto *tmpIr = syncIR[loopId].get();
     assert(tmpIr != nullptr);
-    if (auto *loopInst = dyn_cast<LoopInstanceElement>(syncIR[id].get())) {
+    if (auto *loopInst = dyn_cast<LoopInstanceElement>(syncIR[loopId].get())) {
       if (loopInst->getLoopKind() == KindOfLoop::LOOP_END) {
-        id = loopInst->beginId;
+        loopId = static_cast<int>(loopInst->beginId);
       } else if (loopInst->getLoopKind() == KindOfLoop::LOOP_BEGIN) {
         break;
       }
     }
-    if (auto *branchInst = dyn_cast<BranchInstanceElement>(syncIR[id].get())) {
+    if (auto *branchInst = dyn_cast<BranchInstanceElement>(syncIR[loopId].get())) {
       if (branchInst->getBranchKind() == KindOfBranch::IF_END) {
-        id = branchInst->beginId;
+        loopId = static_cast<int>(branchInst->beginId);
       } else if (branchInst->getBranchKind() == KindOfBranch::IF_BEGIN ||
                  branchInst->getBranchKind() == KindOfBranch::ELSE_BEGIN) {
         break;

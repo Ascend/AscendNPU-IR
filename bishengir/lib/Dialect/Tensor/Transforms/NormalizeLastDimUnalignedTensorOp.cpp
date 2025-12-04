@@ -54,7 +54,7 @@ TensorType transposeTensorType(TensorType oldType, ArrayRef<int64_t> perm) {
 
 SmallVector<OpFoldResult> transposeMixedSizes(ArrayRef<OpFoldResult> oldSizes,
                                               ArrayRef<int64_t> perm) {
-  int64_t rank = oldSizes.size();
+  int64_t rank = static_cast<int64_t>(oldSizes.size());
   SmallVector<OpFoldResult> newSizes(rank);
   assert(newSizes.size() == perm.size());
   for (int64_t i = 0; i < rank; i++)
@@ -222,7 +222,7 @@ public:
                                 PatternRewriter &rewriter) const override {
     // Check that the concat axis is the last dim, if not skip this op.
     size_t dim = concatOp.getDim();
-    size_t rank = concatOp.getResultType().getRank();
+    int rank = concatOp.getResultType().getRank();
     if (dim != rank - 1) {
       return failure();
     }
