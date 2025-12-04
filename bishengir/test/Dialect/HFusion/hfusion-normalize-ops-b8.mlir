@@ -234,7 +234,7 @@ func.func @test_normalize_i8_elemwise_mod(%arg0: tensor<64xi8>, %arg1: tensor<64
 // -----
 
 // CHECK-LABEL: @test_reduce_max_with_index
-// CHECK: hfusion.reduce_with_index {already_denaned, tie_break_left = true} <max> ins(%[[input0:.*]], %[[input1:.*]] : tensor<4x64xf16>, tensor<4x64xi32>) outs(%[[init0:.*]], %[[init1:.*]] : tensor<4xf16>, tensor<4xi32>) dimensions = [1] -> tensor<4xf16>, tensor<4xi32>
+// CHECK: hfusion.reduce_with_index {tie_break_left = true} <max> ins(%[[input0:.*]], %[[input1:.*]] : tensor<4x64xf16>, tensor<4x64xi32>) outs(%[[init0:.*]], %[[init1:.*]] : tensor<4xf16>, tensor<4xi32>) dimensions = [1] -> tensor<4xf16>, tensor<4xi32>
 module {
   func.func @test_reduce_max_with_index(%arg0: tensor<4x64xi8>, %arg1: tensor<4x64xi32>) -> (tensor<4xi8>, tensor<4xi32>) {
     %0 = tensor.empty() : tensor<4xi8>
