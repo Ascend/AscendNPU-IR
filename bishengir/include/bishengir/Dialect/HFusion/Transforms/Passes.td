@@ -353,6 +353,9 @@ def AdaptTritonKernel : Pass<"adapt-triton-kernel", "ModuleOp"> {
   let summary = "Adapt the triton kernel";
   let constructor = "mlir::hfusion::createAdaptTritonKernelPass()";
   let dependentDialects = ["hacc::HACCDialect", "hfusion::HFusionDialect"];
+  let options = [Option<"hivmcVersion", "hivmc-version", "std::string", /*default=*/"",
+                        "Specify hivmc version to resolve backward compatibility">,
+  ];
 }
 
 def LegalizeBF16Pass : Pass<"hfusion-legalize-bf16", "func::FuncOp"> {

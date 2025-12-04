@@ -80,9 +80,6 @@ bool isDeviceEntry(Operation *func);
 /// Return if the function inputs/outputs are strictly not alias.
 bool hasNoIOAlias(Operation *func);
 
-/// Return if the module contains triton kernel.
-bool hasTritonKernel(ModuleOp module);
-
 /// Return the host function type. If the function is not a host function,
 /// return `std::nullopt`.
 std::optional<HostFuncType> getHostFuncType(Operation *func);

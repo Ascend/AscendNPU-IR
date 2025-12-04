@@ -27,6 +27,7 @@
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/VersionTuple.h"
 
 #include <algorithm>
 #include <numeric>
@@ -1206,4 +1207,14 @@ std::optional<int64_t> utils::traceToAllocMaxSize(mlir::Value memrefVal) {
   return allocSizeInBit /
          static_cast<int>(originalMemRefType.getElementTypeBitWidth());
 }
+
+bool version_utils::isCompatibleHIVMCVersion(StringRef versionStr) {
+  llvm::VersionTuple version;
+  bool fail = version.tryParse(versionStr.trim());
+  if (fail || version.empty()) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace mlir

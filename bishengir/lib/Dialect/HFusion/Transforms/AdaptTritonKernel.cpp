@@ -44,6 +44,8 @@ struct AdaptTritonKernelPass
   using AdaptTritonKernelBase<AdaptTritonKernelPass>::AdaptTritonKernelBase;
 
 public:
+  AdaptTritonKernelPass(std::string hivmcVersion)
+      : AdaptTritonKernelBase(AdaptTritonKernelOptions{hivmcVersion}) {}
   void runOnOperation() override;
 };
 
@@ -411,9 +413,12 @@ void AdaptTritonKernelPass::runOnOperation() {
     markSyncBlockLockArgument(funcOp);
   });
   // Add metadata.
-  module->setAttr(hacc::TritonKernelAttr::name, UnitAttr::get(context));
+  if (version_utils::isCompatibleHIVMCVersion(this->hivmcVersion)) {
+    module->setAttr(utils::kMemrefAsPtr, UnitAttr::get(context));
+  }
 }
 
-std::unique_ptr<Pass> mlir::hfusion::createAdaptTritonKernelPass() {
-  return std::make_unique<AdaptTritonKernelPass>();
+std::unique_ptr<Pass>
+mlir::hfusion::createAdaptTritonKernelPass(std::string hivmcVersion) {
+  return std::make_unique<AdaptTritonKernelPass>(hivmcVersion);
 }

@@ -91,7 +91,7 @@ static void preProcess(OpPassManager &pm,
   if (options.enableTritonKernelCompile) {
     pm.addPass(createSymbolDCEPass());
     pm.addPass(createGPUToHFusionConversionPass());
-    pm.addPass(createAdaptTritonKernelPass());
+    pm.addPass(createAdaptTritonKernelPass(options.hIVMCVersion));
   }
   pm.addPass(createTensorToHFusionConversionPass());
   pm.nest<func::FuncOp>().addPass(

@@ -165,10 +165,6 @@ SmallVector<ExternalFuncInfo> collectExternalFuncs(ModuleOp mod) {
   return externalFuncs;
 }
 
-bool hasTritonKernel(ModuleOp module) {
-  return module->hasAttr(hacc::TritonKernelAttr::name);
-}
-
 //===----------------------------------------------------------------------===//
 // Data Layout and Target Info
 //===----------------------------------------------------------------------===//
