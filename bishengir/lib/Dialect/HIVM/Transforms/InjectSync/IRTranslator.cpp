@@ -148,7 +148,7 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
       std::nullopt;
   if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
     auto spaceAttr = GetBufferSpaceAttr(pointerCastOp.getResult());
-    if (!spaceAttr) {
+    if (!spaceAttr.has_value()) {
       // Only handle buffers within the specified scope.
       return failure();
     }
@@ -168,25 +168,23 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
   }
 
   int addressNum = static_cast<int>(curAddress.size());
-  if (addressNum == 0)
+  if (addressNum == 0) {
     return op->emitError("MemAllocOp must have at least one address present");
-
-  SmallVector<uint64_t> baseAddresses(addressNum,
-                                      std::numeric_limits<uint64_t>::max());
-  if (!util::isGMPointerCastOp(op)) {
-    for (int i = 0; i < addressNum; i++) {
-      auto constOp = dyn_cast<arith::ConstantOp>(curAddress[i].getDefiningOp());
-      if (!constOp)
-        return op->emitError(
-            "Currently, only constant addresses are supported");
-      baseAddresses[i] =
-          static_cast<uint64_t>(cast<IntegerAttr>(constOp.getValue()).getInt());
+  }
+  SmallVector<uint64_t> baseAddresses;
+  for (int i = 0; i < addressNum; i++) {
+    auto constOp = dyn_cast<arith::ConstantOp>(curAddress[i].getDefiningOp());
+    if (!constOp) {
+      return op->emitError("Currently, only constant addresses are supported");
     }
+    int64_t value = cast<IntegerAttr>(constOp.getValue()).getInt();
+    baseAddresses.push_back(value);
   }
   auto bufferSize = GetBufferSize(rootBuffer);
-  if (!bufferSize.has_value())
+  if (!bufferSize.has_value()) {
     return op->emitError(
         "There are illegal buffer MemAllocOp can't get buffer size! ");
+  }
 
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       baseBuffer, rootBuffer, space, baseAddresses, bufferSize.value(),
@@ -198,9 +196,25 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
   return success();
 }
 
-void IRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
-  auto spaceAttr = GetBufferSpaceAttr(result);
-  if (!spaceAttr) {
+void IRTranslator::UpdateAliasBufferInfo(
+    Value result, Value source,
+    std::optional<std::reference_wrapper<Buffer2MemInfoMap>>
+        buffer2MemInfoMapOpt) {
+  if (syncAnalysisMode == SyncAnalysisMode::NORMALSYNC) {
+    auto spaceAttr = GetBufferSpaceAttr(result);
+    if (!spaceAttr.has_value()) {
+      return;
+    }
+  }
+
+  if (buffer2MemInfoMapOpt.has_value()) {
+    auto &buffer2MemInfoMap = buffer2MemInfoMapOpt.value().get();
+    if (buffer2MemInfoMap.contains(source)) {
+      auto &resultMemInfoVec = buffer2MemInfoMap[result];
+      for (auto &memInfo : buffer2MemInfoMap[source]) {
+        resultMemInfoVec.emplace_back(memInfo->clone(result));
+      }
+    }
     return;
   }
 
@@ -220,9 +234,8 @@ void IRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
 }
 
 void IRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
-  auto forBeginElement = std::make_unique<LoopInstanceElement>(
-      LoopInstanceElement{index, index, index});
-  assert(forBeginElement != nullptr);
+  auto forBeginElement =
+      std::make_unique<LoopInstanceElement>(index, index, index);
   forBeginElement->elementOp = forOp.getOperation();
   syncIR.emplace_back(std::move(forBeginElement));
   std::unique_ptr<InstanceElement> &forElement = syncIR[index];
@@ -241,9 +254,8 @@ void IRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
 }
 
 void IRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
-  auto loopBeginElement = std::make_unique<LoopInstanceElement>(
-      LoopInstanceElement{index, index, index});
-  assert(loopBeginElement != nullptr);
+  auto loopBeginElement =
+      std::make_unique<LoopInstanceElement>(index, index, index);
   loopBeginElement->elementOp = whileOp.getOperation();
   syncIR.emplace_back(std::move(loopBeginElement));
   auto &loopElement = syncIR.back();
@@ -289,7 +301,7 @@ void IRTranslator::UpdateWhileInitArgsAliasInfo(scf::WhileOp whileOp) {
   }
 }
 
-void IRTranslator::insertPlaceHolderInst(InstanceElement *parentScope) {
+void IRTranslator::InsertPlaceHolderInst(InstanceElement *parentScope) {
   auto placeHolder = std::make_unique<PlaceHolderInstanceElement>(
       index, parentScope->GetIndex());
   syncIR.emplace_back(std::move(placeHolder));
@@ -307,7 +319,7 @@ void IRTranslator::UpdateIfOpInform(scf::IfOp ifOp) {
   assert(syncIR.size() == index && "Sync IR Construction failed.");
 
   RecursionIR(&ifOp.getThenRegion());
-  insertPlaceHolderInst(ifPtr);
+  InsertPlaceHolderInst(ifPtr);
   ifPtr->branchId = index;
 
   if (ifOp.elseBlock()) {
@@ -320,7 +332,7 @@ void IRTranslator::UpdateIfOpInform(scf::IfOp ifOp) {
     assert(syncIR.size() == index && "Sync IR Construction failed.");
 
     RecursionIR(&ifOp.getElseRegion());
-    insertPlaceHolderInst(elsePtr);
+    InsertPlaceHolderInst(elsePtr);
     elsePtr->endId = index;
   }
   ifPtr->endId = index;
@@ -343,7 +355,7 @@ void IRTranslator::UpdateYieldOpInform(scf::YieldOp yieldOp) {
   for (auto [yieldVal, resultVal] :
        llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
     auto spaceAttr = GetBufferSpaceAttr(resultVal);
-    if (!spaceAttr) {
+    if (!spaceAttr.has_value()) {
       continue;
     }
     UpdateAliasBufferInfo(resultVal, yieldVal.get());
@@ -369,22 +381,22 @@ void IRTranslator::UpdateMacroOpInform(DestinationStyleOpInterface dstOp) {
   assert(static_cast<unsigned int>(pipeOp.getOutPipe()) < getPipeNum());
   SmallVector<const BaseMemInfo *> defVec;
   UpdateDefUseVec(dstOp.getDpsInits(), defVec);
-  auto copPrt1 =
-      std::make_unique<CompoundInstanceElement>(CompoundInstanceElement{
-          index, defVec, {}, pipeOp.getOutPipe(), dstOp->getName()});
-  assert(copPrt1 != nullptr);
-  copPrt1->elementOp = dstOp.getOperation();
-  syncIR.emplace_back(std::move(copPrt1));
+  auto copPtr1 = std::make_unique<CompoundInstanceElement>(
+      index, defVec, SmallVector<const BaseMemInfo *>(), pipeOp.getOutPipe(),
+      dstOp->getName());
+  copPtr1->elementOp = dstOp.getOperation();
+  copPtr1->macroOpInstanceId = 0;
+  syncIR.emplace_back(std::move(copPtr1));
   index++;
 
   SmallVector<const BaseMemInfo *> useVec;
   UpdateDefUseVec(dstOp.getDpsInputs(), useVec);
-  auto copPrt2 =
-      std::make_unique<CompoundInstanceElement>(CompoundInstanceElement{
-          index, {}, useVec, pipeOp.getInPipe(), dstOp->getName()});
-  assert(copPrt2 != nullptr);
-  copPrt2->elementOp = dstOp.getOperation();
-  syncIR.emplace_back(std::move(copPrt2));
+  auto copPtr2 = std::make_unique<CompoundInstanceElement>(
+      index, SmallVector<const BaseMemInfo *>(), useVec, pipeOp.getInPipe(),
+      dstOp->getName());
+  copPtr2->macroOpInstanceId = 1;
+  copPtr2->elementOp = dstOp.getOperation();
+  syncIR.emplace_back(std::move(copPtr2));
   index++;
 }
 
@@ -405,8 +417,7 @@ void IRTranslator::UpdateDestinationStyleOpInterfaceInform(
   UpdateTempOpDefVec(op, defVec);
   assert(static_cast<unsigned int>(pipe) < getPipeNum());
   auto copPrt = std::make_unique<CompoundInstanceElement>(
-      CompoundInstanceElement{index, defVec, useVec, pipe, dstOp->getName()});
-  assert(copPrt != nullptr);
+      index, defVec, useVec, pipe, dstOp->getName());
   copPrt->elementOp = op;
   syncIR.emplace_back(std::move(copPrt));
   index++;
@@ -428,14 +439,11 @@ void IRTranslator::UpdateTempOpDefVec(
 }
 
 bool IRTranslator::isTensorExtractLoadOp(Operation *op) {
-  for (auto result : op->getResults()) {
+  return llvm::any_of(op->getResults(), [](Value result) {
     auto duplicateTensorExtractForCubeOpt = utils::getAnnotateOpWithAttr(
         result, "DuplicateTensorExtractForCube::replacementLabel");
-    if (duplicateTensorExtractForCubeOpt.has_value()) {
-      return true;
-    }
-  }
-  return false;
+    return duplicateTensorExtractForCubeOpt.has_value();
+  });
 }
 
 template <typename OP>
@@ -480,7 +488,6 @@ IRTranslator::UpdateStoreOrLoadOpInform(OP op) {
   assert(static_cast<unsigned int>(pipe) < getPipeNum());
   auto copPrt = std::make_unique<CompoundInstanceElement>(index, defVec, useVec,
                                                           pipe, op->getName());
-  assert(copPrt != nullptr);
   copPrt->elementOp = op.getOperation();
   syncIR.emplace_back(std::move(copPrt));
   index++;

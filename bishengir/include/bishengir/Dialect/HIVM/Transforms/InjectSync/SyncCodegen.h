@@ -35,16 +35,24 @@ struct SyncPipeBuild {
 /// Sync and Template Interaction.
 struct SyncTemplateInter {
   SyncTemplateInter() = default;
-  SyncTemplateInter(Value MmadL1WaitL1AEvent, Value MmadL1WaitL1BEvent,
-                    Value L1AWaitMmadL1Event, Value L1B2WaitMmadL1Event,
-                    Value KLoopDBCond, Value BackPipeMPipeMTE1DBEvent0,
-                    Value BackPipeMPipeMTE1DBEvent1)
+
+  explicit SyncTemplateInter(Value MmadL1WaitL1AEvent, Value MmadL1WaitL1BEvent,
+                             Value L1AWaitMmadL1Event,
+                             Value L1B2WaitMmadL1Event, Value KLoopDBCond,
+                             Value BackPipeMPipeMTE1DBEvent0,
+                             Value BackPipeMPipeMTE1DBEvent1)
       : MmadL1WaitL1AEvent(MmadL1WaitL1AEvent),
         MmadL1WaitL1BEvent(MmadL1WaitL1BEvent),
         L1AWaitMmadL1Event(L1AWaitMmadL1Event),
         L1B2WaitMmadL1Event(L1B2WaitMmadL1Event), KLoopDBCond(KLoopDBCond),
         BackPipeMPipeMTE1DBEvent0(BackPipeMPipeMTE1DBEvent0),
         BackPipeMPipeMTE1DBEvent1(BackPipeMPipeMTE1DBEvent1) {}
+
+  explicit SyncTemplateInter(Value defaultValue)
+      : MmadL1WaitL1AEvent(defaultValue), MmadL1WaitL1BEvent(defaultValue),
+        L1AWaitMmadL1Event(defaultValue), L1B2WaitMmadL1Event(defaultValue),
+        KLoopDBCond(defaultValue), BackPipeMPipeMTE1DBEvent0(defaultValue),
+        BackPipeMPipeMTE1DBEvent1(defaultValue) {}
 
   Value MmadL1WaitL1AEvent;
   Value MmadL1WaitL1BEvent;
@@ -59,7 +67,7 @@ class SyncCodegen {
 public:
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
               SyncAnalysisMode syncAnalysisMode)
-      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode){};
+      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode) {};
 
   ~SyncCodegen() = default;
 
@@ -79,8 +87,9 @@ private:
 
   /// Update the synchronization required for compound element to be inserted.
   void UpdateCompoundOpInsertSync(CompoundInstanceElement *nowCompound);
-  
-  /// Update the synchronization required for place-holder element to be inserted.
+
+  /// Update the synchronization required for place-holder element to be
+  /// inserted.
   void updatePlaceHolderOpInsertSync(PlaceHolderInstanceElement *placeHolder);
 
   /// Update the synchronization required for for element to be inserted.
@@ -135,17 +144,16 @@ private:
 
   /// Determine whether to synchronize instructions to lower into the library.
   void UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
-      CompoundInstanceElement *nowCompound);
+      CompoundInstanceElement *nowCompound, hivm::MmadL1Op mmadL1Op);
 
   /// SyncTemplateInter for initialization and library interaction.
-  void InitDefaultSyncTemplateInterForMmadL1Op(IRRewriter &rewriter,
-                                               hivm::MmadL1Op mmadL1Op);
+  void InitDefaultSyncTemplateInterForMmadL1Op(hivm::MmadL1Op mmadL1Op);
 
   /// Update the SyncTemplateInter information for the interaction between
   /// MmadL1 and the library.
-  void UpdateMmadL1SyncTemplateInter();
+  void UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter);
 
-  void handleEnableUnitFlag(IRRewriter &rewriter,
+  void HandleEnableUnitFlag(IRRewriter &rewriter,
                             CompoundInstanceElement *nowCompound) const;
 
 private:

@@ -76,7 +76,10 @@ public:
 
   /// Collect information on result replace source baseAddress and allocate
   /// size.
-  virtual void UpdateAliasBufferInfo(Value result, Value source);
+  void
+  UpdateAliasBufferInfo(Value result, Value source,
+                        std::optional<std::reference_wrapper<Buffer2MemInfoMap>>
+                            buffer2MemInfoMapOpt = {});
 
   /// Determine whether the loadOp is from tensor extract op.
   bool isTensorExtractLoadOp(Operation *op);
@@ -89,12 +92,13 @@ public:
 
   SyncAnalysisMode syncAnalysisMode;
 
+  /// Maps buffers to their mem-info.
   Buffer2MemInfoMap buffer2MemInfoMap;
 
-  /// same as buffer2MemInfoMap but including work-space arguments (that are
-  /// usually ignored in normal-sync).
+  /// Same as buffer2MemInfoMap but includes work-space arguments.
   Buffer2MemInfoMap buffer2MemInfoMapIncludingWSArgs;
 
+  /// A reference to the function being processed.
   func::FuncOp func_;
 
   /// The serial index of syncIR.
@@ -147,7 +151,8 @@ private:
   /// Update the src and dst information of MacroOp.
   void UpdateMacroOpInform(DestinationStyleOpInterface dstOp);
 
-  void insertPlaceHolderInst(InstanceElement *parentScope);
+  /// Insert a place-holder instance-element.
+  void InsertPlaceHolderInst(InstanceElement *parentScope);
 
 private:
   /// The actual base address corresponding to the buffer.

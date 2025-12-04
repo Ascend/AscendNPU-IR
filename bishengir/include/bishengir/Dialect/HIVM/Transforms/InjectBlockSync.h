@@ -90,9 +90,6 @@ private:
   /// Collect information on YieldOp, handle if yield and for yield.
   void UpdateYieldOpInform(scf::YieldOp yieldOp);
 
-  /// Update the buffer information of alias.
-  void UpdateAliasBufferInfo(Value buffer, Value aliasBuffer) override;
-
   /// Update the tensor dst and result alias.
   void UpdateInitAndResAlias(DestinationStyleOpInterface dstStyleOp);
 
@@ -105,13 +102,7 @@ private:
   void UpdateTensorExtractOpInform(Operation *op, tensor::ExtractOp extractOp);
 
   /// Collect information on load or store op.
-  template <typename OP>
-  typename std::enable_if<std::is_same_v<OP, memref::LoadOp> ||
-                              std::is_same_v<OP, affine::AffineLoadOp> ||
-                              std::is_same_v<OP, affine::AffineStoreOp> ||
-                              std::is_same_v<OP, memref::StoreOp>,
-                          void>::type
-  updateStoreOrLoadOpInfoBlockSync(OP op);
+  template <typename OP> void UpdateStoreOrLoadOpInfoBlockSync(OP op);
 };
 
 } // namespace hivm

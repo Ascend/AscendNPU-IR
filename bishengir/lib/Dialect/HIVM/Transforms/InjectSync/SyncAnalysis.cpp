@@ -55,48 +55,46 @@ void SyncAnalyzer::Plan(bool insertBarAllAtLast) {
 }
 
 void SyncAnalyzer::insertMmadL1BackPipeMPipeMTE1Sync() {
+
+  auto getPipeMTE1PipeMSyncPairPtr = [this](int id) {
+    if (BwdPipeMPipeMTE1SyncPtr.contains(id)) {
+      return BwdPipeMPipeMTE1SyncPtr[id];
+    }
+    int insertSetId = 0;
+    int insertWaitId = static_cast<int>(syncIR.size()) - 1;
+    auto setSyncOp = std::make_unique<SyncOperation>(
+        SyncOperation::TYPE::SET_EVENT, hivm::PIPE::PIPE_M,
+        hivm::PIPE::PIPE_MTE1, syncIndex, insertSetId, std::nullopt);
+    auto waitSyncOp = setSyncOp->GetMatchSync(insertWaitId);
+    auto *setSyncOpPtr = setSyncOp.get();
+    syncIR[insertSetId]->pipeBefore.push_back(setSyncOp.get());
+    syncIR[insertWaitId]->pipeAfter.push_back(waitSyncOp.get());
+    SmallVector<std::unique_ptr<SyncOperation>> newSync;
+    newSync.emplace_back(std::move(setSyncOp));
+    newSync.emplace_back(std::move(waitSyncOp));
+    syncOperations.emplace_back(std::move(newSync));
+    syncIndex++;
+    assert(syncOperations.size() == syncIndex);
+    return BwdPipeMPipeMTE1SyncPtr[id] = setSyncOpPtr;
+  };
   for (auto &e : syncIR) {
     if (auto *compound = dyn_cast<CompoundInstanceElement>(e.get())) {
       if (!isa<hivm::MmadL1Op>(compound->elementOp)) {
         continue;
       }
-
       // There must be a for loop on the outer layer of MmadL1Op.
-      LoopLikeOpInterface parentLoop =
+      auto parentLoop =
           compound->elementOp->getParentOfType<LoopLikeOpInterface>();
       if (!parentLoop) {
         continue;
       }
-
-      // for each mmadl1 operation, there is 2 in the sync-ir, for the first one
-      // (that has an empty useVec) we will use the id 0, and for the other one
-      // we will use id 1.
-      int backPipeMEventID = compound->useVec.empty() ? 0 : 1;
-      if (this->PipeMTE1ToPipeMSync[backPipeMEventID] != nullptr) {
-        compound->PipeMTE1ToPipeMSync =
-            this->PipeMTE1ToPipeMSync[backPipeMEventID];
-        continue;
-      }
-
-      unsigned insertWaitId = syncIR.size() - 1;
-      unsigned insertSetId = 0;
-      std::unique_ptr<SyncOperation, std::default_delete<SyncOperation>>
-          setSyncOp = std::make_unique<SyncOperation>(SyncOperation{
-              SyncOperation::TYPE::SET_EVENT, hivm::PIPE::PIPE_M,
-              hivm::PIPE::PIPE_MTE1, syncIndex, insertSetId, std::nullopt});
-      assert(setSyncOp != nullptr);
-      auto waitSyncOp = setSyncOp->GetMatchSync(insertWaitId);
-      this->PipeMTE1ToPipeMSync[backPipeMEventID] = setSyncOp.get();
-      compound->PipeMTE1ToPipeMSync =
-          this->PipeMTE1ToPipeMSync[backPipeMEventID];
-      syncIR[insertSetId]->pipeBefore.push_back(setSyncOp.get());
-      syncIR[insertWaitId]->pipeAfter.push_back(waitSyncOp.get());
-      SmallVector<std::unique_ptr<SyncOperation>> newSync;
-      newSync.emplace_back(std::move(setSyncOp));
-      newSync.emplace_back(std::move(waitSyncOp));
-      syncOperations.emplace_back(std::move(newSync));
-      syncIndex++;
-      assert(syncOperations.size() == syncIndex);
+      // for each mmadl1 operation, there are 2 compound elements in the
+      // sync-ir, for the first one (that has an empty useVec) we will use the
+      // id 0, and for the other one we will use id 1.
+      assert(compound->macroOpInstanceId != -1);
+      int instanceId = compound->macroOpInstanceId;
+      compound->BwdPipeMPipeMTE1SyncPtr =
+          getPipeMTE1PipeMSyncPairPtr(instanceId);
     }
   }
 }
@@ -108,10 +106,9 @@ void SyncAnalyzer::InsertLastPipeAll() {
   // insert last barrier all.
   assert(!syncIR.empty());
   auto *nowCompound = syncIR[syncIR.size() - 1].get();
-  auto syncFront = std::make_unique<SyncOperation>(SyncOperation{
+  auto syncFront = std::make_unique<SyncOperation>(
       SyncOperation::TYPE::PIPE_BARRIER, hivm::PIPE::PIPE_ALL,
-      hivm::PIPE::PIPE_ALL, syncIndex, nowCompound->GetIndex(), std::nullopt});
-  assert(syncFront != nullptr && "get unique_ptr fail");
+      hivm::PIPE::PIPE_ALL, syncIndex, nowCompound->GetIndex(), std::nullopt);
   syncIR[syncIR.size() - 1]->pipeAfter.push_back(syncFront.get());
   SmallVector<std::unique_ptr<SyncOperation>> newSync;
   newSync.emplace_back(std::move(syncFront));
@@ -525,8 +522,8 @@ void SyncAnalyzer::MemAnalyze(CompoundInstanceElement *nowCompound,
     return;
   }
   if (forEndIndex.has_value()) {
-    int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
-    for (int i = 1; i < eventIdNum; i++) {
+    size_t eventIdNum = GetEventIdNum(depBaseMemInfosVec);
+    for (size_t i = 1; i < eventIdNum; i++) {
       if (isAlreadySync(nowCompound, frontCompound, syncRecordList, i)) {
         // already sync by checking corresponding multi buffer records, no need
         // to insert sync any more
@@ -766,7 +763,7 @@ SyncAnalyzer::getParentScope(InstanceElement *instanceElement) {
 }
 
 PlaceHolderInstanceElement *
-SyncAnalyzer::checkUnlikelyScope(CompoundInstanceElement *nowCompound,
+SyncAnalyzer::CheckUnlikelyScope(CompoundInstanceElement *nowCompound,
                                  CompoundInstanceElement *frontCompound) {
   auto *parentScope = getParentScope(frontCompound);
   if (parentScope == nullptr) {
@@ -788,7 +785,7 @@ SyncAnalyzer::checkUnlikelyScope(CompoundInstanceElement *nowCompound,
   return nullptr;
 }
 
-void SyncAnalyzer::insertUnlikelySyncOperation(
+void SyncAnalyzer::InsertUnlikelySyncOperation(
     PlaceHolderInstanceElement *placeHolder,
     CompoundInstanceElement *nowCompound,
     CompoundInstanceElement *frontCompound,
@@ -834,8 +831,8 @@ void SyncAnalyzer::InsertSyncOperation(
     CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec,
     const std::optional<unsigned> &forEndIndex) {
-  if (auto *placeHolder = checkUnlikelyScope(nowCompound, frontCompound)) {
-    insertUnlikelySyncOperation(placeHolder, nowCompound, frontCompound,
+  if (auto *placeHolder = CheckUnlikelyScope(nowCompound, frontCompound)) {
+    InsertUnlikelySyncOperation(placeHolder, nowCompound, frontCompound,
                                 depBaseMemInfosVec, forEndIndex);
     return;
   }
@@ -1199,8 +1196,11 @@ std::optional<std::pair<Value, scf::ForOp>> SyncAnalyzer::GetCommonParentLoop(
   if (allocOp == nullptr) {
     return {};
   }
-  scf::ForOp retParentLoop = allocOp->getParentOfType<scf::ForOp>();
-  if (!retParentLoop) {
+  if (!checkAllParentLoopsAreForLoops(allocOp)) {
+    return {};
+  }
+  auto retParentLoop = allocOp->getParentOfType<scf::ForOp>();
+  if (retParentLoop == nullptr) {
     return {};
   }
   for (auto &buffer : touchedBuffer) {
@@ -1208,7 +1208,7 @@ std::optional<std::pair<Value, scf::ForOp>> SyncAnalyzer::GetCommonParentLoop(
     assert(curAllocOp != nullptr);
     assert(IsMemAllocOp(curAllocOp));
     auto curParentLoop = curAllocOp->getParentOfType<scf::ForOp>();
-    if (curParentLoop == nullptr || retParentLoop != curParentLoop) {
+    if (retParentLoop != curParentLoop) {
       return {};
     }
   }

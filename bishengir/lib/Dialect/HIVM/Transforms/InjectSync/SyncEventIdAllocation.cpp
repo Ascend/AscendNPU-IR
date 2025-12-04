@@ -562,14 +562,10 @@ void SyncEventIdAllocation::clearAllocatedEventId() {
 
   for (auto &e : syncIR) {
     for (auto &sync : e->pipeBefore) {
-      if (!sync->isBarrierType()) {
-        ClearEventId(sync);
-      }
+      ClearEventId(sync);
     }
     for (auto &sync : e->pipeAfter) {
-      if (!sync->isBarrierType()) {
-        ClearEventId(sync);
-      }
+      ClearEventId(sync);
     }
   }
 }
@@ -595,11 +591,9 @@ void SyncEventIdAllocation::ReallocatedEventId() {
 }
 
 void SyncEventIdAllocation::ClearEventId(const SyncOperation *sync) {
-  // Clearly identify all the eventIDs of the sync for pipes.
-  if (sync->eventIds.empty()) {
+  if (sync->isBarrierType()) {
     return;
   }
-  // Clearly identify all the eventIDs of the sync for pipes.
   auto &syncPair = syncOperations[sync->GetSyncIndex()];
   assert(syncPair.size() > 1);
   SyncOperation *setSync = syncPair[0].get();
