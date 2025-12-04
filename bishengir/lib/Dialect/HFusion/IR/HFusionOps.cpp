@@ -464,6 +464,14 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
       llvm_unreachable("unsupported type for vmax");
+    case BinaryFn::minnumf:
+      if (allFloatingPoint)
+        return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmin");
+    case BinaryFn::maxnumf:
+      if (allFloatingPoint)
+        return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmax");
     case BinaryFn::powf:
       if (allFloatingPoint)
         return builder.create<math::PowFOp>(arg0.getLoc(), arg0, arg1);

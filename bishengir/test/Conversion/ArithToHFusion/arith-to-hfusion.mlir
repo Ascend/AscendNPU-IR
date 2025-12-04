@@ -192,7 +192,7 @@ func.func @test_ori(%arg0 : tensor<6x6xi1>, %arg1 : tensor<6x6xi1>) -> tensor<6x
 // CHECK-LABEL: func.func @test_maxf
 func.func @test_maxf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> tensor<512xf16> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.elemwise_binary {fun =  #hfusion.binary_fn<maxf>}
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_binary {fun =  #hfusion.binary_fn<maxnumf>}
   %ret = arith.maxnumf %arg0, %arg1 : tensor<512xf16>
   return %ret : tensor<512xf16>
 }
@@ -202,7 +202,7 @@ func.func @test_maxf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> tensor
 // CHECK-LABEL: func.func @test_minf
 func.func @test_minf(%arg0 : tensor<512xf16>, %arg1 : tensor<512xf16>) -> tensor<512xf16> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
-  // CHECK:       %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>}
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minnumf>}
   %ret =  arith.minnumf %arg0, %arg1 : tensor<512xf16>
   return %ret : tensor<512xf16>
 }

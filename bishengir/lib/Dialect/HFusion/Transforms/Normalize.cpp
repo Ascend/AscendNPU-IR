@@ -5582,6 +5582,101 @@ struct NormalizeVPowiToPowf
   }
 };
 
+/// Normalize maxnumf (minnumf) to maxf (minf).
+/// eg.
+/// dst = hfusion.elemwise_binary {maxnumf} (src0, src1)
+/// is normalized to
+/// src0_nan_mask = hfusion.isnan(src0)
+/// new_src0 = hfusion.select(src0_nan_mask, -inf, src0)
+/// src1_nan_mask = hfusion.isnan(src1)
+/// new_src1 = hfusion.select(src1_nan_mask, -inf, src1)
+/// dst = hfusion.elemwise_binary {maxf} (new_src0, new_src1)
+template <BinaryFn funFrom>
+struct NormalizeMinMaxNumFOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    static_assert(funFrom == BinaryFn::maxnumf || funFrom == BinaryFn::minnumf,
+                  "Argument mismatch. NormaliseMinMaxNumFOp expects "
+                  "hfusion::BinaryFn::maxnumf or hfusion::BinaryFn::minnumf");
+ 
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+ 
+    if (op.getFun() != funFrom) {
+      return failure();
+    }
+ 
+    constexpr auto funTo =
+        (funFrom == BinaryFn::maxnumf) ? BinaryFn::maxf : BinaryFn::minf;
+    constexpr auto paddingInfSign = (funFrom == BinaryFn::maxnumf) ? -1 : 1;
+ 
+    auto res = rewriteMinMaxNumFOp<funTo>(
+        op, rewriter, paddingInfSign * std::numeric_limits<double>::infinity());
+ 
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+ 
+private:
+  /// Normalize maxnumf (minnumf) to maxf (minf)
+  /// Check comment before struct definition
+  template <hfusion::BinaryFn hfusionFn>
+  Value rewriteMinMaxNumFOp(hfusion::ElemwiseBinaryOp op,
+                            PatternRewriter &rewriter,
+                            double paddingInfValue) const {
+    static_assert(
+        hfusionFn == BinaryFn::maxf || hfusionFn == BinaryFn::minf,
+        "Normalization hfusion::BinaryFn::maxnumf (minnumf) allows "
+        "only hfusion::BinaryFn::maxf (minf) to be used for replacement");
+ 
+    Value src0 = op.getInputs()[0];
+    Value src1 = op.getInputs()[1];
+ 
+    // step 1: new_src0 = hfusion.select(hfusion.isnan(src0), -+inf, src0)
+    auto newSrc0 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src0,
+                                               paddingInfValue);
+    // step 2: new_src0 = hfusion.select(hfusion.isnan(src0), -+inf, src1)
+    auto newSrc1 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src1,
+                                               paddingInfValue);
+ 
+    // step 3: dst = hfusion.elemwise_binary {maxf | minf} (new_src0, new_src1)
+    auto minMaxFOpOut = utils::createEmptyOp(rewriter, op->getLoc(), src0);
+    auto minMaxFOp = createBinaryOp<ElemwiseBinaryOp, BinaryFn, BinaryFnAttr>(
+        rewriter, op->getLoc(), hfusionFn, ValueRange({newSrc0, newSrc1}),
+        ValueRange(minMaxFOpOut));
+ 
+    return minMaxFOp->getResult(0);
+  }
+ 
+  /// Returns a new operand for BinaryFn::maxf (BinaryFn::minf)
+  /// that is used when normalizing maxnumf (minnumf) to maxf (minf).
+  /// Check comment before struct definition
+  Value createNewSrcForMinMaxNumFOp(PatternRewriter &rewriter, Location loc,
+                                    Value src, double paddingInfValue) const {
+    auto elementType = getElementTypeOrSelf(src.getType());
+    auto constInfinity = utils::createConstantOp<double>(
+        rewriter, loc, elementType, paddingInfValue);
+ 
+    // src_nan_mask = hfusion.isnan(src0)
+    auto isNanResultTensorType =
+        utils::getTensorTypeWithSameShape(src.getType(), rewriter.getI1Type());
+    auto isNanOp = rewriter.create<IsNanOp>(loc, isNanResultTensorType, src);
+ 
+    // new_src = hfusion.select(src0_nan_mask, inf, src0)
+    auto selectOpOut = utils::createEmptyOp(rewriter, loc, src);
+    auto selectOp = rewriter.create<SelectOp>(
+        loc, TypeRange(selectOpOut),
+        ValueRange({isNanOp->getResult(0), constInfinity, src}),
+        ValueRange(selectOpOut));
+ 
+    return selectOp->getResult(0);
+  }
+};
+
 template <>
 struct NormalizeToTargetType<bool, hfusion::InterleaveOp>
     : public OpRewritePattern<hfusion::InterleaveOp> {
@@ -5740,6 +5835,8 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeIlogbOp>(patterns.getContext());
   patterns.add<NormalizeLdexpOp>(patterns.getContext());
   patterns.add<NormalizePowfOp>(patterns.getContext());
+  patterns.add<NormalizeMinMaxNumFOp<BinaryFn::maxnumf>>(patterns.getContext());
+  patterns.add<NormalizeMinMaxNumFOp<BinaryFn::minnumf>>(patterns.getContext());
   patterns.add<NormalizeF16ReduceSum>(patterns.getContext());
   patterns.add<ReduceWithIndexRAHighPerformance>(patterns.getContext());
   patterns.add<NormalizetruncfExtf>(patterns.getContext());
