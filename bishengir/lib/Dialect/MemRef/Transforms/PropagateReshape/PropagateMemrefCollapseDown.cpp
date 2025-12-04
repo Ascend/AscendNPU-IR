@@ -36,12 +36,6 @@ namespace mlir {
 namespace memref {
 
 namespace {
-
-bool isStrided(Value operand) {
-  MemRefType memrefType = dyn_cast<MemRefType>(operand.getType());
-  return memrefType && isa<StridedLayoutAttr>(memrefType.getLayout());
-}
-
 Operation *createNewExpandOpFromCollapseOp(memref::CollapseShapeOp &collapseOp,
                                            PatternRewriter &rewriter,
                                            Location loc, Value operand) {

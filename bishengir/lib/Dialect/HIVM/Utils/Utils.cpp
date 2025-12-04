@@ -1179,7 +1179,6 @@ bool isArgminOrArgmax(ReduceOperation op) {
          op == ReduceOperation::min_with_index_right ||
          op == ReduceOperation::max_with_index_right;
 }
-
 } // namespace util
 } // namespace hivm
 } // namespace mlir
