@@ -353,6 +353,12 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9372),
                 REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
                 REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+                // Ascend910_95 series
+                REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
+                REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
+                REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
+                REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
+                REGISTER_TARGET(Ascend910_9599),
                 REGISTER_TARGET(Unknown)
     #undef REGISTER_TARGET
     #undef TO_STRING

@@ -153,4 +153,40 @@ def Ascend910_9392_Spec : Ascend910_93_BaseSpec<"Ascend910_9392"> {
   let VectorCoreCount = 48;
 }
 
+//===----------------------------------------------------------------------===//
+// Ascend910_95
+//===----------------------------------------------------------------------===//
+
+class Ascend910_95_BaseSpec <string name> : TargetSpec<name> {
+  let UbSize = -1;
+  let L1Size = -1;
+  let L0aSize = -1;
+  let L0bSize = -1;
+  let L0cSize = -1;
+  let UbAlignSize = -1;
+  let L1AlignSize = -1;
+  let L0cAlignSize = -1;
+  let AiCoreCount = -1;
+  let CubeCoreCount = -1;
+  let VectorCoreCount = -1;
+}
+
+def Ascend910_950z_Spec : Ascend910_95_BaseSpec<"Ascend910_950z">{}
+
+def Ascend910_9579_Spec : Ascend910_95_BaseSpec<"Ascend910_9579">{}
+
+def Ascend910_957b_Spec : Ascend910_95_BaseSpec<"Ascend910_957b">{}
+
+def Ascend910_957d_Spec : Ascend910_95_BaseSpec<"Ascend910_957d">{}
+
+def Ascend910_9581_Spec : Ascend910_95_BaseSpec<"Ascend910_9581">{}
+
+def Ascend910_9589_Spec : Ascend910_95_BaseSpec<"Ascend910_9589">{}
+
+def Ascend910_958a_Spec : Ascend910_95_BaseSpec<"Ascend910_958a">{}
+
+def Ascend910_958b_Spec : Ascend910_95_BaseSpec<"Ascend910_958b">{}
+
+def Ascend910_9599_Spec : Ascend910_95_BaseSpec<"Ascend910_9599">{}
+
 #endif // BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
