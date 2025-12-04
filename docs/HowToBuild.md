@@ -50,7 +50,7 @@ We provide a convenient build script `build.sh` to automate configuration and bu
 
 Common script parameters:
 
-- `--apply-patches`：Enables the extended functionality of AscendNPU IR for third-party repositories, Recommended for initial compilation.
+- `--apply-patches`：Enables the extended functionality of AscendNPU IR for third-party repositories, which needs to be enabled during the first compilation.
 - `-o`: Output path for compiled artefacts
 - `--build-type`: Build type, such as "Release" and "Debug".
 
@@ -64,7 +64,8 @@ mkdir -p build
 cd build
 
 # Run CMake for configuration
-cmake -G Ninja .. \
+export LLVM_SOURCE_DIR=$(realpath ../third-party/llvm-project/llvm)
+cmake ${LLVM_SOURCE_DIR} -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Release \
