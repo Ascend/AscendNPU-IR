@@ -88,7 +88,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       scopeOp->body.push_back(std::move(conditionOp));
       empty = false;
     } else {
-      hivm::PIPE pipeRead = pipesVec[getRand() % pipesVec.size()];
+      hivm::PIPE pipeRead = pipesVec[getRand() % static_cast<int>(pipesVec.size())];
       // hivm::PIPE pipeWrite = pipesVec[getRand() % pipesVec.size()];
       hivm::PIPE pipeWrite = pipeRead;
 
@@ -136,7 +136,7 @@ std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
 
   std::vector<hivm::PIPE> pipesVec;
   for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-    if ((usedPipesMask >> i) & 1) {
+    if ((static_cast<unsigned>(usedPipesMask) >> i) & 1u) {
       pipesVec.push_back(static_cast<hivm::PIPE>(i));
     }
   }
@@ -390,7 +390,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
   auto checkMemoryConflict = [&](const RWOperation *rwOp, int loopIndex) {
     for (const auto &readPtr : rwOp->testReadMemVals) {
-      auto index = loopIndex % readPtr.size();
+      auto index = loopIndex % static_cast<int>(readPtr.size());
       auto ptrVal = readPtr[index];
       auto ongoingWriteOps = ongoingWrites[ptrVal];
       if (!ongoingWriteOps.empty()) {
@@ -490,7 +490,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     }
     for (auto [rwOp, loopIdx] : runningOps[pipe]) {
       for (auto writePtr : rwOp->testWriteMemVals) {
-        auto index = loopIdx % writePtr.size();
+        auto index = loopIdx % static_cast<int>(writePtr.size());
         auto ptrVal = writePtr[index];
         ongoingWrites[ptrVal].erase(rwOp);
       }

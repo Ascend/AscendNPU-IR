@@ -225,8 +225,8 @@ Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
   assert(bufferSize1.has_value() && bufferSize2.has_value());
   auto addrs1 = pointerCastOp1.getAddrs();
   auto addrs2 = pointerCastOp2.getAddrs();
-  int sz1 = addrs1.size();
-  int sz2 = addrs2.size();
+  auto sz1 = static_cast<int>(addrs1.size());
+  auto sz2 = static_cast<int>(addrs2.size());
   assert(sz1 <= 2 && sz2 <= 2);
   const int eventIdNum = 2;
   int lcmLen = sz1 * sz2 / std::__gcd(sz1, sz2);

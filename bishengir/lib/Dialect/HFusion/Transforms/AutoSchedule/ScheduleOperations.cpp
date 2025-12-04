@@ -821,7 +821,8 @@ ValueHandles SchedulerBase::splitHandle(ValueHandle *handle, size_t splitSize,
                          /*numResultHandles=*/static_cast<int64_t>(splitSize))
                      .getResults();
   return llvm::map_to_vector(results, [this, &opBuilder](Value result) {
-    return (ValueHandle *)record<RegularValueHandle>(result, opBuilder);
+    auto ptr = record<RegularValueHandle>(result, opBuilder);
+    return static_cast<ValueHandle *>(ptr);
   });
 }
 

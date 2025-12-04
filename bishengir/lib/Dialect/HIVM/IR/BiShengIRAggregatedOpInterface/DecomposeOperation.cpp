@@ -175,7 +175,7 @@ LogicalResult decomposeInsertSliceConcat(VConcatOp concatOp, OpBuilder &b) {
     assert(srcIndex == 1 && "insert_slice src must be the middle operand");
     SmallVector<OpFoldResult> firstSizes =
         memref::getMixedSizes(b, loc, inputs[0]);
-    int64_t dim = concatOp.getDim();
+    auto dim = static_cast<int64_t>(concatOp.getDim());
     offsets[dim] = firstSizes[dim];
   }
 
@@ -979,7 +979,7 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
   SmallVector<int64_t> transposeLoopDims;
   op.getTransposeLoopDims(transposeLoopDims);
 
-  auto lastAlign = alignList[0]->alignBytes[0] / elemTypeBytes;
+  auto lastAlign = alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
   auto lastDim = inputShape[transposeLoopDims[1]];
 
   // (K * lastAlign, lastDim) -> (K, lastAlign * lastDim) -> (lastAlign *

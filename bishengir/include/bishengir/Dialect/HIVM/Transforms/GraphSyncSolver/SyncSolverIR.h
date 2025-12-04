@@ -181,7 +181,8 @@ public:
   MmadL0Operation *mmadL0Op;
 
   MmadL1LoopOp(Operation *op, OperationBase *parentOp)
-      : Scope(OpType::MMAD_LOOP, op, parentOp) {};
+      : Scope(OpType::MMAD_LOOP, op, parentOp),
+        mmadL0Op(nullptr) {};
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_LOOP;

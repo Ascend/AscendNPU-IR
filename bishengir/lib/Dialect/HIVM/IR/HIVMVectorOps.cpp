@@ -750,10 +750,10 @@ LogicalResult VTransposeOp::verify() {
         SmallVector<int64_t> transposeLoopDims;
         getTransposeLoopDims(transposeLoopDims);
 
-        auto firstAlign = alignList[1]->alignBytes[0] / elemTypeBytes;
+        auto firstAlign = alignList[1]->alignBytes[0] / static_cast<int>(elemTypeBytes);
         auto firstDim = srcShape[transposeLoopDims[0]];
 
-        auto lastAlign = alignList[0]->alignBytes[0] / elemTypeBytes;
+        auto lastAlign = alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
         auto lastDim = srcShape[transposeLoopDims[1]];
 
         if ((firstDim % firstAlign == 0) && (lastDim % lastAlign == 0)) {
