@@ -241,6 +241,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMMapForallToBlocksPass());
   // Op decompose, need mark buffer size for newly allocated buffer.
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
+  pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
   pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
   pm.nest<func::FuncOp>().addPass(
       createInsertInferSyncBlockLockNumAndInitFuncPass());

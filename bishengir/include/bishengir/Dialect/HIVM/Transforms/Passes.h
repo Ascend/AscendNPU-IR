@@ -194,6 +194,10 @@ std::unique_ptr<Pass> createBindWorkSpaceArgPass();
 // CreateSyncBlockLockOp.
 std::unique_ptr<Pass> createBindSyncBlockLockArgPass();
 
+// Hoist syncblock lock and unlock operation to the parent region if it
+// is in the scf.for or scf.while
+std::unique_ptr<Pass> createSyncBlockHoistingPass();
+
 // Create a pass to insert infer-sync-block-lock-num and
 // infer-sync-block-lock-init callback func for host.
 std::unique_ptr<Pass> createInsertInferSyncBlockLockNumAndInitFuncPass();

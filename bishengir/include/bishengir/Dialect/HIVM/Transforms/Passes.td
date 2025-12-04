@@ -517,6 +517,15 @@ def BindSyncBlockLockArg : Pass<"hivm-bind-sync-block-lock-arg", "func::FuncOp">
                            "hivm::HIVMDialect"];
 }
 
+def SyncBlockHoisting : Pass<"hivm-sync-block-hoisting", "func::FuncOp"> {
+  let summary = "Hoist syncblock lock and unlock operation to the parent region "
+                "if it is in the scf.for or scf.while";
+
+  let constructor = "mlir::hivm::createSyncBlockHoistingPass()";
+  let dependentDialects = ["memref::MemRefDialect",
+                           "hivm::HIVMDialect"];
+}
+
 def InsertInferSyncBlockLockNumAndInitFunc : Pass<"hivm-insert-infer-sync-block-lock-num-and-init-func",
                                         "func::FuncOp"> {
   let summary = "Insert infer-sync-block-lock callback func for host";
