@@ -217,9 +217,15 @@ template <typename HIVMOP>
 void storeFirstValueOfCumDim(RewriterBase &rewriter,
                              llvm::SmallVector<Value> dstIndexes, HIVMOP op,
                              int64_t cumDim) {
-  auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  auto startInd = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+
+  if (op.getReverse()) {
+    auto lastInd = cast<ShapedType>(op.getDst().getType()).getShape()[cumDim] - 1;
+    startInd = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lastInd);
+  }
+
   auto *it = dstIndexes.begin() + cumDim;
-  dstIndexes.insert(it, constZero);
+  dstIndexes.insert(it, startInd);
   auto loadOp = mlir::utils::createSinglePointLoad(
       rewriter, op.getLoc(), op.getDpsInputs()[0], dstIndexes);
   mlir::utils::createSinglePointStore(rewriter, op.getLoc(), loadOp.getResult(),
@@ -236,10 +242,15 @@ Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
   indexInputs.push_back(indexes[cumDim]);
   auto constOne = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
   indexInputs.push_back(constOne.getResult());
-  auto arithOp = rewriter.create<arith::SubIOp>(op.getLoc(), indexInputs);
-
   llvm::SmallVector<Value> loopInputs{indexes};
-  loopInputs[cumDim] = arithOp.getResult();
+  if (op.getReverse()) {
+    auto arithAddOp = rewriter.create<arith::AddIOp>(op.getLoc(), indexInputs);
+    loopInputs[cumDim] = arithAddOp.getResult();
+  } else {
+    auto arithSubOp = rewriter.create<arith::SubIOp>(op.getLoc(), indexInputs);
+    loopInputs[cumDim] = arithSubOp.getResult();
+  }
+
   auto previousLoadOp = mlir::utils::createSinglePointLoad(
       rewriter, op.getLoc(), op.getDpsInits()[0], loopInputs);
   return previousLoadOp.getResult();
@@ -266,7 +277,18 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
          &op](llvm::SmallVector<Value> innerIndexes) -> void {
       // Get loop's index
       auto *it = indexes.begin() + cumDim;
-      indexes.insert(it, innerIndexes[0]);
+      if (op.getReverse()){
+        llvm::SmallVector<Value> fixInd;
+        auto lastIndNum = cast<ShapedType>(op.getDst().getType()).getShape()[cumDim] - 1;
+        auto lastInd = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), lastIndNum);
+        fixInd.push_back(lastInd.getResult());
+        fixInd.push_back(innerIndexes[0]);
+        auto fixIndVal = rewriter.create<arith::SubIOp>(op.getLoc(), fixInd);
+        indexes.insert(it, fixIndVal.getResult());
+      } else {
+        indexes.insert(it, innerIndexes[0]);
+      }
+
       auto getScalarValueFunc = [&rewriter, &op,
                                  &indexes](OpOperand *operand) -> Value {
         return mlir::utils::getScalarValue(rewriter, op->getLoc(),
@@ -311,7 +333,6 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
   createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
   return SmallVector<Value>{};
 }
-
 } // namespace hivm
 } // namespace mlir
 

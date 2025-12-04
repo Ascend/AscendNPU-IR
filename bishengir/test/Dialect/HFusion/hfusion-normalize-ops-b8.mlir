@@ -259,11 +259,11 @@ module {
 // -----
 
 // CHECK-LABEL: @test_cumsum_b8
-// CHECK: hfusion.cumsum %[[INPUT0:.*]] : tensor<4x64xf32> cum_dims = [0] -> tensor<4x32xf32>
+// CHECK: hfusion.cumsum %[[INPUT0:.*]] : tensor<4x64xf32> cum_dims = [0] reverse = false -> tensor<4x32xf32>
 module {
   func.func @test_cumsum_b8(%arg0: tensor<4x64xi8>) -> tensor<4x32xi8> {
     %0 = tensor.empty() : tensor<4x32xi8>
-    %1 = hfusion.cumsum %arg0 : tensor<4x64xi8> cum_dims = [0] -> tensor<4x32xi8>
+    %1 = hfusion.cumsum %arg0 : tensor<4x64xi8> cum_dims = [0] reverse = false -> tensor<4x32xi8>
     return %1 : tensor<4x32xi8>
   }
 }
@@ -271,11 +271,11 @@ module {
 // -----
 
 // CHECK-LABEL: @test_cumprod_b8
-// CHECK: hfusion.cumprod %[[INPUT0:.*]] : tensor<4x64xf32> cum_dims = [1] -> tensor<4x32xf32>
+// CHECK: hfusion.cumprod %[[INPUT0:.*]] : tensor<4x64xf32> cum_dims = [1] reverse = false -> tensor<4x32xf32>
 module {
   func.func @test_cumprod_b8(%arg0: tensor<4x64xi8>) -> tensor<4x32xi8> {
     %0 = tensor.empty() : tensor<4x32xi8>
-    %1 = hfusion.cumprod %arg0 : tensor<4x64xi8> cum_dims = [1] -> tensor<4x32xi8>
+    %1 = hfusion.cumprod %arg0 : tensor<4x64xi8> cum_dims = [1] reverse = false -> tensor<4x32xi8>
     return %1 : tensor<4x32xi8>
   }
 }

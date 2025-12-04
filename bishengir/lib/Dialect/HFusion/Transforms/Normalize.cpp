@@ -3402,7 +3402,7 @@ public:
     auto newInputs = normalizeF16ToF32(rewriter, inputs);
     auto newOutputs = normalizeF16ToF32(rewriter, outputs);
     Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims());
+        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(), op.getReverse());
     Value castResult =
         castTo(rewriter, newOp->getResults()[0], rewriter.getF16Type());
     rewriter.replaceAllUsesWith(op->getResults()[0], castResult);
@@ -3831,7 +3831,7 @@ public:
     auto newOutputs =
         normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, outputs);
     Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims());
+        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(), op.getReverse());
     replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
                                    rewriter);
     return success();

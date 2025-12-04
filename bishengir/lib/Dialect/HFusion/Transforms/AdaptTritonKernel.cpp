@@ -251,15 +251,21 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
       return callOp->emitError("Failed to extract the value of arith.constant "
                                "defining the cum dims.");
     }
+    Value reverseVals = callOp.getOperand(2);
+    auto reverse = mlir::utils::getArithConstantOpValue<bool>(reverseVals);
+    if (failed(reverse)) {
+      return callOp->emitError("Failed to extract the value of arith.constant"
+                               "defining the reverse.");
+    }
 
     auto srcTy = cast<RankedTensorType>(src.getType());
     llvm::SmallVector<int64_t> cumDims{*cumDim};
     if (cumOpType == mlir::hfusion::CumOpType::CUMSUM) {
       rewriter.replaceOp(
-          callOp, rewriter.create<hfusion::CumsumOp>(loc, srcTy, src, cumDims));
+          callOp, rewriter.create<hfusion::CumsumOp>(loc, srcTy, src, cumDims, *reverse));
     } else if (cumOpType == mlir::hfusion::CumOpType::CUMPROD) {
       rewriter.replaceOp(callOp, rewriter.create<hfusion::CumprodOp>(
-                                     loc, srcTy, src, cumDims));
+                                     loc, srcTy, src, cumDims, *reverse));
     } else {
       llvm_unreachable("unsupport cumulative function");
     }

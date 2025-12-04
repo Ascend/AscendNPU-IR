@@ -390,9 +390,9 @@ func.func @test_cumsum_alignment(%arg0: memref<5x3x3x4x2x5xi32, #hivm.address_sp
   %alloc = memref.alloc() : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>
   hivm.hir.load ins(%arg0 : memref<5x3x3x4x2x5xi32, #hivm.address_space<gm>>) outs(%alloc : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>)
   %alloc_0 = memref.alloc() : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   %alloc_1 = memref.alloc() : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   hivm.hir.store ins(%alloc_0 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%arg1 : memref<5x3x3x4x2x5xi32, #hivm.address_space<gm>>)
   hivm.hir.store ins(%alloc_1 : memref<5x3x3x4x2x5xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<5x3x3x4x2x5xi32, #hivm.address_space<gm>>)
   return
@@ -407,9 +407,9 @@ func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_
   %alloc = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
   hivm.hir.load ins(%arg0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>) outs(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>)
   %alloc_0 = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   %alloc_1 = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   hivm.hir.store ins(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   hivm.hir.store ins(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   return

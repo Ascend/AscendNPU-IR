@@ -311,13 +311,14 @@ void DimensionAnalyzer::processVCumOp(T op) {
   }
   auto input = op.getSrc();
   auto output = op.getDst();
+  auto reverse = op.getReverse();
   SmallVector<Value> outputs(op.getResult());
 
   assert(outputs.size() <= 1 &&
          "result size must be 1 if tensor type and 0 if memref type");
 
   outputs.push_back(output);
-  mergeValues({input}, outputs, getMutatedDims(op));
+  mergeValues({input}, outputs, getMutatedDims(op), reverse);
 }
 
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {

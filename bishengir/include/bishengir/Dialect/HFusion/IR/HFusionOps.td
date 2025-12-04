@@ -280,14 +280,15 @@ def CumsumOp : HFusion_Op<"cumsum",
   }];
   let description = [{
     The cumsum operation calculates cumulative sum on a certain dim of the input
-    tensor.
+    tensor.  The reverse argument specifies the direction of the cumulative sum.
     Currently only support one cumulation dim.
   }];
   let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
                        ConfinedAttr<DenseI64ArrayAttr,
-                      [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims);
+                      [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse);
   let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
-  let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `->` type($output)";
+  let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)";
   let hasVerifier = 1;
 }
 
@@ -302,14 +303,15 @@ def CumprodOp : HFusion_Op<"cumprod",
   }];
   let description = [{
     The cumsum operation calculates cumulative product on a certain dim of
-    the input tensor.
+    the input tensor. The reverse argument specifies the direction of the cumulative product.
     Currently only support one cumulation dim.
   }];
   let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
                        ConfinedAttr<DenseI64ArrayAttr,
-                      [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims);
+                      [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse);
   let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
-  let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `->` type($output)";
+  let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)";
   let hasVerifier = 1;
 }
 

@@ -819,24 +819,24 @@ func.func @test_hfusion_cast_ops() {
 // -----
 
 // CHECK-LABEL: func.func @test_hfusion_cum_ops(
-// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [0] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [1] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [2] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [3] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [0] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [1] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [2] -> tensor<1x2x3x4xi32>
-// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [3] -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [0] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [1] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [2] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumsum ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [3] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [0] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [1] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [2] reverse = false -> tensor<1x2x3x4xi32>
+// CHECK: hivm.hir.vcumprod ins(%{{.*}} : tensor<1x2x3x4xi32>) outs(%{{.*}} : tensor<1x2x3x4xi32>) cum_dims = [3] reverse = false -> tensor<1x2x3x4xi32>
 func.func @test_hfusion_cum_ops() -> tensor<1x2x3x4xi32> {
   %arg = tensor.empty() : tensor<1x2x3x4xi32>
-  %0 = hfusion.cumsum %arg : tensor<1x2x3x4xi32> cum_dims = [0] -> tensor<1x2x3x4xi32>
-  %1 = hfusion.cumsum %0 : tensor<1x2x3x4xi32> cum_dims = [1] -> tensor<1x2x3x4xi32>
-  %2 = hfusion.cumsum %1 : tensor<1x2x3x4xi32> cum_dims = [2] -> tensor<1x2x3x4xi32>
-  %3 = hfusion.cumsum %2 : tensor<1x2x3x4xi32> cum_dims = [3] -> tensor<1x2x3x4xi32>
-  %4 = hfusion.cumprod %3 : tensor<1x2x3x4xi32> cum_dims = [0] -> tensor<1x2x3x4xi32>
-  %5 = hfusion.cumprod %4 : tensor<1x2x3x4xi32> cum_dims = [1] -> tensor<1x2x3x4xi32>
-  %6 = hfusion.cumprod %5 : tensor<1x2x3x4xi32> cum_dims = [2] -> tensor<1x2x3x4xi32>
-  %7 = hfusion.cumprod %6 : tensor<1x2x3x4xi32> cum_dims = [3] -> tensor<1x2x3x4xi32>
+  %0 = hfusion.cumsum %arg : tensor<1x2x3x4xi32> cum_dims = [0] reverse = false -> tensor<1x2x3x4xi32>
+  %1 = hfusion.cumsum %0 : tensor<1x2x3x4xi32> cum_dims = [1] reverse = false -> tensor<1x2x3x4xi32>
+  %2 = hfusion.cumsum %1 : tensor<1x2x3x4xi32> cum_dims = [2] reverse = false -> tensor<1x2x3x4xi32>
+  %3 = hfusion.cumsum %2 : tensor<1x2x3x4xi32> cum_dims = [3] reverse = false -> tensor<1x2x3x4xi32>
+  %4 = hfusion.cumprod %3 : tensor<1x2x3x4xi32> cum_dims = [0] reverse = false -> tensor<1x2x3x4xi32>
+  %5 = hfusion.cumprod %4 : tensor<1x2x3x4xi32> cum_dims = [1] reverse = false -> tensor<1x2x3x4xi32>
+  %6 = hfusion.cumprod %5 : tensor<1x2x3x4xi32> cum_dims = [2] reverse = false -> tensor<1x2x3x4xi32>
+  %7 = hfusion.cumprod %6 : tensor<1x2x3x4xi32> cum_dims = [3] reverse = false -> tensor<1x2x3x4xi32>
   return %7 : tensor<1x2x3x4xi32>
 }
 

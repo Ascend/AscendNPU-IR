@@ -232,7 +232,7 @@ struct CumulativeOpLiftLowestStridePattern : public OpRewritePattern<CumOp> {
     Value dstCast = createLiftedOperand(rewriter, op->getLoc(), dst);
 
     rewriter.replaceOpWithNewOp<CumOp>(op, TypeRange(), srcCast, dstCast,
-                                       op.getCumDims());
+                                       op.getCumDims(), op.getReverse());
     return success();
   }
 };

@@ -257,8 +257,8 @@ func.func @test_align_down_from_scf_if(%cond : i1) {
 
 // -----
 
-// CHECK: func @test_cumsum_unalignment
-func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>, %arg1: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>, %arg2: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>) attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+// CHECK: func @test_cumsum_cumprod_unalignment
+func.func @test_cumsum_cumprod_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>, %arg1: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>, %arg2: memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>) attributes {hacc.entry, hivm.func_core_type = #hivm.func_core_type<AIV>} {
   %alloc = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
   annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
   annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
@@ -266,11 +266,11 @@ func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_
   // CHECK: memref.alloc() : memref<5x3x3x8x3x5x1xi32, #hivm.address_space<ub>>
   %alloc_0 = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
   annotation.mark %alloc_0 {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   // CHECK: memref.alloc() : memref<5x3x3x8x3x5x1xi32, #hivm.address_space<ub>>
   %alloc_1 = memref.alloc() : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
   annotation.mark %alloc_1 {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>
-  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%alloc : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) cum_dims = [2] reverse = false
   hivm.hir.store ins(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   hivm.hir.store ins(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   return

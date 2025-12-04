@@ -549,12 +549,12 @@ func.func @test_cumsum_tensor(%input : tensor<6x?x?xi32>) {
   %s64 = tensor.empty() : tensor<6x7xi64>
   %f16 = tensor.empty() : tensor<6x7xf16>
   %f32 = tensor.empty() : tensor<6x7xf32>
-  hfusion.cumsum %f16 : tensor<6x7xf16> cum_dims = [0] -> tensor<6x7xf16>
-  hfusion.cumsum %f32 : tensor<6x7xf32> cum_dims = [1] -> tensor<6x7xf32>
-  hfusion.cumsum %s16 : tensor<6x7xi16> cum_dims = [0] -> tensor<6x7xi16>
-  hfusion.cumsum %s32 : tensor<6x7xi32> cum_dims = [1] -> tensor<6x7xi32>
-  hfusion.cumsum %s64 : tensor<6x7xi64> cum_dims = [0] -> tensor<6x7xi64>
-  hfusion.cumsum %input : tensor<6x?x?xi32> cum_dims = [2] -> tensor<6x?x?xi32>
+  hfusion.cumsum %f16 : tensor<6x7xf16> cum_dims = [0] reverse = false -> tensor<6x7xf16>
+  hfusion.cumsum %f32 : tensor<6x7xf32> cum_dims = [1] reverse = false -> tensor<6x7xf32>
+  hfusion.cumsum %s16 : tensor<6x7xi16> cum_dims = [0] reverse = false -> tensor<6x7xi16>
+  hfusion.cumsum %s32 : tensor<6x7xi32> cum_dims = [1] reverse = false -> tensor<6x7xi32>
+  hfusion.cumsum %s64 : tensor<6x7xi64> cum_dims = [0] reverse = false -> tensor<6x7xi64>
+  hfusion.cumsum %input : tensor<6x?x?xi32> cum_dims = [2] reverse = false -> tensor<6x?x?xi32>
   return
 }
 
@@ -567,12 +567,12 @@ func.func @test_cumprod_tensor(%input : tensor<6x?x?xi32>) {
   %s64 = tensor.empty() : tensor<6x7xi64>
   %f16 = tensor.empty() : tensor<6x7xf16>
   %f32 = tensor.empty() : tensor<6x7xf32>
-  hfusion.cumprod %f16 : tensor<6x7xf16> cum_dims = [0] -> tensor<6x7xf16>
-  hfusion.cumprod %f32 : tensor<6x7xf32> cum_dims = [1] -> tensor<6x7xf32>
-  hfusion.cumprod %s16 : tensor<6x7xi16> cum_dims = [0] -> tensor<6x7xi16>
-  hfusion.cumprod %s32 : tensor<6x7xi32> cum_dims = [1] -> tensor<6x7xi32>
-  hfusion.cumprod %s64 : tensor<6x7xi64> cum_dims = [0] -> tensor<6x7xi64>
-  hfusion.cumprod %input : tensor<6x?x?xi32> cum_dims = [2] -> tensor<6x?x?xi32>
+  hfusion.cumprod %f16 : tensor<6x7xf16> cum_dims = [0] reverse = false -> tensor<6x7xf16>
+  hfusion.cumprod %f32 : tensor<6x7xf32> cum_dims = [1] reverse = false -> tensor<6x7xf32>
+  hfusion.cumprod %s16 : tensor<6x7xi16> cum_dims = [0] reverse = false -> tensor<6x7xi16>
+  hfusion.cumprod %s32 : tensor<6x7xi32> cum_dims = [1] reverse = false -> tensor<6x7xi32>
+  hfusion.cumprod %s64 : tensor<6x7xi64> cum_dims = [0] reverse = false -> tensor<6x7xi64>
+  hfusion.cumprod %input : tensor<6x?x?xi32> cum_dims = [2] reverse = false -> tensor<6x?x?xi32>
   return
 }
 

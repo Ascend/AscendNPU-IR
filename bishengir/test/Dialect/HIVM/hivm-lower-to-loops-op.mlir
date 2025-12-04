@@ -1544,7 +1544,7 @@ func.func @test_cumsum_1d_i16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi16>
   %src = memref.alloc() : memref<16xi16>
   %dst = memref.alloc() : memref<16xi16>
-  hivm.hir.vcumsum ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1567,7 +1567,7 @@ func.func @test_cumsum_2d_i16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]]] : memref<2x16xi16>
   %src = memref.alloc() : memref<2x16xi16>
   %dst = memref.alloc() : memref<2x16xi16>
-  hivm.hir.vcumsum ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1]
+  hivm.hir.vcumsum ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1592,7 +1592,7 @@ func.func @test_cumsum_3d_f16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<2x24x16xf16>
   %src = memref.alloc() : memref<2x24x16xf16>
   %dst = memref.alloc() : memref<2x24x16xf16>
-  hivm.hir.vcumsum ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2] reverse = false
   return
 }
 
@@ -1613,7 +1613,7 @@ func.func @test_cumsum_1d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi64>
   %src = memref.alloc() : memref<16xi64>
   %dst = memref.alloc() : memref<16xi64>
-  hivm.hir.vcumsum ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1636,7 +1636,7 @@ func.func @test_cumsum_2d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg1]], %[[arg0]]] : memref<2x16xi64>
   %src = memref.alloc() : memref<2x16xi64>
   %dst = memref.alloc() : memref<2x16xi64>
-  hivm.hir.vcumsum ins(%src : memref<2x16xi64>) outs(%dst : memref<2x16xi64>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<2x16xi64>) outs(%dst : memref<2x16xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1661,7 +1661,7 @@ func.func @test_cumsum_3d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg2]], %[[arg1]]] : memref<2x24x16xi64>
   %src = memref.alloc() : memref<2x24x16xi64>
   %dst = memref.alloc() : memref<2x24x16xi64>
-  hivm.hir.vcumsum ins(%src : memref<2x24x16xi64>) outs(%dst : memref<2x24x16xi64>) cum_dims = [1]
+  hivm.hir.vcumsum ins(%src : memref<2x24x16xi64>) outs(%dst : memref<2x24x16xi64>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1678,7 +1678,7 @@ func.func @test_cumsum_1d_dynshape_lastdim(%src : memref<?xi32>, %dst : memref<?
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg1]]] : memref<?xi32>
   // CHECK: %[[dst:.*]] = arith.addi %[[input]], %[[cum]] : i32
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<?xi32>
-  hivm.hir.vcumsum ins(%src : memref<?xi32>) outs(%dst : memref<?xi32>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<?xi32>) outs(%dst : memref<?xi32>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1697,7 +1697,7 @@ func.func @test_cumsum_2d_dynshape_highdim(%src : memref<?x?xi64>, %dst : memref
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[pre]], %[[arg0]]] : memref<?x?xi64>
   // CHECK: %[[dst:.*]] = arith.addi %[[input]], %[[cum]] : i64
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg1]], %[[arg0]]] : memref<?x?xi64>
-  hivm.hir.vcumsum ins(%src : memref<?x?xi64>) outs(%dst : memref<?x?xi64>) cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<?x?xi64>) outs(%dst : memref<?x?xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1719,7 +1719,7 @@ func.func @test_cumsum_3d_dynshape_i64_highdim(%src : memref<?x?x?xi64>, %dst : 
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[pre]], %[[arg1]]] : memref<?x?x?xi64>
   // CHECK: %[[dst:.*]] = arith.addi %[[input]], %[[cum]] : i64
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg2]], %[[arg1]]] : memref<?x?x?xi64>
-  hivm.hir.vcumsum ins(%src : memref<?x?x?xi64>) outs(%dst : memref<?x?x?xi64>) cum_dims = [1]
+  hivm.hir.vcumsum ins(%src : memref<?x?x?xi64>) outs(%dst : memref<?x?x?xi64>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1741,7 +1741,7 @@ func.func @test_cumsum_3d_synshape_f32_lastdim(%src : memref<?x?x?xf32>, %dst : 
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[pre]]] : memref<?x?x?xf32>
   // CHECK: %[[dst:.*]] = arith.addf %[[input]], %[[cum]] : f32
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<?x?x?xf32>
-  hivm.hir.vcumsum ins(%src : memref<?x?x?xf32>) outs(%dst : memref<?x?x?xf32>) cum_dims = [2]
+  hivm.hir.vcumsum ins(%src : memref<?x?x?xf32>) outs(%dst : memref<?x?x?xf32>) cum_dims = [2] reverse = false
   return
 }
 
@@ -1765,7 +1765,7 @@ func.func @test_cumprod_1d_i16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi16>
   %src = memref.alloc() : memref<16xi16>
   %dst = memref.alloc() : memref<16xi16>
-  hivm.hir.vcumprod ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0]
+  hivm.hir.vcumprod ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1788,7 +1788,7 @@ func.func @test_cumprod_2d_i16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]]] : memref<2x16xi16>
   %src = memref.alloc() : memref<2x16xi16>
   %dst = memref.alloc() : memref<2x16xi16>
-  hivm.hir.vcumprod ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1]
+  hivm.hir.vcumprod ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1813,7 +1813,7 @@ func.func @test_cumprod_3d_f16() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<2x24x16xf16>
   %src = memref.alloc() : memref<2x24x16xf16>
   %dst = memref.alloc() : memref<2x24x16xf16>
-  hivm.hir.vcumprod ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2] reverse = false
   return
 }
 
@@ -1834,7 +1834,7 @@ func.func @test_cumprod_1d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi64>
   %src = memref.alloc() : memref<16xi64>
   %dst = memref.alloc() : memref<16xi64>
-  hivm.hir.vcumprod ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0]
+  hivm.hir.vcumprod ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1857,7 +1857,7 @@ func.func @test_cumprod_2d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg1]], %[[arg0]]] : memref<2x16xi64>
   %src = memref.alloc() : memref<2x16xi64>
   %dst = memref.alloc() : memref<2x16xi64>
-  hivm.hir.vcumprod ins(%src : memref<2x16xi64>) outs(%dst : memref<2x16xi64>) cum_dims = [0]
+  hivm.hir.vcumprod ins(%src : memref<2x16xi64>) outs(%dst : memref<2x16xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1882,7 +1882,7 @@ func.func @test_cumprod_3d_i64() {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg2]], %[[arg1]]] : memref<2x24x16xi64>
   %src = memref.alloc() : memref<2x24x16xi64>
   %dst = memref.alloc() : memref<2x24x16xi64>
-  hivm.hir.vcumprod ins(%src : memref<2x24x16xi64>) outs(%dst : memref<2x24x16xi64>) cum_dims = [1]
+  hivm.hir.vcumprod ins(%src : memref<2x24x16xi64>) outs(%dst : memref<2x24x16xi64>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1899,7 +1899,7 @@ func.func @test_cumprod_1d_dynshape_lastdim(%src : memref<?xi32>, %dst : memref<
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg1]]] : memref<?xi32>
   // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i32
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<?xi32>
-  hivm.hir.vcumprod ins(%src : memref<?xi32>) outs(%dst : memref<?xi32>) cum_dims = [0]
+  hivm.hir.vcumprod ins(%src : memref<?xi32>) outs(%dst : memref<?xi32>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1918,7 +1918,7 @@ func.func @test_cumprod_2d_dynshape_highdim(%src : memref<?x?xi64>, %dst : memre
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[pre]], %[[arg0]]] : memref<?x?xi64>
   // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i64
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg1]], %[[arg0]]] : memref<?x?xi64>
-  hivm.hir.vcumprod ins(%src : memref<?x?xi64>) outs(%dst : memref<?x?xi64>) cum_dims = [0]
+  hivm.hir.vcumprod ins(%src : memref<?x?xi64>) outs(%dst : memref<?x?xi64>) cum_dims = [0] reverse = false
   return
 }
 
@@ -1940,7 +1940,7 @@ func.func @test_cumprod_3d_dynshape_i64_highdim(%src : memref<?x?x?xi64>, %dst :
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[pre]], %[[arg1]]] : memref<?x?x?xi64>
   // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i64
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg2]], %[[arg1]]] : memref<?x?x?xi64>
-  hivm.hir.vcumprod ins(%src : memref<?x?x?xi64>) outs(%dst : memref<?x?x?xi64>) cum_dims = [1]
+  hivm.hir.vcumprod ins(%src : memref<?x?x?xi64>) outs(%dst : memref<?x?x?xi64>) cum_dims = [1] reverse = false
   return
 }
 
@@ -1962,7 +1962,7 @@ func.func @test_cumprod_3d_synshape_f32_lastdim(%src : memref<?x?x?xf32>, %dst :
   // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[pre]]] : memref<?x?x?xf32>
   // CHECK: %[[dst:.*]] = arith.mulf %[[input]], %[[cum]] : f32
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<?x?x?xf32>
-  hivm.hir.vcumprod ins(%src : memref<?x?x?xf32>) outs(%dst : memref<?x?x?xf32>) cum_dims = [2]
+  hivm.hir.vcumprod ins(%src : memref<?x?x?xf32>) outs(%dst : memref<?x?x?xf32>) cum_dims = [2] reverse = false
   return
 }
 

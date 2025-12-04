@@ -176,7 +176,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] -> tensor<5x?x10xf32>
+    %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: memref<5x?x10xi32>, memref<5x?x1xi32>)
@@ -185,7 +185,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1]
+    hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
 
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
@@ -194,7 +194,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    %1 = hivm.hir.vcumsum ins(%a: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) cum_dims = [0] -> tensor<5x?x10xf32>
+    %1 = hivm.hir.vcumsum ins(%a: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: memref<5x?x10xi32>, memref<5x?x1xi32>)
@@ -203,7 +203,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    hivm.hir.vcumsum ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1]
+    hivm.hir.vcumsum ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
 
     func.return %0: tensor<5x?x10xf32>
 }
