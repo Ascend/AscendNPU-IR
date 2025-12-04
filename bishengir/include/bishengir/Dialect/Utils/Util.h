@@ -316,6 +316,12 @@ Value createEmptyOpWithTargetElemType(
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          TensorType targetTensorType);
 
+/// Returns RankedTensorType with same shape as source tensor with
+/// srcTensorType and element type newTensorElementType.
+/// e.g. tensor<512xi1> = getTensorTypeWithSameShape(tensor<512xf32>, i1)
+RankedTensorType getTensorTypeWithSameShape(Type srcTensorType,
+                                            Type newTensorElementType);
+
 /// Return the func::FuncOp called by `callOp`.
 template <typename FuncOp_t, typename CallOp_t>
 FuncOp_t getCalledFunction(CallOp_t callOp) {

@@ -220,6 +220,14 @@ tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          targetTensorType.getElementType());
 }
 
+RankedTensorType getTensorTypeWithSameShape(Type srcTensorType,
+                                            Type newTensorElementType) {
+  auto rankedTensorType = dyn_cast<RankedTensorType>(srcTensorType);
+  assert(rankedTensorType && "Source type is not a mlir::RankedTensorType");
+  auto resultTensorShape = rankedTensorType.getShape();
+  return mlir::RankedTensorType::get(resultTensorShape, newTensorElementType);
+}
+
 func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   func::ReturnOp returnOp;
   for (Block &b : funcOp.getBody()) {

@@ -65,7 +65,9 @@ def BinaryFn : I32EnumAttr<"BinaryFn", "", [
   I32EnumAttrCase<"ceildivsi", 11>,
   I32EnumAttrCase<"ceildivui", 12>,
   I32EnumAttrCase<"floordivsi", 13>,
-  I32EnumAttrCase<"powi", 14>
+  I32EnumAttrCase<"powi", 14>,
+  I32EnumAttrCase<"minnumf", 15>,
+  I32EnumAttrCase<"maxnumf", 16>
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

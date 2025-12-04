@@ -2349,3 +2349,36 @@ func.func @test_hfusion_select_cast_i1_to_i16(%src0: tensor<32xi1>, %src1: tenso
   %1 = hfusion.select ins(%src0, %src1, %src2 : tensor<32xi1>, tensor<32xi1>, tensor<32xi1>) outs(%x : tensor<32xi1>) -> tensor<32xi1>
   return %1 : tensor<32xi1>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_minf
+// CHECK: %[[INFINITY:.*]] : f32
+// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_0:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
+func.func @test_minf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
+  %0 = tensor.empty() : tensor<512xf32>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
+  return %1 : tensor<512xf32>
+}
+ 
+// CHECK-LABEL: func.func @test_maxf
+// CHECK: %[[INFINITY:.*]] : f32
+// CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_0:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_0:.*]] = hfusion.select ins(%[[SRC_0_NAN_MASK:.*]], %[[INFINITY:.*]], %arg0 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_0:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[SRC_1_NAN_MASK:.*]] -> tensor<512xi1>
+// CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[NEW_SRC_1:.*]] = hfusion.select ins(%[[SRC_1_NAN_MASK:.*]], %[[INFINITY:.*]], %arg1 : tensor<512xi1>, f32, tensor<512xf32>) outs(%[[EMPTY_1:.*]] : tensor<512xf32>) -> tensor<512xf32>
+// CHECK: %[[EMPTY_RES:.*]] = tensor.empty() : tensor<512xf32>
+// CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[NEW_SRC_0:.*]], %[[NEW_SRC_0:.*]] : tensor<512xf32>, tensor<512xf32>) outs(%[[EMPTY_RES:.*]] : tensor<512xf32>) -> tensor<512xf32>
+func.func @test_maxf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<512xf32> {
+  %0 = tensor.empty() : tensor<512xf32>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
+  return %1 : tensor<512xf32>
+}
