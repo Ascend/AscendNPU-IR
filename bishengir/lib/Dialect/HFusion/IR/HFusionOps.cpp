@@ -2492,3 +2492,41 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   Value finalHist = forOp.getResult(0);
   return SmallVector<Value>{finalHist};
 }
+
+Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
+                      hfusion::RoundMode roundMode, std::optional<Value> dst,
+                      bool enableOverflow, hfusion::TypeFn castIntegerType) {
+  Location loc = src.getLoc();
+  if (!isa<TensorType>(src.getType())) {
+    assert(src.getType().isIntOrIndexOrFloat());
+    bool isUnsignedCast = (hfusion::TypeFn::cast_unsigned == castIntegerType);
+    return convertScalarToDtype(builder, loc, src, targetElemType,
+                                isUnsignedCast);
+  }
+
+  Value targetTensor;
+  if (dst.has_value()) {
+    targetTensor = dst.value();
+  } else {
+    targetTensor = utils::createEmptyOpWithTargetElemType(builder, loc, src,
+                                                          targetElemType);
+  }
+
+  auto roundingAttr = builder.getAttr<hfusion::RoundModeAttr>(roundMode);
+  auto enableOverflowVal = builder.getBoolAttr(enableOverflow);
+  auto castAttr = builder.getAttr<hfusion::TypeFnAttr>(castIntegerType);
+  auto vcastOp = builder.create<hfusion::CastOp>(
+      loc, SmallVector<Type>{targetTensor.getType()}, src, targetTensor,
+      roundingAttr, enableOverflowVal, castAttr);
+  return vcastOp->getResult(0);
+}
+
+Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
+                      hfusion::TypeFn castIntegerType) {
+  Type srcElemType = getElementTypeOrSelf(src.getType());
+  hfusion::RoundMode rounding =
+      mlir::utils::selectRoundMode<hfusion::RoundMode>(srcElemType,
+                                                       targetElemType);
+  return hfusion::castTo(builder, src, targetElemType, rounding, std::nullopt,
+                         /*enableOverflow=*/true, castIntegerType);
+}
