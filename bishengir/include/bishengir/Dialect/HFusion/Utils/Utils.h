@@ -286,24 +286,6 @@ Value divWithRoundMode(OpBuilder &builder, Location loc, Type resType,
                        hfusion::RoundMode roundingMode,
                        std::optional<Operation **> divOp = std::nullopt);
 
-/// Cast `src` value to the specified element type and rounding mode.
-///
-/// `src` can be either tensor or scalar.
-/// If it's a scalar, casting is done by arith dialect ops.
-/// If it's a tensor, casting is done by `hfusion.cast` op. If `dst` is not
-/// provided, the init value is a `tensor.empty` op. Otherwise, it's written
-/// to `dst`.
-Value castTo(OpBuilder &builder, Value src, Type targetElemType,
-             hfusion::RoundMode roundMode,
-             std::optional<Value> dst = std::nullopt,
-             bool enableOverflow = true,
-             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
-
-/// Cast `src` value to the specified element type.
-/// Select rounding mode inside.
-Value castTo(OpBuilder &builder, Value src, Type targetElemType,
-             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
-
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
