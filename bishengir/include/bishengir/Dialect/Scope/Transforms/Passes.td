@@ -67,4 +67,42 @@ def OutlineScope : Pass<"outline-scope", "mlir::ModuleOp"> {
   let dependentDialects = ["mlir::func::FuncDialect"];
 }
 
+def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
+  let summary = "Inline scope region within ScopeOp.";
+  let description = [{
+    Move out operations inside the scope region to its parent
+    region if `scope.scope` doesn't have the `no_inline` attribute.
+    Example:
+
+    ```mlir
+    func.func @test() {
+      scope.scope : () -> () {
+        ...
+        scope.return
+      } {no_inline}
+      scope.scope : () -> () {
+        <inlinable_operations>
+        scope.return
+      }
+      return
+    }
+    ```
+
+    will be transformed into:
+
+    ```mlir
+    func.func @test() {
+      scope.scope : () -> () {
+        ...
+        scope.return
+      } {no_inline}
+      <inlinable_operations>
+      return
+    }
+    ```
+  }];
+  let constructor = "mlir::scope::createInlineScopePass()";
+  let dependentDialects = [];
+}
+
 #endif // BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_TD

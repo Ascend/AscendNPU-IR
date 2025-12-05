@@ -1,0 +1,56 @@
+// RUN: bishengir-opt --inline-scope --split-input-file %s | FileCheck %s
+
+// CHECK:   func.func @inline_func(%[[ARG_0:.*]]: tensor<64x128xf32>)
+// CHECK-DAG:           %[[END_2:.*]] = arith.constant {debug = 12 : index} 4096 : index
+// CHECK-DAG:           %[[INIT:.*]] = arith.constant {debug = 1 : index} 0 : index
+// CHECK-DAG:           %[[END_1:.*]] = arith.constant {debug = 2 : index} 64 : index
+// CHECK-DAG:           %[[STEP:.*]] = arith.constant {debug = 3 : index} 20 : index
+// CHECK:           scf.for %[[_:.*]] = %[[INIT]] to %[[END_1]] step %[[STEP]] {
+// CHECK:             scf.for %[[_:.*]] = %[[INIT]] to %[[END_2]] step %[[STEP]] {
+// CHECK:               hivm.hir.sync_block_set {debug = 15 : index}
+// CHECK:             hivm.hir.sync_block_wait {debug = 20 : index}
+// CHECK:             scope.scope : () -> () {
+// CHECK:               hivm.hir.sync_block_wait {debug = 26 : index}
+// CHECK:               scope.return
+// CHECK:             } {core_mode = "vector", no_inline}
+// CHECK:           return {debug = 8 : index} %[[ARG_0]] : tensor<64x128xf32>
+
+module {
+  func.func @inline_func(%arg0: tensor<64x128xf32>) -> tensor<64x128xf32> attributes {debug = 0 : index} {
+    %c0 = arith.constant {debug = 1 : index} 0 : index
+    %c64 = arith.constant {debug = 2 : index} 64 : index
+    %c20 = arith.constant {debug = 3 : index} 20 : index
+    %0 = scf.for %arg1 = %c0 to %c64 step %c20 iter_args(%arg2 = %arg0) -> (tensor<64x128xf32>) {
+      %1 = func.call @inline_func_a(%arg2) : (tensor<64x128xf32>) -> tensor<64x128xf32>
+      %2 = func.call @inline_func_b(%1) : (tensor<64x128xf32>) -> tensor<64x128xf32>
+      scf.yield %2 : tensor<64x128xf32>
+    }
+    return {debug = 8 : index} %0 : tensor<64x128xf32>
+  }
+  func.func private @inline_func_a(%arg0: tensor<64x128xf32>) -> tensor<64x128xf32> attributes {noinline = false} {
+    %c0 = arith.constant {debug = 10 : index} 0 : index
+    %c20 = arith.constant {debug = 11 : index} 20 : index
+    %c4096 = arith.constant {debug = 12 : index} 4096 : index
+    scope.scope : () -> () {
+      scf.for %arg1 = %c0 to %c4096 step %c20 {
+        hivm.hir.sync_block_set {debug = 15 : index}[<CUBE>, <PIPE_FIX>, <PIPE_V>] flag = 0
+      }
+      scope.return
+    } {core_mode = "cube"}
+    scope.scope : () -> () {
+      scope.scope : () -> () {
+        hivm.hir.sync_block_wait {debug = 20 : index}[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 0
+        scope.return
+      }
+      scope.return
+    } {core_mode = "vector"}
+    return %arg0 : tensor<64x128xf32>
+  }
+  func.func private @inline_func_b(%arg0: tensor<64x128xf32>) -> tensor<64x128xf32> attributes {noinline = false} {
+    scope.scope : () -> () {
+      hivm.hir.sync_block_wait {debug = 26 : index}[<VECTOR>, <PIPE_FIX>, <PIPE_V>] flag = 0
+      scope.return
+    } {core_mode = "vector", no_inline}
+    return %arg0 : tensor<64x128xf32>
+  }
+}

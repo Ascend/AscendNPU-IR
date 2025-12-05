@@ -51,6 +51,9 @@ def ScopeOp : Scope_Op<"scope", [
     }
     ```
   }];
+  let arguments = (ins
+    UnitAttr:$no_inline
+  );
   let regions = (region SizedRegion<1>:$region);
   let hasCustomAssemblyFormat = 1;
 }

@@ -27,21 +27,21 @@
 
 namespace {
 /// This class defines the interface for handling inlining with scope
-/// operations.
+/// operations. All scope operations can be inlined.
 struct ScopeInlinerInterface : public mlir::DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
 
-  /// All operations within scope ops can be inlined.
   bool isLegalToInline(mlir::Region *dest, mlir::Region *src,
                        bool wouldBeCloned,
                        mlir::IRMapping &valueMapping) const final {
     return true;
   }
-  // Operations in Scope dialect are always legal to inline.
+
   bool isLegalToInline(mlir::Operation *, mlir::Region *, bool,
                        mlir::IRMapping &) const final {
     return true;
   }
+
   // Handle the given inlined terminator by replacing it with a new operation
   // as necessary. Required when the region has only one block.
   void handleTerminator(mlir::Operation *op,
