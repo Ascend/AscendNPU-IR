@@ -43,7 +43,13 @@ inline int64_t getRank(const Type &type) {
 
 // Returns stride of shaped memref type.
 inline SmallVector<int64_t> getStride(const Type &type) {
+  auto memrefType = cast<MemRefType>(type);
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   auto [strides, offset] = getStridesAndOffset(cast<MemRefType>(type));
+#else
+  auto [strides, offset] = memrefType.getStridesAndOffset();
+#endif
   return strides;
 }
 

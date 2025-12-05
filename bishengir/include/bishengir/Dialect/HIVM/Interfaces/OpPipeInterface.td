@@ -59,7 +59,13 @@ def OpPipeInterface : OpInterface<"OpPipeInterface"> {
       /*args=*/(ins),
       /*methodBody=*/[{
         if constexpr(ConcreteOp::template hasTrait<OpTrait::SinglePipeOpTrait>()) {
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
           return $_op.getPipe();
+#else
+          ConcreteOp op = $_op;
+          return op.getPipe();
+#endif
         } else {
           return mlir::hivm::PIPE::PIPE_UNASSIGNED;
         }
@@ -72,7 +78,13 @@ def OpPipeInterface : OpInterface<"OpPipeInterface"> {
       /*args=*/(ins),
       /*methodBody=*/[{
         if constexpr(ConcreteOp::template hasTrait<OpTrait::MacroOpTrait>()) {
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
           return $_op.getInPipe();
+#else
+          ConcreteOp op = $_op;
+          return op.getInPipe();
+#endif
         } else {
           return mlir::hivm::PIPE::PIPE_UNASSIGNED;
         }
@@ -85,7 +97,13 @@ def OpPipeInterface : OpInterface<"OpPipeInterface"> {
       /*args=*/(ins),
       /*methodBody=*/[{
         if constexpr(ConcreteOp::template hasTrait<OpTrait::MacroOpTrait>()) {
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
           return $_op.getOutPipe();
+#else
+          ConcreteOp op = $_op;
+          return op.getOutPipe();
+#endif
         } else {
           return mlir::hivm::PIPE::PIPE_UNASSIGNED;
         }

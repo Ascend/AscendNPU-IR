@@ -77,6 +77,8 @@ cmake -G Ninja .. \
 ninja -j32
 ```
 
+Note: When the LLVM version is 21 or higher, add the option -DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON
+
 ## 🧪 Run tests
 
 ### Compile Test Targets

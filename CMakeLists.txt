@@ -13,6 +13,13 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
   endif()
 endif()
 
+# TODO : release different version of ascendnpu ir and remove the macro
+option(LLVM_MAJOR_VERSION_21_COMPATIBLE "NPUIR build with LLVM 21 or later" OFF)
+if(LLVM_MAJOR_VERSION_21_COMPATIBLE)
+  message(STATUS "Building with LLVM 21 or later")
+  add_definitions(-D__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+endif()
+
 # -------------------------------------------------------------------------------
 # Handle Option
 # -------------------------------------------------------------------------------

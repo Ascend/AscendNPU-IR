@@ -301,8 +301,12 @@ Type getAnnotationMarkByteAlignment(Value value) {
   // set new type with new stride
   auto memrefType = cast<MemRefType>(shapedType);
   bool isAlreadyAligned = true;
-
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   auto [strides, offset] = getStridesAndOffset(memrefType);
+#else
+  auto [strides, offset] = memrefType.getStridesAndOffset();
+#endif
   llvm::SmallVector<int64_t> alignedStrides(rank, 1);
   for (int64_t i = 0; i < rank; i++) {
     if (strideAlignElems[i] == 1) {
