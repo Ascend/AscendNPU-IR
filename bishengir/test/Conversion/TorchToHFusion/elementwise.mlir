@@ -394,7 +394,7 @@ func.func @torch.aten.to.dtype.f32_f16(%arg0: !torch.vtensor<[6,4,3],f32>) -> !t
 // -----
 
 // CHECK-LABEL: @torch.aten.to.dtype.i1_f32
-// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<rint>}
 // CHECK-GENERIC: arith.uitofp
 func.func @torch.aten.to.dtype.i1_f32(%arg0: !torch.vtensor<[6,4,3],i1>) -> !torch.vtensor<[6,4,3],f32> {
   %int6 = torch.constant.int 6
@@ -431,7 +431,7 @@ func.func @torch.aten.to.dtype.f16_i32(%arg0: !torch.vtensor<[6,4,3],f16>) -> !t
 // -----
 
 // CHECK-LABEL: @torch.aten.to.dtype.i32_bf16
-// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<rint>}
 func.func @torch.aten.to.dtype.i32_bf16(%arg0: !torch.vtensor<[6,4,3],si32>) -> !torch.vtensor<[6,4,3],bf16> {
   %int15 = torch.constant.int 15
   %false = torch.constant.bool false
@@ -498,7 +498,7 @@ func.func @torch.aten.where.self.i32(%arg0: !torch.vtensor<[5,2],i1>, %arg1: !to
 // -----
 
 // CHECK-LABEL: @torch.aten.where.self_cast_broadcast
-// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<trunc>}
+// CHECK: hfusion.cast {round_mode = #hfusion.round_mode<rint>}
 // CHECK: linalg.broadcast
 // CHECK: hfusion.select
 func.func @torch.aten.where.self_cast_broadcast(%arg0: !torch.vtensor<[5,2],i1>, %arg1: !torch.vtensor<[2],si32>, %arg2: !torch.vtensor<[5,2],f32>) -> !torch.vtensor<[5,2],f32> {
