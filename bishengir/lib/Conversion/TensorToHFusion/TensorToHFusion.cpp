@@ -31,7 +31,7 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
-struct TensorSplatOpToLinalgFill : OpRewritePattern<tensor::SplatOp> {
+struct TensorSplatOpToLinalgFill : public OpRewritePattern<tensor::SplatOp> {
   using OpRewritePattern<tensor::SplatOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(tensor::SplatOp op,

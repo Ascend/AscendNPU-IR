@@ -56,7 +56,7 @@ namespace mlir::hivm::detail {
 //   xxx
 //   xxx
 // }
-struct MoveUpAffineMapPattern : OpRewritePattern<affine::AffineApplyOp> {
+struct MoveUpAffineMapPattern : public OpRewritePattern<affine::AffineApplyOp> {
   using OpRewritePattern<affine::AffineApplyOp>::OpRewritePattern;
 
   explicit MoveUpAffineMapPattern(MLIRContext *ctx, PatternBenefit benefit = 100)

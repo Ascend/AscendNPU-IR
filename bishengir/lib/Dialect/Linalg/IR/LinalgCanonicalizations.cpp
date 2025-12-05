@@ -76,7 +76,7 @@ getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank) {
 /// (2) the expand dim is not be permuted
 /// (3) contains dynamic dim
 /// (4) transpose op cannot be elimated after adjusting the expand op
-struct FoldTransposeWithExpand : OpRewritePattern<linalg::TransposeOp> {
+struct FoldTransposeWithExpand : public OpRewritePattern<linalg::TransposeOp> {
   using OpRewritePattern<linalg::TransposeOp>::OpRewritePattern;
 
   bool hasDynamicDim(tensor::ExpandShapeOp defExpandOp) const {
@@ -230,7 +230,7 @@ struct FoldTransposeWithExpand : OpRewritePattern<linalg::TransposeOp> {
   }
 };
 
-struct MergeConsecutiveReduceOp : OpRewritePattern<linalg::ReduceOp> {
+struct MergeConsecutiveReduceOp : public OpRewritePattern<linalg::ReduceOp> {
   using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(linalg::ReduceOp op,
                                 PatternRewriter &rewriter) const override {
@@ -352,7 +352,7 @@ public:
   }
 };
 
-struct FoldBroadcastFill : OpRewritePattern<linalg::BroadcastOp> {
+struct FoldBroadcastFill : public OpRewritePattern<linalg::BroadcastOp> {
   using OpRewritePattern<linalg::BroadcastOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(linalg::BroadcastOp broadcastOp,
                                 PatternRewriter &rewriter) const override {

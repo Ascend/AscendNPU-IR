@@ -31,7 +31,7 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
-struct GPUBarrierToHFusionBarrierOp : OpRewritePattern<gpu::BarrierOp> {
+struct GPUBarrierToHFusionBarrierOp : public OpRewritePattern<gpu::BarrierOp> {
   using OpRewritePattern<gpu::BarrierOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(gpu::BarrierOp op,

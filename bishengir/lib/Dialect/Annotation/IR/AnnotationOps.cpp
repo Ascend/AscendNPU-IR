@@ -61,7 +61,7 @@ LogicalResult MarkOp::fold(FoldAdaptor adaptor,
   return foldBufferSizeAnnotationToAlloc(*this);
 }
 
-struct FoldUselessBufferSizeMarkOp : OpRewritePattern<annotation::MarkOp> {
+struct FoldUselessBufferSizeMarkOp : public OpRewritePattern<annotation::MarkOp> {
   using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,

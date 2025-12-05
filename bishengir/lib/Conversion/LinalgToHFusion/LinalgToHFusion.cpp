@@ -42,7 +42,7 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
-struct LinalgMapToHFusionPattern : OpRewritePattern<linalg::MapOp> {
+struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
   using OpRewritePattern<linalg::MapOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::MapOp op,
@@ -227,7 +227,7 @@ struct LinalgMapToHFusionPattern : OpRewritePattern<linalg::MapOp> {
 };
 
 struct LinalgGenericToHFusionArangePattern
-    : OpRewritePattern<linalg::GenericOp> {
+    : public OpRewritePattern<linalg::GenericOp> {
   using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::GenericOp op,
@@ -371,7 +371,7 @@ struct AtomicLinalgGenericToHFusionStorePattern
 //    ins(%arg0, %arg1 : tensor<256x64xf32>, tensor<256x64xi32>)
 //    outs(%0, %1 : tensor<256xf32>, tensor<256xi32>)
 //    dimensions = [1] -> tensor<256xf32>, tensor<256xi32>
-struct LinalgToHFusionReduceWithIndex : OpRewritePattern<linalg::ReduceOp> {
+struct LinalgToHFusionReduceWithIndex : public OpRewritePattern<linalg::ReduceOp> {
   using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::ReduceOp op,

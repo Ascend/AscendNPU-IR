@@ -32,7 +32,7 @@ namespace mlir {
 using namespace mlir;
 
 template <typename ArithOpTy, AffineExprKind AffineExprTy>
-struct BinaryArithOpToAffineApply : OpRewritePattern<ArithOpTy> {
+struct BinaryArithOpToAffineApply : public OpRewritePattern<ArithOpTy> {
   using OpRewritePattern<ArithOpTy>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ArithOpTy op,
@@ -60,7 +60,7 @@ struct BinaryArithOpToAffineApply : OpRewritePattern<ArithOpTy> {
 };
 
 template <typename ArithOpTy, typename AffineOpTy>
-struct ArithMinMaxToAffine : OpRewritePattern<ArithOpTy> {
+struct ArithMinMaxToAffine : public OpRewritePattern<ArithOpTy> {
   using OpRewritePattern<ArithOpTy>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ArithOpTy op,
