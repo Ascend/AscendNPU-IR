@@ -29,8 +29,8 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
 #include <numeric>
-#define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
-#define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
+#define CEIL_FACTOR(x, y) (((x) + ((y)-1)) / (y) * (y))
+#define CEIL_DIV(x, y) (((x) + ((y)-1)) / (y))
 #define UINT8_WIDTH 8
 namespace mlir {
 namespace utils {
@@ -40,6 +40,8 @@ constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
+static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
+
 namespace debugger {
 
 // Type trait to check if T is an LLVM-style container
@@ -563,6 +565,19 @@ SmallVector<SmallVector<int64_t, 2>>
 getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank);
 
 } // namespace reshape_utils
+
+namespace version_utils {
+
+// Currently, we only handle compatibility between two hivmc versons
+// 1. early version: empty or fail to parse version
+// 2. new version: has meaningful version number
+//
+// TODO: support semantic version compatibility check in the future,
+// e.g. check compatibility between 1.0.0 and 2.0.0
+bool isCompatibleHIVMCVersion(StringRef versionStr);
+
+} // namespace version_utils
+
 } // namespace mlir
 
 #endif

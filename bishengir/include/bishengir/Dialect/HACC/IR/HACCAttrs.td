@@ -288,19 +288,6 @@ def HACC_TargetDeviceSpecAttr :
 }
 
 //===----------------------------------------------------------------------===//
-// Metadata
-//===----------------------------------------------------------------------===//
-
-def HACC_TritonKernel : HACC_Attr<"TritonKernel", "triton_kernel"> {
-  let description = [{
-    If a module is tagged with this attribute, it means there is a triton kernel
-    function within this module.
-    If a function is tagged with this attribute, it means that it is a triton
-    kernel.
-  }];
-}
-
-//===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//
 

@@ -24,6 +24,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "llvm/Support/VersionTuple.h"
 
 namespace bishengir {
 
@@ -62,9 +63,18 @@ getTempFile(const std::string &outputFile, TempDirectoriesStore &tempDirsStore);
 llvm::LogicalResult
 checkInOutOptionsValidity(BiShengIRCompileConfigBase &config);
 
-llvm::LogicalResult execute(llvm::StringRef binName,
-                            llvm::StringRef installPath,
-                            llvm::SmallVectorImpl<llvm::StringRef> &arguments);
+llvm::LogicalResult
+execute(llvm::StringRef binName, llvm::StringRef installPath,
+        llvm::SmallVectorImpl<llvm::StringRef> &arguments,
+        std::optional<llvm::StringRef> outputFile = std::nullopt,
+        unsigned timeoutSeconds = 15);
+
+std::optional<llvm::VersionTuple> parseHIVMCVersion(llvm::StringRef content);
+
+std::optional<llvm::VersionTuple>
+parseHIVMCVersion(llvm::ArrayRef<llvm::StringRef> contents);
+
+std::optional<llvm::VersionTuple> detectHIVMCVersion(llvm::StringRef hivmcName);
 
 /// Get the path set by environment variable `BISHENG_INSTALL_PATH`.
 std::string getBiShengInstallPath();
