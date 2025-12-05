@@ -17,6 +17,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -76,7 +77,7 @@ LogicalResult markAlignedDim(OpBuilder &builder, Operation *markedOp, Value arg,
     }
 
     builder.setInsertionPoint(markedOp);
-    auto hwAlignBytes = getHWAlignBytes(memrefTy.getMemorySpace());
+    auto hwAlignBytes = util::getHWAlignBytes(memrefTy.getMemorySpace());
     createAlignMarkOp(builder, markedOp->getLoc(), arg, {alignedDimValue},
                       {static_cast<int>(hwAlignBytes)});
   }
@@ -140,7 +141,7 @@ void MarkStrideAlignPass::runOnOperation() {
     }
 
     if (isa<hivm::VTransposeOp>(op) &&
-        isLastDimTranspose(cast<hivm::VTransposeOp>(op))) {
+        cast<hivm::VTransposeOp>(op).isLastDimTranspose()) {
       // already alloc size aligned, no need to do storage align
       return WalkResult::skip();
     }

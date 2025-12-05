@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -133,7 +134,7 @@ LogicalResult alignAllocSize(HIVMOP op, OpBuilder &builder) {
     return failure();
   }
 
-  std::vector<std::unique_ptr<OperAlignInfo>> operAlignInfoList;
+  std::vector<std::unique_ptr<util::OperAlignInfo>> operAlignInfoList;
   if (failed(getUnAlignSizeInfo(op, &operAlignInfoList))) {
     return failure();
   }
@@ -150,7 +151,7 @@ LogicalResult markAllocAlign(func::FuncOp funcOp) {
   OpBuilder builder(funcOp.getContext());
   WalkResult result = funcOp->walk([&builder](Operation *op) {
     if (auto transposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
-      if (!isLastDimTranspose(transposeOp)) {
+      if (!transposeOp.isLastDimTranspose()) {
         // un-last transpose, no need to do alloc size alignment, just do stride
         // alignment
         return WalkResult::skip();

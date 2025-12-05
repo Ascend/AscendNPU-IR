@@ -89,10 +89,6 @@ const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
 
-// New helper function to get the updated BaseMemRefType
-BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
-                                             AddressSpaceAttr targetMemScope);
-
 /// Get the root MemRef AllocOp for the input operand, return failure if there
 /// is unsupported Ops on the search path or if the defining op is not a MemRef
 /// AllocOp.
@@ -243,10 +239,6 @@ std::vector<scf::ForOp> createNestedLoops(
 FailureOr<SmallVector<Operation *>> traceForPotentialMatrixC(Value v,
                                                              Block *storeBlock);
 
-// TODO: move to platform info
-uint32_t getHWAlignBytes(Attribute spaceAttr);
-std::optional<uint32_t> getHWAlignBytes(Type t);
-
 bool isMarkedAsHIVMElementwiseOp(Operation *op);
 
 bool isMixModule(ModuleOp mod);
@@ -266,10 +258,6 @@ void removeModuleCoreTypeAttr(ModuleOp mod);
 /// Constraints: Skip memref::SubViewOp/ViewOp/ReinterpretCastOp
 /// Constraints: Skip bufferization::ToMemrefOp
 void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
-
-bool isLastDimTranspose(hivm::VTransposeOp op);
-
-bool isLastTwoAxesTranspose(hivm::VTransposeOp op);
 
 // Create local workspace of current block
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
@@ -330,60 +318,6 @@ LogicalResult traceHIVMOpUntil(RewriterBase &rewriter, Operation *op,
   return failure();
 }
 
-struct AlignInfo {
-  llvm::SmallVector<int32_t> alignDims;
-  llvm::SmallVector<int32_t> alignBytes;
-
-  AlignInfo(ArrayRef<int32_t> alignDims_, ArrayRef<int32_t> alignBytes_) {
-    alignDims = SmallVector<int32_t>(alignDims_);
-    alignBytes = SmallVector<int32_t>(alignBytes_);
-  }
-
-  AlignInfo(llvm::SmallVector<int32_t> alignDims_,
-            llvm::SmallVector<int32_t> alignBytes_) {
-    alignDims = alignDims_;
-    alignBytes = alignBytes_;
-  }
-
-  AlignInfo(AlignInfo &&other) {
-    alignDims = other.alignDims;
-    alignBytes = other.alignBytes;
-  }
-
-  bool operator==(const AlignInfo &other);
-  bool operator!=(const AlignInfo &other);
-
-  void dump();
-};
-
-struct OperAlignInfo : public AlignInfo {
-  Value operand;
-
-  OperAlignInfo(Value operand_, ArrayRef<int32_t> alignDims_,
-                ArrayRef<int32_t> alignBytes_)
-      : AlignInfo(alignDims_, alignBytes_) {
-    operand = operand_;
-  }
-
-  OperAlignInfo(Value operand_, llvm::SmallVector<int32_t> alignDims_,
-                llvm::SmallVector<int32_t> alignBytes_)
-      : AlignInfo(alignDims_, alignBytes_) {
-    operand = operand_;
-  }
-};
-
-LogicalResult getUnAlignSizeInfo(
-  VTransposeOp op,
-  std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
-
-LogicalResult getUnAlignSizeInfo(
-  VCastOp op,
-  std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
-
-LogicalResult getUnAlignSizeInfo(
-  VSortOp op,
-  std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
-
 namespace util {
 enum class BitWidth : uint32_t {
   B1 = 1,
@@ -425,10 +359,6 @@ bool isLastDimContiguous(Value operand);
 bool isGMPointerCastOp(Operation *op);
 
 bool isArgminOrArgmax(ReduceOperation op);
-
-/// Return the elementType as string for library call name.
-std::string getTypeName(Location loc, Type type,
-                        hivm::TypeFn casting = hivm::TypeFn::cast_signed);
 
 } // namespace util
 } // namespace hivm

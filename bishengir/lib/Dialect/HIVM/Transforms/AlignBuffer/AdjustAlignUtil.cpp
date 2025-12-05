@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -44,7 +45,7 @@ std::optional<int> getPrevUncontiguousDim(
 
 bool isAlreadyAligned(MemRefType memrefType, int32_t alignDim) {
   auto ElemBits = getElementTypeOrSelf(memrefType).getIntOrFloatBitWidth();
-  auto hwAlignBits = getHWAlignBytes(memrefType.getMemorySpace()) * 8;
+  auto hwAlignBits = util::getHWAlignBytes(memrefType.getMemorySpace()) * 8;
   if (auto strided =
           llvm::dyn_cast<StridedLayoutAttr>(memrefType.getLayout())) {
     auto alignDimStride = strided.getStrides()[alignDim];

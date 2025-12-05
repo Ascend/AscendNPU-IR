@@ -179,6 +179,48 @@ mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
 Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);
 
 namespace util {
+struct AlignInfo {
+  llvm::SmallVector<int32_t> alignDims;
+  llvm::SmallVector<int32_t> alignBytes;
+
+  AlignInfo(ArrayRef<int32_t> alignDims_, ArrayRef<int32_t> alignBytes_) {
+    alignDims = SmallVector<int32_t>(alignDims_);
+    alignBytes = SmallVector<int32_t>(alignBytes_);
+  }
+
+  AlignInfo(llvm::SmallVector<int32_t> alignDims_,
+            llvm::SmallVector<int32_t> alignBytes_) {
+    alignDims = alignDims_;
+    alignBytes = alignBytes_;
+  }
+
+  AlignInfo(AlignInfo &&other) {
+    alignDims = other.alignDims;
+    alignBytes = other.alignBytes;
+  }
+
+  bool operator==(const AlignInfo &other);
+  bool operator!=(const AlignInfo &other);
+
+  void dump();
+};
+
+struct OperAlignInfo : public AlignInfo {
+  Value operand;
+
+  OperAlignInfo(Value operand_, ArrayRef<int32_t> alignDims_,
+                ArrayRef<int32_t> alignBytes_)
+      : AlignInfo(alignDims_, alignBytes_) {
+    operand = operand_;
+  }
+
+  OperAlignInfo(Value operand_, llvm::SmallVector<int32_t> alignDims_,
+                llvm::SmallVector<int32_t> alignBytes_)
+      : AlignInfo(alignDims_, alignBytes_) {
+    operand = operand_;
+  }
+};
+
 /// Returns if the reassociations are identity that each indices group only
 /// contains a single dimension. e.g. `[[0], [1], [3]]` is indentity collapse.
 bool isIdentityCollapse(ArrayRef<ReassociationIndices> reassociations);
@@ -188,6 +230,29 @@ bool isTransposeAdjacentAxes(SmallVector<int64_t> transposeAxes);
 
 /// Return the ConstantOp IntValue.
 FailureOr<std::string> stringfyConstantIntOpValue(Value value);
+
+/// Return the elementType as string for library call name.
+std::string getTypeName(Location loc, Type type,
+                        hivm::TypeFn casting = hivm::TypeFn::cast_signed);
+
+LogicalResult getUnAlignSizeInfo(
+    VTransposeOp op,
+    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
+
+LogicalResult getUnAlignSizeInfo(
+    VCastOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
+
+LogicalResult getUnAlignSizeInfo(
+    VSortOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
+
+// TODO: move to platform info
+uint32_t getHWAlignBytes(Attribute spaceAttr);
+std::optional<uint32_t> getHWAlignBytes(Type t);
+
+// New helper function to get the updated BaseMemRefType
+BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
+                                             AddressSpaceAttr targetMemScope);
+
 } // namespace util
 } // namespace hivm
 } // namespace mlir

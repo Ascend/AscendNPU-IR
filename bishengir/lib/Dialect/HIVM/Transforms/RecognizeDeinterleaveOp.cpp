@@ -15,6 +15,7 @@
 //
 //===---------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -258,7 +259,7 @@ struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
     adaptToDeinterleaveOp(rewriter, deinterleaveSrc, deinterleaveDst, op);
 
     // adjust strides to hwAlignBytes for deinterleave to work
-    auto hwAlignBytes = getHWAlignBytes(dstMemRef.getMemorySpace());
+    auto hwAlignBytes = util::getHWAlignBytes(dstMemRef.getMemorySpace());
     markEnableStrideAlign(deinterleaveSrc, rank - 1, hwAlignBytes, loc,
                           rewriter);
     return success();
@@ -327,7 +328,7 @@ struct RecognizeDeinterleaveOpForCopy : public OpRewritePattern<hivm::CopyOp> {
     adaptToDeinterleaveOp(rewriter, deinterleaveSrc, deinterleaveDst, op);
 
     // adjust strides to hwAlignBytes for deinterleave to work
-    auto hwAlignBytes = getHWAlignBytes(dstMemRef.getMemorySpace());
+    auto hwAlignBytes = util::getHWAlignBytes(dstMemRef.getMemorySpace());
     markEnableStrideAlign(deinterleaveSrc, rank - 1, hwAlignBytes, op->getLoc(),
                           rewriter);
     return success();
