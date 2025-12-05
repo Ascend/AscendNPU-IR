@@ -19,14 +19,51 @@
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+// For function inliner support
+#include "mlir/Transforms/InliningUtils.h"
+
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Scope/IR/ScopeOps.cpp.inc"
+
+namespace {
+/// This class defines the interface for handling inlining with scope
+/// operations.
+struct ScopeInlinerInterface : public mlir::DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  /// All operations within scope ops can be inlined.
+  bool isLegalToInline(mlir::Region *dest, mlir::Region *src,
+                       bool wouldBeCloned,
+                       mlir::IRMapping &valueMapping) const final {
+    return true;
+  }
+  // Operations in Scope dialect are always legal to inline.
+  bool isLegalToInline(mlir::Operation *, mlir::Region *, bool,
+                       mlir::IRMapping &) const final {
+    return true;
+  }
+  // Handle the given inlined terminator by replacing it with a new operation
+  // as necessary. Required when the region has only one block.
+  void handleTerminator(mlir::Operation *op,
+                        mlir::ValueRange valuesToRepl) const final {
+#ifndef NDEBUG
+    auto yieldOp = llvm::cast<mlir::scope::ReturnOp>(op);
+    assert(yieldOp->getNumOperands() == 0 &&
+           "need to update this function if ReturnOp returns operands");
+#endif
+  }
+};
+
+} // namespace
 
 void mlir::scope::ScopeDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
 #include "bishengir/Dialect/Scope/IR/ScopeOps.cpp.inc"
       >();
+
+  // Add function inliner interfaces
+  addInterfaces<ScopeInlinerInterface>();
 }
 
 #include "bishengir/Dialect/Scope/IR/ScopeDialect.cpp.inc"
