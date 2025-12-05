@@ -17,6 +17,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -401,8 +402,8 @@ void populatePropagateAlignAmongOpOperandsPatterns(
   registerOne<::mlir::hivm::CopyOp>(patterns);
 }
 
-bool isSame(std::map<Operation *, std::unique_ptr<AlignInfo>> *lhs,
-            std::map<Operation *, std::unique_ptr<AlignInfo>> *rhs) {
+bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
+            std::map<Operation *, std::unique_ptr<util::AlignInfo>> *rhs) {
   if (lhs->size() != rhs->size()) {
     return false;
   }
@@ -422,7 +423,7 @@ bool isSame(std::map<Operation *, std::unique_ptr<AlignInfo>> *lhs,
   return true;
 }
 
-void dump(std::map<Operation *, std::unique_ptr<AlignInfo>> *alignInfoMap) {
+void dump(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
 #ifndef NDEBUG
   LDBG("dump align info map");
   for (auto &it : *alignInfoMap) {
@@ -434,7 +435,7 @@ void dump(std::map<Operation *, std::unique_ptr<AlignInfo>> *alignInfoMap) {
 
 void collectAlignInfo(
     Operation *funcOp,
-    std::map<Operation *, std::unique_ptr<AlignInfo>> *alignInfoMap) {
+    std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
   funcOp->walk([&](Operation *op) {
     if (!utils::isAllocLikeOp(op)) {
       return WalkResult::advance();
@@ -444,7 +445,7 @@ void collectAlignInfo(
       return WalkResult::advance();
     }
 
-    auto alignInfo = std::make_unique<AlignInfo>(
+    auto alignInfo = std::make_unique<util::AlignInfo>(
         op->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignDimsAttr::name),
         op->getAttrOfType<DenseI32ArrayAttr>(
             hivm::StrideAlignValueInByteAttr::name));
@@ -511,7 +512,7 @@ LogicalResult populatePropagateAlignAmongOpOperands(MLIRContext *context,
 LogicalResult propagateAlignInfoToOperands(MLIRContext *context,
                                            Operation *funcOp) {
   // collect the align info on allocation
-  std::map<Operation *, std::unique_ptr<AlignInfo>> prevAlignInfoMap;
+  std::map<Operation *, std::unique_ptr<util::AlignInfo>> prevAlignInfoMap;
   collectAlignInfo(funcOp, &prevAlignInfoMap);
 
   bool isChanged;
@@ -536,7 +537,7 @@ LogicalResult propagateAlignInfoToOperands(MLIRContext *context,
     }
 
     // collect the align info on allocation
-    std::map<Operation *, std::unique_ptr<AlignInfo>> curAlignInfoMap;
+    std::map<Operation *, std::unique_ptr<util::AlignInfo>> curAlignInfoMap;
     collectAlignInfo(funcOp, &curAlignInfoMap);
     isChanged = !isSame(&prevAlignInfoMap, &curAlignInfoMap);
     LDBG("isChanged : " << isChanged);

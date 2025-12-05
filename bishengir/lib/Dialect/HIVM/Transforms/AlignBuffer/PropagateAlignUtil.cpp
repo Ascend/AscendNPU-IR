@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
@@ -435,7 +436,7 @@ LogicalResult propagateAlignDown(
   auto [unionAlignDims, unionAlignBytes] = unionAlignInfo(
       alreadyAlignDims, alreadyAlignBytes, alignDims, alignBytes);
 
-  if (AlignInfo(alignDims, alignBytes) == AlignInfo(unionAlignDims, unionAlignBytes)) {
+  if (util::AlignInfo(alignDims, alignBytes) == util::AlignInfo(unionAlignDims, unionAlignBytes)) {
     return failure();
   }
   rewriter.modifyOpInPlace(alreadyAnnotateOp, [&rewriter, &alreadyAnnotateOp,
@@ -1084,9 +1085,9 @@ mlir::LogicalResult propagateAlignUpFromResult(
 
 } // namespace
 
-void AlignInfo::dump() { hivm::dump(alignDims, alignBytes, DEBUG_TYPE); }
+void util::AlignInfo::dump() { hivm::dump(alignDims, alignBytes, DEBUG_TYPE); }
 
-bool AlignInfo::operator==(const AlignInfo &other) {
+bool util::AlignInfo::operator==(const AlignInfo &other) {
   if (this->alignDims.size() != other.alignDims.size()) {
     return false;
   }
@@ -1103,7 +1104,7 @@ bool AlignInfo::operator==(const AlignInfo &other) {
   return true;
 }
 
-bool AlignInfo::operator!=(const AlignInfo &other) { return !(*this == other); }
+bool util::AlignInfo::operator!=(const AlignInfo &other) { return !(*this == other); }
 
 void mlir::hivm::populatePropagateAlignUpToRootAllocationPattern(
     RewritePatternSet &patterns, std::string alignDimAttrName,
