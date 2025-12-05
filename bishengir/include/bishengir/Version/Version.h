@@ -56,6 +56,9 @@ std::string getBiShengIRVendor();
 /// and the vendor tag.
 std::string getBiShengIRFullVersion();
 
+/// return a tup contains (commit_hash, date)
+std::string getBiShengIRFullRepositoryVersion();
+
 /// Like getBiShengIRFullVersion(), but with a custom tool name.
 std::string getBiShengIRToolFullVersion(llvm::StringRef toolName);
 
