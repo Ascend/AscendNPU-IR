@@ -55,6 +55,24 @@ bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
 
 } // namespace mlir::hivm
 
+namespace mlir::hivm {
+
+template <typename HIVMOP>
+bool shouldModOpLowerToScalarLoops(HIVMOP op) {
+  if (!op.hasPureBufferSemantics()) {
+    return false;
+  }
+  
+  if (op.hasHWUnsupportedScalarOperand()) {
+    return true;
+  }
+
+  auto elemType = getElementTypeOrSelf(op.getOperandTypes()[0]);
+  return elemType.isInteger(64) || elemType.isInteger(32);
+}
+
+} // namespace mlir::hivm
+
 //===----------------------------------------------------------------------===//
 // Macros to help generate `shouldLowerToScalarLoops`
 //===----------------------------------------------------------------------===//
@@ -76,6 +94,11 @@ bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
   bool OP_NAME::shouldLowerToScalarLoops() {                                   \
     return shouldCumOpLowerToScalarLoops(*this);                               \
   }
+#define ENABLE_MOD_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(OP_NAME)               \
+  bool OP_NAME::shouldLowerToScalarLoops() {                                   \
+    return shouldModOpLowerToScalarLoops(*this);                               \
+  }                                                                            \
+
 
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VInterleaveOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VDeinterleaveOp)
@@ -87,13 +110,15 @@ ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMaxOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VAbsOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShLOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShROp)
-ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VModOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VDivOp)
 #undef ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
 ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumprodOp)
 ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumsumOp)
 #undef ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
+
+ENABLE_MOD_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VModOp)
+#undef ENABLE_MOD_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
 //===----------------------------------------------------------------------===//
 // VCmpOp
