@@ -47,7 +47,9 @@ struct CPURunnerPipelineOptions
   }
 
   CPURunnerPipelineOptions &operator=(const CPURunnerPipelineOptions &other) {
-    this->copyOptionValuesFrom(other);
+    if (this != &other) {
+      this->copyOptionValuesFrom(other);
+    }
     return *this;
   }
 
