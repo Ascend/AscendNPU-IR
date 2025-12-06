@@ -889,7 +889,7 @@ static Value getReshapedValue(OpBuilder &builder, Location loc, Value v,
 
   auto prevMemSpace = cast<MemRefType>(v.getType()).getMemorySpace();
   if (prevMemSpace) {
-    newType = cast<MemRefType>(getBaseMemRefTypeWithNewScope(
+    newType = cast<MemRefType>(util::getBaseMemRefTypeWithNewScope(
         newType, cast<AddressSpaceAttr>(prevMemSpace)));
   }
 
@@ -899,7 +899,7 @@ static Value getReshapedValue(OpBuilder &builder, Location loc, Value v,
   auto gmSpaceAttr =
       AddressSpaceAttr::get(builder.getContext(), hivm::AddressSpace::UB);
   idxsType =
-      cast<MemRefType>(getBaseMemRefTypeWithNewScope(idxsType, gmSpaceAttr));
+      cast<MemRefType>(util::getBaseMemRefTypeWithNewScope(idxsType, gmSpaceAttr));
 
   auto memrefIdxs = builder.create<memref::AllocOp>(loc, idxsType);
   for (auto [idx, dim] : llvm::enumerate(newShape)) {
@@ -964,7 +964,7 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
     return failure();
   }
 
-  std::vector<std::unique_ptr<OperAlignInfo>> alignList;
+  std::vector<std::unique_ptr<util::OperAlignInfo>> alignList;
   if (getUnAlignSizeInfo(op, &alignList).failed()) {
     return failure();
   }
