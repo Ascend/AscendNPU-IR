@@ -2792,8 +2792,26 @@ public:
 
     hfusion::RoundMode rounding =
         utils::selectRoundMode<hfusion::RoundMode>(lhsElemType, targetType);
-    Value castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding);
-    Value castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding);
+    
+    Value castLhs, castRhs;
+    static DenseMap<hfusion::CompareFn, hfusion::CompareFn> cmpFnMap = {
+        {hfusion::CompareFn::vule, hfusion::CompareFn::vle},
+        {hfusion::CompareFn::vult, hfusion::CompareFn::vlt},
+        {hfusion::CompareFn::vuge, hfusion::CompareFn::vge},
+        {hfusion::CompareFn::vugt, hfusion::CompareFn::vgt},
+    };
+    
+    if (cmpFnMap.contains(cmpFn)) {
+      castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding, std::nullopt, true,
+                                hfusion::TypeFn::cast_unsigned);
+      castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding, std::nullopt, true,
+                                hfusion::TypeFn::cast_unsigned);
+      cmpFn = cmpFnMap[cmpFn];
+    } else {
+      castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding);
+      castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding);
+    }
+
     auto newCmpOp =
         createCmpOp(rewriter, op->getLoc(), castLhs, castRhs, cmpFn);
     rewriter.replaceOp(op, newCmpOp);
