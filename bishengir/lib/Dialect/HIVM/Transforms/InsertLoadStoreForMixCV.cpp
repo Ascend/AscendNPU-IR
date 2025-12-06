@@ -223,6 +223,7 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
 template <typename OpType>
 struct InsertStoreOpBetweenVectorAndLoad
     : public OpRewritePattern<hivm::LoadOp> {
+  virtual ~InsertStoreOpBetweenVectorAndLoad() = default;
   using OpRewritePattern<hivm::LoadOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hivm::LoadOp op,
@@ -262,6 +263,8 @@ struct InsertLoadStoreOpBetweenVectorAndCube
     : public OpRewritePattern<hivm::MmadL1Op> {
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
 
+  virtual ~InsertLoadStoreOpBetweenVectorAndCube() = default;
+
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
@@ -279,6 +282,8 @@ template <typename OpType>
 struct InsertLoadStoreOpBetweenCrossLoopVectorAndCube
     : public OpRewritePattern<hivm::MmadL1Op> {
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+
+  virtual ~InsertLoadStoreOpBetweenCrossLoopVectorAndCube() = default;
 
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {

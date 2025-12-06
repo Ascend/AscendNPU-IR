@@ -125,7 +125,7 @@ void SyncCodegen::handleEnableUnitFlag(
 
 void SyncCodegen::updatePlaceHolderOpInsertSync(
     PlaceHolderInstanceElement *placeHolder) {
-  Operation *terminatorOp;
+  Operation *terminatorOp = nullptr;
   auto *parentScope = syncIR[placeHolder->parentScopeId].get();
   if (auto *branchOp = dyn_cast<BranchInstanceElement>(parentScope)) {
     if (auto ifOp = dyn_cast<scf::IfOp>(branchOp->elementOp)) {

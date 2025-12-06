@@ -584,7 +584,7 @@ LogicalResult TilingInfo::trySimplifyTilingFunc() {
 }
 
 void TilingInfo::pruneTilingExcept(int64_t keepKey) {
-  caseKeys_.getRef().remove_if([&](int64_t key) { return key != keepKey; });
+  caseKeys_.removeIf(keepKey);
 }
 
 TilingData *TilingInfo::getTilingData(unsigned idx) const {
