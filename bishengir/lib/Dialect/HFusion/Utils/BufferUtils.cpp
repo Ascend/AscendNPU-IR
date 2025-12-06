@@ -378,6 +378,7 @@ mlir::utils::BufferAnalysis::updateAliasIntoFurthest(const Value &val,
 
 void BufferAnalysis::gatherLiveRanges(const LivenessBlockInfo *blockInfo) {
   LDBG("Gathering live range information...");
+  assert(blockInfo != nullptr);
   for (const auto &arg : block.getArguments()) {
     LDBG("Processing arguments " << arg);
     // For the arguments, we assume that they are explicitly copied into

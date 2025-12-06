@@ -143,6 +143,8 @@ struct GenericPreprocessAndRewrite : public OpRewritePattern<From> {
 
   using OpRewritePattern<From>::OpRewritePattern;
 
+  virtual ~GenericPreprocessAndRewrite() = default;
+
 private:
   template <unsigned start = 0>
   static constexpr void
@@ -302,6 +304,8 @@ struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
   using FromOp = From;
 
   using GenericPreprocessAndRewrite<From>::GenericPreprocessAndRewrite;
+
+  virtual ~RewriteUsingMapOp() = default;
 
   LogicalResult rewriteFromGeneric(FromOp op,
                                    SmallVector<Value> &&preprocessedOperands,
