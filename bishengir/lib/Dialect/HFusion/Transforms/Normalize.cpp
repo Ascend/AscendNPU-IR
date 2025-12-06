@@ -1495,6 +1495,8 @@ public:
       return failure();
     }
 
+    bool shouldCastToUnsigned = ShouldCastToUnsigned(op);
+    
     auto loc = op->getLoc();
     // linalg::ElemwiseBinaryOp's Outputs and Results must be
     // variadic of ranked tensor of any type values.
@@ -1510,11 +1512,21 @@ public:
     // step1. res = divWithRoundMode(x, y, TRUNC)
     rewriter.setInsertionPoint(op);
     auto inputs = op.getDpsInputs();
-    auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
+    auto res = hfusion::divWithRoundModeAndCastType(rewriter, loc, elemTySrc, inputs[0],
                                          inputs[1], resTensor,
-                                         hfusion::RoundMode::TRUNC);
+                                         hfusion::RoundMode::TRUNC,
+                                         shouldCastToUnsigned ? hfusion::TypeFn::cast_unsigned : 
+                                         hfusion::TypeFn::cast_signed);
     rewriter.replaceOp(op, res);
     return success();
+  }
+  
+  bool ShouldCastToUnsigned(linalg::ElemwiseBinaryOp op) const{
+    auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+    linalg::BinaryFn func = binOp.getFun();
+    static DenseSet<linalg::BinaryFn> binarySet = {
+        linalg::BinaryFn::div_unsigned};
+      return binarySet.contains(func);
   }
 };
 
@@ -2875,7 +2887,7 @@ template <typename targetType,
                                      std::is_same_v<int8_t, targetType>)>>
 static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
                                          const SmallVector<Value> &newResults,
-                                         PatternRewriter &rewriter,
+                                         PatternRewriter &rewriter, 
                                          std::optional<CastOptions> castOpts) {
   if constexpr (std::is_same_v<bool, targetType>) {
     replaceI1ResultsWithTargetType(oldResults, newResults, rewriter);
@@ -3121,8 +3133,8 @@ SmallVector<Value> normalizeToTargetType(PatternRewriter &rewriter,
       result.push_back(v);
       continue;
     }
-    Value castResult = castTo(rewriter, v, targetType,
-        castOpts.has_value() && castOpts.value().isUnsignedOp
+    Value castResult = castTo(rewriter, v, targetType,	
+        castOpts.has_value() && castOpts.value().isUnsignedOp	
             ? hfusion::TypeFn::cast_unsigned : hfusion::TypeFn::cast_signed);
     result.push_back(castResult);
   }

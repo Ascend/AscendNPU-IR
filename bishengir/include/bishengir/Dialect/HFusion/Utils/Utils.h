@@ -286,6 +286,11 @@ Value divWithRoundMode(OpBuilder &builder, Location loc, Type resType,
                        hfusion::RoundMode roundingMode,
                        std::optional<Operation **> divOp = std::nullopt);
 
+Value divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType,
+                                Value src0, Value src1, Value resTensor,
+                                hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
+                                std::optional<Operation **> divOp = std::nullopt);
+
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
