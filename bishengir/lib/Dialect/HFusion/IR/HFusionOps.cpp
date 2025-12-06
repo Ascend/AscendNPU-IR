@@ -486,6 +486,12 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
       llvm_unreachable("unsupported type for mod");
+    case BinaryFn::modui:
+      if (allInteger)
+        return builder.create<arith::RemUIOp>(arg0.getLoc(), arg0, arg1);
+      if (allFloatingPoint)
+        return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for modui");
     case BinaryFn::shli:
       if (allInteger)
         return builder.create<arith::ShLIOp>(arg0.getLoc(), arg0, arg1);

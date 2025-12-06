@@ -1015,7 +1015,8 @@ public:
       return failure();
     }
 
-    if (op.getFun() != hfusion::BinaryFn::mod) {
+    auto fun = op.getFun();
+    if (fun != hfusion::BinaryFn::mod && fun != hfusion::BinaryFn::modui) {
       return failure();
     }
 
@@ -1030,11 +1031,14 @@ public:
     //         y_f32 = cast(y) => f32
     Value xF32 = op.getInputs()[0];
     Value yF32 = op.getInputs()[1];
+    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::mod)
+                                  ? hfusion::TypeFn::cast_signed
+                                  : hfusion::TypeFn::cast_unsigned;
     if (!elemType.isF32()) {
-      xF32 =
-          hfusion::castTo(rewriter, op.getInputs()[0], rewriter.getF32Type());
-      yF32 =
-          hfusion::castTo(rewriter, op.getInputs()[1], rewriter.getF32Type());
+      xF32 = hfusion::castTo(rewriter, op.getInputs()[0], rewriter.getF32Type(),
+                             cast_integer_type);
+      yF32 = hfusion::castTo(rewriter, op.getInputs()[1], rewriter.getF32Type(),
+                             cast_integer_type);
     }
 
     // step 2: trunc_div_f32 = truncate_div(x_f32, y_f32)
@@ -1152,7 +1156,8 @@ public:
       return failure();
     }
 
-    if (op.getFun() != hfusion::BinaryFn::mod) {
+    auto fun = op.getFun();
+    if (fun != hfusion::BinaryFn::mod && fun != hfusion::BinaryFn::modui) {
       return failure();
     }
 
@@ -3290,7 +3295,8 @@ private:
           // should compute on f32 for high precision and change to use float
           // ops to compute f32 data
           hfusion::BinaryFn::ceildivsi, hfusion::BinaryFn::floordivsi,
-          hfusion::BinaryFn::ceildivui, hfusion::BinaryFn::mod};
+          hfusion::BinaryFn::ceildivui, hfusion::BinaryFn::mod,
+          hfusion::BinaryFn::modui};
       return !binarySet.contains(func);
     } else if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
       auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
@@ -3308,7 +3314,8 @@ private:
     if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
       auto binOp = cast<hfusion::ElemwiseBinaryOp>(op);
       hfusion::BinaryFn func = binOp.getFun();
-      static DenseSet<hfusion::BinaryFn> binarySet = {hfusion::BinaryFn::mod};
+      static DenseSet<hfusion::BinaryFn> binarySet = {hfusion::BinaryFn::mod,
+                                                      hfusion::BinaryFn::modui};
       return binarySet.contains(func);
     } else if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
       auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
@@ -4556,8 +4563,13 @@ public:
     auto loc = op->getLoc();
     auto targetElemType = rewriter.getI16Type();
     auto shift = op.getDpsInputs()[1];
-    Value inputOfI16 = hfusion::castTo(rewriter, input, targetElemType);
-    Value shiftOfI16 = hfusion::castTo(rewriter, shift, targetElemType);
+    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::shrui)
+                                  ? hfusion::TypeFn::cast_unsigned
+                                  : hfusion::TypeFn::cast_signed;
+    Value inputOfI16 =
+        hfusion::castTo(rewriter, input, targetElemType, cast_integer_type);
+    Value shiftOfI16 =
+        hfusion::castTo(rewriter, shift, targetElemType, cast_integer_type);
 
     auto shiftInit = utils::createEmptyOp(rewriter, loc, inputOfI16);
     Value resOfI16 =
@@ -4573,7 +4585,8 @@ public:
     auto roundMode = (fun == hfusion::BinaryFn::shli)
                          ? hfusion::RoundMode::TRUNCWITHOVERFLOW
                          : selectMode;
-    auto resOfI8 = hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode);
+    auto resOfI8 = hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
+                                   std::nullopt, true, cast_integer_type);
 
     rewriter.replaceOp(op, resOfI8);
     return success();
