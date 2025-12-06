@@ -59,7 +59,7 @@ template <typename T, typename = void> struct HasSubscript : public std::false_t
 
 template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
-    : std::true_type {};
+    : public std::true_type {};
 
 template <typename T>
 std::string to_string(const T &container, int indent = 0, bool useEndl = false);

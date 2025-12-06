@@ -289,7 +289,7 @@ struct LinalgGenericToHFusionArangePattern
 //    ins(%16 : memref<?xf32>)
 //    outs(%subview_2 : memref<?xf32>)
 struct AtomicLinalgGenericToHFusionStorePattern
-    : OpRewritePattern<linalg::GenericOp> {
+    : public OpRewritePattern<linalg::GenericOp> {
   using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
 
   std::optional<StringRef> getAtomicAttrRef(linalg::GenericOp op) const {
