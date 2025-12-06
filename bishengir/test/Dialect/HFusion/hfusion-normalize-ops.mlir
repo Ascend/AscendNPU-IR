@@ -1973,9 +1973,9 @@ func.func @test_isnan() -> tensor<8192xi1> {
 // -----
 // CHECK-LABEL: func.func @test_divui
 // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x6xf32>
-// CHECK: %[[VAL_1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
+// CHECK: %[[VAL_1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
 // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x6xf32>
-// CHECK: %[[VAL_3:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
+// CHECK: %[[VAL_3:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>}
 // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<6x6xf32>
 // CHECK: %[[VAL_5:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: %[[VAL_6:.*]] = tensor.empty() : tensor<6x6xi32>
@@ -1991,8 +1991,8 @@ func.func @test_divui(%arg0: tensor<6x6xi32>, %arg1: tensor<6x6xi32>) -> tensor<
 func.func @test_divui_vs(%arg0: tensor<48xi32>, %arg1: i32) -> tensor<48xi32> {
     %res = tensor.empty() : tensor<48xi32>
     // CHECK: %[[LHS:.*]] = tensor.empty() : tensor<48xf32>
-    // CHECK: %[[LHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<48xi32>) outs(%[[LHS]] : tensor<48xf32>) -> tensor<48xf32>
-    // CHECK: %[[RHSCASTED:.*]] = arith.sitofp %arg1 : i32 to f32
+    // CHECK: %[[LHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<48xi32>) outs(%[[LHS]] : tensor<48xf32>) -> tensor<48xf32>
+    // CHECK: %[[RHSCASTED:.*]] = arith.uitofp %arg1 : i32 to f32
     // CHECK: %[[RES:.*]] = tensor.empty() : tensor<48xf32>
     // CHECK: %[[RESFP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[LHSFP]], %[[RHSCASTED]] : tensor<48xf32>, f32) outs(%[[RES]] : tensor<48xf32>) -> tensor<48xf32>
     // CHECK: %[[RESINT:.*]] = tensor.empty() : tensor<48xi32>
@@ -2005,9 +2005,9 @@ func.func @test_divui_vs(%arg0: tensor<48xi32>, %arg1: i32) -> tensor<48xi32> {
 // CHECK-LABEL: func.func @test_divui_sv
 func.func @test_divui_sv(%arg0: i32, %arg1: tensor<48xi32>) -> tensor<48xi32> {
     %res = tensor.empty() : tensor<48xi32>
-    // CHECK: %[[LHSCASTED:.*]] = arith.sitofp %arg0 : i32 to f32
+    // CHECK: %[[LHSCASTED:.*]] = arith.uitofp %arg0 : i32 to f32
     // CHECK: %[[RHS:.*]] = tensor.empty() : tensor<48xf32>
-    // CHECK: %[[RHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<48xi32>) outs(%[[RHS]] : tensor<48xf32>) -> tensor<48xf32>
+    // CHECK: %[[RHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<48xi32>) outs(%[[RHS]] : tensor<48xf32>) -> tensor<48xf32>
     // CHECK: %[[RES:.*]] = tensor.empty() : tensor<48xf32>
     // CHECK: %[[RESFP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[LHSCASTED]], %[[RHSFP]] : f32, tensor<48xf32>) outs(%[[RES]] : tensor<48xf32>) -> tensor<48xf32>
     // CHECK: %[[RESINT:.*]] = tensor.empty() : tensor<48xi32>

@@ -1272,3 +1272,47 @@ Value hfusion::divWithRoundMode(OpBuilder &builder, Location loc, Type resType,
       hfusion::castTo(builder, divF32->getResults()[0], resType, roundingMode);
   return res;
 }
+
+Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType,
+                                Value src0, Value src1, Value resTensor,
+                                hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
+                                std::optional<Operation **> divOp) {
+  Type elemType = getElementTypeOrSelf(src0.getType());
+  Value castF32X = src0;
+  Value castF32Y = src1;
+
+  // step 1: x_f32 = cast(x) -> f32
+  //         y_f32 = cast(y) -> f32
+  if (!elemType.isF32()) {
+    castF32X = hfusion::castTo(builder, src0, builder.getF32Type(), castIntegerType);
+    castF32Y = hfusion::castTo(builder, src1, builder.getF32Type(), castIntegerType); 
+  }
+
+  // step 2: div_f32 = x_f32 / y_f32
+  auto divInit = utils::createEmptyOpWithTargetElemType(builder, loc, resTensor,
+                                                        builder.getF32Type());
+
+  auto divF32 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
+      builder, loc, linalg::BinaryFn::div, ValueRange{castF32X, castF32Y},
+      ValueRange(divInit));
+
+  if (divOp != std::nullopt) {
+    (*divOp.value()) = divF32;
+  }
+
+  // step3: res = cast<RoundingMode>(div) -> resType
+  if (resType.isInteger(8) || resType.isInteger(16)) {
+    // cast from f32 to i32 then to resType
+    Value resI32 = hfusion::castTo(builder, divF32->getResults()[0],
+                                   builder.getI32Type(), roundingMode);
+    Value res = hfusion::castTo(builder, resI32, resType,
+                                hfusion::RoundMode::TRUNCWITHOVERFLOW);
+    return res;
+  }
+
+  // cast directly to resType
+  Value res =
+      hfusion::castTo(builder, divF32->getResults()[0], resType, roundingMode);
+  return res;
+}
