@@ -105,6 +105,7 @@ bool Solver::checkAlreadySyncedWithUnitFlag(RWOperation *rwOp1,
   if (!enableUnitFlagFeature) {
     return false;
   }
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
   if (!rwOp1->hasUnitFlagFeat || !rwOp2->hasUnitFlagFeat) {
     return false;
   }
@@ -766,7 +767,6 @@ std::pair<Occurrence *, Occurrence *> Solver::getSetWaitOcc(Occurrence *occ1,
   assert(parOcc1 != occ1 && parOcc2 != occ2);
   auto *setOcc = occ1->getNthParent(occ1->depth - parOcc1->depth - 1);
   auto *waitOcc = occ2->getNthParent(occ2->depth - parOcc2->depth - 1);
-  assert(setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
   // if (setOcc->op != waitOcc->op) {
   //   // llvm::dbgs() << setOcc->op->str(0, false) << '\n';
   //   // llvm::dbgs() << waitOcc->op->str(0, false) << '\n';
@@ -778,6 +778,7 @@ std::pair<Occurrence *, Occurrence *> Solver::getSetWaitOcc(Occurrence *occ1,
   //     return getSetWaitOcc(occ1, ghostOcc);
   //   }
   // }
+  assert(setOcc != nullptr && waitOcc != nullptr && setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
   if (setOcc->op != waitOcc->op) {
     if (auto *parLoopOp =
             llvm::dyn_cast_if_present<Loop>(setOcc->parentOcc->op)) {

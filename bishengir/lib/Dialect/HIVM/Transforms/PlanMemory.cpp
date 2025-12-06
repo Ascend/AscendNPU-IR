@@ -415,6 +415,7 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
                                           Liveness live) {
   SmallVector<Value> allocBeforeLoopBuffers;
   const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
+  assert(liveBlockInfo != nullptr);
   auto currentLiveValues =
       liveBlockInfo->currentlyLiveValues(loopOp.getOperation());
   if (currentLiveValues.empty()) {
@@ -637,6 +638,7 @@ void MemLivenessAnalysis::UpdateOperandGenInfo(OpInfo *opInfo, Value operand) {
 void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
                                        Block *block) {
   const auto *liveBlockInfo = live.getLiveness(block);
+  assert(liveBlockInfo != nullptr && opInfo != nullptr);
   auto currentLiveValues =
       liveBlockInfo->currentlyLiveValues(opInfo->operation);
   if (currentLiveValues.empty()) {
@@ -669,7 +671,8 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
 
 bool MemLivenessAnalysis::isParentOpDominate(Operation *op1,
                                              Operation *op2) const {
-  assert((op1 != nullptr && op2 != nullptr) && "op must not be nullptr");
+  assert((op1 != nullptr && op2 != nullptr &&
+    op2->getParentOp() != nullptr && op1->getParentOp() != nullptr) && "op must not be nullptr");
   return op2->getParentOp()->isAncestor(op1->getParentOp());
 }
 

@@ -318,6 +318,7 @@ class NormalizeTrigBase : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   explicit NormalizeTrigBase(MLIRContext *ctx, PatternBenefit benefit = 1)
       : OpRewritePattern<hfusion::ElemwiseUnaryOp>(ctx, benefit) {}
+  virtual ~NormalizeTrigBase() = default;
   LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.hasPureTensorSemantics())
@@ -358,7 +359,6 @@ public:
     rewriter.replaceOp(op, finalRes);
     return success();
   }
-
 protected:
   template <mlir::linalg::BinaryFn T>
   Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value inp1,
@@ -5596,6 +5596,7 @@ struct NormalizeMinMaxNumFOp
     : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+  virtual ~NormalizeMinMaxNumFOp() = default;
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
     static_assert(funFrom == BinaryFn::maxnumf || funFrom == BinaryFn::minnumf,
