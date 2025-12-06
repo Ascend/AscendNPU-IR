@@ -2872,10 +2872,16 @@ static void replaceI1ResultsWithTargetType(const SmallVector<Value> &oldResults,
   }
 }
 
+struct CastOptions {
+  bool isUnsignedOp = false;
+  bool enableOverflow = true;
+};
+
 static void replaceI8ResultsWithTargetType(const SmallVector<Value> &oldResults,
                                            const SmallVector<Value> &newResults,
                                            PatternRewriter &rewriter,
-                                           bool enableOverflow = true) {
+                                           bool enableOverflow = true,
+                                           bool isUnsigned = false) {
   assert(oldResults.size() == newResults.size() &&
          "result sizes mismatch when replace op results");
   for (const auto [idx, oldResult] : llvm::enumerate(oldResults)) {
@@ -2885,9 +2891,11 @@ static void replaceI8ResultsWithTargetType(const SmallVector<Value> &oldResults,
       continue;
     }
 
-    Value castResult =
-        castTo(rewriter, newResult, rewriter.getI8Type(),
-               hfusion::RoundMode::TRUNC, std::nullopt, enableOverflow);
+    Value castResult = castTo(rewriter, newResult, rewriter.getI8Type(),
+                              hfusion::RoundMode::TRUNC,
+                              std::nullopt, enableOverflow,
+                              isUnsigned ? hfusion::TypeFn::cast_unsigned : hfusion::TypeFn::cast_signed
+                              );
     rewriter.replaceAllUsesWith(oldResult, castResult);
   }
 }
@@ -2917,12 +2925,18 @@ template <typename targetType,
                                      std::is_same_v<int8_t, targetType>)>>
 static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
                                          const SmallVector<Value> &newResults,
-                                         PatternRewriter &rewriter) {
+                                         PatternRewriter &rewriter,
+                                         std::optional<CastOptions> castOpts) {
   if constexpr (std::is_same_v<bool, targetType>) {
     replaceI1ResultsWithTargetType(oldResults, newResults, rewriter);
   }
   if constexpr (std::is_same_v<int8_t, targetType>) {
-    replaceI8ResultsWithTargetType(oldResults, newResults, rewriter);
+    if (castOpts.has_value()) {
+      auto opts = castOpts.value();
+      replaceI8ResultsWithTargetType(oldResults, newResults, rewriter, opts.enableOverflow, opts.isUnsignedOp);
+    } else {
+      replaceI8ResultsWithTargetType(oldResults, newResults, rewriter);
+    }
   }
 }
 
@@ -3118,17 +3132,48 @@ Operation *createNewReduceOp(linalg::ReduceOp op, PatternRewriter &rewriter,
   return newOp;
 }
 
+static DenseSet<linalg::BinaryFn> unsignedLinalgBinFnSet = {
+    linalg::BinaryFn::max_unsigned,
+    linalg::BinaryFn::min_unsigned,
+};
+static DenseSet<linalg::BinaryFn> disableOverflowLinalgBinFnSet = {
+    linalg::BinaryFn::max_unsigned,
+    linalg::BinaryFn::min_unsigned,
+};
+
+template <typename OpType>
+std::optional<CastOptions> getCastOptsForUint8(OpType op) {
+  struct CastOptions castOpts;
+  if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
+    // some ops' signed info can be determined by func
+    auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+    linalg::BinaryFn func = binOp.getFun();
+    if (unsignedLinalgBinFnSet.contains(func)) {
+      castOpts.isUnsignedOp = true;
+    }
+    if (disableOverflowLinalgBinFnSet.contains(func)) {
+      castOpts.enableOverflow = false;
+    }
+    return castOpts;
+  }
+
+  return std::nullopt;
+}
+
 template <typename ElemType>
 SmallVector<Value> normalizeToTargetType(PatternRewriter &rewriter,
                                          const SmallVector<Value> &values,
-                                         Type targetType) {
+                                         Type targetType,
+                                         std::optional<CastOptions> castOpts) {
   SmallVector<Value> result;
   for (Value v : values) {
     if (!isElemType<ElemType>(v.getType())) {
       result.push_back(v);
       continue;
     }
-    Value castResult = castTo(rewriter, v, targetType);
+    Value castResult = castTo(rewriter, v, targetType,
+        castOpts.has_value() && castOpts.value().isUnsignedOp
+            ? hfusion::TypeFn::cast_unsigned : hfusion::TypeFn::cast_signed);
     result.push_back(castResult);
   }
   return result;
@@ -3160,6 +3205,8 @@ public:
       return failure();
     }
 
+    auto castOpts = getCastOptsForUint8(op);
+
     Type targetType;
     if (computeByF16) {
       targetType = rewriter.getF16Type();
@@ -3169,9 +3216,9 @@ public:
       llvm_unreachable("Unsupported Op.");
     }
     SmallVector<Value> newInputs =
-        normalizeToTargetType<ElemType>(rewriter, op.getInputs(), targetType);
+        normalizeToTargetType<ElemType>(rewriter, op.getInputs(), targetType, castOpts);
     SmallVector<Value> newOutputs =
-        normalizeToTargetType<ElemType>(rewriter, op.getOutputs(), targetType);
+        normalizeToTargetType<ElemType>(rewriter, op.getOutputs(), targetType, castOpts);
     Operation *newOp = createBodyOp(op, newInputs, newOutputs, rewriter);
     if (std::is_same_v<OpType, hfusion::SelectOp>) {
       replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
@@ -3180,7 +3227,7 @@ public:
       // TODO: set argument enableOverflow = false inside for all non-arithmatic
       // op type
       replaceResultsWithTargetType<ElemType>(op->getResults(),
-                                             newOp->getResults(), rewriter);
+                                             newOp->getResults(), rewriter, castOpts);
     }
     return success();
   }
