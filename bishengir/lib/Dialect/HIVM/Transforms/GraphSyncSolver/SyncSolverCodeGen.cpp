@@ -48,7 +48,9 @@ void Solver::setProperInsertionPoint(IRRewriter &rewriter,
       rewriter.setInsertionPoint(returnOp);
     } else {
       if (!resultFuncIrWasGenerated) {
-        rewriter.setInsertionPoint(dyn_cast<Scope>(opBase)->body.front()->op);
+        auto *scopeOp = dyn_cast<Scope>(opBase);
+        assert(scopeOp != nullptr && scopeOp->body.front() != nullptr);
+        rewriter.setInsertionPoint(scopeOp->body.front()->op);
       } else {
         rewriter.setInsertionPointToStart(
             &dyn_cast<func::FuncOp>(funcIr->op).getBody().front());
@@ -71,6 +73,7 @@ void Solver::setProperInsertionPoint(IRRewriter &rewriter,
 Location Solver::getProperLoc(OperationBase *opBase) {
   assert(opBase != nullptr);
   if (auto *ghostOp = dyn_cast<Ghost>(opBase)) {
+    assert(ghostOp != nullptr && ghostOp->block != nullptr && ghostOp->block->getParentOp() != nullptr);
     return ghostOp->block->getParentOp()->getLoc();
   }
   if (opBase->op == nullptr && opBase->parentOp != nullptr) {
@@ -184,6 +187,7 @@ Value Solver::getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp) {
     counter = createNestedIndexModular(rewriter, syncOp->multibufferLoopPar);
     nestedIndexModularMem[syncOp->multibufferLoopPar] = counter;
   }
+  assert(counter.getDefiningOp() != nullptr);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
   Location loc = counter.getDefiningOp()->getLoc();
   Value firstID = rewriter.create<arith::ConstantIntOp>(
@@ -668,7 +672,9 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
   }
 
   resetAndBuildSetWaitOpIndex(syncMapBefore, syncMapAfter);
-  mergeBackwardSyncEventIds(dyn_cast<Scope>(funcIr.get())->body.front().get());
+  auto *scopeOp = dyn_cast<Scope>(funcIr.get());
+  assert(scopeOp != nullptr && scopeOp->body.front() != nullptr);
+  mergeBackwardSyncEventIds(scopeOp->body.front().get());
 
   for (auto &[op, mp] : backwardSyncEvents) {
     if (mp.empty()) {
