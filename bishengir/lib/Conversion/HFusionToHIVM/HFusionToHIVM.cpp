@@ -937,18 +937,37 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
 // ===----------------------------------------------------------------------===//
 // HFusionToHIVM AtomicCasOp and AtomicXchgOp
 // ===----------------------------------------------------------------------===//
-template <typename HFUSIONOP, typename HIVMOP>
-struct HFusionToHIVMAtomicOp : public OpRewritePattern<HFUSIONOP> {
-  using OpRewritePattern<HFUSIONOP>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(HFUSIONOP op,
+struct HFusionToHIVMAtomicCasOp
+    : public OpRewritePattern<hfusion::AtomicCasOp> {
+  using OpRewritePattern<hfusion::AtomicCasOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::AtomicCasOp op,
                                 PatternRewriter &rewriter) const override {
     SmallVector<Value> dsts;
     if (failed(
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
-    auto hivmAtomicOp = rewriter.create<HIVMOP>(
+    auto hivmAtomicOp = rewriter.create<hivm::AtomicCasOp>(
         op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst());
+    rewriter.replaceOp(op, hivmAtomicOp);
+    return success();
+  }
+};
+
+struct HFusionToHIVMAtomicXchgOp
+    : public OpRewritePattern<hfusion::AtomicXchgOp> {
+  using OpRewritePattern<hfusion::AtomicXchgOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::AtomicXchgOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> dsts;
+    if (failed(
+            tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
+      return failure();
+    auto hivmAtomicOp = rewriter.create<hivm::AtomicXchgOp>(
+        op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst(),
+        op.getMask());
     rewriter.replaceOp(op, hivmAtomicOp);
     return success();
   }
@@ -1062,8 +1081,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMSortOp,
     HFusionToHIVMCumOp<hfusion::CumsumOp, hivm::VCumsumOp>,
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
-    HFusionToHIVMAtomicOp<hfusion::AtomicCasOp, hivm::AtomicCasOp>,
-    HFusionToHIVMAtomicOp<hfusion::AtomicXchgOp, hivm::AtomicXchgOp>
+    HFusionToHIVMAtomicCasOp,
+    HFusionToHIVMAtomicXchgOp
   >(patterns.getContext());
   // clang-format on
 }
