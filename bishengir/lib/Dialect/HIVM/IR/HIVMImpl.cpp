@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
@@ -185,8 +185,10 @@ createEltwiseOpByAtomicKind(OpBuilder &builder, Location loc,
   case hivm::AtomicKind::ADD:
     return builder.create<hivm::VAddOp>(loc, resTypeRange, src, dst);
   case hivm::AtomicKind::MIN:
+  case hivm::AtomicKind::UMIN:
     return builder.create<hivm::VMinOp>(loc, resTypeRange, src, dst);
   case hivm::AtomicKind::MAX:
+  case hivm::AtomicKind::UMAX:
     return builder.create<hivm::VMaxOp>(loc, resTypeRange, src, dst);
   case hivm::AtomicKind::AND:
     return builder.create<hivm::VAndOp>(loc, resTypeRange, src, dst);
@@ -350,7 +352,8 @@ Type getAnnotationMarkByteAlignment(Value value) {
 }
 
 VCastOp castTo(OpBuilder &builder, Location loc, Value src,
-               hivm::RoundModeAttr roundMode, Type targetElemType) {
+               hivm::RoundModeAttr roundMode, Type targetElemType,
+               hivm::TypeFnAttr typeFnAttr) {
   // Create targetTensor
   Value targetTensor =
       createTmpBufferOrTensorWithTargetType(builder, loc, src, targetElemType);
@@ -369,7 +372,7 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
-      loc, resultTypeRange, src, targetTensor, roundMode, hivm::TypeFnAttr{});
+      loc, resultTypeRange, src, targetTensor, roundMode, typeFnAttr);
   return VCastOp;
 }
 

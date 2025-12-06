@@ -314,6 +314,10 @@ struct AtomicLinalgGenericToHFusionStorePattern
     auto *context = rewriter.getContext();
     if (atomicRef.ends_with("add")) {
       atomicKind = AtomicKindAttr::get(context, AtomicKind::ADD);
+    } else if (atomicRef.ends_with("umax")) {
+      atomicKind = AtomicKindAttr::get(context, AtomicKind::UMAX);
+    } else if (atomicRef.ends_with("umin")) {
+      atomicKind = AtomicKindAttr::get(context, AtomicKind::UMIN);
     } else if (atomicRef.ends_with("max")) {
       atomicKind = AtomicKindAttr::get(context, AtomicKind::MAX);
     } else if (atomicRef.ends_with("min")) {
