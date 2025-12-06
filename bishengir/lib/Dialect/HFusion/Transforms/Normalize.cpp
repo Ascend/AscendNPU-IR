@@ -1022,7 +1022,7 @@ public:
     auto resTensor = op.getResultTensors()[0];
     auto resTy = dyn_cast<TensorType>(resTensor.getType());
     auto elemType = getElementTypeOrSelf(resTy);
-    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64)) {
+    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) || elemType.isInteger(32)) {
       return failure();
     }
 
