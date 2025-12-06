@@ -456,13 +456,13 @@ def HistogramOp : HFusion_Op<"histogram", [
   }];
 
   let arguments = (ins
-    RankedTensorOf<[I8, I16, I32, I64]>:$input,
+    AnyRankedTensor:$input,
     I64Attr:$num_bins,
     Optional<RankedTensorOf<[I1]>>:$mask
   );
 
   let results = (outs
-    RankedTensorOf<[I32, I64]>:$output
+    RankedTensorOf<[I8, I16, I32, I64]>:$output
   );
 
   let hasVerifier = 1;
