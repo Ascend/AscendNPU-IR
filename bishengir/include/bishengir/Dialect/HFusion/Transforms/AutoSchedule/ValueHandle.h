@@ -95,7 +95,7 @@ protected:
   ValueHandleKind kind_{ValueHandleKind::kUnknown};
 };
 
-struct RegularValueHandle : ValueHandle {
+struct RegularValueHandle : public ValueHandle {
   RegularValueHandle(Value handle, HandleStatus status)
       : ValueHandle(handle, status, ValueHandleKind::kRegular) {}
 
@@ -190,7 +190,7 @@ struct NamedValueHandleArgs {
 };
 } // namespace detail
 
-struct NamedValueHandle : ValueHandle {
+struct NamedValueHandle : public ValueHandle {
   NamedValueHandle(Value handle, std::string name, IdentifierType type,
                    HandleStatus status, bool needsReverse)
       : ValueHandle(handle, status, ValueHandleKind::kNamed),
@@ -213,7 +213,7 @@ private:
   bool needsReverse_{false};
 };
 
-struct FuncArgHandle : ValueHandle {
+struct FuncArgHandle : public ValueHandle {
   FuncArgHandle(Value handle, size_t funcArgNum, HandleStatus status)
       : ValueHandle(handle, status, ValueHandleKind::kFuncArg),
         funcArgNum_(funcArgNum) {}

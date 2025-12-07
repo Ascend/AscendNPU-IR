@@ -321,7 +321,7 @@ inline LogicalResult generateScalarImplementationImpl(
 //===----------------------------------------------------------------------===//
 template <typename HIVMOpTy>
 struct HIVMOpTilingInterface
-    : TilingInterface::ExternalModel<HIVMOpTilingInterface<HIVMOpTy>,
+    : public TilingInterface::ExternalModel<HIVMOpTilingInterface<HIVMOpTy>,
                                      HIVMOpTy> {
   DECLARE_DEFAULT_GET_LOOP_ITERATOR_TYPES
   DECLARE_DEFAULT_GET_LOOP_ITERATION_DOMAIN

@@ -46,16 +46,16 @@ namespace debugger {
 
 // Type trait to check if T is an LLVM-style container
 template <typename T, typename = void>
-struct IsLLVMContainer : std::false_type {};
+struct IsLLVMContainer : public std::false_type {};
 
 template <typename T>
 struct IsLLVMContainer<T, std::void_t<decltype(std::declval<T>().begin()),
                                       decltype(std::declval<T>().end()),
                                       decltype(std::declval<T>().size())>>
-    : std::true_type {};
+    : public std::true_type {};
 
 // Type trait to check if T supports indexing
-template <typename T, typename = void> struct HasSubscript : std::false_type {};
+template <typename T, typename = void> struct HasSubscript : public std::false_type {};
 
 template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>

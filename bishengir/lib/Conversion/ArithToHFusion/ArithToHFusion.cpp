@@ -42,7 +42,7 @@ static bool operateOnTensors(Operation *op) {
 }
 
 template <typename UnaryOp, linalg::UnaryFn linalgFn>
-struct ElementwiseOpToLinalgUnary : OpRewritePattern<UnaryOp> {
+struct ElementwiseOpToLinalgUnary : public OpRewritePattern<UnaryOp> {
   using OpRewritePattern<UnaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(UnaryOp op,
@@ -63,7 +63,7 @@ struct ElementwiseOpToLinalgUnary : OpRewritePattern<UnaryOp> {
 };
 
 template <typename BinaryOp, linalg::BinaryFn linalgFn>
-struct ElementwiseOpToLinalgBinary : OpRewritePattern<BinaryOp> {
+struct ElementwiseOpToLinalgBinary : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -85,7 +85,7 @@ struct ElementwiseOpToLinalgBinary : OpRewritePattern<BinaryOp> {
 };
 
 template <typename UnaryOp, hfusion::UnaryFn hfusionFn>
-struct ElementwiseOpToHFusionUnary : OpRewritePattern<UnaryOp> {
+struct ElementwiseOpToHFusionUnary : public OpRewritePattern<UnaryOp> {
   using OpRewritePattern<UnaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(UnaryOp op,
@@ -106,7 +106,7 @@ struct ElementwiseOpToHFusionUnary : OpRewritePattern<UnaryOp> {
 };
 
 template <typename BinaryOp, hfusion::BinaryFn hfusionFn>
-struct ElementwiseOpToHFusionBinary : OpRewritePattern<BinaryOp> {
+struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -128,7 +128,7 @@ struct ElementwiseOpToHFusionBinary : OpRewritePattern<BinaryOp> {
 };
 
 template <typename BinaryOp>
-struct MulIExtendedOpLowering : OpRewritePattern<BinaryOp> {
+struct MulIExtendedOpLowering : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -148,7 +148,7 @@ struct MulIExtendedOpLowering : OpRewritePattern<BinaryOp> {
 };
 
 namespace {
-struct BitcastOpToHFusionBitcastOp : OpRewritePattern<arith::BitcastOp> {
+struct BitcastOpToHFusionBitcastOp : public OpRewritePattern<arith::BitcastOp> {
   using OpRewritePattern<arith::BitcastOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(arith::BitcastOp op,
                                 PatternRewriter &rewriter) const final {
@@ -186,7 +186,7 @@ inline bool isOverFlowMode(Type inType, Type outType) {
 }
 
 template <typename CastOp>
-struct ElementwiseOpToHFusionCast : OpRewritePattern<CastOp> {
+struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
   using OpRewritePattern<CastOp>::OpRewritePattern;
 
   static hfusion::RoundMode selectRoundMode(CastOp op) {
@@ -275,7 +275,7 @@ struct ElementwiseOpToHFusionCast : OpRewritePattern<CastOp> {
 };
 
 template <typename CompareOp>
-struct ElementwiseOpToHFusionCompare : OpRewritePattern<CompareOp> {
+struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
   using OpRewritePattern<CompareOp>::OpRewritePattern;
 
   static hfusion::CompareFn selectPredicate(arith::CmpFOp op) {
@@ -347,7 +347,7 @@ struct ElementwiseOpToHFusionCompare : OpRewritePattern<CompareOp> {
 };
 
 template <typename SelectOp>
-struct ElementwiseOpToHFusionSelect : OpRewritePattern<SelectOp> {
+struct ElementwiseOpToHFusionSelect : public OpRewritePattern<SelectOp> {
   using OpRewritePattern<SelectOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SelectOp op,
@@ -369,7 +369,7 @@ struct ElementwiseOpToHFusionSelect : OpRewritePattern<SelectOp> {
 };
 
 struct ConstantSplatOpToLinalgFillPattern
-    : OpRewritePattern<arith::ConstantOp> {
+    : public OpRewritePattern<arith::ConstantOp> {
   using OpRewritePattern<arith::ConstantOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(arith::ConstantOp op,
                                 PatternRewriter &rewriter) const final {

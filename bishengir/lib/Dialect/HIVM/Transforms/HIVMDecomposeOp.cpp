@@ -410,7 +410,7 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
   }
 };
 
-struct VCmpOpLowering : OpRewritePattern<VCmpOp> {
+struct VCmpOpLowering : public OpRewritePattern<VCmpOp> {
   using OpRewritePattern<VCmpOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(VCmpOp op,
                                 PatternRewriter &rewriter) const final {
@@ -470,7 +470,7 @@ struct VCmpOpLowering : OpRewritePattern<VCmpOp> {
 };
 
 template <typename ExtOp>
-struct DecomposeI32ScalarExtOp : OpRewritePattern<ExtOp> {
+struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
   using OpRewritePattern<ExtOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ExtOp op,

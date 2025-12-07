@@ -45,7 +45,7 @@ static bool operateOnTensors(Operation *op) {
 }
 
 template <typename UnaryOp, linalg::UnaryFn linalgFn>
-struct ElementwiseOpToLinalgUnary : OpRewritePattern<UnaryOp> {
+struct ElementwiseOpToLinalgUnary : public OpRewritePattern<UnaryOp> {
   using OpRewritePattern<UnaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(UnaryOp op,
@@ -66,7 +66,7 @@ struct ElementwiseOpToLinalgUnary : OpRewritePattern<UnaryOp> {
 };
 
 template <typename BinaryOp, linalg::BinaryFn linalgFn>
-struct ElementwiseOpToLinalgBinary : OpRewritePattern<BinaryOp> {
+struct ElementwiseOpToLinalgBinary : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -88,7 +88,7 @@ struct ElementwiseOpToLinalgBinary : OpRewritePattern<BinaryOp> {
 };
 
 template <typename UnaryOp, hfusion::UnaryFn hfusionFn>
-struct ElementwiseOpToHFusionUnary : OpRewritePattern<UnaryOp> {
+struct ElementwiseOpToHFusionUnary : public OpRewritePattern<UnaryOp> {
   using OpRewritePattern<UnaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(UnaryOp op,
@@ -109,7 +109,7 @@ struct ElementwiseOpToHFusionUnary : OpRewritePattern<UnaryOp> {
 };
 
 template <typename BinaryOp, hfusion::BinaryFn hfusionFn>
-struct ElementwiseOpToHFusionBinary : OpRewritePattern<BinaryOp> {
+struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -130,7 +130,7 @@ struct ElementwiseOpToHFusionBinary : OpRewritePattern<BinaryOp> {
   }
 };
 
-struct MathFmaToComposeBinaryOp : OpRewritePattern<math::FmaOp> {
+struct MathFmaToComposeBinaryOp : public OpRewritePattern<math::FmaOp> {
   using OpRewritePattern<math::FmaOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(math::FmaOp op,

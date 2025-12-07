@@ -30,7 +30,7 @@ static bool isEqual(const Operation *lhsC, const Operation *rhsC) {
       lhs, rhs, OperationEquivalence::IgnoreLocations);
 }
 
-struct CSEExtractSlicePattern : OpRewritePattern<tensor::ExtractSliceOp> {
+struct CSEExtractSlicePattern : public OpRewritePattern<tensor::ExtractSliceOp> {
   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp pivotSliceOp,
@@ -72,7 +72,7 @@ struct CSEExtractSlicePattern : OpRewritePattern<tensor::ExtractSliceOp> {
   }
 };
 
-struct CSEAffineApplyPattern : OpRewritePattern<affine::AffineApplyOp> {
+struct CSEAffineApplyPattern : public OpRewritePattern<affine::AffineApplyOp> {
   using OpRewritePattern<affine::AffineApplyOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(affine::AffineApplyOp baseOp,
