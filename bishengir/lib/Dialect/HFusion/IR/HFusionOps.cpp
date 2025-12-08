@@ -2389,7 +2389,7 @@ LogicalResult HistogramOp::verify() {
     return emitOpError() << "output element type must be i32 or i64";
 
   // Output length must match num_bins
-  int64_t bins = getNumBins();
+  auto bins = static_cast<int64_t>(getNumBins());
   if (outTy.getDimSize(0) != bins)
     return emitOpError() << "output length (" << outTy.getDimSize(0)
                          << ") must equal num_bins (" << bins << ")";

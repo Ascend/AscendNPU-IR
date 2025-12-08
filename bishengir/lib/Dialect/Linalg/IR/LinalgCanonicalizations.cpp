@@ -142,7 +142,7 @@ struct FoldTransposeWithExpand : public OpRewritePattern<linalg::TransposeOp> {
     int64_t idxAfterPerm = -1;
     for (size_t i = 0; i < perms.size(); ++i) {
       if (perms[i] == expandDim) {
-        idxAfterPerm = i;
+        idxAfterPerm = static_cast<int>(i);
       }
     }
     return idxAfterPerm;
@@ -256,7 +256,7 @@ struct MergeConsecutiveReduceOp : public OpRewritePattern<linalg::ReduceOp> {
     prevReduce.getReductionDims(dims0);
     SmallVector<unsigned> dims1;
     op.getReductionDims(dims1);
-    unsigned maxRank = prevReduce.getRank(prevReduce.getDpsInputOperand(0));
+    unsigned maxRank = static_cast<unsigned>(prevReduce.getRank(prevReduce.getDpsInputOperand(0)));
 
     SmallVector<int64_t> dims =
         mergeConsecutiveReduceDims(dims0, dims1, maxRank);

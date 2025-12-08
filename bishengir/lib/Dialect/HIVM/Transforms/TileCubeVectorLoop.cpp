@@ -971,7 +971,7 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
     auto resultType = dyn_cast<RankedTensorType>(value.getType());
     if (!resultType || ShapedType::isDynamicShape(resultType.getShape()))
       continue;
-    size_t bitUsed = 1;
+    int bitUsed = 1;
     for (auto dim = 0; dim < resultType.getRank(); dim++) {
       if (dim == tilingDim) {
         bitUsed = bitUsed * resultType.getDimSize(dim) / tilingFactor;

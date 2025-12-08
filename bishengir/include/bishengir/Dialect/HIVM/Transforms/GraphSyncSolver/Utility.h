@@ -146,8 +146,8 @@ struct ConflictPair {
 
   std::unique_ptr<ConflictPair> clone(uint32_t startIndex, uint32_t endIndex) {
     auto clonedConflictPair = this->clone();
-    clonedConflictPair->startIndex = startIndex;
-    clonedConflictPair->endIndex = endIndex;
+    clonedConflictPair->startIndex = static_cast<int>(startIndex);
+    clonedConflictPair->endIndex = static_cast<int>(endIndex);
     return clonedConflictPair;
   }
 };
