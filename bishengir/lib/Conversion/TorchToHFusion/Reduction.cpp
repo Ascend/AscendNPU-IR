@@ -294,6 +294,7 @@ public:
   ConvertReductionOp(TypeConverter &typeConverter, MLIRContext *context)
       : ConversionPattern(typeConverter, MatchAnyOpTypeTag(), /*benefit=*/1,
                           context) {}
+  virtual ~ConvertReductionOp() = default;
   LogicalResult
   matchAndRewrite(Operation *op, ArrayRef<Value> operands,
                   ConversionPatternRewriter &rewriter) const override {
