@@ -1290,7 +1290,7 @@ static LogicalResult appendMangledType(llvm::raw_string_ostream &ss, Type t) {
 ///
 /// Restrictions:
 /// the output of cast op should be an empty op
-struct FoldCastEmpty : OpRewritePattern<hfusion::CastOp> {
+struct FoldCastEmpty : public OpRewritePattern<hfusion::CastOp> {
   using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::CastOp castOp,
@@ -1306,7 +1306,7 @@ struct FoldCastEmpty : OpRewritePattern<hfusion::CastOp> {
   }
 };
 
-struct ConstantFolding : OpRewritePattern<hfusion::CastOp> {
+struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
   using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
   template <typename T>
   inline T roundToOdd(T x) const {
