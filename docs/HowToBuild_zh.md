@@ -50,7 +50,7 @@ git submodule update --init --recursive
 
 脚本常见参数：
 
-- `--apply-patches`：使能AscendNPU IR对三方仓库的扩展功能，推荐首次编译时启用。
+- `--apply-patches`：使能AscendNPU IR对三方仓库的扩展功能，首次编译时需要启用。
 - `-o`：编译产物输出路径
 - `--build-type`：构建类型，如"Release"、"Debug"。
 
@@ -64,7 +64,8 @@ mkdir -p build
 cd build
 
 # 运行 CMake 进行配置
-cmake -G Ninja .. \
+export LLVM_SOURCE_DIR=$(realpath ../third-party/llvm-project/llvm)
+cmake ${LLVM_SOURCE_DIR} -G Ninja \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Release \
