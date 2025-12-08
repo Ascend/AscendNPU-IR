@@ -58,9 +58,7 @@
 #include <optional>
 #include <variant>
 
-#if BSPUB_DAVINCI_BISHENGIR
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
-#endif
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -2360,8 +2358,8 @@ LogicalResult SortOp::verify() {
 // HistogramOp
 //===----------------------------------------------------------------------===//
 LogicalResult HistogramOp::verify() {
-  auto inTy = mlir::dyn_cast<RankedTensorType>(getInput().getType());
-  auto outTy = mlir::dyn_cast<RankedTensorType>(getOutput().getType());
+  auto inTy = dyn_cast<RankedTensorType>(getInput().getType());
+  auto outTy = dyn_cast<RankedTensorType>(getOutput().getType());
   Value mask = getMask();
 
   // Input/output must be ranked tensors
@@ -2370,10 +2368,11 @@ LogicalResult HistogramOp::verify() {
 
   // Input element type must be i32 or i64
   Type inEltTy = inTy.getElementType();
-  if (!mlir::isa<IntegerType>(inEltTy) ||
-      (inEltTy.getIntOrFloatBitWidth() != 32 &&
-       inEltTy.getIntOrFloatBitWidth() != 64))
-    return emitOpError() << "input element type must be i32 or i64";
+  if (!isa<IntegerType>(inEltTy) || (inEltTy.getIntOrFloatBitWidth() != 8 &&
+                                     inEltTy.getIntOrFloatBitWidth() != 16 &&
+                                     inEltTy.getIntOrFloatBitWidth() != 32 &&
+                                     inEltTy.getIntOrFloatBitWidth() != 64))
+    return emitOpError() << "input element type must be i8, i16, i32, i64, u8";
 
   // Output must be 1D statically sized
   if (outTy.getRank() != 1)
@@ -2383,9 +2382,8 @@ LogicalResult HistogramOp::verify() {
 
   // Output element type must be i32 or i64
   Type outEltTy = outTy.getElementType();
-  if (!mlir::isa<IntegerType>(outEltTy) ||
-      (outEltTy.getIntOrFloatBitWidth() != 32 &&
-       outEltTy.getIntOrFloatBitWidth() != 64))
+  if (!isa<IntegerType>(outEltTy) || (outEltTy.getIntOrFloatBitWidth() != 32 &&
+                                      outEltTy.getIntOrFloatBitWidth() != 64))
     return emitOpError() << "output element type must be i32 or i64";
 
   // Output length must match num_bins
@@ -2396,7 +2394,7 @@ LogicalResult HistogramOp::verify() {
 
   // If mask is provided, it must match input shape
   if (mask) {
-    auto maskTy = mlir::dyn_cast<RankedTensorType>(mask.getType());
+    auto maskTy = dyn_cast<RankedTensorType>(mask.getType());
     if (!maskTy)
       return emitOpError() << "mask must be a ranked tensor";
     if (maskTy.getElementType() != IntegerType::get(getContext(), 1))
@@ -2413,12 +2411,12 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   b.setInsertionPoint(getOperation());
 
   Location loc = getLoc();
-
+  int64_t inputBins = getNumBins();
   Value input = getInput();
   Value mask = getMask();
-  auto inTy = mlir::dyn_cast<RankedTensorType>(input.getType());
-  auto outTy = mlir::dyn_cast<RankedTensorType>(getOutput().getType());
 
+  auto inTy = cast<RankedTensorType>(input.getType());
+  auto outTy = cast<RankedTensorType>(getOutput().getType());
   Type outEltTy = outTy.getElementType();
   Type idxTy = b.getIndexType();
 
@@ -2429,23 +2427,26 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   auto cstOut = [&](int64_t v) -> Value {
     return b.create<arith::ConstantOp>(loc, b.getIntegerAttr(outEltTy, v));
   };
+  auto cstInZero = [&](Value src) -> Value {
+    auto ty = cast<IntegerType>(src.getType());
+    return b.create<arith::ConstantIntOp>(loc, 0, ty);
+  };
 
   // Constants
   Value c0 = cstIdx(0);
   Value c1 = cstIdx(1);
+  Value bins = cstIdx(inputBins);
   Value oneOut = cstOut(1);
   Value zeroOut = cstOut(0);
 
   // Create zero-initialized histogram tensor
   Value histEmpty = b.create<tensor::EmptyOp>(loc, outTy.getShape(), outEltTy);
-  Value histInit = b.create<linalg::FillOp>(loc, zeroOut, histEmpty).getResult(0);
+  Value histInit =
+      b.create<linalg::FillOp>(loc, zeroOut, histEmpty).getResult(0);
 
   // Upper bound: number of elements in input
-  Value ub;
-  if (inTy.hasStaticShape())
-    ub = cstIdx(inTy.getDimSize(0));
-  else
-    ub = b.create<tensor::DimOp>(loc, input, 0);
+  Value ub = inTy.hasStaticShape() ? cstIdx(inTy.getDimSize(0))
+                                   : b.create<tensor::DimOp>(loc, input, 0);
 
   // Single loop over input elements
   auto forOp = b.create<scf::ForOp>(loc, c0, ub, c1, ValueRange{histInit});
@@ -2456,47 +2457,37 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
     Value i = forOp.getInductionVar();
     Value hist = forOp.getRegionIterArg(0);
 
-    // Case 1: mask provided
+    Value elem = b.create<tensor::ExtractOp>(loc, input, ValueRange{i});
+    Value isNeg = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, elem,
+                                          cstInZero(elem));
+    Value elemIdx = b.create<arith::IndexCastUIOp>(loc, idxTy, elem);
+    Value posIdx = b.create<arith::SelectOp>(loc, isNeg, c0, elemIdx);
+    Value outRange =
+        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, posIdx, bins);
+    Value safeIdx = b.create<arith::SelectOp>(loc, outRange, c0, posIdx);
+
+    Value maskCond;
     if (mask) {
-      Value cond = b.create<tensor::ExtractOp>(loc, mask, ValueRange{i});
-
-      // Create scf.if with one result (the histogram tensor)
-      auto ifOp = b.create<scf::IfOp>(loc, TypeRange{hist.getType()}, cond,
-                                      /*withElseRegion=*/true);
-
-      // Then region: perform update
-      {
-        OpBuilder thenBuilder = ifOp.getThenBodyBuilder();
-        Value elem = thenBuilder.create<tensor::ExtractOp>(loc, input, ValueRange{i});
-        Value elemIdx = thenBuilder.create<arith::IndexCastUIOp>(loc, idxTy, elem);
-
-        Value old = thenBuilder.create<tensor::ExtractOp>(loc, hist, ValueRange{elemIdx});
-        Value neu = thenBuilder.create<arith::AddIOp>(loc, old, oneOut);
-        Value upd = thenBuilder.create<tensor::InsertOp>(loc, neu, hist, ValueRange{elemIdx});
-
-        thenBuilder.create<scf::YieldOp>(loc, upd);
-      }
-
-      // Else region: yield histogram unchanged
-      {
-        OpBuilder elseBuilder = ifOp.getElseBodyBuilder();
-        elseBuilder.create<scf::YieldOp>(loc, hist);
-      }
-
-      b.create<scf::YieldOp>(loc, ifOp.getResult(0));
+      maskCond = b.create<tensor::ExtractOp>(loc, mask, ValueRange{i});
+    } else {
+      maskCond = b.create<arith::ConstantIntOp>(loc, 1, 1);
     }
 
-    // Case 2: no mask
-    else {
-      Value elem = b.create<tensor::ExtractOp>(loc, input, ValueRange{i});
-      Value elemIdx = b.create<arith::IndexCastUIOp>(loc, idxTy, elem);
+    Value skipCond = b.create<arith::OrIOp>(loc, isNeg, outRange);
+    Value writeMask = b.create<arith::AndIOp>(
+        loc, maskCond,
+        b.create<arith::XOrIOp>(loc, skipCond,
+                                b.create<arith::ConstantIntOp>(loc, 1, 1)));
 
-      Value old = b.create<tensor::ExtractOp>(loc, hist, ValueRange{elemIdx});
-      Value neu = b.create<arith::AddIOp>(loc, old, oneOut);
-      Value upd = b.create<tensor::InsertOp>(loc, neu, hist, ValueRange{elemIdx});
+    Value oldVal = b.create<tensor::ExtractOp>(loc, hist, ValueRange{safeIdx});
+    Value newVal = b.create<arith::AddIOp>(loc, oldVal, oneOut);
 
-      b.create<scf::YieldOp>(loc, upd);
-    }
+    Value updatedHist =
+        b.create<tensor::InsertOp>(loc, newVal, hist, ValueRange{safeIdx});
+    Value resultHist =
+        b.create<arith::SelectOp>(loc, writeMask, updatedHist, hist);
+
+    b.create<scf::YieldOp>(loc, resultHist);
   }
 
   Value finalHist = forOp.getResult(0);
