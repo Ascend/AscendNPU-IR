@@ -349,7 +349,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     return retPipe;
   };
 
-  auto printMainQue = [&]() {
+  [[maybe_unused]] auto printMainQue = [&]() {
     for (auto pipe : mainQue) {
       int szLimit = 100;
       llvm::dbgs() << stringifyPIPE(pipe).str() << ": ";
@@ -374,7 +374,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     }
   };
 
-  auto decomposeIndex = [](int index) {
+  [[maybe_unused]] auto decomposeIndex = [](int index) {
     std::vector<int> ret;
     int x = index;
     while (true) {
