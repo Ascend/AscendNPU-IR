@@ -1,6 +1,6 @@
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false \
-// RUN:   -hivm-compile-args="bishengir-print-ir-after=hivm-inject-sync" \
+// RUN:   -bishengir-print-ir-after='hivm-inject-sync' \
 // RUN:   -bishengir-print-ir-before='hfusion-auto-schedule' %s 2>&1 | FileCheck %s
 
 // CHECK: IR Dump After InjectSync (hivm-inject-sync)
