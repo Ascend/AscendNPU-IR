@@ -221,9 +221,9 @@ public:
   LogicalResult matchAndRewrite(tensor::ConcatOp concatOp,
                                 PatternRewriter &rewriter) const override {
     // Check that the concat axis is the last dim, if not skip this op.
-    size_t dim = concatOp.getDim();
+    auto dim = static_cast<int>(concatOp.getDim());
     int rank = concatOp.getResultType().getRank();
-    if (static_cast<int>(dim) != rank - 1) {
+    if (dim != rank - 1) {
       return failure();
     }
 

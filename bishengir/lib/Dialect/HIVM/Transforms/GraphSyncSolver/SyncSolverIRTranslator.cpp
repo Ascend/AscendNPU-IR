@@ -376,7 +376,7 @@ void Solver::syncIrBuilder(OperationBase *op, Occurrence *parentOcc, int depth,
   assert(op != nullptr);
   int startIndex = globalIndex++;
   auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, startIndex, -1);
-  occ->syncIrIndex = syncIr.size();
+  occ->syncIrIndex = static_cast<int>(syncIr.size());
   syncIr.push_back(std::move(occ));
   Occurrence *occPtr = syncIr.back().get();
   opAllOccurrences[op].push_back(occPtr);
@@ -425,7 +425,7 @@ void Solver::syncIrBuilder(OperationBase *op, Occurrence *parentOcc, int depth,
 
   int endIndex = globalIndex++;
   occPtr->endIndex = endIndex;
-  occPtr->syncIrEndIndex = syncIr.size();
+  occPtr->syncIrEndIndex = static_cast<int>(syncIr.size());
 }
 
 // Helpers to find first/last iteration occurrences relative to parent
