@@ -187,7 +187,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);
   for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-    handleDiagnostic(diag);
+    [[maybe_unused]] auto res = handleDiagnostic(diag);
   }
 
   if (!hirCompileSuccess) {

@@ -383,7 +383,7 @@ struct RewriteElemwiseOp final : public GenericPreprocessAndRewrite<From> {
   LogicalResult rewriteFromGeneric(From op,
                                    SmallVector<Value> &&preprocessedOperands,
                                    PatternRewriter &rewriter) const final {
-    auto elemwiseOp = rewriter.replaceOpWithNewOp<To>(
+    [[maybe_unused]] auto elemwiseOp = rewriter.replaceOpWithNewOp<To>(
         op, op.getResultTypes(), preprocessedOperands, op.getDst(),
         ArrayRef{rewriter.getNamedAttr(
             "fun", rewriter.getAttr<EquivalentFnAttr>(equivalentFn))});

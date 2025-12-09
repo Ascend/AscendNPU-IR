@@ -454,9 +454,6 @@ std::string getTypeName(Location loc, Type type,
         return "uint" + std::to_string(iType.getWidth()) + "_t";
       else
         return "int" + std::to_string(iType.getWidth()) + "_t";
-    default:
-      emitError(loc, "unrecognized integer type: ") << type;
-      return unknown;
     }
   }
   if (auto fType = dyn_cast<FloatType>(type)) {

@@ -325,8 +325,6 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
       return CompareFn::vge;
     case arith::CmpIPredicate::uge:
       return CompareFn::vuge;
-    default:
-      llvm_unreachable("unsupported arith cmp predicate to hfusion");
     }
   }
 

@@ -172,9 +172,9 @@ Value Solver::getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
   assert(syncOp->eventIds.size() == 2);
   assert(syncOp->multibufferLoopPar != nullptr);
-  auto forOp = llvm::dyn_cast_if_present<scf::ForOp>(
-      syncOp->multibufferLoopPar.getOperation());
-  assert(forOp != nullptr);
+
+  assert(llvm::dyn_cast_if_present<scf::ForOp>(
+             syncOp->multibufferLoopPar.getOperation()) != nullptr);
   auto eventsPair = std::make_pair(syncOp->eventIds[0], syncOp->eventIds[1]);
   if (bufferSelectedMem[syncOp->multibufferLoopPar].contains(eventsPair)) {
     return bufferSelectedMem[syncOp->multibufferLoopPar][eventsPair];

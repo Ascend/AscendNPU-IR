@@ -963,7 +963,7 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
 
   Occurrence *parentLCALoopOcc{nullptr};
   OperationBase *parentLCALoopOp{nullptr};
-  Scope *parentLCALoopScopeOp{nullptr};
+  [[maybe_unused]] Scope *parentLCALoopScopeOp{nullptr};
   std::unique_ptr<ConflictPair> conflictPair;
 
   auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
