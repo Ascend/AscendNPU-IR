@@ -28,6 +28,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Regex.h"
 #include "llvm/Support/VersionTuple.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -211,34 +212,25 @@ bishengir::parseHIVMCVersion(llvm::StringRef content) {
   return std::nullopt;
 }
 
-std::optional<llvm::VersionTuple>
-bishengir::parseHIVMCVersion(ArrayRef<StringRef> items) {
-  for (StringRef item : items) {
-    auto version = bishengir::parseHIVMCVersion(item);
-    if (version.has_value()) {
-      return version;
-    }
-  }
-  return std::nullopt;
-}
-
 llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
-  SmallVector<StringRef> lines;
-  int maxSplit = 100;
-  content.split(lines, '\n', maxSplit, /*KeepEmpty=*/false);
-  for (StringRef line : lines) {
-    // expected line to parse should contains "hivmc" and "version"
-    if (!line.contains_insensitive("hivmc") ||
-        !line.contains_insensitive("version")) {
-      continue;
-    }
-    SmallVector<StringRef> items;
-    content.split(items, ' ', maxSplit, /*KeepEmpty=*/false);
-    auto version = bishengir::parseHIVMCVersion(items);
-    if (version.has_value()) {
-      return version.value();
-    }
+  StringRef versionLine = content.split('\n').first;
+  Regex R(
+    "^(hivmc) "                         // name
+    "([0-9]+\\.[0-9]+\\.[0-9]+) "       // version
+    "\\(([0-9a-fA-F]{6,40}) "           // commit hash
+    "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$"  // build date
+  );
+  SmallVector<StringRef, 4> M;
+  if (!R.match(versionLine, &M)) {
+    return llvm::VersionTuple();
   }
+
+  StringRef versionStr = M[2];
+  auto version = bishengir::parseHIVMCVersion(versionStr);
+  if (version.has_value()) {
+    return version.value();
+  }
+
   return llvm::VersionTuple();
 }
 
@@ -277,7 +269,7 @@ std::string bishengir::getBiShengInstallPath() {
   const char *kBiShengInstallPathEnv = "BISHENG_INSTALL_PATH";
   const char *kBiShengInstallPath = getenv(kBiShengInstallPathEnv);
   if (!kBiShengInstallPath) {
-    llvm::dbgs() << "[DEBUG] BISHENG_INSTALL_PATH is not set.\n";
+    LLVM_DEBUG(llvm::dbgs() << "[DEBUG] BISHENG_INSTALL_PATH is not set.\n");
     return "";
   }
 
