@@ -87,8 +87,8 @@ bool Solver::checkEventIdNum(
     int eventIdNum) {
   for (auto &ptr1 : memValsList1) {
     for (auto &ptr2 : memValsList2) {
-      size_t sz1 = ptr1.size();
-      size_t sz2 = ptr2.size();
+      auto sz1 = static_cast<int>(ptr1.size());
+      auto sz2 = static_cast<int>(ptr2.size());
       for (int i = 0; i < lcmLen; i++) {
         for (int j = 0; j < lcmLen; j++) {
           if (i % eventIdNum != j % eventIdNum) {

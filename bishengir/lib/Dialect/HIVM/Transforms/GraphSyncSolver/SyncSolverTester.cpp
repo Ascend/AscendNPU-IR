@@ -409,7 +409,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       }
     }
     for (const auto &writePtr : rwOp->testWriteMemVals) {
-      auto index = loopIndex % writePtr.size();
+      auto index = loopIndex % static_cast<int>(writePtr.size());
       auto ptrVal = writePtr[index];
       auto ongoingReadOps = ongoingReads[ptrVal];
       auto ongoingWriteOps = ongoingWrites[ptrVal];
@@ -447,12 +447,12 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
   auto handleRWOperation = [&](const RWOperation *rwOp, int loopIndex) {
     for (const auto &readPtr : rwOp->testReadMemVals) {
-      auto index = loopIndex % readPtr.size();
+      auto index = loopIndex % static_cast<int>(readPtr.size());
       auto ptrVal = readPtr[index];
       ongoingReads[ptrVal].insert(rwOp);
     }
     for (const auto &writePtr : rwOp->testWriteMemVals) {
-      auto index = loopIndex % writePtr.size();
+      auto index = loopIndex % static_cast<int>(writePtr.size());
       auto ptrVal = writePtr[index];
       ongoingWrites[ptrVal].insert(rwOp);
     }
@@ -464,12 +464,12 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
   auto handleSetFlagOp = [&](const SetFlagOp *setFlagOp, int loopIndex) {
     for (auto [rwOp, loopIdx] : runningOps[setFlagOp->pipeSrc]) {
       for (auto readPtr : rwOp->testReadMemVals) {
-        auto index = loopIdx % readPtr.size();
+        auto index = loopIdx % static_cast<int>(readPtr.size());
         auto ptrVal = readPtr[index];
         ongoingReads[ptrVal].erase(rwOp);
       }
       for (auto writePtr : rwOp->testWriteMemVals) {
-        auto index = loopIdx % writePtr.size();
+        auto index = loopIdx % static_cast<int>(writePtr.size());
         auto ptrVal = writePtr[index];
         ongoingWrites[ptrVal].erase(rwOp);
       }
@@ -483,7 +483,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
   auto clearPipeline = [&](const hivm::PIPE &pipe) {
     for (auto [rwOp, loopIdx] : runningOps[pipe]) {
       for (auto readPtr : rwOp->testReadMemVals) {
-        auto index = loopIdx % readPtr.size();
+        auto index = loopIdx % static_cast<int>(readPtr.size());
         auto ptrVal = readPtr[index];
         ongoingReads[ptrVal].erase(rwOp);
       }

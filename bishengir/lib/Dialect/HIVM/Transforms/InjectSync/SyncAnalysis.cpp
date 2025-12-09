@@ -254,8 +254,8 @@ void SyncAnalyzer::InsertSeqSync(CompoundInstanceElement *nowCompound,
       assert(syncIR[frontIndex]->pipeBefore.empty());
       assert(syncIR[frontIndex]->pipeAfter.empty());
       int skipBranch =
-          InsertBranchSync(i, nowCompound, begin, branchElement, syncElement,
-                           syncRecordList, forEndIndex);
+          static_cast<int>(InsertBranchSync(i, nowCompound, begin, branchElement, syncElement,
+                           syncRecordList, forEndIndex));
       i -= skipBranch;
     }
   }
@@ -751,7 +751,7 @@ SyncAnalyzer::getParentScope(InstanceElement *instanceElement) {
       if (loopKind == KindOfLoop::LOOP_BEGIN) {
         return loopOp;
       }
-      i = loopOp->beginId;
+      i = static_cast<int>(loopOp->beginId);
     } else if (auto *branchOp =
                    dyn_cast<BranchInstanceElement>(syncIR[i].get())) {
       auto branchKind = branchOp->getBranchKind();
