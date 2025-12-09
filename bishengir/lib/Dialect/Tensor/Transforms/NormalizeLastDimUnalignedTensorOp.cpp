@@ -223,7 +223,7 @@ public:
     // Check that the concat axis is the last dim, if not skip this op.
     size_t dim = concatOp.getDim();
     int rank = concatOp.getResultType().getRank();
-    if (dim != rank - 1) {
+    if (static_cast<int>(dim) != rank - 1) {
       return failure();
     }
 
