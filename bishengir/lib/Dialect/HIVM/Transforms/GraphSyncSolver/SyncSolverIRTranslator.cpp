@@ -396,7 +396,7 @@ void Solver::syncIrBuilder(OperationBase *op, Occurrence *parentOcc, int depth,
       for (auto &op : scopeOp->body) {
         syncIrBuilder(op.get(), occPtr, depth + 1, isUseless);
       }
-      occPtr->loopSplitIndex = syncIr.size();
+      occPtr->loopSplitIndex = static_cast<int>(syncIr.size());
       for (auto &op : scopeOp->body) {
         syncIrBuilder(op.get(), occPtr, depth + 1, true);
       }

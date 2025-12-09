@@ -745,7 +745,7 @@ void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2(
 
 InstanceElement *
 SyncAnalyzer::getParentScope(InstanceElement *instanceElement) {
-  for (int i = instanceElement->GetIndex(); i >= 0; i--) {
+  for (int i = static_cast<int>(instanceElement->GetIndex()); i >= 0; i--) {
     if (auto *loopOp = dyn_cast<LoopInstanceElement>(syncIR[i].get())) {
       auto loopKind = loopOp->getLoopKind();
       if (loopKind == KindOfLoop::LOOP_BEGIN) {
@@ -759,7 +759,7 @@ SyncAnalyzer::getParentScope(InstanceElement *instanceElement) {
           branchKind == KindOfBranch::ELSE_BEGIN) {
         return branchOp;
       }
-      i = branchOp->beginId;
+      i = static_cast<int>(branchOp->beginId);
     }
   }
   return nullptr;
@@ -1114,8 +1114,8 @@ int SyncAnalyzer::GetEventIdNum(
   for (auto &depBaseMemInfos : depBaseMemInfosVec) {
     assert(depBaseMemInfos.first != nullptr &&
            depBaseMemInfos.second != nullptr);
-    int aBaseAddressesSize = depBaseMemInfos.first->baseAddresses.size();
-    int bBaseAddressesSize = depBaseMemInfos.second->baseAddresses.size();
+    int aBaseAddressesSize = static_cast<int>(depBaseMemInfos.first->baseAddresses.size());
+    int bBaseAddressesSize = static_cast<int>(depBaseMemInfos.second->baseAddresses.size());
     if ((aBaseAddressesSize == bBaseAddressesSize && aBaseAddressesSize == 1) ||
         aBaseAddressesSize != bBaseAddressesSize) {
       return singleBufferNum;

@@ -96,7 +96,7 @@ public:
     this->seed =
         seed.has_value()
             ? seed.value()
-            : std::chrono::steady_clock::now().time_since_epoch().count();
+            : static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
     randGenerator = std::make_unique<std::mt19937>(this->seed);
   }
 
