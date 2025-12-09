@@ -300,37 +300,42 @@ void Solver::solveTest(int runNum) {
 
 // If environment indicates tester mode, parse env vars and run SyncTester.
 bool SyncTester::runTestMode() {
-  const char *testModeEnv = std::getenv("BISHENGIR_GSS_TESTER");
+  const char *testModeEnvRaw = std::getenv("BISHENGIR_GSS_TESTER");
+  std::string testModeEnv = testModeEnvRaw ? std::string(testModeEnvRaw) : "";
   bool testMode = false;
-
-  if (testModeEnv != nullptr)
-    testMode = std::stoull(std::string(testModeEnv)) != 0;
+  if (!testModeEnv.empty())
+    testMode = std::stoull(testModeEnv) != 0;
 
   if (!testMode)
     return false;
 
   // Read env vars exactly once.
-  const char *seedEnv = std::getenv("BISHENGIR_GSS_TESTER_SEED");
-  const char *numOpsEnv = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
-  const char *numPtrsEnv = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
-  const char *multiBufEnv = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
+  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
+  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
+  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
+  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
+
+  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
+  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
+  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
+  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
 
   // Copy them into std::string.
   std::optional<uint64_t> seed;
-  if (seedEnv != nullptr)
-    seed = std::stoull(std::string(seedEnv));
+  if (!seedEnv.empty())
+    seed = std::stoull(seedEnv);
 
   int numOperations = 40;
-  if (numOpsEnv != nullptr)
-    numOperations = static_cast<int>(std::stoull(std::string(numOpsEnv)));
+  if (!numOpsEnv.empty())
+    numOperations = static_cast<int>(std::stoull(numOpsEnv));
 
   int numPointers = 20;
-  if (numPtrsEnv != nullptr)
-    numPointers = static_cast<int>(std::stoull(std::string(numPtrsEnv)));
+  if (!numPtrsEnv.empty())
+    numPointers = static_cast<int>(std::stoull(numPtrsEnv));
 
   bool enableMultiBuffer = false;
-  if (multiBufEnv != nullptr)
-    enableMultiBuffer = std::stoull(std::string(multiBufEnv)) != 0;
+  if (!multiBufEnv.empty())
+    enableMultiBuffer = std::stoull(multiBufEnv) != 0;
 
   unsigned usedPipesMask = 0u;
   for (auto pipe : { hivm::PIPE::PIPE_MTE1,
