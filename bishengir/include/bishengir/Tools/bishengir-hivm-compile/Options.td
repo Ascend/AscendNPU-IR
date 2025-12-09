@@ -348,6 +348,8 @@ llvm::cl::values(
                 // Ascend910B series
                 REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
                 REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
+                clEnumValN(mlir::hacc::TargetDevice::Ascend910B4_1,
+                              "Ascend910B4-1", "Ascend910B4-1"),
                 REGISTER_TARGET(Ascend910B2C),
                 // Ascend910_93 series
                 REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9372),
