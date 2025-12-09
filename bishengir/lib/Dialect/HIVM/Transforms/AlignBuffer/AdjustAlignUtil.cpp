@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/IR/BuiltinTypes.h"
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -300,7 +301,20 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   auto lastReduceDimSize =
       cast<ShapedType>(flattenSrcType.value()).getShape()[flattenRank - 1];
   auto elemType = getElementTypeOrSelf(flattenSrcType.value());
-  if (static_cast<unsigned int>(lastReduceDimSize) *
+
+  auto flattenDstType =
+      flattenResult->getOperandTypeAfterFlattened(reduceOp.getDstValue());
+  assert(flattenDstType != std::nullopt);
+  auto flattenDstMemRef = cast<MemRefType>(flattenDstType.value());
+
+  int64_t flattenDstOffset;
+  SmallVector<int64_t> flattenDstStrides;
+
+  auto haveDstStrides =
+      getStridesAndOffset(flattenDstMemRef, flattenDstStrides, flattenDstOffset)
+          .succeeded();
+  if (haveDstStrides && (flattenDstStrides[0] == 1) &&
+      static_cast<unsigned int>(lastReduceDimSize) *
               elemType.getIntOrFloatBitWidth() / 8 <=
           util::BL &&
       isa<FloatType>(elemType) && llvm::isPowerOf2_64(lastReduceDimSize) &&
