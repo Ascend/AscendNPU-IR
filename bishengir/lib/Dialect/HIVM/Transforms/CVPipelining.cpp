@@ -1690,6 +1690,7 @@ void CVPipeliningPass::runOnOperation() {
         usrOp = usrParent;
         break;
       }
+      assert(usrParent != nullptr);
       usrParent = usrParent->getParentOp();
     }
 
