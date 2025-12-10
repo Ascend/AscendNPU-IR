@@ -87,8 +87,8 @@ bool Solver::checkEventIdNum(
     int eventIdNum) {
   for (auto &ptr1 : memValsList1) {
     for (auto &ptr2 : memValsList2) {
-      size_t sz1 = ptr1.size();
-      size_t sz2 = ptr2.size();
+      auto sz1 = static_cast<int>(ptr1.size());
+      auto sz2 = static_cast<int>(ptr2.size());
       for (int i = 0; i < lcmLen; i++) {
         for (int j = 0; j < lcmLen; j++) {
           if (i % eventIdNum != j % eventIdNum) {
@@ -305,31 +305,27 @@ bool SyncTester::runTestMode() {
   if (!testMode)
     return false;
 
-  // Read env vars exactly once.
-  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
-  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
-  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
-  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
-
-  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
-  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
-  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
-  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
-
-  // Copy them into std::string.
   std::optional<uint64_t> seed;
+  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
+  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
   if (!seedEnv.empty())
     seed = std::stoull(seedEnv);
 
   int numOperations = 40;
+  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
+  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
   if (!numOpsEnv.empty())
     numOperations = static_cast<int>(std::stoull(numOpsEnv));
 
   int numPointers = 20;
+  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
+  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
   if (!numPtrsEnv.empty())
     numPointers = static_cast<int>(std::stoull(numPtrsEnv));
 
   bool enableMultiBuffer = false;
+  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
+  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
   if (!multiBufEnv.empty())
     enableMultiBuffer = std::stoull(multiBufEnv) != 0;
 
