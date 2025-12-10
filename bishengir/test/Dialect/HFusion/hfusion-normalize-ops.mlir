@@ -2429,3 +2429,43 @@ func.func @test_gt_uint8(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref
   }
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_elementwise_shrui
+func.func @test_elementwise_shrui(%arg0: tensor<32xi8>, %arg1: tensor<32xi8>) -> tensor<32xi8> {
+  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<32xf16>
+  // CHECK: %[[VAL_1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<32xi8>) outs(%[[VAL_0:.*]] : tensor<32xf16>) -> tensor<32xf16>
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<32xi16>
+  // CHECK: %[[VAL_3:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[VAL_1:.*]] : tensor<32xf16>) outs(%[[VAL_2:.*]] : tensor<32xi16>) -> tensor<32xi16>
+  // CHECK: %[[VAL_4:.*]] = tensor.empty() : tensor<32xf16>
+  // CHECK: %[[VAL_5:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<32xi8>) outs(%[[VAL_4:.*]] : tensor<32xf16>) -> tensor<32xf16>
+  // CHECK: %[[VAL_6:.*]] = tensor.empty() : tensor<32xi16>
+  // CHECK: %[[VAL_7:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[VAL_5:.*]] : tensor<32xf16>) outs(%[[VAL_6:.*]] : tensor<32xi16>) -> tensor<32xi16>
+  // CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<32xi16>
+  // CHECK: %[[VAL_9:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>} ins(%[[VAL_3:.*]], %[[VAL_7:.*]] : tensor<32xi16>, tensor<32xi16>) outs(%[[VAL_8:.*]] : tensor<32xi16>) -> tensor<32xi16>
+  // CHECK: %[[VAL_10:.*]] = tensor.empty() : tensor<32xi8>
+  // CHECK: %[[VAL_11:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%[[VAL_9:.*]] : tensor<32xi16>) outs(%[[VAL_10:.*]] : tensor<32xi8>) -> tensor<32xi8>
+  %0 = tensor.empty() : tensor<32xi8>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>} ins(%arg0, %arg1 : tensor<32xi8>, tensor<32xi8>) outs(%0 : tensor<32xi8>) -> tensor<32xi8>
+  return %1 : tensor<32xi8>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_elementwise_modui
+func.func @test_elementwise_modui(%arg0: tensor<32xi8>, %arg1: tensor<32xi8>) -> tensor<32xi8> {
+  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<32xf16>
+  // CHECK: %[[VAL_1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<32xi8>) outs(%[[VAL_0:.*]] : tensor<32xf16>) -> tensor<32xf16>
+  // CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<32xf16>
+  // CHECK: %[[VAL_3:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg1 : tensor<32xi8>) outs(%[[VAL_2:.*]] : tensor<32xf16>) -> tensor<32xf16>
+  // CHECK: %[[RET_0:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+  // CHECK: %[[RET_1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+  // CHECK: %[[RET_2:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+  // CHECK: %[[RET_3:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+  // CHECK: %[[RET_4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+  // CHECK: %[[RET_5:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
+  // CHECK: %[[RET_6:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+  // CHECK: %[[RET_7:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+  %0 = tensor.empty() : tensor<32xi8>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>} ins(%arg0, %arg1 : tensor<32xi8>, tensor<32xi8>) outs(%0 : tensor<32xi8>) -> tensor<32xi8>
+  return %1 : tensor<32xi8>
+}
