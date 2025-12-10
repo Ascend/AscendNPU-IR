@@ -79,7 +79,11 @@ def CompareFn : I32EnumAttr<"CompareFn", "", [
   I32EnumAttrCase<"vle", 2>,
   I32EnumAttrCase<"vlt", 3>,
   I32EnumAttrCase<"vge", 4>,
-  I32EnumAttrCase<"vgt", 5>
+  I32EnumAttrCase<"vgt", 5>,
+  I32EnumAttrCase<"vule", 6>,
+  I32EnumAttrCase<"vult", 7>,
+  I32EnumAttrCase<"vuge", 8>,
+  I32EnumAttrCase<"vugt", 9>
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";
