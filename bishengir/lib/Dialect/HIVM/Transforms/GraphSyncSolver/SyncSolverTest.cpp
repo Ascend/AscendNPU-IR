@@ -305,31 +305,27 @@ bool SyncTester::runTestMode() {
   if (!testMode)
     return false;
 
-  // Read env vars exactly once.
-  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
-  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
-  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
-  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
-
-  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
-  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
-  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
-  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
-
-  // Copy them into std::string.
   std::optional<uint64_t> seed;
+  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
+  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
   if (!seedEnv.empty())
     seed = std::stoull(seedEnv);
 
   int numOperations = 40;
+  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
+  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
   if (!numOpsEnv.empty())
     numOperations = static_cast<int>(std::stoull(numOpsEnv));
 
   int numPointers = 20;
+  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
+  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
   if (!numPtrsEnv.empty())
     numPointers = static_cast<int>(std::stoull(numPtrsEnv));
 
   bool enableMultiBuffer = false;
+  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
+  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
   if (!multiBufEnv.empty())
     enableMultiBuffer = std::stoull(multiBufEnv) != 0;
 
