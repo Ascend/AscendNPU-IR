@@ -2369,3 +2369,63 @@ func.func @test_unsigned_cast_for_uint8_triton_maximum(%arg4: memref<?xi8>, %arg
   bufferization.materialize_in_destination %extracted_slice in writable %subview_6 : (tensor<?xi8>, memref<?xi8, strided<[1], offset: ?>>) -> ()
   return
 }
+
+// -----
+// CHECK-LABEL:   func.func @test_gt_uint8
+// CHECK:           %[[VAL_11:.*]] = arith.constant 1 : i32
+// CHECK:           %[[VAL_12:.*]] = arith.constant 32 : i32
+// CHECK:           %[[VAL_13:.*]] = arith.constant 0 : i32
+// CHECK:           %[[VAL_14:.*]] = arith.constant 1024 : i32
+// CHECK:           %[[VAL_15:.*]] = arith.constant 32768 : i32
+// CHECK:           %[[VAL_16:.*]] = arith.muli %[[VAL_8:.*]], %[[VAL_15]] : i32
+// CHECK:           scf.for %[[VAL_17:.*]] = %[[VAL_13]] to %[[VAL_12]] step %[[VAL_11]]  : i32 {
+// CHECK:             %[[VAL_18:.*]] = arith.muli %[[VAL_17]], %[[VAL_14]] : i32
+// CHECK:             %[[VAL_19:.*]] = arith.addi %[[VAL_16]], %[[VAL_18]] : i32
+// CHECK:             %[[VAL_20:.*]] = arith.index_cast %[[VAL_19]] : i32 to index
+// CHECK:             %[[VAL_21:.*]] = memref.reinterpret_cast %[[VAL_2:.*]] to offset: {{\[}}%[[VAL_20]]], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_22:.*]] = memref.alloc() : memref<1024xi8>
+// CHECK:             memref.copy %[[VAL_21]], %[[VAL_22]] : memref<1024xi8, strided<[1], offset: ?>> to memref<1024xi8>
+// CHECK:             %[[VAL_23:.*]] = bufferization.to_tensor %[[VAL_22]] restrict writable : memref<1024xi8>
+// CHECK:             %[[VAL_24:.*]] = memref.reinterpret_cast %[[VAL_3:.*]] to offset: {{\[}}%[[VAL_20]]], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_25:.*]] = memref.alloc() : memref<1024xi8>
+// CHECK:             memref.copy %[[VAL_24]], %[[VAL_25]] : memref<1024xi8, strided<[1], offset: ?>> to memref<1024xi8>
+// CHECK:             %[[VAL_26:.*]] = bufferization.to_tensor %[[VAL_25]] restrict writable : memref<1024xi8>
+// CHECK:             %[[VAL_27:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK:             %[[VAL_28:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_23]] : tensor<1024xi8>) outs(%[[VAL_27]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK:             %[[VAL_29:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK:             %[[VAL_30:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_26]] : tensor<1024xi8>) outs(%[[VAL_29]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK:             %[[VAL_31:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK:             %[[VAL_32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[VAL_28]], %[[VAL_30]] : tensor<1024xf16>, tensor<1024xf16>) outs(%[[VAL_31]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK:             %[[VAL_33:.*]] = memref.reinterpret_cast %[[VAL_4:.*]] to offset: {{\[}}%[[VAL_20]]], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_34:.*]] = tensor.empty() : tensor<1024xi8>
+// CHECK:             %[[VAL_35:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_32]] : tensor<1024xi1>) outs(%[[VAL_34]] : tensor<1024xi8>) -> tensor<1024xi8>
+// CHECK:             bufferization.materialize_in_destination %[[VAL_35]] in writable %[[VAL_33]] : (tensor<1024xi8>, memref<1024xi8, strided<[1], offset: ?>>) -> ()
+// CHECK:           }
+func.func @test_gt_uint8(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32){
+  %c1_i32 = arith.constant 1 : i32
+  %c32_i32 = arith.constant 32 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %c1024_i32 = arith.constant 1024 : i32
+  %c32768_i32 = arith.constant 32768 : i32
+  %0 = arith.muli %arg8, %c32768_i32 : i32
+  scf.for %arg11 = %c0_i32 to %c32_i32 step %c1_i32  : i32 {
+    %1 = arith.muli %arg11, %c1024_i32 : i32
+    %2 = arith.addi %0, %1 : i32
+    %3 = arith.index_cast %2 : i32 to index
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%3], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<1024xi8>
+    memref.copy %reinterpret_cast, %alloc : memref<1024xi8, strided<[1], offset: ?>> to memref<1024xi8>
+    %4 = bufferization.to_tensor %alloc restrict writable : memref<1024xi8>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [%3], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+    %alloc_1 = memref.alloc() : memref<1024xi8>
+    memref.copy %reinterpret_cast_0, %alloc_1 : memref<1024xi8, strided<[1], offset: ?>> to memref<1024xi8>
+    %5 = bufferization.to_tensor %alloc_1 restrict writable : memref<1024xi8>
+    %6 = tensor.empty() : tensor<1024xi1>
+    %7 = hfusion.compare {compare_fn = #hfusion.compare_fn<vugt>} ins(%4, %5 : tensor<1024xi8>, tensor<1024xi8>) outs(%6 : tensor<1024xi1>) -> tensor<1024xi1>
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [%3], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+    %8 = tensor.empty() : tensor<1024xi8>
+    %9 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%7 : tensor<1024xi1>) outs(%8 : tensor<1024xi8>) -> tensor<1024xi8>
+    bufferization.materialize_in_destination %9 in writable %reinterpret_cast_2 : (tensor<1024xi8>, memref<1024xi8, strided<[1], offset: ?>>) -> ()
+  }
+  return
+}
