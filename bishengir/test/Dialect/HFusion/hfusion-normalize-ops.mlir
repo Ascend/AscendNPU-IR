@@ -2382,3 +2382,34 @@ func.func @test_maxf(%arg0: tensor<512xf32>, %arg1: tensor<512xf32>) -> tensor<5
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxnumf>} ins(%arg0, %arg1 : tensor<512xf32>, tensor<512xf32>) outs(%0 : tensor<512xf32>) -> tensor<512xf32>
   return %1 : tensor<512xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_unsigned_cast_for_uint8_triton_maximum(
+// CHECK: %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_8:.*]] : tensor<1024xi8>) outs(%[[VAL_12:.*]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[VAL_15:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_10:.*]] : tensor<1024xi8>) outs(%[[VAL_14:.*]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[VAL_17:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_11:.*]] : tensor<1024xi8>) outs(%[[VAL_16:.*]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[VAL_18:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[VAL_13]], %[[VAL_15]] : tensor<1024xf16>, tensor<1024xf16>) outs(%[[VAL_17]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[VAL_20:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = false, round_mode = #hfusion.round_mode<trunc>} ins(%[[VAL_18]] : tensor<1024xf16>) outs(%[[VAL_19:.*]] : tensor<1024xi8>) -> tensor<1024xi8>
+// CHECK: %[[VAL_21:.*]] = memref.reinterpret_cast %[[VAL_0:.*]] to offset: {{\[}}%[[VAL_4:.*]]], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+// CHECK: %[[VAL_22:.*]] = tensor.extract_slice %[[VAL_20]][0] {{\[}}%[[VAL_6:.*]]] [1] : tensor<1024xi8> to tensor<?xi8>
+// CHECK: %[[VAL_23:.*]] = memref.subview %[[VAL_21]][0] {{\[}}%[[VAL_6]]] [1] : memref<1024xi8, strided<[1], offset: ?>> to memref<?xi8, strided<[1], offset: ?>>
+// CHECK: bufferization.materialize_in_destination %[[VAL_22]] in writable %[[VAL_23]] : (tensor<?xi8>, memref<?xi8, strided<[1], offset: ?>>) -> ()
+func.func @test_unsigned_cast_for_uint8_triton_maximum(%arg4: memref<?xi8>, %arg9: i32) {
+  %arg12 = arith.constant 0 : i32 
+  %c32768_i32 = arith.constant 32768 : i32 
+  %0 = arith.muli %arg9, %c32768_i32 : i32 
+  %1 = arith.addi %0, %arg12 : i32 
+  %2 = arith.index_cast %1 : i32 to index
+  %6 = arith.index_cast %1 : i32 to index
+  %7 = arith.subi %6, %2 : index
+  %alloc = memref.alloc() : memref<1024xi8>
+  %9 = bufferization.to_tensor %alloc restrict writable : memref<1024xi8>
+  %alloc_2 = memref.alloc() : memref<1024xi8>
+  %10 = bufferization.to_tensor %alloc_2 restrict writable : memref<1024xi8>    %11 = tensor.empty() : tensor<1024xi8>
+  %12 = linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>} ins(%9, %10 : tensor<1024xi8>, tensor<1024xi8>) outs(%11 : tensor<1024xi8>) -> tensor<1024xi8>
+  %reinterpret_cast_5 = memref.reinterpret_cast %arg4 to offset: [%2], sizes: [1024], strides: [1] : memref<?xi8> to memref<1024xi8, strided<[1], offset: ?>>
+  %extracted_slice = tensor.extract_slice %12[0] [%7] [1] : tensor<1024xi8> to tensor<?xi8>
+  %subview_6 = memref.subview %reinterpret_cast_5[0] [%7] [1] : memref<1024xi8, strided<[1], offset: ?>> to memref<?xi8, strided<[1], offset: ?>>
+  bufferization.materialize_in_destination %extracted_slice in writable %subview_6 : (tensor<?xi8>, memref<?xi8, strided<[1], offset: ?>>) -> ()
+  return
+}
