@@ -227,36 +227,32 @@ void Solver::processOrdersTest() {
       if (!llvm::isa_and_present<RWOperation>(op))
         continue;
 
-        Occurrence *occ1 = reverseOrder ? syncIr[i].get() : curOcc;
-        Occurrence *occ2 = reverseOrder ? curOcc : syncIr[i].get();
+      Occurrence *occ1 = reverseOrder ? syncIr[i].get() : curOcc;
+      Occurrence *occ2 = reverseOrder ? curOcc : syncIr[i].get();
 
-        if (checkSkippable(occ1) ||
-            checkVisited(occ1, occ2) ||
-            checkImpossibleOccPair(occ1, occ2) ||
-            checkAlreadySynced(occ1, occ2))
-          continue;
+      if (checkSkippable(occ1) || checkVisited(occ1, occ2) ||
+          checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2))
+        continue;
 
-        auto rwOp1 = dyn_cast<RWOperation>(occ1->op);
-        auto rwOp2 = dyn_cast<RWOperation>(occ2->op);
-        assert(rwOp1 && rwOp2);
+      auto rwOp1 = dyn_cast<RWOperation>(occ1->op);
+      auto rwOp2 = dyn_cast<RWOperation>(occ2->op);
+      assert(rwOp1 && rwOp2);
 
-        LLVM_DEBUG({
-          llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
-          llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->op->str(0, false)
-                       << '\n';
-          llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->op->str(0, false)
-                       << '\n';
-          llvm::dbgs() << "memConflictsNum: "
-                       << checkTestMemoryConflicts(rwOp1, rwOp2).size() << '\n';
-        });
-        for (auto [setPipe, waitPipe] :
-          checkTestMemoryConflicts(rwOp1, rwOp2)) {
-          auto eventIdNum = getTestEventIdNum(occ1, occ2, setPipe, waitPipe);
-          if (checkGraphConflict(occ1, occ2, setPipe, waitPipe, eventIdNum)) {
-            handleConflict(occ1, occ2, setPipe, waitPipe, isUseless, eventIdNum,
-                           nullptr);
-          }
-
+      LLVM_DEBUG({
+        llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
+        llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->op->str(0, false)
+                     << '\n';
+        llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->op->str(0, false)
+                     << '\n';
+        llvm::dbgs() << "memConflictsNum: "
+                     << checkTestMemoryConflicts(rwOp1, rwOp2).size() << '\n';
+      });
+      for (auto [setPipe, waitPipe] : checkTestMemoryConflicts(rwOp1, rwOp2)) {
+        auto eventIdNum = getTestEventIdNum(occ1, occ2, setPipe, waitPipe);
+        if (checkGraphConflict(occ1, occ2, setPipe, waitPipe, eventIdNum)) {
+          handleConflict(occ1, occ2, setPipe, waitPipe, isUseless, eventIdNum,
+                         nullptr);
+        }
       }
     }
   }
