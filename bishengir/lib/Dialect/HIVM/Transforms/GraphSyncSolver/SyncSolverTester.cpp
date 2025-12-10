@@ -554,8 +554,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     refreshPipeQue(curPipe);
   }
 
-  for (auto &e : pipelineQue) {
-    assert(e.second.empty());
+  for (auto& [_, value] : pipelineQue) {
+      assert(value.empty());
   }
 
   return success();
