@@ -979,7 +979,7 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
         bitUsed = bitUsed * resultType.getDimSize(dim);
       }
     }
-    bitUsed = static_cast<int>(bitUsed * resultType.getElementTypeBitWidth());
+    bitUsed = bitUsed * static_cast<int>(resultType.getElementTypeBitWidth());
     if (bitUsed % alignSize != 0)
       return false;
   }
