@@ -58,7 +58,9 @@
 #include <optional>
 #include <variant>
 
+#if BSPUB_DAVINCI_BISHENGIR
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
+#endif
 
 using namespace mlir;
 using namespace mlir::hfusion;
@@ -1255,7 +1257,8 @@ LogicalResult ReduceWithIndexOp::verify() {
 } // namespace hfusion
 } // namespace mlir
 
-static LogicalResult appendMangledType(llvm::raw_string_ostream &ss, Type t) {
+static LogicalResult appendMangledType(llvm::raw_string_ostream &ss, Type t)
+    __attribute__((unused)) {
   if (auto memref = llvm::dyn_cast<MemRefType>(t)) {
     ss << "view";
     for (auto size : memref.getShape())
