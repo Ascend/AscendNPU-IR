@@ -1247,40 +1247,6 @@ LogicalResult ReduceWithIndexOp::verify() {
 } // namespace hfusion
 } // namespace mlir
 
-static LogicalResult appendMangledType(llvm::raw_string_ostream &ss, Type t)
-    __attribute__((unused)) {
-  if (auto memref = llvm::dyn_cast<MemRefType>(t)) {
-    ss << "view";
-    for (auto size : memref.getShape())
-      if (size < 0)
-        ss << "sx";
-      else
-        ss << size << "x";
-    if (failed(appendMangledType(ss, memref.getElementType())))
-      return failure();
-    if (auto as = memref.getMemorySpace()) {
-      if (auto attr = llvm::dyn_cast<IntegerAttr>(as))
-        ss << "as" << attr.getInt();
-      else
-        return failure();
-    }
-    return success();
-  }
-  if (auto vec = llvm::dyn_cast<VectorType>(t)) {
-    ss << "vector";
-    llvm::interleave(
-        vec.getShape(), [&](int64_t i) { ss << i; }, [&]() { ss << "x"; });
-    if (failed(appendMangledType(ss, vec.getElementType())))
-      return failure();
-    return success();
-  }
-  if (t.isSignlessIntOrIndexOrFloat()) {
-    ss << t;
-    return success();
-  }
-  return failure();
-}
-
 /// Pattern to fold cast into emtpy.
 ///
 /// Before:
