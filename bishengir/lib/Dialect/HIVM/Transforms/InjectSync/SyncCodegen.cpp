@@ -54,11 +54,11 @@ void SyncCodegen::Build() {
   });
 
   if (syncAnalysisMode == SyncAnalysisMode::NORMALSYNC) {
-    UpdateMmadL1SyncTemplateInter();
+    UpdateMmadL1SyncTemplateInter(rewriter);
   }
 }
 
-void SyncCodegen::UpdateMmadL1SyncTemplateInter() {
+void SyncCodegen::UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter) {
   func_->walk<WalkOrder::PreOrder>([&](hivm::MmadL1Op mmadL1Op) {
     auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
     checkCondition(iter != mmadL12SyncTemplateInter.end(),
@@ -80,9 +80,13 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
   for (auto &nowElement : syncIR) {
     if (auto *compoundElement =
             dyn_cast<CompoundInstanceElement>(nowElement.get())) {
-      handleEnableUnitFlag(rewriter, compoundElement);
+      HandleEnableUnitFlag(rewriter, compoundElement);
       UpdateCompoundOpInsertSync(compoundElement);
-      UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement);
+      if (auto mmadL1Op = dyn_cast<MmadL1Op>(compoundElement->elementOp)) {
+        InitDefaultSyncTemplateInterForMmadL1Op(mmadL1Op);
+        UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement,
+                                                      mmadL1Op);
+      }
     } else if (auto *placeHolder =
                    dyn_cast<PlaceHolderInstanceElement>(nowElement.get())) {
       updatePlaceHolderOpInsertSync(placeHolder);
@@ -96,7 +100,7 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
   }
 }
 
-void SyncCodegen::handleEnableUnitFlag(
+void SyncCodegen::HandleEnableUnitFlag(
     IRRewriter &rewriter, CompoundInstanceElement *nowCompound) const {
   auto unitFlagMode = nowCompound->getUnitFlagMode();
   auto unitFlagCond =
@@ -125,6 +129,9 @@ void SyncCodegen::handleEnableUnitFlag(
 
 void SyncCodegen::updatePlaceHolderOpInsertSync(
     PlaceHolderInstanceElement *placeHolder) {
+  if (placeHolder->pipeBefore.empty() && placeHolder->pipeAfter.empty()) {
+    return;
+  }
   Operation *terminatorOp = nullptr;
   auto *parentScope = syncIR[placeHolder->parentScopeId].get();
   if (auto *branchOp = dyn_cast<BranchInstanceElement>(parentScope)) {
@@ -175,53 +182,48 @@ void SyncCodegen::UpdateCompoundOpInsertSync(
 }
 
 void SyncCodegen::UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
-    CompoundInstanceElement *nowCompound) {
-  auto mmadL1Op =
-      llvm::dyn_cast_if_present<hivm::MmadL1Op>(nowCompound->elementOp);
-  if (!mmadL1Op) {
+    CompoundInstanceElement *nowCompound, hivm::MmadL1Op mmadL1Op) {
+  if (!nowCompound->BwdPipeMPipeMTE1SyncPtr ||
+      nowCompound->BwdPipeMPipeMTE1SyncPtr->uselessSync) {
+    // There is no reverse or EventId conflict, and the library implementation
+    // needs to inserted needed synchronization.
     return;
   }
-  MLIRContext *ctx = func_->getContext();
-  IRRewriter rewriter(ctx);
+  checkCondition(nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds.size() == 1,
+                 "expected BwdPipeMPipeMTE1SyncPtr eventIds to be of size 1");
+  IRRewriter rewriter(func_->getContext());
   rewriter.setInsertionPointToStart(&func_.getBody().front());
-  auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
-  if (iter == mmadL12SyncTemplateInter.end()) {
-    InitDefaultSyncTemplateInterForMmadL1Op(rewriter, mmadL1Op);
-  }
-  if (!nowCompound->PipeMTE1ToPipeMSync ||
-      nowCompound->PipeMTE1ToPipeMSync->uselessSync) {
-    // There is no reverse or Eventid conflict, and the library itself
-    // needs to be inserted for synchronization.
-    return;
-  }
-  checkCondition(nowCompound->PipeMTE1ToPipeMSync->eventIds.size() == 1,
-                 "expected PipeMTE1ToPipeMSync eventIds to be of size 1");
   auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantIntOp>(
       nowCompound->elementOp->getLoc(),
-      nowCompound->PipeMTE1ToPipeMSync->eventIds[0], rewriter.getI64Type());
+      nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0], rewriter.getI64Type());
   // mmadL1 Sync IR two updates, namely BackPipeMPipeMTE1DBEvent0 and
   // BackPipeMPipeMTE1DBEvent1.
-  if (nowCompound->defVec.empty()) {
-    mmadL12SyncTemplateInter[mmadL1Op].BackPipeMPipeMTE1DBEvent1 =
+  if (nowCompound->macroOpInstanceId == 0) {
+    mmadL12SyncTemplateInter[mmadL1Op].BackPipeMPipeMTE1DBEvent0 =
         backPipeMPipeMTE1DBEvent;
   } else {
-    mmadL12SyncTemplateInter[mmadL1Op].BackPipeMPipeMTE1DBEvent0 =
+    mmadL12SyncTemplateInter[mmadL1Op].BackPipeMPipeMTE1DBEvent1 =
         backPipeMPipeMTE1DBEvent;
   }
 }
 
 void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
-    IRRewriter &rewriter, hivm::MmadL1Op mmadL1Op) {
+    hivm::MmadL1Op mmadL1Op) {
+  if (mmadL12SyncTemplateInter.contains(mmadL1Op)) {
+    return;
+  }
+  IRRewriter rewriter(func_->getContext());
+  rewriter.setInsertionPointToStart(&func_.getBody().front());
   auto defaultValue = rewriter.create<arith::ConstantIntOp>(
       mmadL1Op.getOperation()->getLoc(), -1, rewriter.getI64Type());
-  SyncTemplateInter syncTemplateInter(defaultValue, defaultValue, defaultValue,
-                                      defaultValue, defaultValue, defaultValue,
-                                      defaultValue);
-  Value KLoopDBCond = createNestedIndexForOp(rewriter, mmadL1Op.getOperation());
-  if (KLoopDBCond) {
-    syncTemplateInter.KLoopDBCond = KLoopDBCond;
-  }
+  SyncTemplateInter syncTemplateInter(defaultValue);
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
+  if (checkAllParentLoopsAreForLoops(mmadL1Op)) {
+    if (auto KLoopDBCond =
+            createNestedIndexForOp(rewriter, mmadL1Op.getOperation())) {
+      mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCond;
+    }
+  }
 }
 
 void SyncCodegen::UpdateLoopOpInsertSync(LoopInstanceElement *nowElement) {

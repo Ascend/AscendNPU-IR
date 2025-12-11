@@ -344,7 +344,8 @@ public:
   // The CoreType for compound node.
   TCoreType compoundCoreType{TCoreType::CUBE_OR_VECTOR};
 
-  SyncOperation *PipeMTE1ToPipeMSync{nullptr};
+  // Backward pipeM->pipeMTE1 sync pair.
+  SyncOperation *BwdPipeMPipeMTE1SyncPtr{nullptr};
 
   // One operation can be synchronized with 2 other operations, one before it
   // and one after it ex: fixpipe-mmadl1-fixpipe. Usually using set/wait flags
@@ -355,6 +356,10 @@ public:
   UNIT_FLAG unitFlagModeAsWait{UNIT_FLAG::DISABLED};
   CompoundInstanceElement *linkedUnitFlagCompAsSet{nullptr};
   CompoundInstanceElement *linkedUnitFlagCompAsWait{nullptr};
+
+  // For macro operations that will get decomposed into multiple sync-ir
+  // elements, this id can be used to differentiate between the cloned elements.
+  int macroOpInstanceId{-1};
 
 public:
   CompoundInstanceElement(unsigned index,
@@ -372,7 +377,7 @@ public:
   // return ENABLED if so.
   UNIT_FLAG getUnitFlagMode() const;
   std::optional<mlir::Value> getUnitFlagCond(Location loc,
-                                             IRRewriter &rewriter) const;
+                                             IRRewriter &rewriter);
 };
 
 // Save all operation information on IR in order, with three main types of
@@ -386,6 +391,9 @@ using SyncOperations = SmallVector<SmallVector<std::unique_ptr<SyncOperation>>>;
 // the map from the buffer to its mem info
 using Buffer2MemInfoMap =
     llvm::DenseMap<Value, llvm::SmallVector<std::unique_ptr<BaseMemInfo>>>;
+
+// Check all loop-like parents of `op` to be of class SCF::ForOps.
+bool checkAllParentLoopsAreForLoops(Operation *op);
 
 // check and assert that index is within the bounds of syncIR
 void checkSyncIRIndex(const SyncIRs &syncIR, int index);

@@ -227,8 +227,8 @@ UNIT_FLAG CompoundInstanceElement::getUnitFlagMode() const {
   return it->second;
 }
 
-static Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                                   IRRewriter &rewriter) {
+Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
+                            IRRewriter &rewriter) {
   Value upperBound = forOp.getUpperBound();
   Value lowerBound = forOp.getLowerBound();
   return rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
@@ -236,8 +236,7 @@ static Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
 }
 
 std::optional<mlir::Value>
-CompoundInstanceElement::getUnitFlagCond(Location loc,
-                                         IRRewriter &rewriter) const {
+CompoundInstanceElement::getUnitFlagCond(Location loc, IRRewriter &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
   SmallVector<Value> conditions;
   if (linkedUnitFlagCompAsWait &&
@@ -279,8 +278,17 @@ CompoundInstanceElement::getUnitFlagCond(Location loc,
 
 namespace mlir::hivm {
 
+bool checkAllParentLoopsAreForLoops(Operation *op) {
+  while ((op = op->getParentOfType<LoopLikeOpInterface>())) {
+    if (!isa<scf::ForOp>(op)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void checkSyncIRIndex(const SyncIRs &syncIR, int index) {
-  if (index < 0 || index > static_cast<int>(syncIR.size())) {
+  if (index < 0 || index >= static_cast<int>(syncIR.size())) {
     llvm_unreachable("index out of bounds when accessing syncIR");
   }
 }

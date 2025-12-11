@@ -65,7 +65,7 @@ public:
   // BackPipeMPipeMTE1DBEvent event-ids. Other wise, different mmadl1 operations
   // could run at the same time using different event-ids and cause r/w
   // conflicts.
-  SyncOperation *PipeMTE1ToPipeMSync[2]{nullptr};
+  DenseMap<int, SyncOperation *> BwdPipeMPipeMTE1SyncPtr;
 
 private:
   /// Save the Global syncIR.
@@ -168,12 +168,12 @@ private:
   InstanceElement *getParentScope(InstanceElement *instanceElement);
 
   PlaceHolderInstanceElement *
-  checkUnlikelyScope(CompoundInstanceElement *nowCompound,
+  CheckUnlikelyScope(CompoundInstanceElement *nowCompound,
                      CompoundInstanceElement *frontCompound);
 
   /// Insert synchronization instructions for dependent elements when the front
   /// compound is inside an "unlikely" scope.
-  void insertUnlikelySyncOperation(PlaceHolderInstanceElement *placeHolder,
+  void InsertUnlikelySyncOperation(PlaceHolderInstanceElement *placeHolder,
                                    CompoundInstanceElement *nowCompound,
                                    CompoundInstanceElement *frontCompound,
                                    DepBaseMemInfoPairVec &depBaseMemInfosVec,
