@@ -310,17 +310,23 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpIPredicate::ne:
       return CompareFn::vne;
     case arith::CmpIPredicate::slt:
-    case arith::CmpIPredicate::ult:
       return CompareFn::vlt;
+    case arith::CmpIPredicate::ult:
+      return CompareFn::vult;
     case arith::CmpIPredicate::sgt:
-    case arith::CmpIPredicate::ugt:
       return CompareFn::vgt;
+    case arith::CmpIPredicate::ugt:
+      return CompareFn::vugt;
     case arith::CmpIPredicate::sle:
-    case arith::CmpIPredicate::ule:
       return CompareFn::vle;
+    case arith::CmpIPredicate::ule:
+      return CompareFn::vule;
     case arith::CmpIPredicate::sge:
-    case arith::CmpIPredicate::uge:
       return CompareFn::vge;
+    case arith::CmpIPredicate::uge:
+      return CompareFn::vuge;
+    default:
+      llvm_unreachable("unsupported arith cmp predicate to hfusion");
     }
   }
 
