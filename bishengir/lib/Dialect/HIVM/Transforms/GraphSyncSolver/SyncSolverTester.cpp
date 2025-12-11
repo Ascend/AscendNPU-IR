@@ -553,11 +553,11 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
     refreshPipeQue(curPipe);
   }
-
-  for (auto& [_, value] : pipelineQue) {
-      assert(value.empty());
+#ifndef NDEBUG
+  for (auto &[_, value] : pipelineQue) {
+    assert(value.empty());
   }
-
+#endif
   return success();
 }
 
