@@ -31,6 +31,10 @@ namespace scope {
 /// Create a pass to outline scope within ScopeOp's region
 std::unique_ptr<Pass> createOutlineScopePass();
 
+// Create a pass to inline operations within the scope.scope operation to the
+// outer region.
+std::unique_ptr<Pass> createInlineScopePass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

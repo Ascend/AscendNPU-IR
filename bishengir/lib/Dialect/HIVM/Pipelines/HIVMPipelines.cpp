@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
 
@@ -208,6 +209,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
+  pm.addPass(scope::createInlineScopePass());
   if (hivmPipelineOptions.enableAutoBindSubBlock)
     pm.addPass(createTileAndBindSubBlockPass());
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());

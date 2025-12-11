@@ -18,14 +18,14 @@
 #ifndef BISHENGIR_DIALECT_SCOPE_IR_SCOPE_H
 #define BISHENGIR_DIALECT_SCOPE_IR_SCOPE_H
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
-
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/Support/Debug.h"
 
 //===----------------------------------------------------------------------===//
 // Scope Dialect
