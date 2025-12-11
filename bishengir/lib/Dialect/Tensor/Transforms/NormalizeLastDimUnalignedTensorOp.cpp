@@ -237,7 +237,7 @@ public:
       // for 1-rank concat, extend dim by brc and then drop dim by slice:
       // - brc + transpose + concat + transpose + extract_slice
       concatOp = extendOneDimConcat(concatOp, rewriter);
-      dim = concatOp.getDim();
+      dim = static_cast<int>(concatOp.getDim());
       rank = concatOp.getResultType().getRank();
     }
 
