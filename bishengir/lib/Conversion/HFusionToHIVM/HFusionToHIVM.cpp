@@ -128,6 +128,9 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
     return hivm::CompareMode::GE;
   case hfusion::CompareFn::vgt:
     return hivm::CompareMode::GT;
+  default:
+    llvm_unreachable(
+        "mapCompareModeHFusionToHiVM: unsupported hfusion::CompareFn");
   }
 }
 
