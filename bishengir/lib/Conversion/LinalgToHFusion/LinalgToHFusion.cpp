@@ -345,7 +345,7 @@ struct AtomicLinalgGenericToHFusionStorePattern
     }
     if (atomicKind == AtomicKindAttr::get(context, AtomicKind::XCHG)) {
       rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(), TypeRange(),
-                                             ValueRange{op.getInputs()[1]},
+                                             op.getInputs()[1],
                                              op.getInputs()[0]);
       rewriter.eraseOp(op);
       return success();

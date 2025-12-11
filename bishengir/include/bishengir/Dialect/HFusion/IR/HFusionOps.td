@@ -378,18 +378,23 @@ def AtomicXchgOp : HFusion_Op<"atomic_xchg",
       Arguments:
         * `src`: new value
         * `dst`: memory location in GM
+        * `mask` : mask the element
 
       Examples:
       ```mlir
-      hfusion.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
-      %result = hfusion.atomic_xchg ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
+      hfusion.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) mask(%m : memref<?xi1>)
+      %result = hfusion.atomic_xchg ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) mask(%m : memref<?xi1>) -> tensor<?xf32>
       ```
   }];
-  let arguments = (ins Variadic<AnyTypeOf<[TensorOrMemref]>>:$input,
-                       TensorOrMemref:$dst);
+  let arguments = (ins TensorOrMemref:$input,
+                       TensorOrMemref:$dst, Optional<TensorOrMemref>:$mask);
   let results = (outs Variadic<AnyTypeOf<[TensorOrMemref]>>:$output);
+  let builders = [
+    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst)>,
+  ];
   let assemblyFormat = [{ attr-dict `ins` `(` $input `:` type($input) `)`
                        `outs` `(` $dst `:` type($dst) `)`
+                       (`mask` `(` $mask^ `:` type($mask) `)`)?
                        (`->` type($output)^)?
   }];
 }

@@ -1116,22 +1116,34 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+    auto src = op.getSrc();
+    auto dst = op.getDst();
+    auto mask = op.getMask();
 
     // insert sync_block_lock
     rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // step1: load old val in dst gm to ub
-    auto src = op.getSrc()[0];
-    auto tmpUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
-
-    auto dst = op.getDst();
-    rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB);
-
-    // step2: store new val to dst gm
-    rewriter.create<hivm::StoreOp>(loc, TypeRange{}, src, dst);
-
-    // step3: copy old val to src ub
-    rewriter.create<hivm::CopyOp>(loc, TypeRange{}, tmpUB, src);
+    auto tmpUB_dst = createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
+    rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB_dst);
+    if (mask) {
+      // step2: select according to the mask
+      auto tmpUB_masked_dst =
+          createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
+      rewriter.create<hivm::VSelOp>(loc, TypeRange{},
+                                    ValueRange({mask, src, tmpUB_dst}),
+                                    ValueRange({tmpUB_masked_dst}), Value());
+      rewriter.create<hivm::VSelOp>(loc, TypeRange{},
+                                    ValueRange({mask, tmpUB_dst, src}),
+                                    ValueRange({src}), Value());
+      // step3: copy/store the selected value
+      rewriter.create<hivm::StoreOp>(loc, TypeRange{}, tmpUB_masked_dst, dst);
+    } else {
+      // step2: store new val to dst gm
+      rewriter.create<hivm::StoreOp>(loc, TypeRange{}, src, dst);
+      // step3: copy old val to src ub
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, tmpUB_dst, src);
+    }
 
     rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
     rewriter.eraseOp(op);

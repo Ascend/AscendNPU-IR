@@ -484,6 +484,7 @@ def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
     Arguments:
       * `src`: new value
       * `dst`: memory location in GM
+      * `mask`: mask the element
 
     Examples:
     ```mlir
@@ -491,14 +492,16 @@ def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
     %result = hivm.hir.atomic_cas ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
     ```
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
-                       TensorOrMemref:$dst
+  let arguments = (ins AnyType:$src,
+                       TensorOrMemref:$dst,
+                       Optional<TensorOrMemref>:$mask
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`mask` `(` $mask^ `:` type($mask) `)`)?
     (`->` type($result_tensor)^)?
   }];
 }

@@ -771,6 +771,7 @@ func.func @test_flip()-> tensor<4x8x8xf32> {
   %1 = hfusion.flip %0 : tensor<4x8x8xf32> flip_axis = 2 -> tensor<4x8x8xf32>
   return %1 : tensor<4x8x8xf32>
 }
+
 // -----
 // CHECK-LABEL: func.func @test_atomic_add
 module {
@@ -786,7 +787,6 @@ module {
 }
 
 // -----
-
 // CHECK-LABEL: func.func @test_powi_to_vpow(
 // CHECK: hivm.hir.vpow
 func.func @test_powi_to_vpow(%arg0: tensor<5x4xi32>, %arg1: tensor<5x4xi32>, %arg2: tensor<5x4xi32> ) -> tensor<5x4xi32> {
@@ -858,12 +858,22 @@ module {
 // CHECK-LABEL: func.func @test_atomic_xchg
 module {
   func.func @test_atomic_xchg(%arg0: memref<?xi16>) {
-    
     %alloc = memref.alloc() : memref<256xi16>
-    %alloc_2 = memref.alloc() : memref<256xi16>
-    // CHECK: hivm.hir.atomic_xchg
+    // CHECK: hivm.hir.atomic_xchg ins(%[[VAL_1:.*]] : memref<256xi16>) outs(%[[VAL_2:.*]] : memref<256xi16, strided<[1]>>)
     %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
-    hfusion.atomic_xchg ins(%alloc_2, %alloc : memref<256xi16>, memref<256xi16>) outs(%reinterpret_cast_0 : memref<256xi16, strided<[1]>>)
+    hfusion.atomic_xchg ins(%alloc: memref<256xi16>) outs(%reinterpret_cast_0 : memref<256xi16, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_masked_atomic_xchg
+module {
+  func.func @test_masked_atomic_xchg(%arg0: memref<?xi16>, %arg1: memref<256xi1>) {
+    %alloc = memref.alloc() : memref<256xi16>
+    // CHECK: hivm.hir.atomic_xchg ins(%[[VAL_2:.*]] : memref<256xi16>) outs(%[[VAL_3:.*]] : memref<256xi16, strided<[1]>>) mask(%[[VAL_1:.*]] : memref<256xi1>)
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
+    hfusion.atomic_xchg ins(%alloc: memref<256xi16>) outs(%reinterpret_cast_0 : memref<256xi16, strided<[1]>>) mask(%arg1: memref<256xi1>)
     return
   }
 }

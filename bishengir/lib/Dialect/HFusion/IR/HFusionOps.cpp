@@ -2273,20 +2273,22 @@ void AtomicCasOp::getEffects(
 void AtomicXchgOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  for (auto [index, operand] : llvm::enumerate(this->getInput())) {
-    if (!llvm::isa<MemRefType>(operand.getType()))
-      continue;
+  if (llvm::isa<MemRefType>(this->getInput().getType()))
     effects.emplace_back(MemoryEffects::Read::get(),
-                         &getOperation()->getOpOperand(index), /*stage=*/0,
-                         /*effectOnFullRegion=*/true,
-                         SideEffects::DefaultResource::get());
-  }
+                          &getOperation()->getOpOperand(0), /*stage=*/0,
+                          /*effectOnFullRegion=*/true,
+                          SideEffects::DefaultResource::get());
   OpOperand &operand = this->getDstMutable();
   if (!llvm::isa<MemRefType>(operand.get().getType()))
     return;
   effects.emplace_back(MemoryEffects::Write::get(), &operand, /*stage=*/0,
                        /*effectOnFullRegion=*/true,
                        SideEffects::DefaultResource::get());
+}
+
+void AtomicXchgOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange output, Value src, Value dst) {
+  build(odsBuilder, odsState, output, src, dst, /*mask=*/nullptr);
 }
 
 //===----------------------------------------------------------------------===//
