@@ -96,6 +96,12 @@ def Ascend910B4Spec : Ascend910B_BaseSpec<"Ascend910B4"> {
   let VectorCoreCount = 40;
 }
 
+def Ascend910B4_1Spec : Ascend910B_BaseSpec<"Ascend910B4_1"> {
+  let AiCoreCount = 20;
+  let CubeCoreCount = 20;
+  let VectorCoreCount = 40;
+}
+
 def Ascend910B2CSpec : Ascend910B_BaseSpec<"Ascend910B2C"> {
   let AiCoreCount = 24;
   let CubeCoreCount = 24;
