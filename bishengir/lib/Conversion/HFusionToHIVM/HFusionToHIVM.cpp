@@ -938,8 +938,24 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
 };
 
 // ===----------------------------------------------------------------------===//
-// HFusionToHIVM AtomicCasOp and AtomicXchgOp
+// HFusionToHIVM AtomicRMWOp, AtomicCasOp and AtomicXchgOp
 // ===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMAtomicRMWOp : public OpRewritePattern<hfusion::AtomicRMWOp> {
+  using OpRewritePattern<hfusion::AtomicRMWOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::AtomicRMWOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> dsts;
+    if (failed(
+            tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
+      return failure();
+    auto hivmAtomicOp = rewriter.create<hivm::AtomicRMWOp>(
+        op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst(), mapAtomicKindHFusionToHiVM(op.getAtomicKind()));
+    rewriter.replaceOp(op, hivmAtomicOp);
+    return success();
+  }
+};
 
 struct HFusionToHIVMAtomicCasOp
     : public OpRewritePattern<hfusion::AtomicCasOp> {
@@ -1085,7 +1101,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMCumOp<hfusion::CumsumOp, hivm::VCumsumOp>,
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
     HFusionToHIVMAtomicCasOp,
-    HFusionToHIVMAtomicXchgOp
+    HFusionToHIVMAtomicXchgOp,
+    HFusionToHIVMAtomicRMWOp
   >(patterns.getContext());
   // clang-format on
 }

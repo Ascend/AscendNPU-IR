@@ -348,7 +348,7 @@ def AtomicCasOp : HFusion_Op<"atomic_cas",
   }];
   let arguments = (ins Variadic<AnyTypeOf<[TensorOrMemref]>>:$input,
                        TensorOrMemref:$dst);
-  let results = (outs Variadic<AnyTypeOf<[TensorOrMemref]>>:$output);
+  let results = (outs Optional<TensorOrMemref>:$output);
   let assemblyFormat = [{ attr-dict `ins` `(` $input `:` type($input) `)`
                        `outs` `(` $dst `:` type($dst) `)`
                        (`->` type($output)^)?
@@ -388,13 +388,54 @@ def AtomicXchgOp : HFusion_Op<"atomic_xchg",
   }];
   let arguments = (ins TensorOrMemref:$input,
                        TensorOrMemref:$dst, Optional<TensorOrMemref>:$mask);
-  let results = (outs Variadic<AnyTypeOf<[TensorOrMemref]>>:$output);
+  let results = (outs Optional<TensorOrMemref>:$output);
   let builders = [
     OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst)>,
   ];
   let assemblyFormat = [{ attr-dict `ins` `(` $input `:` type($input) `)`
                        `outs` `(` $dst `:` type($dst) `)`
                        (`mask` `(` $mask^ `:` type($mask) `)`)?
+                       (`->` type($output)^)?
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// AtomicRMWOp
+//===----------------------------------------------------------------------===//
+
+def AtomicRMWOp : HFusion_Op<"atomic_rmw",
+    [SameOperandsAndResultRank, AllTypesMatch<["output"]>, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = [{
+    Atomic RMW Op
+  }];
+  let description = [{
+      Atomic RMW is an atomic operation that consists of three steps:
+      1. Read the current value of the specified memory address
+      2. Perform action depending on atomic_kind attr
+      3. Return the old value read previously
+      The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
+
+      Constraints:
+        1. The input memref and output memref must have the same rank
+          and the same element type.
+
+      Arguments:
+        * `src`: new value
+        * `dst`: memory location in GM
+
+      Examples:
+      ```mlir
+      hfusion.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_kind = <add>
+      %result = hfusion.atomic_rmw ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) atomic_kind = <or> -> tensor<?xf32>
+      ```
+  }];
+  let arguments = (ins TensorOrMemref:$input,
+                       TensorOrMemref:$dst,
+                       AtomicKindAttr:$atomic_kind);
+  let results = (outs Optional<TensorOrMemref>:$output);
+  let assemblyFormat = [{ attr-dict `ins` `(` $input `:` type($input) `)`
+                       `outs` `(` $dst `:` type($dst) `)`
+                       `atomic_kind` `=` $atomic_kind
                        (`->` type($output)^)?
   }];
 }

@@ -336,28 +336,32 @@ struct AtomicLinalgGenericToHFusionStorePattern
       op.emitOpError("unsupported atomic operation: ");
       llvm_unreachable("Not implemented");
     }
+    bool hasReturn = op.getOutputs().size() > 1;
+    TypeRange returnTypes;
+    if (hasReturn) {
+      returnTypes = TypeRange(op.getOutputs()[1].getType());
+    }
+
+    Operation *newOperation;
     if (atomicKind == AtomicKindAttr::get(context, AtomicKind::CAS)) {
-      rewriter.create<hfusion::AtomicCasOp>(
-          op.getLoc(), TypeRange(),
+      newOperation = rewriter.create<hfusion::AtomicCasOp>(
+          op.getLoc(), returnTypes,
           ValueRange{op.getInputs()[1], op.getInputs()[2]}, op.getInputs()[0]);
-      rewriter.eraseOp(op);
-      return success();
+    } else if (atomicKind == AtomicKindAttr::get(context, AtomicKind::XCHG)) {
+      newOperation = rewriter.create<hfusion::AtomicXchgOp>(
+          op.getLoc(), returnTypes, op.getInputs()[1], op.getInputs()[0]);
+    } else {
+      // hivm.copy only accept tensor/tensor or memref/memref as input/output
+      // and the atomicRMW Op might be masked
+      // need to turn the input tensor into the same type the dst memref has
+      newOperation = rewriter.create<hfusion::AtomicRMWOp>(
+          op.getLoc(), returnTypes, op.getInputs()[1], op.getInputs()[0],
+          atomicKind);
     }
-    if (atomicKind == AtomicKindAttr::get(context, AtomicKind::XCHG)) {
-      rewriter.create<hfusion::AtomicXchgOp>(op.getLoc(), TypeRange(),
-                                             op.getInputs()[1],
-                                             op.getInputs()[0]);
-      rewriter.eraseOp(op);
-      return success();
-    }
-    // hivm.copy only accept tensor/tensor or memref/memref as input/output
-    // and the atomicRMW Op might be masked
-    // need to turn the input tensor into the same type the dst memref has
-    auto hfusionStoreOp = rewriter.create<hfusion::StoreOp>(
-        op.getLoc(), ValueRange(op.getInputs()[1]),
-        ValueRange(op.getInputs()[0]));
-    hfusionStoreOp.setAtomicKindAttr(atomicKind);
     rewriter.eraseOp(op);
+    if (hasReturn) {
+      rewriter.replaceOp(op.getOutputs()[1].getDefiningOp(), newOperation);
+    }
     return success();
   }
 };

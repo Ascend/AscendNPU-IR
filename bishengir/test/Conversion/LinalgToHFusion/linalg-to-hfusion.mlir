@@ -166,7 +166,7 @@ func.func @test_atomic_add(%arg0 : memref<?xf32> {tt.divisibility = 16 : i32}, %
   %1 = arith.index_cast %0 : i32 to index
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<?xf32> to memref<256xf32, strided<[1], offset: ?>>
   %2 = bufferization.to_memref %arg1 : memref<256xf32, strided<[1]>>
-  // CHECK:       hfusion.store {atomic_kind = #hfusion.atomic_kind<add>} ins(%[[UB_MEMREF:.*]] : memref<256xf32, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xf32, strided<[1], offset: ?>>)
+  // CHECK:       hfusion.atomic_rmw ins(%[[UB_MEMREF:.*]] : memref<256xf32, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xf32, strided<[1], offset: ?>>) atomic_kind = <add>
   linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]} ins(%reinterpret_cast, %2 : memref<256xf32, strided<[1], offset: ?>>, memref<256xf32, strided<[1]>>) outs(%reinterpret_cast : memref<256xf32, strided<[1], offset: ?>>) attrs =  {GenericAtomicRMW = "fadd", MemSemantic = "acq_rel", MemSyncScope = "gpu"} {
     ^bb0(%in: f32, %in_0: f32, %out: f32):
       %3 = arith.addf %in, %in_0 : f32
@@ -337,7 +337,7 @@ func.func @test_atomic_max_ui8(%arg0 : memref<?xi8> {tt.divisibility = 16 : i32}
   %1 = arith.index_cast %0 : i32 to index
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8, strided<[1], offset: ?>>
   %2 = bufferization.to_memref %arg1 : memref<256xi8, strided<[1]>>
-  // CHECK:       hfusion.store {atomic_kind = #hfusion.atomic_kind<umax>} ins(%[[UB_MEMREF:.*]] : memref<256xi8, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xi8, strided<[1], offset: ?>>)
+  // CHECK:       hfusion.atomic_rmw ins(%[[UB_MEMREF:.*]] : memref<256xi8, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xi8, strided<[1], offset: ?>>) atomic_kind = <umax>
   linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]} ins(%reinterpret_cast, %2 : memref<256xi8, strided<[1], offset: ?>>, memref<256xi8, strided<[1]>>) outs(%reinterpret_cast : memref<256xi8, strided<[1], offset: ?>>) attrs =  {GenericAtomicRMW = "umax", MemSemantic = "acq_rel", MemSyncScope = "gpu"} {
     ^bb0(%in: i8, %in_0: i8, %out: i8):
       %3 = arith.maxui %in, %in_0 : i8
@@ -355,7 +355,7 @@ func.func @test_atomic_min_ui8(%arg0 : memref<?xi8> {tt.divisibility = 16 : i32}
   %1 = arith.index_cast %0 : i32 to index
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<?xi8> to memref<256xi8, strided<[1], offset: ?>>
   %2 = bufferization.to_memref %arg1 : memref<256xi8, strided<[1]>>
-  // CHECK:       hfusion.store {atomic_kind = #hfusion.atomic_kind<umin>} ins(%[[UB_MEMREF:.*]] : memref<256xi8, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xi8, strided<[1], offset: ?>>)
+  // CHECK:       hfusion.atomic_rmw ins(%[[UB_MEMREF:.*]] : memref<256xi8, strided<[1]>>) outs(%[[GM_MEMREF:.*]] : memref<256xi8, strided<[1], offset: ?>>) atomic_kind = <umin>
   linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]} ins(%reinterpret_cast, %2 : memref<256xi8, strided<[1], offset: ?>>, memref<256xi8, strided<[1]>>) outs(%reinterpret_cast : memref<256xi8, strided<[1], offset: ?>>) attrs =  {GenericAtomicRMW = "umin", MemSemantic = "acq_rel", MemSyncScope = "gpu"} {
     ^bb0(%in: i8, %in_0: i8, %out: i8):
       %3 = arith.minui %in, %in_0 : i8
