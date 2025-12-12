@@ -21,6 +21,8 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "llvm/Support/LogicalResult.h"
+#include <optional>
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -270,6 +272,26 @@ bool isLastReduce(hivm::VReduceOp reduceOp, FlattenResult &flattenResult) {
          (flattenLastReduceDim.value() == flattenRank - 1);
 }
 
+static std::optional<llvm::SmallVector<int64_t>>
+getFlattenValStrides(FlattenResult &flattenResult, Value val) {
+  auto flattenType = flattenResult.getOperandTypeAfterFlattened(val);
+  if (!flattenType.has_value()) {
+    return std::nullopt;
+  }
+
+  auto flattenMemRef = cast<MemRefType>(flattenType.value());
+
+  int64_t flattenOffset;
+  SmallVector<int64_t> flattenStrides;
+
+  if (failed(
+          getStridesAndOffset(flattenMemRef, flattenStrides, flattenOffset))) {
+    return std::nullopt;
+  }
+
+  return flattenStrides;
+}
+
 std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
                                             Value operand,
                                             std::optional<int32_t> alignDim) {
@@ -302,18 +324,9 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
       cast<ShapedType>(flattenSrcType.value()).getShape()[flattenRank - 1];
   auto elemType = getElementTypeOrSelf(flattenSrcType.value());
 
-  auto flattenDstType =
-      flattenResult->getOperandTypeAfterFlattened(reduceOp.getDstValue());
-  assert(flattenDstType != std::nullopt);
-  auto flattenDstMemRef = cast<MemRefType>(flattenDstType.value());
-
-  int64_t flattenDstOffset;
-  SmallVector<int64_t> flattenDstStrides;
-
-  auto haveDstStrides =
-      getStridesAndOffset(flattenDstMemRef, flattenDstStrides, flattenDstOffset)
-          .succeeded();
-  if (haveDstStrides && (flattenDstStrides[0] == 1) &&
+  auto flattenDstStrides =
+      getFlattenValStrides(flattenResult.value(), reduceOp.getDstValue());
+  if (flattenDstStrides.has_value() && (flattenDstStrides.value()[0] == 1) &&
       static_cast<unsigned int>(lastReduceDimSize) *
               elemType.getIntOrFloatBitWidth() / 8 <=
           util::BL &&
@@ -331,6 +344,20 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   // stride alignment after library support init uncontiguous
   if (!isInitOper) {
     return alignDim;
+  }
+
+  auto flattenSrcStrides =
+      getFlattenValStrides(flattenResult.value(), reduceOp.getSrc());
+  auto flattenOperandStrides =
+      getFlattenValStrides(flattenResult.value(), operand);
+  if (!flattenSrcStrides.has_value() || !flattenOperandStrides.has_value()) {
+    return alignDim;
+  }
+
+  for (auto idx = flattenAlignDim.value(); idx < flattenRank; idx++) {
+    if (flattenSrcStrides.value()[idx] != flattenOperandStrides.value()[idx]) {
+      return alignDim;
+    }
   }
 
   // adjust to find previous uncontiguous dimension to do alignment
