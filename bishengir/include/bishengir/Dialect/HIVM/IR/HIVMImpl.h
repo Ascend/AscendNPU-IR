@@ -114,6 +114,23 @@ isSingleChainMmadToMmad(MmadLikeOpType op) {
   return maybeMmadLikeOp.has_value();
 }
 
+template <typename MmadLikeOpType>
+typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
+                            std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
+                        bool>::type
+isSingleChainCrossLoopMmadToMmad(MmadLikeOpType op) {
+  if (auto blockArg = dyn_cast_if_present<BlockArgument>(op.getC())) {
+    if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      auto correspondYieldVal = scfForOp.getTiedLoopYieldedValue(blockArg)->get();
+
+      return traceDefOp<MmadLikeOpType>(correspondYieldVal).has_value();
+    }
+  }
+
+  return false;
+}
+
 /// Broadcast Scalar.
 hivm::VBrcOp brcScalar(RewriterBase &rewriter, Location loc,
                        TypedAttr initValue, Value targetTensor);
