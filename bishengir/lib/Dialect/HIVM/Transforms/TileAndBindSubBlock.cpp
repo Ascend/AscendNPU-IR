@@ -24,7 +24,6 @@
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/MoveUpAffineMap.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"

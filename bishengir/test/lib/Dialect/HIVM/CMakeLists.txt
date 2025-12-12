@@ -2,6 +2,7 @@
 add_bishengir_library(BiShengIRTestDialectHIVM
   TestFlattenInterface.cpp
   TestHIVMDimensionAnalyzer.cpp
+  TestHIVMTransforms.cpp
 
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
