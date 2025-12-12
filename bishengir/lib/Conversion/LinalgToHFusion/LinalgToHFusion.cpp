@@ -375,7 +375,8 @@ struct AtomicLinalgGenericToHFusionStorePattern
 //    ins(%arg0, %arg1 : tensor<256x64xf32>, tensor<256x64xi32>)
 //    outs(%0, %1 : tensor<256xf32>, tensor<256xi32>)
 //    dimensions = [1] -> tensor<256xf32>, tensor<256xi32>
-struct LinalgToHFusionReduceWithIndex : public OpRewritePattern<linalg::ReduceOp> {
+struct LinalgToHFusionReduceWithIndex
+    : public OpRewritePattern<linalg::ReduceOp> {
   using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::ReduceOp op,
@@ -410,24 +411,60 @@ struct LinalgToHFusionReduceWithIndex : public OpRewritePattern<linalg::ReduceOp
       return failure();
     }
 
-    ValueRange inits = op.getInits();
-    ValueRange inputs = op.getInputs();
+    SmallVector<Value> inputs;
+    auto inits = llvm::to_vector(op.getInits());
     auto reduceKindAttr =
         ReduceWithIndexKindAttr::get(rewriter.getContext(), reduceKind);
     auto tieBreakLeftAttr = BoolAttr::get(rewriter.getContext(), tieBreakLeft);
-    std::optional<Operation *> isIndexInputUnused = utils::getAnnotateOpWithAttr(inputs[1], "UseIndexInput");
+    std::optional<Operation *> isIndexInputUnused =
+        utils::getAnnotateOpWithAttr(op.getInputs()[1], "UseIndexInput");
+    bool isUnsigned = checkUnsignedIntInput(op);
     if (isIndexInputUnused.has_value()) {
-      rewriter.replaceOpWithNewOp<hfusion::ReduceWithIndexOp>(
-        op, TypeRange{inits[0].getType(), inits[1].getType()},
-        /*input*/ op.getInputs(), /*outputValue&Index*/ inits, reduceKindAttr,
-        tieBreakLeftAttr, op.getDimensionsAttr());
+      inputs = llvm::to_vector(op.getInputs());
     } else {
-      rewriter.replaceOpWithNewOp<hfusion::ReduceWithIndexOp>(
-          op, TypeRange{inits[0].getType(), inits[1].getType()},
-          /*input*/ ValueRange{op.getInputs()[0]}, /*outputValue&Index*/ inits, reduceKindAttr,
-          tieBreakLeftAttr, op.getDimensionsAttr());
+      inputs.push_back(op.getInputs()[0]);
     }
+
+    auto bitWidth = getElementTypeOrSelf(inputs[0]).getIntOrFloatBitWidth();
+    if (isUnsigned && bitWidth == 8) {
+      Type inputType = rewriter.getF16Type();
+      Type initType = rewriter.getF16Type();
+      if (auto tensorType = dyn_cast<RankedTensorType>(inputs[0].getType()))
+        inputType = RankedTensorType::get(tensorType.getShape(), inputType);
+      if (auto tensorType = dyn_cast<RankedTensorType>(inits[0].getType()))
+        initType = RankedTensorType::get(tensorType.getShape(), initType);
+      inputs[0] = rewriter.create<arith::UIToFPOp>(inputs[0].getLoc(), inputType,
+                                                   inputs[0]);
+      inits[0] = rewriter.create<arith::UIToFPOp>(inits[0].getLoc(), initType,
+                                                  inits[0]);
+    }
+    auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
+        op.getLoc(), TypeRange{inits[0].getType(), inits[1].getType()},
+        /*input*/ inputs, /*outputValue&Index*/ inits,
+        reduceKindAttr, tieBreakLeftAttr, op.getDimensionsAttr());
+    SmallVector<Value> newResults(newOp->result_begin(), newOp->result_end());
+    if (isUnsigned && bitWidth == 8) {
+      newResults[0] = rewriter.create<arith::FPToUIOp>(
+          newResults[0].getLoc(), op->getResultTypes()[0], newResults[0]);
+    }
+    rewriter.replaceOp(op, newResults);
     return success();
+  }
+
+private:
+  bool checkUnsignedIntInput(linalg::ReduceOp op) const {
+    Block *block = &op.getRegion().front();
+    auto inputArg = block->getArgument(0);
+    for (auto *user : inputArg.getUsers()) {
+      if (auto cmpIOp = dyn_cast<arith::CmpIOp>(user)) {
+        if (cmpIOp.getPredicate() == arith::CmpIPredicate::ult ||
+            cmpIOp.getPredicate() == arith::CmpIPredicate::ugt ||
+            cmpIOp.getPredicate() == arith::CmpIPredicate::ule ||
+            cmpIOp.getPredicate() == arith::CmpIPredicate::uge)
+          return true;
+      }
+    }
+    return false;
   }
 };
 
