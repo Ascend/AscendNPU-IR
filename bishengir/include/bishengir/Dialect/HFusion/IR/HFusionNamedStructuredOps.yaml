@@ -63,7 +63,8 @@ structured_op: !HFusionStructuredOpConfig
     value: !ScalarExpression
       scalar_fn:
         kind: atomic_kind
-        attr_name: atomic_kind
+        attr_names:
+          - atomic_kind
         type_var: U
         operands:
         - !ScalarExpression
@@ -108,12 +109,14 @@ structured_op: !HFusionStructuredOpConfig
     value: !ScalarExpression
       scalar_fn:
         kind: unary
-        attr_name: fun
+        attr_names:
+          - fun
         operands:
         - !ScalarExpression
           scalar_fn:
             kind: type
-            attr_name: cast
+            attr_names:
+              - cast
             type_var: U
             operands:
             - !ScalarExpression
@@ -164,12 +167,14 @@ structured_op: !HFusionStructuredOpConfig
     value: !ScalarExpression
       scalar_fn:
         kind: binary
-        attr_name: fun
+        attr_names:
+          - fun
         operands:
         - !ScalarExpression
           scalar_fn:
             kind: type
-            attr_name: cast
+            attr_names:
+              - cast
             type_var: U
             operands:
             - !ScalarExpression
@@ -177,7 +182,8 @@ structured_op: !HFusionStructuredOpConfig
         - !ScalarExpression
           scalar_fn:
             kind: type
-            attr_name: cast
+            attr_names:
+              - cast
             type_var: U
             operands:
             - !ScalarExpression
@@ -223,7 +229,8 @@ structured_op: !HFusionStructuredOpConfig
     value: !ScalarExpression
       scalar_fn:
         kind: compare
-        attr_name: compare_fn
+        attr_names:
+          - compare_fn
         operands:
         - !ScalarExpression
           scalar_arg: lhs
@@ -271,6 +278,7 @@ structured_op: !HFusionStructuredOpConfig
       scalar_fn:
         kind: ternary
         fn_name: select
+        attr_names:
         operands:
         - !ScalarExpression
           scalar_arg: cond
@@ -322,7 +330,9 @@ structured_op: !HFusionStructuredOpConfig
     value: !ScalarExpression
       scalar_fn:
         kind: round
-        attr_name: round_mode
+        attr_names:
+          - cast
+          - round_mode
         type_var: U
         operands:
         - !ScalarExpression
@@ -357,6 +367,7 @@ structured_op: !HFusionStructuredOpConfig
       scalar_fn:
         kind: type
         fn_name: bitcast
+        attr_names:
         type_var: U
         operands:
         - !ScalarExpression

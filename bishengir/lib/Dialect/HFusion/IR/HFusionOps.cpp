@@ -624,9 +624,12 @@ public:
   }
 
   // Build the type functions defined by OpDSL.
-  Value buildRoundMode(RoundMode round, Type toType, Value operand) {
+  Value buildRoundMode(TypeFn castSign, RoundMode round, Type toType,
+                       Value operand) {
     bool isUnsignedCast = false;
-    if (operand.getType().isInteger(1) && toType.getIntOrFloatBitWidth() > 1) {
+    if ((castSign == TypeFn::cast_unsigned) ||
+        (operand.getType().isInteger(1) &&
+         toType.getIntOrFloatBitWidth() > 1)) {
       // TODO: general support for unsigned cast
       isUnsignedCast = true;
     }
