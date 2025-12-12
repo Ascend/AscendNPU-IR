@@ -1851,9 +1851,10 @@ LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
     return success();
   } else if (isF32ToI8) {
     // step 1: cast f32 to i32 in TRUNC mode
+    // As it is TRUNCWITHOVERFLOW mode, lower 8 bits are extracted.
+    // So unsigned handling is not required.
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getI32Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt, true,
-                                castIntegerType);
+                                hfusion::RoundMode::TRUNC);
     // step 2: cast i32 to i8 in TRUNCWITHOVERFLOW mode
     castValue = hfusion::castTo(rewriter, castValue, outType,
                                 hfusion::RoundMode::TRUNCWITHOVERFLOW);

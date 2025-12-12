@@ -243,7 +243,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       return hfusion::TypeFn::cast_signed;
     }
 
-    if (isa<arith::UIToFPOp>(op))
+    if (isa<arith::UIToFPOp, arith::FPToUIOp>(op.getOperation()))
       return hfusion::TypeFn::cast_unsigned;
     return hfusion::TypeFn::cast_signed;
   }
