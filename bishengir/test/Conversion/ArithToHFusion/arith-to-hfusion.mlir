@@ -412,3 +412,13 @@ func.func @test_arith_bitcast(%arg : tensor<32xf32>) -> tensor<32xi32> {
   %1 = arith.bitcast %arg : tensor<32xf32> to tensor<32xi32>
   return %1 : tensor<32xi32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_arith_remui
+func.func @test_arith_remui(%arg0 : tensor<1024xi8>, %arg1 : tensor<1024xi8>) -> tensor<1024xi8> {
+  // CHECK: %[[EMPTY:.*]] = tensor.empty()
+  // CHECK: %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>}
+  %ret = arith.remui %arg0, %arg1 : tensor<1024xi8>
+  return %ret : tensor<1024xi8>
+}
