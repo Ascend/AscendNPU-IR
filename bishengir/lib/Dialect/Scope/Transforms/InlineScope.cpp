@@ -47,9 +47,6 @@ template <typename OpTy>
 class ExtractOpsFromBodyPattern : public OpRewritePattern<OpTy> {
 public:
   using OpRewritePattern<OpTy>::OpRewritePattern;
-  explicit ExtractOpsFromBodyPattern(MLIRContext *context)
-      : OpRewritePattern<OpTy>(context) {}
-
   LogicalResult matchAndRewrite(OpTy regionOp,
                                 PatternRewriter &rewriter) const override {
     if (regionOp.getNoInline())
@@ -57,15 +54,15 @@ public:
     assert(regionOp->getNumRegions() == 1 && regionOp->getNumResults() == 0 &&
            "handle case of op with single region without result");
 
-    for (auto it = regionOp.getRegion().op_begin();
-         it != regionOp.getRegion().op_end(); ++it) {
-      if (it->template hasTrait<OpTrait::ReturnLike>())
-        continue;
+    Region &region = regionOp.getRegion();
+    Block &block = region.front();
+    auto opsToMove = llvm::make_range(block.begin(), std::prev(block.end()));
 
-      LLVM_DEBUG(llvm::dbgs() << "Cloning " << *it << "\n";);
-      rewriter.setInsertionPoint(regionOp);
-      rewriter.clone(*it);
+    for (Operation &op : llvm::make_early_inc_range(opsToMove)) {
+      LLVM_DEBUG(llvm::dbgs() << "Moving " << op << "\n";);
+      rewriter.moveOpBefore(&op, regionOp);
     }
+
     rewriter.eraseOp(regionOp);
     return success();
   }
@@ -82,7 +79,6 @@ void ExtractScopeBodyPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
 
   patterns.add<ExtractOpsFromBodyPattern<ScopeOp>>(&getContext());
-
   if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
     signalPassFailure();
   }
