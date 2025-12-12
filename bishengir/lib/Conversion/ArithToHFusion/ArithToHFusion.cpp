@@ -444,6 +444,7 @@ void mlir::hfusion::populateArithToHFusionConversionPatterns(
                                    hfusion::BinaryFn::maxnumf>,
       ElementwiseOpToHFusionBinary<arith::MaximumFOp, hfusion::BinaryFn::maxf>,
       ElementwiseOpToHFusionBinary<arith::RemSIOp, hfusion::BinaryFn::mod>,
+      ElementwiseOpToHFusionBinary<arith::RemUIOp, hfusion::BinaryFn::modui>,
       ElementwiseOpToHFusionBinary<arith::ShLIOp, hfusion::BinaryFn::shli>,
       ElementwiseOpToHFusionBinary<arith::ShRSIOp, hfusion::BinaryFn::shrsi>,
       ElementwiseOpToHFusionBinary<arith::ShRUIOp, hfusion::BinaryFn::shrui>,
