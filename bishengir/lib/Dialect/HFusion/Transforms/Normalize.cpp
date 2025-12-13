@@ -1003,7 +1003,9 @@ public:
     //         y_f32 = cast(y) => f32
     Value xF32 = xOrig;
     Value yF32 = yOrig;
-
+    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::mod)
+                                  ? hfusion::TypeFn::cast_signed
+                                  : hfusion::TypeFn::cast_unsigned;
     if (!elemType.isF32()) {
       if (elemType.isIntOrIndex()) {
         // For integer → f32 casts, force TRUNC rounding mode to match
@@ -1012,12 +1014,14 @@ public:
             rewriter,
             xOrig,
             rewriter.getF32Type(),
-            hfusion::RoundMode::TRUNC);
+            hfusion::RoundMode::TRUNC,
+            cast_integer_type);
         yF32 = hfusion::castTo(
             rewriter,
             yOrig,
             rewriter.getF32Type(),
-            hfusion::RoundMode::TRUNC);
+            hfusion::RoundMode::TRUNC,
+            cast_integer_type);
       } else {
         // For non-integer element types (e.g. f16/bf16) just cast to f32.
         xF32 = hfusion::castTo(rewriter, xOrig, rewriter.getF32Type());
