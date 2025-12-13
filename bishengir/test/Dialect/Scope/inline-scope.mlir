@@ -1,4 +1,5 @@
 // RUN: bishengir-opt --inline-scope --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --inline-scope="force-inline=true" --split-input-file %s | FileCheck --check-prefix=CHECK-FORCE %s
 
 // CHECK:   func.func @inline_func(%[[ARG_0:.*]]: tensor<64x128xf32>)
 // CHECK-DAG:           %[[END_2:.*]] = arith.constant {debug = 12 : index} 4096 : index
@@ -70,7 +71,7 @@ module {
       %1 = arith.muli %0, %0 : tensor<i32>
       hivm.hir.store ins(%1 : tensor<i32>) outs(%arg2 : memref<i32>)
       scope.return
-    } {hivm.t_core_type = #hivm.tcore_type<VECTOR>}
+    }
     return
   }
 }
@@ -104,3 +105,17 @@ module {
   }
 }
 
+// -----
+
+module {
+  // CHECK: scope.scope
+  // CHECK-FORCE-NOT: scope.scope
+  func.func @no_inline(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: memref<i32>) {
+    scope.scope : () -> () {
+      %0 = arith.addi %arg0, %arg1 : tensor<i32>
+      hivm.hir.store ins(%0 : tensor<i32>) outs(%arg2 : memref<i32>)
+      scope.return
+    } {no_inline}
+    return
+  }
+}
