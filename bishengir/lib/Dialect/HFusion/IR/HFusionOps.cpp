@@ -2244,6 +2244,26 @@ LogicalResult CumsumOp::verify() { return verifyCumOp(*this); }
 LogicalResult CumprodOp::verify() { return verifyCumOp(*this); }
 
 //===----------------------------------------------------------------------===//
+// AtomicRMWOp
+//===----------------------------------------------------------------------===//
+
+void AtomicRMWOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (llvm::isa<MemRefType>(this->getInput().getType()))
+    effects.emplace_back(MemoryEffects::Read::get(),
+                          &getOperation()->getOpOperand(0), /*stage=*/0,
+                          /*effectOnFullRegion=*/true,
+                          SideEffects::DefaultResource::get());
+  OpOperand &operand = this->getDstMutable();
+  if (!llvm::isa<MemRefType>(operand.get().getType()))
+    return;
+  effects.emplace_back(MemoryEffects::Write::get(), &operand, /*stage=*/0,
+                       /*effectOnFullRegion=*/true,
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
 // AtomicCasOp
 //===----------------------------------------------------------------------===//
 

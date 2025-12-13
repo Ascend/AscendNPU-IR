@@ -454,10 +454,10 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
     %result = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<?xf32>, tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
     ```
   }];
-  let arguments = (ins Variadic<AnyType>:$src,
+  let arguments = (ins Variadic<TensorOrMemref>:$src,
                        TensorOrMemref:$dst
   );
-  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let results = (outs Optional<TensorOrMemref>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
@@ -496,13 +496,60 @@ def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
                        TensorOrMemref:$dst,
                        Optional<TensorOrMemref>:$mask
   );
-  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let results = (outs Optional<TensorOrMemref>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
     (`mask` `(` $mask^ `:` type($mask) `)`)?
     (`->` type($result_tensor)^)?
+  }];
+}
+
+def AtomicRMWOp : HIVM_Op<"atomic_rmw", [
+  OperElemTypeConstraints<[0], [I1, I8, I16, I32, F16, F32, I64, BF16]>,
+  MemoryEffectsOpInterface,
+  HIVMStructuredOpInterface,
+  DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>
+]> {
+  let summary = "Atomic RMW Op";
+  let description = [{
+    Atomic exchange is an atomic operation that consists of three steps:
+    1. Read the current value of the specified memory address
+    2. Perform action on value depending on atomic_kind attr
+    3. Return the old value read previously
+    The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
+
+    Constraints:
+      1. The input memref and output memref must have the same rank
+         and the same element type.
+
+    Arguments:
+      * `src`: new value
+      * `dst`: memory location in GM
+
+    Examples:
+    ```mlir
+    hivm.hir.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_kind = <add>
+    %result = hivm.hir.atomic_rmw ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) atomic_kind = <or> -> tensor<?xf32>
+    ```
+  }];
+  let arguments = (ins AnyType:$src,
+                       TensorOrMemref:$dst,
+                       HIVM_AtomicKindAttr:$atomic_kind
+  );
+  let results = (outs Optional<TensorOrMemref>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    `atomic_kind` `=` $atomic_kind
+    (`->` type($result_tensor)^)?
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getDstMutable();
+    }
   }];
 }
 

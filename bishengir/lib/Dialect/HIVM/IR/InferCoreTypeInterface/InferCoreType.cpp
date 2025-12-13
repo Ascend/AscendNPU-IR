@@ -296,6 +296,8 @@ std::optional<TCoreType> CopyOp::inferCoreType() {
 // HIVM Macro Ops
 //===----------------------------------------------------------------------===//
 
+std::optional<TCoreType> AtomicRMWOp::inferCoreType() { return TCoreType::VECTOR; }
+
 std::optional<TCoreType> MatmulOp::inferCoreType() { return TCoreType::CUBE; }
 
 std::optional<TCoreType> MixMatmulOp::inferCoreType() {

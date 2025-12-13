@@ -1048,6 +1048,136 @@ private:
   }
 };
 
+class AtomicRMWOpLowering : public OpRewritePattern<hivm::AtomicRMWOp> {
+  using OpRewritePattern<hivm::AtomicRMWOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::AtomicRMWOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    // If RMW don't have return args -> replace it to store
+    if (op.getNumResults() == 0) {
+      // convert hivm::AtomicRMWOp to hivm::StoreOp
+      Value src = op.getSrc();
+      Value dst = op.getDst();
+
+      auto newStoreOp =
+          rewriter.create<hivm::StoreOp>(loc, TypeRange(), src, dst);
+
+      // Add atomic attr to hivm.store
+      auto hsAtomicKind = op.getAtomicKind();
+      newStoreOp.setAtomicKind(hsAtomicKind);
+
+      rewriter.replaceOp(op, newStoreOp);
+      return success();
+    }
+    // If RMW has return value we should always use software lock
+
+    return decomposeEltwiseAtomic(op, rewriter, loc);
+  }
+
+private:
+  bool shouldCastOperation(hivm::AtomicRMWOp op) const {
+    switch (op.getAtomicKind()) {
+    case hivm::AtomicKind::ADD:
+    case hivm::AtomicKind::MIN:
+    case hivm::AtomicKind::MAX:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  Value processCastTo(PatternRewriter &rewriter, Location loc, Value val,
+                      Type initType) const {
+    if (initType.isInteger(8)) {
+      auto roundingAttr =
+          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
+
+      val = castTo(rewriter, loc, val, roundingAttr, rewriter.getF16Type())
+                .getSingleDst();
+      val = castTo(rewriter, loc, val, roundingAttr, rewriter.getF32Type())
+                .getSingleDst();
+    } else if (initType.isBF16()) {
+      auto roundingAttr =
+          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
+
+      val = castTo(rewriter, loc, val, roundingAttr, rewriter.getF32Type())
+                .getSingleDst();
+    }
+
+    return val;
+  }
+
+  Value processCastFrom(PatternRewriter &rewriter, Location loc, Value val,
+                        Type initType) const {
+    if (initType.isInteger(8)) {
+      auto truncAttr =
+          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::TRUNC);
+      val = castTo(rewriter, loc, val, truncAttr, rewriter.getI32Type())
+                .getSingleDst();
+
+      auto truncOverflowAttr = rewriter.getAttr<hivm::RoundModeAttr>(
+          hivm::RoundMode::TRUNCWITHOVERFLOW);
+      val = castTo(rewriter, loc, val, truncOverflowAttr, rewriter.getI8Type())
+                .getSingleDst();
+    } else if (initType.isBF16()) {
+      auto roundingAttr =
+          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
+
+      val = castTo(rewriter, loc, val, roundingAttr, rewriter.getBF16Type())
+                .getSingleDst();
+    }
+
+    return val;
+  }
+
+  LogicalResult decomposeEltwiseAtomic(hivm::AtomicRMWOp op,
+                                       PatternRewriter &rewriter,
+                                       Location loc) const {
+    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+    // 1. insert sync_block_lock
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+
+    // 2. create tmp memref alloc and load dst to tmp
+    auto src = op.getSrc();
+    auto tmpUB = createTmpBufferOrTensorWithTargetType(rewriter, loc,
+                                                       op.getResults()[0]);
+    rewriter.replaceAllUsesWith(op.getResults()[0], tmpUB);
+
+    auto dst = op.getDst();
+    rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB);
+
+    auto elementType = getElementTypeOrSelf(src);
+    bool shouldCast = shouldCastOperation(op);
+    if (shouldCast) {
+      src = processCastTo(rewriter, op.getLoc(), src, elementType);
+      tmpUB = processCastTo(rewriter, op.getLoc(), tmpUB, elementType);
+    }
+
+    // 3. do eltwise vv between src and tmp(and/or/xor)
+    auto resUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
+    auto eltwiseOp = createEltwiseOpByAtomicKind(
+        rewriter, loc, TypeRange{}, ValueRange{src, tmpUB}, ValueRange{resUB},
+        op.getAtomicKind());
+    if (!eltwiseOp.has_value()) {
+      return op.emitError("not support block-sync atomic kind!!");
+    }
+
+    if (shouldCast) {
+      resUB = processCastFrom(rewriter, loc, resUB, elementType);
+    }
+
+    // 4. store tmp to dst
+    rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
+
+    // 5. insert sync_block_unlock
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
 /// implement atomic cas in software way
 /// e.g. hivm.hir.atomic_cas ins(%src0_ub, src1_ub) outs(%dst_gm) is converted
 /// to
@@ -1071,7 +1201,10 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     // step1: load old val in gm to ub
     // create memref.alloc op
     auto src0 = op.getSrc()[0];
-    auto tmpUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src0);
+
+    bool hasReturn = !op.getResults().empty();
+    auto tmpUB = createTmpBufferOrTensorWithTargetType(
+        rewriter, loc, hasReturn ? op.getResults()[0] : src0);
 
     auto dst = op.getDst();
     rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB);
@@ -1097,6 +1230,9 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
 
     rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+    if (hasReturn) {
+      rewriter.replaceAllUsesWith(op.getResults()[0], tmpUB);
+    }
     rewriter.eraseOp(op);
     return success();
   }
@@ -1124,7 +1260,10 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
     rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // step1: load old val in dst gm to ub
-    auto tmpUB_dst = createTmpBufferOrTensorWithTargetType(rewriter, loc, src);
+
+    bool hasReturn = !op.getResults().empty();
+    auto tmpUB_dst = createTmpBufferOrTensorWithTargetType(
+        rewriter, loc, hasReturn ? op.getResults()[0] : src);
     rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB_dst);
     if (mask) {
       // step2: select according to the mask
@@ -1146,6 +1285,9 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
     }
 
     rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+    if (hasReturn) {
+      rewriter.replaceAllUsesWith(op.getResults()[0], tmpUB_dst);
+    }
     rewriter.eraseOp(op);
     return success();
   }
@@ -1163,22 +1305,21 @@ void HIVMDecomposeOpPass::runOnOperation() {
     return;
 
   RewritePatternSet patterns(&getContext());
-  patterns
-      .add<MultiAxesVBrcLowering, VCastLowering, VAbsIntegerLowering,
-           VRecOpHighPrecisionLowering, VReduceAnyLowering, VReduceAllLowering,
-           VReduceInitInitializing, SyncBlockOpLowering, VCmpOpLowering,
-           DecomposeCastScalarToVecOp<arith::ExtFOp>,
-           DecomposeCastScalarToVecOp<arith::ExtSIOp>,
-           DecomposeCastScalarToVecOp<arith::ExtUIOp>,
-           DecomposeCastScalarToVecOp<arith::FPToSIOp>,
-           DecomposeCastScalarToVecOp<arith::FPToUIOp>,
-           DecomposeCastScalarToVecOp<arith::SIToFPOp>,
-           DecomposeCastScalarToVecOp<arith::TruncFOp>,
-           DecomposeScalarOpToVecOp<math::LogOp, hivm::VLnOp>,
-           DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
-           DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
-           AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering>(
-          &getContext());
+  patterns.add<MultiAxesVBrcLowering, VCastLowering, VAbsIntegerLowering,
+               VRecOpHighPrecisionLowering, VReduceAnyLowering,
+               VReduceAllLowering, VReduceInitInitializing, SyncBlockOpLowering,
+               VCmpOpLowering, DecomposeCastScalarToVecOp<arith::ExtFOp>,
+               DecomposeCastScalarToVecOp<arith::ExtSIOp>,
+               DecomposeCastScalarToVecOp<arith::ExtUIOp>,
+               DecomposeCastScalarToVecOp<arith::FPToSIOp>,
+               DecomposeCastScalarToVecOp<arith::FPToUIOp>,
+               DecomposeCastScalarToVecOp<arith::SIToFPOp>,
+               DecomposeCastScalarToVecOp<arith::TruncFOp>,
+               DecomposeScalarOpToVecOp<math::LogOp, hivm::VLnOp>,
+               DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
+               DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
+               AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
+               AtomicRMWOpLowering>(&getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
