@@ -1,4 +1,4 @@
-//===- MoveUpAffineMap.h --------------------------------------------------===//
+//===- HoistAffine.h --------------------------------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,13 +15,15 @@
 //
 //============================================================================//
 
-#ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_MOVE_UP_AFFINE_MAP_PATTERN_H
-#define BISHENGIR_DIALECT_HIVM_TRANSFORMS_MOVE_UP_AFFINE_MAP_PATTERN_H
+#ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_HOIST_AFFINE_PATTERN_H
+#define BISHENGIR_DIALECT_HIVM_TRANSFORMS_HOIST_AFFINE_PATTERN_H
 
 namespace mlir {
 class RewritePatternSet;
 namespace hivm::detail {
-void populateMoveUpAffineMapPattern(RewritePatternSet &patterns);
+
+// Populate patterns to hoist affine dialect ops.
+void populateHoistAffinePattern(RewritePatternSet &patterns);
 
 } // namespace hivm::detail
 

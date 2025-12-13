@@ -40,6 +40,7 @@ namespace bishengir_test {
   X(TestFlattenInterface);                                                     \
   X(TestFunctionCallPass);                                                     \
   X(TestHIVMDimensionAnalyzer);                                                \
+  X(TestHIVMTransformsPass);                                                   \
   X(ValidPropagatedReshapePass)
 
 // Generate declarations
