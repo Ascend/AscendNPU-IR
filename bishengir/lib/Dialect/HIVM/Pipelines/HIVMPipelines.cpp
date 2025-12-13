@@ -341,6 +341,10 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
     bufferizationPipeline(pm, options);
   }
   hivmPostBufferizationOptimizationPipeline(pm, options);
+  // Optimizations that relies on scope should be done after this point. Inline
+  // all `scope.scope` ops.
+  pm.addPass(
+      scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
 }
 
 //===----------------------------------------------------------------------===//
