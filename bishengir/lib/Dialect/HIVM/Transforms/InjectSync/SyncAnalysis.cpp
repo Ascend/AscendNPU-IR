@@ -245,8 +245,9 @@ void SyncAnalyzer::InsertSeqSync(CompoundInstanceElement *nowCompound,
     } else if (auto *forInstance =
                    dyn_cast<LoopInstanceElement>(frontPtr.get())) {
       assert(syncIR[frontIndex]->pipeAfter.empty());
-      int skipLoop = InsertLoopSync(i, nowCompound, begin, forInstance,
-                                    syncElement, syncRecordList, forEndIndex);
+      int skipLoop = 
+          static_cast<int>(InsertLoopSync(i, nowCompound, begin, forInstance, syncElement,
+                           syncRecordList, forEndIndex));
       assert(syncIR[frontIndex]->pipeBefore.empty());
       i -= skipLoop;
     } else if (auto *branchElement =
