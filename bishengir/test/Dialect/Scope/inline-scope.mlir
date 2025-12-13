@@ -54,3 +54,23 @@ module {
     return %arg0 : tensor<64x128xf32>
   }
 }
+
+// -----
+
+// CHECK:   func.func @extract_multiple_ops(%[[ARG_0:.*]]: tensor<i32>, %[[ARG_1:.*]]: tensor<i32>, %[[ALLOC:.*]]: memref<i32>) {
+// CHECK:           %[[ADD:.*]] = arith.addi %[[ARG_0]], %[[ARG_1]] : tensor<i32>
+// CHECK:           %[[MUL:.*]] = arith.muli %[[ADD]], %[[ADD]] : tensor<i32>
+// CHECK:           hivm.hir.store ins(%[[MUL]] : tensor<i32>) outs(%[[ALLOC]] : memref<i32>)
+// CHECK:           return
+// CHECK:         }
+module {
+  func.func @extract_multiple_ops(%arg0: tensor<i32>, %arg1: tensor<i32>, %arg2: memref<i32>) {
+    scope.scope : () -> () {
+      %0 = arith.addi %arg0, %arg1 : tensor<i32>
+      %1 = arith.muli %0, %0 : tensor<i32>
+      hivm.hir.store ins(%1 : tensor<i32>) outs(%arg2 : memref<i32>)
+      scope.return
+    } {hivm.t_core_type = #hivm.tcore_type<VECTOR>}
+    return
+  }
+}
