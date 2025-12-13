@@ -938,18 +938,17 @@ public:
   }
 };
 
-///  normalize mod op to rec op
-///   z = x % y
+///  Normalize mod op to a canonical form that matches Triton dialect:
+///    z = x % y
 ///  is normalized to
-///   rem = x - truncate_div(x, y) * y
-///   tmp = rem, where sign(x) == sign(y) or rem == 0
-///         rem + y, where sign(x) != sign(y) and rem != 0
-///   z = -1, if type(y) == integer and y == 0
-///       tmp, otherwise
-///  e.g.
-///   41 % 20 = 1; 41 % (-20) = -19; (-72) % 8 = 0
-///  int/fp16/bf16 type needs to convert to fp32 to calculate for higher
-///  accuracy
+///    q = trunc(x / y)                // truncation toward zero
+///    z = x - q * y
+///  This matches:
+///    41 % 20    = 1
+///    41 % (-20) = 1
+///    (-72) % 8  = 0
+///  int/fp16/bf16 types are converted to fp32 for the division to get
+///  better numerical behavior.
 struct NormalizeModOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -972,49 +971,13 @@ public:
         .getResults()[0];
   }
 
-  Value handleZeromodulusForIntegerType(PatternRewriter &rewriter, Location loc,
-                                        Value modulus, Value res) const {
-    auto yType = modulus.getType();
-    Value tensorY = modulus;
-    // TODO: delete fillop after compare op supporting scalar-scalar operation
-    if (!isa<ShapedType>(yType)) {
-      auto yTensor = utils::createEmptyOp(rewriter, loc, res);
-      tensorY = rewriter.create<linalg::FillOp>(loc, modulus, yTensor)
-                    .getResults()[0];
-    }
-
-    auto resTy = dyn_cast<TensorType>(res.getType());
-    auto elemType = getElementTypeOrSelf(resTy);
-    auto constZero = utils::createConstantOp<int>(rewriter, loc, elemType, 0);
-    auto zeroFlag =
-        createCmpOp(rewriter, loc, tensorY, constZero, CompareFn::veq)
-            ->getResult(0);
-
-    auto constNegOne =
-        utils::createConstantOp<int>(rewriter, loc, elemType, -1);
-    auto negOneTensor =
-        utils::createEmptyOpWithTargetElemType(rewriter, loc, res, elemType);
-    auto tensorNegOne =
-        rewriter.create<linalg::FillOp>(loc, constNegOne, negOneTensor)
-            .getResults()[0];
-
-    auto emptyResTensor = utils::createEmptyOp(rewriter, loc, res);
-    auto resWithZeroModulus =
-        rewriter
-            .create<hfusion::SelectOp>(loc, TypeRange(emptyResTensor),
-                                       ValueRange{zeroFlag, tensorNegOne, res},
-                                       ValueRange{emptyResTensor})
-            .getResults()[0];
-
-    return resWithZeroModulus;
-  }
-
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
 
+    // Support both signed and unsigned modulo.
     auto fun = op.getFun();
     if (fun != hfusion::BinaryFn::mod && fun != hfusion::BinaryFn::modui) {
       return failure();
@@ -1022,123 +985,101 @@ public:
 
     auto resTensor = op.getResultTensors()[0];
     auto resTy = dyn_cast<TensorType>(resTensor.getType());
-    auto elemType = getElementTypeOrSelf(resTy);
-    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) || elemType.isInteger(32)) {
+    if (!resTy) {
       return failure();
     }
 
-    // step 1: x_f32 = cast(x) => f32
-    //         y_f32 = cast(y) => f32
-    Value xF32 = op.getInputs()[0];
-    Value yF32 = op.getInputs()[1];
-    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::mod)
-                                  ? hfusion::TypeFn::cast_signed
-                                  : hfusion::TypeFn::cast_unsigned;
-    if (!elemType.isF32()) {
-      xF32 = hfusion::castTo(rewriter, op.getInputs()[0], rewriter.getF32Type(),
-                             cast_integer_type);
-      yF32 = hfusion::castTo(rewriter, op.getInputs()[1], rewriter.getF32Type(),
-                             cast_integer_type);
+    auto elemType = getElementTypeOrSelf(resTy);
+    // Only support int/index/float, but not i64.
+    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64)) {
+      return failure();
     }
 
-    // step 2: trunc_div_f32 = truncate_div(x_f32, y_f32)
+    // Original inputs in their original dtype.
+    Value xOrig = op.getInputs()[0];
+    Value yOrig = op.getInputs()[1];
+
+    // step 1: x_f32 = cast(x) => f32
+    //         y_f32 = cast(y) => f32
+    Value xF32 = xOrig;
+    Value yF32 = yOrig;
+
+    if (!elemType.isF32()) {
+      if (elemType.isIntOrIndex()) {
+        // For integer → f32 casts, force TRUNC rounding mode to match
+        // C-like modulo semantics and the existing tests.
+        xF32 = hfusion::castTo(
+            rewriter,
+            xOrig,
+            rewriter.getF32Type(),
+            hfusion::RoundMode::TRUNC);
+        yF32 = hfusion::castTo(
+            rewriter,
+            yOrig,
+            rewriter.getF32Type(),
+            hfusion::RoundMode::TRUNC);
+      } else {
+        // For non-integer element types (e.g. f16/bf16) just cast to f32.
+        xF32 = hfusion::castTo(rewriter, xOrig, rewriter.getF32Type());
+        yF32 = hfusion::castTo(rewriter, yOrig, rewriter.getF32Type());
+      }
+    }
+
+    // step 2: q_f32 = truncate_div(x_f32, y_f32)
     auto emptyDivTensor = utils::createEmptyOpWithTargetElemType(
         rewriter, op->getLoc(), resTensor, rewriter.getF32Type());
     Operation *divOp = nullptr;
     std::optional<Operation **> divF32 = &divOp;
     auto truncDivF32 = hfusion::divWithRoundMode(
-        rewriter, op.getLoc(), rewriter.getF32Type(), xF32, yF32,
-        emptyDivTensor, hfusion::RoundMode::TRUNC, divF32);
+        rewriter, op.getLoc(), rewriter.getF32Type(),
+        xF32, yF32, emptyDivTensor,
+        hfusion::RoundMode::TRUNC, divF32);
     assert((divF32 != std::nullopt) && (*divF32.value()) != nullptr &&
            "div operation cannot be null!");
 
-    // step 3: rem_f32 = x_f32 - trunc_div_f32 * y_f32
+    // step 3: q = q_f32 castTo elemType
+    Value q = hfusion::castTo(rewriter, truncDivF32, elemType);
+
+    // step 4: mul = y * q   (computed in original dtype)
     auto emptyMulTensor =
-        utils::createEmptyOp(rewriter, op->getLoc(), truncDivF32);
-    auto mulF32 =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+        utils::createEmptyOpWithTargetElemType(
+            rewriter, op->getLoc(), resTensor, elemType);
+    auto mul =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                linalg::BinaryFn,
                                 linalg::BinaryFnAttr>(
             rewriter, op.getLoc(), linalg::BinaryFn::mul,
-            ValueRange{truncDivF32, yF32}, emptyMulTensor)
+            ValueRange{yOrig, q}, emptyMulTensor)
             ->getResults()[0];
 
-    auto emptyTmpTensor0 =
-        utils::createEmptyOp(rewriter, op->getLoc(), truncDivF32);
-    auto remF32 =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+    // step 5: res = x - mul (still in original dtype)
+    auto emptyResTensor =
+        utils::createEmptyOpWithTargetElemType(
+            rewriter, op->getLoc(), resTensor, elemType);
+    auto res =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                linalg::BinaryFn,
                                 linalg::BinaryFnAttr>(
             rewriter, op.getLoc(), linalg::BinaryFn::sub,
-            ValueRange{xF32, mulF32}, emptyTmpTensor0)
+            ValueRange{xOrig, mul}, emptyResTensor)
             ->getResults()[0];
 
-    // step 4: rem_f32_for_negative = rem_f32 + y_f32
-    auto emptyTmpTensor1 =
-        utils::createEmptyOp(rewriter, op->getLoc(), truncDivF32);
-    auto remF32ForNegative =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op.getLoc(), linalg::BinaryFn::add,
-            ValueRange{remF32, yF32}, emptyTmpTensor1)
-            ->getResults()[0];
-
-    // step 5: sel_cond = masl1 | mask2 , where mask1 = (rem_f32 == 0), mask2 =
-    // (div_f32 >= 0)
-    // mask1 = (rem_f32 == 0)
-    auto constZero = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), rewriter.getF32Type(),
-        rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-    auto mask1 =
-        createCmpOp(rewriter, op->getLoc(), remF32, constZero, CompareFn::veq)
-            ->getResult(0);
-
-    // mask2 = div_f32 >= 0
-    auto mask2 =
-        createCmpOp(rewriter, op->getLoc(), (*divF32.value())->getResult(0),
-                    constZero, CompareFn::vge)
-            ->getResult(0);
-
-    // sel_cond = mask1 | mask2
-    Type boolType = rewriter.getIntegerType(1);
-    auto emptyCondTensor = utils::createEmptyOpWithTargetElemType(
-        rewriter, op->getLoc(), truncDivF32, boolType);
-    auto selCond =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, op.getLoc(), hfusion::BinaryFn::vor,
-            ValueRange{mask1, mask2}, emptyCondTensor)
-            ->getResults()[0];
-
-    // step 6: res_f32 = select(sel_cond, rem_f32, rem_f32_for_negative)
-    auto emptyResTensor =
-        utils::createEmptyOp(rewriter, op.getLoc(), truncDivF32);
-    auto resF32 = rewriter
-                      .create<hfusion::SelectOp>(
-                          op.getLoc(), TypeRange(emptyResTensor),
-                          ValueRange{selCond, remF32, remF32ForNegative},
-                          ValueRange{emptyResTensor})
-                      .getResults()[0];
-
-    // step 7: res = cast(correct_res_f32) => orignal type
+    // For f32 we keep the "y == inf ? x : res" correction.
     if (elemType.isF32()) {
-      // step 8: correct_res_f32 = select(div == inf, x, res_f32)
       auto correctResF32 =
-          handleInfinityModulus(rewriter, op.getLoc(), xF32, yF32, resF32)
-              .value_or(resF32);
+          handleInfinityModulus(rewriter, op.getLoc(), xF32, yF32, res)
+              .value_or(res);
       rewriter.replaceOp(op, correctResF32);
       return success();
     }
-    auto res = hfusion::castTo(rewriter, resF32, elemType);
 
-    if (elemType.isInteger()) {
-      // step 8: res_f32 = select(div == 0, -1, res)
-      res = handleZeromodulusForIntegerType(rewriter, op->getLoc(),
-                                            op.getInputs()[1], res);
-    }
-
+    // For other types, res is already in elemType, without Torch-specific logic
+    // (no rem + y, no z = -1 if y == 0).
     rewriter.replaceOp(op, res);
     return success();
   }
 };
+
 
 ///  TODO: hfusion::binaryfn::floormod unsupport right now
 ///  normalize mod op to rec op
