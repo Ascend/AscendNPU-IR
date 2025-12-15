@@ -4209,7 +4209,7 @@ public:
             ValueRange{res0, res1->getResults()[0]}, atanInit);
 
     /// res = sign(x) * atan(x)
-    auto signX = sign<hfusion::TaylerMode::ATAN>(rewriter, loc, input);
+    auto signX = sign<hfusion::TaylerMode::ATAN>(rewriter, loc, clipedInput);
     Value resInit = utils::createEmptyOp(rewriter, loc, input);
     Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
