@@ -280,7 +280,7 @@ std::unique_ptr<Scope> Solver::funcIrBuilder(Region &region,
         auto rwOp = std::make_unique<RWOperation>(&op, scopeOp.get(), pipeRead,
                                                   pipeWrite, coreTypeVal,
                                                   readMemOps, writeMemOps);
-        if (isa<hivm::MmadL1Op, hivm::FixpipeOp>(op)) {
+        if (isa<UnitFlagEnabledInterface>(op)) {
           rwOp->hasUnitFlagFeat = true;
           unitFlagFeaturedOps.insert(rwOp.get());
         }
@@ -377,6 +377,9 @@ void Solver::syncIrBuilder(OperationBase *op, Occurrence *parentOcc, int depth,
   int startIndex = globalIndex++;
   auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, startIndex, -1);
   occ->syncIrIndex = static_cast<int>(syncIr.size());
+  if (auto *rwOp = dyn_cast<RWOperation>(op)) {
+    occ->hasUnitFlagFeat = rwOp->hasUnitFlagFeat;
+  }
   syncIr.push_back(std::move(occ));
   Occurrence *occPtr = syncIr.back().get();
   opAllOccurrences[op].push_back(occPtr);

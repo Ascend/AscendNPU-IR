@@ -220,6 +220,8 @@ private:
   // Reset solver internal bookkeeping prior to another pass.
   void reset();
 
+  void resetUnitFlag();
+
   // Walk and process the generated processingOrders to choose conflicts.
   void processOrders();
 
@@ -304,6 +306,9 @@ private:
   std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
   checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
+  bool checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
+                                              Occurrence *occ2);
+
   std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
   checkTestMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
@@ -324,7 +329,7 @@ private:
 
   bool checkAlreadySynced(Occurrence *occ1, Occurrence *occ2);
 
-  bool checkAlreadySyncedWithUnitFlag(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkAlreadySyncedWithUnitFlag(Occurrence *occ1, Occurrence *occ2);
 
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
@@ -417,15 +422,6 @@ private:
 
   void insertMmadL1SyncArgs(IRRewriter &rewriter);
 
-  // Unit-flag helpers (detection and applying modes to ops).
-  hivm::UNIT_FLAG getUnitFlagMode(RWOperation *rwOp);
-
-  Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                              IRRewriter &rewriter);
-
-  std::optional<mlir::Value> getUnitFlagCond(IRRewriter &rewriter,
-                                             RWOperation *rwOp);
-
   void handleUnitFlagEnabledOps(IRRewriter &rewriter);
 
   // Ensure a barrier-all exists before function return.
@@ -442,20 +438,9 @@ private:
                              Occurrence *parOcc2);
 
   // Unit-flag pattern checks used to transform sync into unit-flag modes.
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
+  std::optional<UnitFlagInfo>
   checkUnitFlagPatterns(ConflictPair *conflictPair, Occurrence *occ1,
                         Occurrence *occ2, Occurrence *parentLCALoopOcc);
-
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-  checkMmadl1FixpipeUnitFlagPattern(RWOperation *rwOp1, RWOperation *rwOp2,
-                                    hivm::PIPE pipe1, hivm::PIPE pipe2);
-
-  std::optional<std::pair<hivm::UNIT_FLAG, hivm::UNIT_FLAG>>
-  checkMmadl1FixpipeSingleForLoopUnitFlagPattern(RWOperation *rwOp1,
-                                                 RWOperation *rwOp2,
-                                                 hivm::PIPE pipe1,
-                                                 hivm::PIPE pipe2,
-                                                 bool rw1IsFrontOcc);
 
   std::pair<bool, Occurrence *> checkMmadl0BackwardSyncOpt(Occurrence *loopOcc);
 

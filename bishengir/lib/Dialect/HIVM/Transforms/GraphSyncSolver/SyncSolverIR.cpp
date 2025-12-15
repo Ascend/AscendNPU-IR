@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include <sstream>
 
 using namespace mlir;
 using namespace hivm::syncsolver;
@@ -138,24 +139,23 @@ std::string RWOperation::str(int indent, bool recursive) const {
     pipes = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
   std::string unitFlag;
-  if (hasUnitFlagFeat) {
-    unitFlag = "unit-flag(";
-    Comma comma;
-    if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unitFlag += comma.get() + "as-set";
-    } else if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      unitFlag += comma.get() + "as-set-only-last-iter";
-    } else if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      unitFlag += comma.get() + "as-set-only-first-iter";
-    }
-    if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unitFlag += comma.get() + "as-wait";
-    } else if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      unitFlag += comma.get() + "as-wait-only-last-iter";
-    } else if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      unitFlag += comma.get() + "as-wait-only-first-iter";
-    }
-    unitFlag += ")";
+  if (!mergedUnitFlagInfo.disabledAsSet()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsSet(";
+    llvm::interleaveComma(
+        mergedUnitFlagInfo.getUnitFlagModesAsSet(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += ss.str();
+  }
+  if (!mergedUnitFlagInfo.disabledAsWait()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsWait(";
+    llvm::interleaveComma(
+        mergedUnitFlagInfo.getUnitFlagModesAsWait(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
   }
   ret += std::string(indent, ' ') + opStr + " " + pipes + " " + unitFlag + "\n";
   if (indent) {

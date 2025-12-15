@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 
@@ -73,7 +74,8 @@ void Solver::setProperInsertionPoint(IRRewriter &rewriter,
 Location Solver::getProperLoc(OperationBase *opBase) {
   assert(opBase != nullptr);
   if (auto *ghostOp = dyn_cast<Ghost>(opBase)) {
-    assert(ghostOp != nullptr && ghostOp->block != nullptr && ghostOp->block->getParentOp() != nullptr);
+    assert(ghostOp != nullptr && ghostOp->block != nullptr &&
+           ghostOp->block->getParentOp() != nullptr);
     return ghostOp->block->getParentOp()->getLoc();
   }
   if (opBase->op == nullptr && opBase->parentOp != nullptr) {
@@ -325,114 +327,21 @@ void Solver::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   }
 }
 
-// Unit-flag helpers: compute final mode and create runtime conditions if
-// needed.
-hivm::UNIT_FLAG Solver::getUnitFlagMode(RWOperation *rwOp) {
-  static DenseMap<std::pair<UNIT_FLAG, UNIT_FLAG>, UNIT_FLAG> possibleStates = {
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::DISABLED},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                      UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                      UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_ONLY_FIRST_ITER},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                      UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::ENABLED_ONLY_LAST_ITER},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                      UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS},
-  };
-  auto it = possibleStates.find(
-      std::make_pair(rwOp->unitFlagModeAsSet, rwOp->unitFlagModeAsWait));
-  if (it == possibleStates.end()) {
-    llvm_unreachable("unit-flag state not handled");
-  }
-  return it->second;
-}
-
-Value Solver::getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                                    IRRewriter &rewriter) {
-  Value upperBound = forOp.getUpperBound();
-  Value lowerBound = forOp.getLowerBound();
-  return rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                        lowerBound, upperBound);
-}
-
-std::optional<mlir::Value> Solver::getUnitFlagCond(IRRewriter &rewriter,
-                                                   RWOperation *rwOp) {
-  assert(rwOp != nullptr && rwOp->op != nullptr);
-  OpBuilder::InsertionGuard guard(rewriter);
-  auto loc = rwOp->op->getLoc();
-  SmallVector<Value> conditions;
-  if (rwOp->linkedUnitFlagOpAsWait != nullptr &&
-      (rwOp->linkedUnitFlagOpAsWait->unitFlagModeAsSet ==
-           UNIT_FLAG::ENABLED_ONLY_LAST_ITER ||
-       rwOp->linkedUnitFlagOpAsWait->unitFlagModeAsSet ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS)) {
-    if (auto forOp = dyn_cast<scf::ForOp>(
-            rwOp->linkedUnitFlagOpAsWait->op->getParentOp())) {
-      rewriter.setInsertionPoint(forOp);
-      Value cond = getIsNotDeadLoopValue(forOp, loc, rewriter);
-      conditions.push_back(cond);
-    }
-  }
-  if (rwOp->linkedUnitFlagOpAsSet != nullptr &&
-      (rwOp->linkedUnitFlagOpAsSet->unitFlagModeAsWait ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_ITER ||
-       rwOp->linkedUnitFlagOpAsSet->unitFlagModeAsWait ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS)) {
-    if (auto forOp = dyn_cast<scf::ForOp>(
-            rwOp->linkedUnitFlagOpAsSet->op->getParentOp())) {
-      rewriter.setInsertionPoint(rwOp->op);
-      Value cond = getIsNotDeadLoopValue(forOp, loc, rewriter);
-      conditions.push_back(cond);
-    }
-  }
-  if (conditions.empty()) {
-    return nullptr;
-  } else if (conditions.size() == 1) {
-    return conditions[0];
-  } else if (conditions.size() == 2) {
-    rewriter.setInsertionPoint(rwOp->op);
-    return rewriter.create<arith::OrIOp>(loc, conditions[0], conditions[1]);
-  } else {
-    llvm_unreachable("unexpected/unhandled number of unit-flag conditions.");
-  }
-}
-
 void Solver::handleUnitFlagEnabledOps(IRRewriter &rewriter) {
   for (auto *rwOp : unitFlagFeaturedOps) {
-    auto unitFlagMode = getUnitFlagMode(rwOp);
-    auto unitFlagCond = getUnitFlagCond(rewriter, rwOp);
-    if (unitFlagMode == UNIT_FLAG::DISABLED) {
-      return;
-    }
-    if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(rwOp->op)) {
-      rewriter.setInsertionPoint(fixpipeOp);
-      fixpipeOp.setUnitFlagModeAttr(
-          UnitFlagAttr::get(rwOp->op->getContext(), unitFlagMode));
-      if (unitFlagCond.has_value() && unitFlagCond.value()) {
-        fixpipeOp.getUnitFlagCondMutable().assign(unitFlagCond.value());
+    auto unitFlagInfo = rwOp->mergedUnitFlagInfo;
+    auto unitFlagEnabledOp =
+        llvm::dyn_cast_if_present<UnitFlagEnabledInterface>(rwOp->op);
+    assert(unitFlagEnabledOp != nullptr);
+    if (auto unitFlagArgsOpt =
+            unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
+      auto [unitFlagModes, unitFlagConds] = unitFlagArgsOpt.value();
+      assert(unitFlagModes.size() <= 1 ||
+             unitFlagModes.size() == unitFlagConds.size());
+      if (!unitFlagModes.empty()) {
+        unitFlagEnabledOp.setUnitFlagModes(unitFlagModes);
+        unitFlagEnabledOp.setUnitFlagConditions(unitFlagConds);
       }
-    } else if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(rwOp->op)) {
-      rewriter.setInsertionPoint(mmadl1Op);
-      mmadl1Op.setUnitFlagModeAttr(
-          UnitFlagAttr::get(rwOp->op->getContext(), unitFlagMode));
-      if (unitFlagCond.has_value() && unitFlagCond.value()) {
-        mmadl1Op.getUnitFlagCondMutable().assign(unitFlagCond.value());
-      }
-    } else {
-      llvm_unreachable("Unsupport op to have unit-flag enabled.");
     }
   }
 }

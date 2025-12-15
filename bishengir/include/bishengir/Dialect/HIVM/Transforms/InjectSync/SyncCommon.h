@@ -17,13 +17,15 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_SYNC_COMMON_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_SYNC_COMMON_H
 
-#include <utility>
-
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
+#include <cstddef>
 #include <deque>
+#include <utility>
 
 #define MAX_MULTI_BUFFER_NUM 16
 
@@ -32,6 +34,38 @@ namespace hivm {
 
 /// different mode for sync analysis.
 enum SyncAnalysisMode { NORMALSYNC = 0, BLOCKSYNC };
+
+class CompoundInstanceElement;
+
+class UnitFlagInfo : public UnitFlagInfoBase {
+public:
+  CompoundInstanceElement *linkedElementAsSet{nullptr};
+  CompoundInstanceElement *linkedElementAsWait{nullptr};
+
+public:
+  UnitFlagInfo() = default;
+  ~UnitFlagInfo() = default;
+
+  UnitFlagInfo(const UnitFlagInfoBase &other) : UnitFlagInfoBase(other) {}
+
+  void reset() {
+    UnitFlagInfoBase::reset();
+    linkedElementAsSet = nullptr;
+    linkedElementAsWait = nullptr;
+  }
+
+  void merge(const UnitFlagInfo &other, CompoundInstanceElement *element1,
+             CompoundInstanceElement *element2, bool asSet = true,
+             bool asWait = true) {
+    UnitFlagInfoBase::merge(other, asSet, asWait);
+    if (asSet && element2 != nullptr) {
+      this->linkedElementAsSet = element2;
+    }
+    if (asWait && element1 != nullptr) {
+      this->linkedElementAsWait = element1;
+    }
+  }
+};
 
 /// Meminfo of the target buffer
 struct BaseMemInfo {
@@ -116,6 +150,8 @@ public:
 
   // Indicates whether to insert the synchronization when codegen sync.
   bool uselessSync{false};
+
+  bool replacedWithUnitFlag{false};
 
   // Need to allocate the size of eventId.
   int eventIdNum{1};
@@ -345,10 +381,7 @@ public:
   // we would have this: (fixpipe/set) (wait/mmadl1/set) (wait/fixpipe)
   // unitFlagModeAsSet is used to handle when an operation is synchronized with
   // an operation after it, and the opposite is true for unitFlagModeAsWait.
-  UNIT_FLAG unitFlagModeAsSet{UNIT_FLAG::DISABLED};
-  UNIT_FLAG unitFlagModeAsWait{UNIT_FLAG::DISABLED};
-  CompoundInstanceElement *linkedUnitFlagCompAsSet{nullptr};
-  CompoundInstanceElement *linkedUnitFlagCompAsWait{nullptr};
+  UnitFlagInfo unitFlagInfo;
 
   // For macro operations that will get decomposed into multiple sync-ir
   // elements, this id can be used to differentiate between the cloned elements.
@@ -365,12 +398,6 @@ public:
   ~CompoundInstanceElement() override = default;
 
   static bool classof(const InstanceElement *e);
-
-  // Check if unit-flag synchronization is enabled for current operation and
-  // return ENABLED if so.
-  UNIT_FLAG getUnitFlagMode() const;
-  std::optional<mlir::Value> getUnitFlagCond(Location loc,
-                                             IRRewriter &rewriter);
 };
 
 // Save all operation information on IR in order, with three main types of
@@ -384,6 +411,13 @@ using SyncOperations = SmallVector<SmallVector<std::unique_ptr<SyncOperation>>>;
 // the map from the buffer to its mem info
 using Buffer2MemInfoMap =
     llvm::DenseMap<Value, llvm::SmallVector<std::unique_ptr<BaseMemInfo>>>;
+
+bool isBackwardSync(const CompoundInstanceElement *nowCompound,
+                    const CompoundInstanceElement *frontCompound);
+
+bool isBackwardSyncUnderForLoop(const CompoundInstanceElement *nowCompound,
+                                const CompoundInstanceElement *frontCompound,
+                                const std::optional<unsigned> &forEndIndex);
 
 // Check all loop-like parents of `op` to be of class SCF::ForOps.
 bool checkAllParentLoopsAreForLoops(Operation *op);

@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
@@ -80,8 +81,12 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
   for (auto &nowElement : syncIR) {
     if (auto *compoundElement =
             dyn_cast<CompoundInstanceElement>(nowElement.get())) {
-      HandleEnableUnitFlag(rewriter, compoundElement);
       UpdateCompoundOpInsertSync(compoundElement);
+      if (auto unitFlagEnabledOp =
+              dyn_cast<UnitFlagEnabledInterface>(compoundElement->elementOp)) {
+        HandleUnitFlagEnabledOp(rewriter, unitFlagEnabledOp,
+                                compoundElement->unitFlagInfo);
+      }
       if (auto mmadL1Op = dyn_cast<MmadL1Op>(compoundElement->elementOp)) {
         InitDefaultSyncTemplateInterForMmadL1Op(mmadL1Op);
         UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement,
@@ -100,30 +105,18 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
   }
 }
 
-void SyncCodegen::HandleEnableUnitFlag(
-    IRRewriter &rewriter, CompoundInstanceElement *nowCompound) const {
-  auto unitFlagMode = nowCompound->getUnitFlagMode();
-  auto unitFlagCond =
-      nowCompound->getUnitFlagCond(nowCompound->elementOp->getLoc(), rewriter);
-  if (unitFlagMode == UNIT_FLAG::DISABLED) {
-    return;
-  }
-  if (auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(nowCompound->elementOp)) {
-    rewriter.setInsertionPoint(fixpipeOp);
-    fixpipeOp.setUnitFlagModeAttr(
-        UnitFlagAttr::get(nowCompound->elementOp->getContext(), unitFlagMode));
-    if (unitFlagCond.has_value() && unitFlagCond.value()) {
-      fixpipeOp.getUnitFlagCondMutable().assign(unitFlagCond.value());
+void SyncCodegen::HandleUnitFlagEnabledOp(
+    IRRewriter &rewriter, UnitFlagEnabledInterface unitFlagEnabledOp,
+    UnitFlagInfo unitFlagInfo) const {
+  if (auto unitFlagArgsOpt =
+          unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
+    auto [unitFlagModes, unitFlagConds] = unitFlagArgsOpt.value();
+    assert(unitFlagModes.size() <= 1 ||
+           unitFlagModes.size() == unitFlagConds.size());
+    if (!unitFlagModes.empty()) {
+      unitFlagEnabledOp.setUnitFlagModes(unitFlagModes);
+      unitFlagEnabledOp.setUnitFlagConditions(unitFlagConds);
     }
-  } else if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(nowCompound->elementOp)) {
-    rewriter.setInsertionPoint(mmadl1Op);
-    mmadl1Op.setUnitFlagModeAttr(
-        UnitFlagAttr::get(nowCompound->elementOp->getContext(), unitFlagMode));
-    if (unitFlagCond.has_value() && unitFlagCond.value()) {
-      mmadl1Op.getUnitFlagCondMutable().assign(unitFlagCond.value());
-    }
-  } else {
-    llvm_unreachable("Unsupport op to have unit-flag enabled.");
   }
 }
 
@@ -346,7 +339,7 @@ void SyncCodegen::CreateSetWaitBlockOpForMultiBuffer(IRRewriter &rewriter,
   Location loc = op->getLoc();
   LoopLikeOpInterface forOp = op->getParentOfType<LoopLikeOpInterface>();
   if (!scf::utils::isNormalized(forOp)) {
-    // TODO: call normalize loop pass before plan memory, currently CVPipeling
+    // TODO: call normalize loop pass before plan memory, currently CVPipelining
     // ensure the loop is normalized
     op->emitOpError("parent loop is not normalized");
     return;

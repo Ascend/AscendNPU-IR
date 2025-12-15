@@ -26,10 +26,12 @@
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 
 #include "bishengir/Config/bishengir-config.h"
+#include "mlir/IR/ValueRange.h"
 
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
@@ -572,9 +574,9 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
 #if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ Value{},
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
         enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ UnitFlagAttr{});
+        /*unit_flag_mode*/ ArrayAttr{});
 #else
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
@@ -594,9 +596,9 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
 #if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
         enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode=*/nullptr);
+        /*unit_flag_mode=*/ArrayAttr{});
 #else
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/nullptr,
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,

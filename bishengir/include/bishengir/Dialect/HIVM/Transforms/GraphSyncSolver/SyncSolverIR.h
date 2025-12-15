@@ -18,6 +18,7 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERIR_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
 #include <memory>
@@ -181,8 +182,7 @@ public:
   MmadL0Operation *mmadL0Op;
 
   MmadL1LoopOp(Operation *op, OperationBase *parentOp)
-      : Scope(OpType::MMAD_LOOP, op, parentOp),
-        mmadL0Op(nullptr) {};
+      : Scope(OpType::MMAD_LOOP, op, parentOp), mmadL0Op(nullptr){};
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_LOOP;
@@ -250,10 +250,7 @@ public:
   llvm::SmallVector<llvm::SmallVector<int>> testReadMemVals;
   llvm::SmallVector<llvm::SmallVector<int>> testWriteMemVals;
   bool hasUnitFlagFeat{false};
-  UNIT_FLAG unitFlagModeAsSet{UNIT_FLAG::DISABLED};
-  UNIT_FLAG unitFlagModeAsWait{UNIT_FLAG::DISABLED};
-  RWOperation *linkedUnitFlagOpAsSet{nullptr};
-  RWOperation *linkedUnitFlagOpAsWait{nullptr};
+  UnitFlagInfoBase mergedUnitFlagInfo;
 
 private:
 public:
@@ -265,7 +262,7 @@ public:
       : OperationBase(opType, op, parentOp), pipeRead(pipeRead),
         pipeWrite(pipeWrite), coreType(coreType),
         readMemVals(std::move(readMemVals)),
-        writeMemVals(std::move(writeMemVals)) {};
+        writeMemVals(std::move(writeMemVals)){};
 
   std::string str(int indent, bool recursive) const override;
 

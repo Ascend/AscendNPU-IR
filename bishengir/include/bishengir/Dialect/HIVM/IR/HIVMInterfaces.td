@@ -713,50 +713,87 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
   }];
 }
 
-def HIVMUnitFlagEnabledInterface : OpInterface<"HIVMUnitFlagEnabled"> {
+def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
   let cppNamespace = "::mlir::hivm";
   let description = [{
     unit-flag enabled operators interface.
   }];
   let methods = [
-    //===------------------------------------------------------------------===//
-    // Operation property handling.
-    //===------------------------------------------------------------------===//
-    InterfaceMethod<
-      /*desc=*/[{
+      //===------------------------------------------------------------------===//
+      // Operation property handling.
+      //===------------------------------------------------------------------===//
+      InterfaceMethod<
+          /*desc=*/[{
         Return unit-flag input value. It should be manually added to the 
         Operator input arguments named 'unit_flag_mode' and assembly format. 
       }],
-      /*retTy=*/"::std::optional<::mlir::hivm::UnitFlagAttr>",
-      /*methodName=*/"getUnitFlagModeValue",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/""
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
+          /*retTy=*/
+          "::std::optional<::llvm::SmallVector<::mlir::hivm::UnitFlagAttr>>",
+          /*methodName=*/"getUnitFlagModes",
+          /*args=*/(ins),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
+          if(auto unitFlagModes = $_op.getUnitFlagMode()){
+            return llvm::to_vector(unitFlagModes->template getAsRange<UnitFlagAttr>());
+          }
+          return {};
+      }]>,
+      InterfaceMethod<
+          /*desc=*/"Set unit-flag modes.",
+          /*retTy=*/"void",
+          /*methodName=*/"setUnitFlagModes",
+          /*args=*/(ins "::llvm::SmallVector<UNIT_FLAG>":$unitFlagModes),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
+        if(!unitFlagModes.empty()){
+          auto *ctx = $_op.getContext();
+          auto unitFlagModesAttrs = ::llvm::to_vector_of<mlir::Attribute>(
+          ::llvm::map_range(unitFlagModes, [&ctx](UNIT_FLAG unitFlagMode) {
+            return UnitFlagAttr::get(ctx, unitFlagMode);
+          }));
+          $_op.setUnitFlagModeAttr(ArrayAttr::get(ctx, unitFlagModesAttrs));
+        }
+      }]>,
+      InterfaceMethod<
+          /*desc=*/[{
         Return unit-flag input value. It should be manually added to the 
         Operator input arguments named 'unit_flag_mode' and assembly format. 
       }],
-      /*retTy=*/"::std::optional<::mlir::Value>",
-      /*methodName=*/"getUnitFlagModeCondition",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/""
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
+          /*retTy=*/"::std::optional<::llvm::SmallVector<::mlir::Value>>",
+          /*methodName=*/"getUnitFlagConditions",
+          /*args=*/(ins),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
+        auto unitFlagConds = $_op.getUnitFlagCond();
+        return !unitFlagConds.empty() ? unitFlagConds : \
+          ::std::optional<::llvm::SmallVector<::mlir::Value>>();
+      }]>,
+      InterfaceMethod<
+          /*desc=*/"Set unit-flag conditions.",
+          /*retTy=*/"void",
+          /*methodName=*/"setUnitFlagConditions",
+          /*args=*/
+          (ins "::llvm::SmallVector<::mlir::Value>":$unitFlagConditions),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
+        if(!unitFlagConditions.empty()){
+          $_op.getUnitFlagCondMutable().assign(unitFlagConditions);
+        }
+      }]>,
+      InterfaceMethod<
+          /*desc=*/[{
         Return unit-flag mode value needed to be passed to the standard library 
         call. It should be one of the possible values for unit-flag (0b00, 0b10, 0b11).
       }],
-      /*retTy=*/"::mlir::Value",
-      /*methodName=*/"getUnitFlagModeLibValue",
-      /*args=*/(ins "::mlir::PatternRewriter&":$rewriter),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
+          /*retTy=*/"::mlir::Value",
+          /*methodName=*/"getUnitFlagModeLibValue",
+          /*args=*/(ins "::mlir::PatternRewriter&":$rewriter),
+          /*methodBody=*/"",
+          /*defaultImplementation=*/[{
         return ::mlir::hivm::detail::getUnitFlagModeLibValueImpl($_op, rewriter);
-      }]
-    >];
+      }]>];
+  let verify =
+      [{ return detail::verifyUnitFlagEnabledInterface(cast<UnitFlagEnabledInterface>($_op)); }];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMINTERFACES_TD

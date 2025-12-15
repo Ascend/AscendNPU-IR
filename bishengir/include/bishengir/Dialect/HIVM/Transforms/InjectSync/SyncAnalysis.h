@@ -263,24 +263,21 @@ private:
   void insertUnitFlagEnabledSyncOperations(
       CompoundInstanceElement *nowCompound,
       CompoundInstanceElement *frontCompound,
-      const std::optional<unsigned> &forEndIndex, UNIT_FLAG frontUnitFlagMode,
-      UNIT_FLAG nowUnitFlagMode);
+      const std::optional<unsigned> &forEndIndex, UnitFlagInfo unitFlagInfo);
+
+  void updateUnitFlagInfo(CompoundInstanceElement *nowCompound,
+                          CompoundInstanceElement *frontCompound,
+                          UnitFlagInfo unitFlagInfo);
+
+  bool
+  checkUnitFlagAlreadySync(const CompoundInstanceElement *nowCompound,
+                           const CompoundInstanceElement *frontCompound) const;
 
   /// Check all patterns where unit-flag is supported.
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
+  std::optional<UnitFlagInfo>
   checkUnitFlagPatterns(CompoundInstanceElement *nowCompound,
                         CompoundInstanceElement *frontCompound,
                         const std::optional<unsigned> &forEndIndex);
-
-  // checkUnitFlag helper function. Check (mmadl1/fixpipe) pair.
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-  checkMmadl1FixpipeUnitFlagPattern(CompoundInstanceElement *op1,
-                                    CompoundInstanceElement *op2) const;
-
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-  checkMmadl1FixpipeSingleForLoopUnitFlagPattern(CompoundInstanceElement *op1,
-                                                 CompoundInstanceElement *op2,
-                                                 bool op1IsFrontCompound) const;
 
   bool checkMemoryConflictBetweenExclusive(
       CompoundInstanceElement *nowCompound,
@@ -292,6 +289,11 @@ private:
   bool
   checkUnderParallelLoop(const CompoundInstanceElement *nowCompound,
                          const CompoundInstanceElement *frontCompound) const;
+
+  bool
+  isBackwardSyncUnderForLoop(const CompoundInstanceElement *nowCompound,
+                             const CompoundInstanceElement *frontCompound,
+                             const std::optional<unsigned> &forEndIndex) const;
 };
 
 } // namespace hivm

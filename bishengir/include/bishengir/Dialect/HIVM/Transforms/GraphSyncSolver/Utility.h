@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -30,6 +31,37 @@
 
 namespace mlir::hivm::syncsolver {
 
+struct Occurrence;
+
+class UnitFlagInfo : public UnitFlagInfoBase {
+public:
+  Occurrence *linkedElementAsSet{nullptr};
+  Occurrence *linkedElementAsWait{nullptr};
+
+public:
+  UnitFlagInfo() = default;
+  ~UnitFlagInfo() = default;
+
+  UnitFlagInfo(const UnitFlagInfoBase &other) : UnitFlagInfoBase(other) {}
+
+  void reset() {
+    UnitFlagInfoBase::reset();
+    linkedElementAsSet = nullptr;
+    linkedElementAsWait = nullptr;
+  }
+
+  void merge(const UnitFlagInfo &other, Occurrence *occ1, Occurrence *occ2,
+             bool asSet = true, bool asWait = true) {
+    UnitFlagInfoBase::merge(other, asSet, asWait);
+    if (asSet && occ2 != nullptr) {
+      linkedElementAsSet = occ2;
+    }
+    if (asWait && occ1 != nullptr) {
+      linkedElementAsWait = occ1;
+    }
+  }
+};
+
 struct Occurrence {
   OperationBase *op{nullptr};
   Occurrence *parentOcc{nullptr};
@@ -39,6 +71,8 @@ struct Occurrence {
   int syncIrIndex{-1};
   int syncIrEndIndex{-1};
   int loopSplitIndex{-1};
+  bool hasUnitFlagFeat{false};
+  UnitFlagInfo unitFlagInfo;
 
   Occurrence(OperationBase *op, Occurrence *parentOcc, int depth,
              int startIndex, int endIdx)
