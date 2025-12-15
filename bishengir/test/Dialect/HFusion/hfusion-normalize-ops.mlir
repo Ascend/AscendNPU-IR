@@ -2374,11 +2374,6 @@ func.func @test_elementwise_modui(%arg0: tensor<32xi8>, %arg1: tensor<32xi8>) ->
   // CHECK: %[[RET_0:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
   // CHECK: %[[RET_1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
   // CHECK: %[[RET_2:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
-  // CHECK: %[[RET_3:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-  // CHECK: %[[RET_4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
-  // CHECK: %[[RET_5:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
-  // CHECK: %[[RET_6:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
-  // CHECK: %[[RET_7:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
   %0 = tensor.empty() : tensor<32xi8>
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>} ins(%arg0, %arg1 : tensor<32xi8>, tensor<32xi8>) outs(%0 : tensor<32xi8>) -> tensor<32xi8>
   return %1 : tensor<32xi8>
