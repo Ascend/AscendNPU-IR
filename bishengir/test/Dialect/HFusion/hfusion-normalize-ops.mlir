@@ -984,7 +984,7 @@ func.func @test_hfusion_cos_ops(%arg0 : tensor<5x1xf16>) ->  tensor<5x1xf16> {
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK: %[[VAL_98:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[VAL_45]], %[[VAL_97]] : tensor<32xf32>, tensor<32xf32>) outs(%[[EMPTY2]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK: %[[VAL_99:.*]] = tensor.empty() : tensor<32xf32>
-// CHECK: %[[VAL_100:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_0]], %[[CONST_1]] : tensor<32xf32>, f32) outs(%[[VAL_99]] : tensor<32xf32>) -> tensor<32xf32>
+// CHECK: %[[VAL_100:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_3]], %[[CONST_1]] : tensor<32xf32>, f32) outs(%[[VAL_99]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK: %[[VAL_101:.*]] = tensor.empty() : tensor<32xf32>
 // CHECK: %[[VAL_102:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[VAL_100]] : tensor<32xf32>) outs(%[[VAL_101]] : tensor<32xf32>) -> tensor<32xf32>
 // CHECK: %[[VAL_103:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_102]], %[[CONST_0]] : tensor<32xf32>, f32) outs(%[[VAL_101]] : tensor<32xf32>) -> tensor<32xf32>
