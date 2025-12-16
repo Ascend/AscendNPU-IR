@@ -5240,17 +5240,31 @@ public:
 
     // step1. res = divWithRoundMode(x, y, FLOOR/CEIL)
     rewriter.setInsertionPoint(op);
-    auto inputs = op.getDpsInputs();
-
+    auto inputs = llvm::to_vector(op.getDpsInputs());
     auto loc = op->getLoc();
-    // TODO: fix to use uint type after support uint op
+
     hfusion::RoundMode roundMode = (fun == hfusion::BinaryFn::ceildivsi ||
                                     fun == hfusion::BinaryFn::ceildivui)
                                        ? hfusion::RoundMode::CEIL
                                        : hfusion::RoundMode::FLOOR;
-    auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
-                                         inputs[1], resTensor, roundMode);
-    rewriter.replaceOp(op, res);
+    if (fun == hfusion::BinaryFn::ceildivui) {
+      assert(elemTySrc.isInteger(8));
+      inputs[0] = hfusion::castTo(rewriter, inputs[0], rewriter.getF32Type(),
+                             hfusion::TypeFn::cast_unsigned);
+      inputs[1] = hfusion::castTo(rewriter, inputs[1], rewriter.getF32Type(),
+                             hfusion::TypeFn::cast_unsigned);
+      auto res = hfusion::divWithRoundMode(rewriter, loc, rewriter.getF32Type(),
+                                          inputs[0], inputs[1], resTensor, roundMode);
+      res = hfusion::castTo(rewriter, res, rewriter.getI32Type(), roundMode);
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type());
+      res = hfusion::castTo(rewriter, res, elemTySrc, hfusion::RoundMode::TRUNC, /*dst=*/std::nullopt,
+                            /*enableOverflow=*/false, hfusion::TypeFn::cast_unsigned);
+      rewriter.replaceOp(op, res);
+    } else {
+      auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
+                                          inputs[1], resTensor, roundMode);
+      rewriter.replaceOp(op, res);
+    }
     return success();
   }
 };
