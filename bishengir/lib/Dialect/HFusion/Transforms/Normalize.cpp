@@ -1101,15 +1101,6 @@ public:
             ValueRange{xOrig, mul}, emptyResTensor)
             ->getResults()[0];
 
-    // For f32 we keep the "y == inf ? x : res" correction.
-    if (elemType.isF32()) {
-      auto correctResF32 =
-          handleInfinityModulus(rewriter, op.getLoc(), xF32, yF32, res)
-              .value_or(res);
-      rewriter.replaceOp(op, correctResF32);
-      return success();
-    }
-
     if (elemType.isInteger(8)) {
       auto resWithZeroModulus = handleZeroModulus(rewriter, op.getLoc(), xOrig,
                                                   yOrig, res);
