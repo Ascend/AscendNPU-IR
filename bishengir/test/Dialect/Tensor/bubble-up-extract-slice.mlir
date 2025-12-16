@@ -120,11 +120,13 @@ func.func @aggressive_bubble_up_unaligned_extract_slice(%arg0: tensor<1x2047xi64
 }
 
 // -----
-// CHECK-AGGRESSIVE-LABEL: @not_bubble_up_aligned_extract_slice(
-// CHECK-AGGRESSIVE: %[[cast0:.*]] = hfusion.cast
-// CHECK-AGGRESSIVE: tensor.extract_slice %[[cast0]]
-// CHECK-AGGRESSIVE: tensor.extract_slice %[[cast0]]
-func.func @not_bubble_up_aligned_extract_slice(%arg0: tensor<1x2047xi64>, %arg1: tensor<2048x2048xi32>) -> tensor<2048x2048xi32> {
+// CHECK-AGGRESSIVE-LABEL: @bubble_up_aligned_extract_slice(
+// CHECK-AGGRESSIVE: %[[load0:.*]] = hfusion.load
+// CHECK-AGGRESSIVE: %[[slice0:.*]] = tensor.extract_slice %[[load0]]
+// CHECK-AGGRESSIVE: hfusion.cast {{.*}} ins(%[[slice0]] : tensor<1024xi64>)
+// CHECK-AGGRESSIVE: %[[slice1:.*]] = tensor.extract_slice %[[load0]]
+// CHECK-AGGRESSIVE: hfusion.cast {{.*}} ins(%[[slice1]] : tensor<1024xi64>)
+func.func @bubble_up_aligned_extract_slice(%arg0: tensor<1x2047xi64>, %arg1: tensor<2048x2048xi32>) -> tensor<2048x2048xi32> {
   %0 = tensor.empty() : tensor<2047xi32>
   %1 = tensor.empty() : tensor<2048x2048xi32>
   %2 = tensor.empty() : tensor<2047xi64>
@@ -159,4 +161,105 @@ func.func @bubble_up_dynamic(%arg0: tensor<1x?x12288xf32>, %arg1: tensor<128xbf1
     %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %arg7 : tensor<?x1x32x128xf32>, tensor<?x1x32x128xf32>) outs(%arg10 : tensor<?x1x32x128xf32>) -> tensor<?x1x32x128xf32>
     %extracted_slice = tensor.extract_slice %5[%arg9, 0, 0, 0] [%arg8, 1, 32, 128] [1, 1, 1, 1] : tensor<?x1x32x128xf32> to tensor<?x1x32x128xf32>
     return %extracted_slice : tensor<?x1x32x128xf32>
+}
+
+// -----
+// CHECK-LABEL: @bubble_up_through_unary_cast_fill(
+// CHECK:      %[[empty_big:.*]] = tensor.empty() : tensor<32xbf16>
+// CHECK:      %[[fill:.*]] = linalg.fill ins(%cst : bf16) outs(%[[empty_big]] : tensor<32xbf16>)
+// CHECK:      %[[empty_f32_big:.*]] = tensor.empty() : tensor<32xf32>
+// CHECK:      %[[cast:.*]] = hfusion.cast ins(%[[fill]] : tensor<32xbf16>) outs(%[[empty_f32_big]] : tensor<32xf32>)
+// CHECK:      %[[unary:.*]] = linalg.elemwise_unary {{.*}} ins(%[[cast]] : tensor<32xf32>)
+// CHECK:      %[[slice0:.*]] = tensor.extract_slice %[[unary]][0] [16] [1] : tensor<32xf32> to tensor<16xf32>
+// CHECK:      %[[slice1:.*]] = tensor.extract_slice %[[unary]][16] [16] [1] : tensor<32xf32> to tensor<16xf32>
+// CHECK:      linalg.broadcast ins(%[[slice1]] : tensor<16xf32>)
+// CHECK:      linalg.broadcast ins(%[[slice0]] : tensor<16xf32>)
+// CHECK:      linalg.elemwise_binary {{.*}} ins({{.*}}, {{.*}} : tensor<?x16xf32>, tensor<?x16xf32>)
+// CHECK-AGGRESSIVE-LABEL: @bubble_up_through_unary_cast_fill(
+// CHECK-AGGRESSIVE:      %[[empty_small:.*]] = tensor.empty() : tensor<16xbf16>
+// CHECK-AGGRESSIVE:      %[[fill:.*]] = linalg.fill ins(%cst : bf16) outs(%[[empty_small]] : tensor<16xbf16>)
+// CHECK-AGGRESSIVE:      %[[empty_f32_small:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK-AGGRESSIVE:      %[[cast:.*]] = hfusion.cast ins(%[[fill]] : tensor<16xbf16>) outs(%[[empty_f32_small]] : tensor<16xf32>)
+// CHECK-AGGRESSIVE-NOT:  tensor.extract_slice
+// CHECK-AGGRESSIVE:      %[[unary1:.*]] = linalg.elemwise_unary {{.*}} ins(%[[cast]] : tensor<16xf32>)
+// CHECK-AGGRESSIVE:      %[[unary2:.*]] = linalg.elemwise_unary {{.*}} ins(%[[cast]] : tensor<16xf32>)
+// CHECK-AGGRESSIVE:      %[[bcast1:.*]] = linalg.broadcast ins(%[[unary1:.*]] : tensor<16xf32>)
+// CHECK-AGGRESSIVE:      %[[bcast2:.*]] = linalg.broadcast ins(%[[unary2:.*]] : tensor<16xf32>)
+// CHECK-AGGRESSIVE:      %[[add:.*]] = linalg.elemwise_binary {{.*}} ins(%[[bcast1]], %[[bcast2]] : tensor<?x16xf32>, tensor<?x16xf32>)
+// CHECK-AGGRESSIVE:      return %[[add]]
+module {
+  func.func @bubble_up_through_unary_cast_fill(%arg0: tensor<?x16xf32> {hacc.arg_type = #hacc.arg_type<input>, hacc.input_idx = #hacc.input_idx<0>}) -> (tensor<?x16xf32>)
+    attributes {hacc.block_dim = 1 : i64, hacc.entry, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
+    %cst = arith.constant 0.000000e+00 : bf16
+    %c0 = arith.constant 0 : index
+    %0 = tensor.empty() : tensor<32xbf16>
+    %1 = linalg.fill ins(%cst : bf16) outs(%0 : tensor<32xbf16>) -> tensor<32xbf16>
+    %2 = tensor.empty() : tensor<32xf32>
+    %dim = tensor.dim %arg0, %c0 : tensor<?x16xf32>
+    %3 = hfusion.cast ins(%1 : tensor<32xbf16>) outs(%2 : tensor<32xf32>) -> tensor<32xf32>
+    %4 = tensor.empty() : tensor<32xf32>
+    %5 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%3 : tensor<32xf32>) outs(%4 : tensor<32xf32>) -> tensor<32xf32>
+    %extracted_slice = tensor.extract_slice %5[0] [16] [1] : tensor<32xf32> to tensor<16xf32>
+    %6 = tensor.empty(%dim) : tensor<?x16xf32>
+    %extracted_slice_5 = tensor.extract_slice %5[16] [16] [1] : tensor<32xf32> to tensor<16xf32>
+    %7 = tensor.empty(%dim) : tensor<?x16xf32>
+    %broadcasted = linalg.broadcast ins(%extracted_slice_5 : tensor<16xf32>) outs(%6 : tensor<?x16xf32>) dimensions = [0]
+    %broadcasted_1 = linalg.broadcast ins(%extracted_slice : tensor<16xf32>)
+                     outs(%7 : tensor<?x16xf32>) dimensions = [0]
+    %8 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+         ins(%broadcasted, %broadcasted_1 : tensor<?x16xf32>, tensor<?x16xf32>)
+         outs(%7 : tensor<?x16xf32>) -> tensor<?x16xf32>
+    return %8 : tensor<?x16xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: @no_bubble_up_fill_multiple_uses(
+// CHECK: tensor.extract_slice
+// CHECK: tensor.extract_slice
+// CHECK-AGGRESSIVE-LABEL: @no_bubble_up_fill_multiple_uses(
+// CHECK-AGGRESSIVE:       %[[fill:.*]] = linalg.fill ins({{.*}} : bf16) outs({{.*}} : tensor<32xbf16>)
+// CHECK-AGGRESSIVE:       %[[slice0:.*]] = tensor.extract_slice %[[fill:.*]]
+// CHECK-AGGRESSIVE:       hfusion.cast ins(%[[slice0:.*]] : tensor<16xbf16>)
+// CHECK-AGGRESSIVE:       %[[slice1:.*]] = tensor.extract_slice %[[fill:.*]]
+// CHECK-AGGRESSIVE:       hfusion.cast ins(%[[slice1:.*]] : tensor<16xbf16>)
+module {
+  func.func @no_bubble_up_fill_multiple_uses(%arg0: tensor<?x16xbf16> {hacc.arg_type = #hacc.arg_type<input>, hacc.input_idx = #hacc.input_idx<0>}) -> (tensor<32xbf16>, tensor<?x16xf32>) attributes {hacc.block_dim = 1 : i64, hacc.entry, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
+    %cst = arith.constant 0.000000e+00 : bf16
+    %c0 = arith.constant 0 : index
+    %0 = tensor.empty() : tensor<32xbf16>
+    %1 = linalg.fill ins(%cst : bf16) outs(%0 : tensor<32xbf16>) -> tensor<32xbf16>
+    %2 = tensor.empty() : tensor<32xf32>
+    %dim = tensor.dim %arg0, %c0 : tensor<?x16xbf16>
+    %3 = hfusion.cast ins(%1 : tensor<32xbf16>) outs(%2 : tensor<32xf32>) -> tensor<32xf32>
+    %extracted_slice = tensor.extract_slice %3[0] [16] [1] : tensor<32xf32> to tensor<16xf32>
+    %4 = tensor.empty(%dim) : tensor<?x16xf32>
+    %extracted_slice_0 = tensor.extract_slice %3[16] [16] [1] : tensor<32xf32> to tensor<16xf32>
+    %5 = tensor.empty(%dim) : tensor<?x16xf32>
+    %broadcasted = linalg.broadcast ins(%extracted_slice_0 : tensor<16xf32>) outs(%4 : tensor<?x16xf32>) dimensions = [0]
+    %broadcasted_1 = linalg.broadcast ins(%extracted_slice : tensor<16xf32>) outs(%5 : tensor<?x16xf32>) dimensions = [0]
+    %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%broadcasted, %broadcasted_1 : tensor<?x16xf32>, tensor<?x16xf32>) outs(%5 : tensor<?x16xf32>) -> tensor<?x16xf32>
+    return %1, %6 : tensor<32xbf16>, tensor<?x16xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: @bubble_up_slices_diff_sizes(
+// CHECK: tensor.extract_slice
+// CHECK: tensor.extract_slice
+// CHECK-AGGRESSIVE-LABEL: @bubble_up_slices_diff_sizes(
+// CHECK-AGGRESSIVE:       linalg.fill ins({{.*}} : bf16) outs({{.*}} : tensor<16xbf16>)
+// CHECK-AGGRESSIVE:       linalg.fill ins({{.*}} : bf16) outs({{.*}} : tensor<4xbf16>)
+// CHECK-AGGRESSIVE-NOT:   tensor.extract_slice
+module {
+  func.func @bubble_up_slices_diff_sizes(%arg0: tensor<?x16xbf16> {hacc.arg_type = #hacc.arg_type<input>, hacc.input_idx = #hacc.input_idx<0>}) -> (tensor<16xf32>, tensor<4xf32>) attributes {hacc.block_dim = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
+    %cst = arith.constant 0.000000e+00 : bf16
+    %0 = tensor.empty() : tensor<32xbf16>
+    %1 = linalg.fill ins(%cst : bf16) outs(%0 : tensor<32xbf16>) -> tensor<32xbf16>
+    %2 = tensor.empty() : tensor<32xf32>
+    %3 = hfusion.cast ins(%1 : tensor<32xbf16>) outs(%2 : tensor<32xf32>) -> tensor<32xf32>
+    %extracted_slice = tensor.extract_slice %3[0] [16] [1] : tensor<32xf32> to tensor<16xf32>
+    %extracted_slice_1 = tensor.extract_slice %3[16] [4] [1] : tensor<32xf32> to tensor<4xf32>
+    return %extracted_slice, %extracted_slice_1 : tensor<16xf32>, tensor<4xf32>
+  }
 }
