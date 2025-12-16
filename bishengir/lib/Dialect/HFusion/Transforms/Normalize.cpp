@@ -1068,17 +1068,6 @@ public:
             ValueRange{xOrig, mul}, emptyResTensor)
             ->getResults()[0];
 
-    // For f32 we keep the "y == inf ? x : res" correction.
-    if (elemType.isF32()) {
-      auto correctResF32 =
-          handleInfinityModulus(rewriter, op.getLoc(), xF32, yF32, res)
-              .value_or(res);
-      rewriter.replaceOp(op, correctResF32);
-      return success();
-    }
-
-    // For other types, res is already in elemType, without Torch-specific logic
-    // (no rem + y, no z = -1 if y == 0).
     rewriter.replaceOp(op, res);
     return success();
   }
