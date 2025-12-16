@@ -25,6 +25,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/TypeRange.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -269,6 +270,61 @@ LogicalResult decomposeMatmulWithElementwiseAdd(PatternRewriter &rewriter,
   return success();
 }
 
+/// Input IR:
+///
+/// ```
+/// %0 = tensor.empty()
+/// scf.for ... iter_args(%arg0 = %0)
+/// %1 = hivm.hir.mmadL1 ins(*)
+///        outs(%arg0 : tensor<16x32xf32>) -> tensor<16x32xf32>
+/// ```
+///
+/// is converted into:
+/// ```
+/// %0 = tensor.empty()
+/// %1 = hivm.vbrc (0, %0) -> tensor<16x32xf32>
+/// scf.for ... iter_args(%arg0 = %1)
+//  %2 = tensor.empty() : tensor<16x32xf32>
+/// %3 = hivm.hir.mmadL1 ins(*)
+///        outs(%2 : tensor<16x32xf32>) -> tensor<16x32xf32>
+/// %4 = hivm.hir.vadd ins(%arg0, %3) outs(%arg0)
+/// ```
+template <typename T>
+LogicalResult
+decomposeMatmulWithCrossLoopElementwiseAdd(PatternRewriter &rewriter, T op) {
+  Location loc = op.getLoc();
+
+  auto maybePreLoopEmptyOp = traceDefOp<tensor::EmptyOp>(op.getC());
+  assert(maybePreLoopEmptyOp.has_value());
+
+  auto preLoopEmptyOp = cast<tensor::EmptyOp>(maybePreLoopEmptyOp.value());
+  rewriter.setInsertionPointAfterValue(preLoopEmptyOp);
+
+  auto mmadCType = op.getC().getType();
+  auto elemType = getElementTypeOrSelf(mmadCType);
+  auto constZero = utils::createConstantOp<int>(rewriter, loc, elemType, 0);
+  auto zeroFillOp = rewriter.create<hivm::VBrcOp>(
+      loc, TypeRange{mmadCType}, constZero, preLoopEmptyOp.getResult());
+  rewriter.replaceAllUsesExcept(preLoopEmptyOp.getResult(),
+                                zeroFillOp->getResults()[0], zeroFillOp);
+
+  rewriter.setInsertionPointAfter(op);
+  auto newMmadInit = mlir::utils::createEmptyOp(rewriter, loc, op.getC());
+  auto newMmad = cast<T>(rewriter.clone(*op.getOperation()));
+  newMmad.getCMutable().assign(newMmadInit);
+  Value constTrue = rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+  newMmad.setInitCondition(constTrue);
+
+  auto addInit = mlir::utils::createEmptyOp(rewriter, loc, op.getC());
+  auto addOp = rewriter.create<hivm::VAddOp>(
+      loc, TypeRange{newMmad.getResults()[0].getType()},
+      ValueRange{newMmad.getResults()[0], op.getDpsInitOperand(0)->get()},
+      ValueRange{addInit});
+
+  rewriter.replaceOp(op, addOp.getResult());
+  return success();
+}
+
 inline Value getBiasInputForPerChannelAdd(Value v) {
   auto defOp = traceDefOp<hivm::VBrcOp>(v);
   assert(defOp.has_value());
@@ -399,6 +455,11 @@ public:
       assert(op.isInitConstant(false));
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
+    }
+    if (op.shouldDecomposeBiasByCrossLoopElementAdd()) {
+      assert(op.isInitFirstLoopIter());
+      LDBG("decompose matmul with crossloop elemwise add");
+      return decomposeMatmulWithCrossLoopElementwiseAdd<T>(rewriter, op); 
     }
     if (biasMode == MatmulBiasMode::PerChannelAdd) {
       LDBG("decompose matmul with per channel add");

@@ -105,9 +105,11 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
       return getCMutable();
     }
     bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    bool isInitFirstLoopIter();
     void setInitCondition(Value init);
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd();
+    bool shouldDecomposeBiasByCrossLoopElementAdd();
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);

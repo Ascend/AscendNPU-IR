@@ -336,7 +336,7 @@ LogicalResult inferAndPropagateMemScopeForExternFunc(func::FuncOp op) {
     if (auto memrefType = dyn_cast<BaseMemRefType>(argType)) {
       if (memrefType.getMemorySpace())
         continue;
-      argType = getBaseMemRefTypeWithNewScope(memrefType, gmSpaceAttr);
+      argType = util::getBaseMemRefTypeWithNewScope(memrefType, gmSpaceAttr);
     }
   }
   // For extern functions that have results, we assume that the memory scope
@@ -347,7 +347,7 @@ LogicalResult inferAndPropagateMemScopeForExternFunc(func::FuncOp op) {
     if (auto memrefType = dyn_cast<BaseMemRefType>(resultType)) {
       if (memrefType.getMemorySpace())
         continue;
-      resultType = getBaseMemRefTypeWithNewScope(memrefType, gmSpaceAttr);
+      resultType = util::getBaseMemRefTypeWithNewScope(memrefType, gmSpaceAttr);
     }
   }
   auto newFt = op.getFunctionType().clone(newArgTypes, newReturnTypes);

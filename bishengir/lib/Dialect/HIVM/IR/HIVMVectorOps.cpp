@@ -677,6 +677,27 @@ bool VReduceOp::useVectorCrossIntr(bool lastAxis, int rank) {
 // VTransposeOp
 //===----------------------------------------------------------------------===//
 
+bool VTransposeOp::isLastDimTranspose() {
+  SmallVector<int64_t> transposeLoopDims;
+  getTransposeLoopDims(transposeLoopDims);
+  auto dimSize = getNumLoops();
+  if (std::find(transposeLoopDims.begin(), transposeLoopDims.end(),
+                dimSize - 1) == transposeLoopDims.end()) {
+    return false;
+  }
+  return true;
+}
+
+bool VTransposeOp::isLastTwoAxesTranspose() {
+  if (!isLastDimTranspose()) {
+    return false;
+  }
+
+  SmallVector<int64_t> transposeLoopDims;
+  getTransposeLoopDims(transposeLoopDims);
+  return transposeLoopDims[0] == (transposeLoopDims[1] - 1);
+}
+
 LogicalResult VTransposeOp::verify() {
   ArrayRef<int64_t> permutation = this->getPermutation();
   size_t permSize = permutation.size();
@@ -726,7 +747,7 @@ LogicalResult VTransposeOp::verify() {
   }
 
   if (getDisableAlign()) {
-    if (!isLastTwoAxesTranspose(*this)) {
+    if (!isLastTwoAxesTranspose()) {
       return emitOpError()
              << "Disabled allign mode supports only last 2 axes transpose";
     }
@@ -737,7 +758,7 @@ LogicalResult VTransposeOp::verify() {
       auto srcMemSpaceAttr = srcMemRefType.getMemorySpace();
       auto dstMemSpaceAttr = dstMemRefType.getMemorySpace();
       if (srcMemSpaceAttr && dstMemSpaceAttr) {
-        std::vector<std::unique_ptr<OperAlignInfo>> alignList;
+        std::vector<std::unique_ptr<util::OperAlignInfo>> alignList;
         if (getUnAlignSizeInfo(*this, &alignList).failed()) {
           return failure();
         }

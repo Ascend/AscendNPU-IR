@@ -1182,6 +1182,10 @@ def VTransposeOp : HIVM_VectorOp<"vtranspose",
   let hasCanonicalizer = 1;
   let extraClassDeclaration = vectorOpBaseDecls # [{
     static StringRef getOpName() { return "transpose"; }
+
+    bool isLastDimTranspose();
+
+    bool isLastTwoAxesTranspose();
   }];
 }
 
