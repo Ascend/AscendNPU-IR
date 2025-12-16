@@ -1495,6 +1495,8 @@ public:
       return failure();
     }
 
+    bool shouldCastToUnsigned = ShouldCastToUnsigned(op);
+    
     auto loc = op->getLoc();
     // linalg::ElemwiseBinaryOp's Outputs and Results must be
     // variadic of ranked tensor of any type values.
@@ -1510,11 +1512,21 @@ public:
     // step1. res = divWithRoundMode(x, y, TRUNC)
     rewriter.setInsertionPoint(op);
     auto inputs = op.getDpsInputs();
-    auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
+    auto res = hfusion::divWithRoundModeAndCastType(rewriter, loc, elemTySrc, inputs[0],
                                          inputs[1], resTensor,
-                                         hfusion::RoundMode::TRUNC);
+                                         hfusion::RoundMode::TRUNC,
+                                         shouldCastToUnsigned ? hfusion::TypeFn::cast_unsigned : 
+                                         hfusion::TypeFn::cast_signed);
     rewriter.replaceOp(op, res);
     return success();
+  }
+  
+  bool ShouldCastToUnsigned(linalg::ElemwiseBinaryOp op) const{
+    auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+    linalg::BinaryFn func = binOp.getFun();
+    static DenseSet<linalg::BinaryFn> binarySet = {
+        linalg::BinaryFn::div_unsigned};
+      return binarySet.contains(func);
   }
 };
 
