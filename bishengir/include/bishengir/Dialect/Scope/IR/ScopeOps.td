@@ -32,9 +32,13 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 //===----------------------------------------------------------------------===//
 
 def ScopeOp : Scope_Op<"scope", [
-    RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<RegionBranchOpInterface, [
+    "getNumRegionInvocations", "getRegionInvocationBounds",
+    "getEntrySuccessorRegions"]>,
+    NoRegionArguments,
     SingleBlockImplicitTerminator<"scope::ReturnOp">,
-    SingleBlock]> {
+    SingleBlock,
+    RecursiveMemoryEffects]> {
   let summary = "Represents scope of a region";
   let description = [{
     The "scope.scope" operation represents a scope of the
@@ -54,6 +58,7 @@ def ScopeOp : Scope_Op<"scope", [
   let arguments = (ins
     UnitAttr:$no_inline
   );
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$region);
   let hasCustomAssemblyFormat = 1;
 }
@@ -73,8 +78,10 @@ def ReturnOp : Scope_Op<"return", [
     ```
   }];
 
+  let arguments = (ins Variadic<AnyType>:$results);
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
   let assemblyFormat =
-      [{ attr-dict }];
+      [{ attr-dict ($results^ `:` type($results))? }];
 }
 
 #endif // BISHENGIR_DIALECT_SCOPE_IR_SCOPEOPS_TD

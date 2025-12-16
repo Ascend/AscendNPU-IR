@@ -55,11 +55,34 @@ ParseResult ScopeOp::parse(OpAsmParser &parser, OperationState &result) {
 
 void ScopeOp::print(OpAsmPrinter &p) {
   p << " : ";
-  p.printFunctionalType(SmallVector<Type>(), SmallVector<Type>());
+  p.printFunctionalType(SmallVector<Type>(), getResultTypes());
   p << " ";
 
   p.printRegion(getRegion(),
                 /*printEntryBlockArgs=*/false,
                 /*printBlockTerminators=*/true);
   p.printOptionalAttrDict((*this)->getAttrs());
+}
+
+void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
+                                  SmallVectorImpl<RegionSuccessor> &regions) {
+  if (!point.isParent()) {
+    regions.push_back(RegionSuccessor(getResults()));
+    return;
+  }
+
+  regions.push_back(RegionSuccessor(&getRegion()));
+}
+
+void ScopeOp::getEntrySuccessorRegions(
+    ArrayRef<Attribute> operands, SmallVectorImpl<RegionSuccessor> &regions) {
+  FoldAdaptor adaptor(operands, *this);
+  regions.emplace_back(&getRegion());
+  regions.emplace_back(getResults());
+}
+
+void ScopeOp::getRegionInvocationBounds(
+    ArrayRef<Attribute> operands,
+    SmallVectorImpl<InvocationBounds> &invocationBounds) {
+  invocationBounds.emplace_back(1, 1);
 }

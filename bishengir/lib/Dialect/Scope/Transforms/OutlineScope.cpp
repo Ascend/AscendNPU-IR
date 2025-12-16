@@ -57,7 +57,7 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
         if (auto blockArg = dyn_cast<BlockArgument>(val)) {
           if (scopeOp->isAncestor(blockArg.getParentRegion()->getParentOp()))
             continue;
-        } else if (auto defOp = val.getDefiningOp()) {
+        } else if (auto *defOp = val.getDefiningOp()) {
           if (scopeOp->isAncestor(defOp))
             continue;
         }
@@ -76,11 +76,6 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
 
   FailureOr<func::FuncOp> outlineScope(scope::ScopeOp scopeOp,
                                        PatternRewriter &rewriter) const {
-#ifndef NDEBUG
-    auto numResults = scopeOp->getNumResults();
-    assert(numResults == 0 && "unhandled case for scopeOp with results");
-#endif
-
     ModuleOp moduleOp = scopeOp->getParentOfType<ModuleOp>();
     func::FuncOp parF = scopeOp->getParentOfType<func::FuncOp>();
     OpBuilder::InsertionGuard insGuard(rewriter);
@@ -93,8 +88,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     SmallVector<Value> inputs = getInputs(scopeOp);
 
     rewriter.setInsertionPoint(parF);
-    FunctionType funcTy =
-        FunctionType::get(moduleOp.getContext(), TypeRange(inputs), {});
+    FunctionType funcTy = FunctionType::get(
+        moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
     SymbolTable symbolTable(moduleOp);
@@ -110,22 +105,26 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     // Clone operations and replace usages
     LDBG("pushing outlined operations\n");
     IRMapping currentMap;
-    for (auto [oldIn, newIn] : llvm::zip_equal(inputs, entryBB->getArguments()))
+    for (auto [oldIn, newIn] :
+         llvm::zip_equal(inputs, entryBB->getArguments())) {
       currentMap.map(oldIn, newIn);
+    }
 
-    SetVector<Operation *> newOps;
+    Operation *newScopeReturnOp = nullptr;
     for (auto it = scopeOp.getRegion().op_begin();
          it != scopeOp.getRegion().op_end(); ++it) {
-      newOps.insert(rewriter.clone(*it, currentMap));
-      LLVM_DEBUG(llvm::dbgs() << "Cloning " << *it << "\n";);
+      Operation *op = &*it;
+      LLVM_DEBUG(llvm::dbgs() << "Cloning " << *op << "\n";);
+      auto *newOp = rewriter.clone(*op, currentMap);
+      if (isa<scope::ReturnOp>(op))
+        newScopeReturnOp = &*newOp;
     }
-    newFuncOp->walk(
-        [&](scope::ReturnOp returnOp) { rewriter.eraseOp(returnOp); });
-    LDBG("created FuncOp for outlined scope\n" << *newFuncOp);
+    assert(newScopeReturnOp != nullptr && "scope::ReturnOp is not cloned");
 
-    rewriter.create<func::ReturnOp>(entryBB->front().getLoc(),
-                                    SmallVector<Value>());
-    LDBG("created return Op\n");
+    auto funcReturnOp = rewriter.create<func::ReturnOp>(
+        entryBB->front().getLoc(), newScopeReturnOp->getOperands());
+    rewriter.replaceOp(newScopeReturnOp, funcReturnOp);
+    LDBG("created FuncOp for outlined scope\n" << *newFuncOp);
     return newFuncOp;
   }
 
@@ -133,16 +132,12 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
                                        func::FuncOp funcOp,
                                        PatternRewriter &rewriter) const {
     LDBG("Replacing invoke with callOp");
-#ifndef NDEBUG
-    auto numResults = scopeOp->getNumResults();
-    assert(numResults == 0 && "unhandled case for scopeOp with results");
-#endif
-
     SetVector<Operation *> ops = getOpsOfScopeOp(scopeOp);
     rewriter.setInsertionPoint(scopeOp);
     func::CallOp callOp = rewriter.create<func::CallOp>(
         scopeOp->getLoc(), funcOp, getInputs(scopeOp));
 
+    LDBG("created callOp: " << callOp);
     rewriter.replaceOp(scopeOp, callOp);
     return success();
   }
@@ -154,11 +149,6 @@ public:
 
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
-    if (scopeOp->getNumResults() > 0) {
-      llvm_unreachable("unhandled case for scopeOp with results");
-      return failure();
-    }
-
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, rewriter);
     if (failed(newFuncOp))
       return failure();

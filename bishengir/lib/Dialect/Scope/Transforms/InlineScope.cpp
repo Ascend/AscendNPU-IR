@@ -51,9 +51,10 @@ public:
                                 PatternRewriter &rewriter) const override {
     if (regionOp.getNoInline())
       return failure();
-    assert(regionOp->getNumRegions() == 1 && regionOp->getNumResults() == 0 &&
-           "handle case of op with single region without result");
 
+    assert(regionOp->getNumRegions() == 1 &&
+           regionOp.getRegion().hasOneBlock() &&
+           "only handle case of ScopeOp with single block");
     Region &region = regionOp.getRegion();
     Block &block = region.front();
     auto opsToMove = llvm::make_range(block.begin(), std::prev(block.end()));
@@ -61,6 +62,12 @@ public:
     for (Operation &op : llvm::make_early_inc_range(opsToMove)) {
       LLVM_DEBUG(llvm::dbgs() << "Moving " << op << "\n";);
       rewriter.moveOpBefore(&op, regionOp);
+    }
+
+    for (auto [res, opr] : llvm::zip_equal(
+             regionOp.getResults(),
+             regionOp.getRegion().front().getTerminator()->getOperands())) {
+      rewriter.replaceAllUsesWith(res, opr);
     }
 
     rewriter.eraseOp(regionOp);
