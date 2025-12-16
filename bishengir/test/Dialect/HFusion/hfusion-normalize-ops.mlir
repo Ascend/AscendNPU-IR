@@ -157,28 +157,8 @@ func.func @test_linalg_floor_to_hfusion_cast(%src: tensor<1024xf16>) -> tensor<1
 // CHECK-LABEL: func.func @test_hfusion_mod
 // CHECK-SAME: (%[[SRC0:.*]]: tensor<2048xi32>, %[[SRC1:.*]]: tensor<2048xi32>)
 //
-// Cast inputs to f32
-// CHECK: %[[LHS_BUF:.*]] = tensor.empty() : tensor<2048xf32>
-// CHECK: %[[LHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[SRC0]] : tensor<2048xi32>) outs(%[[LHS_BUF]] : tensor<2048xf32>) -> tensor<2048xf32>
-// CHECK: %[[RHS_BUF:.*]] = tensor.empty() : tensor<2048xf32>
-// CHECK: %[[RHSFP:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[SRC1]] : tensor<2048xi32>) outs(%[[RHS_BUF]] : tensor<2048xf32>) -> tensor<2048xf32>
-//
-// Divide in f32
-// CHECK: %[[DIV_BUF:.*]] = tensor.empty() : tensor<2048xf32>
-// CHECK: %[[DIVFP:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[LHSFP]], %[[RHSFP]] : tensor<2048xf32>, tensor<2048xf32>) outs(%[[DIV_BUF]] : tensor<2048xf32>) -> tensor<2048xf32>
-//
-// Cast quotient back to i32
-// CHECK: %[[Q_BUF:.*]] = tensor.empty() : tensor<2048xi32>
-// CHECK: %[[Q_I32:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins({{.*}} : tensor<2048xf32>) outs(%[[Q_BUF]] : tensor<2048xi32>) -> tensor<2048xi32>
-//
-// Compute y * q
-// CHECK: %[[MUL_BUF:.*]] = tensor.empty() : tensor<2048xi32>
-// CHECK: %[[MUL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[SRC1]], %[[Q_I32]] : tensor<2048xi32>, tensor<2048xi32>) outs(%[[MUL_BUF]] : tensor<2048xi32>) -> tensor<2048xi32>
-//
-// Compute x - y*q and return
-// CHECK: %[[RES_BUF:.*]] = tensor.empty() : tensor<2048xi32>
-// CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[SRC0]], %[[MUL]] : tensor<2048xi32>, tensor<2048xi32>) outs(%[[RES_BUF]] : tensor<2048xi32>) -> tensor<2048xi32>
-// CHECK: return %[[RES]] : tensor<2048xi32>
+// CHECK: %[[LHS_BUF:.*]] = tensor.empty() : tensor<2048xi32>
+// CHECK: %[[LHSFP:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%arg0, %arg1 : tensor<2048xi32>, tensor<2048xi32>) outs(%0 : tensor<2048xi32>) -> tensor<2048xi32>
 func.func @test_hfusion_mod(%src0: tensor<2048xi32>, %src1: tensor<2048xi32>) -> tensor<2048xi32> {
   %3 = tensor.empty() : tensor<2048xi32>
   %4 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%src0, %src1 : tensor<2048xi32>, tensor<2048xi32>) outs(%3 : tensor<2048xi32>) -> tensor<2048xi32>

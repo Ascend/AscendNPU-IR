@@ -973,6 +973,37 @@ public:
         .getResults()[0];
   }
 
+  Value handleZeroModulus(PatternRewriter &rewriter,
+                          Location loc, Value xOrig,
+                          Value yOrig, Value result) const {
+    auto yType = yOrig.getType();
+    Value tensorY = yOrig;
+
+    // TODO: delete fillop after compare op supporting scalar-scalar operation
+    if (!isa<ShapedType>(yType)) {
+      auto yTensor = utils::createEmptyOp(rewriter, loc, result);
+      tensorY = rewriter.create<linalg::FillOp>(loc, yOrig, yTensor)
+                    .getResults()[0];
+    }
+
+    auto resTy = dyn_cast<TensorType>(result.getType());
+    auto elemType = getElementTypeOrSelf(resTy);
+    auto constZero = utils::createConstantOp<int>(rewriter, loc, elemType, 0);
+    auto zeroFlag =
+        createCmpOp(rewriter, loc, tensorY, constZero, CompareFn::veq)
+            ->getResult(0);
+
+    auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
+    auto resWithZeroModulus =
+        rewriter
+            .create<hfusion::SelectOp>(loc, TypeRange(emptyResTensor),
+                                       ValueRange{zeroFlag, xOrig, result},
+                                       ValueRange{emptyResTensor})
+            .getResults()[0];
+
+    return resWithZeroModulus;
+  }
+
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.hasPureTensorSemantics()) {
@@ -993,7 +1024,7 @@ public:
 
     auto elemType = getElementTypeOrSelf(resTy);
     // Only support int/index/float, but not i64.
-    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64)) {
+    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) || elemType.isInteger(32)) {
       return failure();
     }
 
@@ -1070,6 +1101,15 @@ public:
             ValueRange{xOrig, mul}, emptyResTensor)
             ->getResults()[0];
 
+    if (elemType.isInteger(8)) {
+      auto resWithZeroModulus = handleZeroModulus(rewriter, op.getLoc(), xOrig,
+                                                  yOrig, res);
+      rewriter.replaceOp(op, resWithZeroModulus);
+      return success();
+    }
+
+    // For other types, res is already in elemType, without Torch-specific logic
+    // (no rem + y, no z = -1 if y == 0).
     rewriter.replaceOp(op, res);
     return success();
   }
