@@ -2525,7 +2525,6 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
 
 Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
                       hfusion::RoundMode roundMode, hfusion::TypeFn castIntegerType) {
-  Type srcElemType = getElementTypeOrSelf(src.getType());
   return hfusion::castTo(builder, src, targetElemType, roundMode, std::nullopt,
                          /*enableOverflow=*/true, castIntegerType);
 }
