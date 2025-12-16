@@ -206,7 +206,7 @@ LogicalResult PointerCastOp::verify() {
   if (addrs.empty()) {
     return emitOpError("addrs of PointerCastOp should not be empty!");
   }
-
+#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   if (const std::size_t dynDims = getResult().getType().getNumDynamicDims(),
       dynDimValues = getDynamicSizes().size();
       dynDims != dynDimValues) {
@@ -214,7 +214,7 @@ LogicalResult PointerCastOp::verify() {
                          << " dynamic size operands, but found "
                          << dynDimValues;
   }
-
+#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   return success();
 }
 
