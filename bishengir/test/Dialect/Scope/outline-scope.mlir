@@ -53,3 +53,23 @@ module {
     return {debug = 18 : index}
   }
 }
+
+// -----
+
+// CHECK: func.func @test_scope_with_yields_scope_0(%[[ARG_0:.*]]: f32, %[[ARG_1:.*]]: f32) -> (f32, f32, f32) {
+// CHECK: return %[[ARG_0]], %[[ARG_1]], %[[ARG_0]] : f32, f32, f32
+// CHECK-LABEL: func.func @test_scope_with_yields(
+// CHECK: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[CST_1:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[CALL:.*]]:3 = call @test_scope_with_yields_scope_0(%[[CST_0]], %[[CST_1]]) : (f32, f32) -> (f32, f32, f32)
+// CHECK: return %[[CALL]]#0, %[[CALL]]#1, %[[CALL]]#2 : f32, f32, f32
+module{
+  func.func @test_scope_with_yields() -> (f32, f32, f32){
+    %cst = arith.constant 0.000000e+00 : f32
+    %cst_1 = arith.constant 1.000000e+00 : f32
+    %0:3 = scope.scope : () -> (f32, f32, f32) {
+      scope.return %cst, %cst_1, %cst : f32, f32, f32
+    }
+    return %0#0, %0#1, %0#2 : f32, f32, f32
+  }
+}

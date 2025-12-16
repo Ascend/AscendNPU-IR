@@ -27,3 +27,32 @@ func.func @test_scope_scope_no_inline() {
   } {no_inline}
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_scope_with_yields(
+func.func @test_scope_with_yields() -> f32 {
+  // CHECK: %[[CST:.*]] = arith.constant 0.000000e+00 : f32
+  %cst = arith.constant 0.000000e+00 : f32
+  // CHECK: %[[YIELD:.*]] = scope.scope : () -> f32 {
+  %0 = scope.scope : () -> f32 {
+    // CHECK: scope.return %[[CST]] : f32
+    scope.return %cst : f32
+  }
+  // CHECK: return %[[YIELD]] : f32
+  return %0 : f32
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_scope_with_yields(
+func.func @test_scope_with_yields() {
+  // CHECK: %[[CST:.*]] = arith.constant 0.000000e+00 : f32
+  %cst = arith.constant 0.000000e+00 : f32
+  // CHECK: scope.scope : () -> f32 {
+  scope.scope : () -> f32 {
+    // CHECK: scope.return %[[CST]] : f32
+    scope.return %cst : f32
+  }
+  return
+}

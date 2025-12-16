@@ -45,13 +45,7 @@ struct ScopeInlinerInterface : public mlir::DialectInlinerInterface {
   // Handle the given inlined terminator by replacing it with a new operation
   // as necessary. Required when the region has only one block.
   void handleTerminator(mlir::Operation *op,
-                        mlir::ValueRange valuesToRepl) const final {
-#ifndef NDEBUG
-    auto yieldOp = llvm::cast<mlir::scope::ReturnOp>(op);
-    assert(yieldOp->getNumOperands() == 0 &&
-           "need to update this function if ReturnOp returns operands");
-#endif
-  }
+                        mlir::ValueRange valuesToRepl) const final {}
 };
 
 } // namespace

@@ -74,3 +74,33 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: func.func @inline_func(%[[VAL_0:.*]]: tensor<f32>, %[[VAL_1:.*]]: tensor<i32>) -> (tensor<i32>, tensor<f32>) attributes {debug = 0 : index} {
+// CHECK-NOT: scope.scope
+// CHECK-NOT: func.func private @inline_func_a(
+// CHECK-NOT: scope.scope
+// CHECK: return {debug = 8 : index} %[[VAL_1]], %[[VAL_0]] : tensor<i32>, tensor<f32>
+module {
+  func.func @inline_func(%arg0: tensor<f32>, %arg1: tensor<i32>) -> (tensor<i32>, tensor<f32>) attributes {debug = 0 : index} {
+    %0:2 = scope.scope : () -> (tensor<f32>, tensor<i32>) {
+      %1:2 = func.call @inline_func_a(%arg0, %arg1) : (tensor<f32>, tensor<i32>) -> (tensor<i32>, tensor<f32>)
+      scope.return %1#1, %1#0 : tensor<f32>, tensor<i32>
+    }
+    return {debug = 8 : index} %0#1, %0#0 : tensor<i32>, tensor<f32>
+  }
+  func.func private @inline_func_a(%arg0: tensor<f32>, %arg1: tensor<i32>) -> (tensor<i32>, tensor<f32>) attributes {noinline = false} {
+    %0:2 = scope.scope : () -> (tensor<f32>, tensor<i32>) {
+      scope.return %arg0, %arg1 : tensor<f32>, tensor<i32>
+    }
+    %1:2 = scope.scope : () -> (tensor<f32>, tensor<i32>) {
+      %2:2 = scope.scope : () -> (tensor<i32>, tensor<f32>) {
+        scope.return %0#1, %0#0 : tensor<i32>, tensor<f32>
+      }
+      scope.return %2#1, %2#0 : tensor<f32>, tensor<i32>
+    }
+    return %1#1, %1#0 : tensor<i32>, tensor<f32>
+  }
+}
+
