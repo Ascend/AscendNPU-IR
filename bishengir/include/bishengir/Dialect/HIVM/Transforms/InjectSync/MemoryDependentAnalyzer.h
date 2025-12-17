@@ -34,8 +34,8 @@ public:
                   DepBaseMemInfoPairVec &depBaseMemInfosVec);
 
   /// Based on allocate size and base address, determine buffer over lap.
-  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b, int aIndex,
-                       int bIndex);
+  bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b,
+                       uint32_t aIndex, uint32_t bIndex);
 
 private:
   /// Analysis of dependency conflicts between BaseMemInfo.

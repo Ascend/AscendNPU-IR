@@ -145,14 +145,14 @@ bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
       if (constOp1 == nullptr || constOp2 == nullptr) {
         return true;
       }
-      uint64_t baseAddr1 = static_cast<uint64_t>(
-          cast<IntegerAttr>(constOp1.getValue()).getInt());
-      uint64_t baseAddr2 = static_cast<uint64_t>(
-          cast<IntegerAttr>(constOp2.getValue()).getInt());
-      uint64_t l1 = baseAddr1;
-      uint64_t r1 = baseAddr1 + std::max((uint32_t)1, bufferSize1.value());
-      uint64_t l2 = baseAddr2;
-      uint64_t r2 = baseAddr2 + std::max((uint32_t)1, bufferSize2.value());
+      int64_t baseAddr1 =
+          static_cast<int64_t>(cast<IntegerAttr>(constOp1.getValue()).getInt());
+      int64_t baseAddr2 =
+          static_cast<int64_t>(cast<IntegerAttr>(constOp2.getValue()).getInt());
+      int64_t l1 = baseAddr1;
+      int64_t r1 = baseAddr1 + std::max((int64_t)1, bufferSize1.value());
+      int64_t l2 = baseAddr2;
+      int64_t r2 = baseAddr2 + std::max((int64_t)1, bufferSize2.value());
       // !(r2 <= l1 || r1 <= l2)
       if (r2 > l1 && r1 > l2) {
         return true;
@@ -244,14 +244,14 @@ Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
         if (constOp1 == nullptr || constOp2 == nullptr) {
           return {};
         }
-        uint64_t baseAddr1 = static_cast<uint64_t>(
+        int64_t baseAddr1 = static_cast<int64_t>(
             cast<IntegerAttr>(constOp1.getValue()).getInt());
-        uint64_t baseAddr2 = static_cast<uint64_t>(
+        int64_t baseAddr2 = static_cast<int64_t>(
             cast<IntegerAttr>(constOp2.getValue()).getInt());
-        uint64_t l1 = baseAddr1;
-        uint64_t r1 = baseAddr1 + std::max((uint32_t)1, bufferSize1.value());
-        uint64_t l2 = baseAddr2;
-        uint64_t r2 = baseAddr2 + std::max((uint32_t)1, bufferSize2.value());
+        int64_t l1 = baseAddr1;
+        int64_t r1 = baseAddr1 + std::max((int64_t)1, bufferSize1.value());
+        int64_t l2 = baseAddr2;
+        int64_t r2 = baseAddr2 + std::max((int64_t)1, bufferSize2.value());
         // !(r2 <= l1 || r1 <= l2)
         if (r2 > l1 && r1 > l2) {
           return {};
@@ -778,7 +778,8 @@ std::pair<Occurrence *, Occurrence *> Solver::getSetWaitOcc(Occurrence *occ1,
   //     return getSetWaitOcc(occ1, ghostOcc);
   //   }
   // }
-  assert(setOcc != nullptr && waitOcc != nullptr && setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
+  assert(setOcc != nullptr && waitOcc != nullptr &&
+         setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
   if (setOcc->op != waitOcc->op) {
     if (auto *parLoopOp =
             llvm::dyn_cast_if_present<Loop>(setOcc->parentOcc->op)) {

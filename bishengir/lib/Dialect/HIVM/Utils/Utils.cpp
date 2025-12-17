@@ -853,14 +853,19 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
   return result;
 }
 
-std::optional<uint32_t> GetBufferSize(Value buffer) {
+std::optional<int64_t> GetBufferSize(Value buffer) {
   auto memRefType = cast<MemRefType>(buffer.getType());
-  if (!memRefType)
-    return std::nullopt;
-  ::llvm::ArrayRef<int64_t> shape = memRefType.getShape();
-  uint32_t bufferConstByteSize = memRefType.getElementTypeBitWidth() / 8;
-  for (auto &v : shape)
-    bufferConstByteSize *= v;
+  if (!memRefType) {
+    return {};
+  }
+  int64_t bufferConstByteSize =
+      static_cast<int64_t>(memRefType.getElementTypeBitWidth()) / 8;
+  for (auto &val : memRefType.getShape()) {
+    if (val == ShapedType::kDynamic) {
+      return ShapedType::kDynamic;
+    }
+    bufferConstByteSize *= val;
+  }
   return bufferConstByteSize;
 }
 
@@ -986,8 +991,7 @@ Value createNestedIndexModular(OpBuilder &builder, Operation *op, int modular) {
                                                loopInfoVec, modular);
 }
 
-Value createNestedIndexModular(OpBuilder &builder,
-                               LoopLikeOpInterface loopOp,
+Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
                                int modular) {
   auto loopInfoVec = getLoopsInfo(loopOp);
   // Insert at the beginning of the For loop.

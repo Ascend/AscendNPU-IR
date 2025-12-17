@@ -30,7 +30,7 @@ bool MemoryDependentAnalyzer::DepBetween(
   for (auto &i : a) {
     for (auto &j : b) {
       if (MemAlias(i, j)) {
-        // Update the current sync dependency buffer.
+        // Found dependency conflict between i and j, record the pair.
         depBaseMemInfosVec.push_back(std::make_pair(i, j));
         hasAlias = true;
       }
@@ -41,14 +41,15 @@ bool MemoryDependentAnalyzer::DepBetween(
 
 bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
                                        const BaseMemInfo *b) {
-  hivm::AddressSpace as = a->scope;
-  hivm::AddressSpace bs = b->scope;
-  if (as == hivm::AddressSpace::GM && bs == hivm::AddressSpace::GM) {
-    return isGMBufferOverlap(a, b);
-  }
-  // different scope, just return no dependency.
-  if (as != bs) {
+  assert(a != nullptr && b != nullptr);
+  hivm::AddressSpace addressSpaceA = a->addressSpace;
+  hivm::AddressSpace addressSpaceB = b->addressSpace;
+  if (addressSpaceA != addressSpaceB) {
     return false;
+  }
+  if (addressSpaceA == hivm::AddressSpace::GM &&
+      addressSpaceB == hivm::AddressSpace::GM) {
+    return isGMBufferOverlap(a, b);
   }
   if (a->rootBuffer == b->rootBuffer) {
     return true;
@@ -58,25 +59,29 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
 
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
                                                 const BaseMemInfo *b) {
+  assert(a != nullptr && b != nullptr);
   if (a->rootBuffer != b->rootBuffer) {
     // Different buffers on GM have no dependencies.
     // TODO: handle gm alias cases like inplace
     return false;
-  } else {
-    if (a->allocWorkspaceOp.has_value() && b->allocWorkspaceOp.has_value() &&
-        !isBufferAddressRangeOverlap(a, b)) {
-      return false;
-    }
-    return true;
   }
+  if (a->allocWorkspaceOp.has_value() && b->allocWorkspaceOp.has_value()) {
+    return isBufferAddressRangeOverlap(a, b);
+  }
+  return true;
 }
 
 bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
     const BaseMemInfo *a, const BaseMemInfo *b) {
-  int aBaseAddressesSize = static_cast<int>(a->baseAddresses.size());
-  int bBaseAddressesSize = static_cast<int>(b->baseAddresses.size());
-  for (int i = 0; i < aBaseAddressesSize; i++) {
-    for (int j = 0; j < bBaseAddressesSize; j++) {
+  assert(a != nullptr && b != nullptr);
+  if (a->hasVariableAddress || b->hasVariableAddress) {
+    // conservatively assume overlap if any buffer has variable address
+    return true;
+  }
+  size_t baseAddressesSizeA = a->baseAddresses.size();
+  size_t baseAddressesSizeB = b->baseAddresses.size();
+  for (size_t i = 0; i < baseAddressesSizeA; i++) {
+    for (size_t j = 0; j < baseAddressesSizeB; j++) {
       if (isBufferOverlap(a, b, i, j)) {
         return true;
       }
@@ -86,17 +91,24 @@ bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
 }
 
 bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
-                                              const BaseMemInfo *b, int aIndex,
-                                              int bIndex) {
-  if (a->baseAddresses[aIndex] == b->baseAddresses[bIndex]) {
-    return true;
+                                              const BaseMemInfo *b,
+                                              uint32_t aIndex,
+                                              uint32_t bIndex) {
+  assert(a != nullptr && b != nullptr);
+  assert(aIndex < a->baseAddresses.size());
+  assert(bIndex < b->baseAddresses.size());
+  /*
+  (size_a != ShapedType::kDynamic && (a+size_a <= b)) || 
+  (size_b != ShapedType::kDynamic && (b+size_b <= a)) ==> no overlap
+  else overlap
+  */
+  if((a->allocateSize != ShapedType::kDynamic) &&
+     (a->baseAddresses[aIndex] + a->allocateSize <= b->baseAddresses[bIndex])) {
+    return false;
   }
-  // There are overlapping dependency conflicts.
-  if ((a->baseAddresses[aIndex] > b->baseAddresses[bIndex] &&
-       a->baseAddresses[aIndex] < b->baseAddresses[bIndex] + b->allocateSize) ||
-      (b->baseAddresses[bIndex] > a->baseAddresses[aIndex] &&
-       b->baseAddresses[bIndex] < a->baseAddresses[aIndex] + a->allocateSize)) {
-    return true;
+  if((b->allocateSize != ShapedType::kDynamic) &&
+     (b->baseAddresses[bIndex] + b->allocateSize <= a->baseAddresses[aIndex])) {
+    return false;
   }
-  return false;
+  return true;
 }

@@ -274,7 +274,7 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
 
 /// Get buffer static size.
-std::optional<uint32_t> GetBufferSize(Value buffer);
+std::optional<int64_t> GetBufferSize(Value buffer);
 
 // get is operation aligned according to the broadcast/reduce dim and rank
 AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank);
