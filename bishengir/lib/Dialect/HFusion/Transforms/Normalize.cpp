@@ -1316,11 +1316,16 @@ struct NormalizeArgMinMaxOp : OpRewritePattern<hfusion::ReduceWithIndexOp> {
         ValueRange({srcNanMask, infValue, zeroValue}),
         ValueRange(srcNanMasked)).getResults()[0];
 
+    SmallVector<Value> inputVals = {srcNanMasked};
+    // If size > 1 => We have custom indexes tensor
+    if (op.getInputs().size() > 1) {
+      inputVals.push_back(op.getInputs()[1]);
+    }
     auto srcNanVals = utils::createEmptyOp(rewriter, loc, op.getResults()[0]);
     auto srcNanIdxs = utils::createEmptyOp(rewriter, loc, op.getResults()[1]);
     auto srcNanReduceOp = rewriter.create<hfusion::ReduceWithIndexOp>(
         loc, TypeRange{srcNanVals.getType(), srcNanIdxs.getType()},
-        /*input*/ ValueRange{srcNanMasked},
+        /*input*/ inputVals,
         /*outputValue&Index*/
         ValueRange{srcNanVals, srcNanIdxs}, kind, leftTie, dims);
     srcNanVals = srcNanReduceOp.getResults()[0];

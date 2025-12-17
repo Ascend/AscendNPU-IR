@@ -1633,10 +1633,10 @@ func.func @test_normalize_reduce_with_index_ra_to_ar(%arg0: tensor<32x32x128xf32
 // CHECK-LABEL: @test_normalize_reduce_denaned
 // CHECK: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
 // CHECK: %[[MIN_INF:.*]] = arith.constant 0xFF800000 : f32
-// CHECK: %[[REAL_REDUCE:.*]]:2 = hfusion.reduce_with_index
+// CHECK: %[[REAL_REDUCE:.*]]:2 = hfusion.reduce_with_index {already_denaned, tie_break_left = true} <min> ins(%[[SRC:.*]], %[[IDXS:.*]] : tensor<32x128x32xf32>, tensor<32x128x32xi32>)
 // CHECK: %[[NAN_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
 // CHECK: %[[DENANED_T:.*]] = hfusion.select ins(%[[NAN_MASK]], %[[MIN_INF]], %[[ZERO]] : tensor<32x128x32xi1>, f32, f32)
-// CHECK: %[[DENANED_REDUCE:.*]]:2 = hfusion.reduce_with_index {already_denaned, tie_break_left = true} <min> ins(%[[DENANED_T]] : tensor<32x128x32xf32>)
+// CHECK: %[[DENANED_REDUCE:.*]]:2 = hfusion.reduce_with_index {already_denaned, tie_break_left = true} <min> ins(%[[DENANED_T]], %[[IDXS]] : tensor<32x128x32xf32>, tensor<32x128x32xi32>)
 // CHECK: %[[INF_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} 
 // CHECK: %[[RES:.*]] = hfusion.select ins(%[[INF_MASK]], %[[DENANED_REDUCE]]#1, %[[REAL_REDUCE]]#1 : tensor<32x128xi1>, tensor<32x128xi32>, tensor<32x128xi32>)
 // CHECK: return %[[RES]]
