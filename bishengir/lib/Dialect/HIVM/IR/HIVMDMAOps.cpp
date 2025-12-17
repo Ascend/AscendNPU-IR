@@ -117,56 +117,12 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange res, Value src, Value dst,
-                   Value left_padding_num) {
-  build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
-        /*pad_value=*/nullptr, left_padding_num,
-        /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr);
-}
-
-void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
-                   Value pad_value) {
-  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
-        /*left_padding_num=*/nullptr,
-        /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr);
-}
-
-void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
-                   Value pad_value, Value left_padding_num) {
-  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
-        left_padding_num, /*right_padding_num=*/nullptr,
-        /*init_out_buffer=*/false, /*init_condition=*/nullptr);
-}
-
-void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
-                   Value pad_value, Value left_padding_num,
-                   bool init_out_buffer) {
-  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
-        left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        /*init_condition=*/nullptr);
-}
-
-void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
                    Value pad_value, Value left_padding_num,
                    Value right_padding_num) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, right_padding_num, /*init_out_buffer=*/false,
         /*init_condition=*/nullptr);
-}
-
-void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
-                   Value pad_value, Value left_padding_num,
-                   bool init_out_buffer, Value init_condition) {
-  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
-        left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        init_condition);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
