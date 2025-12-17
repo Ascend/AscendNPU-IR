@@ -35,13 +35,13 @@
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+using namespace mlir;
+using namespace mlir::impl;
+
+namespace mlir {
 #define GEN_PASS_DEF_INLINESCOPE
 #include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
 
-using namespace impl;
-using namespace mlir;
-
-namespace mlir {
 namespace scope {
 template <typename OpTy>
 class ExtractOpsFromBodyPattern : public OpRewritePattern<OpTy> {
@@ -93,13 +93,18 @@ void ExtractScopeBodyPass::runOnOperation() {
 
 class InlineScopePass : public InlineScopeBase<InlineScopePass> {
 public:
-  explicit InlineScopePass() : InlineScopeBase() {}
+  explicit InlineScopePass(const mlir::InlineScopeOptions &options)
+      : InlineScopeBase(options) {}
   void runOnOperation() final;
 };
 
 void InlineScopePass::runOnOperation() {
   auto moduleOp = getOperation();
   PassManager pm(moduleOp->getContext());
+
+  if (forceInline) {
+    moduleOp.walk([](scope::ScopeOp op) { op.setNoInline(false); });
+  }
 
   pm.addPass(std::make_unique<ExtractScopeBodyPass>());
   pm.addPass(createInlinerPass());
@@ -108,8 +113,9 @@ void InlineScopePass::runOnOperation() {
     return signalPassFailure();
 }
 
-std::unique_ptr<Pass> createInlineScopePass() {
-  return std::make_unique<InlineScopePass>();
+std::unique_ptr<Pass>
+createInlineScopePass(const mlir::InlineScopeOptions &options) {
+  return std::make_unique<InlineScopePass>(options);
 }
 
 } // namespace scope

@@ -102,7 +102,10 @@ def InlineScope : Pass<"inline-scope", "mlir::ModuleOp"> {
     ```
   }];
   let constructor = "mlir::scope::createInlineScopePass()";
-  let dependentDialects = [];
+  let options = [
+    Option<"forceInline", "force-inline", "bool", /*default=*/"false",
+          "Inline scope regardless of `no_inline` attribute.">
+  ];
 }
 
 #endif // BISHENGIR_DIALECT_SCOPE_TRANSFORMS_PASSES_TD

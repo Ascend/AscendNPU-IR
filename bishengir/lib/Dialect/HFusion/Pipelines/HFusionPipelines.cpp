@@ -23,7 +23,6 @@
 #include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
-#include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Transforms/Passes.h"
@@ -79,9 +78,6 @@ canonicalizationPipeline(OpPassManager &pm,
 
 static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
-  if (options.enableTritonKernelCompile) {
-    pm.addPass(scope::createOutlineScopePass());
-  }
   if (!options.enableSymbolAnalysis) {
     pm.nest<func::FuncOp>().addPass(symbol::createEraseSymbolPass());
   }
