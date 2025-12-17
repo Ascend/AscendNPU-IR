@@ -197,15 +197,6 @@ def InjectBlockSync : Pass<"hivm-inject-block-sync", "func::FuncOp"> {
   ];
 }
 
-def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
-  let summary = "graph sync solver ";
-  let constructor = "mlir::hivm::createGraphSyncSolverPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
-  let options = [Option<"enableUnitFlag", "enable-unit-flag", "bool",
-                        /*default=*/"false",
-                        "Enable unit-flag modes for synchronization">];
-}
-
 def HIVMDecomposeOp : Pass<"hivm-decompose-op", "func::FuncOp"> {
   let summary = "decompose compound hivm op to multiple hivm ops according to "
                 "hardware ability.";
