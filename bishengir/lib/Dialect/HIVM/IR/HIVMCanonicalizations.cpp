@@ -41,84 +41,6 @@ void collectNotOneDims(ShapedType st, const ArrayRef<int64_t> &checkDims,
   }
 }
 
-struct RedudantVPowOp : public OpRewritePattern<VPowOp> {
-  using OpRewritePattern<VPowOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(VPowOp powOp,
-                                PatternRewriter &rewriter) const final {
-    if (!powOp.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    auto src = powOp.getSrc();
-    auto src0Type = src[0].getType();
-    auto inits = powOp.getDpsInits();
-
-    auto src1ConstOp =
-        dyn_cast_or_null<arith::ConstantOp>(src[1].getDefiningOp());
-    if (src1ConstOp == nullptr) {
-      return failure();
-    }
-
-    auto src1ConstValue = src1ConstOp.getValue();
-    auto elementType = getElementTypeOrSelf(src1ConstValue.getType());
-
-    if (utils::isConst<FloatAttr, float_t>(src1ConstValue, 0.0)) {
-      // vpow(x, 0.0) converts to 1
-      Value one = rewriter.create<arith::ConstantOp>(
-          powOp.getLoc(), elementType, rewriter.getOneAttr(elementType));
-      auto hivmVBrcOp = rewriter.create<hivm::VBrcOp>(
-          powOp.getLoc(), src0Type, one, inits[0],
-          rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
-      rewriter.replaceOp(powOp, hivmVBrcOp);
-      return success();
-    }
-
-    if (utils::isConst<FloatAttr, float_t>(src1ConstValue, 0.5)) {
-      // vpow(x, 0.5) converts to vsqrt(x)
-      auto hivmVSqrtOp = rewriter.create<hivm::VSqrtOp>(
-          powOp.getLoc(), src0Type, src[0], inits[0]);
-      rewriter.replaceOp(powOp, hivmVSqrtOp);
-      return success();
-    }
-
-    if (utils::isConst<FloatAttr, float_t>(src1ConstValue, 1.0)) {
-      // vpow(x, 1.0) converts to x
-      rewriter.replaceOp(powOp, {src[0]});
-      return success();
-    }
-
-    if (utils::isConst<FloatAttr, float_t>(src1ConstValue, 2.0)) {
-      // vpow(x, 2.0) converts to x * x
-      auto hivmVMulOp = rewriter.create<hivm::VMulOp>(
-          powOp.getLoc(), src0Type, ValueRange{src[0], src[0]}, inits[0]);
-      rewriter.replaceOp(powOp, hivmVMulOp);
-      return success();
-    }
-
-    if (utils::isConst<FloatAttr, float_t>(src1ConstValue, 3.0)) {
-      // vpow(x, 3.0) converts to x * x * x
-      auto emptyOp =
-          mlir::utils::createEmptyOp(rewriter, powOp.getLoc(), inits[0]);
-
-      /// step 1: y = x * x
-      auto oneHivmVMulOp = rewriter.create<hivm::VMulOp>(
-          powOp.getLoc(), src0Type, ValueRange{src[0], src[0]},
-          ValueRange(emptyOp));
-      auto oneVmulDst = oneHivmVMulOp.getResult();
-
-      /// step 2: z = x * y
-      auto twoHivmVMulOp = rewriter.create<hivm::VMulOp>(
-          powOp.getLoc(), src0Type, ValueRange{src[0], oneVmulDst[0]},
-          inits[0]);
-      rewriter.replaceOp(powOp, twoHivmVMulOp);
-      return success();
-    }
-
-    return failure();
-  }
-};
-
 struct RedudantVBrcOp : public OpRewritePattern<VBrcOp> {
   using OpRewritePattern<VBrcOp>::OpRewritePattern;
 
@@ -492,11 +414,6 @@ struct EliminateTrivialInlineBrc
 };
 
 } // namespace
-
-void VPowOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
-                                         ::mlir::MLIRContext *context) {
-  results.add<RedudantVPowOp>(context);
-}
 
 void VBrcOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
