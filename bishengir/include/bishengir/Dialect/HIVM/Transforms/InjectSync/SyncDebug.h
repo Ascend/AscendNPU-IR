@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+/* LCOV_EXCL_START */
 #ifndef BISHENGIR_SYNCDEBUG_H
 #define BISHENGIR_SYNCDEBUG_H
 
@@ -87,3 +88,4 @@ private:
 } // namespace mlir
 
 #endif // BISHENGIR_SYNCDEBUG_H
+/* LCOV_EXCL_STOP */

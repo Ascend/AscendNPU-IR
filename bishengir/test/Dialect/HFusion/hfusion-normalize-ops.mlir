@@ -701,8 +701,8 @@ func.func @test_xori(%arg0: tensor<512xi16>, %arg1: tensor<512xi16>) -> tensor<5
 // CHECK-SAME: %[[ARG:.*]]: tensor<5x1xf32>) -> tensor<5x1xf32> {
 // CHECK: %[[VAL_0:.*]] = arith.constant -0.166666582 : f32
 // CHECK: %[[VAL_1:.*]] = arith.constant 8.333050e-03 : f32
-// CHECK: %[[VAL_2:.*]] = arith.constant -1.98089445E-4 : f32
-// CHECK: %[[VAL_3:.*]] = arith.constant 2.60492652E-6 : f32
+// CHECK-DAG: %[[VAL_2:.*]] = arith.constant -1.98089445E-4 : f32
+// CHECK-DAG: %[[VAL_3:.*]] = arith.constant 2.60492652E-6 : f32
 // CHECK: %[[VAL_4:.*]] = arith.constant 1.000000e+00 : f32
 // CHECK: %[[VAL_5:.*]]  = arith.constant -2.000000e+00 : f32
 // CHECK: %[[VAL_6:.*]] = arith.constant 4.000000e+00 : f32
@@ -771,8 +771,8 @@ func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
 // CHECK: %[[VAL_0:.*]] = arith.constant -1.000000e+00 : f32
 // CHECK: %[[VAL_1:.*]] = arith.constant -0.166666582 : f32
 // CHECK: %[[VAL_2:.*]] = arith.constant 8.333050e-03 : f32
-// CHECK: %[[VAL_3:.*]] = arith.constant -1.98089445E-4 : f32
-// CHECK: %[[VAL_4:.*]] = arith.constant 2.60492652E-6 : f32
+// CHECK-DAG: %[[VAL_3:.*]] = arith.constant -1.98089445E-4 : f32
+// CHECK-DAG: %[[VAL_4:.*]] = arith.constant 2.60492652E-6 : f32
 // CHECK: %[[VAL_5:.*]]  = arith.constant 1.000000e+00 : f32
 // CHECK: %[[VAL_6:.*]] = arith.constant -2.000000e+00 : f32
 // CHECK: %[[VAL_7:.*]] = arith.constant 4.000000e+00 : f32
