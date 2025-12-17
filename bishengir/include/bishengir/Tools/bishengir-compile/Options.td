@@ -170,14 +170,6 @@ def DisableAutoInjectBlockSync : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
-def EnableHIVMGraphSyncSolver : FeatureControlOptions<
-  "Use hivm graph-sync-solver instead of inject-sync.",
-  "bool",
-  "false"
-> {
-  let passGroup = ["HFUSION", "HIVM"];
-}
-
 def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
   "In combination with the disableAutoInjectBlockSync option.",
   "bool",

@@ -47,12 +47,7 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
 static void
 hivmNormSyncPipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {
-  if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
-      !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
-    GraphSyncSolverOptions gssOptions;
-    gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
-    pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
-  } else if (!hivmPipelineOptions.disableHIVMAutoInjectSync) {
+  if (!hivmPipelineOptions.disableHIVMAutoInjectSync) {
     InjectSyncOptions syncOptions;
     syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     syncOptions.assumeAliveLoops =

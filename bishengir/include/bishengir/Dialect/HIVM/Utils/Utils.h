@@ -171,9 +171,6 @@ LoopLikeOpInterface getParentLoop(Value val);
 Value createNestedIndexModular(OpBuilder &builder, Operation *op,
                                int modular = 2);
 
-Value createNestedIndexModular(OpBuilder &builder, LoopLikeOpInterface loopOp,
-                               int modular = 2);
-
 Value createNestedIndexForOp(OpBuilder &builder, Operation *operation);
 
 /// Create nested loops by choosing `loopDims` of `target`.
