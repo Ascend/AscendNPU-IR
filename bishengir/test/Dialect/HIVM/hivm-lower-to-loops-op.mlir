@@ -1513,8 +1513,7 @@ func.func @test_decompose_vdeinterleave_single_f16(%src: memref<32xf16>, %even_d
 // CHECK: arith.cmpf
 // CHECK: arith.index_cast
 // CHECK: arith.select
-// CHECK: arith.cmpf
-// CHECK: arith.select
+// CHECK: arith.minimumf
 // CHECK: memref.store
 // CHECK: memref.store
 func.func @test_decompose_argmin_float(%src: memref<2x5x7xf16, strided<[96, 16, 1], offset: ?>>, %idx: memref<1x5x7xi32>) {
