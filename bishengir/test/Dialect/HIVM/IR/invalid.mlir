@@ -275,7 +275,7 @@ func.func @hivm_store_dims(%src: tensor<16x16x2xf16>, %dst: tensor<16x16xf16>) {
 func.func @hivm_memref_store_gm_to_gm_fail() {
   %src = memref.alloc() : memref<16x16xf16, #hivm.address_space<gm>>
   %dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<gm>>
-  // expected-error@+1 {{'hivm.hir.store' op only support copy gm to ub or copy ub to gm or copy ub to ub currently!}}
+  // expected-error@+1 {{'hivm.hir.store' op only support store ub to gm currently!}}
   hivm.hir.store ins(%src : memref<16x16xf16, #hivm.address_space<gm>>)
                 outs(%dst : memref<16x16xf16, #hivm.address_space<gm>>)
   return

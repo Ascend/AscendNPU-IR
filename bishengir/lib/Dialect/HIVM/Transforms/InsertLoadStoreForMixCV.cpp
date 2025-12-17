@@ -191,14 +191,26 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
 
     Operation *opPtr = op.getOperation();
     llvm::SmallVector<OpOperand *> consumerOperands;
-    for (OpOperand &operand : opPtr->getOpOperands()) {
-      if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
-          traceDefOp<hivm::StoreOp>(operand.get()).has_value()) {
-        consumerOperands.push_back(&operand);
-      }
-    }
+    TypeSwitch<Operation *>(opPtr)
+        .Case([&](hivm::StoreOp storeOp) {
+            if (!storeOp->getOpOperands().empty()) {
+                OpOperand &firstOperand = storeOp->getOpOperands().front();
+                if (traceDefOp<hivm::FixpipeOp>(firstOperand.get()).has_value() ||
+                    traceDefOp<hivm::StoreOp>(firstOperand.get()).has_value()) {
+                    consumerOperands.push_back(&firstOperand);
+                }
+            }
+        })
+        .Default([&](Operation *genericOp) {
+            for (OpOperand &operand : genericOp->getOpOperands()) {
+                if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
+                    traceDefOp<hivm::StoreOp>(operand.get()).has_value()) {
+                    consumerOperands.push_back(&operand);
+                }
+            }
+        });
     return insertLoadStoreOp(rewriter, opPtr->getLoc(), consumerOperands,
-                             InsertMode::LoadOnly);
+                            InsertMode::LoadOnly);
   }
 };
 

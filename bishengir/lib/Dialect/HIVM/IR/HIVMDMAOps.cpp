@@ -291,8 +291,7 @@ static LogicalResult checkStoreOpMemSpace(StoreOp &op) {
         srcAddrSpace == AddressSpace::UB && dstAddrSpace == AddressSpace::GM;
 
     if (!isUbtoGm) {
-      return op.emitOpError("only support copy gm to ub or copy ub to gm or "
-                            "copy ub to ub currently!");
+      return op.emitOpError("only support store ub to gm currently!");
     }
   }
 

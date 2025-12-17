@@ -167,7 +167,7 @@ module {
       %3 = hivm.hir.load ins(%arg3 : tensor<128x64xf32>) outs(%2 : tensor<128x64xf32>) -> tensor<128x64xf32>
       %4 = tensor.empty() : tensor<128x64xf32>
       %5 = hivm.hir.vadd ins(%3, %cst : tensor<128x64xf32>, f32) outs(%4 : tensor<128x64xf32>) -> tensor<128x64xf32>
-      // CHECK: %[[VAL7:.*]] = hivm.hir.store ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+      // CHECK: %[[VAL7:.*]] = hivm.hir.store ins(%{{.*}} : tensor<128x64xf32>) outs(%arg3 : tensor<128x64xf32>) -> tensor<128x64xf32>
       // CHECK: scf.yield %[[VAL7]] : tensor<128x64xf32>
       scf.yield %5 : tensor<128x64xf32>
     }
