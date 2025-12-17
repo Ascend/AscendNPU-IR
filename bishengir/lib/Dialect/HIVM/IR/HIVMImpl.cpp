@@ -267,25 +267,7 @@ bool isScalarLike(Type type) {
   return !memrefType || memrefType.getRank() == 1;
 }
 
-bool isIdentityStrides(MemRefType shapedType) {
-  auto stridedLayout = dyn_cast<StridedLayoutAttr>(shapedType.getLayout());
-  if (!stridedLayout)
-    return true;
-  return stridedLayout.isIdentity();
-}
-
 using AlignInfoMap = SmallVector<int64_t>;
-SmallVector<int64_t> getAlignedSizes(ArrayRef<int64_t> baseSizes,
-                                     AlignInfoMap &alignInfo) {
-  auto rank = baseSizes.size();
-  SmallVector<int64_t> alignedSizes(rank, 1);
-  for (size_t i = 0; i < rank; ++i) {
-    alignedSizes[i] =
-        static_cast<int64_t>(llvm::divideCeil(baseSizes[i], alignInfo[i])) *
-        alignInfo[i];
-  }
-  return alignedSizes;
-}
 
 Type getAnnotationMarkByteAlignment(Value value) {
   SmallVector<Operation *> annotateMarks =
@@ -551,8 +533,7 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
         (static_cast<uint64_t>(shape[castAlignDims[0]]) * elemTypeBytes) %
         hwAlignBytes !=
         0) {
-      auto srcAlignInfo =
-          std::make_unique<OperAlignInfo>(src, castAlignDims[0], hwAlignBytes);
+      auto srcAlignInfo = std::make_unique<OperAlignInfo>(src, castAlignDims[0], hwAlignBytes);
       operAlignInfoList->push_back(std::move(srcAlignInfo));
     }
   }
@@ -681,18 +662,14 @@ LogicalResult getUnAlignSizeInfo(
 
   operAlignInfoList->clear();
   // choose transdim 0 as double align dim
-  auto srcTrans0AlignInfo = std::make_unique<OperAlignInfo>(
-      op.getSrc(), transposeLoopDims[0], hwAlignBytes);
+  auto srcTrans0AlignInfo = std::make_unique<OperAlignInfo>(op.getSrc(), transposeLoopDims[0], hwAlignBytes);
   operAlignInfoList->push_back(std::move(srcTrans0AlignInfo));
-  auto srcTrans1AlignInfo = std::make_unique<OperAlignInfo>(
-      op.getSrc(), transposeLoopDims[1], hwAlignBytes * 2);
+  auto srcTrans1AlignInfo = std::make_unique<OperAlignInfo>(op.getSrc(), transposeLoopDims[1], hwAlignBytes * 2);
   operAlignInfoList->push_back(std::move(srcTrans1AlignInfo));
 
-  auto dstTrans0AlignInfo = std::make_unique<OperAlignInfo>(
-      op.getDst(), transposeLoopDims[0], hwAlignBytes * 2);
+  auto dstTrans0AlignInfo = std::make_unique<OperAlignInfo>(op.getDst(), transposeLoopDims[0], hwAlignBytes * 2);
   operAlignInfoList->push_back(std::move(dstTrans0AlignInfo));
-  auto dstTrans1AlignInfo = std::make_unique<OperAlignInfo>(
-      op.getDst(), transposeLoopDims[1], hwAlignBytes);
+  auto dstTrans1AlignInfo = std::make_unique<OperAlignInfo>(op.getDst(), transposeLoopDims[1], hwAlignBytes);
   operAlignInfoList->push_back(std::move(dstTrans1AlignInfo));
   return success();
 }
