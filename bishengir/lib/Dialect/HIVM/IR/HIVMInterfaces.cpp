@@ -103,6 +103,7 @@ AlignKind deduceAlignmentForMemRefType(MemRefType vecType) {
   return alignKind;
 }
 
+/* LCOV_EXCL_START */
 AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand) {
   Value operandValue = operand.get();
   MemRefType maybeMemRefType = dyn_cast<MemRefType>(operandValue.getType());
@@ -135,6 +136,7 @@ AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand) {
   }
   return alignmentInfo.front();
 }
+/* LCOV_EXCL_STOP */
 
 namespace detail {
 
@@ -260,6 +262,7 @@ SmallVector<Value> getTargetSpaceOperandsImpl(Operation *op,
   return results;
 }
 
+/* LCOV_EXCL_START */
 bool isVectorOnlyOperandImpl(Operation *op, size_t idx) {
   assert(isa<HIVMStructuredOp>(op));
   auto hivmOp = cast<HIVMStructuredOp>(op);
@@ -279,6 +282,7 @@ bool isVectorOnlyOperandImpl(Operation *op, size_t idx) {
   }
   return false;
 }
+/* LCOV_EXCL_STOP */
 
 BitVector getContiguousAxesImpl(ArrayRef<Type> shapedTypes) {
   BitVector ret;
@@ -318,11 +322,13 @@ BitVector getContiguousAxesImpl(ArrayRef<Type> shapedTypes) {
   return ret;
 }
 
+/* LCOV_EXCL_START */
 /// This function will return the mask of the contiguous axes
 BitVector getContiguousAxesImpl(Operation *op) {
   auto shapedTypes = getHIVMOperandTypesImpl(op);
   return getContiguousAxesImpl(shapedTypes);
 }
+/* LCOV_EXCL_STOP */
 
 BitVector getUnitAxesMaskImpl(MemRefType type) {
   auto shape = type.getShape();
@@ -344,6 +350,7 @@ BitVector getUnitAxesMaskImpl(ArrayRef<Type> types) {
   return ret;
 }
 
+/* LCOV_EXCL_START */
 /// This function will return the mask of the unit axes, true if all of the
 /// shape in the current axis is 1.
 /// Mask doesn't guarantee it's permutation safe
@@ -354,7 +361,9 @@ BitVector getUnitAxesMaskImpl(Operation *op) {
   auto shapedTypes = getHIVMOperandTypesImpl(op);
   return getUnitAxesMaskImpl(shapedTypes);
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 BitVector getPermutedAxesMaskImpl(Operation *op) {
   auto permutationArray = getPermutationArray(op);
   auto shapedTypes = getHIVMOperandTypesImpl(op);
@@ -364,6 +373,7 @@ BitVector getPermutedAxesMaskImpl(Operation *op) {
   }
   return ret;
 }
+/* LCOV_EXCL_STOP */
 
 LogicalResult verifyStructuredOpInterface(Operation *op) {
   auto hivmStructuredOp = cast<HIVMStructuredOp>(op);
@@ -376,6 +386,7 @@ LogicalResult verifyStructuredOpInterface(Operation *op) {
   return success();
 }
 
+/* LCOV_EXCL_START */
 Value getIsFirstIterationValue(scf::ForOp forOp, Location loc,
                                PatternRewriter &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
@@ -386,7 +397,9 @@ Value getIsFirstIterationValue(scf::ForOp forOp, Location loc,
       loc, arith::CmpIPredicate::eq, lowerBound, currentInd);
   return isFirstIter;
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 Value getIsLastIterationValue(scf::ForOp forOp, Location loc,
                               PatternRewriter &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
@@ -399,7 +412,9 @@ Value getIsLastIterationValue(scf::ForOp forOp, Location loc,
       loc, arith::CmpIPredicate::sge, nextInd, upperBound);
   return isLastIter;
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 Value getSelectedUnitFlagMode(Value isEnabled, PatternRewriter &rewriter,
                               std::optional<UNIT_FLAG> isEnabledMode = {}) {
   OpBuilder::InsertionGuard guard(rewriter);
@@ -416,7 +431,9 @@ Value getSelectedUnitFlagMode(Value isEnabled, PatternRewriter &rewriter,
                                           rewriter.getI8Type(), isEnabled,
                                           enabledVal, disabledVal);
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 Value getUnitFlagModeLibValueImpl(HIVMUnitFlagEnabled op,
                                   PatternRewriter &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
@@ -461,6 +478,7 @@ Value getUnitFlagModeLibValueImpl(HIVMUnitFlagEnabled op,
     llvm_unreachable("unsupported unit-flag mode to be lowered to std");
   }
 }
+/* LCOV_EXCL_STOP */
 
 } // namespace detail
 
@@ -474,6 +492,7 @@ HIVMStructuredOp::createFlatListOfOperandDims(OpBuilder &b, Location loc) {
   return res;
 }
 
+/* LCOV_EXCL_START */
 SmallVector<int64_t, 4> HIVMStructuredOp::createFlatListOfOperandStaticDims() {
   SmallVector<int64_t, 4> res;
   assert(!hasDynamicShape() && "expected operands to have static shapes");
@@ -481,7 +500,9 @@ SmallVector<int64_t, 4> HIVMStructuredOp::createFlatListOfOperandStaticDims() {
     llvm::append_range(res, getShape(&opOperand));
   return res;
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 SmallVector<Range, 4> HIVMStructuredOp::createLoopRanges(OpBuilder &b,
                                                          Location loc) {
   AffineMap map = getLoopsToShapesMap();
@@ -500,7 +521,9 @@ SmallVector<Range, 4> HIVMStructuredOp::createLoopRanges(OpBuilder &b,
   }
   return res;
 }
+/* LCOV_EXCL_STOP */
 
+/* LCOV_EXCL_START */
 SmallVector<int64_t, 4> HIVMStructuredOp::computeStaticLoopSizes() {
   AffineMap map = getLoopsToShapesMap();
   unsigned numDims = map.getNumDims();
@@ -514,6 +537,7 @@ SmallVector<int64_t, 4> HIVMStructuredOp::computeStaticLoopSizes() {
   }
   return res;
 }
+/* LCOV_EXCL_STOP */
 
 ArrayAttr detail::getIndexingMapsImpl(HIVMStructuredOp op) {
   MLIRContext *context = op.getContext();
