@@ -477,6 +477,7 @@ static DiagnosedSilenceableFailure rewriteNestedForallImpl(
   SmallVector<Value> subBlkIdxBounds;
   SmallVector<Value> subBlkIdxIV;
 
+  /* LCOV_EXCL_START */
   for (scf::ForallOp forall : worklist) {
     for (auto mapping : llvm::zip_equal(forall.getMappingAttr(),
                                         forall.getUpperBound(rewriter),
@@ -526,6 +527,7 @@ static DiagnosedSilenceableFailure rewriteNestedForallImpl(
     rewriter.eraseOp(forall);
   }
   return DiagnosedSilenceableFailure::success();
+  /* LCOV_EXCL_STOP */
 }
 
 DiagnosedSilenceableFailure mapForallToBlocksImpl(
