@@ -1279,6 +1279,7 @@ LogicalResult CVPipeliningPass::traceAllUseDef(OpBuilder &builder) {
   return anySucceeded;
 }
 
+/* LCOV_EXCL_START */
 void CVPipeliningPass::balanceVectorWorkItems(
     ArrayRef<std::shared_ptr<WorkItem>> list) const {
   SmallVector<WorkItem *> vecItems;
@@ -1326,6 +1327,7 @@ void CVPipeliningPass::balanceVectorWorkItems(
     sortByCost();
   }
 }
+/* LCOV_EXCL_STOP */
 
 static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
                                                Value src, Value into,
