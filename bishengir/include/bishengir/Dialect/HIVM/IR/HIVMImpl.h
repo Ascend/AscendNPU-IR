@@ -144,30 +144,7 @@ FailureOr<TCoreType> getCoreType(Operation *op);
 // get is scalar like
 bool isScalarLike(Type type);
 
-/// Checks if a MemRefType has identity strides.
-///
-/// Identity strides represent the default memory layout where elements are
-/// stored contiguously in row-major order
-///
-/// @param shapedType The MemRefType to check
-/// @return true if the type has no layout or has an identity strided layout,
-///         false otherwise
-bool isIdentityStrides(MemRefType shapedType);
-
 using AlignInfoMap = SmallVector<int64_t>;
-/// Computes aligned sizes by rounding up each dimension to its alignment
-/// requirement.
-///
-/// For each dimension, calculates the smallest size that is a multiple of the
-/// corresponding alignment value. This ensures memory accesses respect
-/// alignment constraints.
-///
-/// @param baseSizes Original sizes for each dimension
-/// @param alignInfo Alignment requirements for each dimension (in elements)
-/// @return Vector of aligned sizes where alignedSizes[i] = ceil(baseSizes[i] /
-/// alignInfo[i]) * alignInfo[i]
-SmallVector<int64_t> getAlignedSizes(ArrayRef<int64_t> baseSizes,
-                                     AlignInfoMap &alignInfo);
 
 /// Extracts byte alignment requirements from annotation marks and computes
 /// aligned type.
