@@ -1216,15 +1216,40 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
                                                         rewriter.getI1Type());
     auto compareAttr =
         rewriter.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::EQ);
+    auto elemType = getElementTypeOrSelf(src0);
+    auto src1 = op.getSrc()[1];
+    hivm::RoundMode rounding = hivm::RoundMode::RINT;
+    auto roundingAttr = rewriter.getAttr<hivm::RoundModeAttr>(rounding);
+    if (elemType.isInteger(8)) {
+      src0 = castTo(rewriter, src0.getLoc(), src0, roundingAttr,
+                       rewriter.getF16Type()).getSingleDst();
+      src1 = castTo(rewriter, src1.getLoc(), src1, roundingAttr,
+                       rewriter.getF16Type()).getSingleDst();
+      tmpUB = castTo(rewriter, tmpUB.getLoc(), tmpUB, roundingAttr,
+                        rewriter.getF16Type()).getSingleDst();
+    } else if (elemType.isBF16()) {
+      src0 = castTo(rewriter, src0.getLoc(), src0, roundingAttr,
+                       rewriter.getF32Type()).getSingleDst();
+      src1 = castTo(rewriter, src1.getLoc(), src1, roundingAttr,
+                       rewriter.getF32Type()).getSingleDst();
+      tmpUB = castTo(rewriter, tmpUB.getLoc(), tmpUB, roundingAttr,
+                        rewriter.getF32Type()).getSingleDst();
+    }
     rewriter.create<hivm::VCmpOp>(op.getLoc(), TypeRange(),
-                                  ValueRange({tmpUB, src0}), Value(condUB),
-                                  compareAttr);
+                                  ValueRange({tmpUB, src0}),
+                                  Value(condUB), compareAttr);
 
     auto resUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src0);
-    auto src1 = op.getSrc()[1];
     rewriter.create<hivm::VSelOp>(op.getLoc(), TypeRange(),
                                   ValueRange({condUB, src1, tmpUB}),
                                   ValueRange({resUB}), Value());
+    if (elemType.isInteger(8)) {
+      resUB = castTo(rewriter, resUB.getLoc(), resUB, roundingAttr,
+                     rewriter.getI8Type()).getSingleDst();
+    } else if (elemType.isBF16()) {
+      resUB = castTo(rewriter, resUB.getLoc(), resUB, roundingAttr,
+                     rewriter.getBF16Type()).getSingleDst();
+    }
 
     // step3: store res_ub to dst
     rewriter.create<hivm::StoreOp>(loc, TypeRange{}, resUB, dst);
