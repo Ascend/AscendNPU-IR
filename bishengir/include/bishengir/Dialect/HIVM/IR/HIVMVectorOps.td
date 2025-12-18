@@ -928,7 +928,6 @@ def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
   let builders = [
     OpBuilder<(ins "TypeRange":$result,"ValueRange":$src,"ValueRange":$dst)>
   ];
-  let hasCanonicalizer = 1;
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
