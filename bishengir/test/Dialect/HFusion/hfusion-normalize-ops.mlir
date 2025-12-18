@@ -2406,3 +2406,32 @@ func.func @test_ceildivui_ui8(%arg0: tensor<6x6xi8>, %arg1: tensor<6x6xi8>) -> t
   %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<ceildivui>} ins(%arg0, %arg1 : tensor<6x6xi8>, tensor<6x6xi8>) outs(%0 : tensor<6x6xi8>) -> tensor<6x6xi8>
   return %1 : tensor<6x6xi8>
 }
+
+// -----
+// CHECK-LABEL:   func.func @test_normalize_reduce_ui8_to_f16(
+// CHECK-SAME:      %[[ARG0:.*]]: tensor<16x2x2x2xi8>) -> tensor<16x2x2xi8> {
+// CHECK:           %[[VAL_0:.*]] = arith.constant 0.000000e+00 : f16
+// CHECK:           %[[VAL_1:.*]] = tensor.empty() : tensor<16x2x2x2xf16>
+// CHECK:           %[[VAL_2:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[ARG0]] : tensor<16x2x2x2xi8>) outs(%[[VAL_1]] : tensor<16x2x2x2xf16>) -> tensor<16x2x2x2xf16>
+// CHECK:           %[[VAL_3:.*]] = tensor.empty() : tensor<16x2x2xf16>
+// CHECK:           %[[VAL_4:.*]] = linalg.fill ins(%[[VAL_0]] : f16) outs(%[[VAL_3]] : tensor<16x2x2xf16>) -> tensor<16x2x2xf16>
+// CHECK:           %[[VAL_5:.*]] = linalg.reduce ins(%[[VAL_2]] : tensor<16x2x2x2xf16>) outs(%[[VAL_4]] : tensor<16x2x2xf16>) dimensions = [3]
+// CHECK:             (%[[VAL_6:.*]]: f16, %[[VAL_7:.*]]: f16) {
+// CHECK:               %[[VAL_8:.*]] = arith.maximumf %[[VAL_6]], %[[VAL_7]] : f16
+// CHECK:               linalg.yield %[[VAL_8]] : f16
+// CHECK:             }
+// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<16x2x2xi8>
+// CHECK:           %[[VAL_10:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = false, round_mode = #hfusion.round_mode<trunc>} ins(%[[VAL_5]] : tensor<16x2x2xf16>) outs(%[[VAL_9]] : tensor<16x2x2xi8>) -> tensor<16x2x2xi8>
+// CHECK:           return %[[VAL_10]] : tensor<16x2x2xi8>
+// CHECK:         }
+func.func @test_normalize_reduce_ui8_to_f16(%arg0: tensor<16x2x2x2xi8>) -> tensor<16x2x2xi8> {
+  %c0_i8 = arith.constant 0 : i8
+  %init = tensor.empty() : tensor<16x2x2xi8>
+  %filled = linalg.fill ins(%c0_i8 : i8) outs(%init : tensor<16x2x2xi8>) -> tensor<16x2x2xi8>
+  %reduced = linalg.reduce ins(%arg0 : tensor<16x2x2x2xi8>) outs(%filled : tensor<16x2x2xi8>) dimensions = [3] 
+    (%in: i8, %init_val: i8) {
+      %max = arith.maxui %in, %init_val : i8
+      linalg.yield %max : i8
+    }
+  return %reduced : tensor<16x2x2xi8>
+}

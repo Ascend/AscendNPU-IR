@@ -3047,7 +3047,8 @@ template <typename srcType, typename targetType,
           typename = std::enable_if<(std::is_same_v<targetType, Float16Type> ||
                                      std::is_same_v<targetType, Float32Type>)>>
 SmallVector<Value> normalizeSrcToTargetType(PatternRewriter &rewriter,
-                                            const SmallVector<Value> &values) {
+                                            const SmallVector<Value> &values,
+                                            hfusion::TypeFn castType = hfusion::TypeFn::cast_signed) {
   SmallVector<Value> result;
   for (Value v : values) {
     if (!isElemType<srcType>(v.getType())) {
@@ -3056,7 +3057,7 @@ SmallVector<Value> normalizeSrcToTargetType(PatternRewriter &rewriter,
     }
 
     Type dstType = rewriter.getType<targetType>();
-    Value castResult = castTo(rewriter, v, dstType);
+    Value castResult = castTo(rewriter, v, dstType, castType);
     result.push_back(castResult);
   }
   return result;
@@ -3744,25 +3745,33 @@ public:
       return failure();
     }
 
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    bool isUnsigned = isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp);
+    bool isMaxMinOp = isa<arith::MaxUIOp, arith::MinUIOp, arith::MaxSIOp, arith::MinSIOp>(bodyOp);
+    auto castType = isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp) 
+                    ? hfusion::TypeFn::cast_unsigned 
+                    : hfusion::TypeFn::cast_signed;
+
     FloatType targetType = nullptr;
     SmallVector<Value> newInputs;
     SmallVector<Value> newInits;
     if (shoudComputeI8ByF32(op)) {
       targetType = rewriter.getF32Type();
-      newInputs =
-          normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs);
-      newInits = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inits);
+      newInputs = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs, castType);
+      newInits = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inits, castType);
     } else {
       targetType = rewriter.getF16Type();
-      newInputs =
-          normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs);
-      newInits = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
+      newInputs = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs, castType);
+      newInits = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits, castType);
     }
 
     Operation *newOp = createNewReduceOp(op, rewriter, rewriter.getI8Type(),
                                          targetType, newInputs, newInits);
+    bool enableOverflow = !isMaxMinOp;
     replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
+                                   rewriter, enableOverflow, isUnsigned);
     return success();
   }
 
