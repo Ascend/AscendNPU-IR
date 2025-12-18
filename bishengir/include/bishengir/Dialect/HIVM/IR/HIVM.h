@@ -111,10 +111,6 @@ namespace detail {
 // Printing/parsing for Structured Op
 //===----------------------------------------------------------------------===//
 
-/// Printer and Parser for HIVM Ops that follows Destination Style Op Interface
-/// \note Only applicable for ops that only have input and init operands.
-ParseResult parseHIVMStructuredDPSOp(OpAsmParser &parser,
-                                     OperationState &result);
 void printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op, ValueRange inputs,
                               ValueRange outputs);
 
