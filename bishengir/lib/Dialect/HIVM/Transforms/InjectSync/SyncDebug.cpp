@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
-
+/* LCOV_EXCL_START */
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncDebug.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
@@ -268,3 +268,4 @@ void SyncDebug::PrintBranchIR(const InstanceElement *e, raw_ostream &os) {
   }
   }
 }
+/* LCOV_EXCL_STOP */
