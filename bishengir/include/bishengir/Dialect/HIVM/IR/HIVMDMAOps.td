@@ -415,7 +415,7 @@ def NZ2NDOp : HIVM_DmaOp<"nz2nd",
 }
 
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64]>
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
 ]> {
   let summary = "Atomic Compare-And-Swap (CAS) Op";
   let description = [{
