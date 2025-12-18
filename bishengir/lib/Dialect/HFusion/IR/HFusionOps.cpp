@@ -2380,7 +2380,7 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   b.setInsertionPoint(getOperation());
 
   Location loc = getLoc();
-  int64_t inputBins = getNumBins();
+  int64_t inputBins = static_cast<int64_t>(getNumBins());
   Value input = getInput();
   Value mask = getMask();
 
