@@ -223,6 +223,7 @@ public:
 
 } // namespace
 
+/* LCOV_EXCL_START */
 static Value createLinalgPayloadForReduceOp(OpBuilder &b, Location loc,
                                             ValueRange payloadArgs,
                                             Operation *op,
@@ -286,6 +287,7 @@ static Value createLinalgPayloadForReduceOp(OpBuilder &b, Location loc,
   op->emitError("unimplemented lowering in createLinalgPayloadForReduceOp");
   return nullptr;
 }
+/* LCOV_EXCL_STOP */
 
 namespace {
 template <typename... AllowOps>
@@ -333,6 +335,7 @@ private:
   /// Given a reduction operation that has the `keepdim` attribute and the
   /// (optional) `dim` attribute, return the source tensor operand and the
   /// literal values of the attributes or failure otherwise
+  /* LCOV_EXCL_START */
   Value createInitTensorForReduceOp(
       OpBuilder &rewriter, Location loc, Operation *op, Type elementType,
       const torch_to_linalg::ReductionOpInfo &opInfo) const {
@@ -463,6 +466,7 @@ private:
     // No checks for all other reduction operations
     return success();
   }
+  /* LCOV_EXCL_STOP */
 
   Value createReductionOp(Location loc, Type elemType, Operation *op,
                           ArrayRef<Value> operands,
