@@ -31,6 +31,19 @@ module {
 
 // -----
 
+// CHECK-ALIGN: dimension to align: 0
+// CHECK-ALIGN: type before alignment: tensor<12x36xf32>
+// CHECK-ALIGN: dim: 1 stride is aligned to: 8
+module {
+  func.func @brodacast(%arg0: tensor<36xf32>, %arg1: tensor<12x36xf32>) -> (tensor<12x36xf32>)
+  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
+    %broadcasted = linalg.broadcast ins(%arg0 : tensor<36xf32>) outs(%arg1 : tensor<12x36xf32>) dimensions = [0] 
+    return %broadcasted : tensor<12x36xf32>
+  }
+}
+
+// -----
+
 // CHECK-ALIGN: type before alignment: tensor<32768x169xi1>
 // CHECK-ALIGN: dim: 1 stride is aligned to: 256
 module {
