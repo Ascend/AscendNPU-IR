@@ -1300,3 +1300,18 @@ func.func @test_cumprod_tensor(%src : tensor<2x?x?xf32>, %dst : tensor<2x?x?xf32
   %res6 = hivm.hir.vcumprod ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] reverse = false -> tensor<2x?x?xf32>
   return
 }
+
+// -----
+
+
+func.func @test_varange_op_with_offset(%offset: index, %stride0: index, %stride1: index) -> tensor<2x4xi32> {
+  %dst = tensor.empty() : tensor<2x4xi32>
+  %result = hivm.hir.varange offset[%offset] strides[%stride0, %stride1] outs(%dst : tensor<2x4xi32>) -> tensor<2x4xi32>
+  return %result : tensor<2x4xi32>
+}
+
+func.func @test_varange_op(%stride0: index, %stride1: index) -> tensor<2x4xi32> {
+  %dst = tensor.empty() : tensor<2x4xi32>
+  %result = hivm.hir.varange strides[%stride0, %stride1] outs(%dst : tensor<2x4xi32>) -> tensor<2x4xi32>
+  return %result : tensor<2x4xi32>
+}
