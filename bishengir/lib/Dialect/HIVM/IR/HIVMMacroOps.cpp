@@ -361,7 +361,6 @@ static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
 }
 
 static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
-  Operation *localMatmulOp = mmOut.getOwner();
   if (auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get())) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
             blockArg.getOwner()->getParentOp())) {
