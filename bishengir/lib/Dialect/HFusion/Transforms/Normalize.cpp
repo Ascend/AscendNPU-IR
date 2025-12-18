@@ -1302,7 +1302,7 @@ public:
   }
 };
 
-struct NormalizeArgMinMaxOp : OpRewritePattern<hfusion::ReduceWithIndexOp> {
+struct NormalizeArgMinMaxOp : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
   using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
