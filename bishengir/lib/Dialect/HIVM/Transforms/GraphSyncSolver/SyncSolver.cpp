@@ -22,6 +22,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -133,8 +134,8 @@ bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
   if (memSpace1 != memSpace2) {
     return false;
   }
-  auto bufferSize1 = GetBufferSize(pointerCastOp1.getResult());
-  auto bufferSize2 = GetBufferSize(pointerCastOp2.getResult());
+  auto bufferSize1 = GetBufferBitSize(pointerCastOp1.getResult());
+  auto bufferSize2 = GetBufferBitSize(pointerCastOp2.getResult());
   assert(bufferSize1.has_value() && bufferSize2.has_value());
   for (auto addr1 : pointerCastOp1.getAddrs()) {
     for (auto addr2 : pointerCastOp2.getAddrs()) {
@@ -149,10 +150,12 @@ bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
           static_cast<int64_t>(cast<IntegerAttr>(constOp1.getValue()).getInt());
       int64_t baseAddr2 =
           static_cast<int64_t>(cast<IntegerAttr>(constOp2.getValue()).getInt());
-      int64_t l1 = baseAddr1;
-      int64_t r1 = baseAddr1 + std::max((int64_t)1, bufferSize1.value());
-      int64_t l2 = baseAddr2;
-      int64_t r2 = baseAddr2 + std::max((int64_t)1, bufferSize2.value());
+      int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
+      int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
+      int64_t l1 = baseAddrInBits1;
+      int64_t r1 = baseAddrInBits1 + std::max((int64_t)1, bufferSize1.value());
+      int64_t l2 = baseAddrInBits2;
+      int64_t r2 = baseAddrInBits2 + std::max((int64_t)1, bufferSize2.value());
       // !(r2 <= l1 || r1 <= l2)
       if (r2 > l1 && r1 > l2) {
         return true;
@@ -221,8 +224,8 @@ Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
   if (loopPar1 != loopPar2) {
     return {};
   }
-  auto bufferSize1 = GetBufferSize(pointerCastOp1.getResult());
-  auto bufferSize2 = GetBufferSize(pointerCastOp2.getResult());
+  auto bufferSize1 = GetBufferBitSize(pointerCastOp1.getResult());
+  auto bufferSize2 = GetBufferBitSize(pointerCastOp2.getResult());
   assert(bufferSize1.has_value() && bufferSize2.has_value());
   auto addrs1 = pointerCastOp1.getAddrs();
   auto addrs2 = pointerCastOp2.getAddrs();
@@ -248,10 +251,14 @@ Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
             cast<IntegerAttr>(constOp1.getValue()).getInt());
         int64_t baseAddr2 = static_cast<int64_t>(
             cast<IntegerAttr>(constOp2.getValue()).getInt());
-        int64_t l1 = baseAddr1;
-        int64_t r1 = baseAddr1 + std::max((int64_t)1, bufferSize1.value());
-        int64_t l2 = baseAddr2;
-        int64_t r2 = baseAddr2 + std::max((int64_t)1, bufferSize2.value());
+        int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
+        int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
+        int64_t l1 = baseAddrInBits1;
+        int64_t r1 =
+            baseAddrInBits1 + std::max((int64_t)1, bufferSize1.value());
+        int64_t l2 = baseAddrInBits2;
+        int64_t r2 =
+            baseAddrInBits2 + std::max((int64_t)1, bufferSize2.value());
         // !(r2 <= l1 || r1 <= l2)
         if (r2 > l1 && r1 > l2) {
           return {};

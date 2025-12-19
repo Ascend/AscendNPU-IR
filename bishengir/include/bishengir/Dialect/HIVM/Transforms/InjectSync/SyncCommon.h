@@ -59,7 +59,7 @@ struct BaseMemInfo {
   /// base addresses of the buffer (offsets)
   SmallVector<int64_t> baseAddresses;
 
-  /// size of the buffer
+  /// size of the buffer in bits
   int64_t allocateSize{ShapedType::kDynamic};
 
   /// whether the base addresses contain variable address

@@ -97,17 +97,21 @@ bool MemoryDependentAnalyzer::isBufferOverlap(const BaseMemInfo *a,
   assert(a != nullptr && b != nullptr);
   assert(aIndex < a->baseAddresses.size());
   assert(bIndex < b->baseAddresses.size());
+  assert(a->allocateSize == ShapedType::kDynamic || a->allocateSize > 0);
+  assert(b->allocateSize == ShapedType::kDynamic || b->allocateSize > 0);
   /*
-  (size_a != ShapedType::kDynamic && (a+size_a <= b)) || 
+  (size_a != ShapedType::kDynamic && (a+size_a <= b)) ||
   (size_b != ShapedType::kDynamic && (b+size_b <= a)) ==> no overlap
   else overlap
   */
-  if((a->allocateSize != ShapedType::kDynamic) &&
-     (a->baseAddresses[aIndex] + a->allocateSize <= b->baseAddresses[bIndex])) {
+  if ((a->allocateSize != ShapedType::kDynamic) &&
+      (a->baseAddresses[aIndex] + a->allocateSize <
+       1 + b->baseAddresses[bIndex])) {
     return false;
   }
-  if((b->allocateSize != ShapedType::kDynamic) &&
-     (b->baseAddresses[bIndex] + b->allocateSize <= a->baseAddresses[aIndex])) {
+  if ((b->allocateSize != ShapedType::kDynamic) &&
+      (b->baseAddresses[bIndex] + b->allocateSize <
+       1 + a->baseAddresses[aIndex])) {
     return false;
   }
   return true;

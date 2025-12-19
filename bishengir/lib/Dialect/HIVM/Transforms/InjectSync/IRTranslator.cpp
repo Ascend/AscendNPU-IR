@@ -164,14 +164,15 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
   for (size_t i = 0; i < curAddress.size(); i++) {
     if (auto constOp =
             dyn_cast<arith::ConstantOp>(curAddress[i].getDefiningOp())) {
-      int64_t value = cast<IntegerAttr>(constOp.getValue()).getInt();
-      baseAddresses.push_back(value);
+      int64_t offset = cast<IntegerAttr>(constOp.getValue()).getInt();
+      int64_t offsetInBits = offset * utils::kBitsToByte;
+      baseAddresses.push_back(offsetInBits);
     } else {
       hasVariableAddress = true;
     }
   }
 
-  auto bufferSize = GetBufferSize(rootBuffer);
+  auto bufferSize = GetBufferBitSize(rootBuffer);
   if (!bufferSize.has_value()) {
     return op->emitError("Failed to get buffer size for alloc-like op.");
   }

@@ -853,20 +853,20 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
   return result;
 }
 
-std::optional<int64_t> GetBufferSize(Value buffer) {
+std::optional<int64_t> GetBufferBitSize(Value buffer) {
   auto memRefType = cast<MemRefType>(buffer.getType());
   if (!memRefType) {
     return {};
   }
-  int64_t bufferConstByteSize =
-      static_cast<int64_t>(memRefType.getElementTypeBitWidth()) / 8;
+  int64_t bufferConstBitSize =
+      static_cast<int64_t>(memRefType.getElementTypeBitWidth());
   for (auto &val : memRefType.getShape()) {
     if (val == ShapedType::kDynamic) {
       return ShapedType::kDynamic;
     }
-    bufferConstByteSize *= val;
+    bufferConstBitSize *= val;
   }
-  return bufferConstByteSize;
+  return bufferConstBitSize;
 }
 
 AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank) {
