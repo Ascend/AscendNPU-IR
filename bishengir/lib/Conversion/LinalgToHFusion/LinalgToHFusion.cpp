@@ -431,8 +431,8 @@ struct LinalgToHFusionReduceWithIndex
 
     auto bitWidth = getElementTypeOrSelf(inputs[0]).getIntOrFloatBitWidth();
     if (isUnsigned && bitWidth == 8) {
-      Type inputType = rewriter.getF16Type();
-      Type initType = rewriter.getF16Type();
+      Type inputType = rewriter.getF32Type();
+      Type initType = rewriter.getF32Type();
       if (auto tensorType = dyn_cast<RankedTensorType>(inputs[0].getType()))
         inputType = RankedTensorType::get(tensorType.getShape(), inputType);
       if (auto tensorType = dyn_cast<RankedTensorType>(inits[0].getType()))
