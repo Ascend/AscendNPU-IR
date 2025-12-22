@@ -61,6 +61,7 @@ def ScopeOp : Scope_Op<"scope", [
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$region);
   let hasCustomAssemblyFormat = 1;
+  let hasCanonicalizer = 1;
 }
 
 def ReturnOp : Scope_Op<"return", [
