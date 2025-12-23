@@ -259,6 +259,36 @@ func.func @test_extui_i1_i8(%arg0 : tensor<6x6xi1>) -> tensor<6x6xi8> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_extui_i8_i64
+func.func @test_extui_i8_i64(%arg0 : tensor<6x6xi8>) -> tensor<6x6xi64> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+  %ret = arith.extui %arg0 : tensor<6x6xi8> to tensor<6x6xi64>
+  return %ret : tensor<6x6xi64>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_extui_i8_i32
+func.func @test_extui_i8_i32(%arg0 : tensor<6x6xi8>) -> tensor<6x6xi32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+  %ret = arith.extui %arg0 : tensor<6x6xi8> to tensor<6x6xi32>
+  return %ret : tensor<6x6xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_extui_i8_i16
+func.func @test_extui_i8_i16(%arg0 : tensor<6x6xi8>) -> tensor<6x6xi16> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+  %ret = arith.extui %arg0 : tensor<6x6xi8> to tensor<6x6xi16>
+  return %ret : tensor<6x6xi16>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_fptosi_f32_i32
 func.func @test_fptosi_f32_i32(%arg0 : tensor<6x6xf32>) -> tensor<6x6xi32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
