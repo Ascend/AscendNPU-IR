@@ -970,7 +970,11 @@ def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
 def VBrcOp : HIVM_VectorOp<"vbrc",
     [SameOperandsElementType,
      OperElemTypeConstraints<
-         [0], [I8, UI8, I16, F16, UI16, I32, F32, UI32, BF16, I64, UI64, I1]>,
+         [0], [
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+         F8E4M3FN, F8E5M2, 
+#endif
+         I8, UI8, I16, F16, UI16, I32, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                ["getIteratorTypesArray", "getIndexingMaps"]>,
@@ -1130,7 +1134,11 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 //===----------------------------------------------------------------------===//
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
-    [OperElemTypeConstraints<[0], [AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64]>,
+    [OperElemTypeConstraints<[0], [
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+       F8E4M3FN, F8E5M2, 
+#endif
+       AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
