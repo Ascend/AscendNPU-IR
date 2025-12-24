@@ -55,6 +55,7 @@ void PropagateReshapePass::runOnOperation() {
   MLIRContext *context = &getContext();
 
   RewritePatternSet patterns(context);
+  patterns.add<PropagateCollapseDownToI1Cast>(context);
   patterns.add<PropagateNearEndExpandDown>(context);
   tensor::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
   tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);

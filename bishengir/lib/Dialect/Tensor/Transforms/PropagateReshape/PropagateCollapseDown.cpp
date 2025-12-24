@@ -1287,5 +1287,44 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
   return failure();
 }
 
+LogicalResult PropagateCollapseDownToI1Cast::matchAndRewrite(
+    tensor::CollapseShapeOp collapseOp, PatternRewriter &rewriter) const {
+  Value result = collapseOp.getResult();
+
+  if (!result.hasOneUse())
+    return failure();
+
+  Operation *userOp = *result.getUsers().begin();
+  if (!userOp)
+    return failure();
+
+  if (collapseOp->getParentOp() != userOp->getParentOp())
+    return failure();
+
+  if (!mlir::isa<hfusion::CastOp>(userOp))
+    return failure();
+
+  auto srcTy = mlir::dyn_cast<RankedTensorType>(collapseOp.getSrc().getType());
+  auto resTy =
+      mlir::dyn_cast<RankedTensorType>(collapseOp.getResult().getType());
+  if (!srcTy || !resTy)
+    return failure();
+
+  if (!srcTy.getElementType().isInteger(1) ||
+      !resTy.getElementType().isInteger(1))
+    return failure();
+
+  auto *src = collapseOp.getSrc().getDefiningOp();
+  if (!src || isStopPropagatable(src))
+    return failure();
+
+  LDBG(*userOp);
+  LLVM_DEBUG(
+      llvm::dbgs()
+          << "Propagate collapse down, single use hfusion.cast on i1\n";);
+
+  return handleElementwiseOp(collapseOp, rewriter, userOp);
+}
+
 } // namespace tensor
 } // namespace mlir
