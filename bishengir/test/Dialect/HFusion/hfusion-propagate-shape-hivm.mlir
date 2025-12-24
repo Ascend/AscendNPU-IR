@@ -107,3 +107,26 @@ func.func @reinterpret_dynamic_stride(%arg0: memref<?xf32>, %arg1: memref<?xf32>
   %3 = hivm.hir.mmadL1 ins(%expanded, %expanded_2, %arg6, %arg7, %arg7, %arg7 : tensor<1x4xf32>, tensor<4x1xf32>, i1, index, index, index) outs(%arg5 : tensor<1x1xf32>) -> tensor<1x1xf32>
   return %3 : tensor<1x1xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @rearrange_cache_with_mask
+// CHECK: %[[OUT_I1:.*]] = tensor.empty() : tensor<1x30xi1>
+// CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[ARG0:.*]], %[[ARG0]] : tensor<1x30xi1>, tensor<1x30xi1>) outs(%[[OUT_I1]] : tensor<1x30xi1>) -> tensor<1x30xi1>
+// CHECK-NOT: tensor.collapse_shape %[[CMP]]
+// CHECK: %[[OUT_F16:.*]] = tensor.empty() : tensor<30xf16>
+// CHECK: %[[EXP:.*]] = tensor.expand_shape %[[OUT_F16]] {{\[\[0, *1\]\]}} output_shape [1, 30] : tensor<30xf16> into tensor<1x30xf16>
+// CHECK: %[[CAST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%[[CMP]] : tensor<1x30xi1>) outs(%[[EXP]] : tensor<1x30xf16>) -> tensor<1x30xf16>
+// CHECK: %[[COLL:.*]] = tensor.collapse_shape %[[CAST]] {{\[\[0, *1\]\]}} : tensor<1x30xf16> into tensor<30xf16>
+module {
+  func.func @rearrange_cache_with_mask(%arg0: tensor<1x30xi1>) -> tensor<30xf16> {
+    %0 = tensor.empty() : tensor<1x30xi1>
+    %1 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+      ins(%arg0, %arg0 : tensor<1x30xi1>, tensor<1x30xi1>) outs(%0 : tensor<1x30xi1>) -> tensor<1x30xi1>
+
+    %collapsed_in = tensor.collapse_shape %1 [[0, 1]] : tensor<1x30xi1> into tensor<30xi1>
+    %2 = tensor.empty() : tensor<30xf16>
+    %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>}
+      ins(%collapsed_in : tensor<30xi1>) outs(%2 : tensor<30xf16>) -> tensor<30xf16>
+    return %3 : tensor<30xf16>
+  }
+}

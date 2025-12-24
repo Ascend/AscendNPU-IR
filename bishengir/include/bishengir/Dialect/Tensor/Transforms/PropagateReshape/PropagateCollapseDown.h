@@ -49,6 +49,14 @@ private:
   PropagateReshapeOptions options;
 };
 
+struct PropagateCollapseDownToI1Cast final
+    : OpRewritePattern<tensor::CollapseShapeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::CollapseShapeOp collapseOp,
+                                PatternRewriter &rewriter) const override;
+};
+
 } // namespace tensor
 } // namespace mlir
 
