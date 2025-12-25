@@ -2016,3 +2016,22 @@ func.func @test_vshr_vv_inline_brc_dim0() {
    hivm.hir.vshr {broadcast = array<i64: 0>} ins(%allocIn0, %allocIn1 : memref<1x8xi64>, memref<64x8xi64>) outs(%allocOut : memref<64x8xi64>)
    return
 }
+
+// CHECK-LABEL: func.func @triton_floordiv_gen
+// CHECK: %[[VAL_3:.*]] = arith.constant 1 : i64
+// CHECK: %[[VAL_4:.*]] = arith.constant 0 : i64
+// CHECK: %[[VAL_5:.*]] = arith.constant 8192 : index
+// CHECK: %[[VAL_6:.*]] = arith.constant 0 : index
+// CHECK: %[[VAL_7:.*]] = arith.constant 1 : index
+// CHECK: scf.for %[[VAL_8:.*]] = %[[VAL_6]] to %[[VAL_5]] step %[[VAL_7]] {
+// CHECK:   %[[VAL_9:.*]] = memref.load %[[VAL_0:.*]]{{\[}}%[[VAL_8]]] : memref<8192xi64, #hivm.address_space<ub>>
+// CHECK:   %[[VAL_10:.*]] = memref.load %[[VAL_1:.*]]{{\[}}%[[VAL_8]]] : memref<8192xi64, #hivm.address_space<ub>>
+// CHECK:   %[[VAL_11:.*]] = arith.cmpi eq, %[[VAL_9]], %[[VAL_4]] : i64
+// CHECK:   %[[VAL_12:.*]] = arith.select %[[VAL_11]], %[[VAL_3]], %[[VAL_10]] : i64
+// CHECK:   %[[VAL_13:.*]] = arith.divsi %[[VAL_9]], %[[VAL_12]] : i64
+// CHECK:   memref.store %[[VAL_13]], %[[VAL_2:.*]]{{\[}}%[[VAL_8]]] : memref<8192xi64, #hivm.address_space<ub>>
+
+func.func @triton_floordiv_gen(%arg0: memref<8192xi64, #hivm.address_space<ub>>, %arg1:memref<8192xi64, #hivm.address_space<ub>>, %arg2:memref<8192xi64, #hivm.address_space<ub>>){
+  hivm.hir.vdiv ins(%arg0, %arg1 : memref<8192xi64, #hivm.address_space<ub>>, memref<8192xi64, #hivm.address_space<ub>>) outs(%arg2 : memref<8192xi64, #hivm.address_space<ub>>)
+  return
+}
