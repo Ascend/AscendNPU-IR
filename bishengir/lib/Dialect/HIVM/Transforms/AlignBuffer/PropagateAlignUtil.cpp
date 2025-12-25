@@ -697,6 +697,45 @@ mlir::LogicalResult propagateAlignUp(
   return propagateAlign ? success() : failure();
 }
 
+mlir::LogicalResult processYieldOp(mlir::PatternRewriter &rewriter, Operation *markedOp,
+    ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
+    const std::string alignDimAttrName,
+    const std::string alignBytesAttrName) {
+  for (Operation *user :markedOp->getUsers()) {
+    if (isa<scf::YieldOp>(user)) {
+      auto yieldOperands = user->getOperands();
+      auto it = std::find(yieldOperands.begin(), yieldOperands.end(), markedOp->getResult(0));
+      if (it == yieldOperands.end()) {
+        continue;
+      }
+      unsigned yieldIndex = static_cast<unsigned>(it - yieldOperands.begin());
+
+      auto yieldOp = user;
+      Block *yieldBlock = yieldOp->getBlock();
+      Operation * parentOp = yieldBlock->getParentOp();
+      if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
+        ValueRange allOperands = forOp.getOperands();
+        int iterArgsIdx = 3;
+        ValueRange iterArgs = allOperands.drop_front(iterArgsIdx);
+
+        if (!iterArgs.empty()) {
+            Value iterArg = iterArgs[yieldIndex];
+            createAlignMarkOp(rewriter, iterArg.getLoc(), iterArg,
+                              alignDims, alignBytes, alignDimAttrName,
+                              alignBytesAttrName);
+        } else {
+          forOp->emitWarning("No iter_args found");
+          return failure();
+        }
+      } else {
+        yieldOp->emitWarning("Parent operation is not a scf::ForOp");
+        return failure();
+      }
+    }
+  }
+  return success();
+}
+
 mlir::LogicalResult propagateAlignUp(
     mlir::PatternRewriter &rewriter, Operation *markedOp,
     ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
@@ -732,6 +771,12 @@ mlir::LogicalResult propagateAlignUp(
           alignBytesAttrName,
           DenseI32ArrayAttr::get(rewriter.getContext(), unionAlignBytes));
     });
+
+    if (failed(processYieldOp(rewriter, markedOp, alignDims, alignBytes,
+                                alignDimAttrName, alignBytesAttrName))) {
+        return failure();
+    }
+    
     return success();
   }
   markedOp->emitWarning("Align mark on unsupported op");
