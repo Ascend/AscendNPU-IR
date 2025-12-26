@@ -149,6 +149,29 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
         hivmStructureOp.getHIVMInputOperands(false /*includeExtraBuffer*/),
         std::back_inserter(scalarInputs), getScalarValueFunc);
 
+    if constexpr (std::is_same<hivm::VDivOp, HIVMOP>::value) {
+      // === Safe handling: replace division by zero with 1 ===
+      // Logic modification: when the dividend is zero, replace the divisor
+      // with 1.
+      auto elemTySrc = scalarInputs[0].getType();
+      if (elemTySrc.isInteger(64)) {
+        auto DivLhs = scalarInputs[0];
+        auto DivRhs = scalarInputs[1];
+        auto loc = op.getLoc();
+
+        arith::ConstantOp constZero = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getIntegerAttr(elemTySrc, 0));
+        arith::ConstantOp constOne = rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getIntegerAttr(elemTySrc, 1));
+        auto condition = rewriter.create<arith::CmpIOp>(
+            loc, arith::CmpIPredicate::eq, DivLhs, constZero);
+        auto newDivRhs = rewriter.create<arith::SelectOp>(
+            loc, condition, constOne, DivRhs);
+
+        scalarInputs[1] = newDivRhs;
+      }
+    }
+
     llvm::SmallVector<Value> dstIndexes(indexes);
     llvm::SmallVector<Value> resTensors =
         createScalarComputeOp(rewriter, op, scalarInputs);
