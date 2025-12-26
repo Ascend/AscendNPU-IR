@@ -165,6 +165,26 @@ func.func @test_hfusion_mod(%src0: tensor<2048xi32>, %src1: tensor<2048xi32>) ->
   return %4 : tensor<2048xi32>
 }
 
+// -----
+
+// CHECK-LABEL: @test_normalize_i16_elemwise_mod
+// CHECK: hfusion.cast {{.*}} ins(%arg0 : tensor<64xi16>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: hfusion.cast {{.*}} ins(%arg1 : tensor<64xi16>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins({{.*}}, {{.*}} : tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins({{.*}}, {{.*}} : tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins({{.*}}, {{.*}} : tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins({{.*}}, {{.*}} : tensor<64xf32>, f32) outs({{.*}} : tensor<64xi1>) -> tensor<64xi1>
+// CHECK: hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<64xi1>, tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<64xf32>) outs({{.*}} : tensor<64xi16>) -> tensor<64xi16>
+func.func @test_normalize_i16_elemwise_mod(%arg0: tensor<64xi16>, %arg1: tensor<64xi16>) -> tensor<64xi16> {
+  %0 = tensor.empty() : tensor<64xi16>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>}
+                                ins(%arg0, %arg1 : tensor<64xi16>, tensor<64xi16>)
+                                outs(%0 : tensor<64xi16>) -> tensor<64xi16>
+  return %1 : tensor<64xi16>
+}
+
 
 // -----
 

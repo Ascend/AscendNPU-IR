@@ -694,8 +694,7 @@ private:
   Block &block;
 };
 
-template <typename CumOpTy>
-LogicalResult verifyCumOp(CumOpTy op) {
+template <typename CumOpTy> LogicalResult verifyCumOp(CumOpTy op) {
   ArrayRef<int64_t> cumDims = op.getCumDims();
   if (cumDims.empty()) {
     return op.emitOpError() << "have empty cum dims array";
@@ -1285,8 +1284,7 @@ struct FoldCastEmpty : public OpRewritePattern<hfusion::CastOp> {
 
 struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
   using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
-  template <typename T>
-  inline T roundToOdd(T x) const {
+  template <typename T> inline T roundToOdd(T x) const {
     T rounded = std::round(x);
     if (std::fabs(x - std::floor(x)) == 0.5) {
       if (static_cast<int>(rounded) % 2 != 0) {
@@ -2252,9 +2250,9 @@ void AtomicRMWOp::getEffects(
         &effects) {
   if (llvm::isa<MemRefType>(this->getInput().getType()))
     effects.emplace_back(MemoryEffects::Read::get(),
-                          &getOperation()->getOpOperand(0), /*stage=*/0,
-                          /*effectOnFullRegion=*/true,
-                          SideEffects::DefaultResource::get());
+                         &getOperation()->getOpOperand(0), /*stage=*/0,
+                         /*effectOnFullRegion=*/true,
+                         SideEffects::DefaultResource::get());
   OpOperand &operand = this->getDstMutable();
   if (!llvm::isa<MemRefType>(operand.get().getType()))
     return;
@@ -2295,9 +2293,9 @@ void AtomicXchgOp::getEffects(
         &effects) {
   if (llvm::isa<MemRefType>(this->getInput().getType()))
     effects.emplace_back(MemoryEffects::Read::get(),
-                          &getOperation()->getOpOperand(0), /*stage=*/0,
-                          /*effectOnFullRegion=*/true,
-                          SideEffects::DefaultResource::get());
+                         &getOperation()->getOpOperand(0), /*stage=*/0,
+                         /*effectOnFullRegion=*/true,
+                         SideEffects::DefaultResource::get());
   OpOperand &operand = this->getDstMutable();
   if (!llvm::isa<MemRefType>(operand.get().getType()))
     return;
@@ -2307,7 +2305,7 @@ void AtomicXchgOp::getEffects(
 }
 
 void AtomicXchgOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                   TypeRange output, Value src, Value dst) {
+                         TypeRange output, Value src, Value dst) {
   build(odsBuilder, odsState, output, src, dst, /*mask=*/nullptr);
 }
 
@@ -2524,7 +2522,18 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
 }
 
 Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
-                      hfusion::RoundMode roundMode, hfusion::TypeFn castIntegerType) {
+                      hfusion::RoundMode roundMode,
+                      hfusion::TypeFn castIntegerType) {
   return hfusion::castTo(builder, src, targetElemType, roundMode, std::nullopt,
                          /*enableOverflow=*/true, castIntegerType);
+}
+
+Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
+                      bool enableOverflow, hfusion::TypeFn castIntegerType) {
+  Type srcElemType = getElementTypeOrSelf(src.getType());
+  hfusion::RoundMode rounding =
+      mlir::utils::selectRoundMode<hfusion::RoundMode>(srcElemType,
+                                                       targetElemType);
+  return hfusion::castTo(builder, src, targetElemType, rounding, std::nullopt,
+                         /*enableOverflow=*/enableOverflow, castIntegerType);
 }
