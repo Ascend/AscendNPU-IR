@@ -44,7 +44,9 @@ static bool isInlinableOp(Operation *op) {
   return isa<linalg::ElemwiseBinaryOp>(op) ||
          isa<linalg::ElemwiseUnaryOp>(op) ||
          isa<hfusion::ElemwiseBinaryOp>(op) ||
-         isa<hfusion::ElemwiseUnaryOp>(op);
+         isa<hfusion::ElemwiseUnaryOp>(op) ||
+         isa<hfusion::SelectOp>(op) ||
+         isa<linalg::SelectOp>(op);
 }
 
 // TODO : add platform information
