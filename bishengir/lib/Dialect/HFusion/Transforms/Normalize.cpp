@@ -361,6 +361,7 @@ public:
     rewriter.replaceOp(op, finalRes);
     return success();
   }
+
 protected:
   template <mlir::linalg::BinaryFn T>
   Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value inp1,
@@ -973,22 +974,21 @@ public:
         .getResults()[0];
   }
 
-  Value handleZeroModulus(PatternRewriter &rewriter,
-                          Location loc, Value xOrig,
-                          Value yOrig, Value result) const {
-    auto yType = yOrig.getType();
-    Value tensorY = yOrig;
+  Value handleZeroModulus(PatternRewriter &rewriter, Location loc, Value xF32,
+                          Value yF32, Value result) const {
+    auto yType = yF32.getType();
+    Value tensorY = yF32;
 
     // TODO: delete fillop after compare op supporting scalar-scalar operation
     if (!isa<ShapedType>(yType)) {
       auto yTensor = utils::createEmptyOp(rewriter, loc, result);
-      tensorY = rewriter.create<linalg::FillOp>(loc, yOrig, yTensor)
-                    .getResults()[0];
+      tensorY =
+          rewriter.create<linalg::FillOp>(loc, yF32, yTensor).getResults()[0];
     }
 
     auto resTy = dyn_cast<TensorType>(result.getType());
     auto elemType = getElementTypeOrSelf(resTy);
-    auto constZero = utils::createConstantOp<int>(rewriter, loc, elemType, 0);
+    auto constZero = utils::createConstantOp<float>(rewriter, loc, elemType, 0);
     auto zeroFlag =
         createCmpOp(rewriter, loc, tensorY, constZero, CompareFn::veq)
             ->getResult(0);
@@ -997,7 +997,7 @@ public:
     auto resWithZeroModulus =
         rewriter
             .create<hfusion::SelectOp>(loc, TypeRange(emptyResTensor),
-                                       ValueRange{zeroFlag, xOrig, result},
+                                       ValueRange{zeroFlag, xF32, result},
                                        ValueRange{emptyResTensor})
             .getResults()[0];
 
@@ -1024,7 +1024,8 @@ public:
 
     auto elemType = getElementTypeOrSelf(resTy);
     // Only support int/index/float, but not i64.
-    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) || elemType.isInteger(32)) {
+    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) ||
+        elemType.isInteger(32)) {
       return failure();
     }
 
@@ -1037,24 +1038,16 @@ public:
     Value xF32 = xOrig;
     Value yF32 = yOrig;
     hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::mod)
-                                  ? hfusion::TypeFn::cast_signed
-                                  : hfusion::TypeFn::cast_unsigned;
+                                            ? hfusion::TypeFn::cast_signed
+                                            : hfusion::TypeFn::cast_unsigned;
     if (!elemType.isF32()) {
       if (elemType.isIntOrIndex()) {
         // For integer → f32 casts, force TRUNC rounding mode to match
         // C-like modulo semantics and the existing tests.
-        xF32 = hfusion::castTo(
-            rewriter,
-            xOrig,
-            rewriter.getF32Type(),
-            hfusion::RoundMode::TRUNC,
-            cast_integer_type);
-        yF32 = hfusion::castTo(
-            rewriter,
-            yOrig,
-            rewriter.getF32Type(),
-            hfusion::RoundMode::TRUNC,
-            cast_integer_type);
+        xF32 = hfusion::castTo(rewriter, xOrig, rewriter.getF32Type(),
+                               hfusion::RoundMode::TRUNC, cast_integer_type);
+        yF32 = hfusion::castTo(rewriter, yOrig, rewriter.getF32Type(),
+                               hfusion::RoundMode::TRUNC, cast_integer_type);
       } else {
         // For non-integer element types (e.g. f16/bf16) just cast to f32.
         xF32 = hfusion::castTo(rewriter, xOrig, rewriter.getF32Type());
@@ -1068,43 +1061,47 @@ public:
     Operation *divOp = nullptr;
     std::optional<Operation **> divF32 = &divOp;
     auto truncDivF32 = hfusion::divWithRoundMode(
-        rewriter, op.getLoc(), rewriter.getF32Type(),
-        xF32, yF32, emptyDivTensor,
-        hfusion::RoundMode::TRUNC, divF32);
+        rewriter, op.getLoc(), rewriter.getF32Type(), xF32, yF32,
+        emptyDivTensor, hfusion::RoundMode::TRUNC, divF32);
     assert((divF32 != std::nullopt) && (*divF32.value()) != nullptr &&
            "div operation cannot be null!");
 
     // step 3: q = q_f32 castTo elemType
-    Value q = hfusion::castTo(rewriter, truncDivF32, elemType);
+    Value q = elemType.isInteger()
+                  ? truncDivF32
+                  : hfusion::castTo(rewriter, truncDivF32, elemType, false);
+    Value y = elemType.isInteger() ? yF32 : yOrig;
+    Value x = elemType.isInteger() ? xF32 : xOrig;
+    auto calElemType = elemType.isInteger() ? rewriter.getF32Type() : elemType;
 
     // step 4: mul = y * q   (computed in original dtype)
-    auto emptyMulTensor =
-        utils::createEmptyOpWithTargetElemType(
-            rewriter, op->getLoc(), resTensor, elemType);
-    auto mul =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op.getLoc(), linalg::BinaryFn::mul,
-            ValueRange{yOrig, q}, emptyMulTensor)
-            ->getResults()[0];
+    auto emptyMulTensor = utils::createEmptyOpWithTargetElemType(
+        rewriter, op->getLoc(), resTensor, calElemType);
+    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
+                   rewriter, op.getLoc(), linalg::BinaryFn::mul,
+                   ValueRange{y, q}, emptyMulTensor)
+                   ->getResults()[0];
 
     // step 5: res = x - mul (still in original dtype)
-    auto emptyResTensor =
-        utils::createEmptyOpWithTargetElemType(
-            rewriter, op->getLoc(), resTensor, elemType);
-    auto res =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op.getLoc(), linalg::BinaryFn::sub,
-            ValueRange{xOrig, mul}, emptyResTensor)
-            ->getResults()[0];
+    auto emptyResTensor = utils::createEmptyOpWithTargetElemType(
+        rewriter, op->getLoc(), resTensor, calElemType);
+    auto res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
+                   rewriter, op.getLoc(), linalg::BinaryFn::sub,
+                   ValueRange{x, mul}, emptyResTensor)
+                   ->getResults()[0];
 
-    if (elemType.isInteger(8)) {
-      auto resWithZeroModulus = handleZeroModulus(rewriter, op.getLoc(), xOrig,
-                                                  yOrig, res);
-      rewriter.replaceOp(op, resWithZeroModulus);
+    if (elemType.isInteger()) {
+      auto resWithZeroModulus =
+          handleZeroModulus(rewriter, op.getLoc(), xF32, yF32, res);
+      Value tmpModRes = resWithZeroModulus;
+      if (elemType.isInteger(8)) {
+        tmpModRes = hfusion::castTo(rewriter, resWithZeroModulus,
+                                    rewriter.getF16Type(), false);
+      }
+      auto resOrig = hfusion::castTo(rewriter, tmpModRes, elemType, false);
+      rewriter.replaceOp(op, resOrig);
       return success();
     }
 
@@ -1221,7 +1218,8 @@ public:
   }
 };
 
-struct NormalizeArgMinMaxOp : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
+struct NormalizeArgMinMaxOp
+    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
   using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
@@ -1270,10 +1268,12 @@ struct NormalizeArgMinMaxOp : public OpRewritePattern<hfusion::ReduceWithIndexOp
             .getResult();
 
     auto srcNanMasked = utils::createEmptyOp(rewriter, loc, src);
-    srcNanMasked = rewriter.create<hfusion::SelectOp>(
-        loc, TypeRange(srcNanMasked),
-        ValueRange({srcNanMask, infValue, zeroValue}),
-        ValueRange(srcNanMasked)).getResults()[0];
+    srcNanMasked = rewriter
+                       .create<hfusion::SelectOp>(
+                           loc, TypeRange(srcNanMasked),
+                           ValueRange({srcNanMask, infValue, zeroValue}),
+                           ValueRange(srcNanMasked))
+                       .getResults()[0];
 
     SmallVector<Value> inputVals = {srcNanMasked};
     // If size > 1 => We have custom indexes tensor
@@ -1302,8 +1302,8 @@ struct NormalizeArgMinMaxOp : public OpRewritePattern<hfusion::ReduceWithIndexOp
         ValueRange({valsInfMask, srcNanIdxs, op.getResults()[1]}),
         ValueRange(newOutput));
 
-    rewriter.replaceAllUsesExcept(op.getResults()[1], finalSelectOp.getResults()[0],
-                                  finalSelectOp);
+    rewriter.replaceAllUsesExcept(op.getResults()[1],
+                                  finalSelectOp.getResults()[0], finalSelectOp);
     rewriter.modifyOpInPlace(op, [&]() {
       op->setAttr(kAlreadyInitalizeInit, UnitAttr::get(op->getContext()));
     });
@@ -1541,7 +1541,7 @@ public:
     }
 
     bool shouldCastToUnsigned = ShouldCastToUnsigned(op);
-    
+
     auto loc = op->getLoc();
     // linalg::ElemwiseBinaryOp's Outputs and Results must be
     // variadic of ranked tensor of any type values.
@@ -1557,21 +1557,21 @@ public:
     // step1. res = divWithRoundMode(x, y, TRUNC)
     rewriter.setInsertionPoint(op);
     auto inputs = op.getDpsInputs();
-    auto res = hfusion::divWithRoundModeAndCastType(rewriter, loc, elemTySrc, inputs[0],
-                                         inputs[1], resTensor,
-                                         hfusion::RoundMode::TRUNC,
-                                         shouldCastToUnsigned ? hfusion::TypeFn::cast_unsigned : 
-                                         hfusion::TypeFn::cast_signed);
+    auto res = hfusion::divWithRoundModeAndCastType(
+        rewriter, loc, elemTySrc, inputs[0], inputs[1], resTensor,
+        hfusion::RoundMode::TRUNC,
+        shouldCastToUnsigned ? hfusion::TypeFn::cast_unsigned
+                             : hfusion::TypeFn::cast_signed);
     rewriter.replaceOp(op, res);
     return success();
   }
-  
-  bool ShouldCastToUnsigned(linalg::ElemwiseBinaryOp op) const{
+
+  bool ShouldCastToUnsigned(linalg::ElemwiseBinaryOp op) const {
     auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
     linalg::BinaryFn func = binOp.getFun();
     static DenseSet<linalg::BinaryFn> binarySet = {
         linalg::BinaryFn::div_unsigned};
-      return binarySet.contains(func);
+    return binarySet.contains(func);
   }
 };
 
@@ -1969,8 +1969,7 @@ static bool isF16ElemType(Type type) {
   return elemType.isF16();
 }
 
-template <typename srcType>
-static bool isElemType(Type valueType) {
+template <typename srcType> static bool isElemType(Type valueType) {
   if constexpr (std::is_same_v<bool, srcType>) {
     return isI1ElemType(valueType);
   }
@@ -2261,6 +2260,8 @@ public:
     auto outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
     int64_t srcBitWidth = inType.getIntOrFloatBitWidth();
     int64_t dstBitWidth = outType.getIntOrFloatBitWidth();
+    // TODO: support "enable_verflow" flag to control overflow mode in the
+    // future
     if (srcBitWidth > dstBitWidth && outType.isInteger() &&
         !outType.isInteger(1)) {
       auto overflowMode = getAnnotateOverflowMode(op);
@@ -2808,18 +2809,20 @@ public:
         {hfusion::CompareFn::vuge, hfusion::CompareFn::vge},
         {hfusion::CompareFn::vugt, hfusion::CompareFn::vgt},
     };
-    
+
     if (cmpFnMap.contains(cmpFn)) {
-      castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding, std::nullopt, true,
-                                hfusion::TypeFn::cast_unsigned);
-      castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding, std::nullopt, true,
-                                hfusion::TypeFn::cast_unsigned);
+      castLhs =
+          hfusion::castTo(rewriter, lhs, targetType, rounding, std::nullopt,
+                          true, hfusion::TypeFn::cast_unsigned);
+      castRhs =
+          hfusion::castTo(rewriter, rhs, targetType, rounding, std::nullopt,
+                          true, hfusion::TypeFn::cast_unsigned);
       cmpFn = cmpFnMap[cmpFn];
     } else {
       castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding);
       castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding);
     }
-    
+
     auto newCmpOp =
         createCmpOp(rewriter, op->getLoc(), castLhs, castRhs, cmpFn);
     rewriter.replaceOp(op, newCmpOp);
@@ -2899,11 +2902,11 @@ static void replaceI8ResultsWithTargetType(const SmallVector<Value> &oldResults,
       continue;
     }
 
-    Value castResult = castTo(rewriter, newResult, rewriter.getI8Type(),
-                              hfusion::RoundMode::TRUNC,
-                              std::nullopt, enableOverflow,
-                              isUnsigned ? hfusion::TypeFn::cast_unsigned : hfusion::TypeFn::cast_signed
-                              );
+    Value castResult =
+        castTo(rewriter, newResult, rewriter.getI8Type(),
+               hfusion::RoundMode::TRUNC, std::nullopt, enableOverflow,
+               isUnsigned ? hfusion::TypeFn::cast_unsigned
+                          : hfusion::TypeFn::cast_signed);
     rewriter.replaceAllUsesWith(oldResult, castResult);
   }
 }
@@ -2941,7 +2944,8 @@ static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
   if constexpr (std::is_same_v<int8_t, targetType>) {
     if (castOpts.has_value()) {
       auto opts = castOpts.value();
-      replaceI8ResultsWithTargetType(oldResults, newResults, rewriter, opts.enableOverflow, opts.isUnsignedOp);
+      replaceI8ResultsWithTargetType(oldResults, newResults, rewriter,
+                                     opts.enableOverflow, opts.isUnsignedOp);
     } else {
       replaceI8ResultsWithTargetType(oldResults, newResults, rewriter);
     }
@@ -2965,9 +2969,9 @@ SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
 template <typename srcType, typename targetType,
           typename = std::enable_if<(std::is_same_v<targetType, Float16Type> ||
                                      std::is_same_v<targetType, Float32Type>)>>
-SmallVector<Value> normalizeSrcToTargetType(PatternRewriter &rewriter,
-                                            const SmallVector<Value> &values,
-                                            hfusion::TypeFn castType = hfusion::TypeFn::cast_signed) {
+SmallVector<Value> normalizeSrcToTargetType(
+    PatternRewriter &rewriter, const SmallVector<Value> &values,
+    hfusion::TypeFn castType = hfusion::TypeFn::cast_signed) {
   SmallVector<Value> result;
   for (Value v : values) {
     if (!isElemType<srcType>(v.getType())) {
@@ -3180,9 +3184,11 @@ SmallVector<Value> normalizeToTargetType(PatternRewriter &rewriter,
       result.push_back(v);
       continue;
     }
-    Value castResult = castTo(rewriter, v, targetType,
-        castOpts.has_value() && castOpts.value().isUnsignedOp
-            ? hfusion::TypeFn::cast_unsigned : hfusion::TypeFn::cast_signed);
+    Value castResult =
+        castTo(rewriter, v, targetType,
+               castOpts.has_value() && castOpts.value().isUnsignedOp
+                   ? hfusion::TypeFn::cast_unsigned
+                   : hfusion::TypeFn::cast_signed);
     result.push_back(castResult);
   }
   return result;
@@ -3224,10 +3230,10 @@ public:
     } else {
       llvm_unreachable("Unsupported Op.");
     }
-    SmallVector<Value> newInputs =
-        normalizeToTargetType<ElemType>(rewriter, op.getInputs(), targetType, castOpts);
-    SmallVector<Value> newOutputs =
-        normalizeToTargetType<ElemType>(rewriter, op.getOutputs(), targetType, castOpts);
+    SmallVector<Value> newInputs = normalizeToTargetType<ElemType>(
+        rewriter, op.getInputs(), targetType, castOpts);
+    SmallVector<Value> newOutputs = normalizeToTargetType<ElemType>(
+        rewriter, op.getOutputs(), targetType, castOpts);
     Operation *newOp = createBodyOp(op, newInputs, newOutputs, rewriter);
     if (std::is_same_v<OpType, hfusion::SelectOp>) {
       replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
@@ -3235,19 +3241,23 @@ public:
     } else {
       // TODO: set argument enableOverflow = false inside for all non-arithmatic
       // op type
-      replaceResultsWithTargetType<ElemType>(op->getResults(),
-                                             newOp->getResults(), rewriter, castOpts);
+      replaceResultsWithTargetType<ElemType>(
+          op->getResults(), newOp->getResults(), rewriter, castOpts);
     }
     return success();
   }
 
 private:
-  template <typename OpElemType, typename std::enable_if_t<!std::is_same_v<OpElemType, int8_t>, int> = 0>
+  template <
+      typename OpElemType,
+      typename std::enable_if_t<!std::is_same_v<OpElemType, int8_t>, int> = 0>
   bool isSupportOperand(OpType op) const {
     return false;
   }
 
-  template <typename OpElemType, typename std::enable_if_t<std::is_same_v<OpElemType, int8_t>, int> = 0>
+  template <
+      typename OpElemType,
+      typename std::enable_if_t<std::is_same_v<OpElemType, int8_t>, int> = 0>
   bool isSupportOperand(OpType op) const {
     if constexpr (std::is_same_v<OpType, linalg::FillOp> ||
                   std::is_same_v<OpType, linalg::BroadcastOp> ||
@@ -3478,7 +3488,8 @@ public:
     auto newInputs = normalizeF16ToF32(rewriter, inputs);
     auto newOutputs = normalizeF16ToF32(rewriter, outputs);
     Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(), op.getReverse());
+        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
+        op.getReverse());
     Value castResult =
         castTo(rewriter, newOp->getResults()[0], rewriter.getF16Type());
     rewriter.replaceAllUsesWith(op->getResults()[0], castResult);
@@ -3668,22 +3679,28 @@ public:
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
     bool isUnsigned = isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp);
-    bool isMaxMinOp = isa<arith::MaxUIOp, arith::MinUIOp, arith::MaxSIOp, arith::MinSIOp>(bodyOp);
-    auto castType = isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp) 
-                    ? hfusion::TypeFn::cast_unsigned 
-                    : hfusion::TypeFn::cast_signed;
+    bool isMaxMinOp =
+        isa<arith::MaxUIOp, arith::MinUIOp, arith::MaxSIOp, arith::MinSIOp>(
+            bodyOp);
+    auto castType = isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp)
+                        ? hfusion::TypeFn::cast_unsigned
+                        : hfusion::TypeFn::cast_signed;
 
     FloatType targetType = nullptr;
     SmallVector<Value> newInputs;
     SmallVector<Value> newInits;
     if (shoudComputeI8ByF32(op)) {
       targetType = rewriter.getF32Type();
-      newInputs = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs, castType);
-      newInits = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inits, castType);
+      newInputs = normalizeSrcToTargetType<int8_t, Float32Type>(
+          rewriter, inputs, castType);
+      newInits = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inits,
+                                                               castType);
     } else {
       targetType = rewriter.getF16Type();
-      newInputs = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs, castType);
-      newInits = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits, castType);
+      newInputs = normalizeSrcToTargetType<int8_t, Float16Type>(
+          rewriter, inputs, castType);
+      newInits = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits,
+                                                               castType);
     }
 
     Operation *newOp = createNewReduceOp(op, rewriter, rewriter.getI8Type(),
@@ -3915,7 +3932,8 @@ public:
     auto newOutputs =
         normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, outputs);
     Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(), op.getReverse());
+        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
+        op.getReverse());
     replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
                                    rewriter);
     return success();
@@ -4576,8 +4594,8 @@ public:
     auto targetElemType = rewriter.getI16Type();
     auto shift = op.getDpsInputs()[1];
     hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::shrui)
-                                  ? hfusion::TypeFn::cast_unsigned
-                                  : hfusion::TypeFn::cast_signed;
+                                            ? hfusion::TypeFn::cast_unsigned
+                                            : hfusion::TypeFn::cast_signed;
     Value inputOfI16 =
         hfusion::castTo(rewriter, input, targetElemType, cast_integer_type);
     Value shiftOfI16 =
@@ -5304,19 +5322,22 @@ public:
     if (fun == hfusion::BinaryFn::ceildivui) {
       assert(elemTySrc.isInteger(8));
       inputs[0] = hfusion::castTo(rewriter, inputs[0], rewriter.getF32Type(),
-                             hfusion::TypeFn::cast_unsigned);
+                                  hfusion::TypeFn::cast_unsigned);
       inputs[1] = hfusion::castTo(rewriter, inputs[1], rewriter.getF32Type(),
-                             hfusion::TypeFn::cast_unsigned);
-      auto res = hfusion::divWithRoundMode(rewriter, loc, rewriter.getF32Type(),
-                                          inputs[0], inputs[1], resTensor, roundMode);
+                                  hfusion::TypeFn::cast_unsigned);
+      auto res =
+          hfusion::divWithRoundMode(rewriter, loc, rewriter.getF32Type(),
+                                    inputs[0], inputs[1], resTensor, roundMode);
       res = hfusion::castTo(rewriter, res, rewriter.getI32Type(), roundMode);
       res = hfusion::castTo(rewriter, res, rewriter.getF16Type());
-      res = hfusion::castTo(rewriter, res, elemTySrc, hfusion::RoundMode::TRUNC, /*dst=*/std::nullopt,
-                            /*enableOverflow=*/false, hfusion::TypeFn::cast_unsigned);
+      res = hfusion::castTo(rewriter, res, elemTySrc, hfusion::RoundMode::TRUNC,
+                            /*dst=*/std::nullopt,
+                            /*enableOverflow=*/false,
+                            hfusion::TypeFn::cast_unsigned);
       rewriter.replaceOp(op, res);
     } else {
       auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
-                                          inputs[1], resTensor, roundMode);
+                                           inputs[1], resTensor, roundMode);
       rewriter.replaceOp(op, res);
     }
     return success();
@@ -5706,26 +5727,26 @@ public:
     static_assert(funFrom == BinaryFn::maxnumf || funFrom == BinaryFn::minnumf,
                   "Argument mismatch. NormaliseMinMaxNumFOp expects "
                   "hfusion::BinaryFn::maxnumf or hfusion::BinaryFn::minnumf");
- 
+
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
- 
+
     if (op.getFun() != funFrom) {
       return failure();
     }
- 
+
     constexpr auto funTo =
         (funFrom == BinaryFn::maxnumf) ? BinaryFn::maxf : BinaryFn::minf;
     constexpr auto paddingInfSign = (funFrom == BinaryFn::maxnumf) ? -1 : 1;
- 
+
     auto res = rewriteMinMaxNumFOp<funTo>(
         op, rewriter, paddingInfSign * std::numeric_limits<double>::infinity());
- 
+
     rewriter.replaceOp(op, res);
     return success();
   }
- 
+
 private:
   /// Normalize maxnumf (minnumf) to maxf (minf)
   /// Check comment before struct definition
@@ -5737,26 +5758,26 @@ private:
         hfusionFn == BinaryFn::maxf || hfusionFn == BinaryFn::minf,
         "Normalization hfusion::BinaryFn::maxnumf (minnumf) allows "
         "only hfusion::BinaryFn::maxf (minf) to be used for replacement");
- 
+
     Value src0 = op.getInputs()[0];
     Value src1 = op.getInputs()[1];
- 
+
     // step 1: new_src0 = hfusion.select(hfusion.isnan(src0), -+inf, src0)
     auto newSrc0 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src0,
                                                paddingInfValue);
     // step 2: new_src0 = hfusion.select(hfusion.isnan(src0), -+inf, src1)
     auto newSrc1 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src1,
                                                paddingInfValue);
- 
+
     // step 3: dst = hfusion.elemwise_binary {maxf | minf} (new_src0, new_src1)
     auto minMaxFOpOut = utils::createEmptyOp(rewriter, op->getLoc(), src0);
     auto minMaxFOp = createBinaryOp<ElemwiseBinaryOp, BinaryFn, BinaryFnAttr>(
         rewriter, op->getLoc(), hfusionFn, ValueRange({newSrc0, newSrc1}),
         ValueRange(minMaxFOpOut));
- 
+
     return minMaxFOp->getResult(0);
   }
- 
+
   /// Returns a new operand for BinaryFn::maxf (BinaryFn::minf)
   /// that is used when normalizing maxnumf (minnumf) to maxf (minf).
   /// Check comment before struct definition
@@ -5765,19 +5786,19 @@ private:
     auto elementType = getElementTypeOrSelf(src.getType());
     auto constInfinity = utils::createConstantOp<double>(
         rewriter, loc, elementType, paddingInfValue);
- 
+
     // src_nan_mask = hfusion.isnan(src0)
     auto isNanResultTensorType =
         utils::getTensorTypeWithSameShape(src.getType(), rewriter.getI1Type());
     auto isNanOp = rewriter.create<IsNanOp>(loc, isNanResultTensorType, src);
- 
+
     // new_src = hfusion.select(src0_nan_mask, inf, src0)
     auto selectOpOut = utils::createEmptyOp(rewriter, loc, src);
     auto selectOp = rewriter.create<SelectOp>(
         loc, TypeRange(selectOpOut),
         ValueRange({isNanOp->getResult(0), constInfinity, src}),
         ValueRange(selectOpOut));
- 
+
     return selectOp->getResult(0);
   }
 };

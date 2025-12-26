@@ -53,20 +53,26 @@ Operation *createUnaryOp(OpBuilder &builder, Location loc, OpFun opFn,
 /// provided, the init value is a `tensor.empty` op. Otherwise, it's written
 /// to `dst`.
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
-  hfusion::RoundMode roundMode,
-  std::optional<Value> dst = std::nullopt,
-  bool enableOverflow = true,
-  hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
+             hfusion::RoundMode roundMode,
+             std::optional<Value> dst = std::nullopt,
+             bool enableOverflow = true,
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
 /// Cast `src` value to the specified element type.
 /// Select rounding mode inside.
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
-  hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
 /// Cast `src` value to the specified element type.
 /// provided rounding_mode and cast sign
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
-    hfusion::RoundMode roundMode, hfusion::TypeFn castIntegerType);
+             hfusion::RoundMode roundMode, hfusion::TypeFn castIntegerType);
+
+/// Cast `src` value to the specified element type.
+/// Select rounding mode inside and pass overflow flag .
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+             bool enableOverflow,
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
 } // namespace hfusion
 } // namespace mlir
