@@ -679,8 +679,16 @@ public:
   void setFixpipeOp(hivm::FixpipeOp op) { fixpipeOp = op; }
   hivm::FixpipeOp getFixpipeOp() { return fixpipeOp; }
 
+  void setTileCubeAttr(bool hasAttr) { hasTileCubeAttr = hasAttr; }
+  bool getTileCubeAttr() { return hasTileCubeAttr; }
+
+  void setTiledDim(std::optional<int64_t> dim) { tiledDim = dim; }
+  std::optional<int64_t> getTiledDim() { return tiledDim; }
+
 private:
   hivm::FixpipeOp fixpipeOp{nullptr};
+  bool hasTileCubeAttr{false};
+  std::optional<int64_t> tiledDim;
 };
 
 //===----------------------------------------------------------------------===//
@@ -869,6 +877,38 @@ void markOpTouchingMMAD(hivm::LoadOp load, CubeLoopInfo &info) {
 
   if (!maybeMmadL1Op)
     return;
+  
+  auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(maybeMmadL1Op);
+  std::optional<Operation *> ADefOp =
+      traceDefOp<hivm::LoadOp>(mmadL1Op.getA());
+  std::optional<Operation *> BDefOp =
+      traceDefOp<hivm::LoadOp>(mmadL1Op.getB());
+  std::optional<Operation *> maybeReinterpretCastOp =
+      traceDefOp<memref::ReinterpretCastOp>(load.getSrc());
+  bool isFromEntryBlock{false};
+  // If the source of load op originates from entry block, we will not tile it
+  if (maybeReinterpretCastOp.has_value()) {
+    if (auto reinterpretCastOp =
+        dyn_cast<memref::ReinterpretCastOp>(maybeReinterpretCastOp.value())) {
+      auto viewSrc = reinterpretCastOp.getViewSource();
+      if (auto blockArg = viewSrc.dyn_cast<mlir::BlockArgument>()) {
+        mlir::Block *ownerBlock = blockArg.getOwner();
+        if (ownerBlock->isEntryBlock()) {
+          isFromEntryBlock = true;
+        }
+      }
+    }
+  }
+
+  auto tileDim = info.getTiledDim();
+  if (tileDim.has_value() && isFromEntryBlock && 
+      maybeMmadL1Op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
+    // if tiled dim is not from this load op, we will not tile it
+    if (tileDim.value() == 1 && ADefOp.value() == load)
+      return;
+    if (tileDim.value() == 0 && BDefOp.value() == load)
+      return;
+  }  
 
   // Also consider the loaded operands as potential producers
   trace.append(
@@ -909,8 +949,9 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   LDBG("Total size required in L0C: " << maybeStaticTotalSize.value());
   const int64_t kL0CSizeInBits = hacc::utils::getIntegerSpecValue(
       this->spec.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_SIZE));
+  bool hasTileCubeAttr = info.getTileCubeAttr();
   if (maybeStaticTotalSize.value() <= kL0CSizeInBits &&
-      info.getTripCount() != 1) {
+      info.getTripCount() != 1 && !hasTileCubeAttr) {
     LDBG("No need to tile because the data can fit on L0C");
     fixpipeOp.emitWarning(
         "Ignoring candidate cube loop trip count because it's suboptimal");
@@ -925,7 +966,8 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   TilingParams result;
   assert(dstType.getRank() == 2 && "MmadL1 operand rank must be two");
   // Tile the larger dimension
-  int64_t singleTileDim = dstType.getDimSize(0) > dstType.getDimSize(1) ? 0 : 1;
+  int64_t singleTileDim = dstType.getDimSize(0) >= dstType.getDimSize(1) ? 0 : 1;
+  info.setTiledDim(singleTileDim);
   result.tiledDims = {singleTileDim};
   result.tileSizes = SmallVector<int64_t>(dstType.getRank(), 0);
   result.tileSizes[singleTileDim] = llvm::divideCeilSigned(
@@ -1067,6 +1109,23 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
   return success();
 }
 
+std::optional<int64_t> getMixCubeLoopNumber(scf::ForOp cubeLoop, CubeLoopInfo &info) {
+  std::optional<int64_t> tileCubeLoopNum;
+  cubeLoop->walk([&tileCubeLoopNum](hivm::MmadL1Op op) {
+    if (op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
+      IntegerAttr attr = op->getAttrOfType<IntegerAttr>(
+          hivm::TileMixCubeNumAttr::name);
+      if (attr) {
+        op.emitWarning(
+            "cube loop trip count will depend on attr instead of compile option");
+        tileCubeLoopNum = attr.getInt();
+      }
+    }
+    return WalkResult::interrupt();
+  });
+  return tileCubeLoopNum;
+}
+
 /// Collect cube loop information.
 ///
 /// We assume that the cube loop always have the following structure:
@@ -1105,6 +1164,13 @@ LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(scf::ForOp cubeLoop) {
 
   info.setFixpipeOp(singleFixpipeOp);
 
+  // set mix cube loop number depending on TileMixCubeNumAttr
+  auto tileCubeLoopNum = getMixCubeLoopNumber(cubeLoop, info);
+  if (tileCubeLoopNum.has_value()) {
+    info.setTileCubeAttr(true);
+    info.setTripCount(tileCubeLoopNum.value());
+  }
+
   // Calculate fixpipe tiling
   auto maybeTilingResult = calculateFixpipeTiling(info);
   if (!maybeTilingResult.has_value())
@@ -1137,6 +1203,7 @@ TileCubeVectorLoopPass::applyTransformation(ModuleOp topLevelModule,
   builder.setInsertionPointToEnd(topLevelModule.getBody());
   transform::NamedSequenceOp transformSequenceOp =
       info.createTransformSequence(builder, topLevelModule->getLoc());
+
   if (!transformSequenceOp)
     return topLevelModule.emitError("Failed to create transform sequence");
 
@@ -1212,6 +1279,7 @@ void TileCubeVectorLoopPass::runOnOperation() {
   }
   topLevelModule->removeAttr(
       transform::TransformDialect::kWithNamedSequenceAttrName);
+
 
   // Post processing step: try to shrink alloc's size.
   // This is needed because for copy that is lifted to tensor, it possible that

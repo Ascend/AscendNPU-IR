@@ -1180,6 +1180,21 @@ public:
                         UnitAttr::get(&getContext()));
       }
     });
+
+    moduleOp->walk([&](hivm::MmadL1Op op) {
+      std::optional<Operation *> tileCubeMarkOp =
+          utils::getAnnotateOpWithAttr(op.getResult(0), hivm::TileMixCubeNumAttr::name);
+      if (tileCubeMarkOp.has_value()) {
+        IntegerAttr tileCubeAttrVal =
+          tileCubeMarkOp.value()->getAttrOfType<IntegerAttr>(hivm::TileMixCubeNumAttr::name);
+        op->setAttr(hivm::TileMixCubeNumAttr::name, tileCubeAttrVal);
+      }
+    });
+
+    moduleOp->walk([&](annotation::MarkOp markOp) {
+      if (markOp.isAnnotatedBy(hivm::TileMixCubeNumAttr::name))
+        markOp.erase();
+    });
   }
 };
 } // namespace
