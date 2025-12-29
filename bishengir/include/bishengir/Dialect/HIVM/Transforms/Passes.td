@@ -309,6 +309,18 @@ def HIVMOptFuncOutput : Pass<"hivm-opt-func-output", "ModuleOp"> {
   let dependentDialects = ["memref::MemRefDialect"];
 }
 
+def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp"> {
+  let summary = "Infer the module's task type and emit a host function that returns it.";
+  let description = [{
+    Detect whether the module is CubeVectorMix, CubeOnly, VectorOnly or Unknown,
+    then emit a host‑side function `<original_func>_infer_task_type_function` that
+    returns an i8 constant encoding the detected type and is marked with the
+    appropriate HACC host‑function attributes.
+  }];
+  let constructor = "mlir::hivm::createInsertInferTaskTypeFuncPass()";
+  let dependentDialects = ["func::FuncDialect", "hacc::HACCDialect"];
+}
+
 def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
   let summary =
       "Split Mix device functions into AICube and AIVector functions.";

@@ -131,6 +131,9 @@ std::unique_ptr<Pass> createAllocExtraBufferPass();
 /// Create a pass to remove unnecessary buffer address return
 std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 
+/// Create a pass to infer task type
+std::unique_ptr<Pass> createInsertInferTaskTypeFuncPass();
+
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 

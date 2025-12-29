@@ -206,6 +206,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
   }
   pm.addPass(mlir::createMemrefExtLoweringPass());
+  pm.addPass(createInsertInferTaskTypeFuncPass());
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
