@@ -7,6 +7,7 @@
 // CHECK:     =Ascend910B2                                             -   Ascend910B2
 // CHECK:     =Ascend910B3                                             -   Ascend910B3
 // CHECK:     =Ascend910B4                                             -   Ascend910B4
+// CHECK:     =Ascend910B4-1                                           -   Ascend910B4-1
 // CHECK:     =Ascend910B2C                                            -   Ascend910B2C
 // CHECK:     =Ascend910_9362                                          -   Ascend910_9362
 // CHECK:     =Ascend910_9372                                          -   Ascend910_9372
