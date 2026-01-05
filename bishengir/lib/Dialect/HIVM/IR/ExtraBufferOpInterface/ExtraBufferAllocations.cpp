@@ -294,6 +294,11 @@ LogicalResult VReduceOp::allocExtraBuffersIfPossible() {
     return success();
   }
 
+  if (this->shouldLowerToScalarLoops()) {
+      // if decompose to scalar later, there is no need to allocate an extra buffer.
+      return success();
+    }
+
   MemRefType srcVecType = cast<MemRefType>(this->getSrc().getType());
   auto bufSizeMaybe = hivm::util::getExtraBufferSizeForReduceOp(
       this->getOperation(), util::BufferSizeUnit::ELEMENT);
