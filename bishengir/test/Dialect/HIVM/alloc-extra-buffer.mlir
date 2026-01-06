@@ -438,74 +438,6 @@ func.func @test_vsort_op_half() {
 
 // -----
 
-func.func @test_vadd_1d_last_axis_inline_brc_temp_buffer() {
-  %src0 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
-  %src0_inline_brc = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
-  %src1 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
-  %src1_inline_brc = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
-  %dst = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<8xf32>)
-  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xf32, #hivm.address_space<ub>>, memref<8xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<8xf32>)
-  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xf32, #hivm.address_space<ub>>, memref<1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<16xf32>)
-  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xf32, #hivm.address_space<ub>>, memref<1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
-  return
-}
-
-// -----
-
-func.func @test_vadd_2d_last_axis_inline_brc_temp_buffer() {
-  %src0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
-  %src0_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
-  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xf32, #hivm.address_space<ub>>
-  %src1 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
-  %src1_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
-  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xf32, #hivm.address_space<ub>>
-  %dst = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<64xf32>)
-  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<8xf32>)
-  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<64xf32>)
-  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xf32, #hivm.address_space<ub>>, memref<8x8xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<128xf32>)
-  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<72xf32>)
-  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<8xf32>)
-  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xf32, #hivm.address_space<ub>>, memref<8x8xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<72xf32>)
-  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
-
-  // CHECK: hivm.hir.vadd{{.*}}temp_buffer({{.*}}memref<16xf32>)
-  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
-                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
-  return
-}
-
-// -----
-
 func.func @test_vmins_2d_last_axis_inline_brc_temp_buffer() {
   %src0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
   %src0_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
@@ -518,6 +450,7 @@ func.func @test_vmins_2d_last_axis_inline_brc_temp_buffer() {
   return
 }
 
+
 // -----
 func.func @test_reduce_sum_ar_b64() {
   %src = memref.alloc() : memref<24x32xi64>
@@ -528,7 +461,22 @@ func.func @test_reduce_sum_ar_b64() {
   return
 }
 
+
 // -----
+func.func @test_vabs_1d_i64() {
+  %src = memref.alloc() : memref<1xi64>
+  %dst = memref.alloc() : memref<256xi64>
+
+  // CHECK: hivm.hir.vabs
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vabs ins(%src : memref<1xi64>)
+               outs(%dst : memref<256xi64>) broadcast = [0]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_min_ar_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<24x1xi64>
@@ -538,7 +486,68 @@ func.func @test_reduce_min_ar_b64() {
   return
 }
 
+func.func @test_vabs_1d_i32() {
+  %src = memref.alloc() : memref<1xi32>
+  %dst = memref.alloc() : memref<256xi32>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}} broadcast = [0]
+  hivm.hir.vabs ins(%src : memref<1xi32>)
+               outs(%dst : memref<256xi32>) broadcast = [0]
+
+  return
+}
+
 // -----
+func.func @test_vabs_1d_i16() {
+  %src = memref.alloc() : memref<1xi16>
+  %dst = memref.alloc() : memref<256xi16>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vabs ins(%src : memref<1xi16>)
+               outs(%dst : memref<256xi16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vabs_1d_f32() {
+  %src = memref.alloc() : memref<1xf32>
+  %dst = memref.alloc() : memref<256xf32>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vabs ins(%src : memref<1xf32>)
+               outs(%dst : memref<256xf32>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vabs_1d_f16() {
+  %src = memref.alloc() : memref<1xf16>
+  %dst = memref.alloc() : memref<256xf16>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vabs ins(%src : memref<1xf16>)
+               outs(%dst : memref<256xf16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vabs_2d_i64() {
+  %src = memref.alloc() : memref<256x1xi64>
+  %dst = memref.alloc() : memref<256x256xi64>
+
+  // CHECK:           hivm.hir.vabs
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vabs ins(%src : memref<256x1xi64>)
+               outs(%dst : memref<256x256xi64>) broadcast = [1]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_max_ar_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<24x1xi64>
@@ -548,7 +557,200 @@ func.func @test_reduce_max_ar_b64() {
   return
 }
 
+func.func @test_vabs_2d_i32() {
+  %src = memref.alloc() : memref<256x1xi32>
+  %dst = memref.alloc() : memref<256x256xi32>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vabs ins(%src : memref<256x1xi32>)
+               outs(%dst : memref<256x256xi32>) broadcast = [1]
+
+  return
+}
+
 // -----
+func.func @test_vabs_2d_i16() {
+  %src = memref.alloc() : memref<256x1xi16>
+  %dst = memref.alloc() : memref<256x256xi16>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vabs ins(%src : memref<256x1xi16>)
+               outs(%dst : memref<256x256xi16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vabs_2d_f32() {
+  %src = memref.alloc() : memref<256x1xf32>
+  %dst = memref.alloc() : memref<256x256xf32>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vabs ins(%src : memref<256x1xf32>)
+               outs(%dst : memref<256x256xf32>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vabs_2d_f16() {
+  %src = memref.alloc() : memref<256x1xf16>
+  %dst = memref.alloc() : memref<256x256xf16>
+
+  // CHECK:           hivm.hir.vabs{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vabs ins(%src : memref<256x1xf16>)
+               outs(%dst : memref<256x256xf16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vshr_1d_i64() {
+   %allocIn0 = memref.alloc() : memref<8xi64>
+   %allocOut = memref.alloc() : memref<8xi64>
+   %cst = memref.alloc() : memref<1xi64>
+   // CHECK:           hivm.hir.vshr
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<8xi64>, memref<1xi64>) outs(%allocOut : memref<8xi64>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshr_1d_i32() {
+   %allocIn0 = memref.alloc() : memref<8xi32>
+   %allocOut = memref.alloc() : memref<8xi32>
+   %cst = memref.alloc() : memref<1xi32>
+  // CHECK:           hivm.hir.vshr{{.*}}broadcast = [0]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<8xi32>, memref<1xi32>) outs(%allocOut : memref<8xi32>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshr_1d_i16() {
+   %allocIn0 = memref.alloc() : memref<8xi16>
+   %allocOut = memref.alloc() : memref<8xi16>
+   %cst = memref.alloc() : memref<1xi16>
+  // CHECK:           hivm.hir.vshr{{.*}}broadcast = [0]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<8xi16>, memref<1xi16>) outs(%allocOut : memref<8xi16>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshr_2d_i64() {
+   %allocIn0 = memref.alloc() : memref<64x8xi64>
+   %allocOut = memref.alloc() : memref<64x8xi64>
+   %cst = memref.alloc() : memref<64x1xi64>
+  // CHECK:           hivm.hir.vshr
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<64x8xi64>, memref<64x1xi64>) outs(%allocOut : memref<64x8xi64>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vshr_2d_i32() {
+   %allocIn0 = memref.alloc() : memref<64x8xi32>
+   %allocOut = memref.alloc() : memref<64x8xi32>
+   %cst = memref.alloc() : memref<64x1xi32>
+   // CHECK: hivm.hir.vshr{{.*}}broadcast = [1]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<64x8xi32>, memref<64x1xi32>) outs(%allocOut : memref<64x8xi32>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vshr_2d_i16() {
+   %allocIn0 = memref.alloc() : memref<64x8xi16>
+   %allocOut = memref.alloc() : memref<64x8xi16>
+   %cst = memref.alloc() : memref<64x1xi16>
+   // CHECK: hivm.hir.vshr{{.*}}broadcast = [1]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshr ins(%allocIn0, %cst : memref<64x8xi16>, memref<64x1xi16>) outs(%allocOut : memref<64x8xi16>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vshl_1d_i64() {
+   %allocIn0 = memref.alloc() : memref<8xi64>
+   %allocOut = memref.alloc() : memref<8xi64>
+   %cst = memref.alloc() : memref<1xi64>
+   // CHECK: hivm.hir.vshl
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<8xi64>, memref<1xi64>) outs(%allocOut : memref<8xi64>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshl_1d_i32() {
+   %allocIn0 = memref.alloc() : memref<8xi32>
+   %allocOut = memref.alloc() : memref<8xi32>
+   %cst = memref.alloc() : memref<1xi32>
+   // CHECK: hivm.hir.vshl{{.*}}broadcast = [0]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<8xi32>, memref<1xi32>) outs(%allocOut : memref<8xi32>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshl_1d_i16() {
+   %allocIn0 = memref.alloc() : memref<8xi16>
+   %allocOut = memref.alloc() : memref<8xi16>
+   %cst = memref.alloc() : memref<1xi16>
+   // CHECK: hivm.hir.vshl{{.*}}broadcast = [0]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<8xi16>, memref<1xi16>) outs(%allocOut : memref<8xi16>) broadcast = [0]
+   return
+}
+
+// -----
+func.func @test_vshl_2d_i64() {
+   %allocIn0 = memref.alloc() : memref<64x8xi64>
+   %allocOut = memref.alloc() : memref<64x8xi64>
+   %cst = memref.alloc() : memref<64x1xi64>
+   // CHECK: hivm.hir.vshl
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<64x8xi64>, memref<64x1xi64>) outs(%allocOut : memref<64x8xi64>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vshl_2d_i32() {
+   %allocIn0 = memref.alloc() : memref<64x8xi32>
+   %allocOut = memref.alloc() : memref<64x8xi32>
+   %cst = memref.alloc() : memref<64x1xi32>
+   // CHECK: hivm.hir.vshl{{.*}}broadcast = [1]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<64x8xi32>, memref<64x1xi32>) outs(%allocOut : memref<64x8xi32>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vshl_2d_i16() {
+   %allocIn0 = memref.alloc() : memref<64x8xi16>
+   %allocOut = memref.alloc() : memref<64x8xi16>
+   %cst = memref.alloc() : memref<64x1xi16>
+   // CHECK: hivm.hir.vshl{{.*}}broadcast = [1]
+   // CHECK-NOT: temp_buffer
+   hivm.hir.vshl ins(%allocIn0, %cst : memref<64x8xi16>, memref<64x1xi16>) outs(%allocOut : memref<64x8xi16>) broadcast = [1]
+   return
+}
+
+// -----
+func.func @test_vdiv_1d_i64() {
+  %lhs = memref.alloc() : memref<24xi64>
+  %rhs = memref.alloc() : memref<1xi64>
+  %dst = memref.alloc() : memref<24xi64>
+  // CHECK:           hivm.hir.vdiv
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<24xi64>, memref<1xi64>)
+               outs(%dst : memref<24xi64>) broadcast = [0]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_prod_ar_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<24x1xi64>
@@ -556,29 +758,169 @@ func.func @test_reduce_prod_ar_b64() {
   // CHECK-NOT: temp_buffer
   hivm.hir.vreduce <prod> ins(%src : memref<24x32xi64>) outs(%dst : memref<24x1xi64>) reduce_dims = [1]
   return
+
+}
+
+func.func @test_vdiv_1d_f16() {
+  %lhs = memref.alloc() : memref<24xf16>
+  %rhs = memref.alloc() : memref<1xf16>
+  %dst = memref.alloc() : memref<24xf16>
+  // CHECK:           hivm.hir.vdiv{{.*}}temp_buffer{{.*}}broadcast = [0]
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<24xf16>, memref<1xf16>)
+               outs(%dst : memref<24xf16>) broadcast = [0]
+
+  return
 }
 
 // -----
+
 func.func @test_reduce_xori_ar_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<24x1xi64>
   // CHECK: hivm.hir.vreduce <xori>
   // CHECK-NOT: temp_buffer
   hivm.hir.vreduce <xori> ins(%src : memref<24x32xi64>) outs(%dst : memref<24x1xi64>) reduce_dims = [1]
+
+    return
+}
+
+
+func.func @test_vdiv_1d_f32() {
+  %lhs = memref.alloc() : memref<24xf32>
+  %rhs = memref.alloc() : memref<1xf32>
+  %dst = memref.alloc() : memref<24xf32>
+  // CHECK:           hivm.hir.vdiv{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<24xf32>, memref<1xf32>)
+               outs(%dst : memref<24xf32>) broadcast = [0]
+
   return
 }
 
 // -----
+func.func @test_vdiv_2d_i64() {
+  %lhs = memref.alloc() : memref<64x24xi64>
+  %rhs = memref.alloc() : memref<64x1xi64>
+  %dst = memref.alloc() : memref<64x24xi64>
+  // CHECK:           hivm.hir.vdiv
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<64x24xi64>, memref<64x1xi64>)
+               outs(%dst : memref<64x24xi64>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vdiv_2d_f32() {
+  %lhs = memref.alloc() : memref<64x24xf32>
+  %rhs = memref.alloc() : memref<64x1xf32>
+  %dst = memref.alloc() : memref<64x24xf32>
+  // CHECK:           hivm.hir.vdiv{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<64x24xf32>, memref<64x1xf32>)
+               outs(%dst : memref<64x24xf32>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vdiv_2d_f16() {
+  %lhs = memref.alloc() : memref<64x24xf16>
+  %rhs = memref.alloc() : memref<64x1xf16>
+  %dst = memref.alloc() : memref<64x24xf16>
+  // CHECK:           hivm.hir.vdiv{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vdiv ins(%lhs, %rhs : memref<64x24xf16>, memref<64x1xf16>)
+               outs(%dst : memref<64x24xf16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vsub_1d_i64() {
+  %lhs = memref.alloc() : memref<32xi64>
+  %rhs = memref.alloc() : memref<1xi64>
+  %dst = memref.alloc() : memref<32xi64>
+  // CHECK: hivm.hir.vsub
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vsub ins(%lhs, %rhs : memref<32xi64>, memref<1xi64>)
+               outs(%dst : memref<32xi64>) broadcast = [0]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_sum_ra_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<1x32xi64>
   // CHECK: hivm.hir.vreduce <sum>
   // CHECK-NOT: temp_buffer
   hivm.hir.vreduce <sum> ins(%src : memref<24x32xi64>) outs(%dst : memref<1x32xi64>) reduce_dims = [0]
+
+  return
+}
+
+
+func.func @test_vsub_1d_i32() {
+  %lhs = memref.alloc() : memref<32xi32>
+  %rhs = memref.alloc() : memref<1xi32>
+  %dst = memref.alloc() : memref<32xi32>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<32xi32>, memref<1xi32>)
+               outs(%dst : memref<32xi32>) broadcast = [0]
+
   return
 }
 
 // -----
+func.func @test_vsub_1d_i16() {
+  %lhs = memref.alloc() : memref<32xi16>
+  %rhs = memref.alloc() : memref<1xi16>
+  %dst = memref.alloc() : memref<32xi16>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<32xi16>, memref<1xi16>)
+               outs(%dst : memref<32xi16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vsub_1d_f32() {
+  %lhs = memref.alloc() : memref<32xf32>
+  %rhs = memref.alloc() : memref<1xf32>
+  %dst = memref.alloc() : memref<32xf32>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<32xf32>, memref<1xf32>)
+               outs(%dst : memref<32xf32>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vsub_1d_f16() {
+  %lhs = memref.alloc() : memref<32xf16>
+  %rhs = memref.alloc() : memref<1xf16>
+  %dst = memref.alloc() : memref<32xf16>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<32xf16>, memref<1xf16>)
+               outs(%dst : memref<32xf16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vsub_2d_i64() {
+  %lhs = memref.alloc() : memref<64x32xi64>
+  %rhs = memref.alloc() : memref<64x1xi64>
+  %dst = memref.alloc() : memref<64x32xi64>
+  // CHECK: hivm.hir.vsub
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vsub ins(%lhs, %rhs : memref<64x32xi64>, memref<64x1xi64>)
+               outs(%dst : memref<64x32xi64>) broadcast = [1]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_min_ra_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<1x32xi64>
@@ -588,7 +930,69 @@ func.func @test_reduce_min_ra_b64() {
   return
 }
 
+
+func.func @test_vsub_2d_i32() {
+  %lhs = memref.alloc() : memref<64x32xi32>
+  %rhs = memref.alloc() : memref<64x1xi32>
+  %dst = memref.alloc() : memref<64x32xi32>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<64x32xi32>, memref<64x1xi32>)
+               outs(%dst : memref<64x32xi32>) broadcast = [1]
+
+  return
+}
+
 // -----
+func.func @test_vsub_2d_i16() {
+  %lhs = memref.alloc() : memref<64x32xi16>
+  %rhs = memref.alloc() : memref<64x1xi16>
+  %dst = memref.alloc() : memref<64x32xi16>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<64x32xi16>, memref<64x1xi16>)
+               outs(%dst : memref<64x32xi16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vsub_2d_f32() {
+  %lhs = memref.alloc() : memref<64x32xf32>
+  %rhs = memref.alloc() : memref<64x1xf32>
+  %dst = memref.alloc() : memref<64x32xf32>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<64x32xf32>, memref<64x1xf32>)
+               outs(%dst : memref<64x32xf32>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vsub_2d_f16() {
+  %lhs = memref.alloc() : memref<64x32xf16>
+  %rhs = memref.alloc() : memref<64x1xf16>
+  %dst = memref.alloc() : memref<64x32xf16>
+  // CHECK:           hivm.hir.vsub{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vsub ins(%lhs, %rhs : memref<64x32xf16>, memref<64x1xf16>)
+               outs(%dst : memref<64x32xf16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmin_1d_i64() {
+  %src0 = memref.alloc() : memref<8xi64, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<1xi64, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i64
+  %dst = memref.alloc() : memref<8xi64, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.vmin
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<1xi64, #hivm.address_space<ub>>, i64)
+                outs(%dst : memref<8xi64, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+
 func.func @test_reduce_max_ra_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<1x32xi64>
@@ -598,7 +1002,69 @@ func.func @test_reduce_max_ra_b64() {
   return
 }
 
+
+func.func @test_vmin_1d_i32() {
+  %src0 = memref.alloc() : memref<8xi32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<1xi32, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i32
+  %dst = memref.alloc() : memref<8xi32, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<1xi32, #hivm.address_space<ub>>, i32)
+                outs(%dst : memref<8xi32, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
 // -----
+func.func @test_vmin_1d_i16() {
+  %src0 = memref.alloc() : memref<8xi16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<1xi16, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i16
+  %dst = memref.alloc() : memref<8xi16, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<1xi16, #hivm.address_space<ub>>, i16)
+                outs(%dst : memref<8xi16, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vmin_1d_f32() {
+  %src0 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
+  %c8 = arith.constant 8.0 : f32
+  %dst = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<1xf32, #hivm.address_space<ub>>, f32)
+                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vmin_1d_f16() {
+  %src0 = memref.alloc() : memref<8xf16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<1xf16, #hivm.address_space<ub>>
+  %c8 = arith.constant 8.0 : f16
+  %dst = memref.alloc() : memref<8xf16, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<1xf16, #hivm.address_space<ub>>, f16)
+                outs(%dst : memref<8xf16, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vmin_2d_i64() {
+  %src0 = memref.alloc() : memref<8x8xi64, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi64, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i64
+  %dst = memref.alloc() : memref<8x8xi64, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.vmin
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xi64, #hivm.address_space<ub>>, i64)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
+// -----
+
 func.func @test_reduce_prod_ra_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<1x32xi64>
@@ -608,7 +1074,69 @@ func.func @test_reduce_prod_ra_b64() {
   return
 }
 
+
+func.func @test_vmin_2d_i32() {
+  %src0 = memref.alloc() : memref<8x8xi32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi32, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i32
+  %dst = memref.alloc() : memref<8x8xi32, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xi32, #hivm.address_space<ub>>, i32)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
 // -----
+func.func @test_vmin_2d_i16() {
+  %src0 = memref.alloc() : memref<8x8xi16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi16, #hivm.address_space<ub>>
+  %c8 = arith.constant 8 : i16
+  %dst = memref.alloc() : memref<8x8xi16, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xi16, #hivm.address_space<ub>>, i16)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
+// -----
+func.func @test_vmin_2d_f32() {
+  %src0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
+  %c8 = arith.constant 8.0 : f32
+  %dst = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xf32, #hivm.address_space<ub>>, f32)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
+// -----
+func.func @test_vmin_2d_f16() {
+  %src0 = memref.alloc() : memref<8x8xf16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xf16, #hivm.address_space<ub>>
+  %c8 = arith.constant 8.0 : f16
+  %dst = memref.alloc() : memref<8x8xf16, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.vmin{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xf16, #hivm.address_space<ub>>, f16)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
+// -----
+func.func @test_vmax_1d_i64() {
+  %lhs = memref.alloc() : memref<64xi64>
+  %rhs = memref.alloc() : memref<1xi64>
+  %dst = memref.alloc() : memref<64xi64>
+  // CHECK: hivm.hir.vmax
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64xi64>, memref<1xi64>)
+               outs(%dst : memref<64xi64>) broadcast = [0]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_xori_ra_b64() {
   %src = memref.alloc() : memref<24x32xi64>
   %dst = memref.alloc() : memref<1x32xi64>
@@ -618,7 +1146,69 @@ func.func @test_reduce_xori_ra_b64() {
   return
 }
 
+
+func.func @test_vmax_1d_i32() {
+  %lhs = memref.alloc() : memref<64xi32>
+  %rhs = memref.alloc() : memref<1xi32>
+  %dst = memref.alloc() : memref<64xi32>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64xi32>, memref<1xi32>)
+               outs(%dst : memref<64xi32>) broadcast = [0]
+
+  return
+}
+
 // -----
+func.func @test_vmax_1d_i16() {
+  %lhs = memref.alloc() : memref<64xi16>
+  %rhs = memref.alloc() : memref<1xi16>
+  %dst = memref.alloc() : memref<64xi16>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64xi16>, memref<1xi16>)
+               outs(%dst : memref<64xi16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmax_1d_f32() {
+  %lhs = memref.alloc() : memref<64xf32>
+  %rhs = memref.alloc() : memref<1xf32>
+  %dst = memref.alloc() : memref<64xf32>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64xf32>, memref<1xf32>)
+               outs(%dst : memref<64xf32>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmax_1d_f16() {
+  %lhs = memref.alloc() : memref<64xf16>
+  %rhs = memref.alloc() : memref<1xf16>
+  %dst = memref.alloc() : memref<64xf16>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64xf16>, memref<1xf16>)
+               outs(%dst : memref<64xf16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmax_2d_i64() {
+  %lhs = memref.alloc() : memref<64x64xi64>
+  %rhs = memref.alloc() : memref<64x1xi64>
+  %dst = memref.alloc() : memref<64x64xi64>
+  // CHECK: hivm.hir.vmax
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64x64xi64>, memref<64x1xi64>)
+               outs(%dst : memref<64x64xi64>) broadcast = [1]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_sum_r_b64() {
   %src = memref.alloc() : memref<32xi64>
   %dst = memref.alloc() : memref<1xi64>
@@ -628,7 +1218,69 @@ func.func @test_reduce_sum_r_b64() {
   return
 }
 
+
+func.func @test_vmax_2d_i32() {
+  %lhs = memref.alloc() : memref<64x64xi32>
+  %rhs = memref.alloc() : memref<64x1xi32>
+  %dst = memref.alloc() : memref<64x64xi32>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64x64xi32>, memref<64x1xi32>)
+               outs(%dst : memref<64x64xi32>) broadcast = [1]
+
+  return
+}
+
 // -----
+func.func @test_vmax_2d_i16() {
+  %lhs = memref.alloc() : memref<64x64xi16>
+  %rhs = memref.alloc() : memref<64x1xi16>
+  %dst = memref.alloc() : memref<64x64xi16>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64x64xi16>, memref<64x1xi16>)
+               outs(%dst : memref<64x64xi16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmax_2d_f32() {
+  %lhs = memref.alloc() : memref<64x64xf32>
+  %rhs = memref.alloc() : memref<64x1xf32>
+  %dst = memref.alloc() : memref<64x64xf32>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64x64xf32>, memref<64x1xf32>)
+               outs(%dst : memref<64x64xf32>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmax_2d_f16() {
+  %lhs = memref.alloc() : memref<64x64xf16>
+  %rhs = memref.alloc() : memref<64x1xf16>
+  %dst = memref.alloc() : memref<64x64xf16>
+  // CHECK:           hivm.hir.vmax{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmax ins(%lhs, %rhs : memref<64x64xf16>, memref<64x1xf16>)
+               outs(%dst : memref<64x64xf16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmul_1d_i64() {
+  %src = memref.alloc() : memref<64xi64>     
+  %scalar_mem = memref.alloc() : memref<1xi64> 
+  %dst = memref.alloc() : memref<64xi64>
+  // CHECK: hivm.hir.vmul
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi64>, memref<1xi64>)
+               outs(%dst : memref<64xi64>) broadcast = [0]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_min_r_b64() {
   %src = memref.alloc() : memref<32xi64>
   %dst = memref.alloc() : memref<1xi64>
@@ -638,7 +1290,69 @@ func.func @test_reduce_min_r_b64() {
   return
 }
 
+
+func.func @test_vmul_1d_i32() {
+  %src = memref.alloc() : memref<64xi32>     
+  %scalar_mem = memref.alloc() : memref<1xi32> 
+  %dst = memref.alloc() : memref<64xi32>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi32>, memref<1xi32>)
+               outs(%dst : memref<64xi32>) broadcast = [0]
+
+  return
+}
+
 // -----
+func.func @test_vmul_1d_i16() {
+  %src = memref.alloc() : memref<64xi16>     
+  %scalar_mem = memref.alloc() : memref<1xi16> 
+  %dst = memref.alloc() : memref<64xi16>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64xi16>, memref<1xi16>)
+               outs(%dst : memref<64xi16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmul_1d_f32() {
+  %src = memref.alloc() : memref<64xf32>     
+  %scalar_mem = memref.alloc() : memref<1xf32> 
+  %dst = memref.alloc() : memref<64xf32>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64xf32>, memref<1xf32>)
+               outs(%dst : memref<64xf32>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmul_1d_f16() {
+  %src = memref.alloc() : memref<64xf16>     
+  %scalar_mem = memref.alloc() : memref<1xf16> 
+  %dst = memref.alloc() : memref<64xf16>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64xf16>, memref<1xf16>)
+               outs(%dst : memref<64xf16>) broadcast = [0]
+
+  return
+}
+
+// -----
+func.func @test_vmul_2d_i64() {
+  %src = memref.alloc() : memref<64x64xi64>     
+  %scalar_mem = memref.alloc() : memref<64x1xi64> 
+  %dst = memref.alloc() : memref<64x64xi64>
+  // CHECK: hivm.hir.vmul
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi64>, memref<64x1xi64>)
+               outs(%dst : memref<64x64xi64>) broadcast = [1]
+
+  return
+}
+
+// -----
+
 func.func @test_reduce_max_r_b64() {
   %src = memref.alloc() : memref<32xi64>
   %dst = memref.alloc() : memref<1xi64>
@@ -668,7 +1382,81 @@ func.func @test_reduce_xori_r_b64() {
   return
 }
 
+
+func.func @test_vmul_2d_i32() {
+  %src = memref.alloc() : memref<64x64xi32>     
+  %scalar_mem = memref.alloc() : memref<64x1xi32> 
+  %dst = memref.alloc() : memref<64x64xi32>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi32>, memref<64x1xi32>)
+               outs(%dst : memref<64x64xi32>) broadcast = [1]
+
+  return
+}
+
 // -----
+func.func @test_vmul_2d_i16() {
+  %src = memref.alloc() : memref<64x64xi16>     
+  %scalar_mem = memref.alloc() : memref<64x1xi16> 
+  %dst = memref.alloc() : memref<64x64xi16>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xi16>, memref<64x1xi16>)
+               outs(%dst : memref<64x64xi16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmul_2d_f32() {
+  %src = memref.alloc() : memref<64x64xf32>     
+  %scalar_mem = memref.alloc() : memref<64x1xf32> 
+  %dst = memref.alloc() : memref<64x64xf32>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xf32>, memref<64x1xf32>)
+               outs(%dst : memref<64x64xf32>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vmul_2d_f16() {
+  %src = memref.alloc() : memref<64x64xf16>     
+  %scalar_mem = memref.alloc() : memref<64x1xf16> 
+  %dst = memref.alloc() : memref<64x64xf16>
+  // CHECK:           hivm.hir.vmul{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vmul ins(%src, %scalar_mem : memref<64x64xf16>, memref<64x1xf16>)
+               outs(%dst : memref<64x64xf16>) broadcast = [1]
+
+  return
+}
+
+// -----
+func.func @test_vadd_1d_i64() {
+  %src0 = memref.alloc() : memref<8xi64, #hivm.address_space<ub>>
+  %src0_inline_brc = memref.alloc() : memref<1xi64, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8xi64, #hivm.address_space<ub>>
+  %src1_inline_brc = memref.alloc() : memref<1xi64, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8xi64, #hivm.address_space<ub>>
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xi64, #hivm.address_space<ub>>, memref<8xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi64, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xi64, #hivm.address_space<ub>>, memref<1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi64, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xi64, #hivm.address_space<ub>>, memref<1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi64, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+
 func.func @test_reduce_min_with_index_int64() {
   %src = memref.alloc() : memref<2x2xi64>
   %dst1 = memref.alloc() : memref<1x2xi64>
@@ -754,7 +1542,148 @@ func.func @test_reduce_max_with_index_int16() {
   return
 }
 
+
+func.func @test_vadd_1d_i32() {
+  %src0 = memref.alloc() : memref<8xi32, #hivm.address_space<ub>>
+  %src0_inline_brc = memref.alloc() : memref<1xi32, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8xi32, #hivm.address_space<ub>>
+  %src1_inline_brc = memref.alloc() : memref<1xi32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8xi32, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xi32, #hivm.address_space<ub>>, memref<8xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi32, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xi32, #hivm.address_space<ub>>, memref<1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi32, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xi32, #hivm.address_space<ub>>, memref<1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi32, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
 // -----
+func.func @test_vadd_1d_i16() {
+  %src0 = memref.alloc() : memref<8xi16, #hivm.address_space<ub>>
+  %src0_inline_brc = memref.alloc() : memref<1xi16, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8xi16, #hivm.address_space<ub>>
+  %src1_inline_brc = memref.alloc() : memref<1xi16, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8xi16, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xi16, #hivm.address_space<ub>>, memref<8xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi16, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xi16, #hivm.address_space<ub>>, memref<1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi16, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xi16, #hivm.address_space<ub>>, memref<1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xi16, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vadd_1d_f32() {
+  %src0 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+  %src0_inline_brc = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+  %src1_inline_brc = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xf32, #hivm.address_space<ub>>, memref<8xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xf32, #hivm.address_space<ub>>, memref<1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xf32, #hivm.address_space<ub>>, memref<1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf32, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vadd_1d_f16() {
+  %src0 = memref.alloc() : memref<8xf16, #hivm.address_space<ub>>
+  %src0_inline_brc = memref.alloc() : memref<1xf16, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8xf16, #hivm.address_space<ub>>
+  %src1_inline_brc = memref.alloc() : memref<1xf16, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8xf16, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1 : memref<1xf16, #hivm.address_space<ub>>, memref<8xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf16, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0, %src1_inline_brc : memref<8xf16, #hivm.address_space<ub>>, memref<1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf16, #hivm.address_space<ub>>) broadcast = [0]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0]
+  hivm.hir.vadd ins(%src0_inline_brc, %src1_inline_brc : memref<1xf16, #hivm.address_space<ub>>, memref<1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8xf16, #hivm.address_space<ub>>) broadcast = [0]
+  return
+}
+
+// -----
+func.func @test_vadd_2d_i64() {
+  %src0 = memref.alloc() : memref<8x8xi64, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi64, #hivm.address_space<ub>>
+  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xi64, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8x8xi64, #hivm.address_space<ub>>
+  %src1_last_inline_brc = memref.alloc() : memref<8x1xi64, #hivm.address_space<ub>>
+  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xi64, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8x8xi64, #hivm.address_space<ub>>
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xi64, #hivm.address_space<ub>>, memref<8x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK: hivm.hir.vadd{{.*}}broadcast = [0, 1]
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xi64, #hivm.address_space<ub>>, memref<1x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xi64, #hivm.address_space<ub>>, memref<8x8xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xi64, #hivm.address_space<ub>>, memref<8x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xi64, #hivm.address_space<ub>>, memref<1x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xi64, #hivm.address_space<ub>>, memref<8x8xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xi64, #hivm.address_space<ub>>, memref<8x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK: hivm.hir.vadd
+  // CHECK-NOT: temp_buffer
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xi64, #hivm.address_space<ub>>, memref<1x1xi64, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
+  return
+}
+
+// -----
+
 func.func @test_decompose_argmax_float16(%src: memref<2x5x7xf16, strided<[96, 16, 1], offset: ?>>, %idx: memref<1x5x7xi32>) {
   %dst = memref.alloc() : memref<1x5x7xf16>
   // CHECK: hivm.hir.vreduce <max_with_index_left>
@@ -849,7 +1778,52 @@ func.func @test_decompose_r_argmin_float32(%src: memref<2x5x7xf32, strided<[35, 
   return
 }
 
+
+func.func @test_vadd_2d_i32() {
+  %src0 = memref.alloc() : memref<8x8xi32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi32, #hivm.address_space<ub>>
+  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xi32, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8x8xi32, #hivm.address_space<ub>>
+  %src1_last_inline_brc = memref.alloc() : memref<8x1xi32, #hivm.address_space<ub>>
+  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xi32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8x8xi32, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xi32, #hivm.address_space<ub>>, memref<8x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xi32, #hivm.address_space<ub>>, memref<1x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xi32, #hivm.address_space<ub>>, memref<8x8xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xi32, #hivm.address_space<ub>>, memref<8x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xi32, #hivm.address_space<ub>>, memref<1x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xi32, #hivm.address_space<ub>>, memref<8x8xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xi32, #hivm.address_space<ub>>, memref<8x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xi32, #hivm.address_space<ub>>, memref<1x1xi32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi32, #hivm.address_space<ub>>) broadcast = [0, 1]
+  return
+}
+
 // -----
+
 func.func @test_decomposer_r_argmin_float16_notflatten(%src: memref<2x5x7xf16, strided<[96, 16, 1], offset: ?>>, %idx: memref<1x5x7xi32>) {
   %dst = memref.alloc() : memref<1x5x7xf16>
   // CHECK: hivm.hir.vreduce <min_with_index_right>
@@ -944,7 +1918,52 @@ func.func @test_decompose_r_argmax_float32(%src: memref<2x5x7xf32, strided<[35, 
   return
 }
 
+
+func.func @test_vadd_2d_i16() {
+  %src0 = memref.alloc() : memref<8x8xi16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xi16, #hivm.address_space<ub>>
+  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xi16, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8x8xi16, #hivm.address_space<ub>>
+  %src1_last_inline_brc = memref.alloc() : memref<8x1xi16, #hivm.address_space<ub>>
+  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xi16, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8x8xi16, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xi16, #hivm.address_space<ub>>, memref<8x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xi16, #hivm.address_space<ub>>, memref<1x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xi16, #hivm.address_space<ub>>, memref<8x8xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xi16, #hivm.address_space<ub>>, memref<8x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xi16, #hivm.address_space<ub>>, memref<1x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xi16, #hivm.address_space<ub>>, memref<8x8xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xi16, #hivm.address_space<ub>>, memref<8x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xi16, #hivm.address_space<ub>>, memref<1x1xi16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xi16, #hivm.address_space<ub>>) broadcast = [0, 1]
+  return
+}
+
 // -----
+
 func.func @test_decomposer_r_argmax_float16_notflatten(%src: memref<2x5x7xf16, strided<[96, 16, 1], offset: ?>>, %idx: memref<1x5x7xi32>) {
   %dst = memref.alloc() : memref<1x5x7xf16>
   // CHECK: hivm.hir.vreduce <max_with_index_right>
@@ -1034,7 +2053,52 @@ func.func @test_reduce_max_ar_ui32() {
   return
 }
 
+
+func.func @test_vadd_2d_f32() {
+  %src0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
+  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xf32, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+  %src1_last_inline_brc = memref.alloc() : memref<8x1xf32, #hivm.address_space<ub>>
+  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xf32, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xf32, #hivm.address_space<ub>>, memref<8x8xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xf32, #hivm.address_space<ub>>, memref<8x8xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xf32, #hivm.address_space<ub>>, memref<8x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xf32, #hivm.address_space<ub>>, memref<1x1xf32, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [0, 1]
+  return
+}
+
 // -----
+
 func.func @test_reduce_max_ra_i1() {
   %src = memref.alloc() : memref<24x32xi1>
   %dst = memref.alloc() : memref<1x32xi1>
@@ -1424,6 +2488,49 @@ func.func @test_decomposer_r_argmax_UI8_notflatten(%src: memref<2x5x7xui8, strid
   // CHECK: temp_buffer
   hivm.hir.vreduce <max_with_index_right> ins(%src : memref<2x5x7xui8, strided<[96, 16, 1], offset: ?>>)
                                     outs(%dst, %idx : memref<1x5x7xui8>, memref<1x5x7xi32>) reduce_dims = [0]
+  return
+}
+
+func.func @test_vadd_2d_f16() {
+  %src0 = memref.alloc() : memref<8x8xf16, #hivm.address_space<ub>>
+  %src0_last_inline_brc = memref.alloc() : memref<8x1xf16, #hivm.address_space<ub>>
+  %src0_last_first_inline_brc = memref.alloc() : memref<1x1xf16, #hivm.address_space<ub>>
+  %src1 = memref.alloc() : memref<8x8xf16, #hivm.address_space<ub>>
+  %src1_last_inline_brc = memref.alloc() : memref<8x1xf16, #hivm.address_space<ub>>
+  %src1_last_first_inline_brc = memref.alloc() : memref<1x1xf16, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<8x8xf16, #hivm.address_space<ub>>
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0, %src1_last_inline_brc : memref<8x8xf16, #hivm.address_space<ub>>, memref<8x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0, %src1_last_first_inline_brc : memref<8x8xf16, #hivm.address_space<ub>>, memref<1x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1 : memref<8x1xf16, #hivm.address_space<ub>>, memref<8x8xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_inline_brc : memref<8x1xf16, #hivm.address_space<ub>>, memref<8x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_inline_brc, %src1_last_first_inline_brc : memref<8x1xf16, #hivm.address_space<ub>>, memref<1x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1 : memref<1x1xf16, #hivm.address_space<ub>>, memref<8x8xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_inline_brc : memref<1x1xf16, #hivm.address_space<ub>>, memref<8x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [0, 1]
+
+  // CHECK:           hivm.hir.vadd{{.*}}temp_buffer{{.*}}broadcast = [0, 1]
+  hivm.hir.vadd ins(%src0_last_first_inline_brc, %src1_last_first_inline_brc : memref<1x1xf16, #hivm.address_space<ub>>, memref<1x1xf16, #hivm.address_space<ub>>)
+                outs(%dst : memref<8x8xf16, #hivm.address_space<ub>>) broadcast = [0, 1]
   return
 }
 

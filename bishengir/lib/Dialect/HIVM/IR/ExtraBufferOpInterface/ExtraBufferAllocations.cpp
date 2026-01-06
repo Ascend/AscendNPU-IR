@@ -39,12 +39,35 @@ Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
 }
 } // namespace
 
+#define CHECK_OP(OpType)                                                       \
+  if (isa<OpType>(op)) {                                                       \
+    auto concreteOp = dyn_cast<OpType>(op);                                    \
+    return concreteOp.shouldLowerToScalarLoops();                              \
+  } 
+
+bool shouldSkipAllocExtraBuffer(Operation *op) {
+  CHECK_OP(VMulOp)
+  CHECK_OP(VAddOp)
+  CHECK_OP(VMaxOp)
+  CHECK_OP(VMinOp)
+  CHECK_OP(VSubOp)
+  CHECK_OP(VDivOp)
+  CHECK_OP(VShLOp)
+  CHECK_OP(VShROp)
+  CHECK_OP(VAbsOp)
+  return false;
+}
+#undef CHECK_OP
+
 //===----------------------------------------------------------------------===//
 // Macros for AllocExtraBufferIfPossible
 //===----------------------------------------------------------------------===//
 
 #define ENABLE_ALLOC_EXTRA_BUFFER_IF_POSSIBLE(OP_NAME)                         \
   LogicalResult OP_NAME::allocExtraBuffersIfPossible() {                       \
+    if (shouldSkipAllocExtraBuffer(this->getOperation())) {                    \
+      return success();                                                        \
+    }                                                                          \
     if (this->getTempBuffer()) {                                               \
       this->emitWarning("already has extra temp buffer");                      \
       return success();                                                        \
