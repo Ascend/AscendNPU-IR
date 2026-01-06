@@ -591,6 +591,13 @@ void TileAndBindSubBlockPass::runOnOperation() {
   uint64_t tiledFunctionCount = 0;
 #endif
 
+  PassManager pm(&getContext());
+  CanonicalizerOptions options;
+  SmallVector<std::string> disabledPatterns(
+      {"ReinterpretCastConstantArgumentFolder"});
+  options.disabledPatterns = disabledPatterns;
+  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+
   // Collect functions to process (can't modify while iterating)
   SmallVector<func::FuncOp> functionsToProcess;
   moduleOp->walk(
