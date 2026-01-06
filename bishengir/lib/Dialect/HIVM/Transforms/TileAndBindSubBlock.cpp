@@ -627,10 +627,11 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     failAndRevert(newFunc);
     return failure();
   }
-  PassManager pm(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm);
 
-  LogicalResult bubbleUpResult = pm.run(newFunc);
+  PassManager pm2(newFunc->getContext());
+  populateBindSubBlockBubbleUpPassManager(pm2);
+
+  LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
       newFunc.verifyBody().failed() || newFunc.verifyRegions().failed()) {
     failAndRevert(newFunc);
@@ -668,6 +669,17 @@ void TileAndBindSubBlockPass::runOnOperation() {
 #ifndef NDEBUG
   uint64_t tiledFunctionCount = 0;
 #endif
+
+  PassManager pm(&getContext());
+  CanonicalizerOptions options;
+  SmallVector<std::string> disabledPatterns(
+      {"ReinterpretCastConstantArgumentFolder"});
+  options.disabledPatterns = disabledPatterns;
+  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+  pm.addPass(createCSEPass());
+  if (failed(pm.run(moduleOp))) {
+    return signalPassFailure();
+  }
 
   // Collect functions to process (can't modify while iterating)
   SmallVector<func::FuncOp> functionsToProcess;
