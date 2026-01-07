@@ -46,9 +46,8 @@ func.func @mm_01_mix_aiv(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
   %24 = arith.minsi %23, %c16 : index
   %extracted_slice = tensor.extract_slice %19[0, 0] [%24, 16] [1, 1] : tensor<16x16xf16> to tensor<?x16xf16>
   %subview_5 = memref.subview %reinterpret_cast_2[0, 0] [%24, 16] [1, 1] : memref<16x16xf16, strided<[16, 1], offset: ?>> to memref<?x16xf16, strided<[16, 1], offset: ?>>
-  // CHECK: scf.if
   // CHECK: hivm.hir.store
-  // CHECK: limit_sub_block_id0
+  // CHECK: {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
   hivm.hir.store ins(%extracted_slice : tensor<?x16xf16>) outs(%subview_5 : memref<?x16xf16, strided<[16, 1], offset: ?>>)
   return
 }
@@ -1036,10 +1035,10 @@ module {
 // CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
 // CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
 // CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]]()[%[[VAL_5]]]
-// CHECK:             %[[VAL_7:.*]] = tensor.empty() : tensor<32xf32>
-// CHECK:             %[[VAL_8:.*]] = hivm.hir.vln ins(%[[VAL_7]] : tensor<32xf32>) outs(%[[VAL_7]] : tensor<32xf32>) -> tensor<32xf32>
-// CHECK:             %[[VAL_9:.*]] = memref.subview %{{.*}}[%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             hivm.hir.store ins(%[[VAL_8]] : tensor<32xf32>) outs(%[[VAL_9]] : memref<32xf32, strided<[1], offset: ?>>)
+// CHECK:             %[[VAL_7:.*]] = memref.subview %{{.*}}[%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_8:.*]] = tensor.empty() : tensor<32xf32>
+// CHECK:             %[[VAL_9:.*]] = hivm.hir.vln ins(%[[VAL_8]] : tensor<32xf32>) outs(%[[VAL_8]] : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:             hivm.hir.store ins(%[[VAL_9]] : tensor<32xf32>) outs(%[[VAL_7]] : memref<32xf32, strided<[1], offset: ?>>)
 // CHECK:           }
 // CHECK:           return
 // CHECK:         }

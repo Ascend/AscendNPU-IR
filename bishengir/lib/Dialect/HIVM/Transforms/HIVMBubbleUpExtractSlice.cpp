@@ -149,6 +149,7 @@ private:
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
 
     // Add pattern with strategies
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
