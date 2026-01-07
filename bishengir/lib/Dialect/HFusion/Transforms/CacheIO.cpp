@@ -98,7 +98,12 @@ void cacheWriteFuncReturn(mlir::OpBuilder &builder, func::FuncOp funcOp,
     auto tracedRes = traceChain.empty() ? res : traceChain.back();
     // Trace back Store operations too
     while (auto currentStoreOp = dyn_cast_if_present<hfusion::StoreOp>(
-               tracedRes.getDefiningOp())) {
+              tracedRes.getDefiningOp())) {
+      // Add the return operand index attribute if missing
+      if (!currentStoreOp->hasAttr(hfusion::ReturnOperandNumAttr::name)) {
+        currentStoreOp->setAttr(hfusion::ReturnOperandNumAttr::name,
+                                builder.getI64IntegerAttr(i));
+      }
       tracedRes = currentStoreOp.getDpsInputs()[0];
     }
 
