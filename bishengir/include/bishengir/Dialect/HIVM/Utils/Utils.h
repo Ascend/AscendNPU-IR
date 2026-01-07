@@ -327,7 +327,32 @@ enum class BitWidth : uint32_t {
   B32 = 32,
   B64 = 64,
 };
-  
+
+/// Task type encoded as a two‑digit decimal number:
+/// - Tens digit: which kernel(s) are used
+///   - 1 → pure vector kernel
+///   - 2 → pure cube kernel
+///   - 3 → mix cube and vector kernels (default 1:1 mix)
+/// - Units digit: presence of the kernel in the mix
+///
+/// Example: 31 → mixed cube + vector, ratio 1:1.
+enum TaskType : int8_t {
+  /// 1x – pure vector kernel (ratio 1:0)
+  VectorOnly = 10,
+
+  /// 2x – pure cube kernel (ratio 0:1)
+  CubeOnly = 20,
+
+  /// 3x – mixed cube & vector kernel, ratio 1:1
+  CubeVectorMix_1_1 = 31,
+
+  /// 3x – mixed cube & vector kernel, default 1:2 ratio
+  CubeVectorMix_1_2 = 32,
+
+  /// Unknown module type (kept as 0 to preserve original behaviour)
+  Unknown = 0
+};
+
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
 const static int vectorBlockSizeBit = 256;

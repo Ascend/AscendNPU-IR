@@ -300,6 +300,7 @@ void WrapHostFuncPass::runOnOperation() {
                                                       removeUnusedArguments);
     addWrapper<hacc::InferSyncBlockLockNumFunctionAttr>(funcOp, *hostCallInfo);
     addWrapper<hacc::InferSyncBlockLockInitFunctionAttr>(funcOp, *hostCallInfo);
+    addWrapper<hacc::InferTaskTypeFunctionAttr>(funcOp, *hostCallInfo);
     return WalkResult::advance();
   });
 }
