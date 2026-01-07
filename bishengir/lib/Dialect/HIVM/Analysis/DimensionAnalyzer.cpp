@@ -57,6 +57,7 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   isVectorOp ? computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps)
              : computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
 
+  DenseMap<int64_t, int> selectedTilingParIdxMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     auto numStoreOp = numStoreOps.at(groupIndex);
     for (const auto &[parentIndex, candidate] : parallelDimMap) {
@@ -69,26 +70,25 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
         }
         // try to find majority of dimension is higher
         if (2 * higherDimCnt >= numStoreOp) {
-          selectedTilingParIdx[groupIndex] = parentIndex;
+          selectedTilingParIdxMap[groupIndex] = parentIndex;
           for (auto [store, dim] : candidate)
             tilingDim_[store] = dim;
         }
       }
     }
   }
+  for (auto[_, parIdx] : selectedTilingParIdxMap)
+    selectedTilingParIdx.insert(parIdx);
 }
 
 int64_t DimensionAnalyzer::getTilingDim(Value v) {
   if (!argumentsRefPointer_.contains(v))
     return -1;
   auto argRef = argumentsRefPointer_.at(v);
-  if (!selectedTilingParIdx.contains(argRef))
-    return -1;
-  auto tilingParIdx = selectedTilingParIdx.at(argRef);
   auto rank = utils::getShapeRank(v.getType()).value_or(0);
   for (size_t i = 0; i < rank; i++) {
     auto parentIndex = solverCollapserElem_->find(getArgumentRef(v)[i]);
-    if (tilingParIdx == parentIndex)
+    if (selectedTilingParIdx.contains(parentIndex))
       return i;
   }
   return -1;

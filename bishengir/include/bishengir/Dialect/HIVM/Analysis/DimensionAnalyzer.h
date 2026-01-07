@@ -138,7 +138,7 @@ protected:
 protected:
   DenseMap<Value, int64_t> tilingDim_;
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMap;
-  DenseMap<int64_t, int> selectedTilingParIdx;
+  llvm::SmallDenseSet<int> selectedTilingParIdx;
   std::unique_ptr<mlir::detail::SimpleUnionFind> solverGroup_;
 };
 
