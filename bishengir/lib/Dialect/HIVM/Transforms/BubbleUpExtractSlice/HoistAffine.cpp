@@ -65,46 +65,70 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
 
   LogicalResult matchAndRewrite(AffineOpTy op,
                                 PatternRewriter &rewriter) const final {
-    auto operandBlocks = llvm::map_to_vector(
-        op->getOperands(), [](Value opr) { return opr.getParentBlock(); });
-
-    auto anchorBlock = operandBlocks.front();
-    if (llvm::any_of(operandBlocks,
-                     [&anchorBlock](Block *b) { return anchorBlock != b; }))
-      return rewriter.notifyMatchFailure(
-          op, "not all operands are in the same block");
-
-    // Get the lowest dominating operation in the block.
+    // Get the lowest dominating operation and block argument.
     Operation *lastDefOp = nullptr;
     Value lastDefVal = Value();
-    Value blockArgFallback = Value();
+    Value lastBlockArg = Value();
+    DominanceInfo dominance;
     for (Value operand : op->getOperands()) {
       if (auto ba = dyn_cast<BlockArgument>(operand)) {
-        blockArgFallback = ba;
+        if (!lastBlockArg) {
+          lastBlockArg = ba;
+        } else {
+          Block *currentBlock = ba.getParentBlock();
+          Block *lastBlock = lastBlockArg.getParentBlock();
+          
+          if (dominance.dominates(lastBlock, currentBlock)) {
+            lastBlockArg = ba;
+          }
+        }
         continue;
       }
+
       auto *definingOp = operand.getDefiningOp();
       if (!definingOp)
         continue;
-      if (!lastDefOp || lastDefOp->isBeforeInBlock(definingOp)) {
+      if (!lastDefOp || dominance.dominates(lastDefOp, definingOp)) {
         lastDefOp = definingOp;
         lastDefVal = operand;
       }
     }
 
-    // If the `lastDefOp` is null, we use BlockArgument as 'lastDefVal'
-    if (!lastDefOp && blockArgFallback) {
-      lastDefVal = blockArgFallback;
+    Operation *insertPoint = nullptr;
+
+    // If 'lastDefOp' is null, it means that the lowest dominating value is
+    // a block argument. So we use 'lastBlockArg' as 'lastDefVal' 
+    // and set the insertion point to the front of the block.
+    if (!lastDefOp && lastBlockArg) {
+      lastDefVal = lastBlockArg;
+      Block *anchorBlock = lastBlockArg.getParentBlock();
+      insertPoint = &anchorBlock->front();
     }
 
+    // If the 'lastDefOp' is null, after updating 'lastDefVal' with 'lastBlockArg',
+    // if 'lastDefVal' is still null, it is abnormal.
     if (!lastDefOp && !lastDefVal)
       return rewriter.notifyMatchFailure(
           op, "no valid operands found");
 
-    // If the `lastDefOp` is null, it means that the lowest dominating value is
-    // a block argument. So set the insertion point to the front of the block.
-    Operation *insertPoint =
-        lastDefOp ? lastDefOp->getNextNode() : &anchorBlock->front();
+    // If we have 'lastDefOp' and 'lastBlockArg' is null, 
+    // it means all operands have defining Op,
+    // we can directly use 'lastDefOp' and 'lastDefVal'
+    // and set the insertion point to the next node of 'lastDefOp'.
+    if (lastDefOp && !lastBlockArg) {
+      insertPoint = lastDefOp->getNextNode();
+    }
+
+    // If we have both 'lastDefOp' and 'lastBlockArg', we might either 
+    // set the insertion point to the next node of 'lastDefOp' or to the front of 'argBlock',
+    // so we need to verify the dominance relationship between 'defOpBlock' and 'argBlock'
+    // and might update 'lastDefVal' with 'lastBlockArg'.
+    if (lastDefOp && lastBlockArg) {
+      Block *defOpBlock = lastDefOp->getBlock();
+      Block *argBlock = lastBlockArg.getParentBlock();
+      insertPoint = dominance.dominates(argBlock, defOpBlock) ? lastDefOp->getNextNode() : &argBlock->front();
+      lastDefVal = dominance.dominates(argBlock, defOpBlock) ? lastDefVal : lastBlockArg;
+    }
 
     if (insertPoint->getBlock() != op->getBlock()) {
       rewriter.moveOpBefore(op, insertPoint);
