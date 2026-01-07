@@ -352,3 +352,23 @@ func.func @castInLoop(%arg0: tensor<1x1x12xbf16>, %arg1: tensor<1x1x12xbf16>) ->
   }
   return %7 : tensor<1x1x12xbf16>
 }
+
+// -----
+// CHECK-LABEL: func.func @triton_not_8d
+func.func @triton_not_8d(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64>, %arg3: memref<?xi64>) {
+  %c-1_i64 = arith.constant -1 : i64
+  %0 = tensor.empty() : tensor<2x2x2x2x2x2x2x2xi64>
+  %1 = linalg.fill ins(%c-1_i64 : i64) outs(%0 : tensor<2x2x2x2x2x2x2x2xi64>) -> tensor<2x2x2x2x2x2x2x2xi64>
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [2, 2, 2, 2, 2, 2, 2, 2], strides: [128, 64, 32, 16, 8, 4, 2, 1] : memref<?xi64> to memref<2x2x2x2x2x2x2x2xi64, strided<[128, 64, 32, 16, 8, 4, 2, 1]>>
+  %alloc = memref.alloc() : memref<2x2x2x2x2x2x2x2xi64>
+  memref.copy %reinterpret_cast, %alloc : memref<2x2x2x2x2x2x2x2xi64, strided<[128, 64, 32, 16, 8, 4, 2, 1]>> to memref<2x2x2x2x2x2x2x2xi64>
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<2x2x2x2x2x2x2x2xi64>
+  // CHECK:  %[[VAL_2:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+  // CHECK-NOT: hfusion.binary_fn<vxor>
+  // CHECK-NOT: hfusion.binary_fn<vor>
+  // CHECK-NOT: hfusion.binary_fn<vand>
+  %3 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vxor>} ins(%2, %1 : tensor<2x2x2x2x2x2x2x2xi64>, tensor<2x2x2x2x2x2x2x2xi64>) outs(%0 : tensor<2x2x2x2x2x2x2x2xi64>) -> tensor<2x2x2x2x2x2x2x2xi64>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [2, 2, 2, 2, 2, 2, 2, 2], strides: [128, 64, 32, 16, 8, 4, 2, 1] : memref<?xi64> to memref<2x2x2x2x2x2x2x2xi64, strided<[128, 64, 32, 16, 8, 4, 2, 1]>>
+  bufferization.materialize_in_destination %3 in writable %reinterpret_cast_0 : (tensor<2x2x2x2x2x2x2x2xi64>,  memref<2x2x2x2x2x2x2x2xi64, strided<[128, 64, 32, 16, 8, 4, 2, 1]>>) -> ()
+  return
+}

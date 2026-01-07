@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -353,6 +354,13 @@ public:
 
       if (binaryFunc == linalg::BinaryFn::div) {
         return simplifyDiv<BINOP>(rewriter, binaryOp);
+      }
+    }
+
+    if constexpr (std::is_same_v<BINOP, hfusion::ElemwiseBinaryOp>) {
+      if (binaryFunc == hfusion::BinaryFn::vxor) {
+        // only deel with x vxor 0xff...
+        return simplifyVxorToVnot(rewriter, binaryOp);
       }
     }
 
