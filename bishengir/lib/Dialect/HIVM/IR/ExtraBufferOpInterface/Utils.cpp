@@ -32,15 +32,19 @@ const static int halfBits = 16;
 
 namespace {
 int64_t getNumPerBlock(Type t) {
-  return INTR_BYTES_PER_BLOCK /
-         (getElementTypeOrSelf(t).getIntOrFloatBitWidth() /
-          utils::INTR_BITS_PER_BYTE);
+  unsigned bitWidth = getElementTypeOrSelf(t).getIntOrFloatBitWidth();
+
+  unsigned bytesPerElem = CEIL_DIV(bitWidth, utils::INTR_BITS_PER_BYTE);
+
+  return CEIL_DIV(INTR_BYTES_PER_BLOCK, bytesPerElem);
 }
 
 int64_t getNumPerRepeat(Type t) {
-  return INTR_BYTES_PER_REPEAT /
-         (getElementTypeOrSelf(t).getIntOrFloatBitWidth() /
-          utils::INTR_BITS_PER_BYTE);
+  unsigned bitWidth = getElementTypeOrSelf(t).getIntOrFloatBitWidth();
+
+  unsigned bytesPerElem = CEIL_DIV(bitWidth, utils::INTR_BITS_PER_BYTE);
+
+  return CEIL_DIV(INTR_BYTES_PER_REPEAT, bytesPerElem);
 }
 } // namespace
 static std::optional<int64_t>
