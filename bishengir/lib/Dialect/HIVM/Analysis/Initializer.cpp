@@ -38,6 +38,7 @@ DimensionAnalyzer::DimensionAnalyzer(Operation *op)
     : DimensionAnalyzerBase(op) {}
 
 LogicalResult DimensionAnalyzer::initialize() {
+  solverGroup_ = std::make_unique<mlir::detail::SimpleUnionFind>();
   auto result = DimensionAnalyzerBase::initialize();
   propagateConnection();
   spreadConnection();
