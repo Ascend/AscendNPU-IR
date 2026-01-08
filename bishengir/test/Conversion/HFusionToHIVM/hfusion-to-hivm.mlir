@@ -609,6 +609,23 @@ func.func @test_hfusion_comparef_ops(
 
 // -----
 
+// CHECK-LABEL: func.func @test_hfusion_compare_scalar_ops
+func.func @test_hfusion_compare_scalar_ops() -> tensor<4xi1> {
+  // CHECK: %[[VAL_0:.*]] = arith.constant 4 : i32
+  // CHECK: %[[VAL_1:.*]] = tensor.empty() : tensor<4xi32>
+  // CHECK: %[[VAL_2:.*]] = hivm.hir.vbrc ins(%[[VAL_0]] : i32) outs(%[[VAL_1]] : tensor<4xi32>) -> tensor<4xi32>
+  // CHECK: hivm.hir.vcmp
+  %src1 = arith.constant 4 : i32
+  %src2 = arith.constant 0 : i32
+  %dst = tensor.empty() : tensor<4xi1>
+  %0 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} 
+    ins(%src1, %src2 : i32, i32) 
+    outs(%dst : tensor<4xi1>) -> tensor<4xi1>
+  return %0 : tensor<4xi1>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_hfusion_selecti_ops
 func.func @test_hfusion_selecti_ops(
   %src1 : memref<6x6xi1>, %src2 : memref<6x6xi32>, %src3 : memref<6x6xi32>, %dst : memref<6x6xi32>) {
