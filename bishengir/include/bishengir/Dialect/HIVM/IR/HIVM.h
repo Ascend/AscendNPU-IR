@@ -133,6 +133,20 @@ AddressSpace getHIVMAddressSpace(Type type);
 /// Judge whether input type has HIVM Address Space.
 std::optional<AddressSpace> getOptionalHIVMAddressSpace(Type type);
 
+/// Infer TCoreType based on pipes
+std::optional<TCoreType> inferCoreTypeBasedOnPipes(ArrayRef<hivm::PIPE> pipes);
+
+/// Check whether the inferred core type based on pipe matches the given core
+/// type. If strict is false, CUBE_OR_VECTOR is considered matching any core
+/// type.
+bool checkPipeInferredCoreType(hivm::PIPE pipe, hivm::TCoreType coreType,
+                               bool strict = false);
+
+/// Infer core type for GlobalMixMatmulOps
+template <typename GlobalMixMatmulTy>
+std::optional<TCoreType>
+inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
+
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
     "multibuffer_unroll_factor";
 constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
