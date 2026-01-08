@@ -69,7 +69,8 @@ bool compareFuncOps(func::FuncOp f1, func::FuncOp f2) {
                   hacc::InferWorkspaceShapeFunctionAttr,
                   hacc::GetTilingStructSizeFunctionAttr,
                   hacc::InferSyncBlockLockNumFunctionAttr,
-                  hacc::InferSyncBlockLockInitFunctionAttr, mlir::StringAttr>(
+                  hacc::InferSyncBlockLockInitFunctionAttr,
+                  hacc::InferTaskTypeFunctionAttr, mlir::StringAttr>(
             attr2.getValue()))
       continue;
 
@@ -182,6 +183,8 @@ void eraseUnusedFuncs(SmallVector<func::FuncOp, 8> funcOps,
           processAttribute<hacc::InferSyncBlockLockNumFunctionAttr>(
               attr.getValue(), funcToErase, funcOps);
           processAttribute<hacc::InferSyncBlockLockInitFunctionAttr>(
+              attr.getValue(), funcToErase, funcOps);
+          processAttribute<hacc::InferTaskTypeFunctionAttr>(
               attr.getValue(), funcToErase, funcOps);
         }
       funcToErase.insert(f);

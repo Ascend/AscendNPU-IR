@@ -129,6 +129,7 @@ def HACC_kInferWorkspaceShapeFunction : I32EnumAttrCase<"kInferWorkspaceShapeFun
 def HACC_kInferSyncBlockLockNumFunction : I32EnumAttrCase<"kInferSyncBlockLockNumFunction", 5, "infer_sync_block_lock_num_function">;
 def HACC_kInferSyncBlockLockInitFunction : I32EnumAttrCase<"kInferSyncBlockLockInitFunction", 6, "infer_sync_block_lock_init_function">;
 def HACC_kGetTilingStructSizeFunction : I32EnumAttrCase<"kGetTilingStructSizeFunction", 7, "get_tiling_struct_size_function">;
+def HACC_kInferTaskTypeFunction : I32EnumAttrCase<"kInferTaskTypeFunction", 8, "infer_task_type_function">;
 def HACC_HostFuncTypeEnum : HACC_I32Enum<"HostFuncType", "HACC Host function type", [
   HACC_kEntry,
   HACC_kTilingFunction,
@@ -137,6 +138,7 @@ def HACC_HostFuncTypeEnum : HACC_I32Enum<"HostFuncType", "HACC Host function typ
   HACC_kInferSyncBlockLockNumFunction,
   HACC_kInferSyncBlockLockInitFunction,
   HACC_kGetTilingStructSizeFunction,
+  HACC_kInferTaskTypeFunction,
 ]> {}
 
 def HACC_HostFuncTypeAttr : HACC_Attr<"HostFuncType", "host_func_type"> {
@@ -223,6 +225,14 @@ def HACC_GetTilingStructSizeFunctionAttr
   let description = [{
     HACC get tiling struct size function attribute. This is used to indicate the host
     get tiling struct size function of the device function.
+  }];
+}
+
+def HACC_InferTaskTypeFunctionAttr
+    : HACC_FuncRefAttr<"InferTaskTypeFunction",
+                       "infer_task_type_function"> {
+  let description = [{
+    HACC infer core type and mix ratio.
   }];
 }
 
