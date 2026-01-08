@@ -238,4 +238,100 @@ def FinishDebugOp : HIVM_Op<"finish_debug", [CubeVectorCoreTypeTrait]> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+def CustomOp
+    : HIVM_StructuredOp<
+          "custom", [AttrSizedOperandSegments,
+                     MemoryEffects<[MemRead, MemWrite]>, SinglePipeOpTrait,
+                     DeclareOpInterfaceMethods<
+                         HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
+  let summary = [{
+    Custom operation is a generic op interface for users to write their own custom implementation.
+
+    Scenarios:
+      1. Existing operations could not fulfill the desired functionality.
+      2. Existing operations could fulfill the functionality, but overall performance is not optimal.
+      3. Desire for private operation.
+  }];
+
+  let description = [{
+    General interface for custom op, where:
+      - name : unique op name.
+
+               Note : there are names reserved for builtins, usually starts with "__builtin".
+                      Compiler will link these builtins to self-contained template library,
+                      which comes together within bishengir-compile.
+
+                      For normal names/cases, user needs to specify implementation location/compilation commands (TODO),
+                      and all ther necessary informations.
+
+               Available builtin names:
+                 "__builtin_gather_load"
+
+      - inputs : input parameters.
+      - outputs : output results, designated "init" operands, which act as initial values for the results
+                  of the operation or the init locations to which the results of the op will be written.
+
+    In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
+    to retreive necessary information, required informations are:
+      - CoreType : which core type to execute on, refer to TCoreTypeAttr.
+      - Pipe     : which pipe to execute on, refer to PipeAttr.
+      - VFMode   : which mode to run on vector units, refer to VFModeAttr.
+                   this attribute is ignored when core type is cube.
+
+                   Note : for builtins, user could specify these informations or not,
+                          compiler will help to check the correctness and canonicalize.
+
+    TODO:
+      - Impl : user provided implementation.
+      - Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
+  }];
+
+  let arguments = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
+      Variadic<AnyType>:$outputs);
+
+  let results = (outs Variadic<AnyType>:$results);
+
+  let extraClassDeclaration = [{
+      // TODO: Customize
+      static int getOpLibraryMaxRankImpl() { return 5; }
+
+      PIPE getPipe();
+
+      ::mlir::MutableOperandRange getDpsInitsMutable() {
+          return getOutputsMutable();
+      }
+
+      // Helper functions
+      void setPipe(PIPE);
+
+      std::optional<TCoreType> getCoreType();
+      void setCoreType(TCoreType);
+
+      std::optional<VFMode> getVFMode();
+      void setVFMode(VFMode);
+
+      bool isBuiltin();
+
+      // Builtins helpers
+      struct BuiltinInfo {
+        TCoreType coreType;
+        PIPE pipe;
+        VFMode vfMode;
+      };
+
+      // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE}
+      static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
+  }];
+
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let hasCanonicalizer = 1;
+}
+
+// TODO: Add CustomMacroOp
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

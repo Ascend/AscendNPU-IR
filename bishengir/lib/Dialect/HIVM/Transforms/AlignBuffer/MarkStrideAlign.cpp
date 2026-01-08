@@ -134,6 +134,11 @@ void MarkStrideAlignPass::runOnOperation() {
       return WalkResult::advance();
     }
 
+    // TODO: Relax when enable user provided optimization hints
+    if (isa<CustomOp>(op)) {
+      return WalkResult::advance();
+    }
+
     auto hivmOp = cast<HIVMStructuredOp>(op);
     if (!hivmOp.hasPureBufferSemantics()) {
       hivmOp->emitError("Not bufferized.");

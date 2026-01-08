@@ -558,3 +558,38 @@ void mlir::hivm::HIVMDialect::getCanonicalizationPatterns(
     ::mlir::RewritePatternSet &results) const {
   results.add<EliminateTrivialInlineBrc>(getContext());
 }
+
+struct CustomOpCanonicalizer : public OpRewritePattern<CustomOp> {
+  using OpRewritePattern<CustomOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CustomOp customOp,
+                                PatternRewriter &rewriter) const final {
+    if (!customOp.isBuiltin())
+      return failure();
+
+    const auto &builtinInfo = CustomOp::kBuiltins.at(customOp.getName());
+    const auto &coreType = customOp.getCoreType();
+    if (!coreType || *coreType != builtinInfo.coreType) {
+      customOp.setCoreType(builtinInfo.coreType);
+      return success();
+    }
+
+    if (customOp.getPipe() != builtinInfo.pipe) {
+      customOp.setPipe(builtinInfo.pipe);
+      return success();
+    }
+
+    const auto &vfMode = customOp.getVFMode();
+    if (!vfMode || *vfMode != builtinInfo.vfMode) {
+      customOp.setVFMode(builtinInfo.vfMode);
+      return success();
+    }
+
+    return failure();
+  }
+};
+
+void CustomOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                           ::mlir::MLIRContext *context) {
+  results.add<CustomOpCanonicalizer>(context);
+}
