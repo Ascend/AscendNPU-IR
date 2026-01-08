@@ -23,7 +23,6 @@
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
@@ -348,197 +347,61 @@ private:
 //===----------------------------------------------------------------------===//
 // SynBlockOpLowering
 //===----------------------------------------------------------------------===//
+void appendBlockSyncOperations(PatternRewriter &rewriter, Location loc,
+                               TCoreTypeAttr tCoreTypeAttr,
+                               hivm::SyncBlockInstrModeAttr modeAttr,
+                               PipeAttr tpipe, PipeAttr pipe,
+                               IntegerAttr flagID, Value fftsBaseAddr) {
+  rewriter.create<SyncBlockSetOp>(loc, tCoreTypeAttr, tpipe, pipe, flagID,
+                                  fftsBaseAddr, modeAttr);
+  rewriter.create<SyncBlockWaitOp>(loc, tCoreTypeAttr, tpipe, pipe, flagID);
+}
 
 struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
-  struct SyncBlockOpLoweringOptions {
-    bool isMixCore{false};
-    TFuncCoreType funcCoreType{TFuncCoreType::AIC_OR_AIV};
-  } options;
-
-  const int64_t interCubeSyncFlagId = 15;
-  const int64_t interVectorSyncFlagId = 14;
-  const int64_t blockAllInterCubeSyncFlagId = 13;
-  const int64_t blockAllInterVectorSyncFlagId = 12;
-  const int64_t blockAllIntraSyncFlagId1 = 11;
-  const int64_t blockAllIntraSyncFlagId2 = 10;
-
-  explicit SyncBlockOpLowering(MLIRContext *context, bool isMixCore,
-                               TFuncCoreType funcCoreType)
-      : OpRewritePattern<SyncBlockOp>(context, /*benefit=*/1),
-        options({isMixCore, funcCoreType}) {}
-
-  void insertBlockSyncOperations(
-      PatternRewriter &rewriter, Location loc, TCoreTypeAttr tCoreTypeAttr,
-      TCoreTypeAttr coreTypeAttr, hivm::SyncBlockInstrModeAttr modeAttr,
-      PipeAttr tpipe, PipeAttr pipe, IntegerAttr flagID, Value fftsBaseAddr,
-      bool insertSetOp = true, bool insertWaitOp = true) const {
-    if (insertSetOp) {
-      rewriter.create<SyncBlockSetOp>(loc, tCoreTypeAttr, tpipe, pipe, flagID,
-                                      fftsBaseAddr, modeAttr);
-    }
-    if (insertWaitOp) {
-      rewriter.create<SyncBlockWaitOp>(loc, coreTypeAttr, tpipe, pipe, flagID);
-    }
-  }
-
-  void insertBlockAll(SyncBlockOp op, PatternRewriter &rewriter) const {
-    auto loc = op.getLoc();
-    auto *ctx = op->getContext();
-    Value fftsBaseAddr = op.getFftsBaseAddr();
-
-    auto tcubePipeAttr = op.getTcubePipeAttr();
-    auto cubePipeAttr = op.getTcubePipeAttr();
-    auto tvectorPipeAttr = op.getTvectorPipeAttr();
-    auto vectorPipeAttr = op.getTvectorPipeAttr();
-
-    auto cubeCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::CUBE);
-    auto vectorCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::VECTOR);
-    auto interBlockSyncAttr = SyncBlockInstrModeAttr::get(
-        ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION);
-    auto intraBlockSyncAttr = SyncBlockInstrModeAttr::get(
-        ctx, SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION);
-
-    const auto interCubeSyncFlagIdAttr = IntegerAttr::get(
-        IntegerType::get(ctx, 64), blockAllInterCubeSyncFlagId);
-    const auto interVectorSyncFlagIdAttr = IntegerAttr::get(
-        IntegerType::get(ctx, 64), blockAllInterVectorSyncFlagId);
-    const auto intraBlockSyncFlagIdAttr1 =
-        IntegerAttr::get(IntegerType::get(ctx, 64), blockAllIntraSyncFlagId1);
-    const auto intraBlockSyncFlagIdAttr2 =
-        IntegerAttr::get(IntegerType::get(ctx, 64), blockAllIntraSyncFlagId2);
-
-    if (options.funcCoreType == TFuncCoreType::AIC) {
-      rewriter.create<PipeBarrierOp>(loc, tcubePipeAttr);
-    }
-    if (options.funcCoreType == TFuncCoreType::AIV) {
-      rewriter.create<PipeBarrierOp>(loc, tvectorPipeAttr);
-    }
-
-    if (tcubePipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      tcubePipeAttr = PipeAttr::get(ctx, PIPE::PIPE_FIX);
-    }
-    if (cubePipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      cubePipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
-    }
-    if (tvectorPipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      tvectorPipeAttr = PipeAttr::get(ctx, PIPE::PIPE_MTE3);
-    }
-    if (vectorPipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      vectorPipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
-    }
-
-    if (!options.isMixCore) {
-      if (options.funcCoreType == TFuncCoreType::AIC) {
-        insertBlockSyncOperations(
-            rewriter, loc, cubeCoreAttr, cubeCoreAttr, interBlockSyncAttr,
-            tcubePipeAttr, cubePipeAttr, interCubeSyncFlagIdAttr, fftsBaseAddr);
-      }
-      if (options.funcCoreType == TFuncCoreType::AIV) {
-        insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, vectorCoreAttr,
-                                  interBlockSyncAttr, tvectorPipeAttr,
-                                  vectorPipeAttr, interVectorSyncFlagIdAttr,
-                                  fftsBaseAddr);
-      }
-    } else {
-      if (options.funcCoreType == TFuncCoreType::AIC) {
-        insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, cubeCoreAttr,
-                                  intraBlockSyncAttr, tvectorPipeAttr,
-                                  cubePipeAttr, intraBlockSyncFlagIdAttr2,
-                                  fftsBaseAddr,
-                                  /*insertSetOp=*/false, /*insertWaitOp=*/true);
-
-        insertBlockSyncOperations(
-            rewriter, loc, cubeCoreAttr, cubeCoreAttr, interBlockSyncAttr,
-            tcubePipeAttr, cubePipeAttr, interCubeSyncFlagIdAttr, fftsBaseAddr);
-
-        insertBlockSyncOperations(rewriter, loc, cubeCoreAttr, vectorCoreAttr,
-                                  intraBlockSyncAttr, tcubePipeAttr,
-                                  vectorPipeAttr, intraBlockSyncFlagIdAttr1,
-                                  fftsBaseAddr,
-                                  /*insertSetOp=*/true, /*insertWaitOp=*/false);
-      }
-      if (options.funcCoreType == TFuncCoreType::AIV) {
-        insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, cubeCoreAttr,
-                                  intraBlockSyncAttr, tvectorPipeAttr,
-                                  cubePipeAttr, intraBlockSyncFlagIdAttr2,
-                                  fftsBaseAddr,
-                                  /*insertSetOp=*/true, /*insertWaitOp=*/false);
-
-        insertBlockSyncOperations(rewriter, loc, cubeCoreAttr, vectorCoreAttr,
-                                  intraBlockSyncAttr, tcubePipeAttr,
-                                  vectorPipeAttr, intraBlockSyncFlagIdAttr1,
-                                  fftsBaseAddr,
-                                  /*insertSetOp=*/false, /*insertWaitOp=*/true);
-      }
-    }
-  }
-
-  void insertBlockAllCube(SyncBlockOp op, PatternRewriter &rewriter) const {
-    auto loc = op.getLoc();
-    auto *ctx = op->getContext();
-    auto fftsBaseAddr = op.getFftsBaseAddr();
-    auto flagIdAttrOpt = op.getFlagId();
-    auto cubeCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::CUBE);
-    auto interBlockSyncAttr = SyncBlockInstrModeAttr::get(
-        ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION);
-    auto interCubeSyncFlagIdAttr =
-        flagIdAttrOpt.has_value()
-            ? flagIdAttrOpt.value()
-            : IntegerAttr::get(IntegerType::get(ctx, 64), interCubeSyncFlagId);
-    auto tpipeAttr = op.getTcubePipeAttr();
-    auto pipeAttr = op.getTcubePipeAttr();
-    rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
-    if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_FIX);
-      pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
-    }
-    insertBlockSyncOperations(rewriter, loc, cubeCoreAttr, cubeCoreAttr,
-                              interBlockSyncAttr, tpipeAttr, pipeAttr,
-                              interCubeSyncFlagIdAttr, fftsBaseAddr);
-  }
-
-  void insertBlockAllVector(SyncBlockOp op, PatternRewriter &rewriter) const {
-    auto loc = op.getLoc();
-    auto *ctx = op->getContext();
-    auto fftsBaseAddr = op.getFftsBaseAddr();
-    auto flagIdAttrOpt = op.getFlagId();
-    auto vectorCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::VECTOR);
-    auto interBlockSyncAttr = SyncBlockInstrModeAttr::get(
-        ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION);
-    auto interVectorSyncFlagIdAttr =
-        flagIdAttrOpt.has_value() ? flagIdAttrOpt.value()
-                                  : IntegerAttr::get(IntegerType::get(ctx, 64),
-                                                     interVectorSyncFlagId);
-    auto tpipeAttr = op.getTvectorPipeAttr();
-    auto pipeAttr = op.getTvectorPipeAttr();
-    rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
-    if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
-      tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_MTE3);
-      pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
-    }
-    insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, vectorCoreAttr,
-                              interBlockSyncAttr, tpipeAttr, pipeAttr,
-                              interVectorSyncFlagIdAttr, fftsBaseAddr);
-  }
-
-  void insertBarrierAllVector(SyncBlockOp op, PatternRewriter &rewriter) const {
-    auto loc = op.getLoc();
-    auto *ctx = op->getContext();
-    rewriter.create<PipeBarrierOp>(loc, PipeAttr::get(ctx, PIPE::PIPE_ALL));
-  }
+  using OpRewritePattern<SyncBlockOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SyncBlockOp op,
                                 PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = op->getContext();
+    Value fftsBaseAddr = op.getFftsBaseAddr();
     auto syncBlockMode = op.getSyncBlockModeAttr().getSyncMode();
+    IntegerAttr flagID = op.getFlagIdAttr();
     if (syncBlockMode == SyncBlockMode::BARRIER_CUBE ||
         syncBlockMode == SyncBlockMode::BARRIER_VECTOR) {
-      insertBarrierAllVector(op, rewriter);
+      rewriter.create<PipeBarrierOp>(loc, PipeAttr::get(ctx, PIPE::PIPE_ALL));
     } else if (syncBlockMode == SyncBlockMode::ALL_CUBE) {
-      insertBlockAllCube(op, rewriter);
+      auto pipe = op.getTcubePipeAttr();
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::CUBE),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION),
+          pipe, pipe, flagID, fftsBaseAddr);
     } else if (syncBlockMode == SyncBlockMode::ALL_VECTOR) {
-      insertBlockAllVector(op, rewriter);
+      auto pipe = op.getTvectorPipeAttr();
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::VECTOR),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION),
+          pipe, pipe, flagID, fftsBaseAddr);
     } else if (syncBlockMode == SyncBlockMode::ALL) {
-      insertBlockAll(op, rewriter);
+      auto tcubePipe = op.getTcubePipeAttr();
+      auto tvectorPipe = op.getTvectorPipeAttr();
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::CUBE),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION),
+          tcubePipe, tcubePipe, flagID, fftsBaseAddr);
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::CUBE_OR_VECTOR),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION),
+          tcubePipe, tvectorPipe, flagID, fftsBaseAddr);
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::VECTOR),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION),
+          tvectorPipe, tvectorPipe, flagID, fftsBaseAddr);
     } else {
       llvm_unreachable("unsupported sync mode");
     }
@@ -1469,8 +1332,8 @@ void HIVMDecomposeOpPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   patterns.add<MultiAxesVBrcLowering, VCastLowering, VAbsIntegerLowering,
                VRecOpHighPrecisionLowering, VReduceAnyLowering,
-               VReduceAllLowering, VReduceInitInitializing, VCmpOpLowering,
-               DecomposeCastScalarToVecOp<arith::ExtFOp>,
+               VReduceAllLowering, VReduceInitInitializing, SyncBlockOpLowering,
+               VCmpOpLowering, DecomposeCastScalarToVecOp<arith::ExtFOp>,
                DecomposeCastScalarToVecOp<arith::ExtSIOp>,
                DecomposeCastScalarToVecOp<arith::ExtUIOp>,
                DecomposeCastScalarToVecOp<arith::FPToSIOp>,
@@ -1482,13 +1345,6 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
                AtomicRMWOpLowering>(&getContext());
-
-  bool isMixModule =
-      mlir::hivm::isMixModule(funcOp->getParentOfType<ModuleOp>());
-  auto funcCoreTypeOpt = queryFuncCoreType(funcOp);
-  auto funcCoreType = funcCoreTypeOpt.has_value() ? funcCoreTypeOpt.value()
-                                                  : TFuncCoreType::AIC_OR_AIV;
-  patterns.add<SyncBlockOpLowering>(&getContext(), isMixModule, funcCoreType);
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
