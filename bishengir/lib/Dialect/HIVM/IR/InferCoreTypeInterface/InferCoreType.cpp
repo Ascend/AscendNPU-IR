@@ -111,6 +111,15 @@ inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
 // HIVM Ops
 //===----------------------------------------------------------------------===//
 
+std::optional<TCoreType> CustomOp::inferCoreType() {
+  if (auto coreTypeAttr = getOperation()->template getAttrOfType<TCoreTypeAttr>(
+          TCoreTypeAttr::name)) {
+    return coreTypeAttr.getTcoretype();
+  }
+
+  return {};
+}
+
 std::optional<TCoreType> ConvertLayoutOp::inferCoreType() {
   BaseMemRefType srcMemRefTy = getSource().getType();
   hivm::AddressSpace addrSpace =

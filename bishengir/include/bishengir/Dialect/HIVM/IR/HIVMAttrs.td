@@ -864,6 +864,20 @@ def HIVM_StorageAligned : HIVM_Attr<"StorageAligned", "storage_aligned"> {
 // Misc.
 //===----------------------------------------------------------------------===//
 
+def HIVM_VF_SIMD : I32EnumAttrCase<"SIMD", 0>;
+def HIVM_VF_SIMT : I32EnumAttrCase<"SIMT", 1>;
+def HIVM_VF_MIX : I32EnumAttrCase<"MIX", 2>;
+
+def HIVM_VFModeEnum
+    : HIVM_I32Enum<"VFMode",
+                   "HIVM VF Mode", [HIVM_VF_SIMD, HIVM_VF_SIMT, HIVM_VF_MIX]>;
+
+def HIVM_VFModeAttr : HIVM_I32EnumAttr<"vf_mode", HIVM_VFModeEnum> {
+  let description = [{
+    HIVM VF mode attribute.
+  }];
+}
+
 def HIVM_MultiBufferAttr : HIVM_Attr<"MultiBuffer", "multi_buffer"> {
   let description = [{
     HIVM multi-buffer attribute.

@@ -168,6 +168,17 @@ struct NDNZConversionOpInterface
   }
 };
 
+struct HIVMCustomOpInterface
+    : public DstBufferizableOpInterfaceExternalModel<HIVMCustomOpInterface,
+                                                     hivm::CustomOp> {
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options,
+        /* supportMixedTensorBufferMode */ true);
+  }
+};
+
 struct HIVMCopyOpInterface
     : public DstBufferizableOpInterfaceExternalModel<HIVMCopyOpInterface,
                                                      hivm::CopyOp> {
@@ -480,6 +491,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOpInterface>(*ctx);
+    CustomOp::attachInterface<HIVMCustomOpInterface>(*ctx);
     LoadOp::attachInterface<HIVMLoadOpInterface>(*ctx);
     StoreOp::attachInterface<HIVMStoreOpInterface>(*ctx);
     MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);

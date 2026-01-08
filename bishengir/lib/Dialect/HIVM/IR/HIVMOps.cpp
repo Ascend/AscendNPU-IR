@@ -374,3 +374,202 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
   printDPSResults(p, op->getResultTypes());
 }
 
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+// Helper functions
+void CustomOp::setPipe(PIPE pipe) {
+  getOperation()->setAttr(PipeAttr::name, PipeAttr::get(getContext(), pipe));
+}
+
+std::optional<TCoreType> CustomOp::getCoreType() {
+  if (const auto coreTypeAttr =
+          getOperation()->template getAttrOfType<TCoreTypeAttr>(
+              TCoreTypeAttr::name)) {
+    return coreTypeAttr.getTcoretype();
+  }
+
+  return {};
+}
+
+void CustomOp::setCoreType(TCoreType coreType) {
+  getOperation()->setAttr(TCoreTypeAttr::name,
+                          TCoreTypeAttr::get(getContext(), coreType));
+}
+
+std::optional<VFMode> CustomOp::getVFMode() {
+  if (const auto vfModeAttr =
+          getOperation()->template getAttrOfType<VFModeAttr>(
+              VFModeAttr::name)) {
+    return vfModeAttr.getValue();
+  }
+
+  return {};
+}
+
+void CustomOp::setVFMode(VFMode vfMode) {
+  getOperation()->setAttr(VFModeAttr::name,
+                          VFModeAttr::get(getContext(), vfMode));
+}
+
+bool CustomOp::isBuiltin() { return kBuiltins.contains(getName()); }
+
+ParseResult CustomOp::parse(OpAsmParser &parser, OperationState &result) {
+  if (succeeded(parser.parseOptionalLess())) {
+    if (parser.parseAttribute(result.propertiesAttr) || parser.parseGreater())
+      return failure();
+  }
+
+  // Parse attributes
+  SMLoc attrsLoc = parser.getCurrentLocation();
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  { // Parse name
+    std::string name{};
+    if (parser.parseString(&name))
+      return failure();
+
+    result.addAttribute("name", parser.getBuilder().getStringAttr(name));
+  }
+
+  { // Parse variadic args
+    SmallVector<int32_t, 3> variadicArgsSizes;
+    auto parseVariadicArgs = [&](const std::string &nameHint) {
+      SMLoc loc;
+      SmallVector<Type, 1> types;
+      SmallVector<OpAsmParser::UnresolvedOperand, 4> operands;
+
+      if (succeeded(parser.parseOptionalKeyword(nameHint))) {
+        loc = parser.getCurrentLocation();
+        if (parser.parseLParen() || parser.parseOperandList(operands) ||
+            parser.parseColonTypeList(types) || parser.parseRParen())
+          return failure();
+      }
+
+      if (parser.resolveOperands(operands, types, loc, result.operands)) {
+        return failure();
+      }
+
+      variadicArgsSizes.push_back(static_cast<int32_t>(operands.size()));
+      return success();
+    };
+
+    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs"))) {
+      return failure();
+    }
+
+    // Update operandSegmentSizes attribute
+    const auto operandSegmentSizesAttr =
+        parser.getBuilder().getDenseI32ArrayAttr(variadicArgsSizes);
+    // This is a bit complex because we're trying to be backward compatible with
+    // operation syntax that mix the inherent attributes and the discardable
+    // ones in the same dictionary. If the properties are used, we append the
+    // operandSegmentSizes there directly. Otherwise we append it to the
+    // discardable attributes dictionary where it is handled by the generic
+    // Operation::create(...) method.
+    if (result.propertiesAttr) {
+      NamedAttrList attrs = llvm::cast<DictionaryAttr>(result.propertiesAttr);
+      attrs.append("operandSegmentSizes", operandSegmentSizesAttr);
+      result.propertiesAttr = attrs.getDictionary(parser.getContext());
+    } else {
+      result.addAttribute("operandSegmentSizes", operandSegmentSizesAttr);
+      std::optional<RegisteredOperationName> info =
+          result.name.getRegisteredInfo();
+      if (info) {
+        if (failed(info->verifyInherentAttrs(result.attributes, [&]() {
+              return parser.emitError(attrsLoc)
+                     << "'" << result.name.getStringRef() << "' op ";
+            })))
+          return failure();
+      }
+    }
+  }
+
+  { // Parse result types
+    SmallVector<Type, 1> resultTypes;
+    if (parser.parseOptionalArrowTypeList(resultTypes)) {
+      return failure();
+    }
+    result.addTypes(resultTypes);
+  }
+
+  return success();
+}
+
+void CustomOp::print(OpAsmPrinter &p) {
+  p.printOptionalAttrDict(getOperation()->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes", "name"});
+
+  p << " ";
+  p.printString(getName());
+
+  auto printVariadicArgs = [&](const auto &args, const std::string &nameHint) {
+    if (!args.empty())
+      p << " " << nameHint << "(" << args << " : " << args.getTypes() << ")";
+  };
+
+  printVariadicArgs(getInputs(), "ins");
+  printVariadicArgs(getOutputs(), "outs");
+
+  if (!getResults().empty())
+    p.printOptionalArrowTypeList(getResultTypes());
+}
+
+static LogicalResult verifyBuiltins(CustomOp op) {
+  const auto &builtinInfo = CustomOp::kBuiltins.at(op.getName());
+
+  const auto &coreType = op.getCoreType();
+  if (coreType && *coreType != builtinInfo.coreType)
+    return op.emitOpError() << "Specified core type conflict with "
+                            << op.getName() << "'s core type.";
+
+  const auto &pipe = op.getPipe();
+  if (pipe != PIPE::PIPE_UNASSIGNED && pipe != builtinInfo.pipe)
+    return op.emitOpError()
+           << "Specified pipe conflict with " << op.getName() << "'s pipe.";
+
+  const auto &vfMode = op.getVFMode();
+  if (vfMode && *vfMode != builtinInfo.vfMode)
+    return op.emitOpError() << "Specified vf mode conflict with "
+                            << op.getName() << "'s vf mode.";
+
+  return success();
+}
+
+LogicalResult CustomOp::verify() {
+  // Check builtins
+  if (isBuiltin())
+    return verifyBuiltins(*this);
+
+  // Check core type attribute
+  const auto coreType = getCoreType();
+  if (!coreType)
+    return emitOpError() << "Missing core type information";
+
+  // Check pipe attribute
+  if (getPipe() == PIPE::PIPE_UNASSIGNED)
+    return emitOpError() << "Missing pipe information";
+
+  // Check VF mode attribute
+  if (*coreType != TCoreType::CUBE) {
+    if (!getVFMode())
+      return emitOpError() << "Missing vf mode information";
+  } else { // Pure cube
+    // Cube function ignores vf mode information
+  }
+
+  return success();
+}
+
+PIPE CustomOp::getPipe() {
+  if (auto pipAttr =
+          getOperation()->template getAttrOfType<PipeAttr>(PipeAttr::name))
+    return pipAttr.getPipe();
+
+  return PIPE::PIPE_UNASSIGNED;
+}
+
+const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
+    {"__builtin_gather_load", {TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}}};
