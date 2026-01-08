@@ -44,6 +44,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
+  InsertInferTaskTypeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
   InsertInitAndFinishForDebug.cpp
   InsertLoadStoreForMixCV.cpp
