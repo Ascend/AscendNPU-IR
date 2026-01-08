@@ -45,7 +45,7 @@ func.func @test_sync_block_set_flag_attr() {
   hivm.hir.sync_block_set[#hivm.tcore_type<CUBE>, #hivm.pipe<PIPE_FIX>, #hivm.pipe<PIPE_FIX>]
     flag = 1
     ffts_base_addr = %ffts_base_addr
-    sync_instr_mode = #hivm.sync_block_instr_mode<INTER_BLOCK_SYNCHRONIZATION>
+    syn_instr_mode = #hivm.sync_block_instr_mode<INTER_BLOCK_SYNCHRONIZATION>
   return
 }
 
@@ -57,7 +57,7 @@ func.func @test_sync_block_set_flag_value() {
   hivm.hir.sync_block_set[#hivm.tcore_type<CUBE>, #hivm.pipe<PIPE_FIX>, #hivm.pipe<PIPE_FIX>]
     flag = %flag_id
     ffts_base_addr = %ffts_base_addr
-    sync_instr_mode = #hivm.sync_block_instr_mode<INTER_BLOCK_SYNCHRONIZATION>
+    syn_instr_mode = #hivm.sync_block_instr_mode<INTER_BLOCK_SYNCHRONIZATION>
   return
 }
 
