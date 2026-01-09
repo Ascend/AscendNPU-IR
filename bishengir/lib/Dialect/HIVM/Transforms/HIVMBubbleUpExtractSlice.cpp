@@ -150,6 +150,7 @@ private:
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
 };

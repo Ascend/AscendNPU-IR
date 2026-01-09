@@ -36,9 +36,8 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
       getArgumentRefOrCreateDummy(dim.first)[dim.second]);
   LDBG("Checking parallelDim of " << solverIndex);
   auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
-  if (tilingDimKindVal != tilingDimKindMap.end()) {
-    return tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel;
-  }
+  if (tilingDimKindVal != tilingDimKindMap.end())
+    return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
   // By default, assume it's parallel
   return true;
 }
@@ -77,8 +76,10 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
       }
     }
   }
+  LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
   for (auto[_, parIdx] : selectedTilingParIdxMap)
     selectedTilingParIdx.insert(parIdx);
+  LDBG(utils::debugger::to_string(selectedTilingParIdx));
 }
 
 int64_t DimensionAnalyzer::getTilingDim(Value v) {

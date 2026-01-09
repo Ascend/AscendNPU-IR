@@ -31,6 +31,7 @@ public:
     Parallel,
     RankReduced,
     Reduce,
+    NotAligned,
   };
   explicit DimensionAnalyzer(Operation *op);
   LogicalResult initialize() override;

@@ -575,6 +575,16 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
       .Default([](auto) { return nullptr; });
 }
 
+bool isAlignedInUB(Type type) {
+  if (auto shapedType = dyn_cast<ShapedType>(type)) {
+    auto shape = shapedType.getShape();
+    auto lastDimSizeInBit =
+        shape.back() * shapedType.getElementType().getIntOrFloatBitWidth();
+    return lastDimSizeInBit % kUBAlignSizeInBits == 0;
+  }
+  return type.getIntOrFloatBitWidth() % kUBAlignSizeInBits == 0;
+}
+
 hivm::AxisKind getAxisKind(int dim, int rank) {
   if (dim == rank - 1)
     return hivm::AxisKind::LAST;
