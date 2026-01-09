@@ -389,6 +389,7 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
   if (getInitCondition()) {
     scf::IfOp ifOp =
         b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
@@ -419,6 +420,7 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   if (getInitCondition()) {
     scf::IfOp ifOp =
         b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
