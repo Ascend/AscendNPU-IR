@@ -965,4 +965,72 @@ LoopArgsBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool VTransposeBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sliceOp) const {
+  // Check if source is a block argument of a for loop
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp)
+    return false;
+  return isa_and_nonnull<hivm::VTransposeOp>(sourceOp) && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult
+VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                     PatternRewriter &rewriter) const {
+  auto transOp = dyn_cast<hivm::VTransposeOp>(sliceOp.getSource().getDefiningOp());
+  if (!transOp)
+    return failure();
+  
+  auto src = transOp.getSrc();
+  auto dst = transOp.getDst();
+
+  auto resultType = cast<RankedTensorType>(sliceOp.getType());
+  auto resultRank = resultType.getRank();
+
+  auto resultShape = llvm::to_vector(resultType.getShape());
+  auto perm = transOp.getPermutation();
+  
+  rewriter.setInsertionPoint(transOp);
+  auto loc = transOp.getLoc();
+  auto dstOffsets = sliceOp.getMixedOffsets();
+  auto srcOffsets = SmallVector<OpFoldResult>(resultRank);
+  auto srcSizes = llvm::to_vector(sliceOp.getMixedSizes());
+  auto srcStrides = sliceOp.getMixedStrides();
+
+  // Infer the sizes and offsets of newSliceOp by perm
+  for (int64_t i = 0; i < resultRank; ++i){
+    srcSizes[perm[i]] = rewriter.getIndexAttr(resultShape[i]);
+    srcOffsets[perm[i]] = dstOffsets[i];
+  }
+
+  rewriter.setInsertionPoint(sliceOp);
+  auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
+    sliceOp.getLoc(), transOp.getSrc(),
+    srcOffsets, srcSizes, srcStrides);
+
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+    sliceOp.getLoc(), transOp.getDst(),
+    dstOffsets, sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+
+  markCreatedExtractSliceOp(rewriter, newSrc);
+  markCreatedExtractSliceOp(rewriter, newDst);
+
+  if (!utils::isAlignedInUB(newSrc.getType()) ||
+      !utils::isAlignedInUB(newDst.getType())) {
+    rewriter.eraseOp(newSrc);
+    rewriter.eraseOp(newDst);
+    return failure();
+  }
+  
+  auto newTransOp = rewriter.create<hivm::VTransposeOp>(
+    sliceOp.getLoc(), sliceOp.getResultType(), 
+    newSrc, newDst, 
+    rewriter.getDenseI64ArrayAttr(perm)
+  );
+
+  rewriter.replaceOp(sliceOp, newTransOp);
+  rewriter.eraseOp(transOp);
+
+  return success();
+}
+
 } // namespace mlir::hivm::detail
