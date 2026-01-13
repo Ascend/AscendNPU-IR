@@ -270,14 +270,14 @@ struct InsertStoreOpBetweenVectorAndLoad
 /// load        ins(%tmp) outs(%tmp')
 /// consumer    ins(%tmp')
 /// ```
-template <typename OpType>
+template <typename OpType, typename CubeOpType>
 struct InsertLoadStoreOpBetweenVectorAndCube
-    : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+    : public OpRewritePattern<CubeOpType> {
+  using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
   virtual ~InsertLoadStoreOpBetweenVectorAndCube() = default;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(CubeOpType op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
@@ -290,14 +290,14 @@ struct InsertLoadStoreOpBetweenVectorAndCube
   }
 };
 
-template <typename OpType>
+template <typename OpType, typename CubeOpType>
 struct InsertLoadStoreOpBetweenCrossLoopVectorAndCube
-    : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+    : public OpRewritePattern<CubeOpType> {
+  using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
   virtual ~InsertLoadStoreOpBetweenCrossLoopVectorAndCube() = default;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(CubeOpType op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
@@ -346,12 +346,12 @@ struct InsertLoadStoreOpBetweenCrossLoopVectorAndCube
 /// l1_dst = load  ins(gm_dst) outs(tmp)
 /// mmadl1(l1_dst)
 /// ```
-template <>
-struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>
-    : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+template <typename CubeOpType>
+struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
+    : public OpRewritePattern<CubeOpType> {
+  using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(CubeOpType op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
@@ -373,12 +373,12 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>
 /// `bufferization.to_tensor` with attr "MayImplicitTransposeWithLastAxis"
 /// describes the process of transposing data on UB. Store & load op will be
 /// added here in order to make transpose operation happen in vector.
-template <>
-struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp>
-    : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+template <typename CubeOpType>
+struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp, CubeOpType>
+    : public OpRewritePattern<CubeOpType> {
+  using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(CubeOpType op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
@@ -407,12 +407,12 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp>
 /// `tensor.collapse_shape` with attr "maybeUnCollapsibleReshape" means that
 /// it's likely that the collapse shape will become noncontiguous. Since only
 /// vector core is able to such case, we need to insert load/store.
-template <>
-struct InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp>
-    : public OpRewritePattern<hivm::MmadL1Op> {
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+template <typename CubeOpType>
+struct InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp, CubeOpType>
+    : public OpRewritePattern<CubeOpType> {
+  using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+  LogicalResult matchAndRewrite(CubeOpType op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : op->getOpOperands()) {
@@ -652,10 +652,10 @@ struct DuplicateTensorExtractForCube
 
 template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
-  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<OpType>,
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
                InsertStoreOpBetweenVectorAndLoad<OpType>,
                InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
-               InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType>>(
+               InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
       patterns.getContext());
 }
 
@@ -674,12 +674,12 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
-  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>>(
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::MmadL1Op>>(
       patterns.getContext());
   patterns
-      .add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp>>(
+      .add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp, hivm::MmadL1Op>>(
           patterns.getContext());
-  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp>>(
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp, hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<tensor::ExtractOp>>(
       patterns.getContext());
