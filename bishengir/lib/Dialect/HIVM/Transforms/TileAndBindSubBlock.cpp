@@ -83,6 +83,7 @@ namespace {
 static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
 static constexpr llvm::StringLiteral tiledOp = "tiled_op";
+static constexpr llvm::StringLiteral tileAndSliceFailure = "tile_and_slice_failure";
 } // namespace
 
 namespace {
@@ -202,25 +203,32 @@ public:
       return failure();
     int64_t tilingDim = analyzer.getTilingDim(storeOp.getSrc());
     auto maybeContainingLoop = findContainingSubblockLoop(storeOp);
-    if (tilingDim == -1 || failed(maybeContainingLoop))
+    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+      storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
+    }
 
     auto containingLoop = maybeContainingLoop.value();
     auto srcType = dyn_cast<ShapedType>(storeOp.getSrc().getType());
-    if (!srcType)
+    if (!srcType) {
+      storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
+    }
 
     // Handling special case
     if (ShapedType::isDynamicShape(srcType.getShape())) {
-      if (failed(
-              handleDynamicShape(storeOp, tilingDim, containingLoop, rewriter)))
+      if (failed(handleDynamicShape(storeOp, tilingDim, containingLoop, rewriter))) {
+        storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
         return failure();
+      }
     } else {
       auto *srcOpr = &storeOp.getSrcMutable();
       auto *dstOpr = &storeOp.getDstMutable();
       if (failed(modifyStoreOp(storeOp, tilingDim, srcOpr, dstOpr,
-                               containingLoop, rewriter)))
+                               containingLoop, rewriter))) {
+        storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
         return failure();
+      }
     }
 
     // Maybe we need to maintain this map when doing bubble up.
@@ -678,24 +686,22 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
     return failure();
   }
-  bool changed = false;
-  func->walk([&](Operation *op) {
-    if (!isa<tensor::ExtractSliceOp>(op)) {
-      return WalkResult::advance();
-    }
-    auto extractSliceOp = cast<tensor::ExtractSliceOp>(op);
-    
-    if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice)) {
-      changed = true;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
 
-  if (!changed) {
-    return failure();
-  }
-  
+  bool isFailed = true;
+ 	   auto walkResult = func->walk([&isFailed](hivm::StoreOp op) {
+ 	     if (op->hasAttr(tileAndSliceFailure)) {
+ 	       op->removeAttr(tileAndSliceFailure);
+ 	       if (op->hasAttr(hivm::AtomicKindAttr::name)) {
+ 	         isFailed = true;
+ 	         return WalkResult::interrupt();
+ 	       }
+ 	     } else {
+ 	       isFailed = false;
+ 	     }
+ 	     return WalkResult::advance();
+ 	   });
+ 	   if (isFailed)
+ 	     return failure();
   return success();
 }
 
