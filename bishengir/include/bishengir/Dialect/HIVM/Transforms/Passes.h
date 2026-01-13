@@ -60,6 +60,9 @@ std::unique_ptr<Pass> createConvertToHIVMOpPass();
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
 
+/// Create a pass to normalize hivm bitwise select op.
+std::unique_ptr<Pass> createNormalizeBitwiseSelectPass();
+
 /// Create a pass to convert args of global kernel function to HIVM Ops.
 std::unique_ptr<Pass> createTritonGlobalKernelArgsToHIVMOpPass();
 
