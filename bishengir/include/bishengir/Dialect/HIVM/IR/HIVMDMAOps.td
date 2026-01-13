@@ -350,16 +350,27 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                     CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
     >
   ];
+
+#ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+  let assemblyFormat = [{	
+    attr-dict	
+    `ins` `(` $src `:` type($src) `)`	
+    `outs` `(` $dst `:` type($dst) `)`
+    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?	
+    (`->` type($result_tensor)^)?	
+  }];	
+#else
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`dual_dst_mode` `=` $dual_dst_mode^)?
     (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
     (`->` type($result_tensor)^)?
   }];
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let hasVerifier = 1; // verify parameter according to hardware version
 #endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
     int needFixpipePreFuse();
