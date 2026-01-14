@@ -248,6 +248,11 @@ LogicalResult SyncBlockOp::verify() {
       return emitOpError("Vector Pipe is illegal. Vector pipe is PIPE_MTE3!");
     }
   }
+  if (synBlockMode == SyncBlockMode::ALL_SUB_VECTOR) {
+    if (getTvectorPipeAttr() == nullptr) {
+      return emitOpError("tvector_pipe should be defined!");
+    }
+  }
   return success();
 }
 

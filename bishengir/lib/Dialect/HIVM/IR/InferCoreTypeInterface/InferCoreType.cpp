@@ -200,7 +200,8 @@ std::optional<TCoreType> SyncBlockOp::inferCoreType() {
       mode == hivm::SyncBlockMode::ALL_CUBE) {
     result = TCoreType::CUBE;
   } else if (mode == hivm::SyncBlockMode::BARRIER_VECTOR ||
-             mode == hivm::SyncBlockMode::ALL_VECTOR) {
+             mode == hivm::SyncBlockMode::ALL_VECTOR ||
+             mode == hivm::SyncBlockMode::ALL_SUB_VECTOR) {
     result = TCoreType::VECTOR;
   }
 
