@@ -1091,7 +1091,6 @@ module {
   func.func @simple_testcase_safely_revert(%arg0: tensor<6xf32>, %arg1: memref<1xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
     %0 = tensor.empty() : tensor<1xf32>
     %1 = hivm.hir.vreduce <sum> ins(%arg0 : tensor<6xf32>) outs(%0 : tensor<1xf32>) reduce_dims = [0] -> tensor<1xf32>
-    // expected-error @+1 {{dimension size (1) is less than minimum tile size (2)}}
     hivm.hir.store ins(%1 : tensor<1xf32>) outs(%arg1 : memref<1xf32>)
     return
   }
