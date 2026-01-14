@@ -521,6 +521,31 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
                               interVectorSyncFlagIdAttr, fftsBaseAddr);
   }
 
+  void insertBlockAllSubVector(SyncBlockOp op,
+                               PatternRewriter &rewriter) const {
+    auto loc = op.getLoc();
+    auto *ctx = op->getContext();
+    auto fftsBaseAddr = op.getFftsBaseAddr();
+    auto flagIdAttrOpt = op.getFlagId();
+    auto vectorCoreAttr = TCoreTypeAttr::get(ctx, TCoreType::VECTOR);
+    auto interSubBlockSyncAttr = SyncBlockInstrModeAttr::get(
+        ctx, SyncBlockInstrMode::INTER_SUBBLOCK_SYNCHRONIZATION);
+    auto interVectorSyncFlagIdAttr =
+        flagIdAttrOpt.has_value() ? flagIdAttrOpt.value()
+                                  : IntegerAttr::get(IntegerType::get(ctx, 64),
+                                                     interVectorSyncFlagId);
+    auto tpipeAttr = op.getTvectorPipeAttr();
+    auto pipeAttr = op.getTvectorPipeAttr();
+    rewriter.create<PipeBarrierOp>(loc, tpipeAttr);
+    if (tpipeAttr.getPipe() == PIPE::PIPE_ALL) {
+      tpipeAttr = PipeAttr::get(ctx, PIPE::PIPE_MTE3);
+      pipeAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
+    }
+    insertBlockSyncOperations(rewriter, loc, vectorCoreAttr, vectorCoreAttr,
+                              interSubBlockSyncAttr, tpipeAttr, pipeAttr,
+                              interVectorSyncFlagIdAttr, fftsBaseAddr);
+  }
+
   void insertBarrierAllVector(SyncBlockOp op, PatternRewriter &rewriter) const {
     auto loc = op.getLoc();
     auto *ctx = op->getContext();
@@ -538,7 +563,7 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
     } else if (syncBlockMode == SyncBlockMode::ALL_VECTOR) {
       insertBlockAllVector(op, rewriter);
     } else if (syncBlockMode == SyncBlockMode::ALL_SUB_VECTOR) {
-
+      insertBlockAllSubVector(op, rewriter);
     } else if (syncBlockMode == SyncBlockMode::ALL) {
       insertBlockAll(op, rewriter);
     } else {

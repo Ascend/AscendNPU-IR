@@ -639,12 +639,27 @@ module {
 // Note: ALL_SUB_VECTOR uses INTER_SUBBLOCK_SYNCHRONIZATION instead of INTER_BLOCK_SYNCHRONIZATION
 func.func @test_sync_block_all_sub_vector() {
   // CHECK: %[[CONST:.*]] = arith.constant 0 : i64
-  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE3>] flag = 1 ffts_base_addr = %[[CONST]] syn_instr_mode = <INTER_SUBBLOCK_SYNCHRONIZATION>
+  // CHECK: hivm.hir.pipe_barrier[<PIPE_MTE3>]
+  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE3>] flag = 1 ffts_base_addr = %[[CONST]] sync_instr_mode = <INTER_SUBBLOCK_SYNCHRONIZATION>
   // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE3>] flag = 1
   %ffts_base_addr = arith.constant 0 : i64
   hivm.hir.sync_block[#hivm.sync_block_mode<ALL_SUB_VECTOR>, 1 : i16]
             ffts_base_addr = %ffts_base_addr
             tvector_pipe=#hivm.pipe<PIPE_MTE3>
+  return
+}
+
+// -----
+// Test SyncBlockAllSubVectorBarrierAll
+func.func @test_sync_block_all_sub_vector_barrier_all() {
+  // CHECK: %[[CONST:.*]] = arith.constant 0 : i64
+  // CHECK: hivm.hir.pipe_barrier[<PIPE_ALL>]
+  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 1 ffts_base_addr = %[[CONST]] sync_instr_mode = <INTER_SUBBLOCK_SYNCHRONIZATION>
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 1
+  %ffts_base_addr = arith.constant 0 : i64
+  hivm.hir.sync_block[#hivm.sync_block_mode<ALL_SUB_VECTOR>, 1 : i16]
+            ffts_base_addr = %ffts_base_addr
+            tvector_pipe=#hivm.pipe<PIPE_ALL>
   return
 }
 
