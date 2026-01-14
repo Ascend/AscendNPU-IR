@@ -384,6 +384,13 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
           SyncBlockInstrModeAttr::get(
               ctx, SyncBlockInstrMode::INTER_BLOCK_SYNCHRONIZATION),
           pipe, pipe, flagID, fftsBaseAddr);
+    } else if (syncBlockMode == SyncBlockMode::ALL_SUB_VECTOR) {
+      auto pipe = op.getTvectorPipeAttr();
+      appendBlockSyncOperations(
+          rewriter, loc, TCoreTypeAttr::get(ctx, TCoreType::VECTOR),
+          SyncBlockInstrModeAttr::get(
+              ctx, SyncBlockInstrMode::INTER_SUBBLOCK_SYNCHRONIZATION),
+          pipe, pipe, flagID, fftsBaseAddr);
     } else if (syncBlockMode == SyncBlockMode::ALL) {
       auto tcubePipe = op.getTcubePipeAttr();
       auto tvectorPipe = op.getTvectorPipeAttr();

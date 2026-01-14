@@ -555,6 +555,20 @@ func.func @test_sync_block_all_vector() {
 }
 
 // -----
+// Test SyncBlockAllSubVector
+// Note: ALL_SUB_VECTOR uses INTER_SUBBLOCK_SYNCHRONIZATION instead of INTER_BLOCK_SYNCHRONIZATION
+func.func @test_sync_block_all_sub_vector() {
+  // CHECK: %[[CONST:.*]] = arith.constant 0 : i64
+  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE3>] flag = 1 ffts_base_addr = %[[CONST]] syn_instr_mode = <INTER_SUBBLOCK_SYNCHRONIZATION>
+  // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE3>, <PIPE_MTE3>] flag = 1
+  %ffts_base_addr = arith.constant 0 : i64
+  hivm.hir.sync_block[#hivm.sync_block_mode<ALL_SUB_VECTOR>, 1 : i16]
+            ffts_base_addr = %ffts_base_addr
+            tvector_pipe=#hivm.pipe<PIPE_MTE3>
+  return
+}
+
+// -----
 func.func @test_cast_int8_t_to_bool_rintmode() -> tensor<1024xi1> {
   // CHECK: %[[CONST:.*]] = arith.constant 0.000000e+00 : f16
   // CHECK: %[[ARG0:.*]] = tensor.empty() : tensor<1024xi8>

@@ -467,17 +467,20 @@ def HIVM_UnitFlagAttr : HIVM_Attr<"UnitFlag", "unit_flag"> {
 
 def HIVM_ALL_CUBE : I32EnumAttrCase<"ALL_CUBE", 0>;
 def HIVM_ALL_VECTOR : I32EnumAttrCase<"ALL_VECTOR", 1>;
-def HIVM_BARRIER_CUBE : I32EnumAttrCase<"BARRIER_CUBE", 2>;
-def HIVM_BARRIER_VECTOR : I32EnumAttrCase<"BARRIER_VECTOR", 3>;
-def HIVM_ALL : I32EnumAttrCase<"ALL", 4>;
+def HIVM_ALL_SUB_VECTOR : I32EnumAttrCase<"ALL_SUB_VECTOR", 2>;
+def HIVM_BARRIER_CUBE : I32EnumAttrCase<"BARRIER_CUBE", 3>;
+def HIVM_BARRIER_VECTOR : I32EnumAttrCase<"BARRIER_VECTOR", 4>;
+def HIVM_ALL : I32EnumAttrCase<"ALL", 5>;
+
 
 def HIVM_SyncBlockModeEnum : HIVM_I32Enum<
   "SyncBlockMode", "HIVM SyncBlockMode", [
     HIVM_ALL_CUBE,
     HIVM_ALL_VECTOR,
+    HIVM_ALL_SUB_VECTOR,
     HIVM_BARRIER_CUBE,
     HIVM_BARRIER_VECTOR,
-    HIVM_ALL
+    HIVM_ALL,
   ]>;
 
 def HIVM_SyncBlockModeAttr : HIVM_Attr<"SyncBlockMode", "sync_block_mode"> {
