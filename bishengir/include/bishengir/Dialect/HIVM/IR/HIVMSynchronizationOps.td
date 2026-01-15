@@ -141,7 +141,7 @@ def SyncBlockSetOp : HIVM_SynchronizationOp<"sync_block_set", [AttrSizedOperandS
     attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
     `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
     (`ffts_base_addr` `=` $ffts_base_addr^)?
-    (`syn_instr_mode` `=` $tsync_instr_mode^)?
+    (`sync_instr_mode` `=` $tsync_instr_mode^)?
   }];
   let builders = [
     OpBuilder<(ins "TCoreTypeAttr":$tcore_type, "PipeAttr":$tpipe, "PipeAttr":$pipe,
