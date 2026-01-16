@@ -522,7 +522,12 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
         auto maps = $_op.getIndexingMapsArray();
+// TODO : release different version of ascendnpu ir and remove the macro
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
         return concatAffineMaps(maps);
+#else
+        return concatAffineMaps(maps, $_op.getContext());
+#endif
       }]
     >,
     InterfaceMethod<

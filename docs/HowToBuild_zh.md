@@ -78,6 +78,8 @@ cmake ${LLVM_SOURCE_DIR} -G Ninja \
 ninja -j32
 ```
 
+注：LLVM 版本大于等于 21 时添加 -DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON 选项
+
 ## 🧪 运行测试
 
 ### 编译测试Target
