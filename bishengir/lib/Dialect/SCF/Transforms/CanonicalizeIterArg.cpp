@@ -56,6 +56,9 @@ static bool handleLoops(LoopLikeOpInterface loop, BlockArgument iterArg,
     return false;
 
   unsigned resultNo = res.getResultNumber();
+  if (resultNo >= loop->getNumResults())
+    return false;
+
   equivalenceSet.insert(loop->getResult(resultNo));
 
   for (Region *region : loop.getLoopRegions()) {
