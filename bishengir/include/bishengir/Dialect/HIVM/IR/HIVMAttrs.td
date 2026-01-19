@@ -941,4 +941,11 @@ def HIVM_UnlikelyConditionAttr
   }];
 }
 
+def HIVM_DisableAutoInjectBlockSyncAttr
+    : HIVM_Attr<"DisableAutoInjectBlockSync", "disable_auto_inject_block_sync"> {
+  let description = [{
+    Disable auto inject block sync, skip block sync injection.
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD
