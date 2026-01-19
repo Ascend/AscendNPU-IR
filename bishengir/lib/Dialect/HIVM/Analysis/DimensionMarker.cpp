@@ -495,7 +495,7 @@ void DimensionAnalyzer::markDimensionKind() {
         auto lastDimSizeInBit =
             shape.back() / 2 *
             shapedType.getElementType().getIntOrFloatBitWidth();
-        if (ShapedType::isDynamic(shape.back()) ||
+        if (ShapedType::isDynamic(shape.back()) &&
             lastDimSizeInBit % utils::kUBAlignSizeInBits != 0) {
           auto argRef = getArgumentRefOrCreateDummy(res);
           tilingDimKindMap[solverCollapserElem_->find(argRef.back())] =

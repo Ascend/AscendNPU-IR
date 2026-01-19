@@ -794,11 +794,12 @@ handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
       rewriter, sliceOp.getLoc(), sliceOp.getMixedOffsets()[tilingDim]);
   auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
                                                  sizes[tilingDim]);
+  auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
+                                                    sliceOp.getMixedSizes()[tilingDim]);
+  offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
   sizeVal =
-      rewriter.create<arith::SubIOp>(sliceOp.getLoc(), sizeVal, offsetVal);
-  auto zeroVal = rewriter.create<arith::ConstantOp>(sliceOp.getLoc(),
-                                                    rewriter.getIndexAttr(0));
-  sizeVal = rewriter.create<arith::MaxSIOp>(sliceOp.getLoc(), sizeVal, zeroVal);
+      rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
+  sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
   sizes[tilingDim] = sizeVal;
 
   srcExtractOp = rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
@@ -1183,12 +1184,12 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
                                                      newSizes[tilingDim]);
       rewriter.setInsertionPointAfterValue(sizeVal);
+      auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
+                                                        sizes[tilingDim]);
+      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
       sizeVal =
-          rewriter.create<arith::SubIOp>(sliceOp.getLoc(), sizeVal, offsetVal);
-      auto zeroVal = rewriter.create<arith::ConstantOp>(
-          sliceOp.getLoc(), rewriter.getIndexAttr(0));
-      sizeVal =
-          rewriter.create<arith::MaxSIOp>(sliceOp.getLoc(), sizeVal, zeroVal);
+          rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
+      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
       newSizes[tilingDim] = sizeVal;
 
       // Rewrite operations

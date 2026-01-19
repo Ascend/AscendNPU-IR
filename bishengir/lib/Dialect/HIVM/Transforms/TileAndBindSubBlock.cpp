@@ -271,8 +271,10 @@ private:
     }
     auto srcShape = llvm::to_vector(cast<ShapedType>(src.getType()).getShape());
     auto dstShape = llvm::to_vector(cast<ShapedType>(dst.getType()).getShape());
-    auto srcOp = storeOp.getSrc().getDefiningOp<OffsetSizeAndStrideOpInterface>();
-    auto dstOp = storeOp.getDst().getDefiningOp<OffsetSizeAndStrideOpInterface>();
+    auto srcOp =
+        storeOp.getSrc().getDefiningOp<OffsetSizeAndStrideOpInterface>();
+    auto dstOp =
+        storeOp.getDst().getDefiningOp<OffsetSizeAndStrideOpInterface>();
     if (srcShape != dstShape || ShapedType::isDynamicShape(srcShape) ||
         !srcOp.hasZeroOffset() || !srcOp.hasUnitStride() ||
         !dstOp.hasZeroOffset() || !dstOp.hasUnitStride())
@@ -288,44 +290,48 @@ private:
     auto offsetAtTileDim = calculateOffsetAtTilingDim(
         rewriter, loc, containingLoop, maybeSingleTileSize.value());
 
-    auto offsetValue = getValueOrCreateConstantIndexOp(rewriter, loc, offsetAtTileDim);
-    auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, loc, sizes[tilingDim]);
+    auto offsetValue =
+        getValueOrCreateConstantIndexOp(rewriter, loc, offsetAtTileDim);
+    auto sizeVal =
+        getValueOrCreateConstantIndexOp(rewriter, loc, sizes[tilingDim]);
+    auto tilingSize = getValueOrCreateConstantIndexOp(
+        rewriter, loc, maybeSingleTileSize.value());
     rewriter.setInsertionPointAfterValue(sizeVal);
 
-    sizeVal = rewriter.create<arith::SubIOp>(loc, sizeVal, offsetValue);
-    auto zeroVal = rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
-    sizeVal = rewriter.create<arith::MaxSIOp>(loc, sizeVal, zeroVal);
+    offsetValue = rewriter.create<arith::MinSIOp>(offsetValue.getLoc(),
+                                                  offsetValue, sizeVal);
+    sizeVal =
+        rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetValue);
+    sizeVal =
+        rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
     sizes[tilingDim] = sizeVal;
 
+    src = storeOp.getSrc();
+    dst = storeOp.getDst();
+
     if (auto extractSliceOp = src.getDefiningOp<tensor::ExtractSliceOp>()) {
-      auto srcOp =
-          extractSliceOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
       rewriter.setInsertionPoint(extractSliceOp);
       rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
           extractSliceOp, extractSliceOp.getSource(),
           extractSliceOp.getMixedOffsets(), sizes,
           extractSliceOp.getMixedStrides());
     } else if (auto subViewOp = src.getDefiningOp<memref::SubViewOp>()) {
-      auto srcOp = subViewOp.getSource().getDefiningOp<memref::SubViewOp>();
       rewriter.setInsertionPoint(subViewOp);
       rewriter.replaceOpWithNewOp<memref::SubViewOp>(
-          subViewOp, subViewOp.getSource(), subViewOp.getMixedOffsets(),
-          sizes, subViewOp.getMixedStrides());
+          subViewOp, subViewOp.getSource(), subViewOp.getMixedOffsets(), sizes,
+          subViewOp.getMixedStrides());
     }
     if (auto extractSliceOp = dst.getDefiningOp<tensor::ExtractSliceOp>()) {
-      auto srcOp =
-          extractSliceOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
       rewriter.setInsertionPoint(extractSliceOp);
       rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
           extractSliceOp, extractSliceOp.getSource(),
           extractSliceOp.getMixedOffsets(), sizes,
           extractSliceOp.getMixedStrides());
     } else if (auto subViewOp = dst.getDefiningOp<memref::SubViewOp>()) {
-      auto srcOp = subViewOp.getSource().getDefiningOp<memref::SubViewOp>();
       rewriter.setInsertionPoint(subViewOp);
       rewriter.replaceOpWithNewOp<memref::SubViewOp>(
-          subViewOp, subViewOp.getSource(), subViewOp.getMixedOffsets(),
-          sizes, subViewOp.getMixedStrides());
+          subViewOp, subViewOp.getSource(), subViewOp.getMixedOffsets(), sizes,
+          subViewOp.getMixedStrides());
     }
     return success();
   }
