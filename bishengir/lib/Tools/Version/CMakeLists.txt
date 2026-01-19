@@ -16,15 +16,19 @@ message("generate_vcs_version_script: " ${generate_vcs_version_script})
 message("bishengir_src_dir: " ${bishengir_src_dir})
 message("vcs_version_inc: " ${vcs_version_inc})
 message("bishengir_vc: " ${bishengir_vc})
+message("LLVM_MAIN_SRC_DIR: " ${LLVM_MAIN_SRC_DIR})
 
 add_custom_command(OUTPUT "${vcs_version_inc}"
   DEPENDS "${bishengir_vc}" "${generate_vcs_version_script}"
-  COMMAND ${CMAKE_COMMAND} "-DNAMES=BISHENGIR"
+  COMMAND ${CMAKE_COMMAND} "-DNAMES=BISHENGIR;LLVM"
                            "-DBISHENGIR_SOURCE_DIR=${bishengir_src_dir}"
+                           "-DLLVM_SOURCE_DIR=${LLVM_MAIN_SRC_DIR}"
                            "-DHEADER_FILE=${vcs_version_inc}"
                            "-DLLVM_FORCE_VC_REVISION=${LLVM_FORCE_VC_REVISION}"
                            "-DLLVM_FORCE_VC_REPOSITORY=${LLVM_FORCE_VC_REPOSITORY}"
-                           -P "${generate_vcs_version_script}")
+                           -P "${generate_vcs_version_script}"
+  VERBATIM
+)
 
 set_source_files_properties("${vcs_version_inc}"
   PROPERTIES GENERATED TRUE

@@ -105,6 +105,7 @@ include(AddLLVM)
 include(AddMLIR)
 include(AddMLIRPython)
 include(AddBiShengIR)
+include(BiShengIRVersion)
 
 configure_file(
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Config/bishengir-config.h.cmake
