@@ -66,7 +66,11 @@ def LoadOp : HIVM_DmaOp<"load", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [I8, UI8, I16, UI16, F16, BF16,
+  OperElemTypeConstraints<[0], [
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+    F8E4M3FN, F8E5M2, 
+#endif
+                                I8, UI8, I16, UI16, F16, BF16,
                                 I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
     ["decomposeOperation", "getDecomposePhase"]>,
@@ -147,7 +151,11 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [I8, UI8, I16, UI16, F16, BF16,
+  OperElemTypeConstraints<[0], [
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+    F8E4M3FN, F8E5M2, 
+#endif
+                                I8, UI8, I16, UI16, F16, BF16,
                                 I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
@@ -201,7 +209,11 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [I1, I8, UI8, I16, UI16, F16, BF16,
+  OperElemTypeConstraints<[0], [
+#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+    F8E4M3FN, F8E5M2, 
+#endif 
+                                I1, I8, UI8, I16, UI16, F16, BF16,
                                 I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
