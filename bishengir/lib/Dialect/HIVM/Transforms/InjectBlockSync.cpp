@@ -482,7 +482,11 @@ void InjectBlockSyncPass::runOnOperation() {
   assert(baseAddr.has_value() &&
          "The mix kernel parameter must have a ffts_addr value");
   insertSetFFTSBaseAddrOp(baseAddr.value());
-
+  // If module has attribute to disable auto inject block sync, skip injection.
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  if (moduleOp && moduleOp->hasAttr(hivm::DisableAutoInjectBlockSyncAttr::name)) {
+    return;
+  }
   if (this->disableAutoInjectBlockSync)
     return;
 
