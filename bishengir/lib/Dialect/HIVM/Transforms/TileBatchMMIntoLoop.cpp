@@ -63,6 +63,11 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+static constexpr llvm::StringLiteral fixpipeAlreadyInserted =
+    "fixpipe_already_inserted";
+}
+
+namespace {
 
 LogicalResult
 getBatchSingleUseChain(Operation *op, int64_t batchDim,
@@ -236,6 +241,10 @@ Value rewriteMmadThrowOutBatch(hivm::BatchMmadL1Op batchmmOp,
       batchmmOp.getRealK(), batchmmOp.getRealN(), /*C=*/newOutput,
       batchmmOp.getPerChannelBias(), batchmmOp.getATransposeAttr(),
       batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr());
+  if (batchmmOp->getAttr(fixpipeAlreadyInserted)) {
+    tiledMmad->setAttr(fixpipeAlreadyInserted,
+                       batchmmOp->getAttr(fixpipeAlreadyInserted));
+  }
   Value matrixToStore = rewriteMatrixCShapeChange(
       /* ignore first fixpipe */ ArrayRef<Operation *>(useChain).drop_front(),
       tiledMmad.getResultTensors()[0], rewriter);
