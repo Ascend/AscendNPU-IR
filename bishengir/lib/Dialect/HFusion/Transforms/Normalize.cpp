@@ -954,6 +954,7 @@ public:
 ///    (-72) % 8  = 0
 ///  int/fp16/bf16 types are converted to fp32 for the division to get
 ///  better numerical behavior.
+static constexpr llvm::StringLiteral normalizeModAlreadyHandle = "already_handle_mod_zero";
 struct NormalizeModOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -975,9 +976,11 @@ public:
                                    ValueRange{correctResult})
         .getResults()[0];
   }
-
-  Value handleZeroModulus(PatternRewriter &rewriter, Location loc, Value xF32,
-                          Value yF32, Value result) const {
+  /// res = x % y
+  /// =>
+  /// handleZeroModulusRes = (y == 0) ? -1 : res;
+  Value handleZeroModulus(PatternRewriter &rewriter, Location loc, Value yF32,
+                          Value result) const {
     auto yType = yF32.getType();
     Value tensorY = yF32;
 
@@ -988,22 +991,33 @@ public:
           rewriter.create<linalg::FillOp>(loc, yF32, yTensor).getResults()[0];
     }
 
-    auto resTy = dyn_cast<TensorType>(result.getType());
-    auto elemType = getElementTypeOrSelf(resTy);
+    auto elemType =
+        getElementTypeOrSelf(dyn_cast<TensorType>(result.getType()));
+
     auto constZero = utils::createConstantOp<float>(rewriter, loc, elemType, 0);
     auto zeroFlag =
         createCmpOp(rewriter, loc, tensorY, constZero, CompareFn::veq)
             ->getResult(0);
 
-    auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
-    auto resWithZeroModulus =
-        rewriter
-            .create<hfusion::SelectOp>(loc, TypeRange(emptyResTensor),
-                                       ValueRange{zeroFlag, xF32, result},
-                                       ValueRange{emptyResTensor})
-            .getResults()[0];
+    Value negOneValue;
+    if (isa<ShapedType>(result.getType())) {
+      auto emptyNegOne = utils::createEmptyOp(rewriter, loc, result);
+      auto constNegOneScalar =
+          utils::createConstantOp<float>(rewriter, loc, elemType, -1);
+      negOneValue =
+          rewriter.create<linalg::FillOp>(loc, constNegOneScalar, emptyNegOne)
+              .getResult(0);
+    } else {
+      negOneValue =
+          utils::createConstantOp<float>(rewriter, loc, elemType, -1);
+    }
 
-    return resWithZeroModulus;
+    auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(emptyResTensor.getType()),
+                                   ValueRange{zeroFlag, negOneValue, result},
+                                   ValueRange{emptyResTensor})
+        .getResult(0);
   }
 
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
@@ -1024,16 +1038,29 @@ public:
       return failure();
     }
 
+    auto loc = op.getLoc();
     auto elemType = getElementTypeOrSelf(resTy);
-    // Only support int/index/float, but not i64.
-    if (!elemType.isIntOrIndexOrFloat() || elemType.isInteger(64) ||
-        elemType.isInteger(32)) {
+    // Only support int/index/float.
+    if (!elemType.isIntOrIndexOrFloat())
       return failure();
-    }
 
     // Original inputs in their original dtype.
     Value xOrig = op.getInputs()[0];
     Value yOrig = op.getInputs()[1];
+    if (elemType.isInteger(64) || elemType.isInteger(32)) {
+      if (op->getAttr(normalizeModAlreadyHandle))
+        return failure();
+      auto clonedMod = rewriter.clone(*op.getOperation());
+      Value normalModResult = clonedMod->getResult(0);
+      clonedMod->setAttr(normalizeModAlreadyHandle, rewriter.getBoolAttr(true));
+
+      Value modWithZeroHandled =
+          handleZeroModulus(rewriter, loc, yOrig, normalModResult);
+
+      op->setAttr(normalizeModAlreadyHandle, rewriter.getBoolAttr(true));
+      rewriter.replaceOp(op, modWithZeroHandled);
+      return success();
+    }
 
     // step 1: x_f32 = cast(x) => f32
     //         y_f32 = cast(y) => f32
@@ -1063,7 +1090,7 @@ public:
     Operation *divOp = nullptr;
     std::optional<Operation **> divF32 = &divOp;
     auto truncDivF32 = hfusion::divWithRoundMode(
-        rewriter, op.getLoc(), rewriter.getF32Type(), xF32, yF32,
+        rewriter, loc, rewriter.getF32Type(), xF32, yF32,
         emptyDivTensor, hfusion::RoundMode::TRUNC, divF32);
     assert((divF32 != std::nullopt) && (*divF32.value()) != nullptr &&
            "div operation cannot be null!");
@@ -1081,7 +1108,7 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, op.getLoc(), linalg::BinaryFn::mul,
+                   rewriter, loc, linalg::BinaryFn::mul,
                    ValueRange{y, q}, emptyMulTensor)
                    ->getResults()[0];
 
@@ -1090,13 +1117,13 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, op.getLoc(), linalg::BinaryFn::sub,
+                   rewriter, loc, linalg::BinaryFn::sub,
                    ValueRange{x, mul}, emptyResTensor)
                    ->getResults()[0];
 
     if (elemType.isInteger()) {
       auto resWithZeroModulus =
-          handleZeroModulus(rewriter, op.getLoc(), xF32, yF32, res);
+          handleZeroModulus(rewriter, loc, yF32, res);
       Value tmpModRes = resWithZeroModulus;
       if (elemType.isInteger(8)) {
         tmpModRes = hfusion::castTo(rewriter, resWithZeroModulus,
