@@ -1100,7 +1100,8 @@ public:
         tmpModRes = hfusion::castTo(rewriter, resWithZeroModulus,
                                     rewriter.getF16Type(), false);
       }
-      auto resOrig = hfusion::castTo(rewriter, tmpModRes, elemType, false);
+      auto resOrig = hfusion::castTo(rewriter, tmpModRes, elemType, false,
+                                     cast_integer_type);
       rewriter.replaceOp(op, resOrig);
       return success();
     }
