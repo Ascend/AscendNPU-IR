@@ -86,18 +86,15 @@ void InsertInferTaskTypeFuncPass::runOnOperation() {
   func::FuncOp entryFunc = nullptr;
   module.walk(
       [&](func::FuncOp func) {
-        bool isHivmEntry = func->hasAttr("hivm.entry");
         bool isHaccEntry = func->hasAttr("hacc.entry");
-
-        if (!isHaccEntry && !isHivmEntry)
+        if (!isHaccEntry)
           return WalkResult::advance();
 
         if (entryFunc) {
           func->emitError()
               << "multiple entry functions detected (previous: '"
               << entryFunc.getName() << "', this: '" << func.getName()
-              << "'). Only one function may be marked with hivm.entry or "
-                 "hacc.entry.";
+              << "'). Only one function may be marked with hacc.entry.";
           signalPassFailure();
           WalkResult::interrupt();
         }
@@ -107,9 +104,9 @@ void InsertInferTaskTypeFuncPass::runOnOperation() {
       });
 
   if (!entryFunc) {
-    module.emitWarning() << "No function with attribute hivm.entry or "
-                            "hacc.entry found in the module. "
-                         << "Task type is set to Unknown.";
+    module.emitWarning()
+        << "No function with attribute hacc.entry found in the module. "
+        << "Task type is set to Unknown.";
     taskType = util::TaskType::Unknown;
   } else {
     auto coreAttr = entryFunc->getAttrOfType<hivm::TFuncCoreTypeAttr>(
