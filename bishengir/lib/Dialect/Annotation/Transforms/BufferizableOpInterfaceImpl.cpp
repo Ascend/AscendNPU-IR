@@ -65,26 +65,34 @@ struct MarkOpInterface
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
-    auto markOp = cast<annotation::MarkOp>(op);
+    // Take a guard before anything else.
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPoint(op);
 
-    Value newSrc;
-    const auto &src = markOp.getSrc();
-    Value value = src;
-    if (isa<TensorType>(value.getType())) {
-      FailureOr<Value> maybeBuffer = getBuffer(rewriter, value, options);
-      if (failed(maybeBuffer))
+    // New operands for the cloned op.
+    SmallVector<Value> newOperands;
+    newOperands.reserve(op->getNumOperands());
+    for (OpOperand &opOperand : op->getOpOperands()) {
+      if (!isa<TensorType>(opOperand.get().getType())) {
+        newOperands.push_back(opOperand.get());
+        continue;
+      }
+      FailureOr<Value> buffer = getBuffer(rewriter, opOperand.get(), options);
+      if (failed(buffer)) {
         return failure();
-      Value buffer = *maybeBuffer;
-      newSrc = buffer;
-    } else {
-      newSrc = value;
+      }
+      newOperands.push_back(*buffer);
     }
 
     DictionaryAttr newAttrs = op->getAttrDictionary();
+    // Clone the op, but use the new operands.
     auto newOp =
-        replaceOpWithNewBufferizedOp<annotation::MarkOp>(rewriter, op, newSrc);
+        clone(rewriter, op, /*newResultTypes=*/TypeRange{}, newOperands);
     // Forward the old attributes to the new operation
     newOp->setAttrs(newAttrs);
+
+    // Erase old annotation
+    rewriter.eraseOp(op);
     return success();
   }
 };
