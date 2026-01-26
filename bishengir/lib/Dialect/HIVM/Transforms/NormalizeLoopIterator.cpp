@@ -16,11 +16,13 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeLoopIterator.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Operation.h"
@@ -70,7 +72,25 @@ bool isBefore(Operation *before, Operation *after) {
 }
 
 FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal,
+                                                 Value initVal,
                                                  LoopLikeOpInterface loopOp) {
+  if (auto mbIfOp = traceDefOp<scf::IfOp>(yieldVal)) {
+    auto concreteIfOp = cast<scf::IfOp>(*mbIfOp);
+    assert(concreteIfOp.elseBlock());
+
+    for (const auto &[thenVal, elseVal] :
+         llvm::zip(concreteIfOp.thenYield().getOperands(),
+                   concreteIfOp.elseYield().getOperands())) {
+      if (thenVal == initVal) {
+        return yieldMemoryInitialization(elseVal, initVal, loopOp);
+      }
+      
+      if (elseVal == initVal) {
+        return yieldMemoryInitialization(thenVal, initVal, loopOp);  
+      }
+    }
+  }
+
   FailureOr<memref::AllocOp> allocOp = getMemRefAlloc(yieldVal);
   if (failed(allocOp) ||
       loopOp.isDefinedOutsideOfLoop((*allocOp).getMemref())) {
@@ -129,7 +149,8 @@ bool existIterArgUseAfterYieldValInit(Value iterArg, Operation *yieldInit) {
         continue;
 
       if (auto memoryEffectOp = dyn_cast<MemoryEffectOpInterface>(useOp)) {
-        if (memoryEffectOp.getEffectOnValue<MemoryEffects::Read>(curAlias))
+        if (memoryEffectOp.getEffectOnValue<MemoryEffects::Read>(curAlias) ||
+            isa<scf::YieldOp>(useOp))
           return true;
       }
     }
@@ -167,7 +188,8 @@ class NormalizeIterUseAfterYieldInit
           hivm::AddressSpace::GM) {
         continue;
       }
-      auto yieldFirstInit = yieldMemoryInitialization(yieldVals[i], loopOp);
+      auto yieldFirstInit =
+          yieldMemoryInitialization(yieldVals[i], iterArgs[i], loopOp);
       if (failed(yieldFirstInit)) {
         LLVM_DEBUG(llvm::dbgs()
                    << yieldVals[i]
