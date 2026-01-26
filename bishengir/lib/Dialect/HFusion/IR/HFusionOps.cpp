@@ -936,30 +936,27 @@ void codeGenWithoutIndexDispatch(OpBuilder &builder, Block &block,
           arith::CmpFPredicate::OLT);
     }
   } else if (isa<IntegerType>(elemType)) {
-    IntegerType::SignednessSemantics sgn =
-        cast<IntegerType>(elemType).getSignedness();
-    if (reduce_kind == ReduceWithIndexKind::MAX) {
-      if (sgn == IntegerType::SignednessSemantics::Signed ||
-          sgn == IntegerType::SignednessSemantics::Signless) {
-        codeGenWithoutIndex<arith::MaxSIOp, arith::CmpIOp,
-                            arith::CmpIPredicate>(
-            builder, inValue, outValue, outIndex, indexType, theDimension,
-            arith::CmpIPredicate::sgt);
-      } else {
-        llvm::report_fatal_error(
-            "Unsigned reduce_with_index is not currently supported by HFusion");
-      }
-    } else {
-      if (sgn == IntegerType::SignednessSemantics::Signed ||
-          sgn == IntegerType::SignednessSemantics::Signless) {
-        codeGenWithoutIndex<arith::MinSIOp, arith::CmpIOp,
-                            arith::CmpIPredicate>(
-            builder, inValue, outValue, outIndex, indexType, theDimension,
-            arith::CmpIPredicate::slt);
-      } else {
-        llvm::report_fatal_error(
-            "Unsigned reduce_with_index is not currently supported by HFusion");
-      }
+    switch (reduce_kind) {
+    case ReduceWithIndexKind::MAX:
+      codeGenWithoutIndex<arith::MaxSIOp, arith::CmpIOp, arith::CmpIPredicate>(
+          builder, inValue, outValue, outIndex, indexType, theDimension,
+          arith::CmpIPredicate::sgt);
+      break;
+    case ReduceWithIndexKind::MAXUI:
+      codeGenWithoutIndex<arith::MaxUIOp, arith::CmpIOp, arith::CmpIPredicate>(
+          builder, inValue, outValue, outIndex, indexType, theDimension,
+          arith::CmpIPredicate::ugt);
+      break;
+    case ReduceWithIndexKind::MIN:
+      codeGenWithoutIndex<arith::MinSIOp, arith::CmpIOp, arith::CmpIPredicate>(
+          builder, inValue, outValue, outIndex, indexType, theDimension,
+          arith::CmpIPredicate::slt);
+      break;
+    case ReduceWithIndexKind::MINUI:
+      codeGenWithoutIndex<arith::MinUIOp, arith::CmpIOp, arith::CmpIPredicate>(
+          builder, inValue, outValue, outIndex, indexType, theDimension,
+          arith::CmpIPredicate::ult);
+      break;
     }
   } else {
     llvm::report_fatal_error("unsupported element type for reduce_with_index");

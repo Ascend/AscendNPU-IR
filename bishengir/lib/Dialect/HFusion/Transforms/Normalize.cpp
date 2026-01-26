@@ -58,6 +58,8 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
+static constexpr llvm::StringLiteral kAlreadyInitalizeInit = "already_denaned";
+
 // norm(x,x_round,offset) = x-x_round*(pi1+pi2+pi3+pi4+pi5)+offset
 // (pi1+pi2+pi3+pi4+pi5) approximates pi
 static Value norm(PatternRewriter &rewriter, Location loc, Value x,
@@ -1316,8 +1318,6 @@ struct NormalizeArgMinMaxOp
     // match I've added this attribute to check that reduce op
     // is already visited
     // (such way was already introduced in HIVMDecompose)
-    static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
-        "already_denaned";
     if (op->hasAttr(kAlreadyInitalizeInit)) {
       return failure();
     }
@@ -3937,16 +3937,38 @@ public:
       return failure();
     }
 
-    auto newInputs =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
+    auto kind = op.getReduceKindAttr().getReduceWithIndexKind();
+    bool isUnsigned = false;
+    switch (kind) {
+    case ReduceWithIndexKind::MAXUI:
+      isUnsigned = true;
+      kind = ReduceWithIndexKind::MAX;
+      break;
+    case ReduceWithIndexKind::MINUI:
+      isUnsigned = true;
+      kind = ReduceWithIndexKind::MIN;
+      break;
+    default:
+      break;
+    }
+
+    auto newCastType = isUnsigned ? TypeFn::cast_unsigned : TypeFn::cast_signed;
+    auto newKindAttr =
+        ReduceWithIndexKindAttr::get(rewriter.getContext(), kind);
+    auto newInputs = normalizeSrcToTargetType<int8_t, Float16Type>(
+        rewriter, inputs, newCastType);
+    auto newInits = normalizeSrcToTargetType<int8_t, Float16Type>(
+        rewriter, inits, newCastType);
     Operation *newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
         op.getLoc(), TypeRange{newInits[0].getType(), newInits[1].getType()},
-        newInputs, newInits, op.getReduceKindAttr(), op.getTieBreakLeftAttr(),
+        newInputs, newInits, newKindAttr, op.getTieBreakLeftAttr(),
         op.getDimensionsAttr());
+    rewriter.modifyOpInPlace(newOp, [&]() {
+      newOp->setAttr(kAlreadyInitalizeInit, UnitAttr::get(newOp->getContext()));
+    });
     replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
+                                   rewriter, /*enableOverflow*/ false,
+                                   isUnsigned);
     return success();
   }
 };

@@ -370,11 +370,8 @@ func.func @test_atomic_min_ui8(%arg0 : memref<?xi8> {tt.divisibility = 16 : i32}
 func.func @test_ui8_reduce_with_index(%arg0 : tensor<256x64xi8>, %arg1 : tensor<256x64xi32>) -> tensor<256xi8> {
   %0 = tensor.empty() : tensor<256xi8>
   %1 = tensor.empty() : tensor<256xi32>
-  // CHECK:  %[[ARG0:.*]] = arith.uitofp {{.*}} : tensor<256x64xi8> to tensor<256x64xf32>
-  // CHECK:  %[[EMPTY0:.*]] = arith.uitofp {{.*}} : tensor<256xi8> to tensor<256xf32>
-  // CHECK:  %[[REDUCED:.*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <max> ins(%[[ARG0]] : tensor<256x64xf32>) outs(%[[EMPTY0]], %[[EMPTY1:.*]] : tensor<256xf32>, tensor<256xi32>) dimensions = [1] -> tensor<256xf32>, tensor<256xi32>
-  // CHECK:  %[[RES:.*]] = arith.fptoui %[[REDUCED]]#0 : tensor<256xf32> to tensor<256xi8>
-  // CHECK:  return %[[RES]] : tensor<256xi8>
+  // CHECK:  %[[REDUCED:.*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <maxui> ins(%arg0 : tensor<256x64xi8>) outs(%0, %1 : tensor<256xi8>, tensor<256xi32>) dimensions = [1] -> tensor<256xi8>, tensor<256xi32>
+  // CHECK:  return %[[REDUCED]]#0 : tensor<256xi8>
   %reduced:2 = linalg.reduce ins(%arg0, %arg1 : tensor<256x64xi8>, tensor<256x64xi32>) outs(%0, %1 : tensor<256xi8>, tensor<256xi32>) dimensions = [1]  {reduce_mode = "max_with_index", tie_break_left = "true"}
       (%in: i8, %in_2: i32, %init: i8, %init_3: i32) {
         %11 = arith.cmpi ugt, %in, %init : i8
