@@ -36,21 +36,15 @@ void IRTranslator::Build() {
 }
 
 void IRTranslator::UpdateKernelArgMemInfo() {
-  auto funcParamSize = func_.getNumArguments();
-  for (size_t i = 0; i < funcParamSize; i++) {
-    if (!dyn_cast_or_null<MemRefType>(func_.getArgument(i).getType())) {
-      // not memref type, skip
+  for (auto [i, funcArg] : llvm::enumerate(func_.getArguments())) {
+    if (!dyn_cast_or_null<MemRefType>(funcArg.getType())) {
       continue;
     }
-    std::unique_ptr<BaseMemInfo> newMemInfo =
-        std::make_unique<BaseMemInfo>(BaseMemInfo{func_.getArgument(i),
-                                                  func_.getArgument(i),
-                                                  hivm::AddressSpace::GM,
-                                                  {0},
-                                                  0,
-                                                  std::nullopt});
+    auto newMemInfo = std::make_unique<BaseMemInfo>(
+        funcArg, funcArg, hivm::AddressSpace::GM, SmallVector<int64_t>(1, 0), 0,
+        false, std::nullopt);
     bool isSplittedMixKernel =
-        func_->getAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name) != nullptr;
+        func_->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name);
     bool isWorkSpaceArg =
         hacc::utils::isKernelArg(func_, i, hacc::KernelArgType::kWorkspace);
     bool includeWorkSpaceArg = true;
@@ -70,7 +64,6 @@ void IRTranslator::UpdateKernelArgMemInfo() {
       }
     }
 
-    Value funcArg = func_.getArgument(i);
     if (!isWorkSpaceArg || includeWorkSpaceArg) {
       buffer2MemInfoMap[funcArg].emplace_back(newMemInfo->clone());
     }
@@ -140,55 +133,53 @@ LogicalResult IRTranslator::CheckIfUnknownOpTouchBuffer(Operation *op) const {
 }
 
 LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
-  SmallVector<Value> curAddress;
   hivm::AddressSpace space;
-  Value baseBuffer;
-  Value rootBuffer;
-  std::optional<bishengir::memref_ext::AllocWorkspaceOp> allocWorkspaceOp =
-      std::nullopt;
+  SmallVector<Value> curAddress;
+  Value rootBuffer, baseBuffer;
+  std::optional<bishengir::memref_ext::AllocWorkspaceOp> allocWorkspaceOp;
   if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
     auto spaceAttr = GetBufferSpaceAttr(pointerCastOp.getResult());
     if (!spaceAttr.has_value()) {
-      // Only handle buffers within the specified scope.
-      return failure();
+      return op->emitError(
+          "pointer_cast operation expected to have memory space attribute.");
     }
     space = spaceAttr.value().getAddressSpace();
     curAddress = pointerCastOp.getAddrs();
-    baseBuffer = pointerCastOp.getResult();
     rootBuffer = pointerCastOp.getResult();
+    baseBuffer = pointerCastOp.getResult();
   } else if (auto workspaceOp =
                  dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(op)) {
     space = hivm::AddressSpace::GM;
     curAddress = workspaceOp.getOffset();
-    baseBuffer = workspaceOp.getResult();
     rootBuffer = workspaceOp.getWorkspaceArg();
+    baseBuffer = workspaceOp.getResult();
     allocWorkspaceOp = workspaceOp;
   } else {
-    llvm_unreachable("unsupport op to update buffer2MemInfo");
+    return op->emitError(
+        "Only pointer_cast and alloc_workspace operations are supported.");
   }
 
-  int addressNum = static_cast<int>(curAddress.size());
-  if (addressNum == 0) {
-    return op->emitError("MemAllocOp must have at least one address present");
-  }
-  SmallVector<uint64_t> baseAddresses;
-  for (int i = 0; i < addressNum; i++) {
-    auto constOp = dyn_cast<arith::ConstantOp>(curAddress[i].getDefiningOp());
-    if (!constOp) {
-      return op->emitError("Currently, only constant addresses are supported");
+  bool hasVariableAddress = false;
+  SmallVector<int64_t> baseAddresses;
+  for (size_t i = 0; i < curAddress.size(); i++) {
+    if (auto constOp =
+            dyn_cast<arith::ConstantOp>(curAddress[i].getDefiningOp())) {
+      int64_t offset = cast<IntegerAttr>(constOp.getValue()).getInt();
+      int64_t offsetInBits = offset * utils::kBitsToByte;
+      baseAddresses.push_back(offsetInBits);
+    } else {
+      hasVariableAddress = true;
     }
-    int64_t value = cast<IntegerAttr>(constOp.getValue()).getInt();
-    baseAddresses.push_back(value);
   }
-  auto bufferSize = GetBufferSize(rootBuffer);
+
+  auto bufferSize = GetBufferBitSize(rootBuffer);
   if (!bufferSize.has_value()) {
-    return op->emitError(
-        "There are illegal buffer MemAllocOp can't get buffer size! ");
+    return op->emitError("Failed to get buffer size for alloc-like op.");
   }
 
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       baseBuffer, rootBuffer, space, baseAddresses, bufferSize.value(),
-      allocWorkspaceOp);
+      hasVariableAddress, allocWorkspaceOp);
 
   buffer2MemInfoMap[baseBuffer].emplace_back(newMemInfo->clone());
   buffer2MemInfoMapIncludingWSArgs[baseBuffer].emplace_back(
