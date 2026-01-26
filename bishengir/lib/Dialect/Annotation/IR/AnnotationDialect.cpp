@@ -27,9 +27,37 @@ using namespace mlir::annotation;
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Annotation/IR/AnnotationOps.cpp.inc"
 
+//===----------------------------------------------------------------------===//
+// Annotation Dialect Inliner Interfaces
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+struct AnnotationInlinerInterface : public mlir::DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  // We don't have any special restrictions on what can be inlined into
+  // destination regions (e.g. while/conditional bodies). Always allow it.
+  bool isLegalToInline(mlir::Region *dest, mlir::Region *src,
+                       bool wouldBeCloned,
+                       mlir::IRMapping &valueMapping) const final {
+    return true;
+  }
+  // Operations in Annotation dialect are always legal to inline.
+  bool isLegalToInline(mlir::Operation *, mlir::Region *, bool,
+                       mlir::IRMapping &) const final {
+    return true;
+  }
+};
+
+} // namespace
+
 void mlir::annotation::AnnotationDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
 #include "bishengir/Dialect/Annotation/IR/AnnotationOps.cpp.inc"
       >();
+
+  // Add function inliner interfaces
+  addInterfaces<AnnotationInlinerInterface>();
 }
