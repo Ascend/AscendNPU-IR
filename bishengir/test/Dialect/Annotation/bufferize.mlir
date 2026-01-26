@@ -18,3 +18,19 @@ func.func @mark(
   annotation.mark %s {attr = 2 : i32} : tensor<?xf32>
   return %s, %w : tensor<?xf32>, tensor<?xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func @dyn_attr
+// CHECK-SAME:     %[[t1:.*]]: tensor<?xf32>, %[[t2:.*]]: tensor<?xf32>
+func.func @dyn_attr(
+    %t1 : tensor<?xf32>,
+    %t2 : tensor<?xf32>)
+  -> (tensor<?xf32>, tensor<?xf32>)
+{
+  // CHECK: bufferization.to_memref
+  // CHECK: bufferization.to_memref
+  // CHECK: annotation.mark
+  annotation.mark %t1 keys = ["key"] values = [%t2: tensor<?xf32>] : tensor<?xf32>
+  return %t1, %t2 : tensor<?xf32>, tensor<?xf32>
+}
