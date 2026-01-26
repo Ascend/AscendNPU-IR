@@ -126,7 +126,7 @@ enum class ScalarFnKind {
 struct ScalarFn {
   ScalarFnKind kind;
   std::optional<std::string> fnName;
-  std::optional<std::string> attrName;
+  std::vector<std::string> attrNames;
   std::optional<std::string> typeVar;
   // NOTE: This must be of arity 1, but to break the self-referential cycle,
   // we use a heap allocated vector.
@@ -325,7 +325,7 @@ template <> struct MappingTraits<ScalarFn> {
   static void mapping(IO &io, ScalarFn &info) {
     io.mapRequired("kind", info.kind);
     io.mapOptional("fn_name", info.fnName);
-    io.mapOptional("attr_name", info.attrName);
+    io.mapRequired("attr_names", info.attrNames);
     io.mapOptional("type_var", info.typeVar);
     io.mapRequired("operands", info.operands);
   }
@@ -1137,21 +1137,24 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
               convertFunctionKindToEnumName(expression.scalarFn->kind);
 
           // Get the function or attribute name.
-          assert(expression.scalarFn->fnName || expression.scalarFn->attrName);
-          std::string funcType;
+          assert(expression.scalarFn->fnName ||
+                 !expression.scalarFn->attrNames.empty());
+          SmallVector<std::string> funcType;
           if (expression.scalarFn->fnName) {
-            funcType = llvm::formatv("{0}::{1}", enumName,
-                                     *expression.scalarFn->fnName);
+            funcType.push_back(llvm::formatv("{0}::{1}", enumName,
+                                             *expression.scalarFn->fnName));
           }
-          if (expression.scalarFn->attrName) {
-            if (llvm::none_of(args, [&](HFusionOperandDef &arg) {
-                  return isFunctionAttribute(arg.kind) &&
-                         arg.name == *expression.scalarFn->attrName;
-                })) {
-              emitError(genContext.getLoc()) << "missing function attribute "
-                                             << *expression.scalarFn->attrName;
+          if (!expression.scalarFn->attrNames.empty()) {
+            for (const auto& curAttrName : expression.scalarFn->attrNames) {
+              if (llvm::none_of(args, [&](HFusionOperandDef &arg) {
+                    return isFunctionAttribute(arg.kind) &&
+                           arg.name == curAttrName;
+                  })) {
+                emitError(genContext.getLoc()) << "missing function attribute "
+                                               << curAttrName;
+              }
+              funcType.push_back(llvm::formatv("{0}Val", curAttrName));
             }
-            funcType = llvm::formatv("{0}Val", *expression.scalarFn->attrName);
           }
           assert(!funcType.empty());
 
@@ -1185,7 +1188,7 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
           std::string cppIdent = llvm::formatv("value{0}", ++localCounter);
           stmts.push_back(llvm::formatv(
               "Value {0} = helper.build{1}({2}, {3});", cppIdent, enumName,
-              funcType, interleaveToString(operandCppValues, ", ")));
+              interleaveToString(funcType, ", "), interleaveToString(operandCppValues, ", ")));
           return cppIdent;
         }
         emitError(genContext.getLoc()) << "unknown ScalarExpression type";
