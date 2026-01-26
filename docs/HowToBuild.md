@@ -22,7 +22,7 @@ Recommendation：
 1. Clone the main repository：
 
 ```bash
-git clone https://gitcode.com/Ascend/ascendnpu-ir.git
+git clone https://gitcode.com/Ascend/AscendNPU-IR.git
 cd AscendNPU-IR
 ```
 
