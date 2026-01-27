@@ -368,6 +368,69 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
   }
 };
 
+//===----------------------------------------------------------------------===//
+// InsertLoadBeforeSCFInitArgs
+//===----------------------------------------------------------------------===//
+
+/// Pattern to insert load op before scf.for loop if its init args come from
+/// store-like operations (Store/Fixpipe).
+///
+/// Example:
+/// ```
+/// %1 = hivm.fixpipe ...
+/// scf.for ... iter_args(%arg = %1)
+/// ```
+///
+/// Is converted into:
+/// ```
+/// %1 = hivm.fixpipe ...
+/// %loaded = hivm.load %1
+/// scf.for ... iter_args(%arg = %loaded)
+/// ```
+struct InsertLoadBeforeSCFInitArgs : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.walk([](hivm::MmadL1Op) {
+            return WalkResult::interrupt();
+          }).wasInterrupted()) {
+      return failure();
+    }
+
+    auto isStoreLike = [](Value v) {
+      return traceDefOp<hivm::FixpipeOp>(v).has_value() ||
+             traceDefOp<hivm::StoreOp>(v).has_value();
+    };
+
+    auto isLoadInLoop = [](Value innerArg) {
+      return llvm::any_of(innerArg.getUsers(), [&](Operation *user) {
+        auto loadOp = dyn_cast<hivm::LoadOp>(user);
+        return loadOp && loadOp.getSrc() == innerArg;
+      });
+    };
+
+    llvm::SmallVector<OpOperand *> operandsToFix;
+
+    for (auto [initOperand, innerArg] :
+         llvm::zip(op.getInitsMutable(), op.getRegionIterArgs())) {
+
+      if (!isStoreLike(initOperand.get())) {
+        continue;
+      }
+
+      if (isLoadInLoop(innerArg)) {
+        continue;
+      }
+
+      operandsToFix.push_back(&initOperand);
+    }
+
+    return insertLoadStoreOp(rewriter, op.getLoc(), operandsToFix,
+                             InsertMode::LoadOnly);
+  }
+};
+
 /// Specialized case for implicit transpose.
 ///
 /// `bufferization.to_tensor` with attr "MayImplicitTransposeWithLastAxis"
@@ -685,11 +748,21 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       patterns.getContext());
 }
 
+LogicalResult applyInsertLoadBeforeSCFInitArgs(MLIRContext *context,
+                                                    Operation *funcOp) {
+  RewritePatternSet patterns(context);
+  patterns.insert<InsertLoadBeforeSCFInitArgs>(patterns.getContext());
+  return applyPatternsGreedily(funcOp, std::move(patterns));
+}
+
 void InsertLoadStoreForMixCVPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto *context = &getContext();
   auto funcOp = getOperation();
   RewritePatternSet patterns(context);
+  if (failed(applyInsertLoadBeforeSCFInitArgs(context, funcOp))) {
+      signalPassFailure();
+  }
   populateInsertLoadStorePattern(patterns);
   patterns.insert<InsertStoreForSCFYield>(patterns.getContext());
   // TODO: move InferFuncCoreType to previous places; then this pass may return
