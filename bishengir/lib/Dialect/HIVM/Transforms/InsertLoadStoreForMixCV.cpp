@@ -116,7 +116,7 @@ Value inertLoadStoreOperation(PatternRewriter &rewriter, Location loc,
 
 LogicalResult
 insertLoadStoreOp(PatternRewriter &rewriter, Location loc,
-                  const llvm::SmallVector<OpOperand *> &consumerOperands,
+    const llvm::SmallVector<OpOperand *> &consumerOperands,
                   InsertMode insertMode,
                   std::optional<Value> insertInit = std::nullopt) {
   if (consumerOperands.empty()) {
@@ -193,24 +193,24 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
     llvm::SmallVector<OpOperand *> consumerOperands;
     TypeSwitch<Operation *>(opPtr)
         .Case([&](hivm::StoreOp storeOp) {
-          if (!storeOp->getOpOperands().empty()) {
-            OpOperand &firstOperand = storeOp->getOpOperands().front();
-            if (traceDefOp<hivm::FixpipeOp>(firstOperand.get()).has_value() ||
-                traceDefOp<hivm::StoreOp>(firstOperand.get()).has_value()) {
-              consumerOperands.push_back(&firstOperand);
+            if (!storeOp->getOpOperands().empty()) {
+                OpOperand &firstOperand = storeOp->getOpOperands().front();
+                if (traceDefOp<hivm::FixpipeOp>(firstOperand.get()).has_value() ||
+                    traceDefOp<hivm::StoreOp>(firstOperand.get()).has_value()) {
+                    consumerOperands.push_back(&firstOperand);
+                }
             }
-          }
         })
         .Default([&](Operation *genericOp) {
-          for (OpOperand &operand : genericOp->getOpOperands()) {
-            if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
-                traceDefOp<hivm::StoreOp>(operand.get()).has_value()) {
-              consumerOperands.push_back(&operand);
+            for (OpOperand &operand : genericOp->getOpOperands()) {
+                if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
+                    traceDefOp<hivm::StoreOp>(operand.get()).has_value()) {
+                    consumerOperands.push_back(&operand);
+                }
             }
-          }
         });
     return insertLoadStoreOp(rewriter, opPtr->getLoc(), consumerOperands,
-                             InsertMode::LoadOnly);
+                            InsertMode::LoadOnly);
   }
 };
 
@@ -315,7 +315,7 @@ struct InsertLoadStoreOpBetweenCrossLoopVectorAndCube
       if (!yield) {
         continue;
       }
-
+      
       if (traceDefOp<OpType>(yield->get()).has_value()) {
         consumerOperands.push_back(&operand);
       }
@@ -374,8 +374,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
 /// describes the process of transposing data on UB. Store & load op will be
 /// added here in order to make transpose operation happen in vector.
 template <typename CubeOpType>
-struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
-                                             CubeOpType>
+struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp, CubeOpType>
     : public OpRewritePattern<CubeOpType> {
   using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
@@ -390,6 +389,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
           llvm::cast<bufferization::ToTensorOp>(toTensorOpDef.value());
       auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
           toTensorOp->getResult(0), "MayImplicitTransposeWithLastAxis");
+      
 
       if (maybeAnnotateOp.has_value()) {
         consumerOperands.push_back(&operand);
@@ -408,8 +408,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
 /// it's likely that the collapse shape will become noncontiguous. Since only
 /// vector core is able to such case, we need to insert load/store.
 template <typename CubeOpType>
-struct InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
-                                             CubeOpType>
+struct InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp, CubeOpType>
     : public OpRewritePattern<CubeOpType> {
   using OpRewritePattern<CubeOpType>::OpRewritePattern;
 
@@ -515,13 +514,13 @@ struct DuplicateTensorExtractForCube
   bool findCubeUser(tensor::ExtractOp extractOp) const {
     bool hasCubeUser = false;
     SmallVector<Operation *> worklist;
-
+    
     if (extractOp->getNumResults() > 0) {
       for (Operation *userOp : extractOp->getResult(0).getUsers()) {
         worklist.push_back(userOp);
       }
     } else {
-      return false;
+      return false; 
     }
 
     SmallPtrSet<Operation *, 16> visited;
@@ -612,7 +611,7 @@ struct DuplicateTensorExtractForCube
         } else {
           // the op need eraseLabel only if when the bufferization is from load
           allocOp->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-          for (auto op : tmpOps) {
+          for (auto op: tmpOps) {
             op->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
           }
         }
@@ -653,11 +652,10 @@ struct DuplicateTensorExtractForCube
 
 template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
-  patterns.add<
-      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
-      InsertStoreOpBetweenVectorAndLoad<OpType>,
-      InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
-      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
+               InsertStoreOpBetweenVectorAndLoad<OpType>,
+               InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
+               InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
       patterns.getContext());
 }
 
@@ -671,18 +669,17 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
+  registerOne<tensor::InsertSliceOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
-  patterns
-      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::MmadL1Op>>(
-          patterns.getContext());
-  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
-                                                     hivm::MmadL1Op>>(
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::MmadL1Op>>(
       patterns.getContext());
-  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
-                                                     hivm::MmadL1Op>>(
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp, hivm::MmadL1Op>>(
+          patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp, hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<tensor::ExtractOp>>(
       patterns.getContext());
