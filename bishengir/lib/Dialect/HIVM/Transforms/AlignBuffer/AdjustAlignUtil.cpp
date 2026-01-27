@@ -313,25 +313,20 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   auto haveDstStrides =
       getStridesAndOffset(flattenDstMemRef, flattenDstStrides, flattenDstOffset)
           .succeeded();
-  if (haveDstStrides && (flattenDstStrides[0] == 1) &&
+
+  bool isOptimizedReduce =
+      haveDstStrides && (flattenDstStrides[0] == 1) &&
       static_cast<unsigned int>(lastReduceDimSize) *
               elemType.getIntOrFloatBitWidth() / 8 <=
           util::BL &&
       isa<FloatType>(elemType) && llvm::isPowerOf2_64(lastReduceDimSize) &&
-      reduceOp.getArith().getReduceOp() == hivm::ReduceOperation::sum) {
-    // no need to storage align for rank - 2 axis when dim size of last
-    // reduce axis is less than block size and power of 2 for float reduce sum
-    return std::nullopt;
-  }
-
-  const auto &inits = reduceOp.getDpsInits();
-  bool isInitOper =
-      std::find(inits.begin(), inits.end(), operand) != inits.end();
-  // TODO: check if init is last two dimension contiguous and decide if do
-  // stride alignment after library support init uncontiguous
-  if (!isInitOper) {
+      reduceOp.getArith().getReduceOp() == hivm::ReduceOperation::sum;
+  if (!isOptimizedReduce) {
     return alignDim;
   }
+
+  // TODO: check if init is last two dimension contiguous and decide if do
+  // stride alignment after library support init uncontiguous
 
   // adjust to find previous uncontiguous dimension to do alignment
   auto operTypes = reduceOp.getHIVMOperandTypes(/*includeExtraBuffer=*/false);
@@ -339,6 +334,8 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   auto flattenedAssociations = flattenResult->reassociation[0];
   auto adjustAlignDim = getPrevUncontiguousDim(
       flattenAlignDim.value(), flattenedAssociations, memrefTypes);
+  // no need to storage align for rank - 2 axis when dim size of last
+  // reduce axis is less than block size and power of 2 for float reduce sum
   if (isNoNeedAlign(operand, adjustAlignDim)) {
     return std::nullopt;
   }
