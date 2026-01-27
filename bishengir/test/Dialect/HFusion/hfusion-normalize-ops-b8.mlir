@@ -232,6 +232,19 @@ module {
 
 // -----
 
+// CHECK-LABEL: @test_reduce_max_with_index_unsigned
+// CHECK: hfusion.reduce_with_index {already_denaned, tie_break_left = true} <max> ins(%[[input0:.*]], %[[input1:.*]] : tensor<4x64xf16>, tensor<4x64xi32>) outs(%[[init0:.*]], %[[init1:.*]] : tensor<4xf16>, tensor<4xi32>) dimensions = [1] -> tensor<4xf16>, tensor<4xi32>
+module {
+  func.func @test_reduce_max_with_index_unsigned(%arg0: tensor<4x64xi8>, %arg1: tensor<4x64xi32>) -> (tensor<4xi8>, tensor<4xi32>) {
+    %0 = tensor.empty() : tensor<4xi8>
+    %1 = tensor.empty() : tensor<4xi32>
+    %2:2 = hfusion.reduce_with_index {tie_break_left = true} <maxui> ins(%arg0, %arg1 : tensor<4x64xi8>, tensor<4x64xi32>) outs(%0, %1 : tensor<4xi8>, tensor<4xi32>) dimensions = [1] -> tensor<4xi8>, tensor<4xi32>
+    return %2#0, %2#1 : tensor<4xi8>, tensor<4xi32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_gather_b8
 // CHECK: hfusion.gather {operandSegmentSizes = array<i32: 2, 1>} ins(%[[INPUT0:.*]], %arg1 : tensor<4x64xf16>, tensor<4x32xi32>) outs(%[[OUTPUT0:.*]] : tensor<4x32xf16>) axis = 1 -> tensor<4x32xf16>
 module {

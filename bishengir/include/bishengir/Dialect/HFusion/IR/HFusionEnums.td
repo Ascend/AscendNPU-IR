@@ -236,7 +236,9 @@ def HFusion_OutputModeEnum :
 
 def ReduceWithIndexKind : I32EnumAttr<"ReduceWithIndexKind", "", [
   I32EnumAttrCase<"MIN", 0, "min">,
-  I32EnumAttrCase<"MAX", 1, "max">
+  I32EnumAttrCase<"MAX", 1, "max">,
+  I32EnumAttrCase<"MINUI", 2, "minui">,
+  I32EnumAttrCase<"MAXUI", 3, "maxui">
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

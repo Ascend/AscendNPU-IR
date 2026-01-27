@@ -391,11 +391,18 @@ struct LinalgToHFusionReduceWithIndex
       return failure();
     }
 
+    bool isUnsigned = checkUnsignedIntInput(op);
     hfusion::ReduceWithIndexKind reduceKind;
     if (linalgReduceAttr == "max_with_index") {
-      reduceKind = hfusion::ReduceWithIndexKind::MAX;
+      if (isUnsigned)
+        reduceKind = hfusion::ReduceWithIndexKind::MAXUI;
+      else
+        reduceKind = hfusion::ReduceWithIndexKind::MAX;
     } else if (linalgReduceAttr == "min_with_index") {
-      reduceKind = hfusion::ReduceWithIndexKind::MIN;
+      if (isUnsigned)
+        reduceKind = hfusion::ReduceWithIndexKind::MINUI;
+      else
+        reduceKind = hfusion::ReduceWithIndexKind::MIN;
     } else {
       return failure();
     }
@@ -422,36 +429,17 @@ struct LinalgToHFusionReduceWithIndex
     auto tieBreakLeftAttr = BoolAttr::get(rewriter.getContext(), tieBreakLeft);
     std::optional<Operation *> isIndexInputUnused =
         utils::getAnnotateOpWithAttr(op.getInputs()[1], "UseIndexInput");
-    bool isUnsigned = checkUnsignedIntInput(op);
     if (isIndexInputUnused.has_value()) {
       inputs = llvm::to_vector(op.getInputs());
     } else {
       inputs.push_back(op.getInputs()[0]);
     }
 
-    auto bitWidth = getElementTypeOrSelf(inputs[0]).getIntOrFloatBitWidth();
-    if (isUnsigned && bitWidth == 8) {
-      Type inputType = rewriter.getF32Type();
-      Type initType = rewriter.getF32Type();
-      if (auto tensorType = dyn_cast<RankedTensorType>(inputs[0].getType()))
-        inputType = RankedTensorType::get(tensorType.getShape(), inputType);
-      if (auto tensorType = dyn_cast<RankedTensorType>(inits[0].getType()))
-        initType = RankedTensorType::get(tensorType.getShape(), initType);
-      inputs[0] = rewriter.create<arith::UIToFPOp>(inputs[0].getLoc(), inputType,
-                                                   inputs[0]);
-      inits[0] = rewriter.create<arith::UIToFPOp>(inits[0].getLoc(), initType,
-                                                  inits[0]);
-    }
     auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
         op.getLoc(), TypeRange{inits[0].getType(), inits[1].getType()},
         /*input*/ inputs, /*outputValue&Index*/ inits,
         reduceKindAttr, tieBreakLeftAttr, op.getDimensionsAttr());
-    SmallVector<Value> newResults(newOp->result_begin(), newOp->result_end());
-    if (isUnsigned && bitWidth == 8) {
-      newResults[0] = rewriter.create<arith::FPToUIOp>(
-          newResults[0].getLoc(), op->getResultTypes()[0], newResults[0]);
-    }
-    rewriter.replaceOp(op, newResults);
+    rewriter.replaceOp(op, newOp);
     return success();
   }
 
