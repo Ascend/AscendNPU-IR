@@ -60,6 +60,10 @@ LogicalResult handleLoadOp(memref::CollapseShapeOp collapseOp,
   SmallVector<Value> newOperands;
   auto loc = loadOp.getLoc();
   for (Value operand : userOp->getOperands()) {
+    if (operand.getDefiningOp() == collapseOp) {
+      newOperands.push_back(collapseOp.getSrc());
+      continue;
+    }
     rewriter.setInsertionPointAfterValue(operand);
     auto shapeRank = utils::getShapeRank(operand);
     // Check in case its scalar elemwise
@@ -76,6 +80,51 @@ LogicalResult handleLoadOp(memref::CollapseShapeOp collapseOp,
     }
   }
   rewriter.modifyOpInPlace(userOp, [&]() { userOp->setOperands(newOperands); });
+  return success();
+}
+
+LogicalResult handleSubViewOp(memref::CollapseShapeOp collapseOp,
+                              PatternRewriter &rewriter, Operation *userOp) {
+  auto subviewOp = cast<memref::SubViewOp>(userOp);
+  auto offsets = subviewOp.getMixedOffsets();
+  auto sizes = subviewOp.getMixedSizes();
+  auto strides = subviewOp.getMixedStrides();
+  SmallVector<OpFoldResult> newOffsets;
+  SmallVector<OpFoldResult> newSizes;
+  SmallVector<OpFoldResult> newStrides;
+  auto srcShape = collapseOp.getSrcType().getShape();
+  auto reassociation = collapseOp.getReassociationIndices();
+  // only handle the [1, d] -> [d] case
+  for (auto [i, indices] : llvm::enumerate(reassociation)) {
+    bool isHandled = false;
+    for (auto idx : indices) {
+      if (srcShape[idx] != 1) {
+        if (isHandled) {
+          // not trivial conversion
+          return failure();
+        }
+        isHandled = true;
+        newOffsets.push_back(offsets[i]);
+        newSizes.push_back(sizes[i]);
+        newStrides.push_back(strides[i]);
+      } else {
+        newOffsets.push_back(rewriter.getIndexAttr(0));
+        newSizes.push_back(rewriter.getIndexAttr(1));
+        newStrides.push_back(rewriter.getIndexAttr(1));
+      }
+    }
+    if (!isHandled) {
+      newOffsets.back() = offsets[i];
+      newSizes.back() = sizes[i];
+      newStrides.back() = strides[i];
+    }
+  }
+  rewriter.setInsertionPoint(subviewOp);
+  auto newSubView = rewriter.create<memref::SubViewOp>(
+      subviewOp.getLoc(), collapseOp.getSrc(), newOffsets, newSizes,
+      newStrides);
+  rewriter.replaceOpWithNewOp<memref::CollapseShapeOp>(subviewOp, newSubView,
+                                                       reassociation);
   return success();
 }
 } // namespace
@@ -96,6 +145,9 @@ PropagateMemrefCollapseDown::matchAndRewrite(memref::CollapseShapeOp collapseOp,
       continue;
     if (isa<hivm::LoadOp>(userOp)) {
       return handleLoadOp(collapseOp, rewriter, userOp);
+    }
+    if (isa<memref::SubViewOp>(userOp)) {
+      return handleSubViewOp(collapseOp, rewriter, userOp);
     }
   }
   return failure();

@@ -59,6 +59,8 @@ void PropagateReshapePass::runOnOperation() {
   patterns.add<PropagateNearEndExpandDown>(context);
   tensor::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
   tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
+  memref::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
+  memref::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
   patterns.add<SwapCollapseExpand>(context);
   patterns.add<PropagateExpandUp>(context, forHIVM);
   patterns.add<PropagateCollapseDown>(context, forHIVM);
