@@ -59,23 +59,21 @@ struct HoistingSyncBlockPattern
   LogicalResult matchAndRewrite(LoopLikeOpInterface op,
                                 PatternRewriter &rewriter) const override {
     // Step 1: Get the list of lock and unlock operation
-    SmallVector<Operation *> lockVec = {};
-    SmallVector<Operation *> unlockVec = {};
-    for (auto &region : op->getRegions())
-      for (auto &op : region.front().getOperations())
-        if (isa<hivm::SyncBlockLockOp>(op))
-          lockVec.push_back(&op);
-        else if (isa<hivm::SyncBlockUnlockOp>(op))
-          unlockVec.push_back(&op);
+    SmallVector<hivm::SyncBlockLockOp> lockVec = {};
+    SmallVector<hivm::SyncBlockUnlockOp> unlockVec = {};
+    for (auto &region : op->getRegions()) {
+      region.walk([&](hivm::SyncBlockLockOp op) { lockVec.push_back(op); });
+      region.walk([&](hivm::SyncBlockUnlockOp op) { unlockVec.push_back(op); });
+    }
     // Step 2: Return if no lock and unlock op is found
     assert(lockVec.size() == unlockVec.size() &&
            "The number of lock and unlock should be the same in one region.");
     if (lockVec.empty())
       return failure();
     // Step 3: Erase all the lock and unlock op and create them outside
-    for(auto* op: lockVec)
+    for (auto op : lockVec)
       rewriter.eraseOp(op);
-    for(auto* op: unlockVec)
+    for (auto op : unlockVec)
       rewriter.eraseOp(op);
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
     OpBuilder::InsertionGuard guard(rewriter);

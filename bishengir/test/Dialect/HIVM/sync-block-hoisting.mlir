@@ -53,3 +53,27 @@ func.func @hoist_sync_in_while_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>
   }
   return
 }
+
+
+// CHECK-LABEL: func.func @hoist_sync_in_for_loop_if_statement(
+// CHECK: hivm.hir.sync_block_lock
+// CHECK: scf.for
+// CHECK: scf.if
+// CHECK: hivm.hir.sync_block_unlock
+func.func @hoist_sync_in_for_loop_if_statement(%arg0: memref<16xi32>, %arg1: memref<16xi32>, %arg2: i1) {
+  %c1_i32 = arith.constant 1 : i32
+  %c8_i32 = arith.constant 8 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %c128_i32 = arith.constant 128 : i32
+  %true = arith.constant 1 : i1
+  scf.for %arg3 = %c0_i32 to %c8_i32 step %c1_i32  : i32 {
+    scf.if %arg2 {
+      %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
+      hivm.hir.sync_block_lock lock_var(%0 : memref<1xi64>)
+      %alloc = memref.alloc() : memref<16xi32>
+      hivm.hir.vadd ins(%arg0, %arg1 : memref<16xi32>, memref<16xi32>) outs(%alloc : memref<16xi32>)
+      hivm.hir.sync_block_unlock lock_var(%0 : memref<1xi64>)
+    }
+  }
+  return
+}
