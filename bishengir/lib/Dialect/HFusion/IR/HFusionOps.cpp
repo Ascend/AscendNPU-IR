@@ -2537,3 +2537,42 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
   return hfusion::castTo(builder, src, targetElemType, rounding, std::nullopt,
                          /*enableOverflow=*/enableOverflow, castIntegerType);
 }
+
+LogicalResult MatMulMxOp::verify() {
+  auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
+  auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());
+  auto scaleATy = mlir::cast<ShapedType>(getScaleA().getType());
+  auto scaleBTy = mlir::cast<ShapedType>(getScaleB().getType());
+  auto resultTy = mlir::cast<ShapedType>(getResult().getType());
+
+  // Input/Output must be ranked tensors
+  if (!inputATy || !inputBTy || !scaleATy || !scaleBTy)
+    return emitOpError() << "requires shaped types for input";
+
+  static constexpr int twoD = 2;
+  if (inputATy.getRank() != twoD || inputBTy.getRank() != twoD)
+    return emitOpError() << "requires both input to have rank 2";
+
+  static constexpr int dim0 = 0;
+  static constexpr int dim1 = 1;
+  if (inputATy.getDimSize(dim1) != inputBTy.getDimSize(dim0))
+    return emitOpError() << "requires inner dimension of matmul matrix to match";
+
+  if (resultTy.getDimSize(dim0) != inputATy.getDimSize(dim0) ||
+      resultTy.getDimSize(dim1) != inputBTy.getDimSize(dim1))
+    return emitOpError() << "requires output shape to match with input shapes";
+
+  // if acc is provided
+  if (getAcc()) {
+    auto accTy = mlir::cast<ShapedType>(getAcc().getType());
+    if (accTy.getRank() != resultTy.getRank())
+      return emitOpError() << "acc and output should have the same shape";
+
+    for (int dim = 0; dim < accTy.getRank(); dim++) {
+      if (accTy.getDimSize(dim) != resultTy.getDimSize(dim))
+        return emitOpError() << "acc and output should have the same shape";
+    }
+  }
+
+  return success();
+}

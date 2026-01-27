@@ -35,6 +35,14 @@ include "bishengir/Dialect/HFusion/IR/HFusionAttrs.td"
 class HFusion_Op<string mnemonic, list<Trait> traits = []> :
     Op<HFusion_Dialect, mnemonic, traits>;
 
+// Shaped type whose element type is from the given `allowedTypes` list,
+// and which additionally satisfies an optional list of predicates.
+class ShapedTypeOf<list<Type> allowedTypes, list<Pred> preds = [],
+                     string summary = "ranked tensor">
+  : ShapedContainerType<
+      allowedTypes, And<!listconcat([IsShapedTypePred], preds)>,
+      summary, "::mlir::ShapedType">;
+
 //===----------------------------------------------------------------------===//
 // HFusion Types
 //===----------------------------------------------------------------------===//
@@ -517,5 +525,61 @@ def HistogramOp : HFusion_Op<"histogram", [
     "type($input) (`,` type($mask)^)? `->` type($output)";
 }
 
+//===----------------------------------------------------------------------===//
+// MatMulMxOp
+//===----------------------------------------------------------------------===//
+def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
+  let summary = "Performs a block-scaled matrix multiplication";
+  let description = [{
+  Performs matrix multiplication in microscaling format where the inputs are implicitly scaled using provided scale factors, which are often used in quantized data types like FP8/FP4. The operation computes C = (A * scale_a) dot (B * scale_b) directly in hardware (Tensor Cores).
+  lhs and rhs use microscaling formats described here: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+  }];
+
+  let arguments = (ins
+    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputA,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
+    ShapedTypeOf<[UI8, I8]>:$scaleA,
+    ShapedTypeOf<[UI8, I8]>:$scaleB,
+    ShapedTypeOf<[AnyFloat]>:$acc
+  );
+
+  let results = (outs
+    ShapedTypeOf<[AnyFloat]>:$result
+  );
+
+  code hfusionMmadBaseDecls = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getAccMutable();
+    }
+  }];
+
+  let extraClassDeclaration = hfusionMmadBaseDecls;
+
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+    $inputA
+    `,` $inputB
+    `,` $scaleA
+    `,` $scaleB
+    `:`
+    type($inputA)
+    `,` type($inputB)
+    `,` type($scaleA)
+    `,` type($scaleB)
+    `)`
+    `outs` `(` $acc `:` type($acc) `)`
+    `->` type($result)
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Value":$inputA,
+                   "Value":$inputB,
+                   "Value":$scaleA,
+                   "Value":$scaleB,
+                   "Value":$acc)>
+  ];
+}
 
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD
