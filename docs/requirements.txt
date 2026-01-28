@@ -1,0 +1,7 @@
+furo
+myst-parser
+pydata-sphinx-theme
+shibuya
+Sphinx
+sphinx-rtd-theme
+nvidia-sphinx-theme

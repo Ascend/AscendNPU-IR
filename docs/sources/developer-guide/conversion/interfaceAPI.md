@@ -1,0 +1,112 @@
+# IR接入简介
+
+AscendNPU IR开源开放多级抽象接口：
+
+- 提供一系列高层抽象接口，屏蔽底层细节，将硬件无关表达映射到底层指令，提升算子开发易用性
+- 提供细粒度性能控制接口，能够精准控制片上内存地址、流水同步插入位置以及是否使能乒乓流水优化等
+- 基于多级接口支持自定义DSL/生态框架灵活对接，实现自定义算子在昇腾 NPU 上的高性能运行。
+
+## Triton 接入 AscendNPU IR
+
+- Triton 是目前最主流的高性能算子开发编程语言，可以通过Triton Ascend来将现有的Triton算子转换成MLIR，从而接入AscendNPU IR生态
+
+```
+@triton.jit
+def add_kernel(x_ptr,  # *Pointer* to first input vector.
+               y_ptr,  # *Pointer* to second input vector.
+               output_ptr,  # *Pointer* to output vector.
+               n_elements,  # Size of the vector.
+               BLOCK_SIZE: tl.constexpr,  # Number of elements each program should process.
+               ):
+    pid = tl.program_id(axis=0)  # We use a 1D launch grid so axis is 0.
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    y = tl.load(y_ptr + offsets, mask=mask)
+    output = x + y
+    tl.store(output_ptr + offsets, output, mask=mask)
+
+def add(x: torch.Tensor, y: torch.Tensor):
+    output = torch.empty_like(x)
+    n_elements = output.numel()
+    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+    add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
+    return output
+```
+
+- Triton Ascend生成的MLIR
+```
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @add_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1024 = arith.constant 1024 : index
+    %c1024_i32 = arith.constant 1024 : i32
+    %0 = arith.muli %arg9, %c1024_i32 : i32
+    %1 = arith.index_cast %0 : i32 to index
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%1], sizes: [1024], strides: [1] : memref<?xf32> to memref<1024xf32, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<1024xf32>
+    %2 = arith.addi %1, %c1024 : index
+    %3 = arith.index_cast %arg5 : i32 to index
+    %4 = arith.maxsi %1, %3 : index
+    %5 = arith.minsi %2, %4 : index
+    %6 = arith.subi %5, %1 : index
+    %7 = arith.cmpi slt, %6, %c1024 : index
+    scf.if %7 {
+      linalg.fill ins(%cst : f32) outs(%alloc : memref<1024xf32>)
+    }
+    %subview = memref.subview %reinterpret_cast[0] [%6] [1] : memref<1024xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    %subview_0 = memref.subview %alloc[0] [%6] [1] : memref<1024xf32> to memref<?xf32, strided<[1]>>
+    memref.copy %subview, %subview_0 : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1]>>
+    %8 = bufferization.to_tensor %alloc restrict writable : memref<1024xf32>
+    %reinterpret_cast_1 = memref.reinterpret_cast %arg3 to offset: [%1], sizes: [1024], strides: [1] : memref<?xf32> to memref<1024xf32, strided<[1], offset: ?>>
+    %alloc_2 = memref.alloc() : memref<1024xf32>
+    scf.if %7 {
+      linalg.fill ins(%cst : f32) outs(%alloc_2 : memref<1024xf32>)
+    }
+    %subview_3 = memref.subview %reinterpret_cast_1[0] [%6] [1] : memref<1024xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    %subview_4 = memref.subview %alloc_2[0] [%6] [1] : memref<1024xf32> to memref<?xf32, strided<[1]>>
+    memref.copy %subview_3, %subview_4 : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1]>>
+    %9 = bufferization.to_tensor %alloc_2 restrict writable : memref<1024xf32>
+    %10 = arith.addf %8, %9 : tensor<1024xf32>
+    %reinterpret_cast_5 = memref.reinterpret_cast %arg4 to offset: [%1], sizes: [1024], strides: [1] : memref<?xf32> to memref<1024xf32, strided<[1], offset: ?>>
+    %extracted_slice = tensor.extract_slice %10[0] [%6] [1] : tensor<1024xf32> to tensor<?xf32>
+    %subview_6 = memref.subview %reinterpret_cast_5[0] [%6] [1] : memref<1024xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    bufferization.materialize_in_destination %extracted_slice in writable %subview_6 : (tensor<?xf32>, memref<?xf32, strided<[1], offset: ?>>) -> ()
+    return
+  }
+}
+```
+
+## 框架接入 AscendNPU IR 生态
+
+AscendNPU IR支持框架（Pytorch/Tensorflow/Mindspore）直接通过IR接入，并支持自动算子融合和切分，从而生成昇腾亲和的高性能算子。
+
+### MLIR用例
+
+```
+func.func @test_reduce(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
+attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %1 = tensor.empty() : tensor<40960x1024xf32>
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg1, %arg2 : tensor<40960x1024xf32>, tensor<40960x1024xf32>) outs(%arg3: tensor<40960x1024xf32>) -> tensor<40960x1024xf32>
+  %4 = tensor.empty() : tensor<40960xf32>
+  %sum = linalg.reduce {arith.addf} ins(%3 : tensor<40960x1024xf32>) 
+                                    outs(%4 : tensor<40960xf32>) dimensions = [1]
+  %5 = tensor.empty() : tensor<40960xf32>
+  %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %sum : tensor<40960xf32>, tensor<40960xf32>) 
+                                                                  outs(%5: tensor<40960xf32>) -> tensor<40960xf32>
+  return %6 : tensor<40960xf32>
+}
+```
+
+### 使能自动融合
+- 需要添加`hacc.entry`表示当前函数是kernel的入口
+- 需要添加`hacc.function_kind = #hacc.function_kind<DEVICE>` 表示当前函数运行在DEVICE设备侧
+- 支持Op范围
+  - Elemwise
+  - Broadcast
+  - Reduce
+  - Transpose
+  - Concat
+
+---
