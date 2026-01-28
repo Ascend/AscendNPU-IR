@@ -4154,6 +4154,13 @@ public:
     auto inputs = op.getDpsInputs();
     auto outs = op.getDpsInits();
     assert(!outs.empty() && isa<ShapedType>(outs[0].getType()));
+    assert(inputs.size() == 2);
+
+    // XOR with all ones values can be optimized as NOT operation
+    LogicalResult res = simplifyVxorToVnot(rewriter, op);
+    if (llvm::succeeded(res)) {
+      return success();
+    }
 
     // x|y
     auto emptyVorOp = utils::createEmptyOp(rewriter, op->getLoc(), outs[0]);

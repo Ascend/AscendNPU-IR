@@ -145,6 +145,51 @@ Operation *hfusion::createVandOp(PatternRewriter &rewriter, Location loc,
       ValueRange{andEmptyOp});
 }
 
+bool isConstantAllOne(Value v) {
+  auto type = getElementTypeOrSelf(v);
+  if (isa<FloatType>(type)) {
+    return false;
+  }
+
+  APInt value;
+  if (matchPattern(v, m_ConstantInt(&value))) {
+    // match true for i1 type, match -1 for i8/i16/i32/i64 type
+    return value.isAllOnes() ? true : false;
+  }
+
+  auto defineOp = v.getDefiningOp();
+  if (!defineOp) {
+    return false;
+  }
+
+  auto resIndx = cast<OpResult>(v).getResultNumber();
+  if (auto fillOp = dyn_cast<linalg::FillOp>(defineOp)) {
+    return isConstantAllOne(fillOp.getOperand(resIndx));
+  }
+
+  if (auto castOp = dyn_cast<hfusion::CastOp>(defineOp)) {
+    return isConstantAllOne(castOp.getOperand(resIndx));
+  }
+
+  return false;
+}
+
+LogicalResult hfusion::simplifyVxorToVnot(PatternRewriter &rewriter,
+                                          hfusion::ElemwiseBinaryOp op) {
+  if (isConstantAllOne(op.getOperand(1))) {
+    // XOR with all ones values can be optimized as NOT operation
+    auto vnotOp = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn, hfusion::UnaryFnAttr> (
+      rewriter, op.getLoc(), hfusion::UnaryFn::vnot,
+      ValueRange(op.getOperand(0)), ValueRange(op.getOperand(0))
+    );
+
+    rewriter.replaceOp(op, vnotOp);
+    return success();
+  }
+
+  return failure();
+}
+
 void tiling::getCallerInfo(func::FuncOp callee, ModuleOp enclosingModule,
                            DenseMap<func::FuncOp, CallerInfo> &info) {
   std::optional<SymbolTable::UseRange> maybeUses =

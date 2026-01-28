@@ -48,6 +48,10 @@ Operation *createCmpOp(PatternRewriter &rewriter, Location loc, Value lhs,
 
 Operation *createVandOp(PatternRewriter &rewriter, Location loc, Value lhs,
                         Value rhs);
+
+/// simplify 'x vxor 0xFF...' to 'vnot(x)'
+LogicalResult simplifyVxorToVnot(PatternRewriter &rewriter,
+                                 hfusion::ElemwiseBinaryOp op);
 /// Tiling related utilities
 namespace tiling {
 
