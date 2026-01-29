@@ -138,8 +138,8 @@ func.func @test_brc_last() {
 
 // -----
 
-// CHECK-LABEL: func @test_reduce_last_not_align
-func.func @test_reduce_last_not_align() {
+// CHECK-LABEL: func @test_reduce_last
+func.func @test_reduce_last() {
   %src0 = memref.alloc() : memref<32x4xf32, #hivm.address_space<ub>>
   %dst = memref.alloc() : memref<32x1xf32, #hivm.address_space<ub>>
 
@@ -149,16 +149,8 @@ func.func @test_reduce_last_not_align() {
   hivm.hir.vreduce <sum> ins(%src0 : memref<32x4xf32, #hivm.address_space<ub>>)
     outs(%dst : memref<32x1xf32, #hivm.address_space<ub>>)
     reduce_dims = [1]
-  return
-}
 
-// -----
-
-// CHECK-LABEL: func @test_reduce_last_align
-func.func @test_reduce_last_align() {
-  %dst = memref.alloc() : memref<32x1xf32, #hivm.address_space<ub>>
   %src1 = memref.alloc() : memref<32x5xf32, #hivm.address_space<ub>>
-  
   // CHECK: %[[SRC1:.*]] = memref.alloc() : memref<32x5xf32, #hivm.address_space<ub>>
   // CHECK: annotation.mark %[[SRC1]]
   hivm.hir.vreduce <sum> ins(%src1 : memref<32x5xf32, #hivm.address_space<ub>>)
