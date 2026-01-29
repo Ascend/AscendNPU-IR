@@ -242,9 +242,11 @@ refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
   const int numPerRepeat = getNumPerRepeat(eleType);
 
   int64_t rDim = srcType.getShape()[reductionDim];
-  int64_t aDim = srcType.getShape()[0];
+  int64_t aDim;
   if (reductionDim == 0) {
     aDim = 1;
+  } else {
+    aDim = srcType.getShape()[reductionDim - 1];
   }
   int64_t extraBufferSize = 0;
   if (eleType.isInteger() || arithOp == hivm::ReduceOperation::prod ||
