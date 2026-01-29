@@ -471,14 +471,44 @@ func.func @test_redundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tenso
   return %t1: tensor<128x1xf32>
 }
 
+// CHECK-LABEL: func.func @test_unredundant_reduce_sum_init	 
+// CHECK-NOT: tensor.empty	 
+func.func @test_unredundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tensor<128x128xf32>) -> tensor<128x1xf32> {	 
+  %cst_0 = arith.constant 1.000000e+00 : f32	 
+  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg0: tensor<128x1xf32>) -> tensor<128x1xf32>	 
+  %t1 = hivm.hir.vreduce <max> ins(%arg1: tensor<128x128xf32>)	 
+                        outs(%t0: tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>	 
+  return %t1: tensor<128x1xf32>
+}
+
 // -----
 
-// CHECK-LABEL: func.func @test_unredundant_reduce_sum_init
-// CHECK-NOT: tensor.empty
-func.func @test_unredundant_reduce_sum_init(%arg0: tensor<128x1xf32>, %arg1: tensor<128x128xf32>) -> tensor<128x1xf32> {
-  %cst_0 = arith.constant 1.000000e+00 : f32
-  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg0: tensor<128x1xf32>) -> tensor<128x1xf32>
-  %t1 = hivm.hir.vreduce <max> ins(%arg1: tensor<128x128xf32>)
-                         outs(%t0: tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
-  return %t1: tensor<128x1xf32>
+// CHECK-LABEL: func.func @test_redundant_init_for_reduce_with_index_init
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK: hivm.hir.vreduce
+func.func @test_redundant_init_for_reduce_with_index_init(%arg0: tensor<128x3xf32>, %arg1: tensor<128x1xf32>, %arg2: tensor<128x1xi32>) -> tensor<128x1xf32> {
+  %cst_0 = arith.constant 0xFF800000 : f32
+  %cst_1 = arith.constant 2147483647 : i32
+  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg1: tensor<128x1xf32>) -> tensor<128x1xf32>
+  %t1 = hivm.hir.vbrc ins(%cst_1: i32) outs(%arg2: tensor<128x1xi32>) -> tensor<128x1xi32>
+  %0:2 = hivm.hir.vreduce <max_with_index_left> ins(%arg0 : tensor<128x3xf32>)
+                                           outs(%t0, %t1 : tensor<128x1xf32>, tensor<128x1xi32>)
+                                           reduce_dims = [1] -> tensor<128x1xf32>, tensor<128x1xi32>
+  return %0#0 : tensor<128x1xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_redundant_init_and_reduce_with_index
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vreduce
+func.func @test_redundant_init_and_reduce_with_index(%arg0: tensor<128x1xf32>, %arg1: tensor<128x1xf32>, %arg2: tensor<128x1xi32>) -> tensor<128x1xf32> {
+  %cst_0 = arith.constant 0x7F800000 : f32
+  %cst_1 = arith.constant -1 : i32
+  %t0 = hivm.hir.vbrc ins(%cst_0: f32) outs(%arg1: tensor<128x1xf32>) -> tensor<128x1xf32>
+  %t1 = hivm.hir.vbrc ins(%cst_1: i32) outs(%arg2: tensor<128x1xi32>) -> tensor<128x1xi32>
+  %0:2 = hivm.hir.vreduce <min_with_index_right> ins(%arg0 : tensor<128x1xf32>)
+                                           outs(%t0, %t1 : tensor<128x1xf32>, tensor<128x1xi32>)
+                                           reduce_dims = [1] -> tensor<128x1xf32>, tensor<128x1xi32>
+  return %0#0 : tensor<128x1xf32>
 }
