@@ -61,14 +61,14 @@ bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   return true;
 }
 
-// TODO, enhance the analysis for vsel, we can reuse memory of source instead of condition
-bool isReusableSelOp(hivm::VSelOp &selOp) {
+bool isReusableVSelOp(hivm::VSelOp &selOp, const Value &genBuffer,
+                      const Value &killBuffer) {
   auto condType = getElementTypeOrSelf(selOp.getSrc()[0].getType());
   auto srcType = getElementTypeOrSelf(selOp.getSrc()[1].getType());
-  if (srcType.isInteger(64) &&
-      condType.isInteger(1))
-    return false;
-
+  if (srcType.isInteger(64) && condType.isInteger(1)) {
+    Value condOperand = utils::tracebackMemRef(selOp.getSrc()[0]);
+    return killBuffer != condOperand;
+  }
   return true;
 }
 
@@ -869,7 +869,7 @@ bool MemPlan::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
     return true;
 
   if (auto selOp = dyn_cast_if_present<hivm::VSelOp>(op)) {
-    return isReusableSelOp(selOp);
+    return isReusableVSelOp(selOp, genBuffer, killBuffer);
   }
 
   return isReusableOperands(op, hivmOp);
