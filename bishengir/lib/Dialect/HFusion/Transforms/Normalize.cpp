@@ -980,7 +980,7 @@ public:
   /// =>
   /// handleZeroModulusRes = (y == 0) ? -1 : res;
   Value handleZeroModulus(PatternRewriter &rewriter, Location loc, Value yF32,
-                          Value result) const {
+                          Value result, float replaceValue) const {
     auto yType = yF32.getType();
     Value tensorY = yF32;
 
@@ -999,18 +999,8 @@ public:
         createCmpOp(rewriter, loc, tensorY, constZero, CompareFn::veq)
             ->getResult(0);
 
-    Value negOneValue;
-    if (isa<ShapedType>(result.getType())) {
-      auto emptyNegOne = utils::createEmptyOp(rewriter, loc, result);
-      auto constNegOneScalar =
-          utils::createConstantOp<float>(rewriter, loc, elemType, -1);
-      negOneValue =
-          rewriter.create<linalg::FillOp>(loc, constNegOneScalar, emptyNegOne)
-              .getResult(0);
-    } else {
-      negOneValue =
-          utils::createConstantOp<float>(rewriter, loc, elemType, -1);
-    }
+    Value negOneValue =
+          utils::createConstantOp<float>(rewriter, loc, elemType, replaceValue);
 
     auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
     return rewriter
@@ -1055,7 +1045,7 @@ public:
       clonedMod->setAttr(normalizeModAlreadyHandle, rewriter.getBoolAttr(true));
 
       Value modWithZeroHandled =
-          handleZeroModulus(rewriter, loc, yOrig, normalModResult);
+          handleZeroModulus(rewriter, loc, yOrig, normalModResult, -1);
 
       op->setAttr(normalizeModAlreadyHandle, rewriter.getBoolAttr(true));
       rewriter.replaceOp(op, modWithZeroHandled);
@@ -1122,8 +1112,9 @@ public:
                    ->getResults()[0];
 
     if (elemType.isInteger()) {
+      float replaceValue = fun == hfusion::BinaryFn::mod ? -1 : 255;
       auto resWithZeroModulus =
-          handleZeroModulus(rewriter, loc, yF32, res);
+          handleZeroModulus(rewriter, loc, yF32, res, replaceValue);
       Value tmpModRes = resWithZeroModulus;
       if (elemType.isInteger(8)) {
         tmpModRes = hfusion::castTo(rewriter, resWithZeroModulus,
