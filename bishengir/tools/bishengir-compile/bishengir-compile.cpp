@@ -48,10 +48,8 @@ void registerAndParseCLIOptions(int argc, char **argv) {
   mlir::registerAsmPrinterCLOptions();
   bishengir::BiShengIRCompileMainConfig::registerCLOptions();
   bishengir::registerPassManagerCLOptions();
-#if BISHENGIR_ENABLE_PM_CL_OPTIONS
   // Enable full pass management abilities.
   mlir::registerPassManagerCLOptions();
-#endif
 
   // Register version printer
   llvm::cl::SetVersionPrinter(printVersion);
