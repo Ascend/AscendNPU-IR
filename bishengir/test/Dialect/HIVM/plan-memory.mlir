@@ -1964,3 +1964,74 @@ module {
       return
   }
 }
+
+// -----
+
+module {
+  func.func @test_vsel_i64_reuse(%arg0: memref<16xi64, #hivm.address_space<gm>>,
+                                   %arg1: memref<16xi64, #hivm.address_space<gm>>,
+                                   %arg2: memref<16xi64, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST2:.*]] = arith.constant 256 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 128 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0_i64 = arith.constant 0 : i64
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc = memref.alloc() : memref<16xi64, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<16xi64, #hivm.address_space<gm>>) outs(%alloc : memref<16xi64, #hivm.address_space<ub>>)
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST1]])
+    %alloc_1 = memref.alloc() : memref<16xi64, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xi64, #hivm.address_space<gm>>) outs(%alloc_1 : memref<16xi64, #hivm.address_space<ub>>)
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST2]])
+    %alloc_2 = memref.alloc() : memref<16xi1, #hivm.address_space<ub>>
+    hivm.hir.vcmp ins(%alloc, %c0_i64 : memref<16xi64, #hivm.address_space<ub>>, i64) outs(%alloc_2 : memref<16xi1, #hivm.address_space<ub>>)
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc_3 = memref.alloc() : memref<16xi64, #hivm.address_space<ub>>
+    hivm.hir.vsel ins(%alloc_2, %alloc, %alloc_1 : memref<16xi1, #hivm.address_space<ub>>, memref<16xi64, #hivm.address_space<ub>>, memref<16xi64, #hivm.address_space<ub>>) outs(%alloc_3 : memref<16xi64, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%alloc_3 : memref<16xi64, #hivm.address_space<ub>>) outs(%arg2 : memref<16xi64, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @test_vsel_i64_no_reuse(%arg0: memref<16xi64, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST1:.*]] = arith.constant 256 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c2_i64 = arith.constant 2 : i64
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc = memref.alloc() : memref<2048xi1, #hivm.address_space<ub>>
+    linalg.fill ins(%c1_i64: i64) outs(%alloc : memref<2048xi1, #hivm.address_space<ub>>)
+    %subview = memref.subview %alloc[0] [16] [1] : memref<2048xi1, #hivm.address_space<ub>> to memref<16xi1, #hivm.address_space<ub>>
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST1]])
+    %alloc_1 = memref.alloc() : memref<16xi64, #hivm.address_space<ub>>
+    hivm.hir.vsel ins(%subview, %c1_i64, %c2_i64 : memref<16xi1, #hivm.address_space<ub>>, i64, i64) outs(%alloc_1 : memref<16xi64, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%alloc_1 : memref<16xi64, #hivm.address_space<ub>>) outs(%arg0 : memref<16xi64, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @test_vsel_i32_reuse_cond(%arg0: memref<16xi32, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c2_i32 = arith.constant 2 : i32
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc = memref.alloc() : memref<2048xi1, #hivm.address_space<ub>>
+    linalg.fill ins(%c1_i32: i32) outs(%alloc : memref<2048xi1, #hivm.address_space<ub>>)
+    %subview = memref.subview %alloc[0] [16] [1] : memref<2048xi1, #hivm.address_space<ub>> to memref<16xi1, #hivm.address_space<ub>>
+    // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc_1 = memref.alloc() : memref<16xi32, #hivm.address_space<ub>>
+    hivm.hir.vsel ins(%subview, %c1_i32, %c2_i32 : memref<16xi1, #hivm.address_space<ub>>, i32, i32) outs(%alloc_1 : memref<16xi32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%alloc_1 : memref<16xi32, #hivm.address_space<ub>>) outs(%arg0 : memref<16xi32, #hivm.address_space<gm>>)
+    return
+  }
+}
