@@ -206,7 +206,7 @@ func.func @test_normalize_i8_reduce_with_index(%arg0: tensor<32x16x8xi8>) -> (te
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins({{.*}}, {{.*}} : tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins({{.*}}, {{.*}} : tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins({{.*}}, {{.*}} : tensor<64xf32>, f32) outs({{.*}} : tensor<64xi1>) -> tensor<64xi1>
-// CHECK: hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<64xi1>, tensor<64xf32>, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
+// CHECK: hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<64xi1>, f32, tensor<64xf32>) outs({{.*}} : tensor<64xf32>) -> tensor<64xf32>
 // CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<64xf32>) outs({{.*}} : tensor<64xf16>) -> tensor<64xf16>
 // CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<64xf16>) outs({{.*}} : tensor<64xi8>) -> tensor<64xi8>
 func.func @test_normalize_i8_elemwise_mod(%arg0: tensor<64xi8>, %arg1: tensor<64xi8>) -> tensor<64xi8> {
