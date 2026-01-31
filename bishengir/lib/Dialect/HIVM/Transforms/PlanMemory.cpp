@@ -526,15 +526,25 @@ void MemLivenessAnalysis::UpdateOpTempGenInfo(OpInfo *opInfo) {
 }
 
 void MemLivenessAnalysis::UpdateBuffer2AliasVec(
-    const SetVector<Value> &buffers, const SetVector<Value> &aliasBuffers,
-    bool hasCond) {
-  for (auto buffer : buffers) {
-    for (auto aliasValue : aliasBuffers) {
-      auto bufferCondPair = FindBufferCondPair(buffer, aliasValue);
-      if (bufferCondPair) {
-        (*bufferCondPair)->second = (*bufferCondPair)->second || hasCond;
+    Value buffer, Value aliasBuffer,
+    const SetVector<Value> &aliasBuffersOfBuffer,
+    const SetVector<Value> &aliasBuffersOfAliasBuffer, bool hasCond) {
+  for (auto aliasBufferOfBuffer : aliasBuffersOfBuffer) {
+    auto bufferCondPair = FindBufferCondPair(buffer, aliasBufferOfBuffer);
+    auto bufferHasCond = bufferCondPair ? (*bufferCondPair)->second : false;
+    for (auto aliasBufferOfAliasBuffer : aliasBuffersOfAliasBuffer) {
+      auto aliasBufferCondPair =
+          FindBufferCondPair(aliasBuffer, aliasBufferOfAliasBuffer);
+      auto aliasBufferHasCond =
+          aliasBufferCondPair ? (*aliasBufferCondPair)->second : false;
+      bool resultCond = hasCond || bufferHasCond || aliasBufferHasCond;
+      auto newBufferPair =
+          FindBufferCondPair(aliasBufferOfBuffer, aliasBufferOfAliasBuffer);
+      if (newBufferPair) {
+        (*newBufferPair)->second = (*newBufferPair)->second || resultCond;
       } else {
-        buffer2AliasVec[buffer].push_back(std::make_pair(aliasValue, hasCond));
+        buffer2AliasVec[aliasBufferOfBuffer].push_back(
+            std::make_pair(aliasBufferOfAliasBuffer, resultCond));
       }
     }
   }
@@ -551,11 +561,11 @@ void MemLivenessAnalysis::UpdateBufferAlias(Value buffer, Value aliasBuffer,
   // update alias map info for each buffer
   // e.g. if A alias B, C alias D, now update:
   // A alias B,C,D; B alias A,C,D; and update C,D's condition
-  UpdateBuffer2AliasVec(buffers, aliasBuffers, hasCond);
+  UpdateBuffer2AliasVec(buffer, aliasBuffer, buffers, aliasBuffers, hasCond);
 
   // e.g. if A alias B, C alias D, now update:
   // C alias A,B,D; D alias A,B,C; and update A,B's condition
-  UpdateBuffer2AliasVec(aliasBuffers, buffers, hasCond);
+  UpdateBuffer2AliasVec(aliasBuffer, buffer, aliasBuffers, buffers, hasCond);
 
   // AllocOp is DEFFINED, not AllocOp is UNDEFFINED.
   // The buffer of UNDEFFINED is only used as an alias buffer to
