@@ -255,6 +255,77 @@ public:
   }
 };
 
+static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
+                                  SmallVector<OpFoldResult, 4> mixedOffsets,
+                                  SmallVector<OpFoldResult, 4> mixedSize,
+                                  SmallVector<OpFoldResult, 4> mixedStrides,
+                                  SmallVector<int64_t, 4> newShape) {
+  auto rankType = cast<RankedTensorType>(debugOp.getArg().getType());
+  auto loc = debugOp->getLoc();
+
+  auto newType =
+      mlir::RankedTensorType::get(newShape, rankType.getElementType());
+  auto slicedDebug = rewriter.create<tensor::ExtractSliceOp>(
+      loc, newType, debugOp->getOperand(0), mixedOffsets, mixedSize,
+      mixedStrides);
+  markCreatedExtractSliceOp(rewriter, slicedDebug);
+  rewriter.modifyOpInPlace(debugOp, [&]() {
+    debugOp->setOperand(0, slicedDebug);
+    debugOp->setAttr(tiledOp, UnitAttr::get(debugOp->getContext()));
+  });
+}
+
+/// try to tile debug ops and bind sub block mapping
+class TileAndSliceDebugOp : public OpRewritePattern<hivm::DebugOp> {
+public:
+  hivm::detail::DimensionAnalyzer &analyzer;
+
+  explicit TileAndSliceDebugOp(MLIRContext *context,
+                               hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<hivm::DebugOp>(context, /*benefit=*/1),
+        analyzer(analyzer) {}
+  LogicalResult matchAndRewrite(hivm::DebugOp debugOp,
+                                PatternRewriter &rewriter) const override {
+    if (debugOp->hasAttrOfType<UnitAttr>(tiledOp))
+      return failure();
+    int64_t tilingDim = analyzer.getTilingDim(debugOp.getArg());
+    auto maybeContainingLoop = findContainingSubblockLoop(debugOp);
+    if (tilingDim == -1 || failed(maybeContainingLoop))
+      return failure();
+
+    auto containingLoop = maybeContainingLoop.value();
+    auto loc = debugOp.getLoc();
+    auto maybeSingleTileSize = getSingleTileSize(
+        rewriter, loc, debugOp.getArg(), tilingDim, containingLoop);
+    if (failed(maybeSingleTileSize))
+      return failure();
+    rewriter.setInsertionPointToStart(containingLoop.getBody());
+    auto offsetAtTileDim = calculateOffsetAtTilingDim(
+        rewriter, loc, containingLoop, maybeSingleTileSize.value());
+
+    rewriter.setInsertionPoint(debugOp);
+
+    SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
+    SmallVector<int64_t, 4> newShape;
+    auto rankType = cast<ShapedType>(debugOp.getArg().getType());
+    assert(!ShapedType::isDynamicShape(rankType.getShape()));
+    if (failed(findCorrespondingSizesOffsetsStrides(
+            rewriter, rankType, tilingDim, offsetAtTileDim,
+            maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
+            newShape)))
+      return failure();
+
+    modifyDebugOpToSliced(rewriter, debugOp, mixedOffsets, mixedSize,
+                          mixedStrides, newShape);
+
+    // Maybe we need to maintain this map when doing bubble up.
+    DenseMap<Operation *, Operation *> map;
+    map[debugOp] = debugOp;
+    setBufferSizeInLoopOp(rewriter, loc, containingLoop, map);
+
+    return success();
+  }
+};
 /// add if (sublock_id == 0) guard for each store op.
 /// e.g.
 /// case 1: store op without results
@@ -407,7 +478,8 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   }
 
   RewritePatternSet patterns(func->getContext());
-  patterns.add<TileAndSliceStore>(func->getContext(), analyzer);
+  patterns.add<TileAndSliceStore, TileAndSliceDebugOp>(func->getContext(),
+                                                       analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
@@ -496,7 +568,6 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     failAndRevert(newFunc);
     return failure();
   }
-
   PassManager pm(newFunc->getContext());
   populateBindSubBlockBubbleUpPassManager(pm);
 
