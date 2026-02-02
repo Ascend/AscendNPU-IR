@@ -9,3 +9,6 @@ Dialects
    HACCDialect.md
    ScopeDialect.md
    AnnotationDialect.md
+   SymbolDialect.md
+   MatExtDialect.md
+   MemRefExtDialect.md

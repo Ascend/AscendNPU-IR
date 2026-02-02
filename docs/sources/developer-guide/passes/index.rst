@@ -9,3 +9,4 @@ Passes
    HACCPasses.md
    ScopePasses.md
    AnnotationPasses.md
+   SymbolPasses.md
