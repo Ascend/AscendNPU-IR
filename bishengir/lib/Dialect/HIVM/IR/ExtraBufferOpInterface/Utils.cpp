@@ -326,18 +326,24 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       return numElemPerBlock;
     }
     if (srcType.hasStaticShape()) {
-      // RA, static shape
-      // use r * sizeof(Index) aligned to ub_block_unit + 1 extra ub_block_unit
-      int64_t reductionDimLength = srcType.getShape()[reductionDim];
-      // TODO: library only supports 32 bit index; add verifier for
-      // ReduceWithIndexOp to check this
-      ShapedType indexType =
-          cast<ShapedType>(vReduceOp.getDpsInits()[1].getType());
-      int64_t indexBitWidth = indexType.getElementTypeBitWidth();
-      int64_t totalBitLength =
-          ceilFactor(reductionDimLength * indexBitWidth, vectorBlockSizeBit) +
-          vectorBlockSizeBit;
-      return totalBitLength / elementBitWidth;
+      int64_t aDimension = 1; // This is A dimension in RA term
+      for (auto dim : srcType.getShape()) {
+        if (dim == reductionDim) {
+          continue;
+        }
+        aDimension *= dim;
+      }
+      constexpr int64_t bitsPerByte = 8;
+      // FIXME indices hardcodes as int32
+      const int64_t eltByteSize = elementBitWidth / bitsPerByte;
+      constexpr int64_t idxByteSize = sizeof(int32_t);
+      int64_t numElemPerRepeat = getNumPerRepeat(eleType);
+      int64_t elementsSize =
+          ceilDiv(aDimension * idxByteSize, numElemPerRepeat) * numElemPerRepeat /
+          eltByteSize;
+      int64_t maskSize =
+          ceilDiv(aDimension, bitsPerByte * numElemPerBlock) * numElemPerBlock;
+      return elementsSize + maskSize + numElemPerBlock;
     }
     // RA, dynamic shape
     // use 1.5 * alloc_size aligned to ub_block_unit
