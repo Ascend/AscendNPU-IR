@@ -5,9 +5,7 @@ Tile Language Ascend (**tilelang-ascend**) is a specialized variant of the tile-
 Within the TileLang ecosystem, we have developed an NPU Intermediate Representation (AscendNPU IR) infrastructure specifically for Ascend, enabling seamless integration into the open-source AI compiler ecosystem based on MLIR. This effort not only enhances the openness and extensibility of the compiler stack but also provides developers with a more flexible and efficient pathway for custom operator development. The compiler backend supports two technical routes: [AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) and [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto).
 
 
-<div align="center">
-<img src=./figs/npuir_architecture.png style="width: 50%";/>
-</div>
+![](figs/npuir_architecture.png)
 
 ## Installation
 ### Environment Setup

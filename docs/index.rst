@@ -38,9 +38,9 @@ Welcome to AscendNPU IR documentation!
    :caption: Developer Guide
 
    sources/developer-guide/conversion/index
-   sources/developer-guide/dialect/index
-   sources/developer-guide/passes.md
-   sources/developer-guide/features.md
+   sources/developer-guide/dialects/index
+   sources/developer-guide/passes/index
+   sources/developer-guide/features/index
 
 .. toctree::
    :maxdepth: 2
