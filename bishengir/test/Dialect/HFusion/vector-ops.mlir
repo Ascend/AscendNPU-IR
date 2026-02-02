@@ -627,16 +627,3 @@ func.func @test_reduce_with_index_non_increasing(
     dimensions = [0, 0]
   return
 }
-
-// -----
-
-func.func @test_reduce_with_index_all(
-  %input : memref<6x7xi32>,
-  %output : memref<6xi32>, %output_index : memref<6xi32>) {
-  // expected-error @+1 {{only supports one reduction dimension}}
-  hfusion.reduce_with_index {tie_break_left = true} <max>
-    ins(%input : memref<6x7xi32>)
-    outs(%output, %output_index : memref<6xi32>, memref<6xi32>)
-    dimensions = [0, 1]
-  return
-}

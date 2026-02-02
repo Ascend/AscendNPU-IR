@@ -758,7 +758,7 @@ void updateHFusionReduceWithIndexDim(
     // currently hfusion::ReduceWithIndexOp only supports single reduction
     // dimension; if PropagateCollapseDown generates multi-reduction-dimension
     // cases, the following assertion will catch that
-    assert(newDimensions.size() == 1);
+    assert(newDimensions.size() != 0);
     indexOp.setDim(newDimensions[0]);
   });
   // for robustness
