@@ -66,12 +66,9 @@ def LoadOp : HIVM_DmaOp<"load", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-    F8E4M3FN, F8E5M2, 
-#endif
-                                I8, UI8, I16, UI16, F16, BF16,
-                                I32, UI32, F32, UI64, I64]>,
+  // TODO: Use trait to avoid writing duplicate type constraints
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
     ["decomposeOperation", "getDecomposePhase"]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
@@ -151,12 +148,8 @@ def StoreOp : HIVM_DmaOp<"store", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-    F8E4M3FN, F8E5M2, 
-#endif
-                                I8, UI8, I16, UI16, F16, BF16,
-                                I32, UI32, F32, UI64, I64]>,
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
   let summary = "HIVM data store operation";
@@ -209,12 +202,8 @@ def CopyOp : HIVM_DmaOp<"copy", [
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
   DeclareOpInterfaceMethods<FlattenInterface, ["getLimitedAxes"]>,
-  OperElemTypeConstraints<[0], [
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-    F8E4M3FN, F8E5M2, 
-#endif 
-                                I1, I8, UI8, I16, UI16, F16, BF16,
-                                I32, UI32, F32, UI64, I64]>,
+  OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
+    I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
 ]> {
   let summary = "HIVM data copy operation";
@@ -285,7 +274,6 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>
 ]> {
   let summary = "HIVM data copy operation from L0C to other memory hierarchies.";
-#ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let description = [{
     Fixpipe is pipeline that performing data movement from L0C to other memory hierarchies,
     with on-the-fly fixed function of pre-stage quantization,
@@ -297,38 +285,16 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
 
     Additionally, Fixpipe is also capable of layout transform.
   }];
-#else
-  let description = [{
-    Fixpipe is pipeline that performing data movement from L0C to OUT or L1,
-    with on-the-fly fixed function of pre-stage quantization,
-    pre-stage ReLU, element-wise add, post-stage ReLU, post-stage quantization.
-
-    Additionally, Fixpipe is also capable of layout transform.
-
-    ### Attributes
-
-    #### 'dma_mode'
-    HIVM data movement model from L0C to destination, There are three values: NZ2DN, NZ2ND, and NZ2NZ(normal).
-
-    #### `dual_dst_mode`
-    HIVM dual destination mode control. dual destination mode can be enabled only when nz2nd or normal data
-    movement mode is enabled, and data movement is being performed from L0C to UB. Only supported on Ascend910_95 series.
-  }];
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let arguments = (ins AnyShaped:$src,
                        AnyShaped:$dst,
                        Arg<Variadic<I1>, [{
                         An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                        DefaultValuedAttr<HIVM_FixpipeDMAModeAttr,
                          "FixpipeDMAMode::NZ2NZ">:$dma_mode,
                        DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
                          "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
-#else
-                       OptionalAttr<UnitAttr>:$enable_nz2nd,
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                        DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
                          "FixpipePreQuantMode::NO_QUANT">:$pre_quant,
                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
@@ -339,49 +305,21 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
-#else
-                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd,
-#endif
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
                     CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
     >,
     OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
-#else
-                    CArg<"UnitAttr", "nullptr">:$enable_nz2nd,
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
                     CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
     >
   ];
 
-#ifndef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-  let assemblyFormat = [{	
-    attr-dict	
-    `ins` `(` $src `:` type($src) `)`	
-    `outs` `(` $dst `:` type($dst) `)`
-    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
-    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
-    (`->` type($result_tensor)^)?	
-  }];	
-#else
-  let assemblyFormat = [{
-    attr-dict
-    `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
-    (`dual_dst_mode` `=` $dual_dst_mode^)?
-    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
-    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
-    (`->` type($result_tensor)^)?
-  }];
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
     int needFixpipePreFuse();

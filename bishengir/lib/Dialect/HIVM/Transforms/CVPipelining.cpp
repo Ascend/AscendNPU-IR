@@ -1440,8 +1440,8 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
       builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
     else if (auto fixpipe = dyn_cast<FixpipeOp>(store))
       builder.create<FixpipeOp>(
-          loc, TypeRange{}, fixpipe.getSrc(), newDst,
-          fixpipe.getEnableNz2ndAttr(), fixpipe.getPreQuantAttr(),
+          loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
+          fixpipe.getDualDstModeAttr(), fixpipe.getPreQuantAttr(),
           fixpipe.getPreReluAttr(), fixpipe.getChannelSplitAttr());
     store->erase();
 

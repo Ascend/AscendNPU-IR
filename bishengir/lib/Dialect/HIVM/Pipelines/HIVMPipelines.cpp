@@ -368,6 +368,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
+  pm.addPass(createEnableHIVMCCompatiblePrintPass());
 }
 
 //===----------------------------------------------------------------------===//

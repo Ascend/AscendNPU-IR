@@ -92,6 +92,8 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
         )
       }]
     >,
+    Option<"HIVMCVersion", "hivmc-version", "std::string",
+                        /*default=*/"\"\"", "HIVMC Version">
   ];
   let dependentDialects = [
     "hacc::HACCDialect",

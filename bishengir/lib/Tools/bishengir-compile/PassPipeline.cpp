@@ -54,8 +54,9 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   pm.addPass(createCanonicalizeModulePass());
-  pm.addPass(hacc::createAppendDeviceSpecPass(
-      hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+  pm.addPass(
+      hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+          config.getTarget(), config.getHIVMCVersion()}));
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {

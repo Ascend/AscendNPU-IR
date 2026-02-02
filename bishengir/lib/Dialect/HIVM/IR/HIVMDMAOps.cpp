@@ -15,7 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
@@ -29,6 +29,8 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+
+#include "llvm/Support/VersionTuple.h"
 
 #include "bishengir/Config/bishengir-config.h"
 #include "mlir/IR/ValueRange.h"
@@ -237,6 +239,14 @@ LogicalResult LoadOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
   ShapedType dstOperType = getDstOperandType();
+  Type srcType = srcOperType.getElementType();
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!hacc::utils::isAscend910_95(moduleOp) &&
+      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+    return emitOpError("Current hardware doesn't support fp8 type");
+
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
   }
@@ -328,6 +338,13 @@ LogicalResult StoreOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
   ShapedType dstOperType = getDstOperandType();
+  Type srcType = srcOperType.getElementType();
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!hacc::utils::isAscend910_95(moduleOp) &&
+      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+    return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
   }
@@ -403,10 +420,12 @@ static LogicalResult checkCopyOpMemSpace(CopyOp &op) {
         {std::make_pair(AddressSpace::UB, AddressSpace::GM)},
         {std::make_pair(AddressSpace::UB, AddressSpace::UB)},
         {std::make_pair(AddressSpace::GM, AddressSpace::L1)},
+        {std::make_pair(AddressSpace::UB, AddressSpace::L1)},
     };
-#if BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-    kCopySupported.insert({std::make_pair(AddressSpace::UB, AddressSpace::L1)});
-#endif
+    auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
+    if (hacc::utils::isAscend910_95(moduleOp))
+      kCopySupported.insert(
+          {std::make_pair(AddressSpace::UB, AddressSpace::L1)});
     if (!kCopySupported.count(std::make_pair(srcAddrSpace, dstAddrSpace))) {
       auto srcStr = stringifyAddressSpace(srcAddrSpace).str();
       auto dstStr = stringifyAddressSpace(dstAddrSpace).str();
@@ -454,6 +473,13 @@ LogicalResult CopyOp::verify() {
   // check element type of src and dst
   ShapedType srcOperType = getSrcOperandType();
   ShapedType dstOperType = getDstOperandType();
+  Type srcType = srcOperType.getElementType();
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!hacc::utils::isAscend910_95(moduleOp) &&
+      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+    return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
   }
@@ -565,46 +591,26 @@ void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value dst,
-#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-                      UnitAttr enable_nz2nd,
-#else
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_mode,
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
-#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
-        enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ ArrayAttr{});
-#else
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ArrayAttr{});
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+        /*unit_flag_mode=*/ ArrayAttr{});
 }
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Type result, Value src, Value dst,
-#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-                      UnitAttr enable_nz2nd,
-#else
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_mode,
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
-#if (!BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES)
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
-        enable_nz2nd, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode=*/ArrayAttr{});
-#else
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ArrayAttr{});
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+        /*unit_flag_mode=*/ ArrayAttr{});
 }
 
 enum FixpipeState {
@@ -643,8 +649,457 @@ int FixpipeOp::getFixpipeState() {
   return FixpipeState::Init;
 }
 
-#if BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+void getElidedAttrs(FixpipeOp op,
+                    llvm::SmallVector<llvm::StringRef, 2> &elidedAttrs) {
+  elidedAttrs.push_back("unit_flag_mode");
+  Builder odsBuilder(op.getContext());
+  {
+    Attribute attr = op.getDmaModeAttr();
+    if (attr && (attr == FixpipeDMAModeAttr::get(odsBuilder.getContext(),
+                                                 FixpipeDMAMode::NZ2NZ)))
+      elidedAttrs.push_back("dma_mode");
+  }
+  {
+    Attribute attr = op.getDualDstModeAttr();
+    if (attr &&
+        (attr == FixpipeDualDstModeAttr::get(odsBuilder.getContext(),
+                                             FixpipeDualDstMode::NO_DUAL)))
+      elidedAttrs.push_back("dual_dst_mode");
+  }
+  {
+    Attribute attr = op.getPreQuantAttr();
+    if (attr &&
+        (attr == FixpipePreQuantModeAttr::get(odsBuilder.getContext(),
+                                              FixpipePreQuantMode::NO_QUANT)))
+      elidedAttrs.push_back("pre_quant");
+  }
+  {
+    Attribute attr = op.getPreReluAttr();
+    if (attr &&
+        (attr == FixpipePreReluModeAttr::get(odsBuilder.getContext(),
+                                             FixpipePreReluMode::NO_RELU)))
+      elidedAttrs.push_back("pre_relu");
+  }
+  {
+    Attribute attr = op.getChannelSplitAttr();
+    if (attr && (attr == odsBuilder.getBoolAttr(false)))
+      elidedAttrs.push_back("channel_split");
+  }
+}
+
+/*
+FixpipeOp assemblyFormat in HIVMC version < 0.2.0:
+```
+  attr-dict
+  `ins` `(` $src `:` type($src) `)`
+  `outs` `(` $dst `:` type($dst) `)`
+  (`dual_dst_mode` `=` $dual_dst_mode^)?
+  (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
+  (`->` type($result_tensor)^)?
+```
+Attribute supported in HIVMC version < 0.2.0:
+```
+OptionalAttr<UnitAttr>:$enable_nz2nd
+```
+*/
+static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("unit_flag_mode");
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getPreQuantAttr();
+    if (attr &&
+        (attr == ::mlir::hivm::FixpipePreQuantModeAttr::get(
+                     odsBuilder.getContext(), FixpipePreQuantMode::NO_QUANT)))
+      elidedAttrs.push_back("pre_quant");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getPreReluAttr();
+    if (attr &&
+        (attr == ::mlir::hivm::FixpipePreReluModeAttr::get(
+                     odsBuilder.getContext(), FixpipePreReluMode::NO_RELU)))
+      elidedAttrs.push_back("pre_relu");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getChannelSplitAttr();
+    if (attr && (attr == odsBuilder.getBoolAttr(false)))
+      elidedAttrs.push_back("channel_split");
+  }
+
+  // backward compatibility
+  auto addInterleave = [&](auto idx, auto size) {
+    if (idx < size - 1)
+      _odsPrinter << ", ";
+    return;
+  };
+  auto printFilteredAttrs = [&](auto filteredAttrs) {
+    auto sizeFilteredAttrs =
+        std::distance(filteredAttrs.begin(), filteredAttrs.end());
+    _odsPrinter << " {";
+    for (auto [idx, attr] : llvm::enumerate(filteredAttrs)) {
+      if (attr.getName() == FixpipeDMAModeAttr::getMnemonic()) {
+        _odsPrinter << "enable_nz2nd";
+      } else {
+        _odsPrinter << attr.getName().str();
+        if (!isa<UnitAttr>(attr.getValue())) {
+          _odsPrinter << " = ";
+          _odsPrinter.printAttribute(attr.getValue());
+        }
+      }
+      addInterleave(idx, sizeFilteredAttrs);
+    }
+    _odsPrinter << "}";
+  };
+
+  llvm::SmallDenseSet<StringRef> elidedAttrsSet(elidedAttrs.begin(),
+                                                elidedAttrs.end());
+  auto filteredAttrs =
+      llvm::make_filter_range(op->getAttrs(), [&](NamedAttribute attr) {
+        return !elidedAttrsSet.contains(attr.getName().strref());
+      });
+  if (!filteredAttrs.empty())
+    printFilteredAttrs(filteredAttrs);
+
+  _odsPrinter << ' ' << "ins";
+  _odsPrinter << "(";
+  _odsPrinter << op.getSrc();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = op.getSrc().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  _odsPrinter << ' ' << "outs";
+  _odsPrinter << "(";
+  _odsPrinter << op.getDst();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = op.getDst().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  if (op.getUnitFlagModeAttr()) {
+    _odsPrinter << ' ' << "unit_flag";
+    _odsPrinter << "[";
+    _odsPrinter.printStrippedAttrOrType(op.getUnitFlagModeAttr());
+    /*
+    // TODO: latest AscendNPU-IR is not compatible with HIVMC 0.1.0
+    // unit_flag_cond
+    if (op.getUnitFlagCond()) {
+      _odsPrinter << ","; _odsPrinter << ' ';
+      if (::mlir::Value value = op.getUnitFlagCond())
+      _odsPrinter << value;
+    }
+    */
+    _odsPrinter << "]";
+  }
+  if (op.getResultTensor()) {
+    _odsPrinter << ' ' << "->";
+    _odsPrinter << ' ';
+    _odsPrinter << (op.getResultTensor() ? ::llvm::ArrayRef<::mlir::Type>(
+                                               op.getResultTensor().getType())
+                                         : ::llvm::ArrayRef<::mlir::Type>());
+  }
+}
+
+/*
+FixpipeOp assemblyFormat in HIVMC version == 0.2.*
+```
+  attr-dict
+  `ins` `(` $src `:` type($src) `)`
+  `outs` `(` $dst `:` type($dst) `)`
+  (`dual_dst_mode` `=` $dual_dst_mode^)?
+  (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+  (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
+  (`->` type($result_tensor)^)?
+```
+*/
+static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("dual_dst_mode");
+  elidedAttrs.push_back("unit_flag_mode");
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getDmaModeAttr();
+    if (attr && (attr == ::mlir::hivm::FixpipeDMAModeAttr::get(
+                             odsBuilder.getContext(), FixpipeDMAMode::NZ2NZ)))
+      elidedAttrs.push_back("dma_mode");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getDualDstModeAttr();
+    if (attr && (attr == ::mlir::hivm::FixpipeDualDstModeAttr::get(
+                             odsBuilder.getContext(),
+                             ::mlir::hivm::FixpipeDualDstMode::NO_DUAL)))
+      elidedAttrs.push_back("dual_dst_mode");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getPreQuantAttr();
+    if (attr &&
+        (attr == ::mlir::hivm::FixpipePreQuantModeAttr::get(
+                     odsBuilder.getContext(), FixpipePreQuantMode::NO_QUANT)))
+      elidedAttrs.push_back("pre_quant");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getPreReluAttr();
+    if (attr &&
+        (attr == ::mlir::hivm::FixpipePreReluModeAttr::get(
+                     odsBuilder.getContext(), FixpipePreReluMode::NO_RELU)))
+      elidedAttrs.push_back("pre_relu");
+  }
+  {
+    ::mlir::Builder odsBuilder(op.getContext());
+    ::mlir::Attribute attr = op.getChannelSplitAttr();
+    if (attr && (attr == odsBuilder.getBoolAttr(false)))
+      elidedAttrs.push_back("channel_split");
+  }
+  _odsPrinter.printOptionalAttrDict(op->getAttrs(), elidedAttrs);
+  _odsPrinter << ' ' << "ins";
+  _odsPrinter << "(";
+  _odsPrinter << op.getSrc();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = op.getSrc().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  _odsPrinter << ' ' << "outs";
+  _odsPrinter << "(";
+  _odsPrinter << op.getDst();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = op.getDst().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  if (op.getDualDstModeAttr()) {
+    _odsPrinter << ' ' << "dual_dst_mode";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printStrippedAttrOrType(op.getDualDstModeAttr());
+  }
+  if (op.getUnitFlagModeAttr()) {
+    _odsPrinter << ' ' << "unit_flag_mode";
+    _odsPrinter << "(";
+    _odsPrinter.printAttributeWithoutType(op.getUnitFlagModeAttr());
+    _odsPrinter << ")";
+  }
+  if (!op.getUnitFlagCond().empty()) {
+    _odsPrinter << ' ' << "unit_flag_cond";
+    _odsPrinter << "(";
+    _odsPrinter << op.getUnitFlagCond();
+    _odsPrinter << ")";
+  }
+  if (op.getResultTensor()) {
+    _odsPrinter << ' ' << "->";
+    _odsPrinter << ' ';
+    _odsPrinter << (op.getResultTensor() ? ::llvm::ArrayRef<::mlir::Type>(
+                                               op.getResultTensor().getType())
+                                         : ::llvm::ArrayRef<::mlir::Type>());
+  }
+}
+
+void FixpipeOp::print(OpAsmPrinter &p) {
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  auto compatiblePrint =
+      moduleOp->getAttrOfType<BoolAttr>(hacc::HIVMCCompatiblePrintAttr::name);
+  if (!compatiblePrint || !compatiblePrint.getValue()) {
+    printVersion0_2(*this, p);
+    return;
+  }
+  if (hacc::utils::getHIVMCVersion(moduleOp) < llvm::VersionTuple(0, 2, 0))
+    printVersion0_1(*this, p);
+  else
+    printVersion0_2(*this, p);
+}
+
+/*
+generated with the following assemblyFormat
+```
+  attr-dict
+  `ins` `(` $src `:` type($src) `)`
+  `outs` `(` $dst `:` type($dst) `)`
+  (`dual_dst_mode` `=` $dual_dst_mode^)?
+  (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+  (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
+  (`->` type($result_tensor)^)?
+```
+Supported  `{enable_nz2nd}` for backward compatibility
+TODO: Support `unit_flag_mode[$unit_flag_mode, $unit_flag_cond]`
+*/
+ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
+                             ::mlir::OperationState &result) {
+  ::mlir::OpAsmParser::UnresolvedOperand srcRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> srcOperands(
+      &srcRawOperand, 1);
+  ::llvm::SMLoc srcOperandsLoc;
+  (void)srcOperandsLoc;
+  ::mlir::Type srcRawType{};
+  ::llvm::ArrayRef<::mlir::Type> srcTypes(&srcRawType, 1);
+  ::mlir::OpAsmParser::UnresolvedOperand dstRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> dstOperands(
+      &dstRawOperand, 1);
+  ::llvm::SMLoc dstOperandsLoc;
+  (void)dstOperandsLoc;
+  ::mlir::Type dstRawType{};
+  ::llvm::ArrayRef<::mlir::Type> dstTypes(&dstRawType, 1);
+  ::mlir::hivm::FixpipeDualDstModeAttr dual_dst_modeAttr;
+  ::mlir::ArrayAttr unit_flag_modeAttr;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4>
+      unit_flag_condOperands;
+  ::llvm::SMLoc unit_flag_condOperandsLoc;
+  (void)unit_flag_condOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> result_tensorTypes;
+  {
+    auto loc = parser.getCurrentLocation();
+    (void)loc;
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return ::mlir::failure();
+    if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+          return parser.emitError(loc)
+                 << "'" << result.name.getStringRef() << "' op ";
+        })))
+      return ::mlir::failure();
+    // backward compatibility support
+    for (auto attr : result.attributes) {
+      auto name = attr.getName();
+      if (name == "enable_nz2nd") {
+        result.attributes.erase(name);
+        Builder odsBuilder(parser.getContext());
+        result.attributes.append(
+            FixpipeDMAModeAttr::getMnemonic(),
+            FixpipeDMAModeAttr::get(odsBuilder.getContext(),
+                                    FixpipeDMAMode::NZ2ND));
+      }
+    }
+  }
+  if (parser.parseKeyword("ins"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  srcOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(srcRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::ShapedType type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    srcRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (parser.parseKeyword("outs"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  dstOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(dstRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::ShapedType type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    dstRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (::mlir::succeeded(parser.parseOptionalKeyword("dual_dst_mode"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(dual_dst_modeAttr,
+                                                ::mlir::Type{})) {
+      return ::mlir::failure();
+    }
+    if (dual_dst_modeAttr)
+      result.getOrAddProperties<FixpipeOp::Properties>().dual_dst_mode =
+          dual_dst_modeAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("unit_flag_mode"))) {
+    if (parser.parseLParen())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(
+            unit_flag_modeAttr,
+            parser.getBuilder().getType<::mlir::NoneType>())) {
+      return ::mlir::failure();
+    }
+    if (unit_flag_modeAttr)
+      result.getOrAddProperties<FixpipeOp::Properties>().unit_flag_mode =
+          unit_flag_modeAttr;
+    if (parser.parseRParen())
+      return ::mlir::failure();
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("unit_flag_cond"))) {
+    if (parser.parseLParen())
+      return ::mlir::failure();
+
+    unit_flag_condOperandsLoc = parser.getCurrentLocation();
+    if (parser.parseOperandList(unit_flag_condOperands))
+      return ::mlir::failure();
+    if (parser.parseRParen())
+      return ::mlir::failure();
+  }
+  if (::mlir::succeeded(parser.parseOptionalArrow())) {
+
+    {
+      ::mlir::Type optionalType;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalType(optionalType);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        result_tensorTypes.push_back(optionalType);
+      }
+    }
+  }
+  ::mlir::Type odsBuildableType0 = parser.getBuilder().getIntegerType(1);
+  result.addTypes(result_tensorTypes);
+  if (parser.resolveOperands(srcOperands, srcTypes, srcOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(dstOperands, dstTypes, dstOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(unit_flag_condOperands, odsBuildableType0,
+                             unit_flag_condOperandsLoc, result.operands))
+    return ::mlir::failure();
+  return ::mlir::success();
+}
+
 LogicalResult FixpipeOp::verify() {
+  mlir::ModuleOp moduleOp = (*this)->getParentOfType<mlir::ModuleOp>();
+  bool is910_95 = hacc::utils::isAscend910_95(moduleOp);
+
   // TODO: check that the nz2nd mode is enabled before the dual_dst_mode.
   // check src and dst of dual_dst_mode.
   auto dualDstModeAttr = getDualDstModeAttr();
@@ -653,16 +1108,31 @@ LogicalResult FixpipeOp::verify() {
     auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
     auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
     bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
-    if (hasScopeValue && dualDstMode != FixpipeDualDstMode::NO_DUAL &&
+    if (!is910_95 && dualDstMode != FixpipeDualDstMode::NO_DUAL) {
+      return emitOpError(
+          "The current hardware does not support dual_dst_mode is enabled");
+    }
+    if (is910_95 && hasScopeValue &&
+        dualDstMode != FixpipeDualDstMode::NO_DUAL &&
         (srcScope != hivm::AddressSpace::L0C ||
          dstScope != hivm::AddressSpace::UB))
       return emitOpError("if dual_dst_mode is enabled, the data movement must "
                          "be performed from L0C to UB!");
   }
 
+  if (!is910_95) {
+    auto DMAModeAttr = getDmaMode();
+    if (DMAModeAttr != FixpipeDMAMode::NZ2ND &&
+        DMAModeAttr != FixpipeDMAMode::NZ2NZ)
+      return emitOpError(
+          "The current hardware does not support dma mode is nz2nz");
+
+    if (getChannelSplit())
+      return emitOpError("The current hardware does not channel split");
+  }
+
   return success();
 }
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 
 //===----------------------------------------------------------------------===//
 // AtomicCasOp

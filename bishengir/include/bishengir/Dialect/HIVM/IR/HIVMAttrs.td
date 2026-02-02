@@ -778,7 +778,6 @@ def HIVM_FixpipePreReluModeAttr : HIVM_I32EnumAttr<
   let description = "HIVM fixpipe pre_relu mode";
 }
 
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 def HIVM_FIXPIPEDUALDST_NO_DUAL : I32EnumAttrCase<"NO_DUAL", 0>;
 def HIVM_FIXPIPEDUALDST_ROW_SPLIT : I32EnumAttrCase<"ROW_SPLIT", 1>;
 def HIVM_FIXPIPEDUALDST_COLUMN_SPLIT : I32EnumAttrCase<"COLUMN_SPLIT", 2>;
@@ -818,7 +817,6 @@ def HIVM_FixpipeDMAModeAttr : HIVM_I32EnumAttr<
   "dma_mode", HIVM_FixpipeDMAModeEnum> {
   let description = "HIVM Fixpipe DMA mode";
 }
-#endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
 
 //===----------------------------------------------------------------------===//
 // Deinterleave Mode for VDeinterleaveOp

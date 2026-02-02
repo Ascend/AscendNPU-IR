@@ -194,6 +194,41 @@ int64_t getIntegerSpecValue(DataLayoutEntryInterface entry) {
   return cast<IntegerAttr>(entry.getValue()).getValue().getSExtValue();
 }
 
+std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op) {
+  if (auto versionAttr =
+          op->getAttrOfType<HIVMCVersionAttr>(HIVMCVersionAttr::name))
+    return versionAttr.getParsedVersion();
+  return std::nullopt;
+}
+
+std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
+  if (auto targetAttr = op->getAttrOfType<TargetAttr>(TargetAttr::name))
+    return symbolizeTargetDeviceEnum(targetAttr.getTarget());
+  return std::nullopt;
+}
+
+bool isAscend910_95(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend910_950z ||
+         targetDevice == TargetDevice::Ascend910_9579 ||
+         targetDevice == TargetDevice::Ascend910_957b ||
+         targetDevice == TargetDevice::Ascend910_957d ||
+         targetDevice == TargetDevice::Ascend910_9581 ||
+         targetDevice == TargetDevice::Ascend910_9589 ||
+         targetDevice == TargetDevice::Ascend910_958a ||
+         targetDevice == TargetDevice::Ascend910_958b ||
+         targetDevice == TargetDevice::Ascend910_9599;
+}
+
+bool isAscend910_95(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend910_95(targetDevice);
+}
+
 } // namespace utils
 
 static ModuleOp getDeviceModule(ModuleOp op) {

@@ -305,6 +305,43 @@ def HACC_TargetDeviceSpecAttr :
   }];
 }
 
+def HACC_HIVMCCompatiblePrintAttr
+    : HACC_Attr<"HIVMCCompatiblePrint", "hivmc_compatible_print"> {
+  let description = [{
+    If it is true, it will generate MLIR according to the HIVMC version.
+  }];
+}
+
+def HACCVersionTrait
+    : NativeAttrTrait<"HACCVersionInterface::Trait"> {
+  let cppNamespace = "::mlir::hacc";
+}
+
+def HACC_HIVMCVersionAttr :
+    HACC_Attr<"HIVMCVersion", "hivmc_version",
+              [HACCVersionTrait]> {
+  let summary = "An attribute to represent hivmc version information.";
+  let parameters = (ins
+    AttrParameter<"StringAttr", "version">:$version
+  );
+  let builders = [TypeBuilder<(ins "llvm::VersionTuple":$llvmVersion), [{
+      return Base::get($_ctxt,
+        ::mlir::StringAttr::get($_ctxt, llvmVersion.getAsString()));
+  }]>];
+  let assemblyFormat = "`<` $version `>`";
+  let extraClassDeclaration = [{
+  std::optional<llvm::VersionTuple> getParsedVersion() {
+    StringAttr version = this->getVersion();
+    if (!version)
+      return std::nullopt;
+    auto hivmcVersion = llvm::VersionTuple();
+    if (!hivmcVersion.tryParse(version))
+      return hivmcVersion;
+    return std::nullopt;
+  }
+}];
+}
+
 //===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//

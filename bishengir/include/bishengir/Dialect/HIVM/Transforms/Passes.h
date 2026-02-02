@@ -57,6 +57,9 @@ std::unique_ptr<Pass> createInferFuncCoreTypePass();
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
 
+/// Create a pass to enable HIVMC version-compatible IR print.
+std::unique_ptr<Pass> createEnableHIVMCCompatiblePrintPass();
+
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
 

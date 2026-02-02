@@ -25,6 +25,7 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/VersionTuple.h"
+#include <regex>
 #include <set>
 #include <vector>
 
@@ -108,9 +109,20 @@ LogicalResult runExternalHIVMC(ModuleOp module,
   }
   inputFile = inputFileHandler->outputFilename();
 
-  module.print(inputFileHandler->os(),
+  std::string content;
+  llvm::raw_string_ostream buffer(content);
+  module.print(buffer,
                mlir::OpPrintingFlags().enableDebugInfo(
                    config.getEnableSanitizer() || config.getEnableDebugInfo()));
+
+  // TODO: Once version 0.2.0 is released, warning should be added to notice the
+  // user upgrade the hivmc version.
+  // TODO: Once version 0.1.0 is not supported, the following regex should be
+  // removed.
+  std::regex re("hacc\\.(hivmc_compatible_print|hivmc_version).*,");
+  std::string modified = std::regex_replace(content, re, "");
+
+  inputFileHandler->os() << modified;
   inputFileHandler->os().flush();
 
   std::vector<std::string> arguments;

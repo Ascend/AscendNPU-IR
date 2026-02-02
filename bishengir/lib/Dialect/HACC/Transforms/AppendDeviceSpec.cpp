@@ -103,6 +103,14 @@ void AppendDeviceSpec::runOnOperation() {
   auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
   utils::setNPUTargetSpec(moduleOp, targetSpec);
 
+  llvm::VersionTuple hivmcVersion;
+  if (!hivmcVersion.tryParse(HIVMCVersion))
+    hivmcVersion = llvm::VersionTuple(0, 0, 0);
+  moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
+                    hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
+  moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,
+                    BoolAttr::get(ctx, false));
+
   // Remove attr if exists
   moduleOp->removeAttr(TargetAttr::name);
 }

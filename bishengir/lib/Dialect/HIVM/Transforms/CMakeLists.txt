@@ -26,6 +26,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConstantizeBufferSize.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
+  EnableHIVMCCompatiblePrint.cpp
   CVPipelining.cpp
   EnableMultiBuffer.cpp
   FlattenOps.cpp
