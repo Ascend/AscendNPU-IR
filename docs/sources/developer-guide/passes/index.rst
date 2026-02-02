@@ -2,7 +2,7 @@ Passes
 =======
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
    HFusionPasses.md
    HIVMPasses.md
