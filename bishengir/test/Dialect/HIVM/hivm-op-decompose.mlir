@@ -1048,7 +1048,7 @@ func.func @test_scalar_fp32_to_bf16(%1 :memref<1024xbf16>) {
   // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<1xf32>
   // CHECK: memref.store %[[CST_VAL]], %[[ALLOC0]][%[[CST_ZERO]]] : memref<1xf32>
   // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<1xbf16>
-  // CHECK: hivm.hir.vcast ins(%[[ALLOC0]] : memref<1xf32>) outs(%[[ALLOC1]] : memref<1xbf16>) round_mode = <round>
+  // CHECK: hivm.hir.vcast ins(%[[ALLOC0]] : memref<1xf32>) outs(%[[ALLOC1]] : memref<1xbf16>)
   // CHECK: %[[RES:.*]] = memref.load %[[ALLOC1]][%[[CST_ZERO]]] : memref<1xbf16>
   // CHECK: hivm.hir.vbrc ins(%[[RES]] : bf16) outs(%[[SRC0]] : memref<1024xbf16>)
   %cst = arith.constant 0.21 : f32

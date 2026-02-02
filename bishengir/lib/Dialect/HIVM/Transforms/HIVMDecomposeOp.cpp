@@ -1005,7 +1005,7 @@ struct DecomposeCastScalarToVecOp<arith::TruncFOp>
     // cast src tensor to target tensor
     auto resType = op.getType();
     auto roundingAttr =
-        rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::ROUND);
+        rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
     hivm::VCastOp castOp =
         castTo(rewriter, loc, src, roundingAttr, getElementTypeOrSelf(resType));
 
@@ -1386,22 +1386,28 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     auto roundingAttr = rewriter.getAttr<hivm::RoundModeAttr>(rounding);
     if (elemType.isInteger(8)) {
       src0 = castTo(rewriter, src0.getLoc(), src0, roundingAttr,
-                       rewriter.getF16Type()).getSingleDst();
+                    rewriter.getF16Type())
+                 .getSingleDst();
       src1 = castTo(rewriter, src1.getLoc(), src1, roundingAttr,
-                       rewriter.getF16Type()).getSingleDst();
+                    rewriter.getF16Type())
+                 .getSingleDst();
       tmpUB = castTo(rewriter, tmpUB.getLoc(), tmpUB, roundingAttr,
-                        rewriter.getF16Type()).getSingleDst();
+                     rewriter.getF16Type())
+                  .getSingleDst();
     } else if (elemType.isBF16()) {
       src0 = castTo(rewriter, src0.getLoc(), src0, roundingAttr,
-                       rewriter.getF32Type()).getSingleDst();
+                    rewriter.getF32Type())
+                 .getSingleDst();
       src1 = castTo(rewriter, src1.getLoc(), src1, roundingAttr,
-                       rewriter.getF32Type()).getSingleDst();
+                    rewriter.getF32Type())
+                 .getSingleDst();
       tmpUB = castTo(rewriter, tmpUB.getLoc(), tmpUB, roundingAttr,
-                        rewriter.getF32Type()).getSingleDst();
+                     rewriter.getF32Type())
+                  .getSingleDst();
     }
     rewriter.create<hivm::VCmpOp>(op.getLoc(), TypeRange(),
-                                  ValueRange({tmpUB, src0}),
-                                  Value(condUB), compareAttr);
+                                  ValueRange({tmpUB, src0}), Value(condUB),
+                                  compareAttr);
 
     auto resUB = createTmpBufferOrTensorWithTargetType(rewriter, loc, src0);
     rewriter.create<hivm::VSelOp>(op.getLoc(), TypeRange(),
@@ -1409,10 +1415,12 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
                                   ValueRange({resUB}), Value());
     if (elemType.isInteger(8)) {
       resUB = castTo(rewriter, resUB.getLoc(), resUB, roundingAttr,
-                     rewriter.getI8Type()).getSingleDst();
+                     rewriter.getI8Type())
+                  .getSingleDst();
     } else if (elemType.isBF16()) {
       resUB = castTo(rewriter, resUB.getLoc(), resUB, roundingAttr,
-                     rewriter.getBF16Type()).getSingleDst();
+                     rewriter.getBF16Type())
+                  .getSingleDst();
     }
 
     // step3: store res_ub to dst
