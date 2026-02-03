@@ -20,7 +20,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Transforms/MemoryDisplay.h"
-#include "bishengir/Dialect/HIVM/Transforms/NormalizeLoopIterator.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
@@ -433,7 +432,7 @@ void MemLivenessAnalysis::UpdateIfOpBufferAlias(scf::IfOp ifOp,
   assert(ifOp->getResults().size() == yieldOp->getOperands().size());
   for (auto [i, arg] : llvm::enumerate(yieldOp->getOperands())) {
     // Multiple buffers involved, requiring one-to-one correspondence.
-    UpdateBufferAlias(ifOp->getResult(i), arg, /*hasCond=*/true);
+    UpdateBufferAlias(ifOp->getResult(i), arg);
   }
 }
 
@@ -2822,16 +2821,6 @@ private:
 std::optional<DenseMap<Value, SmallVector<uint64_t>>>
 PlanMemoryPass::planMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
-  if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-    RewritePatternSet normalizeLoopIterPatterns(&getContext());
-    populateNormalizeLoopIneratorPattern(normalizeLoopIterPatterns);
-    if (failed(applyPatternsGreedily(funcOp,
-                                     std::move(normalizeLoopIterPatterns)))) {
-      LDBG("Normalize loop inerator failed\n");
-      return std::nullopt;
-    }
-  }
-
   // Add a attr to the memref alloc for the tempbuf.
   if (this->enableMemoryDisplay) {
     markTempBufForMemoryDisplay(funcOp);
