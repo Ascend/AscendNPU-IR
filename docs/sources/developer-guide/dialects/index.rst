@@ -10,5 +10,5 @@ Dialects
    ScopeDialect.md
    AnnotationDialect.md
    SymbolDialect.md
-   MatExtDialect.md
+   MathExtDialect.md
    MemRefExtDialect.md
