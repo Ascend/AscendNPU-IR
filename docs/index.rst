@@ -58,7 +58,7 @@ Welcome to AscendNPU IR documentation!
    sources/FAQ/FAQ.md
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 0
    :hidden:
    :caption: Reference
 
