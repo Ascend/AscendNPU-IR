@@ -61,6 +61,9 @@ void eliminateDeadFunctions(mlir::ModuleOp module,
 std::unique_ptr<mlir::Pass>
 createExtendedCanonicalizerPass(const mlir::CanonicalizerOptions &options = {});
 
+/// Create InjectIR pass (load IR from file and replace matching functions).
+std::unique_ptr<mlir::Pass> createInjectIRPass(llvm::StringRef filePath = "");
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
