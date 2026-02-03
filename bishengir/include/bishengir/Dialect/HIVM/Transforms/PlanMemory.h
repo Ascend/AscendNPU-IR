@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -337,6 +338,12 @@ private:
 
   /// Update buffer alias information for ifop.
   void UpdateIfOpBufferAlias(scf::IfOp ifOp, scf::YieldOp yieldOp);
+
+  /// Recursive operation scope.
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+
+  /// Update buffer alias information for scopeop.
+  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp, scope::ReturnOp returnOp);
 
   /// Update and obtain op info information.
   OpInfo *UpdateLinearOperation(Operation *op);

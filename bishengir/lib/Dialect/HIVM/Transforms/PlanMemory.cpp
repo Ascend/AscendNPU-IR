@@ -202,9 +202,11 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       RecursiveForOp(forOp, live);
       return WalkResult::skip();
-    }
-    if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
       RecursiveWhileOp(whileOp, live);
+      return WalkResult::skip();
+    } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      RecursiveScopeOp(scopeOp, live);
       return WalkResult::skip();
     }
 
@@ -459,6 +461,26 @@ void MemLivenessAnalysis::UpdateBranchOpAlias(Block *brBlock,
   }
 }
 
+void MemLivenessAnalysis::UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp, scope::ReturnOp returnOp) {
+  if (scopeOp.getResults().empty()) {
+    return;
+  }
+  for (auto [res, arg] : llvm::zip_equal(scopeOp->getResults(), returnOp->getOperands())) {
+    // Multiple buffers involved, requiring one-to-one correspondence.
+    UpdateBufferAlias(res, arg);
+  }
+}
+
+void MemLivenessAnalysis::RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live) {
+  (void)UpdateLinearOperation(scopeOp.getOperation());
+  auto &scopeRegion = scopeOp.getRegion();
+  RecursionIR(&scopeRegion, live);
+  auto returnOp = cast<scope::ReturnOp>(scopeRegion.front().getTerminator());
+  UpdateScopeOpBufferAlias(scopeOp, returnOp);
+  auto scopeEndSeq = UpdateLinearOperation(scopeOp.getOperation());
+  OpKillHandle(scopeEndSeq, live, scopeOp->getBlock());
+}
+
 SmallVector<Value>
 MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
                                           Liveness live) {
@@ -519,7 +541,8 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 }
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
-  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp>(op);
+  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp,
+             scope::ReturnOp>(op);
 }
 
 LogicalResult

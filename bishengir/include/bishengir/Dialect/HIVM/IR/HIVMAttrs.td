@@ -1176,4 +1176,11 @@ def HIVM_PreloadWorkspaceAttr
   }];
 }
 
+def HIVM_PreloadLocalBufferAttr
+    : HIVM_Attr<"PreloadLocalBuffer", "preload_local_buffer"> {
+  let description = [{
+    Specifies that related op is preload local buffer.
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD
