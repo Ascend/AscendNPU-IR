@@ -574,6 +574,92 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
   }
 };
 
+struct HIVMSetAtomicOpLowering : public OpRewritePattern<SetAtomicOp> {
+  using OpRewritePattern<SetAtomicOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SetAtomicOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto kind = op.getKind();
+    auto typeAttr = op.getTypeAttr();
+
+    std::map<int64_t, bool> ctrlIdxEnableMap;
+    Type type = typeAttr.getValue();
+
+    const int64_t kAtomicTypeBit0 = 6;
+    const int64_t kAtomicTypeBit1 = 7;
+    const int64_t kAtomicTypeBit2 = 8;
+    const int64_t kAtomicKindBit0 = 9;
+    const int64_t kAtomicKindBit1 = 10;
+
+    switch (kind) {
+    case AtomicKind::NONE:
+      ctrlIdxEnableMap[kAtomicTypeBit0] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = false;
+      generateSetCtrlOps(ctrlIdxEnableMap, loc, rewriter, op);
+      return success();
+    case AtomicKind::ADD:
+      ctrlIdxEnableMap[kAtomicKindBit0] = false;
+      ctrlIdxEnableMap[kAtomicKindBit1] = false;
+      break;
+    case AtomicKind::MAX:
+      ctrlIdxEnableMap[kAtomicKindBit0] = true;
+      ctrlIdxEnableMap[kAtomicKindBit1] = false;
+      break;
+    case AtomicKind::MIN:
+      ctrlIdxEnableMap[kAtomicKindBit0] = false;
+      ctrlIdxEnableMap[kAtomicKindBit1] = true;
+      break;
+    default:
+      llvm_unreachable("unsupported atomic kind");
+    }
+
+    if (type.isF32()) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = false;
+    } else if (type.isF16()) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = false;
+    } else if (type.isInteger(8)) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = true;
+    } else if (type.isInteger(16)) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = false;
+    } else if (type.isInteger(32)) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = true;
+    } else if (type.isBF16()) {
+      ctrlIdxEnableMap[kAtomicTypeBit0] = false;
+      ctrlIdxEnableMap[kAtomicTypeBit1] = true;
+      ctrlIdxEnableMap[kAtomicTypeBit2] = true;
+    } else {
+      llvm_unreachable("unsupported atomic type");
+    }
+
+    generateSetCtrlOps(ctrlIdxEnableMap, loc, rewriter, op);
+    return success();
+  }
+
+private:
+  void generateSetCtrlOps(const std::map<int64_t, bool> &ctrlIdxEnableMap,
+                          Location loc, PatternRewriter &rewriter,
+                          SetAtomicOp op) const {
+    for (auto &pair : ctrlIdxEnableMap) {
+      int64_t idx = pair.first;
+      bool enable = pair.second;
+      rewriter.create<hivm::SetCtrlOp>(loc, enable, idx);
+    }
+    rewriter.eraseOp(op);
+  }
+};
+
 struct VCmpOpLowering : public OpRewritePattern<VCmpOp> {
   using OpRewritePattern<VCmpOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(VCmpOp op,
@@ -1516,7 +1602,7 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
-               AtomicRMWOpLowering>(&getContext());
+               AtomicRMWOpLowering, HIVMSetAtomicOpLowering>(&getContext());
 
   bool isMixModule =
       mlir::hivm::isMixModule(funcOp->getParentOfType<ModuleOp>());

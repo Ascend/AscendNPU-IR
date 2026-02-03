@@ -1231,3 +1231,55 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
   hivm.hir.store ins(%casted : tensor<256x256xf32>) outs(%dst : memref<256x256xf32>)
   return
 }
+
+
+// -----
+// CHECK-LABEL: func.func @test_mmadL1_fixpipe_atomic
+func.func @test_mmadL1_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
+  %mc = tensor.empty() : tensor<256x256xi32>
+  %true = arith.constant true
+  %M = arith.constant 256 : index
+  %K = arith.constant 128 : index
+  %N = arith.constant 256 : index
+  %ret = hivm.hir.mmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<256x128xi8>, tensor<128x256xi8>, i1, index, index, index)
+                              outs(%mc: tensor<256x256xi32>) -> tensor<256x256xi32>
+  // CHECK: hivm.hir.set_atomic kind = <add>[type = i32]
+  // CHECK: hivm.hir.fixpipe
+  hivm.hir.store ins(%ret : tensor<256x256xi32>) outs(%dst : memref<256x256xi32>) atomic = <add>
+  // CHECK: hivm.hir.set_atomic kind = <none>[type = i32]
+  return
+}
+
+
+// -----
+// CHECK-LABEL: func.func @test_mmadL1_no_fixpipe_atomic
+func.func @test_mmadL1_no_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
+  %mc = tensor.empty() : tensor<256x256xi32>
+  %true = arith.constant true
+  %M = arith.constant 256 : index
+  %K = arith.constant 128 : index
+  %N = arith.constant 256 : index
+  %ret = hivm.hir.mmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<256x128xi8>, tensor<128x256xi8>, i1, index, index, index)
+                              outs(%mc: tensor<256x256xi32>) -> tensor<256x256xi32>
+  // CHECK-NOT: hivm.hir.set_atomic
+  // CHECK: hivm.hir.fixpipe
+  // CHECK: hivm.hir.store
+  hivm.hir.store ins(%ret : tensor<256x256xi32>) outs(%dst : memref<256x256xi32>) atomic = <xor>
+  return
+}
+
+
+// -----
+// CHECK-LABEL: func.func @test_mmadL1_fixpipe_no_atomic
+func.func @test_mmadL1_fixpipe_no_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
+  %mc = tensor.empty() : tensor<256x256xi32>
+  %true = arith.constant true
+  %M = arith.constant 256 : index
+  %K = arith.constant 128 : index
+  %N = arith.constant 256 : index
+  %ret = hivm.hir.mmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<256x128xi8>, tensor<128x256xi8>, i1, index, index, index)
+                              outs(%mc: tensor<256x256xi32>) -> tensor<256x256xi32>
+  // CHECK-NOT: hivm.hir.store
+  hivm.hir.store ins(%ret : tensor<256x256xi32>) outs(%dst : memref<256x256xi32>)
+  return
+}
