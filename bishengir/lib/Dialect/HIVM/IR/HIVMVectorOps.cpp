@@ -38,8 +38,7 @@ using namespace mlir::hivm;
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
 
 namespace {
-template <typename HIVMOP>
-LogicalResult verifyCumOp(HIVMOP op) {
+template <typename HIVMOP> LogicalResult verifyCumOp(HIVMOP op) {
   ArrayRef<int64_t> cumDims = op.getCumDims();
   ShapedType srcType = cast<ShapedType>(op.getSrc().getType());
   if (cumDims.empty()) {
@@ -199,11 +198,9 @@ std::string VCastOp::getCastName(bool withMode) {
   auto srcElemType = srcVcastType.getElementType();
   auto dstElemType = dstVcastType.getElementType();
   hivm::TypeFn casting = this->getCast();
-  castName.append(
-      util::getTypeName(this->getLoc(), srcElemType, casting));
+  castName.append(util::getTypeName(this->getLoc(), srcElemType, casting));
   castName.append("_to_");
-  castName.append(
-      util::getTypeName(this->getLoc(), dstElemType, casting));
+  castName.append(util::getTypeName(this->getLoc(), dstElemType, casting));
   if (withMode) {
     castName.append("_");
     castName.append(stringifyRoundMode((*this).getRoundMode()));
@@ -771,10 +768,12 @@ LogicalResult VTransposeOp::verify() {
         SmallVector<int64_t> transposeLoopDims;
         getTransposeLoopDims(transposeLoopDims);
 
-        auto firstAlign = alignList[1]->alignBytes[0] / static_cast<int>(elemTypeBytes);
+        auto firstAlign =
+            alignList[1]->alignBytes[0] / static_cast<int>(elemTypeBytes);
         auto firstDim = srcShape[transposeLoopDims[0]];
 
-        auto lastAlign = alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
+        auto lastAlign =
+            alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
         auto lastDim = srcShape[transposeLoopDims[1]];
 
         if ((firstDim % firstAlign == 0) && (lastDim % lastAlign == 0)) {

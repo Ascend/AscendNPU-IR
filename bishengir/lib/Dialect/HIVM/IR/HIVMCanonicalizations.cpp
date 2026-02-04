@@ -17,8 +17,8 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -256,15 +256,17 @@ struct RedudantVReduceOp : public OpRewritePattern<VReduceOp> {
 
 struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
   using OpRewritePattern<VReduceOp>::OpRewritePattern;
+  explicit RedudantVReduceInitOp(MLIRContext *context)
+      : OpRewritePattern<VReduceOp>(context, 2) {};
 
-  bool isFillByConst(Value v, Attribute cstAttr) const {
+  bool isFillByConst(Value v, std::optional<Attribute> maybeCstAttr) const {
     if (isa<BlockArgument>(v)) {
       auto blockArg = cast<BlockArgument>(v);
       auto parentOp = blockArg.getOwner()->getParentOp();
       auto blockIndx = blockArg.getArgNumber();
       if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
         auto forInitVal = forOp.getInitArgs()[blockIndx];
-        return isFillByConst(forInitVal, cstAttr);
+        return isFillByConst(forInitVal, maybeCstAttr);
       }
       return false;
     }
@@ -272,34 +274,54 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
     if (auto brcOp = v.getDefiningOp<hivm::VBrcOp>()) {
       auto brcSrc = brcOp.getSrc();
       if (auto cstOp = brcSrc.getDefiningOp<arith::ConstantOp>()) {
-        auto valAttr = cstOp.getValueAttr();
-        return valAttr == cstAttr;
+        if (maybeCstAttr.has_value()) {
+          auto valAttr = cstOp.getValueAttr();
+          return valAttr == maybeCstAttr.value();
+        } else {
+          return true;
+        }
       }
     }
 
     if (auto expandOp = v.getDefiningOp<tensor::ExpandShapeOp>()) {
-      return isFillByConst(expandOp.getSrc(), cstAttr);
+      return isFillByConst(expandOp.getSrc(), maybeCstAttr);
     } else if (auto collapseOp = v.getDefiningOp<tensor::CollapseShapeOp>()) {
-      return isFillByConst(collapseOp.getSrc(), cstAttr);
+      return isFillByConst(collapseOp.getSrc(), maybeCstAttr);
     }
 
     return false;
   }
 
+  bool eraseRedundantInitOp(VReduceOp reduceOp, PatternRewriter &rewriter,
+                            unsigned initIndex, bool isValueInit) const {
+    auto reduceInitOperand = reduceOp.getDpsInitOperand(initIndex);
+    std::optional<Attribute> maybeInit = std::nullopt;
+    if (isValueInit) {
+      maybeInit = reduceOp.getInit();
+    }
+    if (isFillByConst(reduceInitOperand->get(), maybeInit)) {
+      auto emptyValue = mlir::tensor::createTensorEmptyOp(
+          rewriter, reduceOp->getLoc(), reduceInitOperand->get());
+      rewriter.modifyOpInPlace(reduceOp, [&]() {
+        reduceOp.getDpsInitsMutable()[initIndex].assign(emptyValue);
+      });
+      return true;
+    }
+    return false;
+  }
+
   LogicalResult matchAndRewrite(VReduceOp reduceOp,
                                 PatternRewriter &rewriter) const final {
-    auto reduceInitOperand = reduceOp.getDpsInitOperand(0);
-    auto initAttr = reduceOp.getInit();
-    if (!isFillByConst(reduceInitOperand->get(), initAttr)) {
-      return failure();
+    bool isValueInitErased = eraseRedundantInitOp(reduceOp, rewriter, 0, true);
+    bool isIndexInitErased = false;
+    auto arith = reduceOp.getArithAttr().getReduceOp();
+    if (VReduceOp::isArgminOrArgmax(arith)) {
+      isIndexInitErased = eraseRedundantInitOp(reduceOp, rewriter, 1, false);
     }
-    auto emptyValue = mlir::tensor::createTensorEmptyOp(
-        rewriter, reduceOp->getLoc(), reduceInitOperand->get());
-    rewriter.modifyOpInPlace(reduceOp, [&]() {
-      reduceOp.getDpsInitsMutable()[0].assign(emptyValue);
-    });
-
-    return success();
+    if (isValueInitErased || isIndexInitErased) {
+      return success();
+    }
+    return failure();
   }
 };
 
@@ -507,9 +529,10 @@ void VReduceOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                             ::mlir::MLIRContext *context) {
   results.add<RedudantVReduceOp
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  , RedudantVReduceInitOp
+              ,
+              RedudantVReduceInitOp
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
-  >(context);
+              >(context);
 }
 
 void VCumsumOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
