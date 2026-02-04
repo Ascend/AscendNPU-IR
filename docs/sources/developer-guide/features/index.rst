@@ -5,3 +5,4 @@
    :maxdepth: 1
 
    AutoSubtiling/AutoSubtiling.md
+   AutoBlockify/AutoBlockify.md
