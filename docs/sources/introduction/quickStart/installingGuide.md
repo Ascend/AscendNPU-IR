@@ -166,3 +166,20 @@ cmake --build . --target "check-bishengir"
 
 
 ## 4 FAQ
+
+Q：调用build-tools/build.sh脚本构建时，遇到报错"ninja: error: loading 'build.ninja': No such file or directory"应该如何处理？  
+A：在调用build-tools/build.sh脚本时添加"-r"选项，重新执行CMake并生成新的build.ninja文件。
+
+Q：构建时遇到报错"Too many open files"应该如何处理？  
+A：文件同时打开数量超过了系统中配置的上限，可以通过"ulimit -n xxx"来修改文件同时打开数量上限，如"ulimit -n 65535"。
+
+Q：构建时遇到报错
+```bash
+ The CMAKE_CXX_COMPILER:
+
+  clang++
+
+ is not a full path and was not found in the PATH.
+```
+应该如何处理？  
+A：未指定C++编译器或C++编译器二进制存在问题，首先尝试通过"--cxx-compiler=${CXX-COMPILER-PATH}"指定要使用的C++编译器，如果已经指定了C++编译器仍然报错，则尝试重新安装或使用其他版本的C++编译器，如使用推荐的clang++-15。
