@@ -1211,10 +1211,10 @@ void ReduceWithIndexOp::getCanonicalizationPatterns(RewritePatternSet &results,
 }
 
 LogicalResult ReduceWithIndexOp::verify() {
-  if (getDimensions().size() != 1)
-    return emitOpError(
-        "currently ReduceWithIndexOp only supports one reduction dimension");
-
+  if (getDimensions().size() <= 0 || getInputs().size() <= 0) {
+    return emitError(
+        "ReduceWithIndexOp requires positive number of dimensions and inputs");
+  }
   auto inputType = llvm::cast<ShapedType>(getInputs()[0].getType());
   auto initType = llvm::cast<ShapedType>(getInits()[0].getType());
 

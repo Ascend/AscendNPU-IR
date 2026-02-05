@@ -34,6 +34,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Casting.h"
 
 #include <type_traits>
 
@@ -1232,6 +1233,10 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
     if (isa<hfusion::ReduceWithIndexOp>(userOp)) {
       LLVM_DEBUG(llvm::dbgs()
                      << "Propagate collapse down - ReduceWithIndex\n";);
+      if (userOp->getNumResults() >= 2u &&
+          !userOp->getResults()[1].getUsers().empty()) {
+        return failure();
+      }
       return handleReduceLikeOp<hfusion::ReduceWithIndexOp>(
           collapseOp, rewriter, userOp, checkValueIsInit(userOp, result));
     }
@@ -1277,6 +1282,14 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
                                    checkValueIsInit(userOp, result));
     }
     if (isa<hivm::VReduceOp>(userOp)) {
+      hivm::VReduceOp reduceOp = dyn_cast<hivm::VReduceOp>(userOp);
+      auto reduceOpArith = reduceOp.getArithAttr();
+      auto reduceOpAttr = reduceOpArith.getReduceOp();
+      if (hivm::VReduceOp::isArgminOrArgmax(reduceOpAttr) &&
+          userOp->getNumResults() >= 2 &&
+          !userOp->getResults()[1].getUsers().empty()) {
+        return failure();
+      }
       return handleHIVMReduceOp(collapseOp, rewriter, userOp,
                                 checkValueIsInit(userOp, result));
     }
