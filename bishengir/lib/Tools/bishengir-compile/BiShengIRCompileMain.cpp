@@ -74,10 +74,8 @@ std::vector<std::string>
 getCompatibleOptions(const std::vector<std::string> &arguments,
                      const BiShengIRCompileMainConfig &config) {
   std::vector<std::string> options = arguments;
-#ifndef BISHENGIR_PUBLISH
   // if enabled, skip debug options for compatibility.
   options = skipDebugOptions(options);
-#endif
   // TODO: support hivmc compatibility for different versions
   auto version = bishengir::parseHIVMCVersion(config.getHIVMCVersion());
   if (!version.has_value() || version.value().empty()) {
