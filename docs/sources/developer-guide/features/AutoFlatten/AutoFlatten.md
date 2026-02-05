@@ -1,4 +1,4 @@
-# Auto Flatten Pass Documentation
+# Auto Flatten
 
 ## Overview
 

@@ -6,3 +6,5 @@
 
    AutoSubtiling/AutoSubtiling.md
    AutoBlockify/AutoBlockify.md
+   AutoFlatten/AutoFlatten.md
+   CV/CVOptimization.md

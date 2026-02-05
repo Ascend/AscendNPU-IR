@@ -1,4 +1,4 @@
-# AscendNPU IR Cube-Vector（CV）优化流程总览
+# Cube-Vector优化
 
 ## 1. CV融合编译基础能力
 
