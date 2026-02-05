@@ -17,6 +17,8 @@ namespace mlir {
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
+#define DEBUG_TYPE "hivm-sink-op-to-consumer-in-loop"
+
 using namespace mlir;
 using namespace mlir::hivm;
 

@@ -401,6 +401,7 @@ def HIVMFlattenOps : Pass<"hivm-flatten-ops", "func::FuncOp"> {
 }
 
 def SinkOpToConsumerInLoop : Pass<"hivm-sink-op-to-consumer-in-loop", "func::FuncOp"> {
+  let summary = "Sink op to consumer in loop.";
   let constructor = "mlir::hivm::createSinkOpToConsumerInLoopPass()";
   let dependentDialects = ["hivm::HIVMDialect"];
 }
