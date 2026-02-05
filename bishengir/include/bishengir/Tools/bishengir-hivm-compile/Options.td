@@ -182,6 +182,13 @@ def EnableCpuTraceIntrinsic : DFXControlOptions<
 >;
 #endif
 
+def InjectIRFromFile : DFXControlOptions<
+  "Path to IR file for debug: load functions from this file and replace "
+  "matching functions in the current module (inject-ir pass).",
+  "std::string",
+  "\"\""
+>;
+
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
 //===----------------------------------------------------------------------===//

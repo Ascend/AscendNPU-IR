@@ -67,4 +67,19 @@ def ExtendedCanonicalizer : Pass<"canonicalize-ext"> {
   let constructor = "bishengir::createExtendedCanonicalizerPass()";
 }
 
+def InjectIR : Pass<"inject-ir", "mlir::ModuleOp"> {
+  let summary = "Load IR from file and replace matching functions for debug.";
+  let description = [{
+    When a file path is set via option (e.g. inject-ir{file-path=...} or
+    compile option --inject-ir-from-file), this pass loads the module from
+    that file and replaces the body of each function in the current module
+    that has the same name as a function in the loaded module. Used for
+    debugging the pass pipeline by injecting IR from a previously dumped file.
+  }];
+  let constructor = "bishengir::createInjectIRPass()";
+  let options = [Option<"filePath", "file-path", "std::string", "\"\"",
+                        "Path to IR file; functions from this file replace "
+                        "matching functions in the current module">];
+}
+
 #endif //BISHENGIR_TRANSFORMS_PASSES_H
