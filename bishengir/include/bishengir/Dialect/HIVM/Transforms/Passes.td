@@ -42,6 +42,14 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   ];
 }
 
+def NormalizeBitwiseSelect : Pass<"hivm-normalize-bitwise-select"> {
+  let summary = "Normalize hivm bitwise select op";
+  let constructor = "mlir::hivm::createNormalizeBitwiseSelectPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect",
+  ];
+}
+
 def TritonGlobalKernelArgsToHIVMOp
     : Pass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
   let summary = "";
