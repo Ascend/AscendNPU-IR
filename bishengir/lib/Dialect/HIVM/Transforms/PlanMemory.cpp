@@ -1529,8 +1529,10 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
                                pongOffset)) {
         break;
       }
-
       if (VerifyConflictStage2(his, e, localLevel, start, outline)) {
+        break;
+      }
+      if (VerifyConflictStage3(his, e, localLevel, start, outline)) {
         break;
       }
       e->bitsOffset = allocOffset;
@@ -1695,22 +1697,21 @@ void MemPlan::PlanRelationPongEntryAddress(uint64_t offset, StorageEntry *e) {
   }
 }
 
-bool MemPlan::VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
-                                   int specLevel, MemBoundListConstIter &start,
-                                   const MemBoundList &outline) {
-  if (specLevel != SPEC_LEVEL_2) {
-    return false;
-  }
+bool MemPlan::VerifyConflictStageCommon(
+    PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
+    const MemBoundList &outline,
+    std::function<bool(const StorageEntry *, const StorageEntry *)>
+        conflictChecker) {
   bool touchMemCanUse = false;
   MemBoundListConstIter foundMem;
 
   for (auto iter = start; iter != outline.end(); ++iter) {
     uint64_t offset = (*iter)->offset;
-    bool conflict =
-        std::any_of(his.begin(), his.end(), [offset, e, this](PlanRecord &r) {
+    bool conflict = std::any_of(
+        his.begin(), his.end(), [offset, e, &conflictChecker](PlanRecord &r) {
           return (r.firstMemBound->offset + r.allExtent > offset) &&
                  (r.firstMemBound->offset < offset + e->alignedConstBits) &&
-                 this->PipeConflict(r.entry, e, this->pipeDmaConflictMap);
+                 conflictChecker(r.entry, e);
         });
     // if conflict, continue finding the first bound that has no conflict
     // if last bound do not meet the size, continue
@@ -1730,6 +1731,32 @@ bool MemPlan::VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
   }
   // if cannot find a bound that has no conflict with current entry,
   return true;
+}
+
+bool MemPlan::VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
+                                   int specLevel, MemBoundListConstIter &start,
+                                   const MemBoundList &outline) {
+  if (specLevel != SPEC_LEVEL_3) {
+    return false;
+  }
+  return VerifyConflictStageCommon(
+      his, e, start, outline,
+      [this](const StorageEntry *e1, const StorageEntry *e2) {
+        return this->PipeConflict(e1, e2, this->pipeDmaConflictMap);
+      });
+}
+
+bool MemPlan::VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
+                                   int specLevel, MemBoundListConstIter &start,
+                                   const MemBoundList &outline) {
+  if (specLevel != SPEC_LEVEL_2) {
+    return false;
+  }
+  return VerifyConflictStageCommon(
+      his, e, start, outline,
+      [this](const StorageEntry *e1, const StorageEntry *e2) {
+        return this->PipeConflictInSameLoop(e1, e2);
+      });
 }
 
 bool MemPlan::PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
@@ -1753,6 +1780,20 @@ bool MemPlan::PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
     }
   }
   return false;
+}
+
+bool MemPlan::PipeConflictInSameLoop(const StorageEntry *e1,
+                                     const StorageEntry *e2) {
+  if (e1 == nullptr || e2 == nullptr) {
+    return false;
+  }
+  auto parentLoop1 = GetBufferParentLoop(e1->inplaceBuffers);
+  auto parentLoop2 = GetBufferParentLoop(e2->inplaceBuffers);
+  if (parentLoop1 != parentLoop2) {
+    return false;
+  }
+  // Cannot be reused under the same region.
+  return true;
 }
 
 void MemPlan::UpdateOutline(MemBoundList &outline, PlanRecHis &his,
