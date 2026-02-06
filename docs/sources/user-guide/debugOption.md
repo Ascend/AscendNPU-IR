@@ -1,6 +1,6 @@
-# DFX调试调测
+# 调试调测
 
-## 一：DEBUG OP类
+## 调试：DEBUG OP类
 
 有多种生态编程语言对接AscendNPU IR，当前仅以Triton为例进行介绍，剩余还有TileLang/FlagTree/DLCompiler/TLE 方式类试可以参考Triton进行对接
 
@@ -89,7 +89,7 @@ def kernel_name(x_ptr, y):
 
 #### 断言效果：
 
-![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015176/cb2ee98c494e4786abe139a854b2084b.png)
+![](figs/P1.png)
 
 ### device_print
 
@@ -122,9 +122,9 @@ def kernel_name(x_ptr, y):
 
 #### 打印效果：
 
-![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015993/a84e22db27664dfd9ce492636082bfd0.png)
+![](figs/P2.png)
 
-## 二：工具类
+## 调试：工具类
 
 ### mssanitizer
 
@@ -141,7 +141,7 @@ mssanitizer python test.py
 
 #### 效果展示
 
-![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015995/81869adf44154acaac41525f3b40a116.png)
+![](figs/P3.png)
 
 ### msprof
 
@@ -177,10 +177,10 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 性能流水图数据可在以下文件中获取
 
 trace.json：支持在chrome://tracing/上生成指令流水图
-![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015992/4b23c707f2ab4d9096876522bcc7149b.png)
+ ![](figs/P4.png)
 
 visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
-![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015994/99c3210cb8624057b074a9807e7d20c0.png)
+![](figs/P5.png)
 
 #### 其他性能分析图
 
