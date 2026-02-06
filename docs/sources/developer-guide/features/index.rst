@@ -8,3 +8,4 @@
    AutoBlockify/AutoBlockify.md
    AutoFlatten/AutoFlatten.md
    CV/CVOptimization.md
+   DFX/DFX.md
