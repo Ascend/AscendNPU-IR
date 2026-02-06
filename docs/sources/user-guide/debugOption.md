@@ -1,8 +1,10 @@
-# 调试指南
+# DFX调试调测
 
-## 调试：DEBUG OP类
+## 一：DEBUG OP类
 
-目前与调试调测相关的op主要有如下四类：
+有多种生态编程语言对接AscendNPU IR，当前仅以Triton为例进行介绍，剩余还有TileLang/FlagTree/DLCompiler/TLE 方式类试可以参考Triton进行对接
+
+目前与调试调测相关的triton op主要有如下四类：
 
 * **​static_assert：​**编译时静态断言
 * **​static_print：​**编译时静态打印
@@ -70,14 +72,6 @@ def kernel_name(
 
 # triton language 接口
 triton.language.device_assert(condition: bool, message: str = "") -> None
-
-# hfusion op接口
-hfusion.assert "condition = xxx" %condition : i1
-
-# hivm op接口
-# hex: bool - 是否将所有值以十六进制而非十进制形式打印
-# tcoretype - 指明是在core核上运行还是vector核上运行（CUBE/VECTOR/CUBE_OR_VECTOR）
-hivm.hir.debug {debugtype = "assert", hex = xxx, prefix = "condition = xxx", tcoretype = #hivm.tcore_type<VECTOR>} %condition : i1
 ```
 
 #### 使用示例
@@ -93,73 +87,13 @@ def kernel_name(x_ptr, y):
     tl.device_assert(x > 0, "x must be positive")
 ```
 
-#### AscendNPU IR片段示例：
-
-```
-// ttadapter ir:
-module {
-  func.func private @triton_assert_0(tensor<8xi1>) attributes {msg = "x must be positive"}
-  func.func @vector_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
-    %c0_i64 = arith.constant 0 : i64
-    %0 = tensor.empty() : tensor<8xi64>
-    %1 = linalg.fill ins(%c0_i64 : i64) outs(%0 : tensor<8xi64>) -> tensor<8xi64>
-    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    %3 = arith.cmpi sgt, %2, %1 : tensor<8xi64>
-    call @triton_assert_0(%3) : (tensor<8xi1>) -> ()
-    return
-  }
-}
-
-// 转到hfusion层
-// -----// IR Dump After AdaptTritonKernel (adapt-triton-kernel) //----- //
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %c0_i64 = arith.constant 0 : i64
-    %0 = tensor.empty() : tensor<8xi64>
-    %1 = linalg.fill ins(%c0_i64 : i64) outs(%0 : tensor<8xi64>) -> tensor<8xi64>
-    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    %3 = tensor.empty() : tensor<8xi1>
-    %4 = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%2, %1 : tensor<8xi64>, tensor<8xi64>) outs(%3 : tensor<8xi1>) -> tensor<8xi1>
-    %5 = arith.extui %4 : tensor<8xi1> to tensor<8xi8>
-    hfusion.assert "x must be positive" %5 : tensor<8xi8>
-    return
-  }
-}
-
-// 转到hivm层
-// -----// IR Dump After ConvertHFusionToHIVM (convert-hfusion-to-hivm) //----- //
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dltentry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 5242i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.mems_ptr} {
-  func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_typhacc.arg_type<workspace>}, %arg3: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) attrib{SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %c0_i64 = arith.constant 0 : i64
-    %0 = tensor.empty() : tensor<8xi64>
-    %1 = hivm.hir.vbrc ins(%c0_i64 : i64) outs(%0 : tensor<8xi64>) -> tensor<8xi64>
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    %3 = tensor.empty() : tensor<8xi1>
-    %4 = hivm.hir.vcmp ins(%2, %1 : tensor<8xi64>, tensor<8xi64>) outs(%3 : tensor<8xi1>) compare_mode = <gt> -> tensor<8xi1>
-    %5 = tensor.empty() : tensor<8xi8>
-    %6 = hivm.hir.vcast ins(%4 : tensor<8xi1>) outs(%5 : tensor<8xi8>) -> tensor<8xi8>
-    hivm.hir.debug {debugtype = "assert", hex = false, prefix = "x must be positive", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %6 : tensor<8xi8>
-    return
-  }
-}
-```
-
 #### 断言效果：
 
-![](figs/P1.png)
+![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015176/cb2ee98c494e4786abe139a854b2084b.png)
 
 ### device_print
 
-注：使用此功能前需要设置环境变量export TRITON_DEBUG=1 export TRITON_DEVICE_PRINT=1
+注：使用此功能前需要设置环境变量export TRITON_DEVICE_PRINT=1
 
 #### 接口描述
 
@@ -170,14 +104,6 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 # triton language 接口
 triton.language.device_print(prefix, *args, hex=False) -> None
-
-# hfusion op接口
-# dtype - 待打印tensor/scalar对应的数据类型
-hfusion.print " prefix = xxx " {hex = xxx} %args : dtype
-
-# hivm op接口
-# tcoretype - 指明是在core核上运行还是vector核上运行（默认初始值为: CUBE_OR_VECTOR）
-hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %args : dtype
 ```
 
 #### 使用示例
@@ -194,64 +120,11 @@ def kernel_name(x_ptr, y):
     tl.device_print("y and 16", y, 16, hex=True)
 ```
 
-#### AscendNPU IR片段示例：
-
-```
-// ttadapter ir:
-module {
-  func.func private @triton_print_0(tensor<8xi64>) attributes {hex = false, prefix = " x: "}
-  func.func private @triton_print_1(i32, i32) attributes {hex = true, prefix = " y and 16: "}
-  func.func @vector_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
-    %c16_i32 = arith.constant 16 : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %0 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    call @triton_print_0(%0) : (tensor<8xi64>) -> ()
-    call @triton_print_1(%arg3, %c16_i32) : (i32, i32) -> ()
-    return
-  }
-}
-
-// 转到hfusion层
-// -----// IR Dump After AdaptTritonKernel (adapt-triton-kernel) //----- //
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %c16_i32 = arith.constant 16 : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %0 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    hfusion.print " x: " {hex = false} %0 : tensor<8xi64>
-    hfusion.print " y and 16: " {hex = true} %arg3 : i32
-    hfusion.print " y and 16: " {hex = true} %c16_i32 : i32
-    return
-  }
-}
-
-// 转到hivm层
-// -----// IR Dump After ConvertHFusionToHIVM (convert-hfusion-to-hivm) //----- //
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 20 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 40 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %c16_i32 = arith.constant 16 : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
-    %alloc = memref.alloc() : memref<8xi64>
-    memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8xi64>
-    %0 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %0 : tensor<8xi64>
-    hivm.hir.debug {debugtype = "print", hex = true, prefix = " y and 16: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %arg4 : i32
-    hivm.hir.debug {debugtype = "print", hex = true, prefix = " y and 16: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %c16_i32 : i32
-    return
-  }
-}
-```
-
 #### 打印效果：
 
-![](figs/P2.png)
+![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015993/a84e22db27664dfd9ce492636082bfd0.png)
 
-## 调试：工具类
-
+## 二：工具类
 
 ### mssanitizer
 
@@ -265,9 +138,10 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 # 直接拉起triton算子运行即可
 mssanitizer python test.py
 ```
+
 #### 效果展示
 
-![](figs/P3.png)
+![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015995/81869adf44154acaac41525f3b40a116.png)
 
 ### msprof
 
@@ -303,10 +177,10 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 性能流水图数据可在以下文件中获取
 
 trace.json：支持在chrome://tracing/上生成指令流水图
-![](figs/P4.png)
+![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015992/4b23c707f2ab4d9096876522bcc7149b.png)
 
 visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
-![](figs/P5.png)
+![](https://wiki.huawei.com/vision-file-storage/api/file/download/upload-v2/WIKI202601279949203/38015994/99c3210cb8624057b074a9807e7d20c0.png)
 
 #### 其他性能分析图
 
@@ -321,5 +195,3 @@ visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾A
 #### enable-debug-info
 
 用于传递对应的triton kernel行号信息
-
-
