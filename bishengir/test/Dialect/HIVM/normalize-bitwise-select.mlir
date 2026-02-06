@@ -5,7 +5,7 @@
 // CHECK-SAME:                                    %[[VAL_1:.*]]: tensor<16xf32>,
 // CHECK-SAME:                                    %[[VAL_2:.*]]: tensor<16xf32>) -> tensor<16xf32> {
 // CHECK:           %[[VAL_3:.*]] = tensor.empty() : tensor<16xf32>
-// CHECK:           %[[VAL_4:.*]] = hivm.hir.vsel ins(%[[VAL_0]], %[[VAL_2]], %[[VAL_1]] : tensor<16xi8>, tensor<16xf32>, tensor<16xf32>) outs(%[[VAL_3]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.vsel ins(%[[VAL_0]], %[[VAL_1]], %[[VAL_2]] : tensor<16xi8>, tensor<16xf32>, tensor<16xf32>) outs(%[[VAL_3]] : tensor<16xf32>) -> tensor<16xf32>
 // CHECK:           return %[[VAL_4]] : tensor<16xf32>
 // CHECK:         }
 func.func @test_i8_bitwise_mask(%arg0: tensor<16xi8>, %arg1: tensor<16xf32>, %arg2: tensor<16xf32>) -> tensor<16xf32> {
