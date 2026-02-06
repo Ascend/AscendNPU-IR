@@ -1,7 +1,37 @@
+# Build directories (keep build-tools)
 build*/
 !build-tools/
-.vscode
-.cache
+
+# IDE & editor
+.vscode/
 .idea/
+.cache/
+
+# Merge / patch artifacts
 *.orig
 *.rej
+
+# --- Sphinx / docs ---
+docs/_build/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+*.egg-info/
+.eggs/
+dist/
+*.egg
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Optional: Cursor agent / logs (uncomment if you want to ignore)
+# .cursor/agent-transcripts/
