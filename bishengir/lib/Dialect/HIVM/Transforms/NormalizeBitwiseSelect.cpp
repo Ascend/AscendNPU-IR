@@ -90,10 +90,10 @@ public:
       return failure();
     // Generate pattern:
     // %0 = ...
-    // vsel ins(%0, %false, %true)
+    // vsel ins(%0, %true, %false)
     auto newSelOp = rewriter.create<hivm::VSelOp>(
         op.getLoc(), TypeRange({selOp.getDst()[0].getType()}),
-        ValueRange({initMask, selOp.getSrc()[2], selOp.getSrc()[1]}),
+        ValueRange({initMask, selOp.getSrc()[1], selOp.getSrc()[2]}),
         selOp.getDst(), Value());
     rewriter.eraseOp(op);
     selOp.replaceAllUsesWith(newSelOp.getResults());
