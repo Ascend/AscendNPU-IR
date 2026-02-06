@@ -376,6 +376,7 @@ SmallVector<MemRefType> getMemRefTypes(TypeRange types);
 bool isAllSameRank(const SmallVectorImpl<MemRefType> &memrefTypes);
 
 inline int64_t ceilFactor(int64_t x, int64_t y) { return (x + y - 1) / y * y; }
+inline int64_t ceilDiv(int64_t x, int64_t y) { return (x + y - 1) / y; }
 
 bool isLastDimContiguous(Value operand);
 
