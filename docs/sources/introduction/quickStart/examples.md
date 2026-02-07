@@ -26,7 +26,7 @@ module {
 bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 ```
 
-这时的`kernel.o`即为可上班执行的二进制。
+这时的`kernel.o`即为可上板执行的二进制。
 
 ## runtime注册上板执行
 
