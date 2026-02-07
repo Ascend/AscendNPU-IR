@@ -61,3 +61,8 @@ bishengir目录结构和mlir目录结构保持一致，其中include下存放声
 ```
 IR中主要由Conversion、Dialect、tools三部分组成，其中Conversion承载不同方言间转换的能力，Dialect下是不同方言的定义和实现，tools目录下定义编译工具链。
 Conversion中既包括三方生态对接转换（如TorchToHFusion）也包括AscendNPU IR内部方言间转换（如HFusionToHIVM）；Dialect下既包括自研方言也包括社区方言（内部是对社区方言的扩展增强）；tools中bishengir-compile是AscendNPU IR编译器的命令行驱动程序。
+
+## 编译流程
+
+AscendNPU IR对应工具链是bishengir-compile，会负责把高抽象层级的Tile级OP编译成感知NPU 硬件架构的low level op，该工具链输入和输出均是mlir。hivmc工具会负责把low level的mlir转成llvm ir并基于LLVM IR进行底层指令编译优化，最终生成算子二进制。
+![](figs/fig3.png)
