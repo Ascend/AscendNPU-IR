@@ -2534,3 +2534,14 @@ func.func @test_vadd_2d_f16() {
   return
 }
 
+// -----
+func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
+  %src = memref.alloc() : memref<16x512xf16>
+  %dst = memref.alloc() : memref<16x1xf16>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<512xf16>)
+  hivm.hir.vreduce <sum> ins(%src : memref<16x512xf16>)
+                         outs(%dst : memref<16x1xf16>)
+                         reduce_dims = [1]
+
+  return
+}

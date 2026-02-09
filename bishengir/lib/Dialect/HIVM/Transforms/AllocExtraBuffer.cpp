@@ -40,6 +40,8 @@ namespace {
 
 struct AllocExtraBufferPass
     : public mlir::impl::AllocExtraBufferBase<AllocExtraBufferPass> {
+  explicit AllocExtraBufferPass() : AllocExtraBufferBase() {}
+
 public:
   void runOnOperation() override;
 };

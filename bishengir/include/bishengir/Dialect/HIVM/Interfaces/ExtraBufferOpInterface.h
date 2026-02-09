@@ -51,11 +51,12 @@ std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
 
 std::optional<int64_t>
 getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
-                                       int64_t reductionDim);
+                                       int64_t reductionDim, bool saveUbUf);
 
 std::optional<int64_t> refineReduceExtraBufferSize(ShapedType srcType,
                                                    int64_t srcAllocTotalSize,
-                                                   int64_t reductionDim);
+                                                   int64_t reductionDim,
+                                                   bool saveUbUf);
 
 } // namespace util
 } // namespace hivm
