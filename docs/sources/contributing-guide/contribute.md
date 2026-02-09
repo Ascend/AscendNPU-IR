@@ -1,4 +1,4 @@
-# AscendNPU IR贡献指南
+# 贡献指南
 
 本项目欢迎广大开发者体验并参与贡献，在参与社区贡献之前。请参见[ascend-community](https://gitcode.com/ascend/community)了解行为准则，进行[CLA协议签署](https://clasign.osinfra.cn/sign/690ca9ddf91c03dee6082ab1)，了解源码仓的贡献流程。
 
