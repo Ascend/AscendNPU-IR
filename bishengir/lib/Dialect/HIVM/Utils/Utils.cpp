@@ -1040,7 +1040,11 @@ computeCollapsedLayoutMap(MemRefType srcType,
   int64_t srcOffset;
   SmallVector<int64_t> srcStrides;
   auto srcShape = srcType.getShape();
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)))
+#else
+  if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)))
+#endif
     return failure();
 
   // The result stride of a reassociation group is the stride of the last
@@ -1156,7 +1160,11 @@ bool isLastDimContiguous(Value operand) {
 
   auto mem = cast<MemRefType>(operType);
   auto shape = mem.getShape();
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   auto [strides, offset] = getStridesAndOffset(mem);
+#else
+  auto [strides, offset] = mem.getStridesAndOffset();
+#endif
   assert(!strides.empty() && "strides should not be empty.");
 
   return *shape.rbegin() == 1 || *strides.rbegin() == 1;
