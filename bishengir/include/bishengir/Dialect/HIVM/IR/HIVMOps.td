@@ -98,6 +98,50 @@ def LoadScalarOp : HIVM_Op<"load_scalar"> {
   let hasVerifier = 1;
 }
 
+def SetAtomicOp : HIVM_Op<"set_atomic"> {
+  let summary = "HIVM Set Atomic Operation";
+  let description = [{
+    This operation enables atomic operation for any data written to global memory.
+    Reset atomic operation by setting kind = #hivm.atomic_kind<NONE>.
+
+    The supported atomic operation's data type includes:
+        - F32
+        - F16
+        - S16
+        - S32
+        - S8
+        - BF16
+
+    The supported atomic operation's type includes:
+        - ADD
+        - MAX
+        - MIN
+
+    For example:
+
+    ```
+    hivm.hir.set_atomic kind= #hivm.atomic_kind<ADD> type = i32
+    // all subsequent store-like operations will enable atomic store with addition
+    hivm.hir.store ins(...) outs(...)
+    ...
+    hivm.hir.set_atomic kind= #hivm.atomic_kind<NONE>
+    hivm.hir.fixpipe ins(...) outs(...)
+    ```
+  }];
+  let arguments = (ins HIVM_AtomicKindAttr:$kind,
+                       OptionalAttr<TypeAttr>:$type);
+  let assemblyFormat = "`kind` `=` $kind `[` `type` `=` $type `]` attr-dict";
+}
+
+def SetCtrlOp : HIVM_Op<"set_ctrl"> {
+  let summary = "hivm set ctrl operation";
+  let description = "This op configures control bits by setting a specific bit to 0 or 1.";
+  let arguments = (ins BoolAttr:$enable,
+                       I64Attr:$idx);
+  let assemblyFormat = "$enable `at` `ctrl``[` $idx `]` attr-dict";
+}
+
+
 def DCCIOp : HIVM_Op<"dcci"> {
   let summary = "hivm dcci op ";
   let description = [{

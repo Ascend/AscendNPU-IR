@@ -2000,3 +2000,25 @@ func.func @atomic_masked_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_typ
   hivm.hir.atomic_xchg ins(%alloc : memref<256xi16>) outs(%reinterpret_cast_1 : memref<256xi16, strided<[1]>>) mask(%mask : memref<256xi1>)
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_set_atomic_ADD_f32
+// CHECK: hivm.hir.set_ctrl true at ctrl[6]
+// CHECK: hivm.hir.set_ctrl false at ctrl[7]
+// CHECK: hivm.hir.set_ctrl false at ctrl[8]
+// CHECK: hivm.hir.set_ctrl false at ctrl[9]
+// CHECK: hivm.hir.set_ctrl false at ctrl[10]
+func.func @test_set_atomic_ADD_f32() {
+  hivm.hir.set_atomic kind = <add>[type = f32]
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @test_set_atomic_NONE_f32
+// CHECK: hivm.hir.set_ctrl false at ctrl[6]
+// CHECK: hivm.hir.set_ctrl false at ctrl[7]
+// CHECK: hivm.hir.set_ctrl false at ctrl[8]
+func.func @test_set_atomic_NONE_f32() {
+  hivm.hir.set_atomic kind = <none>[type = f32]
+  return
+}

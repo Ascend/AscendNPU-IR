@@ -247,9 +247,16 @@ private:
       inlineFixPipeWithRreRelu(rewriter, loc, op, reluOp);
     } else if (auto storeOp = llvm::dyn_cast_if_present<hivm::StoreOp>(curOp)) {
       //   3. store or layout
-      matched = true;
-      inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
-                               op.getDpsInputOperand(0)->get());
+      auto storeAttr = storeOp.getAtomicKindAttr();
+      hivm::AtomicKind atomicKind = hivm::AtomicKind::NONE;
+      if (storeAttr)
+        atomicKind = storeAttr.getValue();
+      if (atomicKind == AtomicKind::NONE || atomicKind == AtomicKind::ADD ||
+          atomicKind == AtomicKind::MAX || atomicKind == AtomicKind::MIN) {
+        matched = true;
+        inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
+                                 op.getDpsInputOperand(0)->get());
+      }
     } else if (auto extractSliceOp =
                    dyn_cast_if_present<tensor::ExtractSliceOp>(curOp)) {
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
@@ -323,14 +330,24 @@ private:
   void inlineFixPipeWithStoreOp(PatternRewriter &rewriter, Location loc,
                                 hivm::FixpipeOp op, hivm::StoreOp storeOp,
                                 Value fixpipeSrcTensor) const {
+    assert(storeOp->getNumResults() == 0 && "StoreOp must have 0 results");
     rewriter.setInsertionPointAfter(storeOp);
-    auto fixpipeDstMemref = storeOp.getDst();
-    auto quantModeAttr = op.getPreQuantAttr();
-    auto reluModeAttr = op.getPreReluAttr();
-    rewriter.replaceOpWithNewOp<FixpipeOp>(
-        storeOp, TypeRange{}, /*src=*/fixpipeSrcTensor,
-        /*dst=*/fixpipeDstMemref, rewriter.getUnitAttr(), quantModeAttr,
-        reluModeAttr);
+    auto dst = storeOp.getDst();
+    auto storeAttr = storeOp.getAtomicKindAttr();
+    auto noneAtomicAttr =
+        AtomicKindAttr::get(op->getContext(), ::mlir::hivm::AtomicKind::NONE);
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+        loc, TypeRange{}, ValueRange{fixpipeSrcTensor, dst}, op->getAttrs());
+    if (storeAttr) {
+      auto typeAttr =
+          TypeAttr::get(mlir::cast<ShapedType>(dst.getType()).getElementType());
+      rewriter.setInsertionPoint(newFixpipeOp);
+      rewriter.create<SetAtomicOp>(loc, storeAttr, typeAttr);
+      rewriter.setInsertionPointAfter(newFixpipeOp);
+      rewriter.create<SetAtomicOp>(loc, noneAtomicAttr, typeAttr);
+    }
+    rewriter.eraseOp(storeOp);
+    rewriter.eraseOp(op);
     LDBG("InlineFixpipeEnd");
   }
 
