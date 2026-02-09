@@ -340,9 +340,12 @@ void convertInvalidScalarOperandByBrc(
   OpBuilder b(op);
   Value dstVal = op->getOperand(op->getNumOperands() - 1);
   for (size_t invalidIdx : invalidscalarOperands) {
-    auto operand = op->getOperand(invalidIdx);
-    Value empty = utils::createEmptyOp(b, op->getLoc(), dstVal);
-    Value newOperand = brcOperand(b, op->getLoc(), operand, empty);
+    Value scalarOperand = op->getOperand(invalidIdx);
+    Type scalarElemTy = scalarOperand.getType();
+
+    Value empty = utils::createEmptyOpWithTargetElemType(
+        b, op->getLoc(), dstVal, scalarElemTy, std::nullopt);
+    Value newOperand = brcOperand(b, op->getLoc(), scalarOperand, empty);
     op->setOperand(invalidIdx, newOperand);
   }
 }
