@@ -77,6 +77,22 @@ void DimensionAnalyzer::processBFS() {
 
     for (Operation *user : current.getUsers()) {
       processOperation(user, current);
+      if (isa<ShapedType>(current.getType())) {
+        createDummyRefIfNotExist({current});
+        auto curRef = argumentsRefPointer_.at(current);
+        for (auto res : user->getResults()) {
+          if (isa<ShapedType>(res.getType())) {
+            createDummyRefIfNotExist({res});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+          }
+        }
+        for (auto opr : user->getOperands()) {
+          if (isa<ShapedType>(opr.getType())) {
+            createDummyRefIfNotExist({opr});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
+          }
+        }
+      }
 
       for (Value result : user->getResults()) {
         updatePreviousType(result);
@@ -378,7 +394,7 @@ void DimensionAnalyzer::processReshapeOp(T op) {
     LDBG(utils::debugger::to_string(inputIdx)
          << ' ' << utils::debugger::to_string(outputIdx));
     if (inputIdx.size() == 1 && outputIdx.size() == 1) {
-      joinShape(inputArgs[inputIndices.back()[0]], outputArgs[outputIdx[0]]);
+      joinShape(inputArgs[inputIdx[0]], outputArgs[outputIdx[0]]);
       continue;
     }
     // Consider not mutated if and only if there exists exactly 1 nonone
@@ -439,33 +455,52 @@ void DimensionAnalyzer::combineInferable() {
 }
 
 void DimensionAnalyzer::markDimensionKind() {
-  op_->walk<WalkOrder::PreOrder>([&](VReduceOp reduceOp) {
-    // By default reduce would connect with each other
-    LDBG("Trying to mark this reduce op " << reduceOp);
-    auto reduceResRef = getArgumentRef(reduceOp.getSrc());
-    for (auto reduceDim : reduceOp.getReduceDims()) {
-      tilingDimKindMap[solverCollapserElem_->find(reduceResRef[reduceDim])] =
-          TilingDimensionKind::Reduce;
-    }
-  });
   auto processSlice = [this](auto sliceOp) {
     if (!argumentsRefPointer_.contains(sliceOp.getSource()))
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    auto sliceRef = getArgumentRef(sliceOp.getSource());
+    SmallVector<int64_t> sliceRef;
+    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
+      sliceRef = getArgumentRef(sliceOp.getSource());
+    } else {
+      sliceRef = getArgumentRef(sliceOp.getResult());
+    }
     for (size_t i = 0; i < sliceRef.size(); ++i) {
-      tilingDimKindMap[solverCollapserElem_->find(droppedDimsMask[i])] =
-          TilingDimensionKind::RankReduced;
+      if (droppedDimsMask[i]) {
+        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
+            TilingDimensionKind::RankReduced;
+      }
     }
   };
 
   op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
-      if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(op)) {
-        processSlice(insertOp);
-      } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-        processSlice(extractOp);
+    if (auto reduceOp = dyn_cast<hivm::VReduceOp>(op)) {
+      // By default reduce would connect with each other
+      LDBG("Trying to mark this reduce op " << reduceOp);
+      auto reduceResRef = getArgumentRef(reduceOp.getSrc());
+      for (auto reduceDim : reduceOp.getReduceDims()) {
+        tilingDimKindMap[solverCollapserElem_->find(reduceResRef[reduceDim])] =
+            TilingDimensionKind::Reduce;
+      }
+    } else if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      processSlice(insertOp);
+    } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
+      processSlice(extractOp);
+    }
+    for (auto res : op->getResults()) {
+      if (auto shapedType = dyn_cast<ShapedType>(res.getType());
+          shapedType && shapedType.getRank() > 0) {
+        auto shape = shapedType.getShape();
+        auto lastDimSizeInBit =
+            shape.back() / 2 *
+            shapedType.getElementType().getIntOrFloatBitWidth();
+        if (!ShapedType::isDynamic(shape.back()) &&
+            lastDimSizeInBit % utils::kUBAlignSizeInBits != 0) {
+          auto argRef = getArgumentRefOrCreateDummy(res);
+          tilingDimKindMap[solverCollapserElem_->find(argRef.back())] =
+              TilingDimensionKind::NotAligned;
+        }
       }
     }
   });

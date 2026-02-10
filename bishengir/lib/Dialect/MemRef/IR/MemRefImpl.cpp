@@ -16,6 +16,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Utils/ExpandShapeUtils.h"
 #endif
@@ -187,6 +189,24 @@ struct FoldRedundantCopy : public OpRewritePattern<memref::CopyOp> {
   }
 };
 
+struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
+public:
+  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::AllocOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasOneUse())
+      return failure();
+    auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(*op->user_begin());
+    if (!toTensorOp)
+      return failure();
+    auto tensorType = toTensorOp.getType();
+    rewriter.replaceOpWithNewOp<tensor::EmptyOp>(toTensorOp, tensorType.getShape(), tensorType.getElementType());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 } // namespace
 
 namespace mlir {
@@ -226,7 +246,7 @@ void getExtendedCanonicalizationPatterns(mlir::RewritePatternSet &results) {
       ReinterpretCastOp, ReinterpretCastReturnTypeCanonicalizer,
       ReinterpretCastCanonicalizer>>(context,
                                      "ReinterpretCastConstantArgumentFolder");
-  results.add<FoldRedundantCopy>(context);
+  results.add<FoldRedundantCopy, CanonicalizeAllocToTensor>(context);
   results.add<FoldConstantDimOfOutputShape<ExpandShapeOp, CastOp>>(context);
 #endif
 }
