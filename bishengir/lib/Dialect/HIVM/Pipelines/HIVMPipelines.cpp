@@ -97,6 +97,9 @@ bufferizationPipeline(OpPassManager &pm,
         tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   }
+  if (hivmPipelineOptions.enableUbufSaving) {
+    pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
+  }
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(

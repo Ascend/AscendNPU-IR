@@ -400,6 +400,12 @@ def HIVMFlattenOps : Pass<"hivm-flatten-ops", "func::FuncOp"> {
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", ];
 }
 
+def SinkOpToConsumerInLoop : Pass<"hivm-sink-op-to-consumer-in-loop", "func::FuncOp"> {
+  let summary = "Sink op to consumer in loop.";
+  let constructor = "mlir::hivm::createSinkOpToConsumerInLoopPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def AlignAllocSize : Pass<"hivm-align-alloc-size", "func::FuncOp"> {
   let summary =
       "Automatically align memref.alloc size for special hivm op that "

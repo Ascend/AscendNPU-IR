@@ -214,6 +214,10 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
       UpdateMultiBufferInfo(markOp);
+      auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
+      if (maybeAlloc.has_value()) {
+        UpdateOpKillInfo(curOpInfo, maybeAlloc.value(), live);
+      }
     } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(op)) {
       UpdateConditionOpBufferAlias(conditionOp);
     } else if (auto condBrOp = dyn_cast<cf::CondBranchOp>(op)) {
