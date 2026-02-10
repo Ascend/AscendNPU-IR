@@ -1,4 +1,4 @@
-# AscendNPU IR编译&执行用力
+# AscendNPU IR编译&执行用例
 
 本样例展示如何编译链接，并基于CANN提供的runtime接口实现上板执行。
 

@@ -1,4 +1,4 @@
-# Auto-Sync — Developer Guide
+# Auto-Sync
 
 Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts synchronization operations so producers and consumers of shared data or resources are correctly ordered. Goals: **correctness** (no data races or ordering bugs) and **minimal overhead** (fewest syncs needed, reuse of hardware events when safe).
 

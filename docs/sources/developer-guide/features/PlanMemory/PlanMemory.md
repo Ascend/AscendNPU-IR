@@ -1,4 +1,4 @@
-# PlanMemoryPass 介绍
+# PlanMemoryPass
 
 本文介绍 HIVM 中的 **PlanMemory** 变换（`PlanMemoryPass`），包括硬件背景、算法原理、接口说明和约束能力。
 
