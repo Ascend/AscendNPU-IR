@@ -77,22 +77,6 @@ void DimensionAnalyzer::processBFS() {
 
     for (Operation *user : current.getUsers()) {
       processOperation(user, current);
-      if (isa<ShapedType>(current.getType())) {
-        createDummyRefIfNotExist({current});
-        auto curRef = argumentsRefPointer_.at(current);
-        for (auto res : user->getResults()) {
-          if (isa<ShapedType>(res.getType())) {
-            createDummyRefIfNotExist({res});
-            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-          }
-        }
-        for (auto opr : user->getOperands()) {
-          if (isa<ShapedType>(opr.getType())) {
-            createDummyRefIfNotExist({opr});
-            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
-          }
-        }
-      }
 
       for (Value result : user->getResults()) {
         updatePreviousType(result);
@@ -394,7 +378,7 @@ void DimensionAnalyzer::processReshapeOp(T op) {
     LDBG(utils::debugger::to_string(inputIdx)
          << ' ' << utils::debugger::to_string(outputIdx));
     if (inputIdx.size() == 1 && outputIdx.size() == 1) {
-      joinShape(inputArgs[inputIdx[0]], outputArgs[outputIdx[0]]);
+      joinShape(inputArgs[inputIndices.back()[0]], outputArgs[outputIdx[0]]);
       continue;
     }
     // Consider not mutated if and only if there exists exactly 1 nonone
