@@ -1029,18 +1029,18 @@ module {
 }
 
 // -----
-// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 32)>
 // CHECK-LABEL:   func.func @simple_testcase_slicingUB(
 // CHECK:           %[[VAL_2:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_3:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
-// CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
-// CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]]()[%[[VAL_5]]]
-// CHECK:             %[[VAL_7:.*]] = tensor.empty() : tensor<32xf32>
-// CHECK:             %[[VAL_8:.*]] = hivm.hir.vln ins(%[[VAL_7]] : tensor<32xf32>) outs(%[[VAL_7]] : tensor<32xf32>) -> tensor<32xf32>
-// CHECK:             %[[VAL_9:.*]] = memref.subview %{{.*}}[%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:             hivm.hir.store ins(%[[VAL_8]] : tensor<32xf32>) outs(%[[VAL_9]] : memref<32xf32, strided<[1], offset: ?>>)
-// CHECK:           }
+// CHECK:           %[[VAL_3:.*]] = memref.alloc() : memref<64xf32>
+// CHECK:           %[[VAL_4:.*]] = bufferization.to_tensor %[[VAL_3]] restrict writable : memref<64xf32>
+// CHECK:           %[[VAL_5:.*]] = tensor.empty() : tensor<64xf32>
+// CHECK:           %[[VAL_6:.*]] = hivm.hir.vln ins(%[[VAL_4]] : tensor<64xf32>) outs(%[[VAL_5]] : tensor<64xf32>) -> tensor<64xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.get_sub_block_idx -> i64
+// CHECK:           %[[VAL_8:.*]] = arith.index_cast %[[VAL_7]] : i64 to index
+// CHECK:           %[[VAL_9:.*]] = arith.cmpi eq, %[[VAL_8]], %[[VAL_2]] : index
+// CHECK:           scf.if %[[VAL_9]] {
+// CHECK:             hivm.hir.store ins(%[[VAL_6]] : tensor<64xf32>) outs(%[[random:.*]] : memref<64xf32>)
+// CHECK:           } {limit_sub_block_id0}
 // CHECK:           return
 // CHECK:         }
 module {
