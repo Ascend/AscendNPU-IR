@@ -83,7 +83,6 @@ namespace {
 static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
 static constexpr llvm::StringLiteral tiledOp = "tiled_op";
-static constexpr llvm::StringLiteral tileAndBindLeaf = "hivm.tile_and_bind_leaf";
 } // namespace
 
 namespace {
@@ -256,61 +255,6 @@ public:
   }
 };
 
-template <typename OpTy>
-class TileAndSliceLeaf : public OpRewritePattern<OpTy> {
-public:
-  hivm::detail::DimensionAnalyzer &analyzer;
-
-  explicit TileAndSliceLeaf(MLIRContext *context,
-                            hivm::detail::DimensionAnalyzer &analyzer)
-      : OpRewritePattern<OpTy>(context),
-        analyzer(analyzer) {}
-  LogicalResult matchAndRewrite(OpTy op,
-                                PatternRewriter &rewriter) const override {
-    LogicalResult result = failure();
-    auto maybeContainingLoop = findContainingSubblockLoop(op);
-    if (failed(maybeContainingLoop))
-      return failure();
-    for (auto res : op->getResults()) {
-      int64_t tilingDim = analyzer.getTilingDim(res);
-      if (tilingDim == -1 || !res.use_empty())
-        continue;
-
-      auto containingLoop = maybeContainingLoop.value();
-      auto loc = res.getLoc();
-      auto maybeSingleTileSize = getSingleTileSize(
-          rewriter, loc, res, tilingDim, containingLoop);
-      if (failed(maybeSingleTileSize))
-        continue;
-      rewriter.setInsertionPointToStart(containingLoop.getBody());
-      auto offsetAtTileDim = calculateOffsetAtTilingDim(
-          rewriter, loc, containingLoop, maybeSingleTileSize.value());
-
-      rewriter.setInsertionPointAfter(op);
-
-      SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
-      SmallVector<int64_t, 4> newShape;
-      auto rankType = cast<ShapedType>(res.getType());
-      assert(!ShapedType::isDynamicShape(rankType.getShape()));
-      if (failed(findCorrespondingSizesOffsetsStrides(
-              rewriter, rankType, tilingDim, offsetAtTileDim,
-              maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
-              newShape)))
-        continue;
-
-      auto newType = RankedTensorType::get(newShape, rankType.getElementType());
-      auto slicedValue = rewriter.create<tensor::ExtractSliceOp>(
-          loc, newType, res, mixedOffsets, mixedSize,
-          mixedStrides);
-      markCreatedExtractSliceOp(rewriter, slicedValue);
-
-      auto mark = rewriter.create<annotation::MarkOp>(loc, slicedValue);
-      mark->setAttr(tileAndBindLeaf, rewriter.getUnitAttr());
-    }
-    return result;
-  }
-};
-
 /// add if (sublock_id == 0) guard for each store op.
 /// e.g.
 /// case 1: store op without results
@@ -463,10 +407,7 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   }
 
   RewritePatternSet patterns(func->getContext());
-  patterns.add<TileAndSliceStore,
-               TileAndSliceLeaf<scf::ForOp>,
-               TileAndSliceLeaf<scf::WhileOp>,
-               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
+  patterns.add<TileAndSliceStore>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
@@ -474,15 +415,22 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   }
   bool changed = false;
   func->walk([&](Operation *op) {
-    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-      if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice))
-        changed = true;
+    if (!isa<tensor::ExtractSliceOp>(op)) {
+      return WalkResult::advance();
     }
+    auto extractSliceOp = cast<tensor::ExtractSliceOp>(op);
+    
+    if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice)) {
+      changed = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
   });
 
-  if (!changed)
+  if (!changed) {
     return failure();
-
+  }
+  
   return success();
 }
 
@@ -558,15 +506,6 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     failAndRevert(newFunc);
     return failure();
   }
-
-  SmallVector<Operation *> toBeRemoved;
-  func->walk([&](annotation::MarkOp op) {
-    if (op->hasAttr(tileAndBindLeaf))
-        toBeRemoved.push_back(op);
-  });
-
-  for (auto *op : toBeRemoved)
-    op->erase();
 
   RewritePatternSet patternsPost(&getContext());
   patternsPost.add<mlir::hivm::detail::BubbleUpSubviewFromTiling>(

@@ -1123,6 +1123,7 @@ module {
     // For now, store with result and result is used afterwards is not supported yet, but
     // this pass will revert to 1:1 and still succeed the pass, but limit to unique subblock
     // to store.
+    // expected-error@below {{'scf.for' op 0-th region iter_arg and 0-th yielded value have different type: 'tensor<64xf32>' != 'tensor<32xf32>'}}
     %10 = scf.for %arg2 = %c0 to %c2 step %c1 iter_args(%arg01 = %arg0) -> tensor<64xf32> {
       %1 = affine.apply #map1()[%arg2]
       hivm.hir.load ins(%arg01 : tensor<64xf32>) outs(%arg0 : tensor<64xf32>) init_out_buffer = false -> tensor<64xf32>
