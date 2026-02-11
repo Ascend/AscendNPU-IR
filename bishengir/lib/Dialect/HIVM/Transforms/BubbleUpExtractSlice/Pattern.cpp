@@ -1096,7 +1096,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
         // Create a new ToTensorOp
         auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
-            sliceOp.getLoc(), newAllocOp.getResult(), true, true);
+            sliceOp.getLoc(), subviewOp.getResult(), true, true);
 
         rewriter.modifyOpInPlace(newToTensorOp, [&]() {
           newToTensorOp->setOperand(0, newAllocOp.getResult());
@@ -1157,7 +1157,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       // Rewrite operations
       rewriter.setInsertionPoint(subViewOpGM);
       auto newCastValue = rewriter.create<memref::SubViewOp>(
-          castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
+          castOp.getLoc(), castOp, offsets, sizes, strides);
       auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
           subViewOpGM.getLoc(), newCastValue, subViewOpGM.getMixedOffsets(),
           newSizes, subViewOpGM.getMixedStrides());

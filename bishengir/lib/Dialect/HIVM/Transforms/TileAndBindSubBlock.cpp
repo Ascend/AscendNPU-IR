@@ -175,13 +175,13 @@ static void modifyStoreToSliced(RewriterBase &rewriter, OpOperand *operand,
     auto slicedValue = rewriter.create<tensor::ExtractSliceOp>(
         loc, operandValue, mixedOffsets,
         mixedSize, mixedStrides);
-    operand->set(slicedValue.getResult());
+    operand->set(slicedValue);
     markCreatedExtractSliceOp(rewriter, slicedValue);
   } else if (auto memrefType = dyn_cast<MemRefType>(newType)) {
     auto slicedValue = rewriter.create<memref::SubViewOp>(
         loc, operandValue, mixedOffsets,
         mixedSize, mixedStrides);
-    operand->set(slicedValue.getResult());
+    operand->set(slicedValue);
     markCreatedExtractSliceOp(rewriter, slicedValue);
   }
 }
@@ -191,6 +191,8 @@ namespace {
 /// try to tile store ops and bind sub block mapping
 class TileAndSliceStore : public OpRewritePattern<hivm::StoreOp> {
 public:
+  hivm::detail::DimensionAnalyzer &analyzer;
+
   explicit TileAndSliceStore(MLIRContext *context,
                              hivm::detail::DimensionAnalyzer &analyzer)
       : OpRewritePattern<hivm::StoreOp>(context, /*benefit=*/1),
@@ -211,7 +213,8 @@ public:
 
     // Handling special case
     if (ShapedType::isDynamicShape(srcType.getShape())) {
-      if (failed(handleDynamicShape(storeOp, tilingDim, containingLoop, rewriter)))
+      if (failed(
+              handleDynamicShape(storeOp, tilingDim, containingLoop, rewriter)))
         return failure();
     } else {
       auto *srcOpr = &storeOp.getSrcMutable();
@@ -392,13 +395,13 @@ private:
     });
     return success();
   }
-
-  hivm::detail::DimensionAnalyzer &analyzer;
 };
 
 template <typename OpTy>
 class TileAndSliceLeaf : public OpRewritePattern<OpTy> {
 public:
+  hivm::detail::DimensionAnalyzer &analyzer;
+
   explicit TileAndSliceLeaf(MLIRContext *context,
                             hivm::detail::DimensionAnalyzer &analyzer)
       : OpRewritePattern<OpTy>(context),
@@ -409,12 +412,12 @@ public:
     auto maybeContainingLoop = findContainingSubblockLoop(op);
     if (failed(maybeContainingLoop))
       return failure();
-    auto containingLoop = maybeContainingLoop.value();
     for (auto res : op->getResults()) {
       int64_t tilingDim = analyzer.getTilingDim(res);
       if (tilingDim == -1 || !res.use_empty())
         continue;
 
+      auto containingLoop = maybeContainingLoop.value();
       auto loc = res.getLoc();
       auto maybeSingleTileSize = getSingleTileSize(
           rewriter, loc, res, tilingDim, containingLoop);
@@ -444,13 +447,9 @@ public:
 
       auto mark = rewriter.create<annotation::MarkOp>(loc, slicedValue);
       mark->setAttr(tileAndBindLeaf, rewriter.getUnitAttr());
-      result = success();
     }
     return result;
   }
-
-private:
-  hivm::detail::DimensionAnalyzer &analyzer;
 };
 
 /// add if (sublock_id == 0) guard for each store op.
@@ -633,21 +632,17 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
     return failure();
   }
-
-  bool isFailed = true;
-  auto walkResult = func->walk([&isFailed](hivm::StoreOp op) {
-    if (!op->hasAttr(tiledOp)) {
-      if (op->hasAttr(hivm::AtomicKindAttr::name)) {
-        isFailed = true;
-        return WalkResult::interrupt();
-      }
-    } else {
-      isFailed = false;
+  bool changed = false;
+  func->walk([&](Operation *op) {
+    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
+      if (extractSliceOp->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice))
+        changed = true;
     }
-    return WalkResult::advance();
   });
-  if (isFailed)
+
+  if (!changed)
     return failure();
+
   return success();
 }
 
