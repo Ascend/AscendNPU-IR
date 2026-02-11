@@ -612,7 +612,7 @@ bool InsertSliceBubbleUpStrategy::isSupportedOperation(
     return false;
   if (!insertSliceOp.hasUnitStride())
     return false;
-  return !isDynamicSlice(sliceOp);
+  return !isDynamicSlice(insertSliceOp) && !isDynamicSlice(sliceOp);
 }
 
 static LogicalResult
@@ -763,56 +763,6 @@ handleExtractOfInsertSameDimCase(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
-static LogicalResult
-handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
-                                      PatternRewriter &rewriter) {
-  auto parentInsertOp =
-      sliceOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
-  auto srcExtractOp =
-      parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
-
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  if (extractDims.size() != 1)
-    return failure();
-  auto tilingDim = *extractDims.begin();
-
-  rewriter.setInsertionPoint(parentInsertOp);
-  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
-      sliceOp->getLoc(), parentInsertOp.getDest(), sliceOp.getMixedOffsets(),
-      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-  markCreatedExtractSliceOp(rewriter, newDst);
-
-  rewriter.setInsertionPoint(srcExtractOp);
-  auto newSrcSrc = rewriter.create<tensor::ExtractSliceOp>(
-      srcExtractOp->getLoc(), srcExtractOp.getSource(),
-      sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
-      sliceOp.getMixedStrides());
-  markCreatedExtractSliceOp(rewriter, newDst);
-
-  auto sizes = srcExtractOp.getMixedSizes();
-  auto offsetVal = getValueOrCreateConstantIndexOp(
-      rewriter, sliceOp.getLoc(), sliceOp.getMixedOffsets()[tilingDim]);
-  auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                 sizes[tilingDim]);
-  auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                    sliceOp.getMixedSizes()[tilingDim]);
-  offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
-  sizeVal =
-      rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-  sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
-  sizes[tilingDim] = sizeVal;
-
-  srcExtractOp = rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
-      srcExtractOp, newSrcSrc, srcExtractOp.getMixedOffsets(), sizes,
-      srcExtractOp.getMixedStrides());
-  rewriter.setInsertionPoint(parentInsertOp);
-  rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
-      sliceOp, srcExtractOp, newDst, parentInsertOp.getMixedOffsets(), sizes,
-      parentInsertOp.getMixedStrides());
-  rewriter.eraseOp(parentInsertOp);
-  return success();
-}
-
 LogicalResult
 InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                      PatternRewriter &rewriter) const {
@@ -825,7 +775,7 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   // Handle ranked-reduce case.
   if ((parentInsertOp.getResultType().getRank() -
            parentInsertOp.getSource().getType().getRank() >
-       0) && !isDynamicSlice(parentInsertOp)) {
+       0)) {
     return handleInsertRankedReduceCase(sliceOp, rewriter);
   }
 
@@ -833,20 +783,7 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!llvm::set_intersection(getExtractOrInsertDim(parentInsertOp),
                               getExtractOrInsertDim(sliceOp))
            .empty()) {
-    // handling special case
-    // ex)
-    // %extracted_slice = tensor.extract_slice %src[0] [%size] [1] : tensor<16xf32> to tensor<?xf32>
-    // %inserted_slice = tensor.insert_slice %extracted_slice into %10[0] [%size] [1] : tensor<?xf32> into tensor<16xf32>
-    // %to_bubble_up = tensor.extract_slice %inserted_slice[%offset] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
-    if (auto srcExtractOp = parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
-        srcExtractOp && srcExtractOp->hasOneUse() &&
-        srcExtractOp.getSource().getType() == sliceOp.getSource().getType() &&
-        (!sliceOp.hasZeroOffset() || !srcExtractOp.hasZeroOffset() ||
-        !sliceOp.hasUnitStride() || !srcExtractOp.hasUnitStride())) {
-      return handleExtractInsertExtractSameDimCase(sliceOp, rewriter);
-    }
-    if (!isDynamicSlice(parentInsertOp))
-      return handleExtractOfInsertSameDimCase(sliceOp, rewriter);
+    return handleExtractOfInsertSameDimCase(sliceOp, rewriter);
   }
 
   // TODO:: Handle extract and insert on different dimension case.
@@ -1024,239 +961,6 @@ LoopArgsBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   blockArg.setType(sliceOp.getType());
   rewriter.replaceAllUsesWith(sliceOp, blockArg);
   forOp.getInitArgsMutable()[blockArgIdx].set(movedOutSlice);
-
-  return success();
-}
-
-bool BufferizationBubbleUpStrategy::isSupportedOperation(
-    tensor::ExtractSliceOp sliceOp) const {
-  auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<bufferization::ToTensorOp>(sourceOp) &&
-         !isDynamicSlice(sliceOp);
-}
-
-LogicalResult
-BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                                       PatternRewriter &rewriter) const {
-  auto toTensorOp =
-      dyn_cast<bufferization::ToTensorOp>(sliceOp.getSource().getDefiningOp());
-
-  if (!toTensorOp)
-    return failure();
-
-  LDBG("BufferizationBubbleUpStrategy\n" << toTensorOp);
-
-  // Utilize the offsets, sizes, and strides from ExtractSliceOp
-  auto offsets = sliceOp.getMixedOffsets();
-  auto sizes = sliceOp.getMixedSizes();
-  auto strides = sliceOp.getMixedStrides();
-
-  auto srcMemref = toTensorOp.getMemref();
-
-  for (Operation *userOp : srcMemref.getUsers()) {
-    // Pattern 1: This deals with the pattern: memref.alloc() ->
-    // bufferization.to_tensor, with Load Op
-    if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp)) {
-      LDBG("Pattern 1:\n" << loadOp);
-
-      // For Operand(0): if the Operand(0) of LoadOP is memref.reinterpret_cast
-      auto castOp = dyn_cast<memref::ReinterpretCastOp>(
-          loadOp.getOperand(0).getDefiningOp());
-      if (castOp) {
-        rewriter.setInsertionPoint(loadOp);
-        auto castSubviewOp = rewriter.create<memref::SubViewOp>(
-            castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
-
-        rewriter.modifyOpInPlace(
-            loadOp, [&]() { loadOp.setOperand(0, castSubviewOp.getResult()); });
-      }
-
-      // For Operand(1): if the Operand(1) of LoadOP is memref.alloc()
-      auto AllocOp =
-          dyn_cast<memref::AllocOp>(loadOp.getOperand(1).getDefiningOp());
-      if (AllocOp) {
-        rewriter.setInsertionPoint(AllocOp);
-        Location loc = AllocOp.getLoc();
-
-        auto resultType =
-            dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-
-        auto memrefType =
-            MemRefType::get(resultType.getShape(), resultType.getElementType());
-        // Create a newAllocOp
-        auto newAllocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
-
-        rewriter.modifyOpInPlace(
-            loadOp, [&]() { loadOp.setOperand(1, newAllocOp.getResult()); });
-
-        rewriter.setInsertionPoint(sliceOp);
-        // Create a newsubViewOp, (it is used to create newToTensorOp)
-        auto subviewOp = rewriter.create<memref::SubViewOp>(
-            sliceOp.getLoc(), newAllocOp.getResult(), offsets, sizes, strides);
-
-        // Create a new ToTensorOp
-        auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
-            sliceOp.getLoc(), newAllocOp.getResult(), true, true);
-
-        rewriter.modifyOpInPlace(newToTensorOp, [&]() {
-          newToTensorOp->setOperand(0, newAllocOp.getResult());
-        });
-
-        rewriter.replaceOp(sliceOp, newToTensorOp);
-        rewriter.eraseOp(toTensorOp);
-        rewriter.eraseOp(subviewOp);
-      }
-      return success();
-    }
-    // Pattern 2: This deals with the pattern: memref.alloc() ->
-    // bufferization.to_tensor, with Subview Op + Load Op
-    if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
-      if (!subViewOp->hasOneUse() || !subViewOp.hasZeroOffset() ||
-          !subViewOp.hasUnitStride())
-        continue;
-      auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
-      if (!loadOp)
-        continue;
-      auto subViewOpGM = loadOp.getSrc().getDefiningOp<memref::SubViewOp>();
-      if (!subViewOpGM || !subViewOpGM.hasZeroOffset() ||
-          !subViewOpGM.hasUnitStride())
-        continue;
-      auto castOp =
-          subViewOpGM.getSource().getDefiningOp<memref::ReinterpretCastOp>();
-      if (!castOp)
-        continue;
-      auto allocOp = subViewOp.getSource().getDefiningOp<memref::AllocOp>();
-      if (!allocOp)
-        continue;
-      LDBG("Pattern 2:\n"
-           << castOp << "\n"
-           << subViewOpGM << "\n"
-           << allocOp << "\n"
-           << subViewOp);
-      rewriter.setInsertionPoint(subViewOpGM);
-
-      // Compute new size
-      auto newSizes = subViewOpGM.getMixedSizes();
-      auto extractDims = getExtractOrInsertDim(sliceOp);
-      if (extractDims.size() != 1)
-        continue;
-      auto tilingDim = *extractDims.begin();
-      auto offsetVal = getValueOrCreateConstantIndexOp(
-          rewriter, sliceOp.getLoc(), offsets[tilingDim]);
-      auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                     newSizes[tilingDim]);
-      rewriter.setInsertionPointAfterValue(sizeVal);
-      auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                        sizes[tilingDim]);
-      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
-      sizeVal =
-          rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
-      newSizes[tilingDim] = sizeVal;
-
-      // Rewrite operations
-      rewriter.setInsertionPoint(subViewOpGM);
-      auto newCastValue = rewriter.create<memref::SubViewOp>(
-          castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
-      auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
-          subViewOpGM.getLoc(), newCastValue, subViewOpGM.getMixedOffsets(),
-          newSizes, subViewOpGM.getMixedStrides());
-      rewriter.setInsertionPoint(allocOp);
-      auto resultType =
-          dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-      allocOp = rewriter.replaceOpWithNewOp<memref::AllocOp>(
-          allocOp,
-          MemRefType::get(resultType.getShape(), resultType.getElementType()));
-      rewriter.setInsertionPoint(subViewOp);
-      auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-          subViewOp.getLoc(), allocOp, subViewOp.getMixedOffsets(), newSizes,
-          subViewOp.getMixedStrides());
-
-      rewriter.modifyOpInPlace(loadOp, [&]() {
-        loadOp.getSrcMutable().set(newSubViewOpGM);
-        loadOp.getDstMutable().set(newSubViewOp);
-      });
-
-      rewriter.setInsertionPoint(sliceOp);
-      rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
-          sliceOp, allocOp.getResult(), true, true);
-
-      rewriter.eraseOp(subViewOp);
-      rewriter.eraseOp(subViewOpGM);
-      rewriter.eraseOp(toTensorOp);
-
-      return success();
-    }
-  }
-
-  // If it is not the above patterns, return failure()
-  return failure();
-}
-
-bool VTransposeBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sliceOp) const {
-  // Check if source is a block argument of a for loop
-  auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  if (!sourceOp)
-    return false;
-  return isa_and_nonnull<hivm::VTransposeOp>(sourceOp) && !isDynamicSlice(sliceOp);
-}
-
-LogicalResult
-VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                                     PatternRewriter &rewriter) const {
-  auto transOp = dyn_cast<hivm::VTransposeOp>(sliceOp.getSource().getDefiningOp());
-  if (!transOp)
-    return failure();
-  
-  auto src = transOp.getSrc();
-  auto dst = transOp.getDst();
-
-  auto resultType = cast<RankedTensorType>(sliceOp.getType());
-  auto resultRank = resultType.getRank();
-
-  auto resultShape = llvm::to_vector(resultType.getShape());
-  auto perm = transOp.getPermutation();
-  
-  rewriter.setInsertionPoint(transOp);
-  auto loc = transOp.getLoc();
-  auto dstOffsets = sliceOp.getMixedOffsets();
-  auto srcOffsets = SmallVector<OpFoldResult>(resultRank);
-  auto srcSizes = llvm::to_vector(sliceOp.getMixedSizes());
-  auto srcStrides = sliceOp.getMixedStrides();
-
-  // Infer the sizes and offsets of newSliceOp by perm
-  for (int64_t i = 0; i < resultRank; ++i){
-    srcSizes[perm[i]] = rewriter.getIndexAttr(resultShape[i]);
-    srcOffsets[perm[i]] = dstOffsets[i];
-  }
-
-  rewriter.setInsertionPoint(sliceOp);
-  auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
-    sliceOp.getLoc(), transOp.getSrc(),
-    srcOffsets, srcSizes, srcStrides);
-
-  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
-    sliceOp.getLoc(), transOp.getDst(),
-    dstOffsets, sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-
-  markCreatedExtractSliceOp(rewriter, newSrc);
-  markCreatedExtractSliceOp(rewriter, newDst);
-
-  if (!utils::isAlignedInUB(newSrc.getType()) ||
-      !utils::isAlignedInUB(newDst.getType())) {
-    rewriter.eraseOp(newSrc);
-    rewriter.eraseOp(newDst);
-    return failure();
-  }
-  
-  auto newTransOp = rewriter.create<hivm::VTransposeOp>(
-    sliceOp.getLoc(), sliceOp.getResultType(), 
-    newSrc, newDst, 
-    rewriter.getDenseI64ArrayAttr(perm)
-  );
-
-  rewriter.replaceOp(sliceOp, newTransOp);
-  rewriter.eraseOp(transOp);
 
   return success();
 }

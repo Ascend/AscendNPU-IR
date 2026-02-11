@@ -22,15 +22,6 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/ADT/SmallVector.h"
 
-#include "llvm/Support/Debug.h"
-
-#define DEBUG_TYPE "common-pattern-bubble-up-extract-slice"
-#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
-#define DBGSNL() (llvm::dbgs() << "\n")
-#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
-#define LLDBG(X)                                                               \
-  LLVM_DEBUG(DBGS() << __FILE__ << ":" << __LINE__ << " " << X << "\n")
-
 namespace mlir::hivm::detail {
 static bool isEqual(const Operation *lhsC, const Operation *rhsC) {
   auto *lhs = cast<Operation *>(lhsC);
@@ -39,8 +30,7 @@ static bool isEqual(const Operation *lhsC, const Operation *rhsC) {
       lhs, rhs, OperationEquivalence::IgnoreLocations);
 }
 
-struct CSEExtractSlicePattern
-    : public OpRewritePattern<tensor::ExtractSliceOp> {
+struct CSEExtractSlicePattern : public OpRewritePattern<tensor::ExtractSliceOp> {
   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp pivotSliceOp,
@@ -61,31 +51,23 @@ struct CSEExtractSlicePattern
       }
     }
 
+    DominanceInfo domInfo(pivotSliceOp->getParentOfType<func::FuncOp>());
+
     if (siblingSlices.size() == 1)
       return rewriter.notifyMatchFailure(
           pivotSliceOp, "Slice doesn't have any sibling duplicate");
 
-    DominanceInfo domInfo(pivotSliceOp->getParentOfType<func::FuncOp>());
-    auto pivot = source;
-
-    for (auto opr : pivotSliceOp->getOperands()) {
-      if (pivot == opr)
-        continue;
-      auto pivotDefOp = pivot.getDefiningOp();
-      auto oprDefOp = opr.getDefiningOp();
-      if (pivotDefOp && oprDefOp) {
-        if (domInfo.properlyDominates(pivotDefOp, oprDefOp))
-          pivot = opr;
-      } else if (pivot.getParentRegion()->isProperAncestor(opr.getParentRegion()) ||
-                 (pivot.getParentRegion() == opr.getParentRegion() && oprDefOp)) {
-        pivot = opr;
+    // Move the pivot to the front most
+    for (int i = 1; i < static_cast<int64_t>(siblingSlices.size()); ++i) {
+      if (domInfo.dominates(siblingSlices[i].getOperation(),
+                            siblingSlices[0].getOperation())) {
+        std::swap(siblingSlices[i], siblingSlices[0]);
       }
     }
 
-    rewriter.setInsertionPointAfterValue(pivot);
-    auto newOp = rewriter.clone(*pivotSliceOp.getOperation());
-    for (auto siblingSlice : siblingSlices)
-      rewriter.replaceOp(siblingSlice, newOp);
+    for (int i = 1; i < static_cast<int64_t>(siblingSlices.size()); ++i) {
+      rewriter.replaceAllUsesWith(siblingSlices[i], siblingSlices[0]);
+    }
     return success();
   }
 };

@@ -38,7 +38,6 @@ constexpr const uint8_t kBitsToByte = 8;
 constexpr static unsigned int INTR_BITS_PER_BYTE = 8;
 constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
-constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
 static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
@@ -509,8 +508,6 @@ Value getDimValue(OpBuilder &builder, Location loc, Value v, int64_t dim);
 Value getSlice(OpBuilder &b, Location loc, Value source,
                ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes,
                ArrayRef<OpFoldResult> strides);
-
-bool isAlignedInUB(Type type);
 
 } // namespace utils
 
