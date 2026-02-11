@@ -153,9 +153,9 @@ bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
       int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
       int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
       int64_t l1 = baseAddrInBits1;
-      int64_t r1 = baseAddrInBits1 + std::max((int64_t)1, bufferSize1.value());
+      int64_t r1 = baseAddrInBits1 + bufferSize1.value();
       int64_t l2 = baseAddrInBits2;
-      int64_t r2 = baseAddrInBits2 + std::max((int64_t)1, bufferSize2.value());
+      int64_t r2 = baseAddrInBits2 + bufferSize2.value();
       // !(r2 <= l1 || r1 <= l2)
       if (r2 > l1 && r1 > l2) {
         return true;
@@ -254,11 +254,9 @@ Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
         int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
         int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
         int64_t l1 = baseAddrInBits1;
-        int64_t r1 =
-            baseAddrInBits1 + std::max((int64_t)1, bufferSize1.value());
+        int64_t r1 = baseAddrInBits1 + bufferSize1.value();
         int64_t l2 = baseAddrInBits2;
-        int64_t r2 =
-            baseAddrInBits2 + std::max((int64_t)1, bufferSize2.value());
+        int64_t r2 = baseAddrInBits2 + bufferSize2.value();
         // !(r2 <= l1 || r1 <= l2)
         if (r2 > l1 && r1 > l2) {
           return {};
