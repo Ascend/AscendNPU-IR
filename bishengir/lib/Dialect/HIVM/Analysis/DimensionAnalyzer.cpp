@@ -37,7 +37,7 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   LDBG("Checking parallelDim of " << solverIndex);
   auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
   if (tilingDimKindVal != tilingDimKindMap.end()) {
-    return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
+    return tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel;
   }
   // By default, assume it's parallel
   return true;

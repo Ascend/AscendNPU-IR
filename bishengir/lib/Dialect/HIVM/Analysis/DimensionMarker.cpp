@@ -453,17 +453,10 @@ void DimensionAnalyzer::markDimensionKind() {
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    SmallVector<int64_t> sliceRef;
-    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
-      sliceRef = getArgumentRef(sliceOp.getSource());
-    } else {
-      sliceRef = getArgumentRef(sliceOp.getResult());
-    }
+    auto sliceRef = getArgumentRef(sliceOp.getSource());
     for (size_t i = 0; i < sliceRef.size(); ++i) {
-      if (droppedDimsMask[i]) {
-        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
-            TilingDimensionKind::RankReduced;
-      }
+      tilingDimKindMap[solverCollapserElem_->find(droppedDimsMask[i])] =
+          TilingDimensionKind::RankReduced;
     }
   };
 
