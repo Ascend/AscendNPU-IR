@@ -159,12 +159,20 @@ set_target_properties(bishengir-publish-products PROPERTIES FOLDER "BiShengIR/To
 add_llvm_install_targets(install-bishengir-publish-products
                          COMPONENT bishengir-publish-products)
 
-set(BISHENGIR_VERSION "${BISHENGIR_VERSION_MAJOR}.${BISHENGIR_VERSION_MINOR}.${BISHENGIR_VERSION_PATCHLEVEL}${BISHENGIR_VERSION_SUFFIX}")
-if(NOT BISHENGIR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+[a-zA-Z0-9-]*$")
+# Check format for BISHENGIR_VERSION
+foreach(part MAJOR MINOR PATCHLEVEL)
+  if(NOT BISHENGIR_VERSION_${part} MATCHES "^[0-9]+$")
     message(FATAL_ERROR 
-        "Invalid BISHENGIR_VERSION format: '${BISHENGIR_VERSION}'. "
-        "Expected format: Major.Minor.Patch[Suffix] (e.g., 1.0.0, 2.1.3-alpha)")
+      "BISHENGIR_VERSION_${part} is invalid: '${BISHENGIR_VERSION_${part}}'. "
+      "This part must contain only digits.")
+  endif()
+endforeach()
+if(NOT "${BISHENGIR_VERSION_SUFFIX}" MATCHES "^[a-zA-Z0-9-]*$")
+  message(FATAL_ERROR 
+    "BISHENGIR_VERSION_SUFFIX is invalid: '${BISHENGIR_VERSION_SUFFIX}'. "
+    "Suffix must only contain alphanumeric characters or hyphens.")
 endif()
+set(BISHENGIR_VERSION "${BISHENGIR_VERSION_MAJOR}.${BISHENGIR_VERSION_MINOR}.${BISHENGIR_VERSION_PATCHLEVEL}${BISHENGIR_VERSION_SUFFIX}")
 string(TIMESTAMP BISHENGIR_BUILD_DATE "%Y-%m-%d")
 message(STATUS "BISHENGIR version: ${BISHENGIR_VERSION}")
 message(STATUS "BISHENGIR build date: ${BISHENGIR_BUILD_DATE}")
