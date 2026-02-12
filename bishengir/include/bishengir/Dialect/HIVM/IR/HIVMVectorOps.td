@@ -1577,6 +1577,53 @@ def VGatherOp : HIVM_VectorOp<"vgather",
 }
 
 //===----------------------------------------------------------------------===//
+// HIVM GatherMask Op
+//===----------------------------------------------------------------------===//
+
+def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
+    [HIVMOpSameOperandsAndResultRank,
+     OperElemTypeConstraints<[0], [I16, UI16, I32, UI32, F16, BF16, F32]>,
+     OperElemTypeConstraints<[1], [I1, I8]>,
+     DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+       ["getIteratorTypesArray"]>,
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+       ["getLimitedAxes"]>
+    ]> {
+  let summary = "Vector Gather Mask Op";
+  let description = [{
+    Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
+    Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
+    and returns the `dst` tensor as `result` for functional compatibility.
+    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
+
+    Arguments:
+      * `src`: the tensor/memref from which to gather elements
+      * `mask`: the mask tensor/memref to filter elements (non-zero = select src element)
+      * `dst`: the pre-allocated tensor/memref to store the gathered elements (InPlace write)
+    Results:
+      * `result`: the same as `dst` (functional return for compatibility)
+
+    Usage:
+      result = gather_mask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst : tensor<16xf32>)
+  }];
+  let arguments = (ins TensorOrMemref:$src,
+                       TensorOrMemref:$mask,
+                       TensorOrMemref:$dst  
+  );
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let assemblyFormat = [{
+    attr-dict `ins` `(` $src `:` type($src) `)`
+    `mask` `(` $mask `:` type($mask) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`->` type($result)^)?  
+  }];
+  let extraClassDeclaration = vectorOpBaseDecls # [{
+    static StringRef getOpName() { return "vgather_mask"; }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // HIVM Vector Cumprod Op
 //===----------------------------------------------------------------------===//
 

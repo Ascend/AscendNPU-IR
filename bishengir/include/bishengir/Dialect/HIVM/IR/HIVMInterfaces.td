@@ -329,6 +329,19 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
           mlir::hivm::IteratorType::kGather, res);
       }]
     >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Return the dims that are gathermask loops.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"getGatherMaskLoopDims",
+      /*args=*/(ins "SmallVectorImpl<int64_t> &":$res),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return ::mlir::hivm::detail::findPositionsOfType($_op.getIteratorTypesArray(),
+          mlir::hivm::IteratorType::kParallel, res);
+      }]
+    >,
     //===------------------------------------------------------------------===//
     // Other interface methods.
     //===------------------------------------------------------------------===//

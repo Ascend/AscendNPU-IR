@@ -652,6 +652,34 @@ struct HFusionToHIVMGatherOp : public OpRewritePattern<hfusion::GatherOp> {
 };
 
 //===----------------------------------------------------------------------===//
+// HFusionToHIVMGatherMaskOp 
+//===----------------------------------------------------------------------===//
+struct HFusionToHIVMGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
+  using OpRewritePattern<hfusion::GatherMaskOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::GatherMaskOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureBufferSemantics() && !op.hasPureTensorSemantics()) {
+      return op.emitOpError(
+          "hfusion::GatherMaskOp should have pure buffer or tensor Semantics!");
+    }
+
+    auto resultTypeRange = op.hasPureBufferSemantics()
+                               ? TypeRange()  
+                               : TypeRange(op->getResultTypes());  
+    rewriter.replaceOpWithNewOp<hivm::VGatherMaskOp>(
+        op,
+        resultTypeRange,
+        op.getSrc(),
+        op.getMask(),
+        op.getInit()
+    );
+
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // HFusionLoadOpToHIVMLoadOp
 //===----------------------------------------------------------------------===//
 
@@ -1093,6 +1121,7 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     LinalgToHIVMTransposeOp,
     HFusionToHIVMArangeOp,
     HFusionToHIVMGatherOp,
+    HFusionToHIVMGatherMaskOp,
     HFusionPrintOpToHIVMDebugOp,
     HFusionAssertOpToHIVMDebugOp,
     HFusionToHIVMBarrierOp,

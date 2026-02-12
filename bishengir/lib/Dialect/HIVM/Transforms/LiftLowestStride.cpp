@@ -412,6 +412,7 @@ static void registerOne(RewritePatternSet &patterns) {
                   std::is_same_v<OpType, hivm::VPadOp> ||
                   std::is_same_v<OpType, hivm::VConcatOp> ||
                   std::is_same_v<OpType, hivm::VGatherOp> ||
+                  std::is_same_v<OpType, hivm::VGatherMaskOp> ||
                   std::is_same_v<OpType, hivm::VCumsumOp> ||
                   std::is_same_v<OpType, hivm::VCumprodOp> ||
                   std::is_same_v<OpType, hivm::VSortOp>)) {
