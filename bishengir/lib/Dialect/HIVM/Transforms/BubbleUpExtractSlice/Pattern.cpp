@@ -965,4 +965,42 @@ LoopArgsBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool BitcastBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<hivm::BitcastOp>(sourceOp);
+}
+
+LogicalResult
+BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                 PatternRewriter &rewriter) const {
+  auto bitcastOp =
+      dyn_cast<hivm::BitcastOp>(sliceOp.getSource().getDefiningOp());
+  if (!bitcastOp)
+    return failure();
+
+  auto loc = bitcastOp.getLoc();
+
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes   = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  // 1. Slice the bitcast source
+  rewriter.setInsertionPoint(bitcastOp);
+  auto newSlicedInput = rewriter.create<tensor::ExtractSliceOp>(
+      loc, bitcastOp.getSrc(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newSlicedInput);
+
+  // 2. Create a new bitcast on sliced input
+  rewriter.setInsertionPointAfter(bitcastOp);
+  auto newBitcast = rewriter.create<hivm::BitcastOp>(
+      loc, sliceOp.getType(), newSlicedInput.getResult());
+
+  // 3. Replace the original extract_slice
+  rewriter.replaceOp(sliceOp, newBitcast.getResult());
+
+  return success();
+}
+
 } // namespace mlir::hivm::detail
