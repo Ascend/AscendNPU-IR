@@ -4,13 +4,14 @@
 .. toctree::
    :maxdepth: 1
 
-   AutoSchedule/HFusion_AutoSchedule_zh.md
-   AutoFlatten/AutoFlatten.md
    AutoBlockify/AutoBlockify.md
-   AutoSync/AutoSync.md
+   AutoFlatten/AutoFlatten.md
+   AutoSchedule/HFusion_AutoSchedule_zh.md
    AutoSubtiling/AutoSubtiling.md
-   PlanMemory/PlanMemory.md
+   AutoSync/AutoSync.md
    CV/CVOptimization.md
    CV/TileCubeAndVectorLoop.md
    CVPipeline/CVPipelining.md
+   CustomOp/CustomOp.md
    DFX/DFX.md
+   PlanMemory/PlanMemory.md
