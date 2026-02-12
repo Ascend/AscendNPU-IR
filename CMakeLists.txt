@@ -159,20 +159,12 @@ set_target_properties(bishengir-publish-products PROPERTIES FOLDER "BiShengIR/To
 add_llvm_install_targets(install-bishengir-publish-products
                          COMPONENT bishengir-publish-products)
 
-# If BISHENGIR_VERSION_* is specified, use it, if not use LLVM_VERSION_*.
-if(NOT DEFINED BISHENGIR_VERSION_MAJOR)
-  set(BISHENGIR_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
-endif()
-if(NOT DEFINED BISHENGIR_VERSION_MINOR)
-  set(BISHENGIR_VERSION_MINOR ${LLVM_VERSION_MINOR})
-endif()
-if(NOT DEFINED BISHENGIR_VERSION_PATCHLEVEL)
-  set(BISHENGIR_VERSION_PATCHLEVEL ${LLVM_VERSION_PATCH})
-endif()
-if(NOT DEFINED BISHENGIR_VERSION_SUFFIX)
-  set(BISHENGIR_VERSION_SUFFIX ${LLVM_VERSION_SUFFIX})
-endif()
 set(BISHENGIR_VERSION "${BISHENGIR_VERSION_MAJOR}.${BISHENGIR_VERSION_MINOR}.${BISHENGIR_VERSION_PATCHLEVEL}${BISHENGIR_VERSION_SUFFIX}")
+if(NOT BISHENGIR_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+[a-zA-Z0-9-]*$")
+    message(FATAL_ERROR 
+        "Invalid BISHENGIR_VERSION format: '${BISHENGIR_VERSION}'. "
+        "Expected format: Major.Minor.Patch[Suffix] (e.g., 1.0.0, 2.1.3-alpha)")
+endif()
 string(TIMESTAMP BISHENGIR_BUILD_DATE "%Y-%m-%d")
 message(STATUS "BISHENGIR version: ${BISHENGIR_VERSION}")
 message(STATUS "BISHENGIR build date: ${BISHENGIR_BUILD_DATE}")
