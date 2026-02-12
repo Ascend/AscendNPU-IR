@@ -17,10 +17,12 @@
 
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -152,87 +154,81 @@ static bool isIterArgUnchanged(LoopLikeOpInterface loop, BlockArgument arg,
   return true;
 }
 
-static bool isNoEffect(Operation *op) {
+// Check memory effect and handle inner regions recursively
+static bool hasNoSideEffects(Operation *op) {
+
   if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
     SmallVector<MemoryEffects::EffectInstance, 4> effects;
     mei.getEffects(effects);
-    return effects.empty();
+    if (!effects.empty())
+      return false;
   }
-  // If op has no interface, Assume no Effects.
+
+  // 2. Handle operations with regions (scf.for, scf.if, scf.while, etc.)
+  if (op->getNumRegions() > 0) {
+    auto regionOp = dyn_cast<RegionBranchOpInterface>(op);
+    if (!regionOp)
+      return false; // Unknown region op, assume unsafe.
+
+    for (Region &region : op->getRegions()) {
+      if (region.empty())
+        continue;
+
+      for (Operation &nestedOp : region.getOps()) {
+
+        if (nestedOp.hasTrait<OpTrait::IsTerminator>())
+          continue;
+
+        if (!hasNoSideEffects(&nestedOp))
+          return false;
+      }
+    }
+  }
+
   return true;
 }
 
-static bool isInLoopBody(Value x, Block *body) {
-  if (!body)
-    return false;
-  if (auto barg = dyn_cast<BlockArgument>(x))
-    return barg.getOwner() == body;
-  if (auto *defOp = x.getDefiningOp())
-    return defOp->getBlock() == body;
-  return false;
-}
-
 static LogicalResult
-isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
-                  SmallPtrSetImpl<Operation *> &tobeDeletedOps) {
+isIterationIndependent(scf::YieldOp allowedYield, Block *body,
+                       BlockArgument iterArg,
+                       SmallPtrSetImpl<Operation *> &tobeDeletedOps) {
   SmallVector<Value, 8> worklist;
   SmallPtrSet<Value, 16> visitedVals;
-  worklist.push_back(yield);
-  visitedVals.insert(yield);
+  worklist.push_back(iterArg);
+  visitedVals.insert(iterArg);
 
   SmallPtrSet<Operation *, 16> visitedOps;
 
   while (!worklist.empty()) {
     Value cur = worklist.pop_back_val();
-    if (cur == allowedIterArg)
-      continue; // reach only accepted leaf
+    LLVM_DEBUG(llvm::dbgs() << "\tWorklist Item : \n" << cur << "\n");
 
-    Operation *def = cur.getDefiningOp();
-    if (!def)
-      return failure();
-
-    if (def->getBlock() != body)
-      return failure();
-
-    // No memory effects.
-    if (!isNoEffect(def))
-      return failure();
-
-    visitedOps.insert(def);
-    for (Value operand : def->getOperands()) {
-      if (!isInLoopBody(operand, body)) {
-        continue; // ignore outside loop constants
-      }
-
-      if (visitedVals.insert(operand).second) // avoid double visit
-        worklist.push_back(operand);
-    }
-  }
-  // cannot delete iter arg if used elsewhere
-  for (OpOperand &use : allowedIterArg.getUses()) {
-    Operation *user = use.getOwner();
-    if (!visitedOps.contains(user)) {
-      if (!(isa<scf::YieldOp>(user) &&
-            body->getArgument(use.getOperandNumber() + 1) == allowedIterArg))
-        return failure();
-    }
-  }
-  // visited ops to be deleted should only be used in current trace chain
-  for (Operation *op : visitedOps) {
-    for (Value res : op->getResults()) {
-      for (OpOperand &use : res.getUses()) {
-        Operation *user = use.getOwner();
-        if (!visitedOps.contains(user)) {
-          if (!(isa<scf::YieldOp>(user) &&
-                body->getArgument(use.getOperandNumber() + 1) ==
-                    allowedIterArg))
-            return failure();
+    for (OpOperand &use : cur.getUses()) {
+      Operation *user = use.getOwner();
+      LLVM_DEBUG(llvm::dbgs() << "\tLooking at candidate to be deleted : \n"
+                              << *user << "\n");
+      if (auto userYield = llvm::dyn_cast_if_present<scf::YieldOp>(user)) {
+        if (OperationEquivalence::isEquivalentTo(userYield, allowedYield,
+                                                 OperationEquivalence::None)) {
+          LLVM_DEBUG(llvm::dbgs() << "\tDeal with yieldOp specially : \n");
+          if (body->getArgument(use.getOperandNumber() + 1) == iterArg)
+            continue; // if this use is the allowed yield that is fine !
         }
+        return failure();
+      }
+      // No memory effects.
+      if (!hasNoSideEffects(user))
+        return failure();
+      visitedOps.insert(user);
+      for (Value res : user->getResults()) {
+        if (visitedVals.insert(res).second)
+          worklist.push_back(res);
       }
     }
   }
 
   tobeDeletedOps.insert(visitedOps.begin(), visitedOps.end());
+  LLVM_DEBUG(llvm::dbgs() << "\tSucces, we will delete the ops above \n");
   return success();
 }
 
@@ -289,9 +285,11 @@ public:
   using OpRewritePattern<LoopT>::OpRewritePattern;
   LogicalResult
   matchAndRewrite(LoopT forOp, mlir::PatternRewriter &rewriter) const override {
+    LLVM_DEBUG(llvm::dbgs() << "\tRemoveDeadIterArgPattern For Loop:  \n"
+                            << forOp << "\n");
     unsigned numResults = forOp.getNumResults();
     if (numResults == 0)
-      return failure();
+      return rewriter.notifyMatchFailure(forOp, "for op has no results");
     Block *body = forOp.getBody();
     auto yield = cast<scf::YieldOp>(body->getTerminator());
 
@@ -299,6 +297,7 @@ public:
     SmallVector<SmallPtrSet<Operation *, 8>, 4> opsToErasePerIdx;
 
     for (unsigned i = 0, e = numResults; i < e; ++i) {
+      LLVM_DEBUG(llvm::dbgs() << "\tLooping over result index: " << i << "\n");
       Value res = forOp.getResult(i);
       if (!res.use_empty())
         continue;
@@ -306,15 +305,22 @@ public:
       Value yielded = yield.getOperand(i);
 
       SmallPtrSet<Operation *, 8> tobeDeletedOps;
-      if (failed(isIterationIndependent(yielded, body, iterArg, tobeDeletedOps)))
+      if (failed(
+              isIterationIndependent(yield, body, iterArg, tobeDeletedOps))) {
+        LLVM_DEBUG(llvm::dbgs()
+                   << "\tFailure, cannot delete use chain for index: " << i
+                   << "\n");
         continue;
+      }
 
+      LLVM_DEBUG(llvm::dbgs() << "\tAdding to be deleted index: " << i << "\n");
       removableIdxs.push_back(i);
       opsToErasePerIdx.emplace_back(std::move(tobeDeletedOps));
     }
 
     if (removableIdxs.empty())
-      return failure();
+      return rewriter.notifyMatchFailure(forOp,
+                                         "No Iter args deemed removable");
 
     // have to rewrite for op with new types
     llvm::SmallBitVector keep(numResults, true);
