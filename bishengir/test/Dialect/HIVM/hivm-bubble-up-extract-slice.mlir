@@ -776,3 +776,88 @@ func.func @bubble_up_slice_non_hivm(%arg0: tensor<4xf32>, %arg3: memref<2xf32>) 
     } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
     return
 }
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_1d_static(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<64xf32>) -> tensor<32xi32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.bitcast %[[VAL_1]] : tensor<32xf32> -> tensor<32xi32>
+// CHECK:           return %[[VAL_2]] : tensor<32xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast_1d_static(%arg0: tensor<64xf32>) -> tensor<32xi32> {
+    %1 = hivm.hir.bitcast %arg0 : tensor<64xf32> -> tensor<64xi32>
+    %extracted_slice = tensor.extract_slice %1[0] [32] [1] {to_be_bubbled_slice} : tensor<64xi32> to tensor<32xi32>
+    return %extracted_slice : tensor<32xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_1d_dyn(
+// CHECK-SAME:                                             %[[VAL_0:.*]]: tensor<64xf32>,
+// CHECK-SAME:                                             %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                             %[[VAL_2:.*]]: index) -> tensor<?xi32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_1]]] {{\[}}%[[VAL_2]]] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<?xf32>
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.bitcast %[[VAL_3]] : tensor<?xf32> -> tensor<?xi32>
+// CHECK:           return %[[VAL_4]] : tensor<?xi32>
+func.func @bubble_up_hivm_bitcast_1d_dyn(%arg0: tensor<64xf32>, %offset: index, %size: index) -> tensor<?xi32> {
+  %1 = hivm.hir.bitcast %arg0 : tensor<64xf32> -> tensor<64xi32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<64xi32> to tensor<?xi32>
+  return %extracted_slice : tensor<?xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_1d_dyn2(
+// CHECK-SAME:                                              %[[VAL_0:.*]]: tensor<?xf32>,
+// CHECK-SAME:                                              %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                              %[[VAL_2:.*]]: index) -> tensor<?xi32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_1]]] {{\[}}%[[VAL_2]]] [1] {to_be_bubbled_slice} : tensor<?xf32> to tensor<?xf32>
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.bitcast %[[VAL_3]] : tensor<?xf32> -> tensor<?xi32>
+// CHECK:           return %[[VAL_4]] : tensor<?xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast_1d_dyn2(%arg0: tensor<?xf32>, %offset: index, %size: index) -> tensor<?xi32> {
+  %1 = hivm.hir.bitcast %arg0 : tensor<?xf32> -> tensor<?xi32>
+  %extracted_slice = tensor.extract_slice %1[%offset] [%size] [1] {to_be_bubbled_slice}: tensor<?xi32> to tensor<?xi32>
+  return %extracted_slice : tensor<?xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_2d_static(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<32x64xf32>) -> tensor<16x64xi32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xf32> to tensor<16x64xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.bitcast %[[VAL_1]] : tensor<16x64xf32> -> tensor<16x64xi32>
+// CHECK:           return %[[VAL_2]] : tensor<16x64xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast_2d_static(%arg0: tensor<32x64xf32>) -> tensor<16x64xi32> {
+    %1 = hivm.hir.bitcast %arg0 : tensor<32x64xf32> -> tensor<32x64xi32>
+    %extracted_slice = tensor.extract_slice %1[1,0] [16,64] [1,1] {to_be_bubbled_slice} : tensor<32x64xi32> to tensor<16x64xi32>
+    return %extracted_slice : tensor<16x64xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_2d_dyn(
+// CHECK-SAME:                                             %[[VAL_0:.*]]: tensor<31x64xf32>,
+// CHECK-SAME:                                             %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                             %[[VAL_2:.*]]: index) -> tensor<?x64xi32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_1]], 0] {{\[}}%[[VAL_2]], 64] [1, 1] {to_be_bubbled_slice} : tensor<31x64xf32> to tensor<?x64xf32>
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.bitcast %[[VAL_3]] : tensor<?x64xf32> -> tensor<?x64xi32>
+// CHECK:           return %[[VAL_4]] : tensor<?x64xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast_2d_dyn(%arg0: tensor<31x64xf32>, %offset: index, %size: index) -> tensor<?x64xi32> {
+  %1 = hivm.hir.bitcast %arg0 : tensor<31x64xf32> -> tensor<31x64xi32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,64] [1,1] {to_be_bubbled_slice}: tensor<31x64xi32> to tensor<?x64xi32>
+  return %extracted_slice : tensor<?x64xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast_2d_dyn2(
+// CHECK-SAME:                                              %[[VAL_0:.*]]: tensor<?x64xf32>,
+// CHECK-SAME:                                              %[[VAL_1:.*]]: index,
+// CHECK-SAME:                                              %[[VAL_2:.*]]: index) -> tensor<?x64xi32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_1]], 0] {{\[}}%[[VAL_2]], 64] [1, 1] {to_be_bubbled_slice} : tensor<?x64xf32> to tensor<?x64xf32>
+// CHECK:           %[[VAL_4:.*]] = hivm.hir.bitcast %[[VAL_3]] : tensor<?x64xf32> -> tensor<?x64xi32>
+// CHECK:           return %[[VAL_4]] : tensor<?x64xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast_2d_dyn2(%arg0: tensor<?x64xf32>, %offset: index, %size: index) -> tensor<?x64xi32> {
+  %1 = hivm.hir.bitcast %arg0 : tensor<?x64xf32> -> tensor<?x64xi32>
+  %extracted_slice = tensor.extract_slice %1[%offset,0] [%size,64] [1,1] {to_be_bubbled_slice}: tensor<?x64xi32> to tensor<?x64xi32>
+  return %extracted_slice : tensor<?x64xi32>
+}
