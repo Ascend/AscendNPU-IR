@@ -452,7 +452,8 @@ def NZ2NDOp : HIVM_DmaOp<"nz2nd",
 }
 
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Atomic Compare-And-Swap (CAS) Op";
   let description = [{
@@ -480,7 +481,7 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
   let arguments = (ins Variadic<TensorOrMemref>:$src,
                        TensorOrMemref:$dst
   );
-  let results = (outs Optional<TensorOrMemref>:$result_tensor);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
@@ -519,7 +520,7 @@ def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
                        TensorOrMemref:$dst,
                        Optional<TensorOrMemref>:$mask
   );
-  let results = (outs Optional<TensorOrMemref>:$result_tensor);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
@@ -561,7 +562,7 @@ def AtomicRMWOp : HIVM_Op<"atomic_rmw", [
                        TensorOrMemref:$dst,
                        HIVM_AtomicKindAttr:$atomic_kind
   );
-  let results = (outs Optional<TensorOrMemref>:$result_tensor);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`

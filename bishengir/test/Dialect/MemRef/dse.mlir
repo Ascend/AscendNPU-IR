@@ -550,7 +550,12 @@ func.func @alloc_on_function(%arg0: memref<1xf32>) -> f32 {
 // CHECK:           %[[VAL_3:.*]] = memref.load %[[VAL_0]]{{\[}}%[[VAL_2]]] : memref<1xf32>
 // CHECK:           %[[VAL_4:.*]] = memref.load %[[VAL_1]]{{\[}}%[[VAL_2]]] : memref<1xf32>
 // CHECK:           %[[VAL_5:.*]] = memref.alloc() : memref<1xf32>
-// CHECK:           return %[[VAL_5]] : memref<1xf32>
+// CHECK:           memref.store %[[VAL_3]], %[[VAL_5]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           %[[VAL_6:.*]] = memref.alloc() : memref<1xf32>
+// CHECK:           memref.store %[[VAL_4]], %[[VAL_6]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           %[[VAL_7:.*]] = memref.alloc() : memref<1xf32>
+// CHECK:           hivm.hir.atomic_cas ins(%[[VAL_5]], %[[VAL_6]] : memref<1xf32>, memref<1xf32>) outs(%[[VAL_7]] : memref<1xf32>)
+// CHECK:           return %[[VAL_7]] : memref<1xf32>
 // CHECK:         }
 func.func @double_free(%arg0: memref<1xf32>,%arg1: memref<1xf32>) -> memref<1xf32> {
   %c0 = arith.constant 0 : index
@@ -563,4 +568,30 @@ func.func @double_free(%arg0: memref<1xf32>,%arg1: memref<1xf32>) -> memref<1xf3
   %alloc_2 = memref.alloc(): memref<1xf32>
   hivm.hir.atomic_cas ins(%alloc_0, %alloc_1: memref<1xf32>, memref<1xf32>) outs(%alloc_2: memref<1xf32>)
   return %alloc_2 : memref<1xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @atomic_cas(
+// CHECK-SAME:                          %[[VAL_0:.*]]: memref<1xf32>,
+// CHECK-SAME:                          %[[VAL_1:.*]]: memref<1xf32>) {
+// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_3:.*]] = memref.load %[[VAL_0]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           %[[VAL_4:.*]] = memref.load %[[VAL_1]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           %[[VAL_5:.*]] = memref.alloc() : memref<1xf32>
+// CHECK:           memref.store %[[VAL_3]], %[[VAL_5]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           %[[VAL_6:.*]] = memref.alloc() : memref<1xf32>
+// CHECK:           memref.store %[[VAL_4]], %[[VAL_6]]{{\[}}%[[VAL_2]]] : memref<1xf32>
+// CHECK:           hivm.hir.atomic_cas ins(%[[VAL_5]], %[[VAL_6]] : memref<1xf32>, memref<1xf32>) outs(%[[VAL_0]] : memref<1xf32>)
+// CHECK:           return
+// CHECK:         }
+func.func @atomic_cas(%arg0: memref<1xf32>, %arg1: memref<1xf32>) {
+  %c0 = arith.constant 0 : index
+  %0 = memref.load %arg0[%c0] : memref<1xf32>
+  %1 = memref.load %arg1[%c0] : memref<1xf32>
+  %alloc = memref.alloc() : memref<1xf32>
+  memref.store %0, %alloc[%c0] : memref<1xf32>
+  %alloc_0 = memref.alloc() : memref<1xf32>
+  memref.store %1, %alloc_0[%c0] : memref<1xf32>
+  hivm.hir.atomic_cas ins(%alloc, %alloc_0 : memref<1xf32>, memref<1xf32>) outs(%arg0 : memref<1xf32>)
+  return
 }
