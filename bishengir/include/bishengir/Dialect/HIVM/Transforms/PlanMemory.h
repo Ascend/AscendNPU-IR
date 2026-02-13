@@ -670,8 +670,8 @@ private:
   void ReportCurEntryDebugInfo(const StorageEntry *curEntry) const;
 
   /// Report tensor allocate info.
-  void
-  ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry) const;
+  void ReportAllocatedEntryDebugInfo(const StorageEntry *rootStorageEntry,
+                                     bool isFail) const;
 
 private:
   /// The buffer corresponding to each operation.

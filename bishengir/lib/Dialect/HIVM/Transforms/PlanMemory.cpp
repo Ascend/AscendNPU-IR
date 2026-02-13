@@ -772,6 +772,7 @@ BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
 }
 
 void MemLivenessAnalysis::InitializeInplacePairList() {
+  LDBG("-------------------------- AliasPair --------------------------\n");
   for (auto &bufferInfo : bufferInfos) {
     assert(memref_ext::isDefiningOpAllocLike(bufferInfo.first));
     auto iter = buffer2AliasVec.find(bufferInfo.first);
@@ -789,6 +790,9 @@ void MemLivenessAnalysis::InitializeInplacePairList() {
                 std::make_pair(aliasBuffer, bufferInfo.first))) {
         continue;
       }
+      LDBG("inplace pair: (buffer: "
+           << bufferInfo.first << ", alias buffer: " << aliasBuffer << ")"
+           << " , condition: " << aliasBufferPair.second << "\n");
       if (aliasBufferPair.second) {
         continue;
       }
@@ -1272,6 +1276,7 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
       continue;
     }
     if (IsEnoughForBuffersNoReuse(rootStorageEntry, maxBits, align)) {
+      ReportMemLifeDebugInfo(rootStorageEntry);
       continue;
     }
     rootStorageEntry = GetReorderRootStorageEntry(rootStorageEntry);
@@ -1312,7 +1317,7 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
           continue;
         }
         if (as == PlanStatus::PLAN_FAILED) {
-          ReportAllocatedEntryDebugInfo(rootStorageEntry);
+          ReportAllocatedEntryDebugInfo(rootStorageEntry, true);
           PlanMemAddressForLevel0(rootStorageEntry);
           return as;
         }
@@ -1322,12 +1327,14 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
       }
       curEntry = rootStorageEntry->mergedChildren[si.childIdx];
     }
+    ReportAllocatedEntryDebugInfo(rootStorageEntry, false);
   }
   planStatus = PlanStatus::PLAN_SUCCESS;
   return planStatus;
 }
 
 void MemPlan::ReportMemLifeDebugInfo(const StorageEntry *rootStorageEntry) {
+  LDBG("\n");
   LDBG("-------------------------- Buffer2Life --------------------------\n");
   MemLifeDebugInfo(rootStorageEntry);
   for (auto &StorageEntry : rootStorageEntry->mergedChildren) {
@@ -1950,7 +1957,7 @@ PlanStatus MemPlan::ApplyFailStrategy(StatusWrapper &statusWrapper,
 }
 
 void MemPlan::ReportAllocatedEntryDebugInfo(
-    const StorageEntry *rootStorageEntry) const {
+    const StorageEntry *rootStorageEntry, bool isFail) const {
 #ifndef NDEBUG
   auto printRecord = [this](const StorageEntry *entry) {
     uint64_t needByte =
@@ -1981,13 +1988,15 @@ void MemPlan::ReportAllocatedEntryDebugInfo(
       printRecord(entry);
       LDBG("\n");
     }
-    size_t num = allocatedEntry.size() - 1;
-    assert(rootStorageEntry->mergedChildren.size() > num);
-    const StorageEntry *failedSe = rootStorageEntry->mergedChildren[num];
-    printRecord(failedSe);
+    if (isFail) {
+      size_t num = allocatedEntry.size() - 1;
+      assert(rootStorageEntry->mergedChildren.size() > num);
+      const StorageEntry *failedSe = rootStorageEntry->mergedChildren[num];
+      printRecord(failedSe);
+      LDBG("alloc fail,because exceed bound of memory "
+           << rootStorageEntry->bufInfo->bufferScope << "\n");
+    }
   }
-  LDBG("alloc fail,because exceed bound of memory "
-       << rootStorageEntry->bufInfo->bufferScope << "\n");
   LDBG("  BUFFER ALLOCATE END \n");
   LDBG("\n"
        << "--------------------------BUFFER ALLOCATE "
