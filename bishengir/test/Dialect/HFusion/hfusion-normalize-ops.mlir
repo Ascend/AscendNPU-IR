@@ -692,6 +692,20 @@ func.func @test_linalg_mul_div_by_one_rec(%arg0: tensor<5x1xf16>, %arg1: tensor<
 }
 
 // -----
+// CHECK-LABEL: func.func @test_normalize_i1_hfusion_compare
+// CHECK-NOT: hfusion.compare
+// CHECK: return %arg0
+func.func @test_normalize_i1_hfusion_compare(%arg0: tensor<16xi1>) -> tensor<16xi1> {
+  %false = arith.constant false
+  %0 = tensor.empty() : tensor<16xi1>
+  %1 = linalg.fill ins(%false : i1) outs (%0 : tensor<16xi1>) -> tensor<16xi1>
+  %dst0 = tensor.empty() : tensor<16xi1>
+  %res1 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
+    ins(%arg0, %1 : tensor<16xi1>, tensor<16xi1>) outs(%dst0 : tensor<16xi1>) -> tensor<16xi1>
+  return %res1 : tensor<16xi1>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_normalize_i8_hfusion_compare
 // CHECK: %[[CAST0:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<16xi8>)
 // CHECK: %[[CAST1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins({{.*}} : tensor<16xi8>)

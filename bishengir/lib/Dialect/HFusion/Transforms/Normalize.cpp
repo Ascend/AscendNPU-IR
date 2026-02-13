@@ -586,13 +586,33 @@ struct NormalizeCosOp : public NormalizeTrigBase<NormalizeCosOp> {
   }
 };
 
-/// normalize the specific cmp pattern to cast op
+static bool isZero(Value v) {
+  auto fillOp = v.getDefiningOp<linalg::FillOp>();
+  if (!fillOp) {
+    return false;
+  }
+  auto cstOp = fillOp.getInputs()[0].getDefiningOp<arith::ConstantIntOp>();
+  if (!cstOp) {
+    return false;
+  }
+  return (cstOp.value() == 0);
+}
+
+/// normalize the specific cmp pattern to cast op in the non-bool scenario.
 /// eg.
 ///  scalar = const 0
 ///  src0 = fill(scalar, dst) -> i8
 ///  y = hfusion.cmpi x, src0 {vne} ->  i1
 /// is normalized to
 ///  y = hfusion.cast x -> i1
+///
+/// erase the redundant cmp op in the bool scenario.
+/// eg.
+///  src0 = fill(false, dst) -> i1
+///  y = hfusion.cmpi x, src0 {vne} ->  i1
+///  use y
+/// is normalized to
+///  use x
 
 struct NormalizeCmpToCastOp : public OpRewritePattern<CompareOp> {
 public:
@@ -604,18 +624,30 @@ public:
       return failure();
     }
 
+    // Whether comparing with const zero
+    size_t nonZeroSrcIndx = 0;
     llvm::SmallVector<Value> inputs = op.getInputs();
-    bool isValidPattern = llvm::any_of(inputs, [&](Value &src) {
-      if (auto fillOp = src.getDefiningOp<linalg::FillOp>()) {
-        if (auto cstOp =
-                fillOp.getInputs()[0].getDefiningOp<arith::ConstantIntOp>()) {
-          return ((op.getCompareFn() == CompareFn::vne && cstOp.value() == 0));
-        }
-      }
-      return false;
-    });
-    if (!isValidPattern) {
+    if (isZero(inputs[0])) {
+      nonZeroSrcIndx = 1;
+    } else if (isZero(inputs[1])) {
+      nonZeroSrcIndx = 0;
+    } else {
       return failure();
+    }
+
+    if (op.getCompareFn() != CompareFn::vne) {
+      return failure();
+    }
+
+    // The result of `bool value vne const 0` equals the origin value.
+    Value &src = inputs[nonZeroSrcIndx];
+    auto tensorType = dyn_cast<RankedTensorType>(src.getType());
+    bool isSrcBool = (tensorType && tensorType.getElementTypeBitWidth() == 1);
+    if (isSrcBool) {
+      // Erase redundant CompareOp
+      rewriter.replaceAllUsesWith(op->getResults()[0], src);
+      rewriter.eraseOp(op);
+      return success();
     }
 
     hfusion::RoundMode rounding = hfusion::RoundMode::RINT;
@@ -623,8 +655,9 @@ public:
     auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                           roundingAttr);
     auto castOp = rewriter.create<hfusion::CastOp>(
-        op->getLoc(), TypeRange(op.getResults()), ValueRange{inputs[0]},
-        ValueRange{op.getOutputs()[0]}, ArrayRef{modeAttr});
+        op->getLoc(), TypeRange(op.getResults()),
+        ValueRange{inputs[nonZeroSrcIndx]}, ValueRange{op.getOutputs()[0]},
+        ArrayRef{modeAttr});
     rewriter.replaceOp(op, castOp);
 
     return success();
