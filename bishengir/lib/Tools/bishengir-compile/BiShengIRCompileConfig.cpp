@@ -98,9 +98,10 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             llvm::cl::cat(enableCPURunnerCategory)};
 #endif // MLIR_ENABLE_EXECUTION_ENGINE
 
-    // when enableSanitizer is true, enable printDebugInfoOpt
+    // when enableSanitizer/enableMemoryDisplay is true, enable
+    // printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
-    if ((enableSanitizer || enableDebugInfo) &&
+    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo) &&
         (opts.count("mlir-print-debuginfo") != 0)) {
       static_cast<cl::opt<bool> *>(opts["mlir-print-debuginfo"])
           ->setValue(true);

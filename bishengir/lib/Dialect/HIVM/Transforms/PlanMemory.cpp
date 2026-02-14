@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeLoopIterator.h"
+#include "bishengir/Dialect/HIVM/Transforms/MemoryDisplay.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -227,6 +228,8 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
                           condBrOp.getFalseDestOperands());
     } else if (auto brOp = dyn_cast<cf::BranchOp>(op)) {
       UpdateBranchOpAlias(brOp.getDest(), brOp.getDestOperands());
+    } else if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }
@@ -485,8 +488,7 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 }
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
-  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DebugOp,
-             hivm::DCCIOp>(op);
+  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp>(op);
 }
 
 LogicalResult
@@ -696,8 +698,9 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
 
 bool MemLivenessAnalysis::isParentOpDominate(Operation *op1,
                                              Operation *op2) const {
-  assert((op1 != nullptr && op2 != nullptr &&
-    op2->getParentOp() != nullptr && op1->getParentOp() != nullptr) && "op must not be nullptr");
+  assert((op1 != nullptr && op2 != nullptr && op2->getParentOp() != nullptr &&
+          op1->getParentOp() != nullptr) &&
+         "op must not be nullptr");
   return op2->getParentOp()->isAncestor(op1->getParentOp());
 }
 
@@ -940,12 +943,15 @@ void MemPlan::EmitPlanMemoryFailureInfo() {
     return;
   for (auto &iter : failApplyBufferInfo) {
     AddressSpace space = iter.first;
-    func_.emitError() << stringifyEnum(space) << " overflow, requires "
-                      << iter.second << " bits while "
-                      << GetBufferSpaceInfo(space).second << " bits available! "
-                      << "(possible reason: tiling basic block is too large "
-                      << "or block number is more than what user expect due to multi-buffer feature is enabled "
-                      << "and some ops need extra local buffer.)";
+    std::string error =
+        stringifyEnum(space).str() + " overflow, requires " +
+        std::to_string(iter.second) + " bits while " +
+        std::to_string(GetBufferSpaceInfo(space).second) +
+        " bits available! (possible reason: tiling basic block is too large or "
+        "block number is more than what user expect due to multi-buffer "
+        "feature is enabled and some ops need extra local buffer.)";
+    func_.emitError() << error;
+    errorInfo[space] = error;
   }
 }
 
@@ -959,6 +965,10 @@ LogicalResult MemPlan::plan() {
                       : PlanWorkSpaceMemAddress();
   if (as == PlanStatus::PLAN_FAILED) {
     EmitPlanMemoryFailureInfo();
+    if (enableMemoryDisplay) {
+      // Update the address information of each buffer after memory buffer.
+      UpdateBuffer2Offsets();
+    }
     return failure();
   }
   // Update the address information of each buffer after memory buffer.
@@ -1336,6 +1346,12 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
         if (as == PlanStatus::PLAN_FAILED) {
           ReportAllocatedEntryDebugInfo(rootStorageEntry, true);
           PlanMemAddressForLevel0(rootStorageEntry);
+          hivm::AddressSpace bufferScope =
+              rootStorageEntry->bufInfo->bufferScope;
+          auto iter = memscope2rootFailStorageEntry.find(bufferScope);
+          if (iter == memscope2rootFailStorageEntry.end()) {
+            memscope2rootFailStorageEntry[bufferScope] = rootStorageEntry;
+          }
           return as;
         }
       }
@@ -1369,8 +1385,9 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
   }
 #ifndef NDEBUG
   for (auto &bufferLife : storageEntry->bufferLifeVec) {
-    LDBG("bufferLife : " << "allocTime : " << bufferLife->allocTime
-                         << " , freeTime : " << bufferLife->freeTime << "\n");
+    LDBG("bufferLife : "
+         << "allocTime : " << bufferLife->allocTime
+         << " , freeTime : " << bufferLife->freeTime << "\n");
   }
   LDBG("\n");
 #endif
@@ -2290,6 +2307,29 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
   return llvm::success();
 }
 
+static void markTempBufForMemoryDisplay(func::FuncOp funcOp) {
+  funcOp.getBody().walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (auto extraBufferOp = dyn_cast_if_present<ExtraBufferOpInterface>(op)) {
+      for (auto value : extraBufferOp.getExtraBuffers()) {
+        auto maybeAlloc = utils::tracebackMemRefToAlloc(value);
+        if (maybeAlloc.has_value()) {
+          maybeAlloc.value()->setAttr(
+              "is_tmpbuf", mlir::BoolAttr::get(funcOp.getContext(), true));
+        }
+      }
+    }
+  });
+}
+
+void MemPlan::SetMemscope2rootSuccessStorageEntry() {
+  for (auto &it : memscope2rootStorageEntry) {
+    if (memscope2rootFailStorageEntry.find(it.first) ==
+        memscope2rootFailStorageEntry.end()) {
+      memscope2rootSuccessStorageEntry[it.first] = it.second;
+    }
+  }
+}
+
 void PlanMemoryPass::runOnOperation() {
   auto funcOp = getOperation();
   if (hacc::utils::isHost(funcOp))
@@ -2308,7 +2348,7 @@ void PlanMemoryPass::runOnOperation() {
   memLiveness.build();
 
   MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                  this->restrictInplaceAsISA);
+                  this->enableMemoryDisplay, this->restrictInplaceAsISA);
   memPlan.func_ = funcOp;
   memPlan.SetLinearOperation(memLiveness.linearOperation);
   memPlan.SetBufferInfos(memLiveness.bufferInfos);
@@ -2316,8 +2356,36 @@ void PlanMemoryPass::runOnOperation() {
   memPlan.SetGenKillMap(memLiveness.genKillMap);
   memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
   memPlan.SetInplacePairList(memLiveness.inplacePairList);
+
+  // Add a attr to the memref alloc for the tempbuf.
+  if (memPlan.enableMemoryDisplay) {
+    markTempBufForMemoryDisplay(funcOp);
+  }
+
+  // record the memory display info list.
+  SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
   if (failed(memPlan.plan())) {
+    if (memPlan.enableMemoryDisplay) {
+      // Collect plan fail memory info for memory display tools.
+      collectMemoryInfoForDebug(
+          memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
+          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
+      memPlan.SetMemscope2rootSuccessStorageEntry();
+      // Collect plan success memory info for memory display tools.
+      collectMemoryInfoForDebug(
+          memoryDisplayInfoList, memPlan.GetMemscope2rootSuccessStorageEntry(),
+          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+      createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+    }
     return signalPassFailure();
+  }
+
+  if (memPlan.enableMemoryDisplay) {
+    // Collect plan success memory info for memory display tools.
+    collectMemoryInfoForDebug(
+        memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
+        memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+    createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
   }
 
   RewritePatternSet patterns(&getContext());
