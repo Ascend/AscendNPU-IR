@@ -61,7 +61,7 @@ module {
     // CHECK: %[[FIX_RES:.*]] = hivm.hir.fixpipe
     // CHECK-SAME: ins(%[[MATMUL_RES]]
     // CHECK-SAME: outs(%[[EXT_WS]]
-    // CHECK: %[[INSERT:.*]] = tensor.insert_slice %[[FIX_RES]] into %[[ITERATION]]
+    // CHECK: %[[INSERT:.*]] = tensor.insert_slice %[[FIX_RES]] into %[[ITERATION]][%[[INDUCTION_VAR]], 0, 0] [1, 16, 16] [1, 1, 1] {ignore_load_store}
     // CHECK: scf.yield %[[INSERT]]
     %3 = tensor.empty() : tensor<3x16x16xf32>
     %4 = hivm.hir.batchMmadL1 ins(%0, %1, %true, %c16, %c32, %c16 : tensor<3x16x32xf16>, tensor<3x32x16xf16>, i1, index, index, index) outs(%3 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
