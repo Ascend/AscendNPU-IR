@@ -5983,6 +5983,49 @@ public:
   }
 };
 
+struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::GatherMaskOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Value src = op.getSrc();
+    Value mask = op.getMask();
+    Value init = op.getInit();
+
+    auto maskType = mlir::dyn_cast<RankedTensorType>(mask.getType());
+    if (!maskType) return failure();
+
+    Type elemTy = maskType.getElementType();
+
+    if (elemTy.isInteger(1)) {
+      return failure();
+    }
+
+    if (!elemTy.isInteger(8)) {
+      return failure();
+    }
+
+    Value newMask = hfusion::castTo(
+        rewriter, mask,
+        rewriter.getI1Type(),
+        hfusion::RoundMode::RINT,
+        /*dst=*/std::nullopt,
+        /*enableOverflow=*/false,
+        hfusion::TypeFn::cast_signed);
+
+    auto newOp = rewriter.create<hfusion::GatherMaskOp>(
+        loc, src, newMask, init);
+
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -6045,6 +6088,7 @@ void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {
 
 void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   populateNormalizeF16ToF32Patterns(patterns);
+  patterns.add<NormalizeGatherMaskOp>(patterns.getContext());
   patterns.add<NormalizeSinOp>(patterns.getContext());
   patterns.add<NormalizeCosOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
