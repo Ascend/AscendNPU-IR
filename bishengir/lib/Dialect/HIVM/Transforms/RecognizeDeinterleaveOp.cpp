@@ -33,58 +33,35 @@ using namespace mlir::hivm;
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-FailureOr<Value> backtraceStaticAlloc(Value loadDst,
-                                      SmallVector<Operation *> &traceOps) {
-  SmallVector<Value> worklist = {loadDst};
-  while (!worklist.empty()) {
-    Value value = worklist.pop_back_val();
-    LDBG("trace static alloc: " << value);
-    MemRefType memrefType = cast<MemRefType>(value.getType());
-    auto [strides, offset] = getStridesAndOffset(memrefType);
-    if (memrefType.hasStaticShape() &&
-        std::is_sorted(strides.rbegin(), strides.rend())) {
-      LDBG("trace static alloc succeed");
-      return value;
+Value traceStaticAlloc(Value value, SmallVector<OpFoldResult> &offsets,
+                       SmallVector<OpFoldResult> &sizes,
+                       SmallVector<OpFoldResult> &strides) {
+  // Currently, only support single subview and static alloc
+  Operation *op = value.getDefiningOp();
+  if (auto subviewOp = dyn_cast<memref::SubViewOp>(op)) {
+    offsets = subviewOp.getMixedOffsets();
+    sizes = subviewOp.getMixedSizes();
+    strides = subviewOp.getMixedStrides();
+
+    Value viewSrc = subviewOp.getViewSource();
+    Operation *viewSrcOp = viewSrc.getDefiningOp();
+    if (isa<memref::SubViewOp>(viewSrcOp) || isa<memref::ViewOp>(viewSrcOp)) {
+      // TODO: can there be multiple subviews/view from alloc?
+      return Value();
     }
-    auto viewLikeOp = dyn_cast<ViewLikeOpInterface>(value.getDefiningOp());
-    if (!viewLikeOp)
-      break;
-    traceOps.push_back(viewLikeOp);
-    worklist.push_back(viewLikeOp.getViewSource());
+    return traceStaticAlloc(subviewOp.getViewSource(), offsets, sizes, strides);
   }
-  LDBG("trace static alloc fail");
-  return failure();
+  if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
+    auto allocMemRef = cast<MemRefType>(allocOp.getType());
+    return allocMemRef.hasStaticShape() ? allocOp.getMemref() : nullptr;
+  }
+  return Value();
 }
 
-LogicalResult forwardRecoverAlloc(PatternRewriter &rewriter, Location loc,
-                                  Value &initAlloc,
-                                  SmallVector<Operation *> &traceOps) {
-  for (auto op : llvm::reverse(traceOps)) {
-    if (auto subviewOp = dyn_cast<memref::SubViewOp>(op)) {
-      SmallVector<OpFoldResult> offsets = subviewOp.getMixedOffsets();
-      if (llvm::any_of(offsets, [](const OpFoldResult &ofr) -> bool {
-            return !isConstantIntValue(ofr, 0);
-          }))
-        return failure();
-      initAlloc = rewriter.create<memref::SubViewOp>(
-          loc, initAlloc, offsets, subviewOp.getMixedSizes(),
-          subviewOp.getMixedStrides());
-    } else if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(op)) {
-      initAlloc = rewriter.create<memref::CollapseShapeOp>(
-          loc, collapseOp.getResult().getType(), initAlloc,
-          collapseOp.getReassociation());
-    } else if (auto expandOp = dyn_cast<memref::ExpandShapeOp>(op)) {
-      initAlloc = rewriter.create<memref::ExpandShapeOp>(
-          loc, expandOp.getResult().getType(), initAlloc,
-          expandOp.getReassociation(), expandOp.getOutputShape(),
-          expandOp.getStaticOutputShape());
-    } else {
-      return rewriter.notifyMatchFailure(
-          op, " cannot recognize deinterleave op from the backtrace ops");
-    }
-    LDBG("recover traced operation: " << initAlloc);
-  }
-  return success();
+int64_t computeChannelNum(Type type, int64_t alignBytes) {
+  Type elemType = getElementTypeOrSelf(type);
+  int64_t byteWidth = elemType.getIntOrFloatBitWidth() / 8;
+  return alignBytes / byteWidth;
 }
 
 // check if last dim is effectively marked to do stride align
@@ -186,33 +163,38 @@ bool isDeinterleavePattern(Value src, Value dst) {
   return isLastDimUnContinuous(src) && isLastDimContinuous(dst);
 }
 
-void generateDeinterleaveOp(PatternRewriter &rewriter, int32_t alignDim,
-                            int32_t alignBytes, Value deinterleaveSrc,
-                            Value deinterleaveDst, Operation *op) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  // Generate DeinterleaveOp
-  rewriter.setInsertionPointAfter(op);
-  hivm::DeinterleaveMode hivmDeinterleaveMode =
-      hivm::symbolizeDeinterleaveMode(0).value();
-  Type elemType = getElementTypeOrSelf(deinterleaveDst.getType());
-  int64_t byteWidth = elemType.getIntOrFloatBitWidth() / 8;
-  int64_t channelNum = alignBytes / byteWidth;
-  auto deinterleaveOp = rewriter.create<hivm::VDeinterleaveOp>(
-      op->getLoc(), op->getResultTypes(), /*src=*/deinterleaveSrc,
-      /*dst=*/deinterleaveDst, channelNum, hivmDeinterleaveMode);
-  LDBG("generate deinterleaveOp: " << deinterleaveOp);
-  rewriter.modifyOpInPlace(op, [&] { op->setOperand(1, deinterleaveSrc); });
-  // Generate MarkOp with alignDim and alignBytes attributes
-  rewriter.setInsertionPointAfterValue(deinterleaveSrc);
-  auto markOp =
-      rewriter.create<annotation::MarkOp>(op->getLoc(), deinterleaveSrc);
+void markEnableStrideAlign(Value value, int32_t alignDim, int32_t alignBytes,
+                           Location loc, PatternRewriter &rewriter) {
+  rewriter.setInsertionPointAfterValue(value);
+  auto markOp = rewriter.create<annotation::MarkOp>(loc, value);
   rewriter.modifyOpInPlace(markOp, [&]() {
     markOp->setAttr(hivm::StrideAlignDimsAttr::name,
                     DenseI32ArrayAttr::get(markOp.getContext(), {alignDim}));
     markOp->setAttr(hivm::StrideAlignValueInByteAttr::name,
                     DenseI32ArrayAttr::get(markOp.getContext(), {alignBytes}));
   });
-  LDBG("generate markOp: " << markOp);
+}
+
+namespace {
+bool isAllZero(const SmallVector<OpFoldResult> &values) {
+  return llvm::all_of(values, [](const OpFoldResult &ofr) {
+    return isConstantIntValue(ofr, 0);
+  });
+}
+
+void adaptToDeinterleaveOp(PatternRewriter &rewriter, Value deinterleaveSrc,
+                           Value deinterleaveDst, Operation *op) {
+  // use deinterleave op to adapt new subview to old subview
+  rewriter.setInsertionPointAfter(op);
+  hivm::DeinterleaveMode hivmDeinterleaveMode =
+      hivm::symbolizeDeinterleaveMode(0).value();
+  int64_t channelNum = computeChannelNum(deinterleaveDst.getType(), 32);
+  rewriter.create<hivm::VDeinterleaveOp>(
+      op->getLoc(), op->getResultTypes(), /*src=*/deinterleaveSrc,
+      /*dst=*/deinterleaveDst, channelNum, hivmDeinterleaveMode);
+
+  // adjust dst subview of old load op
+  rewriter.modifyOpInPlace(op, [&] { op->setOperand(1, deinterleaveSrc); });
 }
 
 struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
@@ -223,41 +205,132 @@ struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
       return rewriter.notifyMatchFailure(op,
                                          " op should have buffer semantics.");
     }
-    // Only recognize deinterleave op
-    // when src last dim != 1 and dst last dim == 1
-    Value loadSrc = op.getSrc();
-    Value loadDst = op.getDst();
-    if (!isDeinterleavePattern(loadSrc, loadDst)) {
+
+    Value src = op.getSrc();
+    Value dst = op.getDst();
+    if (!isDeinterleavePattern(src, dst)) {
       return rewriter.notifyMatchFailure(
           op, " only recognize deinterleave op for load op if src last dim not "
               "unit stride and dst last dim unit stride.");
     }
 
-    // Back trace dst to get the closest static memrefType
-    SmallVector<Operation *> traceOps;
-    auto closestStaticTypedValue = backtraceStaticAlloc(loadDst, traceOps);
-    if (failed(closestStaticTypedValue))
-      return failure();
+    // trace dst subview to static alloc site
+    SmallVector<OpFoldResult> offsets;
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides;
+    Value allocForDst = traceStaticAlloc(dst, offsets, sizes, strides);
+    if (!allocForDst) {
+      return rewriter.notifyMatchFailure(
+          op, " only recognize deinterleave op for load op with dst traced "
+              "from static alloc size.");
+    }
 
-    // Configure deinterleaveOp src and dst
-    // Deinterleave src is a newly created allocOp
-    // Deinterleave dst has the same address as the load dst
-    auto loc = op->getLoc();
-    Value deinterleaveDst = *closestStaticTypedValue;
-    Value deinterleaveSrc = rewriter.create<memref::AllocOp>(
-        loc, cast<MemRefType>(closestStaticTypedValue->getType()));
+    MemRefType allocMemRef = cast<MemRefType>(allocForDst.getType());
+    int64_t rank = allocMemRef.getRank();
+    auto dstMemRef = cast<MemRefType>(dst.getType());
+    if (allocMemRef.getRank() != dstMemRef.getRank()) {
+      return rewriter.notifyMatchFailure(
+          op, " cannot recognize deinterleave op for alloc with rank-reducing "
+              "subview.");
+    }
 
-    // Forward recover the deinterleaveOp shape from the op shape
-    if (failed(forwardRecoverAlloc(rewriter, loc, deinterleaveDst, traceOps)))
-      return failure();
-    if (failed(forwardRecoverAlloc(rewriter, loc, deinterleaveSrc, traceOps)))
-      return failure();
+    if (!isAllZero(offsets)) {
+      return rewriter.notifyMatchFailure(
+          op, " only recognize deinterleave op with zero offset alloc.");
+    }
 
-    // Generate deinterleaveOp and adjust its src strides
-    auto dstMemRef = cast<MemRefType>(loadDst.getType());
+    Location loc = op->getLoc();
+    // reuse old alloc and subview from it as deinterleave dst
+    Value deinterleaveDst = allocForDst;
+    bool isLoadToSubview = isa<memref::SubViewOp>(dst.getDefiningOp());
+    if (isLoadToSubview) {
+      deinterleaveDst = rewriter.create<memref::SubViewOp>(
+          loc, allocForDst, offsets, sizes, strides);
+    }
+
+    // create new alloc and subview from it as load dst and deinterleave src
+    Value newAlloc = rewriter.create<memref::AllocOp>(loc, allocMemRef);
+    Value deinterleaveSrc = newAlloc;
+    if (isLoadToSubview) {
+      deinterleaveSrc = rewriter.create<memref::SubViewOp>(
+          loc, newAlloc, offsets, sizes, strides);
+    }
+
+    adaptToDeinterleaveOp(rewriter, deinterleaveSrc, deinterleaveDst, op);
+
+    // adjust strides to hwAlignBytes for deinterleave to work
     auto hwAlignBytes = util::getHWAlignBytes(dstMemRef.getMemorySpace());
-    generateDeinterleaveOp(rewriter, dstMemRef.getRank() - 1, hwAlignBytes,
-                           deinterleaveSrc, deinterleaveDst, op);
+    markEnableStrideAlign(deinterleaveSrc, rank - 1, hwAlignBytes, loc,
+                          rewriter);
+    return success();
+  }
+};
+
+struct RecognizeDeinterleaveOpForCopy : public OpRewritePattern<hivm::CopyOp> {
+  using OpRewritePattern<hivm::CopyOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::CopyOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureBufferSemantics()) {
+      return rewriter.notifyMatchFailure(op,
+                                         " op should have buffer semantics.");
+    }
+
+    Value src = op.getSrc();
+    Value dst = op.getDst();
+    if (!isDeinterleavePattern(src, dst)) {
+      return rewriter.notifyMatchFailure(
+          op, " only recognize deinterleave op for copy op if src last dim not "
+              "unit stride and dst lowest dim is of size one");
+    }
+
+    // trace dst subview to static alloc site
+    SmallVector<OpFoldResult> offsets;
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides;
+    Value allocForDst = traceStaticAlloc(dst, offsets, sizes, strides);
+    if (!allocForDst) {
+      return rewriter.notifyMatchFailure(
+          op, " only recognize deinterleave op for copy op with dst traced "
+              "from static alloc size.");
+    }
+
+    MemRefType allocMemRef = cast<MemRefType>(allocForDst.getType());
+    int64_t rank = allocMemRef.getRank();
+    auto dstMemRef = cast<MemRefType>(dst.getType());
+    if (allocMemRef.getRank() != dstMemRef.getRank()) {
+      return rewriter.notifyMatchFailure(
+          op, " cannot recognize deinterleave op for alloc with rank-reducing "
+              "subview.");
+    }
+
+    if (!isAllZero(offsets)) {
+      return rewriter.notifyMatchFailure(
+          op, " only recognize deinterleave op with zero offset alloc.");
+    }
+
+    Location loc = op->getLoc();
+    // reuse old alloc and subview from it as deinterleave dst
+    Value deinterleaveDst = allocForDst;
+    bool isCopyToSubview = isa<memref::SubViewOp>(dst.getDefiningOp());
+    if (isCopyToSubview) {
+      deinterleaveDst = rewriter.create<memref::SubViewOp>(
+          loc, allocForDst, offsets, sizes, strides);
+    }
+
+    // create new alloc and subview from it as copy dst and deinterleave src
+    Value newAlloc = rewriter.create<memref::AllocOp>(loc, allocMemRef);
+    Value deinterleaveSrc = newAlloc;
+    if (isCopyToSubview) {
+      deinterleaveSrc = rewriter.create<memref::SubViewOp>(
+          loc, newAlloc, offsets, sizes, strides);
+    }
+
+    adaptToDeinterleaveOp(rewriter, deinterleaveSrc, deinterleaveDst, op);
+
+    // adjust strides to hwAlignBytes for deinterleave to work
+    auto hwAlignBytes = util::getHWAlignBytes(dstMemRef.getMemorySpace());
+    markEnableStrideAlign(deinterleaveSrc, rank - 1, hwAlignBytes, op->getLoc(),
+                          rewriter);
     return success();
   }
 };
@@ -265,18 +338,22 @@ struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
 struct RecognizeDeinterleaveOpPass
     : public impl::HIVMRecognizeDeinterleaveOpBase<
           RecognizeDeinterleaveOpPass> {
-  void runOnOperation() override {
-    auto funcOp = getOperation();
-    auto *ctx = &getContext();
-    RewritePatternSet patterns(ctx);
-
-    patterns.add<RecognizeDeinterleaveOpForLoad>(ctx);
-
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-      signalPassFailure();
-    }
-  }
+  void runOnOperation() override;
 };
+} // namespace
+
+void RecognizeDeinterleaveOpPass::runOnOperation() {
+  auto funcOp = getOperation();
+  auto *ctx = &getContext();
+  RewritePatternSet patterns(ctx);
+
+  patterns.add<RecognizeDeinterleaveOpForLoad>(ctx);
+  patterns.add<RecognizeDeinterleaveOpForCopy>(ctx);
+
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    signalPassFailure();
+  }
+}
 
 std::unique_ptr<Pass> mlir::hivm::createHIVMRecognizeDeinterleaveOpPass() {
   return std::make_unique<RecognizeDeinterleaveOpPass>();
