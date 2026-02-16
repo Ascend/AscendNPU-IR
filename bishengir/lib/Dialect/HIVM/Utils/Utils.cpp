@@ -1114,6 +1114,16 @@ bool isGuaranteedCollapsibleStrictly(
                                              /*strict=*/true));
 }
 
+bool isGuaranteedCollapsibleUnStrictly(
+    MemRefType srcType, ArrayRef<ReassociationIndices> reassociation) {
+  // MemRefs with identity layout are always collapsible.
+  if (srcType.getLayout().isIdentity())
+    return true;
+
+  return succeeded(computeCollapsedLayoutMap(srcType, reassociation,
+                                             /*strict=*/false));
+}
+
 SmallVector<MemRefType> getMemRefTypes(TypeRange types) {
   auto filteredTypes = llvm::make_filter_range(types, [](Type t) {
     if (!isa<MemRefType>(t)) {

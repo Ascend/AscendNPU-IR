@@ -303,3 +303,23 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: hivm.hir.copy
+// CHECK: memref.collapse_shape
+// CHECK: return
+func.func @copy_before_collapse() {
+   %src = memref.alloc() : memref<2x2x4xbf16, #hivm.address_space<ub>>
+   annotation.mark %src {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x4xbf16, #hivm.address_space<ub>>
+
+   %c = memref.collapse_shape %src [[0], [1, 2]]
+     : memref<2x2x4xbf16, #hivm.address_space<ub>>
+     into memref<2x8xbf16, #hivm.address_space<ub>>
+ 
+   %dst = memref.alloc() : memref<2x8xbf16, #hivm.address_space<ub>>
+   memref.copy %c, %dst
+     : memref<2x8xbf16, #hivm.address_space<ub>> to memref<2x8xbf16, #hivm.address_space<ub>>
+   return
+}

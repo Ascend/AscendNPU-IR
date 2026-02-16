@@ -18,7 +18,10 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/IR/Value.h"
+#include "llvm/Support/LogicalResult.h"
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -804,19 +807,56 @@ propagateSubViewOp(RewriterBase &rewriter,
   return newConversionOp;
 }
 
+static LogicalResult handlePropagateFailure(RewriterBase &rewriter,
+                                            UnrealizedConversionCastOp conversionOp,
+                                            OpOperand* user){
+  auto loc = conversionOp.getLoc();
+  
+  auto src = conversionOp.getInputs()[0];
+  auto dst = conversionOp.getOutputs()[0];
+
+  rewriter.setInsertionPoint(user->getOwner());
+  auto newDst = utils::createEmptyOp(rewriter, loc, dst);  
+  rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+
+  rewriter.modifyOpInPlace(user->getOwner(), [&] { user->set(newDst); });
+  return success();
+}
+
 /// Push down an UnrealizedConversionCastOp past a CollapseShapeOp.
-UnrealizedConversionCastOp
-propagateCollapseShapeOp(RewriterBase &rewriter,
+static FailureOrCastVec propagateCollapseShapeOp(RewriterBase &rewriter,
                          UnrealizedConversionCastOp conversionOp,
                          memref::CollapseShapeOp op) {
   OpBuilder::InsertionGuard g(rewriter);
   rewriter.setInsertionPoint(op);
-  Value newCollapse = rewriter.create<memref::CollapseShapeOp>(
-      op.getLoc(), conversionOp.getOperand(0), op.getReassociationIndices());
-  auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(
-      op.getLoc(), op.getType(), newCollapse);
-  rewriter.replaceOp(op, newConversionOp);
-  return newConversionOp;
+
+  auto srcBadTy = dyn_cast<MemRefType>(conversionOp.getOperand(0).getType());
+  if (!srcBadTy)
+    return UnrealizedCastOpVec{conversionOp};
+
+  auto reassociation = op.getReassociationIndices();
+
+  // TODO: this condition can be rewritten using isGuaranteedCollapsibleStrictly method.
+  if (!srcBadTy.getLayout().isIdentity() && 
+          !util::isGuaranteedCollapsibleUnStrictly(srcBadTy, reassociation))
+      return failure();
+
+  MemRefType collapsedBadTy = 
+      memref::CollapseShapeOp::computeCollapsedType(srcBadTy, reassociation);
+
+  auto collapsedBadOp = rewriter.create<memref::CollapseShapeOp>(op.getLoc(),
+      collapsedBadTy, conversionOp.getOperand(0), reassociation);
+  
+  if (collapsedBadTy == op.getResultType()) {
+    rewriter.replaceOp(op, collapsedBadOp.getResult());
+    return UnrealizedCastOpVec{conversionOp};
+  }
+
+  auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(op.getLoc(),
+      op.getType(), collapsedBadOp.getResult());
+  
+  rewriter.replaceOp(op, newConversionOp.getResult(0));
+  return UnrealizedCastOpVec{newConversionOp};
 }
 
 /// Push down an UnrealizedConversionCastOp past a ExpandShapeOp.
@@ -1306,9 +1346,7 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
               })
               .Case([&rewriter,
                      &conversion](memref::CollapseShapeOp collapseOp) {
-                auto res =
-                    propagateCollapseShapeOp(rewriter, conversion, collapseOp);
-                return UnrealizedCastOpVec{res};
+                return propagateCollapseShapeOp(rewriter, conversion, collapseOp);
               })
               .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
                 auto res =
@@ -1341,9 +1379,15 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
               .Default([&rewriter, &conversion, &user](Operation *op) {
                 return propagateDefaultOp(rewriter, conversion, op, user);
               });
+      // Universal fallback (with collapse-specific constrained copy).
       if (failed(res)) {
-        LDBG("unexpected failure");
-        return failure();
+        auto handled = handlePropagateFailure(rewriter, conversion, use);
+        if (failed(handled)) {
+          LDBG("unrealized -> copy rewrite fallback failed; keep unrealized cast at use");
+          return failure();
+        }
+
+        continue;
       }
 
       for (auto newOp : res.value()) {
