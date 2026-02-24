@@ -261,8 +261,8 @@ def GatherMaskOp
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
     Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`), 
     and returns `init` as `result` for functional compatibility.
-    The `init`/`result` tensor has the same shape and element type as the `src` tensor.
-
+    The `init`/`result` tensor has the same shape and element type as the `src` tensor.(currently only suppport 1D)
+    
     Usage:
       result = gather_mask(src, mask, init)  
   }];
