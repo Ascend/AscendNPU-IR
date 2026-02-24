@@ -1583,7 +1583,7 @@ def VGatherOp : HIVM_VectorOp<"vgather",
 def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     [HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0], [I16, UI16, I32, UI32, F16, BF16, F32]>,
-     OperElemTypeConstraints<[1], [I1, I8]>,
+     OperElemTypeConstraints<[1], [I1]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      UniformReassociationFlattenTrait,
@@ -1592,10 +1592,10 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     ]> {
   let summary = "Vector Gather Mask Op";
   let description = [{
-    Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
+    Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is True.
     Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
     and returns the `dst` tensor as `result` for functional compatibility.
-    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
+    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.(currently only suppport 1D)
 
     Arguments:
       * `src`: the tensor/memref from which to gather elements
