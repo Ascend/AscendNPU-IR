@@ -2230,10 +2230,12 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
 }
 
 //===----------------------------------------------------------------------===//
-// GatherMaskOp 
+// GatherMaskOp
 //===----------------------------------------------------------------------===//
 
-MutableOperandRange GatherMaskOp::getDpsInitsMutable() { return getInitMutable(); }
+MutableOperandRange GatherMaskOp::getDpsInitsMutable() {
+  return getInitMutable();
+}
 
 SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -2248,7 +2250,7 @@ SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 ArrayAttr GatherMaskOp::getIndexingMaps() {
   MLIRContext *ctx = getContext();
   int64_t numIters = getInit().getType().getRank();
-  
+
   SmallVector<AffineExpr> dims(numIters);
   auto dimsArrayRef = MutableArrayRef(dims);
   bindDimsList(ctx, dimsArrayRef);
@@ -2335,7 +2337,7 @@ LogicalResult GatherMaskOp::verify() {
     Type resultType = resultValue.getType();
     Type initType = getInit().getType();
     if (resultType != initType) {
-      return emitOpError("tensor semantics: result type (") 
+      return emitOpError("tensor semantics: result type (")
              << resultType << ") must match init type (" << initType << ")";
     }
   }
@@ -2372,9 +2374,9 @@ LogicalResult GatherMaskOp::verify() {
   // Check: ranks must match for ranked types; skip for unranked types (adapt to any shape)
   if (srcRank != -1 && maskRank != -1 && initRank != -1) {
     if (srcRank != maskRank || srcRank != initRank) {
-      return emitOpError("src rank (") << srcRank.value() 
-             << "), mask rank (" << maskRank.value() 
-             << "), init rank (" << initRank.value() 
+      return emitOpError("src rank (") << srcRank.value()
+             << "), mask rank (" << maskRank.value()
+             << "), init rank (" << initRank.value()
              << ") must be the same (for ranked types)";
     }
   }
@@ -2382,7 +2384,7 @@ LogicalResult GatherMaskOp::verify() {
   Type srcElementType = getElementTypeOrSelf(getSrc());
   Type initElementType = getElementTypeOrSelf(getInit());
   if (srcElementType != initElementType) {
-    return emitOpError("src element type (") << srcElementType 
+    return emitOpError("src element type (") << srcElementType
            << ") must match init element type (" << initElementType << ")";
   }
   return success();
