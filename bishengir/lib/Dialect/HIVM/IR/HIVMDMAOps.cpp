@@ -661,3 +661,24 @@ LogicalResult FixpipeOp::verify() {
   return success();
 }
 #endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
+
+//===----------------------------------------------------------------------===//
+// AtomicCasOp
+//===----------------------------------------------------------------------===//
+void AtomicCasOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  for (auto &op : getSrcMutable()) {
+    if (!isa<MemRefType>(op.get().getType())) {
+      continue;
+    }
+    effects.emplace_back(MemoryEffects::Read::get(), &op,
+                         SideEffects::DefaultResource::get());
+  }
+  if (isa<MemRefType>(getDst().getType())) {
+    effects.emplace_back(MemoryEffects::Read::get(), &getDstMutable(),
+                         SideEffects::DefaultResource::get());
+    effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                         SideEffects::DefaultResource::get());
+  }
+}
