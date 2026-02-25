@@ -1619,7 +1619,7 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     (`->` type($result)^)?  
   }];
   let extraClassDeclaration = vectorOpBaseDecls # [{
-    static StringRef getOpName() { return "vgather_mask"; }
+    static StringRef getOpName() { return "vgathermask"; }
   }];
 }
 
