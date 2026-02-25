@@ -1603,6 +1603,8 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
       * `dst`: the pre-allocated tensor/memref to store the gathered elements (InPlace write)
     Results:
       * `result`: the same as `dst` (functional return for compatibility)
+    TODO: 
+      * `dst_size`: returning the size of dst as this result
 
     Usage:
       result = gather_mask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst : tensor<16xf32>)
