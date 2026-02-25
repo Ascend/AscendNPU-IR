@@ -1,5 +1,7 @@
 # 构建安装
 
+本文说明 AscendNPU IR 的依赖安装、构建方式（源码/二进制）及运行测试步骤。更多构建选项与脚本说明见项目根目录的 `HowToBuild.md`。
+
 ## 1 安装依赖
 
 ### 1.1 构建依赖
@@ -18,11 +20,11 @@
 
 #### 1.1.2 源码准备
 
-1. 克隆主仓库：
+1. 克隆主仓库（克隆后进入仓库目录，目录名通常为 `ascendnpu-ir`）：
 
 ```bash
 git clone https://gitcode.com/Ascend/ascendnpu-ir.git
-cd AscendNPU-IR
+cd ascendnpu-ir
 ```
 
 2. 初始化并更新子模块（Submodules）
@@ -40,12 +42,7 @@ git submodule update --init --recursive
 
 AscendNPU-IR端到端运行依赖CANN环境。
 
-1. 下载CANN包：
-
-```bash
-# 需要下载toolkit包和对应硬件的ops包
-https://www.hiascend.com/developer/download/community/result?module=cann
-```
+1. 下载 CANN 包：需下载 toolkit 包及与硬件对应的 ops 包，可从 [昇腾社区 CANN 下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 获取。
 
 2. 安装CANN包：
 
@@ -86,7 +83,7 @@ source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 - `-o`：编译产物输出路径
 - `--build-type`：构建类型，如"Release"、"Debug"。
 
-### 手动构建（供高级用户参考）
+#### 2.1.2 手动构建（供高级用户参考）
 
 如果您希望手动控制过程，可以参考`build.sh`脚本内部的命令：
 
@@ -95,7 +92,7 @@ source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 mkdir -p build
 cd build
 
-# 运行 CMake 进行配置
+# 运行 CMake 进行配置（LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR 指向项目根目录，即 build 的上一级）
 export LLVM_SOURCE_DIR=$(realpath ../third-party/llvm-project/llvm)
 cmake ${LLVM_SOURCE_DIR} -G Ninja \
     -DCMAKE_C_COMPILER=clang \
@@ -103,22 +100,22 @@ cmake ${LLVM_SOURCE_DIR} -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_ENABLE_PROJECTS="mlir" \
     -DLLVM_EXTERNAL_PROJECTS="bishengir" \
-    -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR="AscendNPU-IR" \ # 项目根目录
-    -DBSPUB_DAVINCI_BISHENGIR=ON # 必须项！用于使能AscendNPU IR对于三方仓库的扩展
+    -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR="$(realpath ..)" \
+    -DBSPUB_DAVINCI_BISHENGIR=ON \
     [其他您需要的 CMake 选项]
 
 ninja -j32
 ```
 
-注：LLVM 版本大于等于 21 时添加 -DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON 选项
+注：LLVM 版本大于等于 21 时添加 `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON` 选项。
 
-### 1.2 二进制安装
+### 2.2 二进制安装
 
-#### 1.2.1 随CANN包安装
+#### 2.2.1 随 CANN 包安装
 
-AscendNPU-IR二进制会随CANN toolkit包一起安装，参考1.2.1。
+AscendNPU-IR二进制会随CANN toolkit包一起安装，参见上文「1.2.1 CANN 包安装」。
 
-#### 1.2.2 AscendNPU-IR包单独安装
+#### 2.2.2 AscendNPU-IR 包单独安装
 
 AscendNPU-IR有独立安装包以供使用。
 
@@ -136,7 +133,7 @@ chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 ./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
 ```
 
-### 1.3 环境变量设置
+### 2.3 环境变量设置
 
 要使用AscendNPU-IR，需要将bishengir-compile可执行文件所在的路径加入到PATH环境变量中。
 

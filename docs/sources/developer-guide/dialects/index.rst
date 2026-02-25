@@ -1,5 +1,5 @@
 Dialects
-=======
+========
 
 .. toctree::
    :maxdepth: 1

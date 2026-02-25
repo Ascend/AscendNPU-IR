@@ -1,16 +1,17 @@
 # 贡献指南
 
-本项目欢迎广大开发者体验并参与贡献，在参与社区贡献之前。请参见[ascend-community](https://gitcode.com/ascend/community)了解行为准则，进行[CLA协议签署](https://clasign.osinfra.cn/sign/690ca9ddf91c03dee6082ab1)，了解源码仓的贡献流程。
+本项目欢迎广大开发者体验并参与贡献。在参与社区贡献之前，请参见 [ascend-community](https://gitcode.com/ascend/community) 了解行为准则，完成 [CLA 协议签署](https://clasign.osinfra.cn/sign/690ca9ddf91c03dee6082ab1)，并了解源码仓的贡献流程。
 
-### ✍️ 如何签署Ascend社区贡献者许可协议CLA
-在参与社区贡献前，您需要签署Ascend社区贡献者许可协议（CLA）
+## ✍️ 如何签署 Ascend 社区贡献者许可协议（CLA）
 
- - **个人贡献者**：请选择“签署个人CLA”
- - **企业**：请选择“签署法人CLA”
- - **企业员工**：请选择“法人贡献者登记”，签署后会收到主题是Signing CLA on project of xx的邮件，请联系邮件内容里的Corporation Managers进行审批
+在参与社区贡献前，您需要签署 Ascend 社区贡献者许可协议（CLA）：
 
+- **个人贡献者**：请选择「签署个人 CLA」
+- **企业**：请选择「签署法人 CLA」
+- **企业员工**：请选择「法人贡献者登记」；签署后会收到主题为 “Signing CLA on project of xx” 的邮件，请联系邮件中的 Corporation Managers 进行审批。
 
-### 开发者贡献
+## 开发者贡献
+
 开发者贡献场景主要包括：
 
 - Bug修复
@@ -24,80 +25,73 @@
   您可以新建 [Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml) 类Issue对新的样例算子予以说明，并提供您的设计方案，
   然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
 
-  对于您在浏览的其他issue
-  - 如果您发现这个问题正是您要解决的，请对该问题发表评论，告诉其他人您将负责这个问题。
-  - 如果问题已经打开一段时间，请您在解决该问题前进行预检查。
-  - 如果您解决了自己报告的问题，在关闭该问题前还需要让其他人知道。
-  
+  对于您浏览的其他 Issue：
+  - 若该问题正是您要解决的，请在问题下评论说明您将负责处理。
+  - 若问题已打开较久，解决前请先做预检查。
+  - 若您解决了自己报告的问题，关闭前请简要说明处理结果。
+
 - 问题咨询
 
   如果您在本项目中的使用或者其他内容存在疑问，欢迎您新建Issue进行反馈和咨询。
 
-  您可以按照新建 [Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml) 类Issue提出自己的疑问。
+  您可以按照新建 [Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml) 类 Issue 提出自己的疑问。
 
-  
-- 帮助解决他人Issue
+- 帮助解决他人 Issue
 
   如果社区中他人遇到的问题您有合适的解决方法，欢迎您在Issue中发表评论交流，帮助他人解决问题和痛点，共同优化易用性。
 
-  如果对应Issue需要进行代码修改，您可以在Issue评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您，跟踪协助解决问题。
+  如果对应 Issue 需要进行代码修改，您可以在 Issue 评论框中输入 “/assign” 或 “/assign @yourself”，将该 Issue 分配给您，跟踪协助解决问题。
 
-### 开发建议
+## 开发建议
 
-#### 代码风格
+### 代码风格
 
-本代码仓采用LLVM社区通用的代码规范与编程风格。[LLVM 编码规范](https://llvm.org/docs/CodingStandards.html))。可以使用以下工具和规范检查自己的代码风格。
-* [clang-tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
-* [CppLint](https://github.com/cpplint/cpplint)
-* [CppCheck](http://cppcheck.sourceforge.net/)
-* [CMakeLint](https://github.com/cmake-lint/cmake-lint)
+本代码仓采用 LLVM 社区通用的代码规范与编程风格，参见 [LLVM 编码规范](https://llvm.org/docs/CodingStandards.html)。可使用以下工具进行代码风格检查：
 
-#### 提交PR
+- [clang-tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
+- [CppLint](https://github.com/cpplint/cpplint)
+- [CppCheck](http://cppcheck.sourceforge.net/)
+- [CMakeLint](https://github.com/cmake-lint/cmake-lint)
 
-- 在[GitCode](https://gitcode.com/Ascend/AscendNPU-IR)上提出您的想法作为问题。
-- 如果要开发的新功能需要大量设计细节，您还应提交设计方案。
-- 在问题讨论和设计方案审查达成共识后，再进行fork开发并提交PR。
-- 在PR被充分讨论后，将根据讨论结果对PR进行合并、拒绝或放弃。
-- PR的合入需要2个Reviewer评论`/lgtm`（Looks Good To Me）,以及1个Approver评论`/approve` 。请注意PR提交者无法进行合入操作。
+### 提交 PR
 
-#### Fork-Pull开发模式
+- 在 [GitCode](https://gitcode.com/Ascend/AscendNPU-IR) 上提出您的想法作为 Issue。
+- 若新功能涉及较多设计细节，请同时提交设计方案。
+- 在问题讨论与设计方案审查达成共识后，再进行 Fork 开发并提交 PR。
+- PR 经充分讨论后，将根据讨论结果进行合并、拒绝或关闭。
+- PR 合入需 2 位 Reviewer 评论 `/lgtm`（Looks Good To Me）及 1 位 Approver 评论 `/approve`；PR 提交者本人无法执行合入操作。
 
-在您向AscendNPU-IR项目提交自己的代码之前，请确保已经将项目Fork到您自己的存储库。后续您将在自己Fork的项目上进行开发，并通过Pull Request的方式合并到本项目。
+### Fork-Pull 开发模式
 
-#### 代码更改自测
+在向 AscendNPU-IR 项目提交代码前，请先将项目 Fork 到您自己的仓库。后续在您 Fork 的仓库中进行开发，并通过 Pull Request 将变更合并到本项目。
 
-完成代码更改后，需要编译后验证功能是否正确。
-```
+### 代码更改自测
+
+完成代码更改后，需在**构建目录**下编译并运行测试以验证功能：
+
+```bash
 ninja check-bishengir
 ```
 
-#### 代码推送验证
+### 代码推送验证
 
-代码更新&测试完成后，推送您的commit到您的远程仓库。
+代码更新与测试通过后，将您的 commit 推送到您的远程仓库。
 
-#### 向主仓创建拉取请求
+### 向主仓创建拉取请求
 
-代码推送至您的远程仓库后，您需要在您的新分支和与AscendNPU IR的主分支之间新建Pull Request。完成新建合并请求后，评论`compile`后，`CI`将自动设置为您构建流水线测试。您的Pull Request请尽快合并到上游master分支，以降低合并风险。
+将代码推送到您的远程仓库后，在您的新分支与 AscendNPU-IR 的 master 分支之间新建 Pull Request。创建合并请求后，在 PR 中评论 `compile` 可触发 CI 构建流水线。建议尽快将 PR 合并到上游 master，以降低合并冲突风险。
 
-#### 门禁异常处理
+### 门禁异常处理
 
-代码门禁异常主要包含以下几种情况，请根据相关提示信息解决门禁异常问题。
+代码门禁异常主要包括以下几类，请根据 CI 提示信息逐项排查并修复。
 
-- 编译失败
+- **编译失败**：根据提示检查编译失败原因，修复后重新编译。
+- **静态检查失败**：根据提示定位并修复代码中的静态检查问题。
+- **CI 流水线未通过**：根据提示定位未通过的测试用例并修复，然后重新触发 CI。
 
-  请根据提示信息，检查编译失败的原因，解决后重新编译即可 。
+## 注意事项
 
-- 静态检查失败
-
-  请根据提示信息，查找出代码中的异常信息并解决。
-
-- CI流水线未通过
-
-  请根据提示信息，查找出CI流水线未通过的测试用例并检查原因，解决后重新运行CI流水线。
-
-### 注意事项：
-
--   应避免任何不相关的更改。
--   确保您的提交历史是简洁有序的。
--   创建PR前请rebase上游仓库最新代码。
--   对于错误修复 PR，请确保链接所有相关Issue 和 PR。
+- 避免在 PR 中引入与本次修改无关的变更。
+- 保持提交历史简洁、有序（可适当使用 squash/rebase）。
+- 创建 PR 前，请将您的分支 rebase 到上游仓库最新 master。
+- 若为错误修复类 PR，请在描述中关联所有相关 Issue 与 PR。

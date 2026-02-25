@@ -1,14 +1,19 @@
-# 相关项目
+# 相关项目与致谢
+
+本文列出与 AscendNPU IR 密切相关的开源项目与生态，并致谢 LLVM/MLIR 等社区。
 
 ## [MLIR](https://mlir.llvm.org)
-MLIR 源自 LLVM 社区，提供了一套革命性的、可复用和可扩展的编译器基础设施。AscendNPU IR项目构建在MLIR框架之上，我们诚挚感谢 LLVM/MLIR 社区所有开发者、维护者和贡献者所创造的这一卓越基础设施。正是基于 MLIR 在编译技术上的前瞻性工作与开放生态，AscendNPU IR 项目才能够更快速地实现其目标，并更便捷地与更广泛的AI编译技术栈进行对接与集成。AscendNPU IR充分利用了 MLIR 的核心优势：
-- **模块化设计**：可以定义不同抽象层次的IR，方便进行渐进式 lowering。
-- **基础设施复用**：直接使用 MLIR 提供的解析、转换、优化和代码生成工具链。
-- **生态互通性**：扩展 MLIR 方言，理论上能与 MLIR 生态中的其他方言（如 TensorFlow、PyTorch 导出的 IR）进行交互和转换，为连接上层框架提供了潜在通路。
+
+MLIR 源自 LLVM 社区，提供可复用、可扩展的编译器基础设施。AscendNPU IR 构建在 MLIR 之上，感谢 LLVM/MLIR 社区所有开发者与贡献者。AscendNPU IR 充分利用 MLIR 的以下优势：
+
+- **模块化设计**：可定义不同抽象层次的 IR，便于渐进式 lowering。
+- **基础设施复用**：复用 MLIR 的解析、转换、优化与代码生成工具链。
+- **生态互通性**：通过扩展 MLIR 方言，可与 MLIR 生态中其他方言（如 TensorFlow、PyTorch 导出的 IR）交互与转换，为对接上层框架提供通路。
 
 ## [Triton-Ascend](https://gitcode.com/Ascend/triton-ascend)
-Triton-Ascend是面向昇腾平台构建的Triton编译框架，旨在让Triton代码能够在昇腾硬件上高效运行。AscendNPU IR 通过支持作为 Triton 的一个编译后端，使得开发者可以使用熟悉的 Triton 语法和编程模型，直接为昇腾NPU编写高性能内核代码，极大地降低了Python开发者为昇腾编写高性能算子的门槛。
+
+Triton-Ascend 是面向昇腾的 Triton 编程，使 Triton 代码能在昇腾硬件上高效运行。AscendNPU IR 作为 Triton 的编译后端，使开发者能以熟悉的 Triton 语法与编程模型为昇腾 NPU 高效开发kernel，降低 Python 开发者为昇腾开发算子的门槛。
 
 ## [TileLang-Ascend](https://github.com/tile-ai/tilelang-ascend)
-TileLang 是一个用于描述张量计算的领域特定语言。TileLang-Ascend 是其针对昇腾的版本。通过将 AscendNPU IR 作为其编译目标，TileLang-Ascend 能够利用 AscendNPU IR 的硬件特化优化能力，生成高效的昇腾内核。
 
+TileLang 是用于描述张量计算的领域特定语言，TileLang-Ascend 为其面向昇腾的版本。通过将 AscendNPU IR 作为编译后端，TileLang-Ascend 可借助 AscendNPU IR 的昇腾硬件亲优化能力生成高性能昇腾算子。

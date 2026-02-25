@@ -37,3 +37,11 @@ source_suffix = {
 # html_theme = 'furo'
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
+
+
+def setup(app):
+    """Register Pygments lexer aliases for MLIR and plaintext to avoid unknown-lexer warnings."""
+    from sphinx.highlighting import lexers
+    from pygments.lexers import get_lexer_by_name
+    lexers['mlir'] = get_lexer_by_name('text')
+    lexers['plaintext'] = get_lexer_by_name('text')
