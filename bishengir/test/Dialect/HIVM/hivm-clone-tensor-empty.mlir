@@ -68,6 +68,60 @@ module {
 }
 
 // -----
+// CHECK-LABEL: func.func @while_kernel
+#map = affine_map<()[s0] -> (s0 + 128)>
+#map1 = affine_map<()[s0, s1] -> (s0 - s1)>
+func.func @while_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32) {
+  %c1_i32 = arith.constant 1 : i32
+  %cst = arith.constant 0.000000e+00 : f32
+  %c128_i32 = arith.constant 128 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %c8_i32 = arith.constant 8 : i32
+  %c0 = arith.constant 0 : index
+  hivm.hir.set_ctrl false at ctrl[60]
+  hivm.hir.set_ctrl true at ctrl[48]
+  %0 = arith.muli %arg5, %arg6 : i32
+  %1 = arith.muli %0, %arg7 : i32
+  annotation.mark %1 {logical_block_num} : i32
+  %2 = hivm.hir.get_block_idx -> i64
+  %3 = arith.trunci %2 : i64 to i32
+  %4 = arith.muli %arg7, %arg6 : i32
+  %5 = arith.divsi %3, %4 : i32
+  %6 = arith.remsi %5, %arg5 : i32
+  %7 = tensor.empty() : tensor<128xf32>
+  %8 = tensor.empty() : tensor<128xf32>
+  %9 = arith.muli %6, %c128_i32 : i32
+  %10 = arith.index_cast %9 : i32 to index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%10], sizes: [128], strides: [1] : memref<?xf32> to memref<128xf32, strided<[1], offset: ?>>
+  %alloc = memref.alloc() : memref<128xf32>
+  %11 = affine.apply #map()[%10]
+  %12 = arith.index_cast %arg4 : i32 to index
+  %13 = arith.maxsi %10, %12 : index
+  %14 = arith.minsi %11, %13 : index
+  %15 = affine.apply #map1()[%14, %10]
+  %subview = memref.subview %reinterpret_cast[0] [%15] [1] : memref<128xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0] [%15] [1] : memref<128xf32> to memref<?xf32>
+  hivm.hir.load ins(%subview : memref<?xf32, strided<[1], offset: ?>>) outs(%subview_0 : memref<?xf32>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index
+  %16 = bufferization.to_tensor %alloc restrict writable : memref<128xf32>
+  %17:2 = scf.while (%arg8 = %16, %arg9 = %c0_i32) : (tensor<128xf32>, i32) -> (tensor<128xf32>, i32) {
+    %18 = arith.cmpi slt, %arg9, %c8_i32 : i32
+    scf.condition(%18) %arg8, %arg9 : tensor<128xf32>, i32
+  } do {
+  ^bb0(%arg8: tensor<128xf32>, %arg9: i32):
+    // CHECK: tensor.empty() : tensor<128xf32>
+    // CHECK: hivm.hir.vadd
+    %18 = hivm.hir.vadd ins(%arg8, %7 : tensor<128xf32>, tensor<128xf32>) outs(%8 : tensor<128xf32>) -> tensor<128xf32>
+    %19 = arith.addi %arg9, %c1_i32 : i32
+    scf.yield %18, %19 : tensor<128xf32>, i32
+  }
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg3 to offset: [%10], sizes: [128], strides: [1] : memref<?xf32> to memref<128xf32, strided<[1], offset: ?>>
+  %extracted_slice = tensor.extract_slice %17#0[0] [%15] [1] : tensor<128xf32> to tensor<?xf32>
+  %subview_2 = memref.subview %reinterpret_cast_1[0] [%15] [1] : memref<128xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+  hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview_2 : memref<?xf32, strided<[1], offset: ?>>)
+  return
+}
+
+// -----
 // NO-CLONE-LABEL: test_sink_empty
 // CLONE-LABEL: test_sink_empty
 func.func @test_sink_empty() -> tensor<16xf32>{

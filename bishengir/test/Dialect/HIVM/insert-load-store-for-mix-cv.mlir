@@ -393,9 +393,9 @@ module {
 }
 
 // -----
-// CHECK-LABEL: func.func @test_insert_load_before_loop
+// CHECK-LABEL: func.func @test_insert_load_before_for
 module {
-  func.func @test_insert_load_before_loop(%arg0: tensor<32x32xf32>, %arg1: tensor<32x32xf32>) -> tensor<32x32xf32>{
+  func.func @test_insert_load_before_for(%arg0: tensor<32x32xf32>, %arg1: tensor<32x32xf32>) -> tensor<32x32xf32>{
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
@@ -415,6 +415,35 @@ module {
     return %1 : tensor<32x32xf32>
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @test_insert_load_before_while
+module {
+  func.func @test_insert_load_before_while(%arg0: tensor<32x32xf32>, %arg1: tensor<32x32xf32>) -> tensor<32x32xf32>{
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : index
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %0 = hivm.hir.fixpipe {enable_nz2nd} ins(%arg0 : tensor<32x32xf32>) outs(%arg1 : tensor<32x32xf32>) -> tensor<32x32xf32>
+    // CHECK: %[[FIXPIPE_RES:.*]] = hivm.hir.fixpipe
+    // CHECK: %[[LOAD_RES:.*]] = hivm.hir.load ins(%[[FIXPIPE_RES]]
+    // CHECK: scf.while (%{{.*}} = %[[LOAD_RES]],
+    %1:2 = scf.while (%arg8 = %0, %arg9 = %c0_i32) : (tensor<32x32xf32>, i32) -> (tensor<32x32xf32>, i32) {
+      %18 = arith.cmpi slt, %arg9, %c8_i32 : i32
+      scf.condition(%18) %arg8, %arg9 : tensor<32x32xf32>, i32
+    } do {
+      ^bb0(%arg8: tensor<32x32xf32>, %arg9: i32):
+      %slice = tensor.extract_slice %arg8[0, 0] [1, 32] [1, 1] : tensor<32x32xf32> to tensor<1x32xf32>
+      %res_slice = hivm.hir.vadd ins(%slice, %slice : tensor<1x32xf32>, tensor<1x32xf32>) outs(%slice : tensor<1x32xf32>) -> tensor<1x32xf32>
+      %res = tensor.insert_slice %res_slice into %arg8[0, 0] [1, 32] [1, 1] : tensor<1x32xf32> into tensor<32x32xf32>
+      %19 = arith.addi %arg9, %c1_i32 : i32
+      scf.yield %res, %19 : tensor<32x32xf32>, i32
+    }
+    return %1#0 : tensor<32x32xf32>
+  }
+}
+
 
 // -----
 // CHECK-LABEL: @insert_load_store_ignore_insert_slice

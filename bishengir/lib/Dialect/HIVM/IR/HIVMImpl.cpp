@@ -97,31 +97,42 @@ bool traceSingleChainUser(
     return traceSingleChainUser(insertSliceOp.getResult(), isMatchedOp);
   }
 
-  if (isa<scf::ForOp>(curOperation)) {
-    auto forOp = dyn_cast_if_present<scf::ForOp>(curOperation);
-    auto initArgs = forOp.getInitArgs();
+  if (isa<LoopLikeOpInterface>(curOperation)) {
+    auto loop = dyn_cast_if_present<LoopLikeOpInterface>(curOperation);
+    auto initArgs = loop.getInits();
     auto it = std::find(initArgs.begin(), initArgs.end(), v);
     int initIndx = it == initArgs.end() ? -1 : it - initArgs.begin();
     if (initIndx >= 0) {
-      bool hasTraceMmad = traceSingleChainUser(
-          forOp.getRegionIterArgs()[initIndx], isMatchedOp);
+      bool hasTraceMmad =
+          traceSingleChainUser(loop.getRegionIterArgs()[initIndx], isMatchedOp);
       if (getUsersNum(initArgs[initIndx]) == 1 && hasTraceMmad)
         return true;
       return false;
     }
   }
 
-  if (isa<scf::ForOp>(curOperation->getParentOp()) &&
+  if (isa<LoopLikeOpInterface>(curOperation->getParentOp()) &&
       isa<scf::YieldOp>(curOperation)) {
-    auto scfForOp =
-        dyn_cast_if_present<scf::ForOp>(curOperation->getParentOp());
+    auto loopLikeOp =
+        dyn_cast_if_present<LoopLikeOpInterface>(curOperation->getParentOp());
     SmallVector<Value> yieldValues =
-        llvm::to_vector(scfForOp.getYieldedValues());
+        llvm::to_vector(loopLikeOp.getYieldedValues());
     auto idx = findIdx(yieldValues, v);
     if (idx.has_value()) {
-      auto forResult = scfForOp.getLoopResults().value()[idx.value()];
+      auto forResult = loopLikeOp.getLoopResults().value()[idx.value()];
       return traceSingleChainUser(forResult, isMatchedOp);
     }
+  }
+
+  if (isa<scf::WhileOp>(curOperation->getParentOp()) &&
+      isa<scf::ConditionOp>(curOperation)) {
+    auto whileOp = cast<scf::WhileOp>(curOperation->getParentOp());
+    auto condOp = cast<scf::ConditionOp>(curOperation);
+    SmallVector<Value> argsValue = llvm::to_vector(condOp.getArgs());
+    auto idx = findIdx(argsValue, v);
+    if (idx.has_value())
+      return traceSingleChainUser(
+          whileOp.getAfter().front().getArgument(idx.value()), isMatchedOp);
   }
 
   if (isa<scf::IfOp>(curOperation->getParentOp()) &&

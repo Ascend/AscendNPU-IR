@@ -264,9 +264,9 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
       auto blockArg = cast<BlockArgument>(v);
       auto parentOp = blockArg.getOwner()->getParentOp();
       auto blockIndx = blockArg.getArgNumber();
-      if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
-        auto forInitVal = forOp.getInitArgs()[blockIndx];
-        return isFillByConst(forInitVal, maybeCstAttr);
+      if (auto loop = dyn_cast<LoopLikeOpInterface>(parentOp)) {
+        auto loopInitVal = loop.getInits()[blockIndx];
+        return isFillByConst(loopInitVal, maybeCstAttr);
       }
       return false;
     }
