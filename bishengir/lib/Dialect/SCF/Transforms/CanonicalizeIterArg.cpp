@@ -44,15 +44,18 @@ static void handleIfElse(scf::IfOp ifOp, OpResult ifResult,
   dfsStack.push_back(ifOp.elseYield().getOperand(pos));
 }
 
-static void handleLoops(LoopLikeOpInterface loop, BlockArgument iterArg,
+static bool handleLoops(LoopLikeOpInterface loop, BlockArgument iterArg,
                         SetVector<Value> &equivalenceSet,
                         SmallVector<Value> &dfsStack) {
   // Since loop ops may or may not have induction var as block argument, we try
   // to offset the arg number
   unsigned argNo = iterArg.getArgNumber();
-  unsigned resultNo = argNo - (iterArg.getParentBlock()->getNumArguments() -
-                               loop.getInits().size());
 
+  OpResult res = loop.getTiedLoopResult(iterArg);
+  if (!res)
+    return false;
+
+  unsigned resultNo = res.getResultNumber();
   equivalenceSet.insert(loop->getResult(resultNo));
 
   for (Region *region : loop.getLoopRegions()) {
@@ -68,6 +71,7 @@ static void handleLoops(LoopLikeOpInterface loop, BlockArgument iterArg,
   }
 
   dfsStack.push_back(loop.getInits()[resultNo]);
+  return true;
 }
 
 /// Try to use proof by contradiction to prove whether or not the block arg
@@ -142,7 +146,8 @@ static bool isIterArgUnchanged(LoopLikeOpInterface loop, BlockArgument arg,
       innerArg = innerBlk->getArgument(argNum);
     }
 
-    handleLoops(innerLoop, innerArg, equivalenceSet, dfsStack);
+    if (!handleLoops(innerLoop, innerArg, equivalenceSet, dfsStack))
+      return false;
   }
   return true;
 }

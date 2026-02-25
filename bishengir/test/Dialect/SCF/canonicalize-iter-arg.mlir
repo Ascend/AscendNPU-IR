@@ -95,3 +95,17 @@ func.func @remove_only_one_iter_args(
         // CHECK: return
         return %res#2, %res#3 : index, index
 }
+
+// -----
+func.func @induction_var_yield_iter_arg() -> index {
+  %c0  = arith.constant 0  : index
+  %c10 = arith.constant 10 : index
+  %c1  = arith.constant 1  : index
+
+  %r = scf.for %iv = %c0 to %c10 step %c1 iter_args(%x = %c0) -> (index) {
+    // The yielded value for an iter_arg is the induction variable (block arg #0)
+    scf.yield %iv : index
+  }
+
+  return %r : index
+}
