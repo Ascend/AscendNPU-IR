@@ -74,6 +74,62 @@ bishengir-compile input.mlir -enable-hivm-compile -o kernel.o
 
 **Q3.1** 如何定位算子性能瓶颈？
 
+### MindStudio工具
+链接：https://www.hiascend.com/developer/software/mindstudio
+在华为昇腾平台上，使用 MindStudio 调试 Triton Kernel 的性能主要依赖于其内置的性能分析工具（Profiler），它可以采集硬件运行时的关键指标，帮助开发者定位 kernel 执行的瓶颈
+
+### Torch NPU profiler
+torch_npu.profiler.profile
+是昇腾AI处理器上用于PyTorch训练/推理任务性能分析的核心API接口。它的主要功能是采集并解析模型运行时的性能数据，帮助开发者定位瓶颈并进行优化
+
+核心功能与定位:
+该接口通过代码注入的方式，在模型执行过程中全面采集CPU和NPU（昇腾AI处理器）的性能数据。采集的数据非常丰富，主要包括：
+PyTorch层信息：框架侧算子调用、内存占用、调用栈等。
+CANN层信息：昇腾计算语言接口层的调度和执行情况。
+硬件层信息：NPU上的算子执行时间、AI Core性能指标（如流水线利用率）、缓存命中率等。
+
+它是连接你的PyTorch训练脚本与后面用于可视化分析的工具（如MindStudio Insight或TensorBoard插件）之间的桥梁。
+
+代码样例
+```python
+@triton.jit
+def triton_example(in_ptr0, in_ptr1, out_ptr0, x0_numel, r1_numel, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
+    ...
+
+dtype = torch.float16
+torch.manual_seed(0)
+
+input0 = rand_strided((86, 64, 130), (8320, 130, 1), device='npu:0', dtype=dtype)
+input1 = rand_strided((1, 64, 1), (64, 1, 1), device='npu:0', dtype=dtype)
+output = empty_strided((86, 1), (1, 86), device='npu', dtype=dtype)
+triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
+
+experimental_config = torch_npu.profiler._ExperimentalConfig(
+        aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+        profiler_level=torch_npu.profiler.ProfilerLevel.Level1, l2_cache=False
+    )
+with torch_npu.profiler.profile(
+    activities=[  # torch_npu.profiler.ProfilerActivity.CPU,
+        torch_npu.profiler.ProfilerActivity.NPU],
+    with_stack=False, #采集torch 算子的函数调用栈的开关，该参数选填，默认关闭
+    record_shapes=False,  # 采集torch 算子的input shape和input type的开关，该参数选填，默认关闭
+    profile_memory=False,  # 采集memory相关数据的开关，该参数选填，默认关闭
+    schedule=torch_npu.profiler.schedule(wait=1,
+                                         warmup=1,
+                                         active=10,
+                                         repeat=1,
+                                         skip_first=1),
+    # schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=1, skip_first=6),
+    # warmup默认为0，老版本torch_npu包该参数为必填项
+    experimental_config=experimental_config,  # 该参数选填，默认为Level0
+    # 产生的profling文件的位置
+    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result_dir")
+    # 导出tensorboard可呈现的数据形式，可指定worker_name, 默认为：{host名称}_{进程id}
+) as prof:
+    for i in range(20):
+        triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
+        prof.step()
+```
 *TODO：本节内容待补充。建议涵盖：profiling 手段、与参考实现/竞品对比、关键 pass 对性能的影响等。*
 
 **Q3.2** 编译选项或优化 pass 对性能有何影响？
