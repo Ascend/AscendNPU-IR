@@ -1,6 +1,6 @@
 # Auto-Subtiling 1:2使能
 
-## 1.功能概述
+## 1.硬件背景
 
 昇腾芯片演进过程中，AIC与AIV分离，粒度变为1:2.
 
@@ -10,13 +10,21 @@
 
 为优化计算效率并实现昇腾亲和，编译器需具备自动分核能力。该特性期待自动应用 Cube-Vector 1:2 分核策略，实现数据切分。
 
+## 2. 算法原理
+
+总体实现的思路是：
+
 ![](./2.png)
 
 带来的效果是：
 
 ![](./3.png)
 
-## 2.实现思路
+### 输入输出样例
+
+![](./SuccInOut.png)
+
+### 2.2 实现思路
 
 1. 通过extract-slice和for-loop对Store数据进行对半切分
 2. 通过BubbleUpExtractSlice Pattern把extract slice往上冒泡
@@ -29,7 +37,7 @@
 
 图 Autosubtiling 1:2实现思路
 
-## 3.实现设计
+### 2.3 实现设计 
 
 ##### Dimension Analyzer选轴：
 
@@ -53,9 +61,17 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 后续可以通过增加matchAndRewritePattern增加对更多Op类型的支持
 
-##### 回退1：1
+## 4. 接口说明
 
-如果中间有转换失败，会自动回退1：1，保证功能正确性
+可通过选项控制 
+
+--enable-auto-bind-sub-block=True 为启用此特性(默认)
+
+--enable-auto-bind-sub-block=False 为关闭此特性
+
+## 5. 约束能力
+
+如果尝试切分失败，或中间转换失败，会自动回退1：1，保证功能正确性
 
 ![](./5.png)
 
@@ -64,3 +80,6 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 1. 选轴分析失败，没有可切分的平行轴
 2. BubbleUpExtractSlicePattern中途遇到了未支持的Op
 
+### 5.1 回退1:1样例
+
+![](./FailInOut.png)
