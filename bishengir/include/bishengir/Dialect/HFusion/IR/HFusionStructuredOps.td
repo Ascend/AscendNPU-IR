@@ -240,4 +240,57 @@ def GatherOp
   }];
 }
 
+
+//===----------------------------------------------------------------------===//
+// GatherMaskOp 
+//===----------------------------------------------------------------------===//
+def GatherMaskOp
+    : HFusionStructuredBase_Op<
+          "gather_mask", [
+              AllRanksMatch<["src", "mask", "init"]>,    
+              AllShapesMatch<["src", "mask", "init"]>,   
+              AllElementTypesMatch<["src", "init"]>,     
+              ResultOnlyIfTensor
+          ]>
+{
+  let summary = [{
+    Gather data from src tensor according to the non-zero values of mask tensor
+  }];
+
+  let description = [{
+    Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
+    Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`), 
+    and returns `init` as `result` for functional compatibility.
+    The `init`/`result` tensor has the same shape and element type as the `src` tensor.(currently only suppport 1D)
+    
+    Usage:
+      result = gather_mask(src, mask, init)  
+  }];
+
+  let arguments = (ins 
+    AnyShaped:$src,
+    AnyShaped:$mask,
+    AnyShaped:$init  
+  );
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let regions = (region AnyRegion:$region);  
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "Value":$src, "Value":$mask, "Value":$init)>  
+  ];
+  let hasCustomAssemblyFormat = 1; 
+  let hasVerifier = 1;  
+  let extraClassDeclaration = structuredOpsBaseDecls#[{
+    // Declare functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable();
+
+    // Declare functions necessary for LinalgStructuredInterface.
+    SmallVector<utils::IteratorType> getIteratorTypesArray();
+    ArrayAttr getIndexingMaps();
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>)>
+    getRegionBuilder();
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONSTRUCTUREDOPS_TD

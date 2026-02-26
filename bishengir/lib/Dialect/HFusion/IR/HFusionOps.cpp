@@ -2230,6 +2230,178 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
 }
 
 //===----------------------------------------------------------------------===//
+// GatherMaskOp
+//===----------------------------------------------------------------------===//
+
+MutableOperandRange GatherMaskOp::getDpsInitsMutable() {
+  return getInitMutable();
+}
+
+SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
+#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
+  llvm_unreachable("Not implemented");
+#else
+  SmallVector<utils::IteratorType> result(getInit().getType().getRank(),
+                                          utils::IteratorType::parallel);
+  return result;
+#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
+}
+
+ArrayAttr GatherMaskOp::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  int64_t numIters = getInit().getType().getRank();
+
+  SmallVector<AffineExpr> dims(numIters);
+  auto dimsArrayRef = MutableArrayRef(dims);
+  bindDimsList(ctx, dimsArrayRef);
+
+  AffineMap identityMap = AffineMap::getMultiDimIdentityMap(numIters, ctx);
+  AffineMapAttr identityMapAttr = AffineMapAttr::get(identityMap);
+
+  return ArrayAttr::get(ctx, {identityMapAttr, identityMapAttr, identityMapAttr});
+}
+
+void GatherMaskOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  getGenericEffectsImpl(effects, cast<linalg::LinalgOp>(getOperation()));
+}
+
+void GatherMaskOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                         Value src, Value mask, Value init) {
+  auto resultTy = dyn_cast<TensorType>(init.getType());
+  buildStructuredOp(odsBuilder, odsState, resultTy, {src, mask}, init, {},
+                    getRegionBuilder());
+}
+
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+GatherMaskOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> /*attrs*/) {
+    assert(block.getNumArguments() == 3 &&
+           "GatherMaskOp expecting 3 block arguments: src, mask, init");
+    Value srcVal = block.getArgument(0);
+    Value maskVal = block.getArgument(1);
+    Value initVal = block.getArgument(2);
+    Type i1Type = builder.getI1Type();
+
+    if (maskVal.getType() != i1Type) {
+      maskVal = builder.create<arith::TruncIOp>(builder.getLoc(), i1Type, maskVal);
+    }
+    Value yieldVal = builder.create<arith::SelectOp>(maskVal, srcVal, initVal);
+    builder.create<linalg::YieldOp>(yieldVal);
+  };
+}
+
+void GatherMaskOp::print(OpAsmPrinter &p) {
+  p.printOptionalAttrDict(getOperation()->getAttrs(), /*elidedAttrs=*/{});
+  printCommonStructuredOpParts(p, {getSrc(), getMask()}, getInit());
+  if (getNumResults())
+    p.printArrowTypeList(getResultTypes());
+}
+
+ParseResult GatherMaskOp::parse(OpAsmParser &p, OperationState &result) {
+  if (p.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  SmallVector<Type, 2> inputTypes;
+  SmallVector<Type, 1> outputTypes;
+  if (parseCommonStructuredOpParts(p, result, inputTypes, outputTypes,
+                                   /*OperandSegmentSizes*/ false)) {
+    return failure();
+  }
+
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
+
+  OpBuilder opBuilder(p.getContext());
+  fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
+                         outputTypes, result.attributes.getAttrs(),
+                         getRegionBuilder());
+
+  return success();
+}
+
+LogicalResult GatherMaskOp::verify() {
+  bool isTensorSemantic = hasPureTensorSemantics();
+  bool isMemrefSemantic = hasPureBufferSemantics();
+  // Check: must be pure tensor or pure memref semantics, cannot mix
+  if (!isTensorSemantic && !isMemrefSemantic) {
+    return emitOpError("must have pure tensor or pure memref semantics (cannot mix tensor/memref operands)");
+  }
+
+  if (isTensorSemantic) {
+    if (getNumResults() != 1) {
+      return emitOpError("expecting exactly 1 result for tensor semantics, but got ") << getNumResults();
+    }
+    Value resultValue = getResult()[0];
+    Type resultType = resultValue.getType();
+    Type initType = getInit().getType();
+    if (resultType != initType) {
+      return emitOpError("tensor semantics: result type (")
+             << resultType << ") must match init type (" << initType << ")";
+    }
+  }
+
+  // Memref semantics: no result allowed (memref is in-place write, no return value)
+  if (isMemrefSemantic) {
+    if (getNumResults() != 0) {
+      return emitOpError("expecting 0 results for memref semantics, but got ") << getNumResults();
+    }
+  }
+
+  Value mask = getMask();
+  Type maskElementType = getElementTypeOrSelf(mask);
+  // Check: mask must be I1 or I8 (compatible with any shape, only check element type)
+  if (!maskElementType.isInteger(1) && !maskElementType.isInteger(8)) {
+    return emitOpError("mask element type must be i1 or i8, but got ") << maskElementType;
+  }
+
+  auto getRank = [&](Value value) -> std::optional<int64_t> {
+    Type type = value.getType();
+    if (auto tensorTy = mlir::dyn_cast<RankedTensorType>(type)) {
+      return tensorTy.getRank();
+    }
+    if (auto memrefTy = mlir::dyn_cast<MemRefType>(type)) {
+      return memrefTy.getRank();
+    }
+    return -1;
+  };
+
+  std::optional<int64_t> srcRank = getRank(getSrc());
+  std::optional<int64_t> maskRank = getRank(getMask());
+  std::optional<int64_t> initRank = getRank(getInit());
+
+  // Check: ranks must match for ranked types; skip for unranked types (adapt to any shape)
+  if (srcRank != -1 && maskRank != -1 && initRank != -1) {
+    if (srcRank != maskRank || srcRank != initRank) {
+      return emitOpError("src rank (") << srcRank.value()
+             << "), mask rank (" << maskRank.value()
+             << "), init rank (" << initRank.value()
+             << ") must be the same (for ranked types)";
+    }
+  }
+
+  Type srcElementType = getElementTypeOrSelf(getSrc());
+  Type initElementType = getElementTypeOrSelf(getInit());
+  if (srcElementType != initElementType) {
+    return emitOpError("src element type (") << srcElementType
+           << ") must match init element type (" << initElementType << ")";
+  }
+  return success();
+}
+
+static Type getElementTypeOrSelf(Value value) {
+  Type type = value.getType();
+  if (auto tensorTy = mlir::dyn_cast<TensorType>(type)) {
+    return tensorTy.getElementType();
+  }
+  if (auto memrefTy = mlir::dyn_cast<MemRefType>(type)) {
+    return memrefTy.getElementType();
+  }
+  return type;
+}
+
+//===----------------------------------------------------------------------===//
 // CumsumOp
 //===----------------------------------------------------------------------===//
 

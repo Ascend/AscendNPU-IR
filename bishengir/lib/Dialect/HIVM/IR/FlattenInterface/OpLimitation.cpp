@@ -88,6 +88,13 @@ SmallVector<int64_t> VGatherOp::getLimitedAxes() {
   return limitedAxes;
 }
 
+SmallVector<int64_t> VGatherMaskOp::getLimitedAxes() {
+  SmallVector<int64_t> limitedAxes;
+  // get gathermask axes
+  this->getGatherMaskLoopDims(limitedAxes);
+  return limitedAxes;
+}
+
 SmallVector<int64_t> VArangeOp::getLimitedAxes() {
   // VArangeOp will not be flattened for now.
   SmallVector<int64_t> limitedAxes(this->getResult().getType().getRank());
