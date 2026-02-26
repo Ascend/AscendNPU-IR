@@ -15,12 +15,69 @@
 
 本章节介绍常见功能或精度案例
 
+## 1.卡死类问题
 
-本章节介绍T常见功能或精度案例
+### 1.1 定界
+- **现象** 算子选项规避超时报错,导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
+- **示例**
 
-## 1.卡死类问题(计算)
-### 1.1. 二分注释ir找卡死问题
-### 1.2. 待补充
+| 编译选项 | 数值 | 说明 |
+|--------|------|------|
+| **inject_barrier_all** | false(default). | 前端尝试打开为true,如果卡死问题消失，证明核内同步有问题,适用mix/aic/aiv三类kernel |
+| **inject_block_all**|  false(default). | 前端尝试打开为true,如果卡死问题消失，证明核间同步有问题,适用mix类kernel | 
+
+
+以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码调用为
+
+```python
+chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
+    k=k,
+    v=u,
+    w=w,
+    v_new=v_new,
+    g=g,
+    gk=gk,
+    h=h,
+    h0=initial_state,
+    ht=final_state,
+    cu_seqlens=cu_seqlens,
+    chunk_offsets=chunk_offsets,
+    T=T,
+    H=H,
+    K=K,
+    V=V,
+    BT=BT,
+)
+```
+
+关闭CV流水后的调用则为
+
+```python
+chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
+    k=k,
+    v=u,
+    w=w,
+    v_new=v_new,
+    g=g,
+    gk=gk,
+    h=h,
+    h0=initial_state,
+    ht=final_state,
+    cu_seqlens=cu_seqlens,
+    chunk_offsets=chunk_offsets,
+    T=T,
+    H=H,
+    K=K,
+    V=V,
+    BT=BT,
+    inject_block_all = True # 开启核间同步
+    inject_barrier_all = True # 开启核内同步
+)
+```
+
+### 1.2 参数入参不合理
+对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且再[0, seqlen]范围内。
+
 
 ## 2. ub overflow类问题(计算)
 ### 2.1. tiling值
@@ -28,9 +85,43 @@
 ### 2.3. 待补充
 
 ## 3. d-cache类(计算)
+
 ### 3.1. 无效地址访问
+- **现象** 算子输入合法且均为同一个deviceID, 实际算子的deviceID设置不正确，导致无法取到数据，出现D-cache读写错误
+- **示例**
+错误示例
+```python
+A=torch.empty(shape, dtype)
+```
+正确示例
+```python
+A=torch.empty(shape, dtype).npu()
+or
+DEVICE="npu:0"
+A=torch.empty(shape, dtype, device=DEVICE).npu()
+```
+
 ### 3.2. 可能是offset负数
-### 3.3. i32溢出
+- **现象** ossfet数值ir中是一个计算数值。
+- **示例**
+1. offset算出来是一个负数，导致读取地址不正确。
+2. 算子的offset按照int32表示，实际数值超出这个数据表示范围，导致i32溢出。
+
+### 3.3. 使用非负数iter arg作为访存索引
+- **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
+
+- **示例**
+
+以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
+
+```python
+for i_w in tl.static_range(-W + 1, 1):
+  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
+  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
+  if HAS_WEIGHT:
+    b_yi *= tl.sum(b_w * (o_w == (i_w + W - 1)), 1)
+```
+
 ### 3.4. 待补充
 
 ## 4. load行为(编译器)
@@ -51,25 +142,75 @@
 
 # 场景化调试举例
 
-本章节介绍Triton NPU算子性能优化指南。
+由于`i_w`可为负数，以上算子需改写为
+
+```python
+for i_w in tl.static_range(W):
+  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
+  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
+  if HAS_WEIGHT:
+    b_yi *= tl.sum(b_w * (o_w == i_w), 1)
+```
 
 
-## $\color{red}{计算实战场景}$ 
 
-## 下面编译器类
-## 访存类
+## 4.访存类
 
+### 4.1.load非预期引入vtranspose op导致ub overflow
+- **现象** 算子编译或者精度报错，隐式转置明显特征最内轴stride不为1，外轴stride为1.
+- **示例**
+错误示例
+```python
+K_block_ptr=tl.make_block_ptr(
+    base = K,
+    shape =(HEAD_DIM, N_CTX),
+    stride=(kk, kn)
+    offsets=(0, 0),
+    block_shape=(HEAD_DIM, BLOCK_N),
+    order=(0, 1),
+)
+k=tl.load(K_block_ptr)
+```
+正确示例
+```python
+K_block_ptr=tl.make_block_ptr(
+    base = K,
+    shape =(N_CTX, HEAD_DIM),
+    stride=(kn, kk)
+    offsets=(0, 0),
+    block_shape=(BLOCK_N, HEAD_DIM),
+    order=(1, 0),
+)
+k=tl.load(K_block_ptr)
+trans_k=tl.trans(k)
+```
 
-### - 使用mayDiscretememaccess规避UB overflow
+### 4.2.使用load+mask替换make_block_ptr
+- **现象** 由于make_block_ptr在处理非对齐尾块时支持度不足，导致脏数据引入，影响精度，因此当尾块为非对齐配置时，可以通过改写make_block_ptr为load+mask以准确处理尾块数据。
+- **示例**
+以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
 
-#### 问题描述
+```python
+p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
+b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
+```
 
-导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。
+通过改写make_block_ptr，上述操作会被降解为以下的load+mask操作
 
-无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
+```python
+# initialize `p_yi` with the correct stride and size
+yi_t = i_t * BT + i_w + tl.arange(0, BT)
+yi_d = i_d * BD + tl.arange(0, BD)
+p_yi = x + bos * D + yi_t[:, None] * D + yi_d
+# boundary check in the load operation by adding the mask
+yi_t_m = (yi_t < T) & (yi_t >= 0)
+yi_d_m = (yi_d < D) & (yi_d >= 0)
+b_yi = tl.load(p_yi, mask=yi_t_m[:, None] & yi_d_m[None, :], other=0.).to(tl.float32)
+```
 
-#### 算子示例
-
+### 4.3.使用mayDiscretememaccess规避UB overflow
+- **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
+- **示例**
 改写算子时，只需在load/store操作的数据上加上`compile_hint`即可，参考以下代码段：
 
 ```python
@@ -95,67 +236,16 @@ b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 tl.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
-<hr>
 
-### - 使用load+mask替换make_block_ptr
+## 5.baseline(计算) 
+### 5.1.TRITON_INTERPRET模式(计算)
+### 5.2.GPU特有运算逻辑(计算)
+### 5.3.待补充
 
-#### 问题描述
 
-由于make_block_ptr在处理非对齐尾块时支持度不足，导致脏数据引入，影响精度，因此当尾块为非对齐配置时，可以通过改写make_block_ptr为load+mask以准确处理尾块数据。
+## 场景化调试举例
 
-#### 算子示例
-
-以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
-
-```python
-p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
-b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
-```
-
-通过改写make_block_ptr，上述操作会被降解为以下的load+mask操作
-
-```python
-# initialize `p_yi` with the correct stride and size
-yi_t = i_t * BT + i_w + tl.arange(0, BT)
-yi_d = i_d * BD + tl.arange(0, BD)
-p_yi = x + bos * D + yi_t[:, None] * D + yi_d
-# boundary check in the load operation by adding the mask
-yi_t_m = (yi_t < T) & (yi_t >= 0)
-yi_d_m = (yi_d < D) & (yi_d >= 0)
-b_yi = tl.load(p_yi, mask=yi_t_m[:, None] & yi_d_m[None, :], other=0.).to(tl.float32)
-```
-
----
-
-### - 使用非负数iter arg作为访存索引
-
-#### 问题描述
-
-由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
-
-#### 算子示例
-
-以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
-
-```python
-for i_w in tl.static_range(-W + 1, 1):
-  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
-  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
-  if HAS_WEIGHT:
-    b_yi *= tl.sum(b_w * (o_w == (i_w + W - 1)), 1)
-```
-
-由于`i_w`可为负数，以上算子需改写为
-
-```python
-for i_w in tl.static_range(W):
-  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
-  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
-  if HAS_WEIGHT:
-    b_yi *= tl.sum(b_w * (o_w == i_w), 1)
-```
-
----
+本章节介绍Triton NPU算子性能优化指南。
 
 ### - 使用bitwise_mask优化访存掩码
 
@@ -262,72 +352,6 @@ for idx_ingroup in range(GROUP_SIZE):
 ```
 
 ## CV类
-
----
-
-### - 算子选项规避超时报错
-
-#### 问题描述
-
-导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
-
-```python
-# 核同步选项
-inject_block_all = True # 开启核间同步
-inject_barrier_all = True # 开启核内同步
-# 流水选项
-limit_auto_multi_buffer_only_for_local_buffer = True # 关闭(GM space) CV流水
-multibuffer = False # 关闭乒乓流水
-```
-
-#### 算子示例
-
-以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码调用为
-
-```python
-chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
-    k=k,
-    v=u,
-    w=w,
-    v_new=v_new,
-    g=g,
-    gk=gk,
-    h=h,
-    h0=initial_state,
-    ht=final_state,
-    cu_seqlens=cu_seqlens,
-    chunk_offsets=chunk_offsets,
-    T=T,
-    H=H,
-    K=K,
-    V=V,
-    BT=BT,
-)
-```
-
-关闭CV流水后的调用则为
-
-```python
-chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
-    k=k,
-    v=u,
-    w=w,
-    v_new=v_new,
-    g=g,
-    gk=gk,
-    h=h,
-    h0=initial_state,
-    ht=final_state,
-    cu_seqlens=cu_seqlens,
-    chunk_offsets=chunk_offsets,
-    T=T,
-    H=H,
-    K=K,
-    V=V,
-    BT=BT,
-    limit_auto_multi_buffer_only_for_local_buffer = True,
-)
-```
 
 ---
 
