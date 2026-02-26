@@ -15,9 +15,9 @@
 
 本章节介绍常见功能或精度案例
 
-## 1.卡死类问题
+## 3.卡死类问题
 
-### 1.1 定界
+### 3.1 定界
 - **现象** 算子选项规避超时报错,导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
 - **示例**
 
@@ -75,18 +75,18 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-### 1.2 参数入参不合理
+### 3.2 参数入参不合理
 对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且再[0, seqlen]范围内。
 
 
-## 2. ub overflow类问题(计算)
-### 2.1. tiling值
-### 2.2. stride_align类
-### 2.3. 待补充
+## 4. ub overflow类问题(计算)
+### 4.1. tiling值
+### 4.2. stride_align类
+### 4.3. 待补充
 
-## 3. d-cache类(计算)
+## 5. d-cache类
 
-### 3.1. 无效地址访问
+### 5.1. 无效地址访问
 - **现象** 算子输入合法且均为同一个deviceID, 实际算子的deviceID设置不正确，导致无法取到数据，出现D-cache读写错误
 - **示例**
 错误示例
@@ -101,13 +101,13 @@ DEVICE="npu:0"
 A=torch.empty(shape, dtype, device=DEVICE).npu()
 ```
 
-### 3.2. 可能是offset负数
+### 5.2. 可能是offset负数
 - **现象** ossfet数值ir中是一个计算数值。
 - **示例**
 1. offset算出来是一个负数，导致读取地址不正确。
 2. 算子的offset按照int32表示，实际数值超出这个数据表示范围，导致i32溢出。
 
-### 3.3. 使用非负数iter arg作为访存索引
+### 5.3. 使用非负数iter arg作为访存索引
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
 ## 4.load行为(编译器)
 ### 4.1.load非预期引入vtranspose op导致ub overflow(编译器)
@@ -176,7 +176,6 @@ def transpose_kernel(
 ### 4.3.数据load方式不合理
 ### 4.4.待补充
 
-- **示例**
 
 以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
 
@@ -188,26 +187,6 @@ for i_w in tl.static_range(-W + 1, 1):
     b_yi *= tl.sum(b_w * (o_w == (i_w + W - 1)), 1)
 ```
 
-### 3.4. 待补充
-
-## 4. load行为(编译器)
-### 4.1. load非预期引入vtranspose op导致ub overflow(编译器)
-### 4.2. Load隐式转置(编译器)
-### 4.3. 数据load方式不合理
-### 4.4. 待补充
-
-## 5. baseline(计算)
-### 5.1. TRITON_INTERPRET模式(计算)
-### 5.2. GPU特有运算逻辑(计算)
-### 5.3. 待补充
-
-## 6. 同步类(编译器)
-### 6.1. 核内同步(编译器)
-### 6.2. 核间同步(编译器)
-### 6.3. 待补充
-
-# 场景化调试举例
-
 由于`i_w`可为负数，以上算子需改写为
 
 ```python
@@ -218,11 +197,8 @@ for i_w in tl.static_range(W):
     b_yi *= tl.sum(b_w * (o_w == i_w), 1)
 ```
 
-
-
-## 4.访存类
-
-### 4.1.load非预期引入vtranspose op导致ub overflow
+## 6. 访存类
+### 6.1. load非预期引入vtranspose op导致ub overflow
 - **现象** 算子编译或者精度报错，隐式转置明显特征最内轴stride不为1，外轴stride为1.
 - **示例**
 错误示例
@@ -251,7 +227,70 @@ k=tl.load(K_block_ptr)
 trans_k=tl.trans(k)
 ```
 
-### 4.3.使用mayDiscretememaccess规避UB overflow
+### 6.2.Load隐式转置
+- **现象** “隐式转置”是指在加载或存储数据的同时完成矩阵转置操作，避免单独执行一个转置内核或额外的显式数据重排。
+它通常通过调整指针的步长和形状来实现，使得内存访问模式隐含地完成维度交换。
+这种技术可以节省全局内存带宽、减少内核启动开销，并提高计算效率。
+
+`tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)`
+order参数指定内存中元素的迭代顺序，可以用来实现转置。或者，通过设置strides参数来指示转置后的步长。
+实际上，对于矩阵转置，如果我们有一个输入矩阵A (M, K) 和输出矩阵B (K, M)，我们可以让每个线程块处理B的一个块，
+并从A中加载对应的转置块。加载时，可以使用make_block_ptr从A中加载，但步长设置为导致转置加载的步长？
+或者，更常见的做法是加载一个正常的A块，然后使用tl.trans转置后再存储到B。
+
+- **示例**
+```python
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def transpose_kernel(
+    x_ptr, y_ptr,
+    M, N,
+    stride_xm, stride_xn,
+    stride_ym, stride_yn,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
+):
+    """
+    矩阵转置内核：Y = X^T, 其中 X 形状 (M, N)，Y 形状 (N, M)。
+    每个程序块处理 Y 的一个 (BLOCK_N, BLOCK_M) 子块。
+    通过交换输入指针的步长，实现隐式转置加载。
+    """
+    pid_n = tl.program_id(0)  # 输出矩阵的行块索引（原列块）
+    pid_m = tl.program_id(1)  # 输出矩阵的列块索引（原行块）
+
+    bn = pid_n * BLOCK_N  # 输出矩阵的行起始 = 原列起始
+    bm = pid_m * BLOCK_M  # 输出矩阵的列起始 = 原行起始
+
+    # 构建输入指针：使用交换后的步长，形状 (N, M) 以匹配转置访问
+    x_ptr_t = tl.make_block_ptr(
+        base=x_ptr,
+        shape=(N, M),
+        strides=(stride_xn, stride_xm),
+        offsets=(bn, bm),
+        block_shape=(BLOCK_N, BLOCK_M),
+        order=(1, 0)
+    )
+
+    # 构建输出指针：正常行主序步长，形状 (N, M)
+    y_ptr_b = tl.make_block_ptr(
+        base=y_ptr,
+        shape=(N, M),
+        strides=(stride_ym, stride_yn),
+        offsets=(bn, bm),
+        block_shape=(BLOCK_N, BLOCK_M),
+        order=(1, 0)
+    )
+
+    # 加载输入块（已隐式转置），边界检查防止越界
+    x_tile = tl.load(x_ptr_t, boundary_check=(0, 1))
+
+    # 存储到输出矩阵
+    tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
+```
+
+### 6.3.使用mayDiscretememaccess规避UB overflow
 - **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
 - **示例**
 改写算子时，只需在load/store操作的数据上加上`compile_hint`即可，参考以下代码段：
@@ -266,7 +305,7 @@ tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-##### 示例1
+- **示例1**
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 ```
@@ -278,7 +317,7 @@ b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 tl.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
-##### 示例2
+- **示例2**
 ```diff
 import triton
 import triton.language as tl
@@ -327,7 +366,7 @@ def copy_column_major_to_row_major(
     tl.store(B_block_ptr, a, boundary_check=(0, 1))
 ```
 
-##### 示例2使用compile hint前后的ir对比
+- **示例2使用compile hint前后的ir对比**
 ```c++
 // before using tl.compile_hint(a, "mayDiscretememaccess")
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
@@ -471,7 +510,15 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 ```
 <hr>
 
-### - 使用bitwise_mask优化访存掩码
+## 7.baseline(计算) 	 
+### 7.1.TRITON_INTERPRET模式(计算)	 
+### 7.2.GPU特有运算逻辑(计算)	 
+### 7.3.待补充
+
+## 8.场景化调试举例	 
+
+本章节介绍Triton NPU算子性能优化指南。
+### 8.1.使用bitwise_mask优化访存掩码
 
 #### 问题描述
 
@@ -550,7 +597,7 @@ def test_where_lt_case1(param_list):
 
 ---
 
-### - 动态生成mask类
+### 8.2.动态生成mask类
 
 #### 问题描述
 
@@ -579,11 +626,11 @@ for idx_ingroup in range(GROUP_SIZE):
             )
 ```
 
-## CV类
+## 9.CV类
 
 ---
 
-### - 使用tile_cube_loop规避L1越界
+### 9.1.使用tile_cube_loop规避L1越界
 
 #### 问题描述
 
@@ -595,7 +642,7 @@ for idx_ingroup in range(GROUP_SIZE):
 
 ```python
 res = tl.dot(lhs, rhs)
-tl.compile_hint(res, "tile_cube_loop")
+tl.compile_hint(res, "tile_cube_loop", 2)
 ```
 
 以Flash Attention的`_attn_fwd_inner`算子为例，原代码的QKV矩阵乘法逻辑大致为
@@ -621,7 +668,7 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 
 ---
 
-### - 参考：编译优化选项
+### 9.2.参考：编译优化选项
 
 | 编译选项| 含义| 取值范围|
 | --- | --- | --- |
@@ -647,7 +694,7 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 
 ---
 
-### - 算子选项规避超时报错
+### 9.3.算子选项规避超时报错
 
 #### 问题描述
 
@@ -713,7 +760,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 ---
 
-## Triton NPU 编程案例
+## 10.Triton NPU 编程案例
 Triton NPU 编程请参考：
 [https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)
 
