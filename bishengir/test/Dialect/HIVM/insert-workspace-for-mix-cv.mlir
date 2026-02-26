@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -insert-workspace-for-mix-cv %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -insert-workspace-for-mix-cv %s -split-input-file -allow-unregistered-dialect | FileCheck %s
 
 // -----
 // CHECK-LABEL: @insert_workspace_for_cc(
@@ -118,4 +118,33 @@ module {
     hivm.hir.debug {debugtype = "print", hex = false, prefix = " fixpipe_out ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %1 : tensor<16x16xf32>
     return
   }
+}
+
+// -----
+// CHECK-LABEL: @insert_workspace_for_cv_dynamic(
+func.func @insert_workspace_for_cv_dynamic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2 : tensor<16x16xf16>, %arg3 : tensor<16x16xf16>, %arg4 : memref<16x16xf32, strided<[?, 1], offset: ?>>, %arg5 : tensor<16x16xf32>, %arg6 : index, %arg7 : index) attributes {func_dyn_memref_args = dense<[false, true, true, true, true, false, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false]> : vector<26xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = hivm.hir.mmadL1 ins(%arg2, %arg3, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %extracted_slice = tensor.extract_slice %2[0, 0] [%arg6, %arg7] [1, 1] : tensor<16x16xf32> to tensor<?x?xf32>
+    // CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace(%arg6, %arg7) : memref<?x?xf32>
+    // CHECK: annotation.mark %[[WORKSPACE]] {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32>
+    // CHECK: %[[OUTPUT_TENSOR:.*]] = bufferization.to_tensor %[[WORKSPACE]] restrict writable : memref<?x?xf32>
+    %3 = tensor.empty(%arg6, %arg7) : tensor<?x?xf32>
+    %4 = hivm.hir.fixpipe {enable_nz2nd} ins(%extracted_slice : tensor<?x?xf32>) outs(%3 : tensor<?x?xf32>) -> tensor<?x?xf32>
+    %dim = tensor.dim %4, %c0 : tensor<?x?xf32>
+    %dim_1 = tensor.dim %4, %c1 : tensor<?x?xf32>
+    %5 = tensor.empty(%dim, %dim_1) : tensor<?x?xf32>
+    %6 = hivm.hir.load ins(%4 : tensor<?x?xf32>) outs(%5 : tensor<?x?xf32>) -> tensor<?x?xf32>
+    %inserted_slice = tensor.insert_slice %6 into %0[0, 0] [%arg6, %arg7] [1, 1] : tensor<?x?xf32> into tensor<16x16xf32>
+    %7 = tensor.empty() : tensor<16x16xf32>
+    %8 = hivm.hir.vadd ins(%inserted_slice, %arg5 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%7 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    hivm.hir.store ins(%8 : tensor<16x16xf32>) outs(%arg4 : memref<16x16xf32, strided<[?, 1], offset: ?>>)
+    return
 }

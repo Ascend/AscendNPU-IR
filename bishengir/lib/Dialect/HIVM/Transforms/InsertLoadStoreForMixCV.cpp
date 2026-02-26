@@ -695,7 +695,9 @@ struct DuplicateTensorExtractForCube
 
     // insert operations
     Value workSpaceTensor = getLocalWorkSpaceTensor(
-        rewriter, loc, tensorType.getShape(), getElementTypeOrSelf(tensorType));
+        rewriter, loc, tensorType.getShape(),
+        hivm::getTensorDynamicValues(rewriter, loc, originTensor),
+        getElementTypeOrSelf(tensorType));
     hivm::StoreOp storeOp = rewriter.create<hivm::StoreOp>(
         loc, TypeRange(tensorType), originTensor, workSpaceTensor);
     markCoreType(rewriter, loc, storeOp.getResults()[0], TCoreType::VECTOR);
@@ -753,7 +755,7 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 }
 
 LogicalResult applyInsertLoadBeforeSCFInitArgs(MLIRContext *context,
-                                                    Operation *funcOp) {
+                                               Operation *funcOp) {
   RewritePatternSet patterns(context);
   patterns.insert<InsertLoadBeforeSCFInitArgs>(patterns.getContext());
   return applyPatternsGreedily(funcOp, std::move(patterns));
@@ -765,7 +767,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   auto funcOp = getOperation();
   RewritePatternSet patterns(context);
   if (failed(applyInsertLoadBeforeSCFInitArgs(context, funcOp))) {
-      signalPassFailure();
+    signalPassFailure();
   }
   populateInsertLoadStorePattern(patterns);
   patterns.insert<InsertStoreForSCFYield>(patterns.getContext());

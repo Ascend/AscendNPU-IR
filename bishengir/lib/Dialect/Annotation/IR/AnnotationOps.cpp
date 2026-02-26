@@ -61,7 +61,8 @@ LogicalResult MarkOp::fold(FoldAdaptor adaptor,
   return foldBufferSizeAnnotationToAlloc(*this);
 }
 
-struct FoldUselessBufferSizeMarkOp : public OpRewritePattern<annotation::MarkOp> {
+struct FoldUselessBufferSizeMarkOp
+    : public OpRewritePattern<annotation::MarkOp> {
   using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,
@@ -76,7 +77,10 @@ struct FoldUselessBufferSizeMarkOp : public OpRewritePattern<annotation::MarkOp>
     // If the alloc is a static one, we can ignore the buffer size.
     if (isa<MemRefType>(srcVal.getType())) {
       auto maybeAlloc = utils::tracebackMemRefToAlloc(srcVal);
-      if (maybeAlloc.has_value() && (*maybeAlloc).getType().hasStaticShape()) {
+      if (!maybeAlloc.has_value()) {
+        return failure();
+      }
+      if ((*maybeAlloc).getType().hasStaticShape()) {
         rewriter.eraseOp(markOp);
         return success();
       }

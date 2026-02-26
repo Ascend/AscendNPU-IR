@@ -1,13 +1,13 @@
 // RUN: bishengir-opt %s -hivm-set-buffer-size -allow-unregistered-dialect -split-input-file -verify-diagnostics | FileCheck %s
 
 func.func @set_buffer_size(%arg0: index, %arg1: index) {
-  // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<4000xi8, 1>
-  // CHECK: %[[CONST0:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[ALLOC0:.*]] = memref.alloc() : memref<4000xi8, 1>
+  // CHECK-DAG: %[[CONST0:.*]] = arith.constant 0 : index
   // CHECK: %[[VIEW0:.*]] = memref.view %[[ALLOC0]][%[[CONST0]]][%[[INDEX0:.*]], %[[INDEX1:.*]]] : memref<4000xi8, 1> to memref<?x?xf32, 1>
   %alloc = memref.alloc(%arg0, %arg1) : memref<?x?xf32, 1>
   annotation.mark %alloc {buffer_size_in_byte = 4000 : i64} : memref<?x?xf32, 1>
-  // CHECK: %[[ALLOC1:.*]] = memref.alloca() : memref<4000xi8, 1>
-  // CHECK: %[[CONST1:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[ALLOC1:.*]] = memref.alloca() : memref<4000xi8, 1>
+  // CHECK-DAG: %[[CONST1:.*]] = arith.constant 0 : index
   // CHECK: %[[VIEW1:.*]] = memref.view %[[ALLOC1]][%[[CONST1]]][%[[INDEX1]], %[[INDEX0]]] : memref<4000xi8, 1> to memref<?x?xf32, 1>
   %alloca = memref.alloca(%arg1, %arg0) : memref<?x?xf32, 1>
   annotation.mark %alloca {buffer_size_in_byte = 4000 : i64} : memref<?x?xf32, 1>
@@ -54,5 +54,16 @@ func.func @set_buffer_size_static() {
   // CHECK-NOT: memref.alloc() : memref<4000xi8>
   %alloc = memref.alloc() : memref<16xf32>
   annotation.mark %alloc {buffer_size_in_byte = 4000 : i64} : memref<16xf32>
+  return
+}
+
+// -----
+
+func.func @set_buffer_size_workspace_dynamic(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg1: index, %arg2: index) {
+  // CHECK-DAG: %[[CONST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[ALLOC0:.*]] = memref_ext.alloc_workspace() from {{.*}} : from memref<?xi8> to memref<1024xi8>
+  // CHECK: %[[VIEW:.*]] = memref.view %[[ALLOC0]][%[[CONST0]]][%arg1, %arg2] : memref<1024xi8> to memref<?x?xf32>
+  %1 = memref_ext.alloc_workspace(%arg1, %arg2) from %arg0 : from memref<?xi8> to memref<?x?xf32>
+  annotation.mark %1 {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32>
   return
 }

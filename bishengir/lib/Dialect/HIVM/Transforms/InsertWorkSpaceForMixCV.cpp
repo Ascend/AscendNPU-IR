@@ -53,6 +53,48 @@ struct InsertWorkSpaceForMixCVPass
 };
 } // namespace
 
+// For dynamic-shaped tensors, trace through the ExtractSliceOp chain to find
+// the original static alloc shape.
+// Return std::nullopt for static tensors.
+// Ops with DestinationStyleOpInterface appear between ExtractSliceOps by
+// tracing through their init operands.
+static std::optional<ArrayRef<int64_t>>
+traceStaticAllocShape(ShapedType dstType,
+                      DestinationStyleOpInterface storeLikeOp) {
+  if (dstType.hasStaticShape())
+    return std::nullopt;
+
+  Value currentValue = storeLikeOp.getDpsInputs()[0];
+  while (true) {
+    auto extractSliceDefOp = traceDefOp<tensor::ExtractSliceOp>(currentValue);
+    if (extractSliceDefOp.has_value()) {
+      auto extractSliceOp =
+          cast<tensor::ExtractSliceOp>(extractSliceDefOp.value());
+      auto extractSliceSource = extractSliceOp.getSource();
+      auto sourceType = cast<ShapedType>(extractSliceSource.getType());
+      if (sourceType.hasStaticShape())
+        return sourceType.getShape();
+      currentValue = extractSliceSource;
+      continue;
+    }
+
+    if (auto defOp = currentValue.getDefiningOp()) {
+      if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(defOp)) {
+        auto inits = dstStyleOp.getDpsInits();
+        if (!inits.empty()) {
+          currentValue = inits[0];
+          continue;
+        }
+      }
+    }
+
+    // Cannot trace further: e.g. init from dynamic tensor.empty (EmptyOp has
+    // no inits), or unsupported op.
+    llvm_unreachable(
+        "Unable to trace to a static alloc shape from a dynamic shape");
+  }
+}
+
 // Match CC/CV/VC/VV junction and replace emptyOp with workspace
 // CC: mmadL1 -> fixpipe -> load -> mmadL1
 // CV: mmadL1 -> fixpipe -> load -> vector
@@ -66,9 +108,9 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
     Value src;
     if constexpr (std::is_same_v<OpType, hivm::LoadOp>) {
       src = op.getSrc();
-    } else if constexpr (std::is_same_v<OpType, hivm::DebugOp>){
+    } else if constexpr (std::is_same_v<OpType, hivm::DebugOp>) {
       src = op.getArg();
-    } else{
+    } else {
       llvm_unreachable("Unsupported op type to insert workspace");
     }
     auto maybeStoreDefOp = traceDefOp<hivm::StoreOp>(src);
@@ -88,12 +130,16 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
 
     auto emptyOp = emptyDefOp.value();
     auto dstType = cast<ShapedType>(emptyOp->getResultTypes()[0]);
-    rewriter.setInsertionPoint(emptyOp);
-    auto dstTensor =
-        getLocalWorkSpaceTensor(rewriter, emptyOp->getLoc(), dstType.getShape(),
-                                getElementTypeOrSelf(dstType));
-    rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
+    auto dstShape = dstType.getShape();
+    auto staticAllocShape = traceStaticAllocShape(dstType, gmStoreOp);
 
+    rewriter.setInsertionPoint(emptyOp);
+    auto dstTensor = getLocalWorkSpaceTensor(
+        rewriter, emptyOp->getLoc(), dstShape,
+        hivm::getTensorDynamicValues(rewriter, emptyOp->getLoc(),
+                                     emptyOp->getResults()[0]),
+        getElementTypeOrSelf(dstType), staticAllocShape);
+    rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
     return success();
   }
 };

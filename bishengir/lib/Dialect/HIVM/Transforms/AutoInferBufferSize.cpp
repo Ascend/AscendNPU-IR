@@ -64,11 +64,11 @@ void AutoInferBufferSizePass::runOnOperation() {
     return;
   }
 
-  int64_t numOfElements = -1;
+  std::optional<int64_t> numOfElements;
   funcOp->walk([&](annotation::MarkOp markOp) {
     // given that the number of elements in the buffer is the same,
     // bail out if numOfElements has been calculated
-    if (numOfElements != -1 ||
+    if (numOfElements.has_value() ||
         !markOp->hasAttrOfType<IntegerAttr>(kBufferSizeInByteAttr)) {
       return;
     }
@@ -79,10 +79,10 @@ void AutoInferBufferSizePass::runOnOperation() {
         getElementTypeOrSelf(markOp.getSrc().getType()).getIntOrFloatBitWidth();
     numOfElements = bufferSizeInBit / elementWidthInBit;
   });
-  // no annotation.markOp with buffer size found
-  if (numOfElements == 1) {
+  if (!numOfElements.has_value()) {
     return;
   }
+
   // infer memref.alloc Ops that are not annotated
   funcOp->walk([&](memref::AllocOp allocOp) {
     auto memrefVal = allocOp->getResults()[0];
@@ -97,7 +97,7 @@ void AutoInferBufferSizePass::runOnOperation() {
     int64_t elementWidthInBit =
         getElementTypeOrSelf(memrefTy).getIntOrFloatBitWidth();
     int64_t bufferSizeInByte =
-        numOfElements * elementWidthInBit / mlir::utils::kBitsToByte;
+        *numOfElements * elementWidthInBit / mlir::utils::kBitsToByte;
     insertAnnotation(allocOp, memrefVal, bufferSizeInByte);
   });
 }
