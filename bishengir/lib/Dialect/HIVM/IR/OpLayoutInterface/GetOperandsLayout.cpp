@@ -72,7 +72,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
-      std::nullopt,
+      nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
@@ -81,7 +81,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   auto bBlockSizes = getBlockSizes(operB);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
-      std::nullopt,
+      nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
 
@@ -89,13 +89,13 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   auto mCLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::zN, std::nullopt,
+      getContext(), DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
   valLayoutMap[getC()] = mCLayoutAttr;
 
   if (auto bias = getPerChannelBias()) {
     auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              std::nullopt, std::nullopt);
+                                              nullptr, nullptr);
     valLayoutMap[bias] = biasLayoutAttr;
   }
   return valLayoutMap;

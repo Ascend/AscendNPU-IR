@@ -157,26 +157,72 @@ def DCCIOp : HIVM_Op<"dcci"> {
 def ConvertLayoutOp : HIVM_Op<"convert_layout",
    [Pure,
     ViewLikeOpInterface,
-    SameOperandsAndResultElementType,
     DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
   let summary = "HIVM layout conversion operation.";
   let description = [{
     The `convert_layout` operation converts a memref with one layout
     to another. The data is not copied or modified.
+
+    The operation supports mixed static/dynamic output shapes where static
+    dimensions are specified in the `static_output_shape` attribute and
+    dynamic dimensions are provided as SSA values in `output_shape`.
+    Dynamic dimensions are indicated by `ShapedType::kDynamic` in
+    the static shape attribute.
   }];
 
-  let arguments = (ins AnyRankedOrUnrankedMemRef:$source,
+  let arguments = (ins TensorOrMemref:$source,
                        HIVM_DataLayoutAttr:$srcLayout,
-                       HIVM_DataLayoutAttr:$dstLayout);
-  let results = (outs AnyRankedOrUnrankedMemRef:$result);
+                       HIVM_DataLayoutAttr:$dstLayout,
+                       DenseI64ArrayAttr:$static_output_shape,
+                       Variadic<Index>:$output_shape);
+  let results = (outs TensorOrMemref:$result);
 
   let assemblyFormat = [{
-    $source attr-dict `:` functional-type(operands, results)
+    $source
+    `output_shape` custom<DynamicIndexList>($output_shape, $static_output_shape)
+    attr-dict `:` functional-type(operands, results)
   }];
 
   let extraClassDeclaration = [{
     Value getViewSource() { return getSource(); }
+
+    /// Check if this operation has pure tensor semantics
+    bool hasPureTensorSemantics() {
+      return isa<TensorType>(getSource().getType()) &&
+             isa<TensorType>(getResult().getType());
+    }
+
+    /// Return the output shape as a list of OpFoldResult (mixing static and dynamic)
+    SmallVector<OpFoldResult> getMixedOutputShape() {
+      Builder b(getContext());
+      return getMixedValues(getStaticOutputShape(), getOutputShape(), b);
+    }
+
+    /// Return the number of dynamic dimensions
+    int64_t getNumDynamicDims() {
+      return getOutputShape().size();
+    }
+
+    /// Return a vector of all static shape dimensions
+    SmallVector<int64_t> getStaticOutputShapeVec() {
+      return SmallVector<int64_t>(getStaticOutputShape());
+    }
   }];
+
+  let builders = [
+    // Convenience builder with mixed OpFoldResult shape
+    OpBuilder<(ins "Type":$resultType,
+                   "Value":$source,
+                   "DataLayoutAttr":$srcLayout,
+                   "DataLayoutAttr":$dstLayout,
+                   "ArrayRef<OpFoldResult>":$outputShape)>,
+    OpBuilder<(ins "Type":$resultType,
+                   "Value":$source,
+                   "DataLayoutAttr":$srcLayout,
+                   "DataLayoutAttr":$dstLayout)>
+  ];
+
+  let hasVerifier = 1;
 }
 
 def PointerCastOp : HIVM_Op<"pointer_cast",

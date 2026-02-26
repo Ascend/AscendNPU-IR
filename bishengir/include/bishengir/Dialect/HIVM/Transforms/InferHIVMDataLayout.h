@@ -49,7 +49,8 @@ public:
       return !(this->operator==(other));
     }
 
-    bool noLayoutConflict() const { return currentLayout == targetLayout; }
+    bool noLayoutConflict() const { // TODO: Might wanna check the fractal sizes?
+      return currentLayout.getDataLayout() == targetLayout.getDataLayout(); }
 
     DataLayoutAttr currentLayout;
     DataLayoutAttr targetLayout;

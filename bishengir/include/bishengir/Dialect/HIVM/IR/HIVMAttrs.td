@@ -91,6 +91,7 @@ def HIVM_DataLayoutDotCND : I32EnumAttrCase<"DOTC_ND", 3, "dotC_ND">;
 def HIVM_DataLayoutnZ : I32EnumAttrCase<"nZ", 4, "nZ">;
 def HIVM_DataLayoutzN : I32EnumAttrCase<"zN", 5, "zN">;
 def HIVM_DataLayoutND : I32EnumAttrCase<"ND", 6, "ND">;
+def HIVM_DataLayoutFractal : I32EnumAttrCase<"Fractal", 7, "Fractal">;
 
 def HIVM_DataLayoutEnum : HIVM_I32Enum<
   "DataLayout", "HIVM data layout", [
@@ -99,14 +100,15 @@ def HIVM_DataLayoutEnum : HIVM_I32Enum<
     HIVM_DataLayoutDotCND,
     HIVM_DataLayoutnZ,
     HIVM_DataLayoutzN,
-    HIVM_DataLayoutND
+    HIVM_DataLayoutND,
+    HIVM_DataLayoutFractal
   ]>;
 
 def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
   let parameters = (ins
     EnumParameter<HIVM_DataLayoutEnum>:$data_layout,
-    OptionalParameter<"std::optional<bool>">:$transpose,
-    OptionalParameter<"std::optional<DenseI64ArrayAttr>">:$fractalSizes
+    OptionalParameter<"BoolAttr">:$transpose,
+    OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
   );
   let description = [{
     HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
@@ -114,13 +116,33 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
                      Only valid and must be present for DOTA_ND and DOTB_ND layout.
   }];
   let builders = [
-    AttrBuilder<(ins "hivm::DataLayout":$data_layout)>,
-    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose)>
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
+      return $_get($_ctxt, data_layout, BoolAttr(), DenseI64ArrayAttr());
+    }]>,
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose), [{
+      BoolAttr transposeAttr = transpose.has_value()
+          ? BoolAttr::get($_ctxt, *transpose)
+          : BoolAttr();
+      return $_get($_ctxt, data_layout, transposeAttr, DenseI64ArrayAttr());
+    }]>
   ];
-  let genVerifyDecl = 1;
-  let assemblyFormat = [{
-    `<` $data_layout (`,` `transpose` `=` $transpose^)? (`,` `fractalSizes` `=` $fractalSizes^)?`>`
+  let extraClassDeclaration = [{
+    /// Returns the fractal sizes as a SmallVector, or std::nullopt if not set.
+    std::optional<SmallVector<int64_t>> getFractalSizesArray() const {
+      if (auto attr = getFractalSizes())
+        return SmallVector<int64_t>(attr.asArrayRef());
+      return std::nullopt;
+    }
+
+    /// Returns the transpose value as std::optional<bool>.
+    std::optional<bool> getTransposeValue() const {
+      if (auto attr = getTranspose())
+        return attr.getValue();
+      return std::nullopt;
+    }
   }];
+  let genVerifyDecl = 1;
+  let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
 }
 
 //===----------------------------------------------------------------------===//
