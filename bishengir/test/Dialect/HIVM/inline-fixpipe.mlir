@@ -1,7 +1,6 @@
 // RUN: bishengir-opt -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 
-// -----
 // CHECK: func.func @matmul
 func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {global_kernel = "local"} {
     %c128 = arith.constant 128 : index

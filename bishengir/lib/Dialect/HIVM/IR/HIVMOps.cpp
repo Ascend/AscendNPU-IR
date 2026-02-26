@@ -71,33 +71,25 @@ int64_t AddressSpaceAttr::getRelativeIndex() const {
 LogicalResult
 DataLayoutAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
                        hivm::DataLayout data_layout,
-                       std::optional<bool> transpose,
-                       std::optional<DenseI64ArrayAttr> fractalSizes) {
+                       BoolAttr transpose,
+                       DenseI64ArrayAttr fractalSizes) {
+  // ND is transpose agnostic
+  if (data_layout == hivm::DataLayout::ND)
+    return success();
+
   // Transpose option should and must be set for DOTA_ND and DOTB_ND layout.
   if (data_layout == hivm::DataLayout::DOTA_ND ||
       data_layout == hivm::DataLayout::DOTB_ND) {
-    if (!transpose.has_value())
+    if (transpose == nullptr)
       return emitError() << "'transpose' must be set if data layout is "
-                            "DOTA_ND or DOTB_ND";
+             "DOTA_ND or DOTB_ND";
     return success();
   }
-  if (transpose.has_value())
+
+  if (transpose != nullptr)
     return emitError() << "'transpose' is only valid if data layout is "
-                          "DOTA_ND or DOTB_ND";
+           "DOTA_ND or DOTB_ND or ND like";
   return success();
-}
-
-DataLayoutAttr DataLayoutAttr::get(MLIRContext *context,
-                                   hivm::DataLayout data_layout) {
-  return DataLayoutAttr::get(context, data_layout, /*transpose*/ std::nullopt,
-                             /*fractalSizes*/ std::nullopt);
-}
-
-DataLayoutAttr DataLayoutAttr::get(MLIRContext *context,
-                                   hivm::DataLayout data_layout,
-                                   std::optional<bool> isTranspose) {
-  return DataLayoutAttr::get(context, data_layout, /*transpose*/ isTranspose,
-                             /*fractalSizes*/ std::nullopt);
 }
 
 //===----------------------------------------------------------------------===//
@@ -372,6 +364,54 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
                           /*elidedAttrs=*/{"operandSegmentSizes"});
   printDPSInputOutputs(p, inputs, outputs);
   printDPSResults(p, op->getResultTypes());
+}
+
+//===----------------------------------------------------------------------===//
+// ConvertLayoutOp
+//===----------------------------------------------------------------------===//
+
+void ConvertLayoutOp::build(OpBuilder &builder, OperationState &result,
+                            Type resultType, Value source,
+                            DataLayoutAttr srcLayout,
+                            DataLayoutAttr dstLayout,
+                            ArrayRef<OpFoldResult> outputShape) {
+  SmallVector<Value> dynamicDims;
+  SmallVector<int64_t> staticDims;
+  dispatchIndexOpFoldResults(outputShape, dynamicDims, staticDims);
+  build(builder, result, resultType, source, srcLayout, dstLayout,
+        staticDims, dynamicDims);
+}
+
+void ConvertLayoutOp::build(OpBuilder &builder, OperationState &result,
+                            Type resultType, Value source,
+                            DataLayoutAttr srcLayout,
+                            DataLayoutAttr dstLayout) {
+  auto staticDims = cast<ShapedType>(resultType).getShape();
+  build(builder, result, resultType, source, srcLayout, dstLayout,
+        staticDims, {});
+}
+
+LogicalResult ConvertLayoutOp::verify() {
+  // Verify that the number of dynamic dims matches the number of kDynamic
+  // entries in static_output_shape
+  auto elementType = getElementTypeOrSelf(getResult());
+
+  // Verify operand's element type matches first result's element type.
+  for (auto operand : getOperands()) {
+    if (!isa<ShapedType>(operand.getType())) continue;
+    if (getElementTypeOrSelf(operand) != elementType)
+      return emitOpError(
+          "requires the same element type for all operands and results");
+  }
+  size_t numDynamic = llvm::count_if(getStaticOutputShape(), [](int64_t dim) {
+    return ShapedType::isDynamic(dim);
+  });
+  if (numDynamic != getOutputShape().size()) {
+    return emitOpError("expected ")
+           << numDynamic << " dynamic dimensions but got "
+           << getOutputShape().size();
+  }
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

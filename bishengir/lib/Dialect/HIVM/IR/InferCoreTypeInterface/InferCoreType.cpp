@@ -128,11 +128,14 @@ std::optional<TCoreType> CustomOp::inferCoreType() {
 }
 
 std::optional<TCoreType> ConvertLayoutOp::inferCoreType() {
-  BaseMemRefType srcMemRefTy = getSource().getType();
-  hivm::AddressSpace addrSpace =
-      static_cast<hivm::AddressSpace>(srcMemRefTy.getMemorySpaceAsInt());
-
   TCoreType result = TCoreType::CUBE_OR_VECTOR;
+
+  std::optional<hivm::AddressSpace> addrSpace =
+      getOptionalHIVMAddressSpace(getSource().getType());
+  if (!addrSpace) {
+    return result;
+  }
+
   if (addrSpace == hivm::AddressSpace::UB) {
     result = TCoreType::VECTOR;
   } else if (addrSpace == hivm::AddressSpace::L1 ||

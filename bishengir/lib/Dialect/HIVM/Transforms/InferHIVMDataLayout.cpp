@@ -166,6 +166,13 @@ void DataLayoutInferAndPropagateHelper::map(Value oldValue, Value newValue,
   (void)updateLayoutIfChanged(newValue, LayoutInfo{newLayout, newLayout});
 }
 
+/// Retrieves a value converted to the requested layout.
+/// If the value's current layout differs from the requested layout, this
+/// function looks up the rewritten value or creates a ConvertLayoutOp.
+/// @param value The original value.
+/// @param layout The desired data layout.
+/// @return The value with the requested layout, or the original value if
+///         conversion is not possible or not needed.
 Value DataLayoutInferAndPropagateHelper::getValueAs(Value value,
                                                     DataLayoutAttr layout) {
   if (!layout) {
@@ -181,7 +188,8 @@ Value DataLayoutInferAndPropagateHelper::getValueAs(Value value,
   }
   LayoutInfo info = layoutIt->second;
   // If current value's layout is already the requested layout, return.
-  if (info.currentLayout == layout) {
+  // TODO: might wanna check the fractal sizes(?)
+  if (info.currentLayout.getDataLayout() == layout.getDataLayout()) {
     return value;
   }
   // Get current value's mapped to its target layout.
@@ -225,14 +233,14 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutShape(
   auto conversionKind = kSupportedConversion.at(std::make_pair(
       info.currentLayout.getDataLayout(), info.targetLayout.getDataLayout()));
   SmallVector<int64_t> kBlockSizes;
-  auto fractalSizes = info.targetLayout.getFractalSizes();
+  auto fractalSizes = info.targetLayout.getFractalSizesArray();
   if (fractalSizes.has_value()) {
-    for (int64_t kBlockSize :
-         info.targetLayout.getFractalSizes().value().asArrayRef()) {
+    for (int64_t kBlockSize : *fractalSizes) {
+ 
       kBlockSizes.push_back(kBlockSize);
     }
   }
-  std::optional<bool> srcTransposeInfo = info.currentLayout.getTranspose();
+  std::optional<bool> srcTransposeInfo = info.currentLayout.getTransposeValue();
   SmallVector<Value> transCurrentShape(currentShape);
   if (srcTransposeInfo.has_value() && srcTransposeInfo.value()) {
     auto srcRank = transCurrentShape.size();
@@ -264,15 +272,15 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutOffset(
   auto conversionKind = kSupportedConversion.at(std::make_pair(
       info.currentLayout.getDataLayout(), info.targetLayout.getDataLayout()));
   SmallVector<int64_t> kBlockSizes;
-  auto fractalSizes = info.targetLayout.getFractalSizes();
+  auto fractalSizes = info.targetLayout.getFractalSizesArray();
   if (fractalSizes.has_value()) {
-    for (int64_t kBlockSize :
-         info.targetLayout.getFractalSizes().value().asArrayRef()) {
+    for (int64_t kBlockSize : fractalSizes.value()) {
+ 
       kBlockSizes.push_back(kBlockSize);
     }
   }
-
-  std::optional<bool> srcTransposeInfo = info.currentLayout.getTranspose();
+ 
+  std::optional<bool> srcTransposeInfo = info.currentLayout.getTransposeValue();
   SmallVector<Value> transCurrentOffset(currentOffset);
   if (srcTransposeInfo.has_value() && srcTransposeInfo.value()) {
     auto srcRank = transCurrentOffset.size();
@@ -455,6 +463,10 @@ DataLayoutInferAndPropagateHelper::createLayoutConversion(
 // Init Anchor Layout
 //===----------------------------------------------------------------------===//
 
+/// Initializes layout information for anchor operations.
+/// Walks through the function to find operations implementing
+/// OpWithLayoutInterface and extracts their operand layout requirements.
+/// Also handles PointerCastOp results and function arguments with GM space.
 void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
   LLVM_DEBUG(
       llvm::dbgs()
@@ -469,12 +481,13 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
           opWithLayout.getOperandsTargetLayout();
       assert(currentLayoutMap.size() == targetLayoutMap.size());
       for (auto operand : op->getOperands()) {
-        if (!isa<BaseMemRefType>(operand.getType()))
+        if (!isa<MemRefType>(operand.getType()))
           continue;
         // Ops that implement OpWithLayoutInterface should ensure that every
         // operand with memref type has a corresponding data layout.
         auto currentLayout = currentLayoutMap[operand];
         auto targetLayout = targetLayoutMap[operand];
+        LLVM_DEBUG(llvm::dbgs() << targetLayout << "\n";);
         // Layout Information is appended on to the root alloc.
         FailureOr<memref::AllocOp> status = getMemRefAlloc(operand);
         if (failed(status)) {
@@ -516,6 +529,10 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
 //===----------------------------------------------------------------------===//
 // Propagate Layout
 //===----------------------------------------------------------------------===//
+
+/// Propagates layout information from anchor operations to their users.
+/// Uses a worklist algorithm to iteratively propagate layout info through
+/// the def-use chain until a fixed point is reached.
 void DataLayoutInferAndPropagateHelper::propagateLayout() {
   LLVM_DEBUG(
       llvm::dbgs()
@@ -526,13 +543,19 @@ void DataLayoutInferAndPropagateHelper::propagateLayout() {
     queue.push_back(it.first);
   while (!queue.empty()) {
     Value currentValue = queue.back();
-    LayoutInfo info = layout_info_[currentValue];
+    LayoutInfo info = layout_info_.lookup(currentValue);
     queue.pop_back();
     SmallVector<Value> changed = propagateDataLayoutToUsers(currentValue, info);
     queue.insert(queue.end(), changed.begin(), changed.end());
   }
 }
 
+/// Propagates data layout information to users of a value.
+/// Handles various operation types including SelectOp, ForOp, ViewLikeOps,
+/// and YieldOp with special handling for scf::IfOp.
+/// @param val The value whose layout should be propagated.
+/// @param info The layout information to propagate.
+/// @return Vector of values whose layouts were changed (for further propagation).
 SmallVector<Value>
 DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
     Value val, const LayoutInfo &info) {
@@ -564,16 +587,22 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
   return changed;
 }
 
+/// Updates the layout information for a value if it has changed.
+/// @param value The value to update.
+/// @param info The new layout information.
+/// @return True if the layout was updated, false if unchanged.
 bool DataLayoutInferAndPropagateHelper::updateLayoutIfChanged(
     Value value, const LayoutInfo &info) {
+
   if (layout_info_.contains(value) && layout_info_.lookup(value) == info) {
+    LDBG("Not updating, layout_info_ for " << value << " exists");
     return false;
   }
   layout_info_[value] = info;
   LLVM_DEBUG(llvm::dbgs() << "  Value [" << value << "] Current layout is: "
-                          << info.currentLayout.getDataLayout()
+                          << info.currentLayout
                           << ", Target layout is: "
-                          << info.targetLayout.getDataLayout() << "\n";);
+                          << info.targetLayout << "\n";);
   return true;
 }
 
@@ -612,9 +641,9 @@ void DataLayoutInferAndPropagateHelper::resolveConflicts() {
         continue;
       }
       LLVM_DEBUG(llvm::dbgs() << "        Current layout is: "
-                              << info.currentLayout.getDataLayout()
+                              << info.currentLayout
                               << ", Target layout is: "
-                              << info.targetLayout.getDataLayout() << "\n";);
+                              << info.targetLayout << "\n";);
       if (!isConversionValid(info)) {
         emitError(currentValue.getLoc(),
                   "        Failed to resolve data layout conflicts!\n");
@@ -678,6 +707,7 @@ void DataLayoutInferAndPropagateHelper::rewriteRegion(Region &region) {
             LLVM_DEBUG(llvm::dbgs() << "  Remapping op: " << op << "\n";);
             first_remap = false;
           }
+          LDBG("Get value of val: " << val);
           op.setOperand(operand.getOperandNumber(),
                         getValueAs(val, targetLayout));
         }
@@ -751,13 +781,15 @@ DataLayoutInferAndPropagateHelper::rewriteAllocOp(memref::AllocOp op) {
   OpBuilder builder(op);
   Location loc = op.getLoc();
   auto srcType = op.getType();
-  if (srcType.getRank() != 2 && srcType.getRank() != 3)
-    llvm_unreachable("Unsupported source shape in mad operand subview");
+  auto layoutInfo = layout_info_.lookup(op.getMemref());
+  if (srcType.getRank() != 2 && srcType.getRank() != 3) {
+    map(op.getMemref(), op.getMemref(), layoutInfo.targetLayout);
+    return op;
+  }
   // Extract mix-typed shape from AllocOp.
   auto shape = getValueFromShape(op, builder);
   assert(succeeded(shape));
   // Compute the new shape after layout conversion.
-  auto layoutInfo = layout_info_.lookup(op.getMemref());
 
   auto newShape = computeTargetLayoutShape(*shape, layoutInfo, builder, loc);
   if (failed(newShape)) {
@@ -781,8 +813,11 @@ Operation *
 DataLayoutInferAndPropagateHelper::rewriteSubViewOp(memref::SubViewOp op) {
   auto src = op.getViewSource();
   auto srcType = op.getSourceType();
-  if (srcType.getRank() != 2 && srcType.getRank() != 3)
-    llvm_unreachable("Unsupported source shape in mad operand subview");
+  auto layoutInfo = layout_info_.lookup(src);
+  if (srcType.getRank() != 2 && srcType.getRank() != 3) {
+    map(op.getResult(), op.getResult(), layoutInfo.targetLayout);
+    return op;
+  }
   int batchIndexBias = (srcType.getRank() == 3 ? 1 : 0);
   auto strideIsOne = [](int64_t stride) { return stride == 1; };
   if (!std::all_of(op.getStaticStrides().begin() + batchIndexBias,
@@ -791,7 +826,6 @@ DataLayoutInferAndPropagateHelper::rewriteSubViewOp(memref::SubViewOp op) {
                                "with continuous strides!\n";);
     return nullptr;
   }
-  auto layoutInfo = layout_info_.lookup(src);
   auto rewrittenValue = getValueAs(src, layoutInfo.targetLayout);
   OpBuilder builder(op);
   Location loc = op.getLoc();
