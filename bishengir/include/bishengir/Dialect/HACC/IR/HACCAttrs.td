@@ -23,6 +23,7 @@
 #define BISHENGIR_DIALECT_HACC_IR_HACCATTRS_TD
 
 include "bishengir/Dialect/HACC/IR/HACCBase.td"
+include "bishengir/Dialect/HACC/IR/HACCInterfaces.td"
 
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/EnumAttr.td"
@@ -277,7 +278,11 @@ def HACCTargetDeviceSpecTrait
 
 def HACC_TargetDeviceSpecAttr :
     HACC_Attr<"TargetDeviceSpec", "target_device_spec",
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
               [TargetDeviceSpecTrait, HACCTargetDeviceSpecTrait]> {
+#else
+              [DeclareAttrInterfaceMethods<TargetDeviceSpecInterface>, DeclareAttrInterfaceMethods<DLTIQueryInterface>, HACCTargetDeviceSpecInterface]> {
+#endif
   let summary = "An attribute to represent NPU target device specification.";
   let description = [{
     Each device specification describes a single device and its

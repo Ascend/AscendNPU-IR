@@ -71,4 +71,15 @@ hacc::TargetDeviceSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+#ifdef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
+::mlir::FailureOr<::mlir::Attribute> 
+mlir::hacc::TargetDeviceSpecAttr::query(::mlir::DataLayoutEntryKey key) const {
+  for (const auto& entry : getEntries()) {
+    if (entry.getKey() == key)
+      return entry.getValue();
+  }
+  return ::mlir::failure();
+}
+#endif
+
 #include "bishengir/Dialect/HACC/IR/HACCBaseDialect.cpp.inc"

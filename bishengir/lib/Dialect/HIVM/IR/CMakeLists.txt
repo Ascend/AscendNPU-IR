@@ -58,8 +58,5 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRTensorDialect
   MLIRViewLikeInterface
   BiShengIRDialectUtils
+  BiShengIRHACCDialect
 )
-
-if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  target_link_libraries(obj.BiShengIRHIVMDialect PUBLIC BiShengIRHACCDialect)
-endif()

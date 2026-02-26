@@ -42,9 +42,7 @@ def HIVM_Dialect : Dialect {
   let dependentDialects = [
     "arith::ArithDialect", "bishengir::memref_ext::MemRefExtDialect",
     "math::MathDialect", "memref::MemRefDialect",
-#ifndef BISHENGIR_BUILD_STANDALONE_IR_ONLY
     "hacc::HACCDialect",
-#endif
     "tensor::TensorDialect"
   ];
   let hasCanonicalizer = 1;

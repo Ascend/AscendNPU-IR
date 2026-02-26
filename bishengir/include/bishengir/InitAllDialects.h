@@ -31,13 +31,13 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
-#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/DecomposeOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
@@ -63,14 +63,9 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
-                  bishengir::memref_ext::MemRefExtDialect>();
+                  bishengir::memref_ext::MemRefExtDialect,
+                  mlir::hacc::HACCDialect>();
   // clang-format on
-
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  // clang-format off
-  registry.insert<mlir::hacc::HACCDialect>();
-  // clang-format on
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   // clang-format off

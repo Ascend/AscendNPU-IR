@@ -17,9 +17,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/HACC/IR/HACC.h"
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
