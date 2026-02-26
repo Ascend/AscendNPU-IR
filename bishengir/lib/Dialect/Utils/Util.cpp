@@ -428,7 +428,7 @@ getTensorOrMemrefDynSizes(OpBuilder &builder, Location loc, Value source,
 
 inline bool isPureStatic(ArrayRef<OpFoldResult> mixedValues) {
   return llvm::all_of(mixedValues,
-                      [](OpFoldResult x) { return x.is<Attribute>(); });
+                      [](OpFoldResult x) { return isa<Attribute>(x); });
 }
 
 inline void markDynShapeAlloc(OpBuilder &builder, Value source,
