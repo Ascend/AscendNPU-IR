@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -1227,6 +1228,39 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
     auto *forOp2 = llvm::dyn_cast<Loop>(waitOcc->op);
     if (forOp1 != nullptr && forOp2 != nullptr) {
       if (forOp1->multibufferUnrollNum && forOp2->multibufferUnrollNum) {
+        setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
+        waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
+      }
+    }
+  }
+
+  // - for the case of cv-pipelining:
+  // scope(){
+  //   op1
+  // } {preload=x}
+  // setOcc
+  // waitOcc
+  // scope(){
+  //   op2
+  // } {preload=x}
+  // - and fix it to be:
+  // scope(){
+  //   op1
+  //   setOcc
+  // } {preload=x}
+  // scope(){
+  //   waitOcc
+  //   op2
+  // } {preload=x}
+  if (options.isCrossCoreMode()) {
+    assert(setOcc->op != nullptr && waitOcc->op != nullptr);
+    auto scopeScopeOp1 =
+        llvm::dyn_cast_if_present<scope::ScopeOp>(setOcc->op->op);
+    auto scopeScopeOp2 =
+        llvm::dyn_cast_if_present<scope::ScopeOp>(waitOcc->op->op);
+    if (scopeScopeOp1 != nullptr && scopeScopeOp2 != nullptr) {
+      if (scopeScopeOp1->hasAttr(kPreLoadAttrName) &&
+          scopeScopeOp2->hasAttr(kPreLoadAttrName)) {
         setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
         waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
       }
