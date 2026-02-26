@@ -1,6 +1,6 @@
 # Cube-Vector优化
 
-## 1. CV融合编译基础能力
+## 1. 功能介绍
 
 本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Ascend 910B 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
@@ -32,12 +32,13 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 |------|------|-------------------|
 | **Cube** | 矩阵乘单元，执行 `mmadL1`、`batchMmadL1` 等矩阵运算 | 24 个 AI Core |
 | **Vector** | 向量运算单元，执行 `vadd`、`vcast`、`vreduce` 等向量运算 | 48 个 AI Core |
-| **L0C** | Cube 输出缓冲，存放矩阵乘结果 | ~1MB（1048576 bit） |
-| **L0A/L0B** | Cube 输入缓冲 | 各 ~512KB |
-| **UB** | 统一缓冲，Vector 运算主存 | ~1.5MB，256 bit 对齐 |
+| **L0C** | Cube 输出缓冲，存放矩阵乘结果 | 128KB |
+| **L0A/L0B** | Cube 输入缓冲 | 64KB |
+| **UB** | 统一缓冲，Vector 运算主存 |256KB |
 | **GM** | 全局内存 | 外部 DDR |
 
-**fixpipe** 是 Cube 与 Vector 之间的数据搬运通道：Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 UB，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。
+**fixpipe** 是 Cube 与 Vector 之间的数据搬运通道，昇腾芯片的 **Cube**和**Vector**底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说， Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 GM，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。910系列的芯片架构如下
+![V220架构](./cvarch.png)
 
 ### 1.3 Mix 内核与 CV 优化目标
 
@@ -51,122 +52,9 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 
 ---
 
-### 2. CV 优化 Pass Pipeline 总览
+## 2. 接口说明 
 
-CV 相关 pass 主要位于 HIVM **预 bufferization** 优化阶段（`hivmPreBufferizationOptimizationPipeline`）。所谓「预 bufferization」指：此时 IR 仍以 **tensor**（逻辑多维数组）为主，尚未把 tensor 全部转换为带物理地址的 **memref**；CV 优化先在这一阶段完成「结构变换」（fixpipe 插入、workspace 分配、Mix 拆分等），后续再进行 bufferization 和针对 memref 的优化。因此阅读各 pass 文档时，会频繁看到「tensor.empty」「tensor 的 slice」等表述。
-
-整体顺序如下：
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     hivmPreBufferizationOptimizationPipeline                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  1. createNormalizeMatmulPass                                                │
-│  2. createInlineFixpipePass                                                  │
-│  3. createTileBatchMMIntoLoopPass                                            │
-│  4. createInsertLoadStoreForMixCVPass  (若 enableAutoCVWorkSpaceManage)      │
-│  5. createInsertWorkSpaceForMixCVPass                                        │
-│  6. createBindWorkSpaceArgPass                                               │
-│ 7. ... (InferFuncCoreType, MarkMultiBuffer, CVPipelining, TileCubeVectorLoop)│
-│ 8. createPlanMemoryPass                (GLOBAL_WORKSPACE_PLAN 模式)         │
-│ 9. hivmCrossCoreSyncPipeline           (InjectBlockSync 等)                 │
-│ 10. createSplitMixKernelPass                                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 3. 各 Pass 在 CV 优化中的作用
-
-### 3.1 createNormalizeMatmulPass
-
-- **作用**：规范化 `hivm.hir.mmadL1`、`hivm.hir.batchMmadL1` 的 M/K/N 维度、init 条件及 per-channel add 形式
-- **目的**：统一 matmul 的 IR 形态，便于后续 fixpipe 插入、tiling 等 pass 匹配与变换
-- **典型变换**：将 vbrc + vadd 形式的 bias 内联进 mmadL1 的 init；提取真实 M/K/N 并替换常量；处理 PerChannel 场景
-
-### 3.2 createInlineFixpipePass
-
-- **作用**：在 mmadL1/batchMmadL1 与 store 之间插入 `hivm.hir.fixpipe`，将 store+vcast 等合并进 fixpipe 的量化/激活选项
-- **目的**：显式表达 Cube 到 Vector 的数据搬运，使后续 workspace 分配、load/store 插入有明确插入点
-- **典型变换**：在 mmadL1 结果到 store 的 use 链上插入 fixpipe；将 vcast(f32->f16) 等融合为 fixpipe 的 `pre_quant = F322F16`
-
-### 3.3 createTileBatchMMIntoLoopPass
-
-- **作用**：将 `hivm.hir.batchMmadL1` 沿 batch 维度展开为 `scf.for` 循环，每次迭代执行单次 `mmadL1` 和 fixpipe
-- **目的**：将 batch 维拆成循环，使 load/fixpipe/store 等可以按 batch 索引访问，便于 workspace 管理和流水
-- **典型变换**：batchMmadL1 + fixpipe 被改写为循环内的 mmadL1 + fixpipe，对输入/输出做 extract_slice / insert_slice
-
-### 3.4 createInsertWorkSpaceForMixCVPass
-
-- **作用**：在 Cube-Vector 交汇点（CC/CV/VC/VV）用 `memref_ext.alloc_workspace` 替换 `tensor.empty`
-- **目的**：将 fixpipe 输出、store 输出等中间 buffer 改为从全局 workspace 分配，实现跨迭代、跨核共享
-- **匹配模式**：CC（mmadL1→fixpipe→load→mmadL1）、CV（mmadL1→fixpipe→load→vector）、VC（vector→store→load→mmadL1）、VV（vector→store→load→vector）
-
-### 3.5 createBindWorkSpaceArgPass
-
-- **作用**：将函数内的 `memref_ext.alloc_workspace` 绑定到函数的 workspace 参数（`hacc.arg_type = #hacc.arg_type<workspace>`）
-- **目的**：统一 workspace 来源，使运行时通过参数传入 workspace 指针，实现多 kernel 共享一块 workspace
-- **前置条件**：函数需有 workspace 参数；InsertWorkSpaceForMixCV 已插入 alloc_workspace
-
-### 3.6 createPlanMemoryPass
-
-- **作用**：在 `GLOBAL_WORKSPACE_PLAN` 模式下，对 `memref_ext.alloc_workspace` 进行内存规划，将 alloc 替换为 `hivm.hir.pointer_cast` + 偏移
-- **目的**：在给定 workspace 基址上，按 liveness 与 inplace 规则分配偏移，最大化复用、减少总 workspace 大小
-- **典型变换**：多个 alloc_workspace 被映射到同一块 workspace 的不同偏移；冲突的 buffer 分配不同偏移
-
-### 3.7 createSplitMixKernelPass
-
-- **作用**：将 Mix 内核拆分为 AIC（Cube 主）和 AIV（Vector 主）两个子函数，并生成 mix entry
-- **目的**：后端可按 AIC/AIV 分别调度到 Cube/Vector 核心，便于流水与同步
-- **典型变换**：根据 core type 遍历 IR，将 Cube 相关代码放入 AIC，Vector 放入 AIV；用 `annotation.mark` 标记跨核传递的 tensor
-
----
-
-## 4. 与其他 CV 相关 Pass 的关系
-
-| Pass | 说明 |
-|------|------|
-| **createInsertLoadStoreForMixCVPass** | 在 Cube-Vector 交汇处插入 load/store，使数据在 tensor 与 workspace 间正确流转 |
-| **createCVPipeliningPass** | 对 Cube 与 Vector 循环做软件流水，产生带 `hivm.loop_core_type` 的循环 |
-| **createTileCubeVectorLoopPass** | 对 CVPipelining 后的 Cube/Vector 循环再做子循环 tiling |
-| **createMarkMultiBufferPass** | 标记可多 buffer 的 workspace，供流水使用 |
-| **createInjectBlockSyncPass** | 在跨核数据依赖处插入 block sync |
-
----
-
-## 5. 数据流与典型模式
-
-### 5.1 纯 Cube 到 Store
-
-```
-mmadL1 -> fixpipe -> store
-```
-
-InlineFixpipe 负责插入 fixpipe；若输出到 GM，则 fixpipe 的 dst 为 tensor，后续 bufferization 转为 memref。
-
-### 5.2 Cube-Vector 混合（CV 模式）
-
-```
-mmadL1 -> fixpipe -> load -> vadd/vcast/... -> store
-```
-
-InsertWorkSpaceForMixCV 将 fixpipe 的 outs 从 tensor.empty 改为 alloc_workspace；InsertLoadStoreForMixCV 在 fixpipe 与 vector 之间插入 load；PlanMemory 对 workspace 做偏移规划。
-
-### 5.3 Batch Matmul + Vector（tile 后）
-
-```
-for batch_idx:
-  mmadL1(extract_slice(a), extract_slice(b)) -> fixpipe(extract_slice(workspace))
-  load(workspace) -> vadd -> store
-```
-
-TileBatchMMIntoLoop 将 batchMmadL1 展开为循环；InsertWorkSpaceForMixCV 为 fixpipe 输出分配 workspace；BindWorkSpaceArg 绑定 workspace 参数；PlanMemory 规划 workspace 布局。
-
----
-
-## 6. 快速上手与问题定位
-
-### 6.1 验证单个 Pass
+验证单个 Pass
 
 ```bash
 bishengir-opt -hivm-normalize-matmul input.mlir -o output.mlir
@@ -178,7 +66,203 @@ bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir
 bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 ```
 
-### 6.2 测试用例路径
+---
+
+## 3. 算法原理 
+
+### 3.1 createNormalizeMatmulPass
+
+- **作用**：规范化 `hivm.hir.mmadL1`、`hivm.hir.batchMmadL1` 的 M/K/N 维度、init 条件及 per-channel add 形式
+- **目的**：统一 matmul 的 IR 形态，便于后续 fixpipe 插入、tiling 等 pass 匹配与变换
+- **典型变换**：将 vbrc + vadd 形式的 bias 内联进 mmadL1 的 init；提取真实 M/K/N 并替换常量；处理 PerChannel 场景
+- **典型场景**： elementwise累加
+
+before:
+```
+%2 = ops // not 0 const
+%3 = hivm.hir.mmadL1 ins(*)
+       outs(%2 : tensor<16x32xf32>) -> tensor<16x32xf32>
+```
+after
+```
+%2 = ops
+%3 = tensor.empty() : tensor<16x32xf32>
+%4 = hivm.hir.mmadL1 ins(*)
+        outs(%3 : tensor<16x32xf32>) -> tensor<16x32xf32>
+%5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 :
+tensor<16x32xf32>)
+```
+
+### 3.2 createInlineFixpipePass
+
+- **作用**：在 mmadL1/batchMmadL1 与 store 之间插入 `hivm.hir.fixpipe`，将 store+vcast 等合并进 fixpipe 的量化/激活选项
+- **目的**：显式表达 Cube 到 Vector 的数据搬运，使后续 workspace 分配、load/store 插入有明确插入点
+- **典型变换**：在 mmadL1 结果到 store 的 use 链上插入 fixpipe；将 vcast(f32->f16) 等融合为 fixpipe 的 `pre_quant = F322F16`。
+- **典型场景**： 纯 Cube 到 Store
+
+before:
+```
+mmadL1 -> store
+```
+after
+```
+mmadL1 -> fixpipe
+```
+InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试inline op,如hivm.vcast/hivm.vrelu/hivm.store。
+
+### 3.3 createTileBatchMMIntoLoopPass
+
+- **作用**：将 `hivm.hir.batchMmadL1` 沿 batch 维度展开为 `scf.for` 循环，每次迭代执行单次 `mmadL1` 和 fixpipe
+- **目的**：将 batch 维拆成循环，使 load/fixpipe/store 等可以按 batch 索引访问，便于 workspace 管理和流水
+- **典型变换**：TileBatchMMIntoLoop 将 batchMmadL1 展开为循环
+before:
+```
+batchmmadL1 a : [batch, m ,k], b[batch, k, n]
+fixpipe workspace : [batch, m, n]
+```
+after
+```
+for batch_idx in range(batch):
+  mmadL1(extract_slice(a), extract_slice(b))
+  fixpipe(extract_slice(workspace))
+```
+
+### 3.4 createInsertLoadStoreForMixCVPass
+- **作用**：在 Cube-Vector 交汇处插入 load/store，使数据在 tensor 与 workspace 间正确流转
+- **目的**：保证CV之间数据的正确传递
+- **典型变换**：batchMmadL1 + fixpipe 被改写为循环内的 mmadL1 + fixpipe，对输入/输出做 extract_slice / insert_slice
+- **典型场景**：Cube-Vector 混合（CV 模式）
+
+before:
+```
+mmadL1
+fixpipe
+vadd
+```
+after
+```
+mmadL1
+fixpipe
+load
+vadd
+```
+
+### 3.4 createInsertWorkSpaceForMixCVPass
+
+- **作用**：在 Cube-Vector 交汇点（CC/CV/VC/VV）用 `memref_ext.alloc_workspace` 替换 `tensor.empty`
+- **目的**：将 fixpipe 输出、store 输出等中间 buffer 改为从全局 workspace 分配，实现跨迭代、跨核共享
+- **匹配模式**：CC（mmadL1→fixpipe→load→mmadL1）、CV（mmadL1→fixpipe→load→vector）、VC（vector→store→load→mmadL1）、VV（vector→store→load→vector）
+- **典型场景**：Cube-Vector 混合（CV 模式）
+before：
+```
+%1 = mmadL1
+%2 = tensor.empty() 
+%3 = fixpipe ins(%1) outs(%2)
+%4 = load ins(%3)
+vadd (%4)
+```
+after：
+```
+%1 = mmadL1
+%2 = memref_ext.alloc_workspace()
+%3 =  bufferization.to_tensor(%2)
+%4 = fixpipe ins(%1) outs(%3)
+%5 = load ins(%4)
+vadd (%5)
+```
+
+### 3.5 createBindWorkSpaceArgPass
+
+- **作用**：将函数内的 `memref_ext.alloc_workspace` 绑定到函数的 workspace 参数（`hacc.arg_type = #hacc.arg_type<workspace>`）
+- **目的**：统一 workspace 来源，使运行时通过参数传入 workspace 指针，实现多 kernel 共享一块 workspace
+- **前置条件**：函数需有 workspace 参数；InsertWorkSpaceForMixCV 已插入 alloc_workspace
+- **典型场景**：Cube-Vector 混合（CV 模式）
+before：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+  memref_ext.alloc_workspace() : memref<100xi32>
+  return
+}
+```
+after：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+  memref_ext.alloc_workspace() from %arg1 : memref<100xi32>
+  return
+}
+```
+
+### 3.6 createPlanMemoryPass
+
+- **作用**：在 `GLOBAL_WORKSPACE_PLAN` 模式下，对 `memref_ext.alloc_workspace` 进行内存规划，将 alloc 替换为 `hivm.hir.pointer_cast` + 偏移
+- **目的**：在给定 workspace 基址上，按 liveness 与 inplace 规则分配偏移，最大化复用、减少总 workspace 大小
+- **典型变换**：多个 alloc_workspace 被映射到同一块 workspace 的不同偏移；冲突的 buffer 分配不同偏移
+before：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+  memref_ext.alloc_workspace() from %arg1 : memref<100xi32>
+  return
+}
+```
+after：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+  memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
+  return
+}
+```
+
+### 3.7 createSplitMixKernelPass
+
+- **作用**：将 Mix 内核拆分为 AIC（Cube 主）和 AIV（Vector 主）两个子函数，并生成 mix entry
+- **目的**：后端可按 AIC/AIV 分别调度到 Cube/Vector 核心，便于流水与同步
+- **典型变换**：根据 core type 遍历 IR，将 Cube 相关代码放入 AIC，Vector 放入 AIV；用 `annotation.mark` 标记跨核传递的 tensor
+before：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<MIX>){
+  mmadl1
+  memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
+  fixpipe
+  load
+  vadd
+}
+```
+after：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<AIC>){
+  mmadl1
+  memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
+  fixpipe
+}
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<AIV>){
+  load
+  vadd
+}
+```
+
+---
+
+
+## 4. 快速上手与问题定位
+
+### 4.1 测试用例路径
 
 - `bishengir/test/Dialect/HIVM/normalize-matmul.mlir`
 - `bishengir/test/Dialect/HIVM/inline-fixpipe.mlir`
@@ -188,20 +272,25 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 - `bishengir/test/Dialect/HIVM/plan-memory.mlir`
 - `bishengir/test/Dialect/HIVM/split-mix-kernel.mlir`
 
-### 6.3 常见问题定位
+### 4.2 常见问题定位
+#### 4.2.1 copy op报错
+报错信息如下：
+```
+error: 'hivm.hir.copy' op Unsupported copy from cbuf to cbuf!
+error: 'hivm.hir.copy' op Unsupported copy from gm to gm!
+```
+一般常见的原因：
+- workspace插入不正确， 可以单点调试 InsertWorkSpaceForMixCV
+  - 确认数据流符合 CC/CV/VC/VV 之一（从 load 的 src 反推能否到 fixpipe/store，再能否到 tensor.empty）；若 fixpipe/store 的 outs 不是 tensor.empty 定义，则不会替换 
+- splitmixkernel
+  - 确定没有冗余的copy错分再aic中
 
-
-| 现象 | 可能涉及的 Pass | 排查建议 |
-|------|-----------------|----------|
-| fixpipe 未插入 | InlineFixpipe | 检查 mmadL1 的 use 链是否存在 store；是否被 `isLocalMatmulInit` 跳过（即结果只被另一个 mmad 当 init 用）；是否需先由 NormalizeMatmul 分解 bias |
-| workspace 未分配 | InsertWorkSpaceForMixCV | 确认数据流符合 CC/CV/VC/VV 之一（从 load 的 src 反推能否到 fixpipe/store，再能否到 tensor.empty）；若 fixpipe/store 的 outs 不是 tensor.empty 定义，则不会替换 |
-| bind workspace 失败 | BindWorkSpaceArg | 检查函数是否有带 `hacc.arg_type = #hacc.arg_type<workspace>` 的参数；若无则需在上游或 ABI 中为该 kernel 增加 workspace 参数 |
-| 内存冲突/偏移错误 | PlanMemory | 检查 liveness、inplace 分析是否正确；是否启用 `enable-global-workspace-reuse`；GLOBAL_WORKSPACE_PLAN 下是否已先执行 BindWorkSpaceArg |
-| Mix 未拆分 | SplitMixKernel | 确认函数有 `hivm.func_core_type = MIX`；检查调用方是否为 host（device 调用 device 的 mix 会报错）；确认在 bufferization 之前运行 |
+#### 4.2.2 core dump for translateDeviceKernelToLLVM
+报错信息如下：
+```
+ #6 0x0000000007805d75 llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::Instruction*)
+```
+- splitmixkernel分离不正确，aic中出现aiv的指令或者alloc， aiv中出现aic的指令
+  - 确定aic/aiv的分核后结果
 
 ---
-
-## 7. 小结
-
-CV 优化是 AscendNPU IR 中面向 Mix 内核的核心优化链路，通过 NormalizeMatmul、InlineFixpipe、TileBatchMMIntoLoop 等 pass 规范化与展开 IR，再经 InsertWorkSpaceForMixCV、BindWorkSpaceArg、PlanMemory 实现 workspace 的统一分配与规划，最终由 SplitMixKernel 将 Mix 拆分为 AIC/AIV 子内核。理解各 pass 的作用与顺序，有助于快速投入 CV 相关开发与问题定位。
-
