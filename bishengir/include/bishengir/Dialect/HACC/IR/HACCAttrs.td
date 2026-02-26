@@ -281,7 +281,9 @@ def HACC_TargetDeviceSpecAttr :
 #ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
               [TargetDeviceSpecTrait, HACCTargetDeviceSpecTrait]> {
 #else
-              [DeclareAttrInterfaceMethods<TargetDeviceSpecInterface>, DeclareAttrInterfaceMethods<DLTIQueryInterface>, HACCTargetDeviceSpecInterface]> {
+              [DeclareAttrInterfaceMethods<TargetDeviceSpecInterface>,
+               DeclareAttrInterfaceMethods<DLTIQueryInterface>,
+               HACCTargetDeviceSpecInterface]> {
 #endif
   let summary = "An attribute to represent NPU target device specification.";
   let description = [{
