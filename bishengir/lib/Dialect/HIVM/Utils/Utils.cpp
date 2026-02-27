@@ -158,7 +158,7 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 ///
 /// the sequence is: 0,1,2,..., i*upperJ + j, ...
 ///
-/// \return IndexCastOp of affineApply
+/// \return Index value of affineApply
 Value createNestedIndexModularUsingLoopInfo(
     OpBuilder &builder, Location loc, const std::vector<LoopInfo> &loopInfoVec,
     int modular) {
@@ -208,16 +208,14 @@ Value createNestedIndexModularUsingLoopInfo(
   if (modular == -1) {
     Value affineApply = mlir::affine::makeComposedAffineApply(
         builder, loc, targetExpr, ArrayRef(symbolValueVec));
-    return builder.create<arith::IndexCastOp>(loc, builder.getI64Type(),
-                                              affineApply);
+    return affineApply;
   }
 
   targetExpr = targetExpr % modular;
 
   Value affineApply = mlir::affine::makeComposedAffineApply(
       builder, loc, targetExpr, ArrayRef(symbolValueVec));
-  return builder.create<arith::IndexCastOp>(loc, builder.getI1Type(),
-                                            affineApply);
+  return affineApply;
 }
 
 } // namespace

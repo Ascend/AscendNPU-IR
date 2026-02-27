@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <list>
@@ -143,8 +144,9 @@ struct StorageEntry {
   /// Allocs that inplace buffer this entry.
   SmallVector<Value> inplaceBuffers;
 
-  /// multiBuffer relation StorageEntry.
-  StorageEntry *relationPongEntry{nullptr};
+  /// All multiBuffer relation StorageEntry entries.
+  /// This vector stores all additional entries (multiBufferNum - 1 entries).
+  SmallVector<StorageEntry *> multiBufferRelationEntries;
 
   /// The number of multibuffer optimization.
   /// note: default 1 which means single buffer and does not do multibuffer
@@ -554,11 +556,12 @@ private:
                             int specLevel, MemBoundListConstIter &start,
                             const MemBoundList &outline);
 
-  /// spec_level == SPEC_LEVEL_1, pure single can reuse with db.
+  /// spec_level == SPEC_LEVEL_1, pure single can reuse with mb.
+  /// multiBufferOffsets will contain multiBufferNum elements.
   bool VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
                             StorageEntry *e,
                             const OutlineSectionInfo &outlineInfo,
-                            uint64_t &pongOffset);
+                            SmallVectorImpl<uint64_t> &multiBufferOffsets);
 
   /// check if e1 and e2 has pipe conflict.
   bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
@@ -633,26 +636,29 @@ private:
   DenseMap<ValuePair, BufferLife>
   GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
 
-  /// Reorder and make the storage entries of ping and pong continuous.
-  void
-  ReorderContinuousPingPongEntry(SmallVector<StorageEntry *> &storageEntryVec);
+  /// Reorder and make the storage entries of firstbuffer and multibuffer
+  /// continuous.
+  void ReorderContinuousFirstBufferMultiBufferEntry(
+      SmallVector<StorageEntry *> &storageEntryVec);
 
   /// Determine if the current buffer life of the Storage Entry conflicts with
   /// the memory that has already been allocated in history.
   bool IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
                                const StorageEntry *e) const;
 
-  /// Assign pong storage entry's address.
-  void PlanRelationPongEntryAddress(uint64_t offset, StorageEntry *e);
+  /// Assign multibuffer storage entry address(es). Assigns
+  /// multiBufferRelationEntries[i]->bitsOffset = multiBufferOffsets[i] for each i.
+  void PlanRelationMultiBufferEntryAddress(
+      llvm::ArrayRef<uint64_t> multiBufferOffsets, StorageEntry *e);
 
-  /// Processing Pong Storage Entry Information.
-  void SpecAllocRelationPongEntry(MemBoundList &outline, PlanRecHis &his,
-                                  StorageEntry *e, uint64_t offset);
+  /// Processing MultiBuffer Storage Entry Information.
+  void SpecAllocRelationMultiBufferEntry(MemBoundList &outline, PlanRecHis &his,
+                                         StorageEntry *e, uint64_t offset);
 
-  /// Get relative pong storage entry when the current reuse bound storage entry
-  /// is of type db.
+  /// Get relative multibuffer storage entry when the current reuse bound
+  /// storage entry is of type mb.
   StorageEntry *
-  GetMultiRelationPongEntry(const StorageEntry *reuseBoundStorageEntry);
+  GetMultiRelationMultiBufferEntry(const StorageEntry *reuseBoundStorageEntry);
 
   /// Get the innermost for loop of buffer definition.
   LoopLikeOpInterface GetBufferParentLoop(const SmallVector<Value> &buffers);
@@ -723,9 +729,12 @@ private:
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
 
-  /// Ping storage entry corresponding to reused additional Pong entry.
-  DenseMap<StorageEntry *, std::unique_ptr<StorageEntry>>
-      pingEntry2RelationPongEntry;
+  /// First buffer storage entry corresponding to reused additional multibuffer
+  /// entries. When a single-buffer entry is expanded to use multiple
+  /// multibuffer slots (e.g. double/triple buffer), this stores one
+  /// StorageEntry per multibuffer slot.
+  DenseMap<StorageEntry *, SmallVector<std::unique_ptr<StorageEntry>, 4>>
+      firstBufferEntry2RelationMultiBufferEntry;
 
   DenseMap<hivm::AddressSpace, SmallVector<const StorageEntry *>>
       memscope2allocatedEntry;

@@ -33,6 +33,17 @@ void SyncEventIdAllocation::Allocate(uint32_t runNum) {
   for (auto &e : syncIR) {
     WidenEventId(e->pipeAfter);
   }
+
+  // Check if we need to fall back from multi-buffer
+  if (TryFallbackMultiBuffer()) {
+    // Clear all allocated event IDs and re-run allocation
+    reallocatedPipePair.clear();
+    eventCyclePool.clear();
+    clearAllocatedEventId();
+    Allocate(runNum + 1);
+    return; // Return after recursive call to prevent further processing
+  }
+
   // Ignore partial special synchronization without event_id.
   IgnoreBackHeadAndTailSync();
   // Reallocated unallocated pipes with event IDs for synchronization.
@@ -54,6 +65,70 @@ void SyncEventIdAllocation::Allocate(uint32_t runNum) {
       Allocate(runNum + 1);
     }
   }
+}
+
+bool SyncEventIdAllocation::TryFallbackMultiBuffer() {
+  // Lambda to check if a sync operation has unallocated events in reallocated
+  // pipe pairs
+  auto hasUnallocatedSync = [this](const SyncOps &syncOps) -> bool {
+    return std::any_of(
+        syncOps.begin(), syncOps.end(), [this](const SyncOperation *sync) {
+          return sync->eventIds.empty() && !sync->uselessSync &&
+                 (sync->GetType() == SyncOperation::TYPE::SET_EVENT ||
+                  sync->GetType() == SyncOperation::TYPE::WAIT_EVENT) &&
+                 reallocatedPipePair.count(ScopePair(sync));
+        });
+  };
+
+  // Lambda to check if a sync operation has multi-buffer syncs in reallocated
+  // pipe pairs
+  auto hasMultiBufferSync = [this](const SyncOps &syncOps) -> bool {
+    return std::any_of(syncOps.begin(), syncOps.end(),
+                       [this](const SyncOperation *sync) {
+                         return sync->eventIdNum > 1 &&
+                                reallocatedPipePair.count(ScopePair(sync));
+                       });
+  };
+
+  // Lambda to apply fallback logic to sync operations
+  auto applyFallback = [this](SyncOps &syncOps) {
+    for (auto &sync : syncOps) {
+      if (sync->eventIdNum > 1 && reallocatedPipePair.count(ScopePair(sync))) {
+        sync->eventIdNum =
+            (sync->eventIdNum % 2 == 1 || sync->eventIdNum == 2) ? 1 : 2;
+      }
+    }
+  };
+
+  // Check if there are any unallocated sync operations in reallocated pipe
+  // pairs
+  bool hasAnyUnallocatedSyncs = std::any_of(
+      syncIR.begin(), syncIR.end(),
+      [hasUnallocatedSync](const std::unique_ptr<InstanceElement> &e) {
+        return hasUnallocatedSync(e->pipeBefore) ||
+               hasUnallocatedSync(e->pipeAfter);
+      });
+
+  // Check if there are any multi-buffer sync operations (>1) in reallocated
+  // pipe pairs
+  bool hasMultiBufferSyncs = std::any_of(
+      syncIR.begin(), syncIR.end(),
+      [hasMultiBufferSync](const std::unique_ptr<InstanceElement> &e) {
+        return hasMultiBufferSync(e->pipeBefore) ||
+               hasMultiBufferSync(e->pipeAfter);
+      });
+
+  // If there are both unallocated syncs and multi-buffer syncs in
+  // reallocatedPipePair, perform fallback
+  if (hasAnyUnallocatedSyncs && hasMultiBufferSyncs) {
+    for (auto &e : syncIR) {
+      applyFallback(e->pipeBefore);
+      applyFallback(e->pipeAfter);
+    }
+    return true;
+  }
+
+  return false;
 }
 
 bool SyncEventIdAllocation::tryWidenOnFirstFound() {

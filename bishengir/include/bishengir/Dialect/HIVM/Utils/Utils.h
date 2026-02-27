@@ -167,7 +167,7 @@ LoopLikeOpInterface getParentLoop(Value val);
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
 /// created.
 ///
-/// \return IndexCastOp of affineApply
+/// \return Index value of affineApply
 Value createNestedIndexModular(OpBuilder &builder, Operation *op,
                                int modular = 2);
 

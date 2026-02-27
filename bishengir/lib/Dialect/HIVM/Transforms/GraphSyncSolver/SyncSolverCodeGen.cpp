@@ -184,7 +184,11 @@ Value Solver::getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp) {
   if (nestedIndexModularMem.contains(syncOp->multibufferLoopPar)) {
     counter = nestedIndexModularMem[syncOp->multibufferLoopPar];
   } else {
-    counter = createNestedIndexModular(rewriter, syncOp->multibufferLoopPar);
+    Value modularIndex =
+        createNestedIndexModular(rewriter, syncOp->multibufferLoopPar);
+    // treat the modular as boolean to select.
+    counter = rewriter.create<arith::IndexCastOp>(
+        modularIndex.getLoc(), rewriter.getI1Type(), modularIndex);
     nestedIndexModularMem[syncOp->multibufferLoopPar] = counter;
   }
   assert(counter.getDefiningOp() != nullptr);
@@ -298,7 +302,10 @@ Value Solver::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
   if (loopDBCondMap.contains(parentLoop)) {
     return loopDBCondMap[parentLoop];
   }
-  return loopDBCondMap[parentLoop] = createNestedIndexForOp(rewriter, op);
+  Value moduleIndex = createNestedIndexForOp(rewriter, op);
+  Value moduleIdx = rewriter.create<arith::IndexCastOp>(
+      moduleIndex.getLoc(), rewriter.getI64Type(), moduleIndex);
+  return loopDBCondMap[parentLoop] = moduleIdx;
 }
 
 // Create and propagate sync args into MmadL1 op arguments.
