@@ -34,6 +34,7 @@ std::string getOpTypeStr(OpType opType) {
       {OpType::PLACE_HOLDER, "PlaceHolder"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
+      {OpType::FUNCTION_BLOCK, "FunctionBlock"},
       {OpType::LOOP, "Loop"},
       {OpType::MMAD_SCOPE, "MmadLoop"},
       {OpType::CONDITION, "Condition"},
@@ -75,21 +76,6 @@ std::string PlaceHolder::str(int indent, bool recursive) const {
 }
 
 std::string Scope::str(int indent, bool recursive) const {
-  std::string ret =
-      std::string(indent, ' ') +
-      llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
-      std::to_string(this->id);
-  if (recursive) {
-    ret += " {\n";
-    for (auto &op : body) {
-      ret += op->str(indent + 2, true) + "\n";
-    }
-    ret += std::string(indent, ' ') + "}";
-  }
-  return ret;
-}
-
-std::string Function::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +

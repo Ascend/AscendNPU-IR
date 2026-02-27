@@ -163,12 +163,30 @@ std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
   const llvm::SmallVector<hivm::PIPE> pipesVec = {
       hivm::PIPE::PIPE_MTE1, hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_MTE3};
 
-  int remOpNum = numOperations;
   auto funcIr = std::make_unique<Function>(nullptr);
+
+  int numFunctionBlocks = 1;
+  if (isTrueWithProbability(multi_function_blocks_prob_a,
+                            multi_function_blocks_prob_b)) {
+    numFunctionBlocks = 1 + (getRand() % function_blocks_max_num);
+  }
+
   auto scopeOp = std::make_unique<Scope>();
-  generateRandTest(scopeOp.get(), pointerOps, pipesVec, remOpNum, 0);
   scopeOp->parentOp = funcIr.get();
+  auto *parScopeOp = scopeOp.get();
   funcIr->body.push_back(std::move(scopeOp));
+
+  for (int i = 0; i < numFunctionBlocks; i++) {
+    auto functionBlockOp = std::make_unique<FunctionBlock>();
+    functionBlockOp->parentOp = parScopeOp;
+    int remOpNum = numOperations / numFunctionBlocks;
+    if (i + 1 >= numFunctionBlocks) {
+      remOpNum += numOperations % numFunctionBlocks;
+    }
+    generateRandTest(functionBlockOp.get(), pointerOps, pipesVec, remOpNum, 0);
+    parScopeOp->body.push_back(std::move(functionBlockOp));
+  }
+
   return funcIr;
 }
 
@@ -179,8 +197,11 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
 
   assert(op != nullptr);
   bool doubled = loopCnt > 0;
-  bool allDeadLoops =
-      isTrueWithProbability(all_dead_loops_prob_a, all_dead_loops_prob_b);
+
+  if (isa<SyncOp>(op) && op->getDepth() <= 3) {
+    llvm::dbgs() << op->getDepth() << ' ' << op->str(0, false) << '\n';
+    assert(false && "unexpected sync operation outside of function-block");
+  }
 
   if (auto *setWaitOp = dyn_cast<const SetWaitOp>(op)) {
     if (setWaitOp->checkFirstIter && (loopIdx % loop_unrolling_num != 0)) {
@@ -191,10 +212,15 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
     }
   }
 
+  if (isa<FunctionBlock>(op) &&
+      isTrueWithProbability(skip_function_block_prob_a,
+                            skip_function_block_prob_b)) {
+    return;
+  }
+
   if (auto *loopOp = dyn_cast<const Loop>(op)) {
     int numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
-    if (allDeadLoops ||
-        isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
+    if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
       numIter = 0;
     }
     for (int i = 0; i < numIter; i++) {

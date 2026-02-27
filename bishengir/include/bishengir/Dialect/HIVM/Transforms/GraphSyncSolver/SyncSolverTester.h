@@ -34,18 +34,21 @@ namespace mlir::hivm::syncsolver {
 constexpr int max_depth = 4;
 constexpr int loop_unrolling_num = 3;
 constexpr int read_write_vals_max_num = 2;
+constexpr int function_blocks_max_num = 5;
 
 constexpr int true_branch_prob_a = 1;
 constexpr int true_branch_prob_b = 2;
-constexpr int unlikely_cond_prob_a = 1;
-constexpr int unlikely_cond_prob_b = 10;
 constexpr int dead_loop_prob_a = 1;
 constexpr int dead_loop_prob_b = 10;
-constexpr int all_dead_loops_prob_a = 1;
-constexpr int all_dead_loops_prob_b = 50;
+constexpr int skip_function_block_prob_a = 1;
+constexpr int skip_function_block_prob_b = 10;
 
+constexpr int multi_function_blocks_prob_a = 1;
+constexpr int multi_function_blocks_prob_b = 10;
 constexpr int scope_in_prob_a = 1;
 constexpr int scope_in_prob_b = 5;
+constexpr int unlikely_cond_prob_a = 1;
+constexpr int unlikely_cond_prob_b = 10;
 constexpr int scope_for_loop_prob_a = 1;
 constexpr int scope_for_loop_prob_b = 3;
 constexpr int scope_while_loop_prob_a = 1;

@@ -59,6 +59,10 @@ public:
   // checks.
   std::vector<ProcessingOrder> processingOrders;
 
+  // Aliases for block arguments collected from cf::CondBranchOp and
+  // cf::BranchOp operations.
+  llvm::DenseMap<Value, llvm::SmallVector<Value>> blockArgAliases;
+
 public:
   IRTranslator(func::FuncOp func, SyncSolverOptions options)
       : options(options), funcOp(func) {
@@ -136,6 +140,8 @@ private:
   std::optional<hivm::PIPE>
   getInferredPipe(Operation *op, TCoreType coreType,
                   const llvm::SmallVector<Value> &writeMemInfo);
+
+  void updateBlockArgAliases(Block *block, OperandRange destOperands);
 
   bool isUnlikelyCondition(Condition *condOp);
 

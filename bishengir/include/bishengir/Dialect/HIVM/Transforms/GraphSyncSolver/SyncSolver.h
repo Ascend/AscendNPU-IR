@@ -302,6 +302,9 @@ protected:
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
 
   std::optional<std::pair<Occurrence *, Occurrence *>>
+  getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
+
+  std::optional<std::pair<Occurrence *, Occurrence *>>
   getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
 
   // Convenience to insert barrier-all before a given occurrence/op.
