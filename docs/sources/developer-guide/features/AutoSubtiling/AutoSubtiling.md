@@ -61,7 +61,7 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 后续可以通过增加matchAndRewritePattern增加对更多Op类型的支持
 
-## 4. 接口说明
+## 3. 接口说明
 
 可通过选项控制 
 
@@ -69,7 +69,7 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 --enable-auto-bind-sub-block=False 为关闭此特性
 
-## 5. 约束能力
+## 4. 约束能力
 
 如果尝试切分失败，或中间转换失败，会自动回退1：1，保证功能正确性
 
@@ -80,6 +80,6 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 1. 选轴分析失败，没有可切分的平行轴
 2. BubbleUpExtractSlicePattern中途遇到了未支持的Op
 
-### 5.1 回退1:1样例
+### 4.1 回退1:1样例
 
 ![](./FailInOut.png)
