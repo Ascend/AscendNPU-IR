@@ -363,7 +363,7 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       }
       constexpr int64_t bitsPerByte = 8;
       // FIXME indices hardcodes as int32
-      const int64_t eltByteSize = elementBitWidth / bitsPerByte;
+      const int64_t eltByteSize = CEIL_DIV(elementBitWidth, bitsPerByte);
       constexpr int64_t idxByteSize = sizeof(int32_t);
       int64_t numElemPerRepeat = getNumPerRepeat(eleType);
       int64_t elementsSize =
