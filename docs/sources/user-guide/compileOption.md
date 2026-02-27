@@ -68,7 +68,7 @@
 
 
 ## 2 bishengir-hivm-compile编译选项
-# 2.1 BiShengIR HIVM Optimization Options
+### 2.1 BiShengIR HIVM Optimization Options
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|--------|
 | --limit-auto-multi-buffer-of-local-buffer=<value> | When enable-auto-multi-buffer = true, limit local buffer mode. Value=<no-limit/no-l0c> | MultiBufferStrategy  | no-l0c  | In use  |
@@ -90,7 +90,7 @@
 
 
 
-# 2.2 Options Shared with bishengir-hivm-compile:
+### 2.2 Options Shared with bishengir-hivm-compile:
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|----------|----------|
 | --enable-static-bare-ptr | Enable generating bare ptr calling convention for static shaped kernels. | bool | true | In use |
