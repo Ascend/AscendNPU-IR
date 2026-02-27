@@ -257,6 +257,69 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadL1(hivm::MmadL1Op op) {
   return success();
 }
 
+LogicalResult hivm::inferAndPropagateMemScopeForConv1DL1(hivm::Conv1DL1Op op) {
+  if (!op.hasPureBufferSemantics()) {
+    return op->emitOpError("Run infer memory scope after bufferization.");
+  }
+
+  auto *input = op.getDpsInputOperand(0);
+  auto *weight = op.getDpsInputOperand(1);
+  auto *output = op.getDpsInitOperand(0);
+
+  // input, weight and output must originate from an AllocOp
+  auto allocInput = utils::tracebackMemRefToAlloc(input->get());
+  auto allocWeight = utils::tracebackMemRefToAlloc(weight->get());
+  auto allocOutput = utils::tracebackMemRefToAlloc(output->get());
+
+  if (!allocInput.has_value()) {
+    emitError(op.getLoc())
+      << "Cannot find root memref.alloc for input of this op.";
+    return failure();
+  }
+
+  if (!allocWeight.has_value()) {
+    emitError(op.getLoc())
+      << "Cannot find root memref.alloc for weight of this op.";
+    return failure();
+  }
+
+  if (!allocOutput.has_value()) {
+    emitError(op.getLoc())
+      << "Cannot find root memref.alloc for output of this op.";
+    return failure();
+  }
+
+  auto l1SpaceAttr =
+    AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
+  auto l0SpaceAttr =
+    AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
+  
+  MemScopeInferAndPropagateHelper helper;
+
+  // For Conv1DL1Op, operand input should be in L1.
+  if (failed(helper.Run(*allocInput, l1SpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for input");
+  }
+  LDBG("IR after setting mem scope for input:\n"
+    << *(op->getParentOfType<ModuleOp>()));
+  
+  // For Conv1dL1Op, operand weight should be in L1.
+  if (failed(helper.Run(*allocWeight, l1SpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for weight");
+  }
+  LDBG("IR after setting mem scope for weight:\n"
+    << *(op->getParentOfType<ModuleOp>()));
+  
+  // For Conv1dL1Op, operand output should be in L0C.
+  if (failed(helper.Run(*allocOutput, l0SpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for output");
+  }
+  LDBG("IR after setting mem scope for output:\n"
+    << *(op->getParentOfType<ModuleOp>()));
+  
+  return success();
+}
+
 LogicalResult InferHIVMMemScopePass::fixDeviceCallSite(func::FuncOp op) {
   LDBG("Begin fixing call site for " << op.getSymName());
 
@@ -444,6 +507,12 @@ void InferHIVMMemScopePass::runOnOperation() {
     // Here shouldn't contain `hivm::BatchMmadL1Op` which has been decomposed.
     func->walk([&](mlir::hivm::MmadL1Op op) {
       if (failed(hivm::inferAndPropagateMemScopeForMmadL1(op)))
+        signalPassFailure();
+    });
+
+    // Set the memory scope of values related to `hivm::Conv1DL1Op` to L1 or L0C.
+    func->walk([&](mlir::hivm::Conv1DL1Op op) {
+      if (failed(hivm::inferAndPropagateMemScopeForConv1DL1(op)))
         signalPassFailure();
     });
 
