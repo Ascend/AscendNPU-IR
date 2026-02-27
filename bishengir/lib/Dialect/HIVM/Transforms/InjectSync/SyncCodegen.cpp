@@ -579,7 +579,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
         defineOp->getParentOfType<LoopLikeOpInterface>();
     Value counter;
     unsigned eventIdCount = sync->eventIds.size();
-    // Use map structure: loop2BufferCounter[loop，eventIdCount]
+    // Use map structure: loop2BufferCounter[loop, eventIdCount]
     std::pair<LoopLikeOpInterface, unsigned> counterKey = std::make_pair(parentLoop, eventIdCount);
     auto iter = loop2BufferCounter.find(counterKey);
     if (iter != loop2BufferCounter.end()) {

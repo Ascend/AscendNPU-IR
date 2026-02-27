@@ -2,7 +2,7 @@
 
 // -----
 
-// CHECK: #map = affine_map<()[s0] -> (s0 floordiv 4)>
+// CHECK: #map = affine_map<()[s0] -> ((s0 floordiv 4) mod 2)>
 module {
 // CHECK-LABEL: multi_buffer_alloc_manual(
   func.func @multi_buffer_alloc_manual(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
@@ -23,12 +23,10 @@ module {
     scf.for %arg2 = %c0 to %c16 step %c4 {
       // CHECK: affine.apply #map()[%arg2]
       // CHECK: arith.index_cast {{.*}} : index to i64
-      // CHECK: arith.remsi {{.*}}, %{{.*}} : i64
       // CHECK: arith.cmpi eq, {{.*}}, %{{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
       // CHECK: affine.apply #map()[%arg2]
       // CHECK: arith.index_cast {{.*}} : index to i64
-      // CHECK: arith.remsi {{.*}}, %{{.*}} : i64
       // CHECK: arith.cmpi eq, {{.*}}, %{{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
       %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
@@ -51,7 +49,7 @@ module {
 }
 
 // -----
-// CHECK: #map = affine_map<()[s0, s1] -> (s1 * 5 + s0 floordiv 3)>
+// CHECK: #map = affine_map<()[s0, s1] -> ((s1 * 5 + s0 floordiv 3) mod 2)>
 module {
   func.func @multi_buffer_alloc_manual_2for(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
@@ -75,12 +73,10 @@ module {
         scf.for %arg3 = %c0 to %c15 step %c3 {
           // CHECK: affine.apply #map()[%arg3, %arg2]
           // CHECK: arith.index_cast {{.*}} : index to i64
-          // CHECK: arith.remsi {{.*}} : i64
           // CHECK: arith.cmpi eq, {{.*}} : i64
           // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
           // CHECK: affine.apply #map()[%arg3, %arg2]
           // CHECK: arith.index_cast {{.*}} : index to i64
-          // CHECK: arith.remsi {{.*}} : i64
           // CHECK: arith.cmpi eq, {{.*}} : i64
           // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
           hivm.hir.pipe_barrier[<PIPE_ALL>]
@@ -105,7 +101,7 @@ module {
 }
 
 // -----
-// CHECK: #map = affine_map<()[s0, s1] -> (s0 + s1 * 15)>
+// CHECK: #map1 = affine_map<()[s0, s1] -> ((s0 + s1 * 15) mod 2)>
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_for_vadd(
   func.func @multi_buffer_alloc_manual_for_vadd(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
@@ -127,16 +123,15 @@ module {
     // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
     scf.for %arg2 = %c0 to %c8 step %c1 {
-      // CHECK: arith.index_cast %arg2 : index to i64
-      // CHECK: arith.remsi {{.*}} : i64
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
       // CHECK: arith.cmpi eq, {{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
 
       %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
       scf.for %arg3 = %c0 to %c15 step %c1 {
-        // CHECK: affine.apply #map()[%arg3, %arg2]
+        // CHECK: affine.apply #map1()[%arg3, %arg2]
         // CHECK: arith.index_cast {{.*}} : index to i64
-        // CHECK: arith.remsi {{.*}} : i64
         // CHECK: arith.cmpi eq, {{.*}} : i64
         // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
         %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
@@ -181,12 +176,12 @@ module {
     // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
     scf.for %arg2 = %c0 to %c8 step %c1 {
-      // CHECK: arith.index_cast %arg2 : index to i64
-      // CHECK: arith.remsi {{.*}} : i64
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
       // CHECK: arith.cmpi eq, {{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: arith.index_cast %arg2 : index to i64
-      // CHECK: arith.remsi {{.*}} : i64
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
       // CHECK: arith.cmpi eq, {{.*}} : i64
       // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
 
@@ -218,7 +213,7 @@ module {
 }
 
 // -----
-// CHECK: #map = affine_map<()[s0, s1, s2] -> (s0 + s1 * 15 + ((s2 - 1) floordiv 2) * 225)>
+// CHECK: #map = affine_map<()[s0, s1, s2] -> ((s0 + s1 * 15 + ((s2 - 1) floordiv 2) * 225) mod 2)>
 module {
   func.func @multi_buffer_alloc_manual_3for(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
@@ -244,12 +239,10 @@ module {
           scf.for %arg4 = %c0 to %c15 step %c1 {
             // CHECK: affine.apply #map()[%arg4, %arg3, %arg2]
             // CHECK: arith.index_cast {{.*}} : index to i64
-            // CHECK: arith.remsi {{.*}} : i64
             // CHECK: arith.cmpi eq, {{.*}} : i64
             // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
             // CHECK: affine.apply #map()[%arg4, %arg3, %arg2]
             // CHECK: arith.index_cast {{.*}} : index to i64
-            // CHECK: arith.remsi {{.*}} : i64
             // CHECK: arith.cmpi eq, {{.*}} : i64
             // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
             hivm.hir.pipe_barrier[<PIPE_ALL>]

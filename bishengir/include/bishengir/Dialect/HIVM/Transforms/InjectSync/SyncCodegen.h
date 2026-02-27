@@ -175,9 +175,8 @@ private:
       {4, hivm::EVENT::EVENT_ID4}, {5, hivm::EVENT::EVENT_ID5},
       {6, hivm::EVENT::EVENT_ID6}, {7, hivm::EVENT::EVENT_ID7}};
 
-  /// Record the loop and corresponding counter buffer, with modular value as
-  /// part of the key Key is (loop, eventIdNum) to handle different buffer
-  /// counts for the same loop
+  /// Record the loop and corresponding counter buffer, with eventidNum as
+  /// part of the key to handle different buffer counts for the same loop
   DenseMap<std::pair<LoopLikeOpInterface, unsigned>, Value> loop2BufferCounter;
 
   /// Collect sync index and corresponding event id expressions.

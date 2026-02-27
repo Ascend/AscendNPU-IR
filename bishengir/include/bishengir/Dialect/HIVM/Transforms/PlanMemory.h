@@ -730,9 +730,8 @@ private:
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
 
   /// First buffer storage entry corresponding to reused additional multibuffer
-  /// entries. When a single-buffer entry is expanded to use multiple
-  /// multibuffer slots (e.g. double/triple buffer), this stores one
-  /// StorageEntry per multibuffer slot.
+  /// entries. When a single-buffer entry is expanded to use
+  /// multibuffer, this stores one StorageEntry per multibuffer.
   DenseMap<StorageEntry *, SmallVector<std::unique_ptr<StorageEntry>, 4>>
       firstBufferEntry2RelationMultiBufferEntry;
 

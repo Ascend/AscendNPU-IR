@@ -1751,7 +1751,7 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
 void MemPlan::PlanRelationMultiBufferEntryAddress(
     llvm::ArrayRef<uint64_t> multiBufferOffsets, StorageEntry *e) {
   if (e->multiBufferNum == 1) {
-    // Single-buffer entry expanded to use multiple multibuffer slots. Create
+    // Single-buffer entry expanded to use multibuffer. Create
     // one extra StorageEntry per multibuffer offset and store in
     // firstBufferEntry2RelationMultiBufferEntry as a vector.
     auto &vec = firstBufferEntry2RelationMultiBufferEntry[e];
