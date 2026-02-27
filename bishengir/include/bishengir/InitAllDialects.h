@@ -25,6 +25,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
@@ -37,7 +38,6 @@
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
-#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/DecomposeOpInterfaceImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
@@ -58,6 +58,7 @@ namespace bishengir {
 inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // clang-format off
   registry.insert<mlir::annotation::AnnotationDialect,
+                  mlir::hacc::HACCDialect,
                   mlir::hfusion::HFusionDialect,
                   mlir::hivm::HIVMDialect,
                   mlir::mathExt::MathExtDialect,
@@ -65,12 +66,6 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::symbol::SymbolDialect,
                   bishengir::memref_ext::MemRefExtDialect>();
   // clang-format on
-
-#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  // clang-format off
-  registry.insert<mlir::hacc::HACCDialect>();
-  // clang-format on
-#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   // clang-format off

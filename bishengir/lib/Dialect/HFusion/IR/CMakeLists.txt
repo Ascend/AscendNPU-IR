@@ -1,6 +1,5 @@
 if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   list(APPEND BS_FEAT_LINK_LIBS BiShengIRLinalgDialectExt)
-  list(APPEND BS_FEAT_LINK_LIBS BiShengIRHACCDialect)
 endif()
 
 add_bishengir_dialect_library(BiShengIRHFusionDialect
@@ -19,6 +18,7 @@ add_bishengir_dialect_library(BiShengIRHFusionDialect
 
   LINK_LIBS PUBLIC
   ${BS_FEAT_LINK_LIBS}
+  BiShengIRHACCDialect
   BiShengIRSymbolDialect
   BiShengIRMathExtDialect
   MLIRBufferizationDialect
