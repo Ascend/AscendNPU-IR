@@ -1,6 +1,7 @@
 # 最佳实践案例
 
 ## 性能优化案例
+<<<<<<< HEAD:docs/sources/user_guide/best_practice_zh.md
 ## 1. tiling策略(计算)
 ### 待补充
 ## 2. kernel昇腾亲和改写(计算)
@@ -9,6 +10,170 @@
 ### 常见案例
 ## 4. compile_hint使用(编译器)
 ### 常见案例
+=======
+## 1.  tiling策略
+### 案例说明
+基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销
+建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能
+本案例使用triton实现
+
+``` python
+out = torch.gather(x, dim=1, index=idx)
+```
+
+输入:
+
+| Input | Shape  |
+|-------|--------|
+| x     | (B, C) |
+| idx   | (B, K) |
+
+输出
+
+| Input | Shape  |
+|-------|--------|
+| out   | (B, K) |
+
+### 案例差异点详解
+
+Code diff of NPU and CUDA
+
+```diff
+@triton.jit
+def gather_dim1_kernel(
+        x_ptr,  # *x  [B, C]
+        idx_ptr,  # *idx[B, K]
+        out_ptr,  # *out[B, K]
+        stride_xb, stride_xc,
+        stride_ib, stride_ik,
+        stride_ob, stride_ok,
+        B, K,
+        BLOCK_B: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+):
+    pid_b = tl.program_id(0)  # 1 block per batch row
+-   # GPU实现
+-   pid_k = tl.program_id(1)  # 1 block per K-tile
+
+-   k_off = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
+-   mask = k_off < K
+
+-   idx = tl.load(idx_ptr + pid_b * stride_ib + k_off * stride_ik, mask=mask)  # [BLOCK_K]
+
+-   x_val = tl.load(x_ptr + pid_b * stride_xb + idx * stride_xc, mask=mask)
+
+-   tl.store(out_ptr + pid_b * stride_ob + k_off * stride_ok, x_val, mask=mask)
+
++   #NPU实现
++   b_idx = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
++   b_mask = b_idx < B
+
++   # 对 K 维进行循环
++   for k_start in range(0, K, BLOCK_K):
++       ks = tl.arange(0, BLOCK_K)
++       k_mask = ks < K - k_start
+
++       idx_off = (b_idx[:, None] * stride_ib +
++                  (k_start + ks)[None, :] * stride_ik)
++       col_idx = tl.load(idx_ptr + idx_off, mask=b_mask[:, None] & k_mask)
+
++       x_off = (b_idx[:, None] * stride_xb +
++                col_idx * stride_xc)
++       x_val = tl.load(x_ptr + x_off, mask=b_mask[:, None] & k_mask)
+
++       out_off = (b_idx[:, None] * stride_ob +
++                  (k_start + ks)[None, :] * stride_ok)
++       tl.store(out_ptr + out_off, x_val, mask=b_mask[:, None] & k_mask)
+
+# 调用
+B = 128  # batch dim
+K = 64  
+
+BLOCK_B = 4
+BLOCK_K = 128
+
+— # GPU  
+- grid = (B, triton.cdiv(K, BLOCK_K))
++ # NPU
++ grid = (triton.cdiv(B, BLOCK_B),)
+
+gather_dim1_kernel[grid](
+    x, idx, out,
+    x.stride(0), x.stride(1),
+    idx.stride(0), idx.stride(1),
+    out.stride(0), out.stride(1),
+    B, K,
+    BLOCK_B=BLOCK_B,
+    BLOCK_K=BLOCK_K,
+)
+
+```
+
+## 2.  kernel昇腾亲和改写
+### 案例说明
+原始gpu计算流程i64/i32 cmp操作在npu设备上无法使能vector，退化为scalar计算效率降低；通过转化为fp32来利用vec_cast和vec_cmp实现vector操作加速  
+需要注意的是，在tl.load和tl.save中的mask使用cmp功能，大部分情况下编译器可以自动优化为vec操作，本例中tl.where则需要手动转换
+本案例以layerNorm为例说明实现向量化cmp加速npu计算流程，该cmp操作用于处理layerNorm中的尾块处理
+
+### 案例差异点详解
+
+Code diff of NPU and CUDA
+```diff
+@triton.jit
+def npu_vector_cmp_kernel(
+    X,                 # [Tensor] input tensor (row x col)
+    Out,               # [Tensor] output tensor (row x col)
+    Mean,              # [Vector] mean tensor (row, ) of X
+    Rstd,              # [Vector] std tensor (row, ) of X
+    stride_x_row,      # [Scalar] stride of row in X
+    stride_out_row,    # [Scalar] stride of row in Out, normally equals to stride_x_row
+    M,                 # [Scalar] row number
+    N,                 # [Scalar] col number
+    eps,               # [Scalar] epsilon to aviod division by zeros
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr
+):
+    """
+    an example of layernorm to checkout Vector Cmp
+    Out = ((X - E[X]) / sqrt(V[X] + eps)) on dim -1
+    
+    just for easy case, we assume that:
+    1. BLOCK_N >= X.shape(-1), group_n = 0 only
+    2. BLOCK_M = 1, group_m = range(0, row, 1)
+    """
+    group_m = tl.program_id(0)
+    group_n = tl.program_id(1)
+    row = group_m
+
+    # calculate index & offset
+    Mean = Mean + group_n * M
+    Rstd = Rstd + group_n * M
+    X = X + row * stride_x_row + group_n * N
+    Out = Out + row * stride_out_row + group_n * N
+
+    cols = tl.arange(0, BLOCK_N)  # cols is int64
+    x = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
+
+    # calculate mean & rstd
+    mean = tl.sum(x, axis=0) / N
+    tl.store(Mean + row, mean)
+    
+-   xbar = tl.where(cols < N, X - mean, 0.0)
++   # change cols(i64) into cols_cmp(f32) to enable vector processing
++   cols_cmp = cols.to(tl.float32)
++   xbar = tl.where(cols_cmp < N, x - mean, 0.0)
+
+    var = tl.sum(xbar * xbar, axis=0) / N
+    rstd = 1 / tl.sqrt(var + eps)
+    tl.store(Rstd + row, rstd)
+
+    # calculate Out
+    mask = cols < N
+    out = (x - mean) * rstd
+    tl.store(Out + cols, out, mask=mask)
+
+```
+>>>>>>> 5fa41b6 (Description: add best-practice):docs/sources/user-guide/bestPractice.md
 
 ## 5. CV算子核间优化分析(编译器)
 ### 流水图
