@@ -6,9 +6,11 @@ The **Auto Blockify** pass is essential for optimizing the execution of Ascend-c
 
 In our experience with AscendNPU IR architecture, the number of available physical blocks is often significantly lower than the number of logical blocks used in the computations. (Physical is < 50, logical may be 500+) in these 10x scenarios the acceleration can be over double the original speed.
 
-When running a triton kernel **the way to activate the Auto Blockify logic** is to add the following flag : `TRITON_ALL_PARALLEL`
+When running a triton kernel (with triton-ascend) **the way to activate the Auto Blockify logic** is to add the following flag : `TRITON_ALL_PARALLEL`
 
-![](./AutoBlockify.png)
+For AscendNPU-IR user you can add the following flag to bishengir-compile command : `--enable-auto-blockify-loop`
+
+![](./AutoBlockify.jpg)
 
 ## Algorithm Principle
 
@@ -32,16 +34,18 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
    for block.idx from 0,...,logical_block_num
        use(block.idx)
    ```
-2. **with TRITON_ALL_PARALLEL**​:
+2. **example usage with TRITON_ALL_PARALLEL**​:
 
-When the user adds the TRITON_ALL_PARALLEL flag, the kernel will be launched limited to only the maximum of physical blocks (assuming logical num > physical num). Thus our execution is limited to:
+When the user adds the TRITON_ALL_PARALLEL flag for triton adapter, the kernel will be launched limited to only the maximum of physical blocks (assuming logical num > physical num). Thus our execution is limited to:
 
 ```plaintext
 for block.idx from 0,...,physical_block_num   <- from get_block_idx
     use(block.idx)```
 ```
 
-This logic is incomplete if left alone (some indexes will be missing). this is where the auto blockify pass is needed to complete the logic by automatically adding an outer layer of looping/blockifying
+This logic is incomplete if left alone (some indexes will be missing). this is where the auto blockify pass is needed to complete the logic by automatically adding an outer layer of looping/blockifying.
+
+(Note: if user is not going through triton adapter they will need to make sure the block dim is set similarly as the above)
 
 3. **Final Logic with Auto Blockify**​:
 
@@ -53,9 +57,16 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
 
 ### Interface description:
 
-this feature is controlled in bishengir-compile with the flag `--enable-auto-blockify-loop` but is advised to **NOT** use this flag directly outside of debugging.
+this feature is controlled in bishengir-compile with the flag `--enable-auto-blockify-loop`. it can be called directly with bishengir-opt using flag `--auto-blockify-parallel-loop`
 
-The correct way to make use of AutoBlockify feature is to enable it from the front end (triton) with `TRITON_ALL_PARALLEL=1` as this environment variable will also lay the foundation (lock the number of blocks) then automatically call the appropriate compiler command with the correct flags
+**Requirements** To use this feature correctly the user needs to be careful in setting the following :
+1.  the way the pass gets the logical block num is by finding the value marked by the attribute `kLogicalBlockNumAttr` [in IR: logical_block_num] the user needs to make sure this value is available or the pass will fail when called.
+
+2. the pass also expects to find a hivm get_block_idx operation. this is the operation that gives the block indexes from 0 up to block dim. **when using AutoBlockify** user needs to change the blockdim when calling the device kernel (launch with max physical block dim, same as seen in the algorithm above). this makes it so that the blockidx operation returns values from 0,....,physical_block_num. 
+
+#### Triton adapter: 
+
+This pass has been used extensively with our triton adapter pipeline. The correct way to make use of AutoBlockify feature in this case is to enable it from the front end (triton) with `TRITON_ALL_PARALLEL=1` as this environment variable will also lay the foundation (lock the number of blocks) then automatically call the appropriate compiler command with the correct flags. in the triton pipeline there is a pass called `TritonGlobalKernelArgsToHIVMOpPass` which will automatically make sure there is value marked with logical_block_num and create the get_block_idx op needed.
 
 Example input :
 
@@ -165,6 +176,6 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 ## Constraints
 
 1. ​**Parallelizability**​:
-   The `TRITON_ALL_PARALLEL` flag is only applicable when the code is fully parallelizable. This means that the computations and accesses made by the logical blocks must be safe to run in parallel without dependencies between them.
+   The Auto Blockify algorithm is only applicable when the code is fully parallelizable. This means that the computations and accesses made by the logical blocks must be safe to run in parallel without dependencies between them.
 2. ​**Use Case**​:
    If Logical block num is very small then we do not get any advantage from this pass. 
