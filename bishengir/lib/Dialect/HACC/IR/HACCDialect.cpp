@@ -60,7 +60,7 @@ hacc::TargetDeviceSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
              << type;
     }
     // Check that keys in a target device spec are unique.
-    auto id = entry.getKey().get<StringAttr>();
+    auto id = llvm::cast<StringAttr>(entry.getKey());
     if (!ids.insert(id).second)
       return emitError() << "repeated layout entry key: " << id.getValue();
 
