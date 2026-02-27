@@ -44,7 +44,11 @@ static mlir::GenRegistration
                    return false;
                  });
 
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
 static bool bishengirTargetSpecGenMain(raw_ostream &os, RecordKeeper &records) {
+#else
+static bool bishengirTargetSpecGenMain(raw_ostream &os, const RecordKeeper &records) {
+#endif
   if (!generator) {
     os << records;
     return false;

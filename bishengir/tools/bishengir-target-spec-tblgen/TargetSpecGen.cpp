@@ -102,7 +102,11 @@ static const char *const stringifyEnumDeclStr = R"(
 ///  {int AiCoreCount = 24;},
 static SmallVector<RecordVal>
 getSpecSuperClassEntries(const Record *derivedClassRecord) {
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   SmallVector<Record *> superClasses;
+#else
+  SmallVector<const Record *> superClasses;
+#endif
   derivedClassRecord->getDirectSuperClasses(superClasses);
   auto *superClass = superClasses.front();
   SmallVector<RecordVal> result = llvm::to_vector(superClass->getValues());
@@ -229,8 +233,13 @@ Attribute TargetSpec::getSpecEntry(DeviceSpec specEntry, OpBuilder& builder) con
 }
 
 /// Emit a function to map string to \c DeviceTarget enum.
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
 static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
+#else
+static void emitStrToSymFnForDeviceTarget(const std::vector<const Record *> &records,
+                                          raw_ostream &OS) {
+#endif
   const auto *enumName = "TargetDevice";
   OS << formatv("{0} symbolize{0}Enum(::llvm::StringRef str){{\n", enumName);
   OS << formatv("  return ::llvm::StringSwitch<{0}>(str)\n", enumName);
@@ -244,11 +253,20 @@ static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
 }
 
 /// Emit a function to map \c DeviceTarget enum to string.
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
 static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
+#else
+static void emitSymToStrFnForDeviceTarget(const std::vector<const Record *> &records,
+                                          raw_ostream &OS) {
+#endif
   const auto *enumName = "TargetDevice";
   OS << formatv("::llvm::StringRef stringify{0}Enum({0} val){{\n", enumName);
+#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
   OS << formatv("  switch (val) {{\n", enumName);
+#else
+  OS << "  switch (val) {\n";
+#endif
   for (auto [idx, record] : llvm::enumerate(records)) {
     auto deviceName = record->getValueAsString("Name");
     OS << formatv("    case {0}::{1}: return \"{2}\";\n", enumName, deviceName,
