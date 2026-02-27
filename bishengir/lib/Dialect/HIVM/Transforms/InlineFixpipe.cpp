@@ -199,6 +199,16 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
   llvm_unreachable("unsupported QuantMode");
 }
 
+int64_t getSiftedUsersNum(Value v) {
+  const DenseSet<Operation *> container(v.getUsers().begin(),
+                                        v.getUsers().end());
+  auto filteredRange = llvm::make_filter_range(container, [](Operation *op) {
+    return !isa<tensor::DimOp>(op) && !isa<hivm::DebugOp>(op);
+  });
+  return DenseSet<Operation *>(filteredRange.begin(), filteredRange.end())
+      .size();
+}
+
 //===----------------------------------------------------------------------===//
 // InlineFixpipeOpPattern
 //===----------------------------------------------------------------------===//
@@ -220,7 +230,7 @@ public:
     if (fixpipeResTensor.getUsers().empty())
       return failure();
 
-    if (getUsersNum(fixpipeResTensor) != 1)
+    if (getSiftedUsersNum(fixpipeResTensor) != 1)
       return failure();
 
     return inlineFixpipeOp(rewriter, op);
@@ -230,8 +240,23 @@ private:
   LogicalResult inlineFixpipeOp(PatternRewriter &rewriter, FixpipeOp op) const {
     bool matched = false;
     auto loc = op.getLoc();
-    auto *curOp = *(op.getResultTensor().getUsers().begin());
-
+    Operation *curOp = nullptr;
+    for (Operation *maybeDebugOp : op.getResultTensor().getUsers()) {
+      if (isa<hivm::DebugOp>(maybeDebugOp)) {
+        rewriter.setInsertionPoint(maybeDebugOp);
+        FixpipeOp clonedFixpipeOp = cast<FixpipeOp>(rewriter.clone(*op));
+        Value clonedResult = clonedFixpipeOp->getResult(0);
+        hivm::DebugOp debugOp = cast<hivm::DebugOp>(maybeDebugOp);
+        rewriter.modifyOpInPlace(
+            debugOp, [&]() { debugOp.getArgMutable().assign(clonedResult); });
+      } else {
+        curOp = maybeDebugOp;
+      }
+    }
+    // FixPipe followed by debugOp only, no need to inline
+    if (curOp == nullptr)
+      return success();
+    // Operation curOp = *maybeInlinedOp;
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
     if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp &&
