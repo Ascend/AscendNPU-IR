@@ -2545,3 +2545,59 @@ func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
 
   return
 }
+
+// -----
+
+func.func @test_cast_s322s8_2d() {
+  %src = memref.alloc() : memref<2x16xi32, #hivm.address_space<ub>> // 32 * 16 * i32
+  %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<1536xi32>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<1536xi32>)
+  hivm.hir.vcast ins(%src : memref<2x16xi32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2x16xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
+func.func @test_cast_s322s8_1d() {
+  %src = memref.alloc() : memref<2xi32, #hivm.address_space<ub>> // 256 * i32
+  %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<768xi32>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<768xi32>)
+  hivm.hir.vcast ins(%src : memref<2xi32, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
+func.func @test_cast_s162s8_2d() {
+  %src = memref.alloc() : memref<2x16xi16, #hivm.address_space<ub>> //  32 * 16 * i16
+  %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<1536xi16>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<1536xi16>)
+  hivm.hir.vcast ins(%src : memref<2x16xi16, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2x16xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
+func.func @test_cast_s162s8_1d() {
+  %src = memref.alloc() : memref<2xi16, #hivm.address_space<ub>> // 512 * i16
+  %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
+
+  // CHECK: memref.alloc() : memref<1536xi16>
+  // CHECK: hivm.hir.vcast{{.*}}temp_buffer({{.*}}memref<1536xi16>)
+  hivm.hir.vcast ins(%src : memref<2xi16, #hivm.address_space<ub>>)
+                 outs(%dst : memref<2xi8, #hivm.address_space<ub>>)
+                 round_mode = <truncwithoverflow>
+  return
+}
