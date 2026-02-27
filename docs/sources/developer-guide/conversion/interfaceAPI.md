@@ -10,6 +10,7 @@
 ## Triton 算子接入 AscendNPU IR
 
 - Triton 是目前最主流的高性能算子开发编程语言，可以通过Triton Ascend来将现有的Triton算子转换成MLIR，从而接入AscendNPU IR生态
+- 详细的Triton接入指南请参考 [Triton接入](TritonInterface.md)
 
 ```
 @triton.jit
@@ -106,8 +107,13 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 ```
 
 ### 使能自动融合
+- 需要添加`hacc.target = #hacc.target<"target_device">`指定目标设备，用于获取核数、片上内存大小等硬件规格信息。不指定`-target`时默认为`Ascend910B1`。支持的目标设备包括：
+  - Ascend910B系列：`Ascend910B1`、`Ascend910B2`、`Ascend910B3`、`Ascend910B4`等
+  - Ascend910_93系列：`Ascend910_9362`、`Ascend910_9372`、`Ascend910_9381`等
+  - Ascend910_95系列：`Ascend910_950z`、`Ascend910_9579`、`Ascend910_9589`等
 - 需要添加`hacc.entry`表示当前函数是kernel的入口
 - 需要添加`hacc.function_kind = #hacc.function_kind<DEVICE>` 表示当前函数运行在DEVICE设备侧
+- 需要通过`-block-dim`指定使用的block数量，编译后生成的kernel函数会携带`hacc.block_dim`属性
 - 支持Op范围
   - Elemwise
   - Broadcast
@@ -118,7 +124,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 ### 调用方式
 
 ```
-bishengir-compile -enable-hfusion-compile=true test.mlir
+bishengir-compile -enable-hfusion-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
 ```
 
 ---
