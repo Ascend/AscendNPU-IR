@@ -50,14 +50,6 @@ About / 更多
    sources/introduction/architecture.md
 
 .. toctree::
-   :maxdepth: 1
-   :hidden:
-   :caption: Build
-
-   HowToBuild.md
-   HowToBuild_zh.md
-
-.. toctree::
    :maxdepth: 2
    :hidden:
    :caption: User Guide
