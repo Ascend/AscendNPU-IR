@@ -2893,6 +2893,147 @@ public:
   }
 };
 
+static Operation *buildSubAndCompareCond(PatternRewriter &rewriter,
+                                         Location loc, Value lhs, Value rhs,
+                                         Type elemType,
+                                         hfusion::CompareFn cmpFn) {
+  Value cstZeroF32 = rewriter.create<arith::ConstantFloatOp>(
+      loc, llvm::APFloat(0.0f), rewriter.getF32Type());
+
+  // 1.subRes = a - b
+  auto subInit = utils::createEmptyOp(rewriter, loc, lhs);
+  Value subRes =
+      hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                              linalg::BinaryFnAttr>(
+          rewriter, loc, linalg::BinaryFn::sub, ValueRange({lhs, rhs}),
+          ValueRange(subInit))
+          ->getResult(0);
+
+  // 2. cond1 = subRes.tofloat() > 0
+  Type targetF32Type = rewriter.getF32Type();
+  hfusion::RoundMode rounding =
+      utils::selectRoundMode<hfusion::RoundMode>(elemType, targetF32Type);
+  Value subResFloat =
+      hfusion::castTo(rewriter, subRes, targetF32Type, rounding);
+
+  Value emptyF32Tensor =
+      utils::createEmptyOpWithTargetElemType(rewriter, loc, lhs, targetF32Type);
+  Value zeroF32Tensor = rewriter
+                            .create<linalg::FillOp>(loc, ValueRange{cstZeroF32},
+                                                    ValueRange{emptyF32Tensor})
+                            .getResult(0);
+
+  return createCmpOp(rewriter, loc, subResFloat, zeroF32Tensor, cmpFn);
+}
+
+static Operation *buildSignAwareFallback(PatternRewriter &rewriter,
+                                         Location loc, Value lhs, Value rhs,
+                                         Type elemType, Operation *cond1Op) {
+
+  Value cstShiftAmt = rewriter.create<arith::ConstantIntOp>(loc, 31, 32);
+  Value cstZeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  // 3. a_sign = a >> 31; b_sign = b >> 31
+  auto aShiftInit =
+      utils::createEmptyOpWithTargetElemType(rewriter, loc, lhs, elemType);
+  Value aSign =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::shrsi, ValueRange{lhs, cstShiftAmt},
+          ValueRange(aShiftInit))
+          ->getResults()[0];
+
+  auto bShiftInit =
+      utils::createEmptyOpWithTargetElemType(rewriter, loc, rhs, elemType);
+  Value bSign =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::shrsi, ValueRange{rhs, cstShiftAmt},
+          ValueRange(bShiftInit))
+          ->getResults()[0];
+
+  // 4. same_sign = (a_sign == b_sign)
+  auto sameSignOp =
+      createCmpOp(rewriter, loc, aSign, bSign, hfusion::CompareFn::veq);
+
+  // 5. a_eq_0 = (a_sign == 0); b_neq_0 = (b_sign != 0)
+  auto zeroI32Init =
+      utils::createEmptyOpWithTargetElemType(rewriter, loc, lhs, elemType);
+  Value zeroI32Tensor = rewriter
+                            .create<linalg::FillOp>(loc, ValueRange{cstZeroI32},
+                                                    ValueRange{zeroI32Init})
+                            .getResult(0);
+
+  auto aEqZeroOp =
+      createCmpOp(rewriter, loc, aSign, zeroI32Tensor, hfusion::CompareFn::veq);
+  auto bNeqZeroOp =
+      createCmpOp(rewriter, loc, bSign, zeroI32Tensor, hfusion::CompareFn::vne);
+
+  // 6. cond2 = a_eq_0 && b_neq_0
+  auto cond2Op = createVandOp(rewriter, loc, aEqZeroOp->getResult(0),
+                              bNeqZeroOp->getResult(0));
+
+  // 7. safe_cond1 = cond1 && same_sign
+  auto safeCond1Op = createVandOp(rewriter, loc, cond1Op->getResult(0),
+                                  sameSignOp->getResult(0));
+
+  // 8. res = safe_cond1 || cond2
+  return createVorOp(rewriter, loc, safeCond1Op->getResult(0),
+                     cond2Op->getResult(0));
+}
+
+/// normalize int32 compare op ,divided into simplified logic for adding hints
+/// and guaranteed logic. supports lt, le, gt, ge
+/// Example of adding hints:
+///   c = a > b
+///   extension.compile_hint(c, "enable_high_performance_compare")
+/// is normalized to
+///   subRes = a - b
+///   res = subRes.tofloat() > 0
+/// Example without hint added:
+///   c = a > b
+/// is normalized to
+///   subRes = a - b
+///   cond1 = subRes.tofloat() > 0
+///   a_sign = a >> 31
+///   b_sign = b >> 31
+///   same_sign = a_sign == b_sign
+///   a_eq_0 = a_sign == 0
+///   b_neq_0 = b_sign != 0
+///   cond2 = a_eq_0 && b_neq_0
+///   res = (cond1 && same_sign) || cond2
+static LogicalResult enableOptimizationIntCmp(CompareOp op,
+                                              PatternRewriter &rewriter) {
+  mlir::Location loc = op->getLoc();
+  Value lhs = op.getInputs()[0];
+  Value rhs = op.getInputs()[1];
+  Type elemType = getElementTypeOrSelf(lhs.getType());
+  hfusion::CompareFn cmpFn = op.getCompareFn();
+
+  // a < b is equivalent to b > a; a <= b is equivalent to b >= a.
+  if (cmpFn == hfusion::CompareFn::vlt || cmpFn == hfusion::CompareFn::vle) {
+    std::swap(lhs, rhs);
+    cmpFn = (cmpFn == hfusion::CompareFn::vlt) ? hfusion::CompareFn::vgt
+                                               : hfusion::CompareFn::vge;
+  }
+
+  auto cond1Op =
+      buildSubAndCompareCond(rewriter, loc, lhs, rhs, elemType, cmpFn);
+
+  // If hints are added, user ensures no overflow, return early.
+  std::optional<Operation *> performanceCompare = utils::getAnnotateOpWithAttr(
+      op.getResult(0), "enable_high_performance_compare");
+  if (performanceCompare.has_value()) {
+    rewriter.replaceOp(op, cond1Op);
+    return success();
+  }
+
+  auto finalResOp =
+      buildSignAwareFallback(rewriter, loc, lhs, rhs, elemType, cond1Op);
+
+  rewriter.replaceOp(op, finalResOp);
+  return success();
+}
+
 /// normalize i8/i32 CompareOp
 ///   i8 -> f16
 ///   i32 -> i64 (except vne and veq)
@@ -2941,6 +3082,11 @@ public:
         {hfusion::CompareFn::vuge, hfusion::CompareFn::vge},
         {hfusion::CompareFn::vugt, hfusion::CompareFn::vgt},
     };
+
+    if (lhsElemType.isInteger(32) && cmpFn != hfusion::CompareFn::vne &&
+        cmpFn != hfusion::CompareFn::veq && !cmpFnMap.contains(cmpFn)) {
+      return enableOptimizationIntCmp(op, rewriter);
+    }
 
     if (cmpFnMap.contains(cmpFn)) {
       castLhs =

@@ -49,6 +49,11 @@ Operation *createCmpOp(PatternRewriter &rewriter, Location loc, Value lhs,
 Operation *createVandOp(PatternRewriter &rewriter, Location loc, Value lhs,
                         Value rhs);
 
+Operation *createVorOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                       Value rhs);
+
+Operation *createVnotOp(PatternRewriter &rewriter, Location loc, Value value);
+
 /// simplify 'x vxor 0xFF...' to 'vnot(x)'
 LogicalResult simplifyVxorToVnot(PatternRewriter &rewriter,
                                  hfusion::ElemwiseBinaryOp op);
