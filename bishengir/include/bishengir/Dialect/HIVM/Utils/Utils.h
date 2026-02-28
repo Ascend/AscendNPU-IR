@@ -369,6 +369,9 @@ constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
 bool isGuaranteedCollapsibleStrictly(
     MemRefType srcType, ArrayRef<ReassociationIndices> reassociation);
 
+bool isGuaranteedCollapsibleUnStrictly(
+    MemRefType srcType, ArrayRef<ReassociationIndices> reassociation);
+
 /// Return the MemRefTypes
 SmallVector<MemRefType> getMemRefTypes(TypeRange types);
 
