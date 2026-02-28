@@ -177,3 +177,166 @@ func.func @test_batchMmadL1_with_transpose() -> tensor<2x256x256xf32> {
   %res =  linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%ret1, %ret0 : tensor<2x256x256xf32>, tensor<2x256x256xf32>) outs(%res_empty : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
   return  %res : tensor<2x256x256xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_mmadL1_consecutive_loops
+// CHECK-SAME: (%[[UB1:.*]]: index, %[[UB2:.*]]: index, %[[A:.*]]: tensor<64x64xf16>, %[[B:.*]]: tensor<64x64xf16>)
+func.func @test_mmadL1_consecutive_loops(%ub1: index, %ub2: index, %A: tensor<64x64xf16>, %B: tensor<64x64xf16>) -> tensor<64x64xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init = tensor.empty() : tensor<64x64xf32>
+  %cst = arith.constant 0.000000e+00 : f32
+  // CHECK-NOT: linalg.fill
+  %mc_fill = linalg.fill ins(%cst : f32) outs(%init : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK-DAG:  %[[C0:.*]] = arith.constant 0 : index
+  // CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : index
+  // CHECK:      %[[INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  %loop1_res = scf.for %i = %c0 to %ub1 step %c1 iter_args(%arg0 = %mc_fill) -> (tensor<64x64xf32>) {
+    %res1 = linalg.matmul ins(%A, %B : tensor<64x64xf16>, tensor<64x64xf16>)
+                          outs(%arg0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %res1 : tensor<64x64xf32>
+  }
+  // CHECK:      %[[LOOP1_RES:.*]] = scf.for %[[IV1:.*]] = %[[C0]] to %[[UB1]] step %[[C1]] iter_args(%[[ARG_ITER1:.*]] = %[[INIT]]) -> (tensor<64x64xf32>) {
+  // CHECK:        %[[COND1:.*]] = arith.cmpi eq, %[[IV1]], %[[C0]] : index
+  // CHECK:        %[[MMAD1:.*]] = hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND1]], {{.*}}) outs(%[[ARG_ITER1]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK:        scf.yield %[[MMAD1]] : tensor<64x64xf32>
+  // CHECK:      }
+  %loop2_res = scf.for %j = %c0 to %ub2 step %c1 iter_args(%arg1 = %loop1_res) -> (tensor<64x64xf32>) {
+    %res2 = linalg.matmul ins(%A, %B : tensor<64x64xf16>, tensor<64x64xf16>)
+                          outs(%arg1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %res2 : tensor<64x64xf32>
+  }
+  // CHECK:      %[[LOOP2_RES:.*]] = scf.for %[[IV2:.*]] = %[[C0]] to %[[UB2]] step %[[C1]] iter_args(%[[ARG_ITER2:.*]] = %[[LOOP1_RES]]) -> (tensor<64x64xf32>) {
+  // CHECK:        %[[EQ2:.*]] = arith.cmpi eq, %[[IV2]], %[[C0]] : index
+  // CHECK:        %[[SLE_UB1:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+  // CHECK:        %[[COND2:.*]] = arith.andi %[[EQ2]], %[[SLE_UB1]] : i1
+  // CHECK:        %[[MMAD2:.*]] = hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND2]], {{.*}}) outs(%[[ARG_ITER2]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK:        scf.yield %[[MMAD2]] : tensor<64x64xf32>
+  // CHECK:      }
+  %loop3_res = scf.for %k = %c0 to %ub2 step %c1 iter_args(%arg2 = %loop2_res) -> (tensor<64x64xf32>) {
+    %res3 = linalg.matmul ins(%A, %B : tensor<64x64xf16>, tensor<64x64xf16>)
+                          outs(%arg2 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %res3 : tensor<64x64xf32>
+  }
+  // CHECK:      %[[LOOP3_RES:.*]] = scf.for %[[IV3:.*]] = %[[C0]] to %[[UB2]] step %[[C1]] iter_args(%[[ARG_ITER3:.*]] = %[[LOOP2_RES]]) -> (tensor<64x64xf32>) {
+  // CHECK:        %[[EQ3:.*]] = arith.cmpi eq, %[[IV3]], %[[C0]] : index
+  // CHECK:        %[[SLE_UB2:.*]] = arith.cmpi sle, %[[UB2]], %[[C0]] : index
+  // CHECK:        %[[AND_EQ3_UB2:.*]] = arith.andi %[[EQ3]], %[[SLE_UB2]] : i1
+  // CHECK:        %[[SLE_UB1_2:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+  // CHECK:        %[[COND3:.*]] = arith.andi %[[AND_EQ3_UB2]], %[[SLE_UB1_2]] : i1
+  // CHECK:        %[[MMAD3:.*]] = hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND3]], {{.*}}) outs(%[[ARG_ITER3]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK:        scf.yield %[[MMAD3]] : tensor<64x64xf32>
+  // CHECK:      }
+  return %loop3_res : tensor<64x64xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_case5_inner_plus_consecutive
+// CHECK-SAME: (%[[UB0:.*]]: index, %[[UB1:.*]]: index, %[[UB2:.*]]: index, %[[UB3:.*]]: index, %[[A:.*]]: tensor<64x64xf16>, %[[B:.*]]: tensor<64x64xf16>)
+func.func @test_case5_inner_plus_consecutive(%ub0: index, %ub1: index, %ub2: index, %ub3: index, %A: tensor<64x64xf16>, %B: tensor<64x64xf16>) -> tensor<64x64xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init = tensor.empty() : tensor<64x64xf32>
+  %cst = arith.constant 0.000000e+00 : f32
+  // CHECK-NOT: linalg.fill
+  %mc_fill = linalg.fill ins(%cst : f32) outs(%init : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+  // CHECK:     %[[INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK: %[[RES_OUTER:.*]] = scf.for %[[J:.*]] = %[[C0]] to %[[UB0]] step %[[C1]] iter_args(%[[ARG_J:.*]] = %[[INIT]])
+  %res_outer = scf.for %j = %c0 to %ub0 step %c1 iter_args(%arg0 = %mc_fill) -> (tensor<64x64xf32>) {
+    // CHECK:   %[[RES1:.*]] = scf.for %[[I1:.*]] = %[[C0]] to %[[UB1]] step %[[C1]] iter_args(%[[ARG_I1:.*]] = %[[ARG_J]])
+    // CHECK:     %[[EQ_I1:.*]] = arith.cmpi eq, %[[I1]], %[[C0]] : index
+    // CHECK:     %[[EQ_J1:.*]] = arith.cmpi eq, %[[J]], %[[C0]] : index
+    // CHECK:     %[[COND1:.*]] = arith.andi %[[EQ_I1]], %[[EQ_J1]] : i1
+    // CHECK:     hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND1]], {{.*}}) outs(%[[ARG_I1]]
+    %res1 = scf.for %i1 = %c0 to %ub1 step %c1 iter_args(%arg1 = %arg0) -> (tensor<64x64xf32>) {
+      %m1 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg1: tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %m1 : tensor<64x64xf32>
+    }
+    // CHECK:   %[[RES2:.*]] = scf.for %[[I2:.*]] = %[[C0]] to %[[UB2]] step %[[C1]] iter_args(%[[ARG_I2:.*]] = %[[RES1]])
+    // CHECK:     %[[EQ_I2:.*]] = arith.cmpi eq, %[[I2]], %[[C0]] : index
+    // CHECK:     %[[SLE_UB1_2:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+    // CHECK:     %[[AND_I2_UB1:.*]] = arith.andi %[[EQ_I2]], %[[SLE_UB1_2]] : i1
+    // CHECK:     %[[EQ_J2:.*]] = arith.cmpi eq, %[[J]], %[[C0]] : index
+    // CHECK:     %[[COND2:.*]] = arith.andi %[[AND_I2_UB1]], %[[EQ_J2]] : i1
+    // CHECK:     hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND2]], {{.*}}) outs(%[[ARG_I2]]
+    %res2 = scf.for %i2 = %c0 to %ub2 step %c1 iter_args(%arg2 = %res1) -> (tensor<64x64xf32>) {
+      %m2 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg2: tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %m2 : tensor<64x64xf32>
+    }
+    // CHECK:   %[[RES3:.*]] = scf.for %[[I3:.*]] = %[[C0]] to %[[UB3]] step %[[C1]] iter_args(%[[ARG_I3:.*]] = %[[RES2]])
+    // CHECK:     %[[EQ_I3:.*]] = arith.cmpi eq, %[[I3]], %[[C0]] : index
+    // CHECK:     %[[SLE_UB2_3:.*]] = arith.cmpi sle, %[[UB2]], %[[C0]] : index
+    // CHECK:     %[[AND_I3_UB2:.*]] = arith.andi %[[EQ_I3]], %[[SLE_UB2_3]] : i1
+    // CHECK:     %[[SLE_UB1_3:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+    // CHECK:     %[[AND_PREV_UB1:.*]] = arith.andi %[[AND_I3_UB2]], %[[SLE_UB1_3]] : i1
+    // CHECK:     %[[EQ_J3:.*]] = arith.cmpi eq, %[[J]], %[[C0]] : index
+    // CHECK:     %[[COND3:.*]] = arith.andi %[[AND_PREV_UB1]], %[[EQ_J3]] : i1
+    // CHECK:     hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND3]], {{.*}}) outs(%[[ARG_I3]]
+    %res3 = scf.for %i3 = %c0 to %ub3 step %c1 iter_args(%arg3 = %res2) -> (tensor<64x64xf32>) {
+      %m3 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg3: tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %m3 : tensor<64x64xf32>
+    }
+
+    scf.yield %res3 : tensor<64x64xf32>
+  }
+  return %res_outer : tensor<64x64xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_case6_consecutive_plus_inner
+// CHECK-SAME: (%[[UB1:.*]]: index, %[[UB2:.*]]: index, %[[UB3:.*]]: index, %[[UB4:.*]]: index, %[[UB5:.*]]: index, %[[A:.*]]: tensor<64x64xf16>, %[[B:.*]]: tensor<64x64xf16>)
+func.func @test_case6_consecutive_plus_inner(%ub1: index, %ub2: index, %ub3: index, %ub4: index, %ub5: index, %A: tensor<64x64xf16>, %B: tensor<64x64xf16>) -> tensor<64x64xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init = tensor.empty() : tensor<64x64xf32>
+  %cst = arith.constant 0.000000e+00 : f32
+  // CHECK-NOT: linalg.fill
+  %mc_fill = linalg.fill ins(%cst : f32) outs(%init : tensor<64x64xf32>) -> tensor<64x64xf32>
+  // CHECK-DAG: %[[FALSE:.*]] = arith.constant false
+  // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+  // CHECK:     %[[INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK: %[[RES1:.*]] = scf.for %[[I1:.*]] = %[[C0]] to %[[UB1]] step %[[C1]] iter_args(%[[ARG_I1:.*]] = %[[INIT]])
+  // CHECK:   %[[EQ_I1:.*]] = arith.cmpi eq, %[[I1]], %[[C0]] : index
+  // CHECK:   hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[EQ_I1]], {{.*}}) outs(%[[ARG_I1]]
+  %res1 = scf.for %i1 = %c0 to %ub1 step %c1 iter_args(%arg1 = %mc_fill) -> (tensor<64x64xf32>) {
+    %m1 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg1: tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %m1 : tensor<64x64xf32>
+  }
+  // CHECK: %[[RES2:.*]] = scf.for %[[I2:.*]] = %[[C0]] to %[[UB2]] step %[[C1]] iter_args(%[[ARG_I2:.*]] = %[[RES1]])
+  %res2 = scf.for %i2 = %c0 to %ub2 step %c1 iter_args(%arg2 = %res1) -> (tensor<64x64xf32>) {
+    // CHECK:   %[[RES3:.*]] = scf.for %[[I3:.*]] = %[[C0]] to %[[UB3]] step %[[C1]] iter_args(%[[ARG_I3:.*]] = %[[ARG_I2]])
+    // CHECK:     %[[EQ_I3:.*]] = arith.cmpi eq, %[[I3]], %[[C0]] : index
+    // CHECK:     %[[EQ_I2:.*]] = arith.cmpi eq, %[[I2]], %[[C0]] : index
+    // CHECK:     %[[AND_I3_I2:.*]] = arith.andi %[[EQ_I3]], %[[EQ_I2]] : i1
+    // CHECK:     %[[SLE_UB1:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+    // CHECK:     %[[COND_L3:.*]] = arith.andi %[[AND_I3_I2]], %[[SLE_UB1]] : i1
+    // CHECK:     hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND_L3]], {{.*}}) outs(%[[ARG_I3]]
+    %res3 = scf.for %i3 = %c0 to %ub3 step %c1 iter_args(%arg3 = %arg2) -> (tensor<64x64xf32>) {
+       %m3 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg3: tensor<64x64xf32>) -> tensor<64x64xf32>
+       scf.yield %m3 : tensor<64x64xf32>
+    }
+    scf.yield %res3 : tensor<64x64xf32>
+  }
+  // CHECK: %[[RES4:.*]] = scf.for %[[I4:.*]] = %[[C0]] to %[[UB4]] step %[[C1]] iter_args(%[[ARG_I4:.*]] = %[[RES2]])
+  // CHECK:   %[[EQ_I4:.*]] = arith.cmpi eq, %[[I4]], %[[C0]] : index
+  // CHECK:   %[[SLE_UB2:.*]] = arith.cmpi sle, %[[UB2]], %[[C0]] : index
+  // CHECK:   %[[AND_I4_UB2:.*]] = arith.andi %[[EQ_I4]], %[[SLE_UB2]] : i1
+  // CHECK:   %[[SLE_UB1_L4:.*]] = arith.cmpi sle, %[[UB1]], %[[C0]] : index
+  // CHECK:   %[[COND_L4:.*]] = arith.andi %[[AND_I4_UB2]], %[[SLE_UB1_L4]] : i1
+  // CHECK:   %[[M4:.*]] = hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[COND_L4]], {{.*}}) outs(%[[ARG_I4]]
+  %res4 = scf.for %i4 = %c0 to %ub4 step %c1 iter_args(%arg4 = %res2) -> (tensor<64x64xf32>) {
+     %m4 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg4: tensor<64x64xf32>) -> tensor<64x64xf32>
+     // CHECK:   %[[RES5:.*]] = scf.for %[[I5:.*]] = %[[C0]] to %[[UB5]] step %[[C1]] iter_args(%[[ARG_I5:.*]] = %[[M4]])
+     // CHECK:     hivm.hir.mmadL1 ins(%[[A]], %[[B]], %[[FALSE]], {{.*}}) outs(%[[ARG_I5]]
+     %res5 = scf.for %i5 = %c0 to %ub5 step %c1 iter_args(%arg5 = %m4) -> (tensor<64x64xf32>) {
+       %m5 = linalg.matmul ins(%A, %B: tensor<64x64xf16>, tensor<64x64xf16>) outs(%arg5: tensor<64x64xf32>) -> tensor<64x64xf32>
+       scf.yield %m5 : tensor<64x64xf32>
+     }
+     scf.yield %res5 : tensor<64x64xf32>
+  }
+  // CHECK: return %[[RES4]] : tensor<64x64xf32>
+  return %res4 : tensor<64x64xf32>
+}

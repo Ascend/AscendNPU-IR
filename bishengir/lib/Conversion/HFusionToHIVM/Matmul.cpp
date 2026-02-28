@@ -110,6 +110,22 @@ public:
   ///                         outs(%arg3 : tensor<?x?xf32>) -> tensor<?x?xf32>
   /// \endcode
   /// the init condition is (%arg0 == lower_bound) && (%arg2 == lower_bound1).
+  ///
+  /// Another example, for the below IR:
+  /// \code
+  /// %0 = tensor.empty() : tensor<?x?xf32>
+  /// %cst = linalg.fill ins(%cst: f32) outs(%0: tensor<?x?xf32>)
+  /// ...
+  /// %res = scf.for %arg0 = lower_bound to upper_bound ... iter_args(%arg1 = %cst) { // K loop
+  ///  %ret = linalg.matmul ins(%A, %B : tensor<?x?xf16>, tensor<?x?xf16>)
+  ///                       outs(%arg1 : tensor<?x?xf32>) -> tensor<?x?xf32>
+  ///  yiled %ret
+  /// %res1 = scf.for %arg2 = lower_bound1 to upper_bound1 ... iter_args(%arg3 = %res) { // K loop
+  ///  %ret = linalg.matmul ins(%A, %B : tensor<?x?xf16>, tensor<?x?xf16>)
+  ///                       outs(%arg3 : tensor<?x?xf32>) -> tensor<?x?xf32>
+  ///  yiled %ret
+  /// \endcode
+  /// the init condition is (%arg2 == lower_bound1) && (lower_bound >= upper_bound).
   void extractInitCondition(PatternRewriter &rewriter);
 
   /// Judge whether the input of mmad can be trasposed along being loaded
@@ -254,38 +270,69 @@ template <typename T, typename U>
 LogicalResult
 MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
                                               PatternRewriter &rewriter) const {
-  // If current destination value satisfies empty space, return
+  // Base Case: If current destination value satisfies empty space, return
   if (isZeroOrEmptyTensor(info.currentValue)) {
     return success();
   }
-  // Currently, we can only handle cases where the current value is an iter
-  // argument for a scf::ForOp.
-  // Then, consider case where current dst value is an iter argument of
-  // scf::ForOp and then trace for `ZeroOrEmptyTensor` continually
-  // Otherwise, we think MmadL1 dst has meaningful value for accumulation
-  auto blockArg = dyn_cast_if_present<BlockArgument>(info.currentValue);
-  if (!blockArg) {
-    return failure();
+
+  // Case A: L0C is an iteration argument of scf::ForOp
+  if (auto blockArg = dyn_cast<BlockArgument>(info.currentValue)) {
+    auto scfForOp =
+        dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
+    if (!scfForOp) {
+      return failure();
+    }
+
+    OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
+
+    // Update information.
+    info.initTensorOutermostLoop = scfForOp.getOperation();
+    info.initTensorIterArgIndex = iterArgOperand->getOperandNumber();
+    info.currentValue = iterArgOperand->get();
+
+    auto loc = info.currentCondition.getLoc();
+    // Init condition for current loop is `(iv == lower_bound)`
+    auto isFirstIter = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
+        scfForOp.getInductionVar());
+
+    // Joint condition is `(currentCondition && (iv == lower_bound))`
+    info.currentCondition =
+        rewriter.create<arith::AndIOp>(loc, info.currentCondition, isFirstIter);
+
+    // Directly reuse and pass 'info' upward
+    return buildInitCondition(info, rewriter);
   }
-  auto scfForOp =
-      dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
-  if (!scfForOp) {
-    return failure();
+
+  // Case B: L0C is the result of scf::ForOp
+  if (auto prevLoop =
+          dyn_cast_if_present<scf::ForOp>(info.currentValue.getDefiningOp())) {
+    auto resultIndex = cast<OpResult>(info.currentValue).getResultNumber();
+    Value prevInit = prevLoop.getInitArgs()[resultIndex];
+
+    BlockArgument tiedBlockArg = prevLoop.getRegionIterArg(resultIndex);
+
+    // Update information.
+    info.initTensorOutermostLoop = prevLoop.getOperation();
+    info.initTensorIterArgIndex =
+        prevLoop.getTiedLoopInit(tiedBlockArg)->getOperandNumber();
+    info.currentValue = prevInit;
+
+    // Init condition for current loop is `LowerBound >= UpperBound`
+    auto loc = prevLoop.getLoc();
+    auto loopNotRun = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, prevLoop.getLowerBound(),
+        prevLoop.getUpperBound());
+
+    // Joint condition is `((LowerBound >= UpperBound) && currentCondition)`
+    info.currentCondition =
+        rewriter.create<arith::AndIOp>(loc, info.currentCondition, loopNotRun);
+
+    return buildInitCondition(info, rewriter);
   }
-  OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
-  // Update information.
-  info.initTensorOutermostLoop = scfForOp.getOperation();
-  info.initTensorIterArgIndex = iterArgOperand->getOperandNumber();
-  info.currentValue = iterArgOperand->get();
-  auto loc = info.currentCondition.getLoc();
-  // Init condition for current loop is `(iv == lower_bound)`
-  auto additionalCondition = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
-      scfForOp.getInductionVar());
-  // Joint condition is `((iv == lower_bound) && currentCondition)`
-  info.currentCondition = rewriter.create<arith::AndIOp>(
-      loc, info.currentCondition, additionalCondition);
-  return buildInitCondition(info, rewriter);
+
+  // Unable to trace, return failure (init_c = false)
+  return failure();
 }
 
 template <typename T, typename U>
