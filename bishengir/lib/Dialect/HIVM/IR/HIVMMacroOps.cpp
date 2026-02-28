@@ -166,7 +166,7 @@ bool isInitConstantForLocalMmadOp(LocalMmadTy *localMatmulOp,
 }
 
 static std::optional<int64_t> getConstantFromDefine(Value constVal) {
-  if (auto constOp = dyn_cast<arith::ConstantOp>(constVal.getDefiningOp())) {
+  if (auto constOp = dyn_cast_or_null<arith::ConstantOp>(constVal.getDefiningOp())) {
     return getConstantIntValue(constOp.getValue());
   }
 
@@ -181,10 +181,18 @@ bool isInitFirstLoopIterForLocalMmadOp(LocalMmadTy *localMatmulOp) {
   if (auto cmpOp = dyn_cast<arith::CmpIOp>(initCond.getDefiningOp())) {
     if (auto forOp = cmpOp->template getParentOfType<scf::ForOp>()) {
       auto cmpConst = getConstantFromDefine(cmpOp.getRhs());
+      bool isConstantRhs = true;
+      // If rhs of cmpOp is not a constant, check if lhs is constant
+      if (cmpConst.has_value()) {
+        cmpConst = getConstantFromDefine(cmpOp.getLhs());
+        isConstantRhs = false;
+      }
       auto forLowerConst = getConstantFromDefine(forOp.getLowerBound());
       
       if (cmpConst.has_value() && forLowerConst.has_value()) {
-        return (cmpConst.value() == forLowerConst.value()) && (cmpOp.getLhs() == forOp.getInductionVar());
+        return isConstantRhs 
+               ? (cmpConst.value() == forLowerConst.value()) && (cmpOp.getLhs() == forOp.getInductionVar())
+               : (cmpConst.value() == forLowerConst.value()) && (cmpOp.getRhs() == forOp.getInductionVar());
       }
     }
   }
