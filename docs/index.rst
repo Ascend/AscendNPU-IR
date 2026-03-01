@@ -1,92 +1,96 @@
-.. AscendNPU IR documentation master file.
-   Keep the root toctree for sidebar navigation; content below is the homepage.
+.. AscendNPU IR documentation master file (English).
+   Keep the root toctree for sidebar navigation.
 
-Welcome to AscendNPU IR 文档
+Welcome to AscendNPU IR Docs
 ============================
 
-**AscendNPU IR** 是基于 MLIR 的昇腾亲和算子编译中间表示（Intermediate Representation），面向昇腾 AI 处理器提供多级抽象与编译优化能力，支持生态框架灵活对接，在保证易用性的同时支持细粒度性能调优。
+**AscendNPU IR** is an MLIR-based intermediate representation for Ascend NPU operator compilation, providing multi-level abstraction and compiler optimizations, with flexible integration for ecosystem frameworks and fine-grained performance tuning.
 
-`GitCode 仓库 <https://gitcode.com/Ascend/AscendNPU-IR>`_ · *当前文档为非正式版*
+`AscendNPU-IR on GitCode <https://gitcode.com/Ascend/AscendNPU-IR>`_
 
-Getting Started / 入门
-----------------------
+`AscendNPU-IR on GitHub <https://github.com/Ascend/AscendNPU-IR>`_
 
-- :doc:`安装与构建 <sources/introduction/quickStart/installingGuide>` — 环境要求与编译步骤
-- :doc:`快速开始 <sources/introduction/quickStart/index>` — 安装说明与示例
-- :doc:`简介与架构 <sources/introduction/architecture>` — 逻辑架构与代码结构
-- :doc:`编程模型 <sources/introduction/programmingModel>` — 编程模型说明
+`Documentation on Read the Docs <https://npuir.readthedocs.io/>`_
 
-User Guide / 用户指南
----------------------
+Getting Started
+---------------
 
-- :doc:`编译选项 <sources/user-guide/compileOption>`
-- :doc:`调试调测 <sources/user-guide/debugOption>`
-- :doc:`最佳实践 <sources/user-guide/bestPractice>`
+- :doc:`Install and build <sources/introduction/quick_start/installing_guide>` — Environment and build steps
+- :doc:`Quick start <sources/introduction/quick_start/index>` — Setup and examples
+- :doc:`Introduction and architecture <sources/introduction/architecture>` — Architecture and layout
+- :doc:`Programming model <sources/introduction/programming_model>` — Programming model
 
-Developer Guide / 开发者指南
-----------------------------
+User Guide
+----------
 
-- :doc:`IR 接入指南 <sources/developer-guide/conversion/interfaceAPI>` — 生态对接与接口
-- :doc:`Dialects <sources/developer-guide/dialects/index>` — 方言说明
-- :doc:`Passes <sources/developer-guide/passes/index>` — 变换与 Pass
-- :doc:`关键特性 <sources/developer-guide/features/index>` — 特性与实现说明
+- :doc:`Compile options <sources/user_guide/compile_option>`
+- :doc:`Debug and tune <sources/user_guide/debug_option>`
+- :doc:`Best practices <sources/user_guide/best_practice>`
 
-About / 更多
-------------
+Developer Guide
+---------------
 
-- :doc:`贡献指南 <sources/contributing-guide/contribute>`
-- :doc:`常见问题 <sources/FAQ/FAQ>`
-- :doc:`相关项目与资源 <sources/reference/thanks>`
-- :doc:`讲座与课程 <sources/reference/talkAndCourse>`
+- :doc:`IR integration <sources/developer_guide/conversion/interface_api>` — Ecosystem and APIs
+- :doc:`Dialects <sources/developer_guide/dialects/index>` — Dialect reference
+- :doc:`Passes <sources/developer_guide/passes/index>` — Passes and transforms
+- :doc:`Features <sources/developer_guide/features/index>` — Key features
+
+About
+-----
+
+- :doc:`Contributing <sources/contributing_guide/contribute>`
+- :doc:`FAQ <sources/faq/faq>`
+- :doc:`Related projects <sources/reference/thanks>`
+- :doc:`Talks and courses <sources/reference/talk_and_course>`
 
 .. toctree::
    :maxdepth: 2
    :hidden:
    :caption: Introduction
 
-   sources/introduction/briefIntroduce.md
-   sources/introduction/quickStart/index
-   sources/introduction/programmingModel.md
-   sources/introduction/architecture.md
+   sources/introduction/introduction
+   sources/introduction/quick_start/index
+   sources/introduction/programming_model
+   sources/introduction/architecture
 
 .. toctree::
    :maxdepth: 2
    :hidden:
    :caption: User Guide
 
-   sources/user-guide/compileOption.md
-   sources/user-guide/debugOption.md
-   sources/user-guide/bestPractice.md
+   sources/user_guide/compile_option
+   sources/user_guide/debug_option
+   sources/user_guide/best_practice
 
 .. toctree::
    :maxdepth: 2
    :hidden:
    :caption: Developer Guide
 
-   sources/developer-guide/conversion/index
-   sources/developer-guide/dialects/index
-   sources/developer-guide/passes/index
-   sources/developer-guide/features/index
+   sources/developer_guide/conversion/index
+   sources/developer_guide/dialects/index
+   sources/developer_guide/passes/index
+   sources/developer_guide/features/index
 
 .. toctree::
    :maxdepth: 2
    :hidden:
    :caption: Contributing
 
-   sources/contributing-guide/contribute.md
-   sources/userOfnpuir/users.md
+   sources/contributing_guide/contribute
+   sources/user_of_npuir/users
 
 .. toctree::
    :maxdepth: 1
    :hidden:
    :caption: FAQ
 
-   sources/FAQ/FAQ.md
+   sources/faq/faq
 
 .. toctree::
    :maxdepth: 0
    :hidden:
    :caption: Reference
 
-   sources/reference/thanks.md
-   sources/reference/talkAndCourse.md
+   sources/reference/thanks
+   sources/reference/talk_and_course

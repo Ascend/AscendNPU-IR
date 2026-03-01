@@ -1,20 +1,40 @@
 # Minimal makefile for Sphinx documentation
+# Dual source i18n: .md = English, *_zh.md = Chinese (see docs/README.md)
+# Default target: clean _build then build English (fresh output every time).
 #
 
-# You can set these variables from the command line, and also
-# from the environment for the first two.
 SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
 SOURCEDIR     = .
 BUILDDIR      = _build
 
-# Put it first so that "make" without argument is like "make help".
+# Default: clean and build English (ensures fresh static output on every make -C docs)
+all: clean html
+	@echo "Done. English HTML in $(BUILDDIR)/html"
+
+# Remove generated static files under _build/
+clean:
+	@rm -rf "$(BUILDDIR)"
+	@echo "Cleaned $(BUILDDIR)/"
+
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
-.PHONY: help Makefile
+# Build English docs (conf.py reads READTHEDOCS_LANGUAGE for exclude_patterns)
+html:
+	@READTHEDOCS_LANGUAGE=en $(SPHINXBUILD) -b html -D language=en -D root_doc=index "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
+	@echo "English HTML built in $(BUILDDIR)/html"
 
-# Catch-all target: route all unknown targets to Sphinx using the new
-# "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
+# Build Chinese docs (conf.py writes index.html redirect via build-finished for RTD + local)
+html-zh:
+	@READTHEDOCS_LANGUAGE=zh_CN $(SPHINXBUILD) -b html -D language=zh_CN -D root_doc=index_zh "$(SOURCEDIR)" "$(BUILDDIR)/html_zh" $(SPHINXOPTS) $(O)
+	@echo "Chinese HTML built in $(BUILDDIR)/html_zh"
+
+# Build both: English in _build/html, Chinese in _build/html_zh (for local preview)
+html-all: clean html html-zh
+	@echo "Both languages built. Serve e.g. _build/html and _build/html_zh."
+
+.PHONY: all clean help Makefile html html-zh html-all
+
 %: Makefile
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
