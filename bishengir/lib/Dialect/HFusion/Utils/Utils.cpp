@@ -145,6 +145,23 @@ Operation *hfusion::createVandOp(PatternRewriter &rewriter, Location loc,
       ValueRange{andEmptyOp});
 }
 
+Operation *hfusion::createVorOp(PatternRewriter &rewriter, Location loc,
+                                Value lhs, Value rhs) {
+  auto andEmptyOp = utils::createEmptyOp(rewriter, loc, rhs);
+  return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                 hfusion::BinaryFnAttr>(
+      rewriter, loc, hfusion::BinaryFn::vor, ValueRange({lhs, rhs}),
+      ValueRange{andEmptyOp});
+}
+
+Operation *hfusion::createVnotOp(PatternRewriter &rewriter, Location loc,
+                                 Value value) {
+  auto andEmptyOp = utils::createEmptyOp(rewriter, loc, value);
+  return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                hfusion::UnaryFnAttr>(
+      rewriter, loc, hfusion::UnaryFn::vnot, value, ValueRange{andEmptyOp});
+}
+
 bool isConstantAllOne(Value v) {
   auto type = getElementTypeOrSelf(v);
   if (isa<FloatType>(type)) {
