@@ -2085,3 +2085,22 @@ func.func @test_atomic_max_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type
   hivm.hir.store ins(%alloc2 : memref<16xi8>) outs(%arg3 : memref<16xi8>)
   return
 }
+
+// ---- // IR Dump Before HIVMDecomposeOp (hivm-decompose-op) //---- // 
+// CHECK-LABEL: func.func @test_vsel_i64( 
+// CHECK-SAME: %[[VAL_0:.*]]: memref<1024xi64>, 
+// CHECK-SAME: %[[VAL_1:.*]]: memref<1024xi64>) { 
+// CHECK: %[[VAL_2:.*]] = memref.alloc() : memref<1024xi8> 
+// CHECK: hivm.hir.vcmp ins(%[[VAL_0]], %[[VAL_1]] : memref<1024xi64>, memref<1024xi64>) outs(%[[VAL_2]] : memref<1024xi8>) compare_mode = <lt> 
+// CHECK: %[[VAL_3:.*]] = memref.alloc() {alignment = 64 : i64} : memref<1024xi64> 
+// CHECK: hivm.hir.vsel ins(%[[VAL_2]], %[[VAL_0]], %[[VAL_1]] : memref<1024xi8>, memref<1024xi64>, memref<1024xi64>) outs(%[[VAL_3]] : memref<1024xi64>) 
+// CHECK: return 
+// CHECK: } 
+func.func @test_vsel_i64(%arg0: memref<1024xi64>, %arg1: memref<1024xi64>)
+{ 
+  %alloc_3 = memref.alloc() {alignment = 64 : i64} : memref<1024xi1> 
+  hivm.hir.vcmp ins(%arg0, %arg1 : memref<1024xi64>, memref<1024xi64>) outs(%alloc_3 : memref<1024xi1>) compare_mode = <lt> 
+  %alloc_4 = memref.alloc() {alignment = 64 : i64} : memref<1024xi64> 
+  hivm.hir.vsel ins(%alloc_3, %arg0, %arg1 : memref<1024xi1>, memref<1024xi64>, memref<1024xi64>) outs(%alloc_4 : memref<1024xi64>) 
+  return 
+}
