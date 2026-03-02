@@ -2565,37 +2565,47 @@ func.func @triton_not_8d(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref
 }
 
 // -----
-// CHECK-LABEL:   func.func @test_gathermask
-// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f16
-// CHECK:           %{{.*}} = memref.reinterpret_cast %{{.*}} to offset: [0], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1]>>
-// CHECK:           %{{.*}} = memref.alloc() : memref<16xf32>
-// CHECK:           memref.copy %{{.*}}, %{{.*}} : memref<16xf32, strided<[1]>> to memref<16xf32>
-// CHECK:           %{{.*}} = bufferization.to_tensor %{{.*}} restrict writable : memref<16xf32>
-// CHECK:           %{{.*}} = memref.reinterpret_cast %{{.*}} to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>
-// CHECK:           %{{.*}} = memref.alloc() : memref<16xi8>
-// CHECK:           memref.copy %{{.*}}, %{{.*}} : memref<16xi8, strided<[1]>> to memref<16xi8>
-// CHECK:           %{{.*}} = bufferization.to_tensor %{{.*}} restrict writable : memref<16xi8>
-// CHECK:           %{{.*}} = tensor.empty() : tensor<16xf32>
-// CHECK:           %{{.*}} = tensor.empty() : tensor<16xf16>
-// CHECK:           %{{.*}} = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<16xi8>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
-// CHECK:           %{{.*}} = tensor.empty() : tensor<16xi1>
-// CHECK:           %{{.*}} = tensor.empty() : tensor<16xi1>
-// CHECK:           %{{.*}} = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%{{.*}}, %{{.*}} : tensor<16xf16>, f16) outs(%{{.*}} : tensor<16xi1>) -> tensor<16xi1>
-// CHECK:           %{{.*}} = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%{{.*}} : tensor<16xi1>) outs(%{{.*}} : tensor<16xi1>) -> tensor<16xi1>
-// CHECK:           %{{.*}} = hfusion.gather_mask {operandSegmentSizes = array<i32: 2, 1>} ins(%{{.*}}, %{{.*}} : tensor<16xf32>, tensor<16xi1>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
-func.func @test_gathermask(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi8>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) {
-  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1]>>
-  %alloc = memref.alloc() : memref<16xf32>
-  memref.copy %reinterpret_cast, %alloc : memref<16xf32, strided<[1]>> to memref<16xf32>
-  %0 = bufferization.to_tensor %alloc restrict writable : memref<16xf32>
+// CHECK-LABEL:   "func.func"() <{function_type = (memref<?xi8>, memref<?xi8>, memref<?xi8>, memref<?xi8>, memref<?xi8>, i32, i32, i32, i32, i32, i32) -> (), sym_name = "test_gathermask"}> ({
+// CHECK:         ^bb0(%[[VAL_0:.*]]: memref<?xi8>, %[[VAL_1:.*]]: memref<?xi8>, %[[VAL_2:.*]]: memref<?xi8>, %[[VAL_3:.*]]: memref<?xi8>, %[[VAL_4:.*]]: memref<?xi8>, %[[VAL_5:.*]]: i32, %[[VAL_6:.*]]: i32, %[[VAL_7:.*]]: i32, %[[VAL_8:.*]]: i32, %[[VAL_9:.*]]: i32, %[[VAL_10:.*]]: i32):
+// CHECK:           %[[VAL_11:.*]] = "memref.reinterpret_cast"(%[[VAL_2]]) <{operandSegmentSizes = array<i32: 1, 0, 0, 0>, static_offsets = array<i64: 0>, static_sizes = array<i64: 16>, static_strides = array<i64: 1>}> : (memref<?xi8>) -> memref<16xi8, strided<[1]>>
+// CHECK:           %[[VAL_12:.*]] = "memref.alloc"() <{operandSegmentSizes = array<i32: 0, 0>}> : () -> memref<16xi8>
+// CHECK:           "memref.copy"(%[[VAL_11]], %[[VAL_12]]) : (memref<16xi8, strided<[1]>>, memref<16xi8>) -> ()
+// CHECK:           %[[VAL_13:.*]] = "bufferization.to_tensor"(%[[VAL_12]]) <{restrict, writable}> : (memref<16xi8>) -> tensor<16xi8>
+// CHECK:           %[[VAL_14:.*]] = "memref.reinterpret_cast"(%[[VAL_3]]) <{operandSegmentSizes = array<i32: 1, 0, 0, 0>, static_offsets = array<i64: 0>, static_sizes = array<i64: 16>, static_strides = array<i64: 1>}> : (memref<?xi8>) -> memref<16xi8, strided<[1]>>
+// CHECK:           %[[VAL_15:.*]] = "memref.alloc"() <{operandSegmentSizes = array<i32: 0, 0>}> : () -> memref<16xi8>
+// CHECK:           "memref.copy"(%[[VAL_14]], %[[VAL_15]]) : (memref<16xi8, strided<[1]>>, memref<16xi8>) -> ()
+// CHECK:           %[[VAL_16:.*]] = "bufferization.to_tensor"(%[[VAL_15]]) <{restrict, writable}> : (memref<16xi8>) -> tensor<16xi8>
+// CHECK:           %[[VAL_17:.*]] = "tensor.empty"() : () -> tensor<1xi32>
+// CHECK:           %[[VAL_18:.*]] = "tensor.empty"() : () -> tensor<16xi8>
+// CHECK:           %[[VAL_19:.*]]:2 = "hfusion.gather_mask"(%[[VAL_13]], %[[VAL_16]], %[[VAL_18]], %[[VAL_17]]) ({
+// CHECK:           ^bb0(%[[VAL_20:.*]]: i8, %[[VAL_21:.*]]: i8, %[[VAL_22:.*]]: i8, %[[VAL_23:.*]]: i32):
+// CHECK:             %[[VAL_24:.*]] = "arith.trunci"(%[[VAL_21]]) : (i8) -> i1
+// CHECK:             %[[VAL_25:.*]] = "arith.select"(%[[VAL_24]], %[[VAL_20]], %[[VAL_22]]) : (i1, i8, i8) -> i8
+// CHECK:             %[[VAL_26:.*]] = "arith.constant"() <{value = 0 : i32}> : () -> i32
+// CHECK:             "linalg.yield"(%[[VAL_25]], %[[VAL_26]]) : (i8, i32) -> ()
+// CHECK:           }) : (tensor<16xi8>, tensor<16xi8>, tensor<16xi8>, tensor<1xi32>) -> (tensor<16xi8>, tensor<1xi32>)
+// CHECK:           %[[VAL_27:.*]] = "memref.reinterpret_cast"(%[[VAL_4]]) <{operandSegmentSizes = array<i32: 1, 0, 0, 0>, static_offsets = array<i64: 0>, static_sizes = array<i64: 16>, static_strides = array<i64: 1>}> : (memref<?xi8>) -> memref<16xi8, strided<[1]>>
+// CHECK:           "bufferization.materialize_in_destination"(%[[VAL_28:.*]]#0, %[[VAL_27]]) <{writable}> : (tensor<16xi8>, memref<16xi8, strided<[1]>>) -> ()
+// CHECK:           %[[VAL_29:.*]] = "memref.alloc"() <{operandSegmentSizes = array<i32: 0, 0>}> : () -> memref<1xi32>
+// CHECK:           "bufferization.materialize_in_destination"(%[[VAL_28]]#1, %[[VAL_29]]) <{writable}> : (tensor<1xi32>, memref<1xi32>) -> ()
+// CHECK:           "func.return"() : () -> ()
+// CHECK:         }) : () -> ()
+func.func @test_gathermask(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) {
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>
+  %alloc = memref.alloc() : memref<16xi8>
+  memref.copy %reinterpret_cast, %alloc : memref<16xi8, strided<[1]>> to memref<16xi8>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16xi8>
   %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>
   %alloc_1 = memref.alloc() : memref<16xi8>
   memref.copy %reinterpret_cast_0, %alloc_1 : memref<16xi8, strided<[1]>> to memref<16xi8>
   %1 = bufferization.to_tensor %alloc_1 restrict writable : memref<16xi8>
-  %2 = tensor.empty() : tensor<16xf32>
-  %3 = hfusion.gather_mask ins(%0, %1 : tensor<16xf32>, tensor<16xi8>) outs(%2 : tensor<16xf32>) -> tensor<16xf32>
-  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1]>>
-  bufferization.materialize_in_destination %3 in writable %reinterpret_cast_2 : (tensor<16xf32>, memref<16xf32, strided<[1]>>) -> ()
+  %4 = tensor.empty() : tensor<1xi32>
+  %2 = tensor.empty() : tensor<16xi8>  
+  %3:2 = hfusion.gather_mask ins(%0, %1 : tensor<16xi8>, tensor<16xi8>) outs(%2, %4 : tensor<16xi8>, tensor<1xi32>) -> (tensor<16xi8>, tensor<1xi32>)
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>  
+  bufferization.materialize_in_destination %3#0 in writable %reinterpret_cast_2 : (tensor<16xi8>, memref<16xi8, strided<[1]>>) -> ()  
+  %alloc_size = memref.alloc() : memref<1xi32>
+  bufferization.materialize_in_destination %3#1 in writable %alloc_size : (tensor<1xi32>, memref<1xi32>) -> ()
   return
 }
 
