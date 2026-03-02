@@ -175,7 +175,8 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
     if (!isa<hivm::HIVMStructuredOp>(op.getOperation()) &&
-        !isa<tensor::ExtractOp>(op.getOperation())) {
+        !isa<tensor::ExtractOp>(op.getOperation()) &&
+        !isa<tensor::InsertSliceOp>(op.getOperation())) {
       return failure();
     }
 
@@ -189,22 +190,32 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
       }
     }
 
+    if (isa<tensor::InsertSliceOp>(op.getOperation())) {
+      if (op.getOperation()->hasAttr("elide_after_bufferize")) {
+        return failure();
+      }
+    }
+
     Operation *opPtr = op.getOperation();
     llvm::SmallVector<OpOperand *> consumerOperands;
     TypeSwitch<Operation *>(opPtr)
         .Case([&](hivm::StoreOp storeOp) {
           if (!storeOp->getOpOperands().empty()) {
             OpOperand &firstOperand = storeOp->getOpOperands().front();
-            if (traceDefOp<hivm::FixpipeOp>(firstOperand.get()).has_value() ||
-                traceDefOp<hivm::StoreOp>(firstOperand.get()).has_value()) {
+            if (traceDefOp<hivm::FixpipeOp>(firstOperand.get(), false, true)
+                    .has_value() ||
+                traceDefOp<hivm::StoreOp>(firstOperand.get(), false, true)
+                    .has_value()) {
               consumerOperands.push_back(&firstOperand);
             }
           }
         })
         .Default([&](Operation *genericOp) {
           for (OpOperand &operand : genericOp->getOpOperands()) {
-            if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
-                traceDefOp<hivm::StoreOp>(operand.get()).has_value()) {
+            if (traceDefOp<hivm::FixpipeOp>(operand.get(), false, true)
+                    .has_value() ||
+                traceDefOp<hivm::StoreOp>(operand.get(), false, true)
+                    .has_value()) {
               consumerOperands.push_back(&operand);
             }
           }

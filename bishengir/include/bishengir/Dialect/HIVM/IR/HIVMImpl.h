@@ -42,7 +42,8 @@ bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp);
 
 template <typename OpType>
-std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
+std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false,
+                                      bool shouldFilterInsertSlice = false) {
   if (isSingleChain && getUsersNum(v) != 1)
     return std::nullopt;
   if (Operation *definingOp = v.getDefiningOp<OpType>()) {
@@ -50,70 +51,91 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
     // avoid infinite loop while compiling, remove it after gather_load is
     // supported
     if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
-      if (!insertSliceOp->hasAttr("ignore_load_store")) {
+      if (!insertSliceOp->hasAttr("elide_after_bufferize")) {
         return definingOp;
       }
     } else {
       return definingOp;
     }
   } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
-    return traceDefOp<OpType>(reshapeOp.getSource(), isSingleChain);
+    return traceDefOp<OpType>(reshapeOp.getSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto memrefCollapseShape =
                  v.getDefiningOp<memref::CollapseShapeOp>()) {
     return traceDefOp<OpType>(memrefCollapseShape.getViewSource(),
-                              isSingleChain);
+                              isSingleChain, shouldFilterInsertSlice);
   } else if (auto tensorCollapseShape =
                  v.getDefiningOp<tensor::CollapseShapeOp>()) {
-    return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain);
+    return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
-    return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
-    return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain);
+    return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain,
+                              shouldFilterInsertSlice);
 #else
   } else if (auto toBufferOp = v.getDefiningOp<bufferization::ToBufferOp>()) {
-    return traceDefOp<OpType>(toBufferOp.getOperand(), isSingleChain);
+    return traceDefOp<OpType>(toBufferOp.getOperand(), isSingleChain,
+                              shouldFilterInsertSlice);
 #endif
   } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
-    return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain);
+    return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto viewOp = v.getDefiningOp<memref::ViewOp>()) {
-    return traceDefOp<OpType>(viewOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(viewOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto reshapeOp = v.getDefiningOp<memref::ReshapeOp>()) {
-    return traceDefOp<OpType>(reshapeOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(reshapeOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto expandShapeOp = v.getDefiningOp<memref::ExpandShapeOp>()) {
-    return traceDefOp<OpType>(expandShapeOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(expandShapeOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto tensorExpandShapeOp =
                  v.getDefiningOp<tensor::ExpandShapeOp>()) {
-    return traceDefOp<OpType>(tensorExpandShapeOp->getOperand(0),
-                              isSingleChain);
+    return traceDefOp<OpType>(tensorExpandShapeOp->getOperand(0), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto extractStridedMetadataOp =
                  v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
     return traceDefOp<OpType>(extractStridedMetadataOp.getViewSource(),
-                              isSingleChain);
+                              isSingleChain, shouldFilterInsertSlice);
   } else if (auto castOp = v.getDefiningOp<memref::CastOp>()) {
-    return traceDefOp<OpType>(castOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(castOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto reinterpretCastOp =
                  v.getDefiningOp<memref::ReinterpretCastOp>()) {
-    return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
             blockArg.getOwner()->getParentOp())) {
       if (OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg))
-        return traceDefOp<OpType>(iterArgOperand->get(), isSingleChain);
+        return traceDefOp<OpType>(iterArgOperand->get(), isSingleChain,
+                                  shouldFilterInsertSlice);
     }
   } else if (auto forOp = v.getDefiningOp<scf::ForOp>()) {
     const unsigned int index = cast<OpResult>(v).getResultNumber();
     Value yieldedValue = forOp.getYieldedValues()[index];
-    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+    return traceDefOp<OpType>(yieldedValue, isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto ifOp = v.getDefiningOp<scf::IfOp>()) {
     const unsigned int index = cast<OpResult>(v).getResultNumber();
     Block &thenBlock = ifOp.getThenRegion().front();
     Value yieldedValue = thenBlock.getTerminator()->getOperand(index);
-    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+    return traceDefOp<OpType>(yieldedValue, isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto extractSliceOp = v.getDefiningOp<tensor::ExtractSliceOp>()) {
-    return traceDefOp<OpType>(extractSliceOp.getSource(), isSingleChain);
+    return traceDefOp<OpType>(extractSliceOp.getSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
-    return traceDefOp<OpType>(insertSliceOp.getSource(), isSingleChain);
+    // TODO: using a flag to define whether an insert_slice op recognized as
+    // "VECTOR" should cross, insert_slice op with attr "ignoren_load_store" is
+    // viewed as "CUBE" and can cross
+    if (!shouldFilterInsertSlice ||
+        insertSliceOp->hasAttr("elide_after_bufferize"))
+      return traceDefOp<OpType>(insertSliceOp.getSource(), isSingleChain,
+                                shouldFilterInsertSlice);
   }
   return std::nullopt;
 }
