@@ -3264,6 +3264,27 @@ SmallVector<Value> normalizeSrcToTargetType(
   return result;
 }
 
+SmallVector<Value> normalizeSrcToTargetIntegerType(
+    PatternRewriter &rewriter,
+    const SmallVector<Value> &values,
+    unsigned srcBitWidth,
+    unsigned targetBitWidth,
+    hfusion::TypeFn castType) {
+  SmallVector<Value> result;
+  for (Value v : values) {
+    auto shapedType = mlir::dyn_cast<ShapedType>(v.getType());
+    if (!shapedType || !shapedType.getElementType().isInteger(srcBitWidth)) {
+      result.push_back(v);
+      continue;
+    }
+
+    Type dstElemType = rewriter.getIntegerType(targetBitWidth);
+    Value castResult = castTo(rewriter, v, dstElemType, castType);
+    result.push_back(castResult);
+  }
+  return result;
+}
+
 arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   switch (predicate) {
   case arith::CmpIPredicate::eq:
@@ -4227,10 +4248,13 @@ public:
       return failure();
     }
 
-    auto newInputs =
-        normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs);
-    auto newOutputs =
-        normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, outputs);
+    auto newInputs = normalizeSrcToTargetIntegerType(
+        rewriter, inputs, /*srcBitWidth=*/8, /*targetBitWidth=*/32,
+        hfusion::TypeFn::cast_signed);
+    auto newOutputs = normalizeSrcToTargetIntegerType(
+        rewriter, outputs, /*srcBitWidth=*/8, /*targetBitWidth=*/32,
+        hfusion::TypeFn::cast_signed);
+    
     Operation *newOp = rewriter.create<CumOpType>(
         op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
         op.getReverse());
