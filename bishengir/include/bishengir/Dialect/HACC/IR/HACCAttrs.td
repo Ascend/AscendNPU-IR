@@ -271,20 +271,9 @@ def HACC_DeviceSpecEnum :
   }];
 }
 
-def HACCTargetDeviceSpecTrait
-    : NativeAttrTrait<"HACCTargetDeviceSpecInterface::Trait"> {
-  let cppNamespace = "::mlir::hacc";
-}
-
 def HACC_TargetDeviceSpecAttr :
     HACC_Attr<"TargetDeviceSpec", "target_device_spec",
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-              [TargetDeviceSpecTrait, HACCTargetDeviceSpecTrait]> {
-#else
-              [DeclareAttrInterfaceMethods<TargetDeviceSpecInterface>,
-               DeclareAttrInterfaceMethods<DLTIQueryInterface>,
-               HACCTargetDeviceSpecInterface]> {
-#endif
+              [TargetDeviceSpecInterface, HACCTargetDeviceSpecInterface]> {
   let summary = "An attribute to represent NPU target device specification.";
   let description = [{
     Each device specification describes a single device and its
@@ -302,6 +291,18 @@ def HACC_TargetDeviceSpecAttr :
   );
   let genVerifyDecl = 1;
   let assemblyFormat = "`<` $entries `>`";
+  let extraClassDeclaration = [{
+    /// In older MLIR versions, TargetDeviceSpecInterface does not inherit from
+    /// DLTIQueryInterface, and queryHelper() is not available.
+    /// By using a template member function, we leverage "Lazy Instantiation":
+    /// the function body is only parsed when query() is explicitly called.
+    /// This allows the same code to compile against both old and new MLIR
+    /// versions without requiring explicit preprocessor macros.
+    template <typename T = ::mlir::TargetDeviceSpecInterface>
+    ::mlir::FailureOr<::mlir::Attribute> query(::mlir::DataLayoutEntryKey key) const {
+      return ::llvm::cast<T>(*this).queryHelper(key);
+    }
+  }];
 }
 
 //===----------------------------------------------------------------------===//
