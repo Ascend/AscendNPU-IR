@@ -1300,4 +1300,38 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool IfBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sliceOp) const {
+  auto sourceOp = sliceOp.getSource().getDefiningOp<scf::IfOp>();
+  return sourceOp && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult
+IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                            PatternRewriter &rewriter) const {
+  auto src = cast<OpResult>(sliceOp.getSource());
+  auto ifOp = src.getDefiningOp<scf::IfOp>();
+  if (!ifOp)
+    return failure();
+  
+  auto yieldIndex = src.getResultNumber();
+  for (auto yieldOp : {ifOp.thenYield(), ifOp.elseYield()}) {
+    rewriter.setInsertionPoint(yieldOp);
+    auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp->getLoc(),
+        yieldOp.getResults()[yieldIndex], sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+    rewriter.modifyOpInPlace(yieldOp, [&]() {
+      auto &yieldValueOpr = yieldOp->getOpOperand(yieldIndex);
+      yieldValueOpr.assign(newMovedInSlice.getResult());
+    });
+  }
+
+  rewriter.modifyOpInPlace(
+      ifOp, [&]() { ifOp.getResult(yieldIndex).setType(sliceOp.getType()); });
+  rewriter.replaceAllUsesWith(sliceOp, ifOp->getResult(yieldIndex));
+
+  return success();
+}
+
 } // namespace mlir::hivm::detail
