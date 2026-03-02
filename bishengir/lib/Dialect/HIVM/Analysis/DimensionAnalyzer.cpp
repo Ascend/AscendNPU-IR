@@ -105,11 +105,14 @@ void DimensionAnalyzer::computeTilingDimImpl(
     auto args = getArgumentRefOrCreateDummy(src);
     auto srcRef = argumentsRefPointer_.at(src);
     numStoreOps[srcRef]++;
+    DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim)) {
         auto parentIndex = solverCollapserElem_->find(args[i]);
-        parallelDimMap[srcRef][parentIndex].push_back(dim);
+        if (usedParentIdx.insert(parentIndex).second) {
+          parallelDimMap[srcRef][parentIndex].push_back(dim);
+        }
       }
     }
   });

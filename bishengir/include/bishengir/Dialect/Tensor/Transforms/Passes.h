@@ -67,6 +67,9 @@ std::unique_ptr<Pass> createDecomposeTensorConcatPass();
 /// Create a pass to optimize dps ops that are inserted and yielded.
 std::unique_ptr<Pass> createOptimizeDpsOpWithYieldedInsertSlicePass();
 
+/// Create a pass to clone dst out tensor empty.
+std::unique_ptr<Pass> createReplicateOutEmptyTensorPass();
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h.inc"
 } // namespace tensor

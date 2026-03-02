@@ -28,6 +28,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/Transforms.h"
@@ -629,8 +630,10 @@ static void failAndRevert(func::FuncOp func) {
   func->erase();
 }
 
-static void populateBindSubBlockBubbleUpPassManager(PassManager &pm) {
-  pm.addPass(createHIVMBubbleUpExtractSlicePass());
+static void populateBindSubBlockBubbleUpPassManager(PassManager &pm, bool strictMode) {
+  HIVMBubbleUpExtractSliceOptions bubbleUpOptions;
+  bubbleUpOptions.strictMode = strictMode;
+  pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
   CanonicalizerOptions options;
   SmallVector<std::string> disabledPatterns(
       {"ReinterpretCastConstantArgumentFolder"});
@@ -684,9 +687,9 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
 
   RewritePatternSet patterns(func->getContext());
   patterns.add<TileAndSliceStore,
-              TileAndSliceDebugOp,
- 	                TileAndSliceLeaf<scf::ForOp>,
- 	                TileAndSliceLeaf<scf::WhileOp>>(func->getContext(), analyzer);
+               TileAndSliceDebugOp,
+               TileAndSliceLeaf<scf::ForOp>,
+               TileAndSliceLeaf<scf::WhileOp>>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
@@ -769,13 +772,16 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
-  if (failed(tileAndSliceStore(newFunc))) {
+  PassManager pm(newFunc->getContext());
+  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
+
+  if (failed(pm.run((newFunc))) || failed(tileAndSliceStore(newFunc))) {
     failAndRevert(newFunc);
     return failure();
   }
 
   PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2);
+  populateBindSubBlockBubbleUpPassManager(pm2, strictMode);
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||

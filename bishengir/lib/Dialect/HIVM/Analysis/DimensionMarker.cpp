@@ -498,8 +498,19 @@ void DimensionAnalyzer::markDimensionKind() {
         if (ShapedType::isDynamic(shape.back()) &&
             lastDimSizeInBit % utils::kUBAlignSizeInBits != 0) {
           auto argRef = getArgumentRefOrCreateDummy(res);
-          tilingDimKindMap[solverCollapserElem_->find(argRef.back())] =
-              TilingDimensionKind::NotAligned;
+          // Ignore alignment check if broadcast two different axis case
+          // A -> Ax1, A -> 1xA, Ax1 + 1xA -> AxA
+          bool broadcastDimCase = false;
+          for (size_t i = 0; i + 1 < argRef.size(); i++) {
+            if (argRef[i] == argRef.back()) {
+              broadcastDimCase = true;
+              break;
+            }
+          }
+          if (!broadcastDimCase) {
+            tilingDimKindMap[solverCollapserElem_->find(argRef.back())] =
+                TilingDimensionKind::NotAligned;
+          }
         }
       }
     }
