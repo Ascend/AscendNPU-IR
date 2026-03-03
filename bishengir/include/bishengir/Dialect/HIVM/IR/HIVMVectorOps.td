@@ -1607,7 +1607,7 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
       * `dst_size`: the actual number of elements gathered from src
     
     Usage:
-      result_data, result_size = vgathermask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst_data, %dst_size : tensor<16xf32>, tensor<1xi32>)
+      result_data, result_size = vgathermask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst_data, %dst_size : tensor<16xf32>, tensor<1xi64>)
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$mask,
