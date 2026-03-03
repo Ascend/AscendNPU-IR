@@ -128,7 +128,7 @@ for batch_idx in range(batch):
 ```
 
 ### 3.4 createInsertLoadStoreForMixCVPass
-- **作用**：在 Cube-Vector 交汇处插入 load/store，使数据在 tensor 与 workspace 间正确流转
+- **作用**：在 Cube-Vector 交汇处插入 load/store，使数据在 tensor 与 全局workspace 间正确流转
 - **目的**：保证CV之间数据的正确传递
 - **典型变换**：batchMmadL1 + fixpipe 被改写为循环内的 mmadL1 + fixpipe，对输入/输出做 extract_slice / insert_slice
 - **典型场景**：Cube-Vector 混合（CV 模式）
@@ -240,7 +240,7 @@ func.func @bind_workspace_arg(
 ```
 after：
 ```
-func.func @bind_workspace_arg(
+func.func @bind_workspace_arg_aic(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
 			  hivm.func_core_type = #hivm.func_core_type<AIC>){
@@ -248,7 +248,7 @@ func.func @bind_workspace_arg(
   memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
   fixpipe
 }
-func.func @bind_workspace_arg(
+func.func @bind_workspace_arg_aiv(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
 			  hivm.func_core_type = #hivm.func_core_type<AIV>){
@@ -290,7 +290,7 @@ error: 'hivm.hir.copy' op Unsupported copy from gm to gm!
 ```
  #6 0x0000000007805d75 llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::Instruction*)
 ```
-- splitmixkernel分离不正确，aic中出现aiv的指令或者alloc， aiv中出现aic的指令
+- split-mix-kernel分离不正确，aic中出现aiv的指令或者alloc， aiv中出现aic的指令
   - 确定aic/aiv的分核后结果
 
 ---
