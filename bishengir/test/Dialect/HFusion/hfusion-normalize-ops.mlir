@@ -2786,3 +2786,14 @@ func.func @test_compare_i32_ge(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32
   %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
   return %ret : tensor<16x32xi1>
 }
+
+// -----
+// CHECK-LABEL: func.func @triton_uint8_mod
+// CHECK: %[[VAL:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = false, round_mode = #hfusion.round_mode<trunc>}
+// CHECK-NEXT: bufferization.materialize_in_destination %[[VAL]]
+func.func @triton_uint8_mod(%arg0: tensor<1x64x64xi8>, %arg1: tensor<1x64x64xi8>, %arg2: memref<1x64x64xi8, strided<[4096, 64, 1]>>) {
+  %0 = tensor.empty() : tensor<1x64x64xi8>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>} ins(%arg0, %arg1 : tensor<1x64x64xi8>, tensor<1x64x64xi8>) outs(%0 : tensor<1x64x64xi8>) -> tensor<1x64x64xi8>
+  bufferization.materialize_in_destination %1 in writable %arg2 : (tensor<1x64x64xi8>, memref<1x64x64xi8, strided<[4096, 64, 1]>>) -> ()
+  return
+}
