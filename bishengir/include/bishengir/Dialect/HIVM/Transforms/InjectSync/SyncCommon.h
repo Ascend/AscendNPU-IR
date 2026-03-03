@@ -18,8 +18,8 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_SYNC_COMMON_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
@@ -44,9 +44,9 @@ public:
 
 public:
   UnitFlagInfo() = default;
-  ~UnitFlagInfo() = default;
+  ~UnitFlagInfo() override = default;
 
-  UnitFlagInfo(const UnitFlagInfoBase &other) : UnitFlagInfoBase(other) {}
+  explicit UnitFlagInfo(const UnitFlagInfoBase &other) : UnitFlagInfoBase(other) {}
 
   void reset() {
     UnitFlagInfoBase::reset();
@@ -414,10 +414,6 @@ using Buffer2MemInfoMap =
 
 bool isBackwardSync(const CompoundInstanceElement *nowCompound,
                     const CompoundInstanceElement *frontCompound);
-
-bool isBackwardSyncUnderForLoop(const CompoundInstanceElement *nowCompound,
-                                const CompoundInstanceElement *frontCompound,
-                                const std::optional<unsigned> &forEndIndex);
 
 // Check all loop-like parents of `op` to be of class SCF::ForOps.
 bool checkAllParentLoopsAreForLoops(Operation *op);

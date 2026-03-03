@@ -78,7 +78,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         managed by inject-sync passes.
                        }]>:$sync_related_args,
                        Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flge mode, 
+                        An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        Optional<TensorOrMemref>:$per_channel_bias,

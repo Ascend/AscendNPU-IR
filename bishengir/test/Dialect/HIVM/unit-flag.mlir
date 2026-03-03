@@ -1,5 +1,7 @@
 // RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-inject-sync{enable-unit-flag=true}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-ON"
 // RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-inject-sync{enable-unit-flag=false}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-OFF"
+// RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-graph-sync-solver{enable-unit-flag=false}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-OFF"
+// RUN: bishengir-opt -split-input-file %s -pass-pipeline="builtin.module(func.func(hivm-graph-sync-solver{enable-unit-flag=true}))" | FileCheck %s --check-prefixes="CHECK,CHECK-UF-ON"
 
 // CHECK: @_attn_fwd_mix_aic
 func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.shape_0 = 0 : i32, tt.shape_1 = 0 : i32, tt.shape_2 = 0 : i32, tt.shape_3 = 0 : i32, tt.shape_4 = 0 : i32}, %arg4: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.shape_0 = 0 : i32, tt.shape_1 = 0 : i32, tt.shape_2 = 0 : i32, tt.shape_3 = 0 : i32, tt.shape_4 = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg6: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg7: f32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false, false]> : vector<11xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix} {
@@ -38,8 +40,8 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
   %view_0 = memref.view %arg1[%10][] : memref<?xi8, #hivm.address_space<gm>> to memref<32x256xf16, #hivm.address_space<gm>>
   %11 = affine.apply affine_map<()[s0] -> (s0 * 81920 + 49152)>()[%8]
   %view_1 = memref.view %arg1[%11][] : memref<?xi8, #hivm.address_space<gm>> to memref<32x256xf32, #hivm.address_space<gm>>
-//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
-//   CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0:EVENT_ID[0-7]]]>]
+//   CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
   scf.for %arg11 = %c0_i32 to %c2_i32 step %c1_i32  : i32 {
     %12 = arith.divsi %arg11, %c2_i32 : i32
     %13 = arith.remsi %arg11, %c2_i32 : i32
@@ -61,19 +63,19 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
     annotation.mark %22 {hivm.multi_buffer = 2 : i32} : memref<16x16x16x16xf16, #hivm.address_space<cbuf>>
     %cast_5 = memref.cast %22 : memref<16x16x16x16xf16, #hivm.address_space<cbuf>> to memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
     hivm.hir.nd2nz {dst_continuous} ins(%reinterpret_cast_3 : memref<256x256xf16, strided<[256, 1], offset: ?>, #hivm.address_space<gm>>) outs(%cast_5 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
-    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
-    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
     // CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
     hivm.hir.mmadL1 {b_transpose} ins(%cast_4, %cast_5, %true, %c32, %c256, %c256 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
     // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
-    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
     hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_FIX>] flag = 0
     // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
-    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
     // CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
     hivm.hir.fixpipe {enable_nz2nd} ins(%cast : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%view : memref<32x256xf32, #hivm.address_space<gm>>)
-    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
-    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT1:EVENT_ID[0-7]]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
     annotation.mark %view : memref<32x256xf32, #hivm.address_space<gm>>
     annotation.mark %view : memref<32x256xf32, #hivm.address_space<gm>>
     hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 1
@@ -87,24 +89,24 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
     %cast_7 = memref.cast %24 : memref<16x2x16x16xf16, #hivm.address_space<cbuf>> to memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
     hivm.hir.nd2nz {dst_continuous} ins(%view_0 : memref<32x256xf16, #hivm.address_space<gm>>) outs(%cast_7 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
     hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_MTE3>] flag = 2
-    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
-    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT1]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
     // CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
     hivm.hir.mmadL1 ins(%cast_7, %cast_6, %true, %c32, %c256, %c256 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
-    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT2:EVENT_ID[0-7]]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
     hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_FIX>] flag = 3
-    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+    // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT2]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
     // CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
     hivm.hir.fixpipe {enable_nz2nd} ins(%cast : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%view_1 : memref<32x256xf32, #hivm.address_space<gm>>)
-    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
-    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+    // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0]]>]
+    // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
     annotation.mark %view_1 : memref<32x256xf32, #hivm.address_space<gm>>
     hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 1
   }
-//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
-//   CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0]]>]
+//   CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
   hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_FIX>] flag = 3
   hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_FIX>] flag = 0
   return
@@ -225,14 +227,14 @@ func.func @matmul_x_w_bias_down_up_fused_layer_1_kernel_mix_aic(%arg0: i64 {hacc
     %cast_30 = memref.cast %reinterpret_cast_29 : memref<32x64xf16, strided<[?, 1], offset: ?>, #hivm.address_space<gm>> to memref<32x64xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>
     scf.yield %cast_26, %cast_28, %cast_30, %60, %c0, %61, %c0, %62, %c0 : memref<32x32xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>, memref<32x32xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>, memref<32x64xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>, index, index, index, index, index, index
   }
-//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT0:EVENT_ID[0-7]]]>]
   %37 = arith.index_cast %0 : i64 to index
   %38 = affine.apply affine_map<()[s0] -> (s0 * 12288)>()[%37]
   %view = memref.view %arg1[%38][] : memref<?xi8, #hivm.address_space<gm>> to memref<32x32xf32, #hivm.address_space<gm>>
-//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT0]]>]
 //   CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>]) unit_flag_cond(%{{.*}})
   hivm.hir.fixpipe {enable_nz2nd} ins(%cast_4 : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%view : memref<32x32xf32, #hivm.address_space<gm>>)
-//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT1:EVENT_ID[0-7]]]>]
   annotation.mark %view : memref<32x32xf32, #hivm.address_space<gm>>
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 0
   %39 = arith.index_cast %arg14 : i32 to index
@@ -252,21 +254,22 @@ func.func @matmul_x_w_bias_down_up_fused_layer_1_kernel_mix_aic(%arg0: i64 {hacc
   %43 = hivm.hir.pointer_cast(%c12288_i64) : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
   %cast_11 = memref.cast %43 : memref<4x2x16x16xf16, #hivm.address_space<cbuf>> to memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
   hivm.hir.nd2nz {dst_continuous} ins(%view_10 : memref<32x64xf16, #hivm.address_space<gm>>) outs(%cast_11 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
-//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT1]]>]
 //   CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
   hivm.hir.mmadL1 ins(%cast_11, %cast_7, %true, %c32, %c64, %32 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_4 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
-//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-//   CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+//   CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT2:EVENT_ID[0-7]]]>]
+//   CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
   %44 = affine.apply affine_map<()[s0] -> (s0 * 12288 + 8192)>()[%37]
   %view_12 = memref.view %arg1[%44][] : memref<?xi8, #hivm.address_space<gm>> to memref<32x32xf32, #hivm.address_space<gm>>
-//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-//   CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+//   CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT2]]>]
+//   CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{[0-7]}>]
 //   CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
   hivm.hir.fixpipe {enable_nz2nd} ins(%cast_4 : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%view_12 : memref<32x32xf32, #hivm.address_space<gm>>)
   annotation.mark %view_12 : memref<32x32xf32, #hivm.address_space<gm>>
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 0
   return
 }
+
 // -----
 
 // CHECK: @_fwd_kernel_mix_aic
@@ -405,8 +408,8 @@ func.func @_fwd_kernel_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_b
       hivm.hir.nd2nz {dst_continuous} ins(%subview_13 : memref<?x128xbf16, strided<[24576, 1], offset: ?>, #hivm.address_space<gm>>) outs(%cast_15 : memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = false
       %60 = hivm.hir.pointer_cast(%c0_i64) : memref<2x2x16x16xf32, #hivm.address_space<cc>>
       %cast_16 = memref.cast %60 : memref<2x2x16x16xf32, #hivm.address_space<cc>> to memref<?x?x?x?xf32, #hivm.address_space<cc>>
-      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
-      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0:EVENT_ID[0-7]]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
       // CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<DISABLED>, #hivm.unit_flag<ENABLED_WITHOUT_UPDATE>, #hivm.unit_flag<ENABLED_WITHOUT_UPDATE>]) unit_flag_cond(%{{.*}}, %{{.*}}, %true{{.*}})
       hivm.hir.mmadL1 {b_transpose} ins(%cast, %cast_12, %true, %27, %c128, %54 : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_16 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
       %61 = affine.apply affine_map<()[s0, s1] -> (s0 + s1 * 24576 + 128)>()[%19, %57]
@@ -424,19 +427,18 @@ func.func @_fwd_kernel_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_b
       hivm.hir.nd2nz {dst_continuous} ins(%subview_19 : memref<?x64xbf16, strided<[24576, 1], offset: ?>, #hivm.address_space<gm>>) outs(%cast_21 : memref<?x?x?x?xbf16, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = false
       // CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
       hivm.hir.mmadL1 {b_transpose, fixpipe_already_inserted = true} ins(%cast_5, %cast_18, %false, %26, %c64, %53 : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_16 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
-      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
-      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT1:EVENT_ID[0-7]]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
       %subview_22 = memref.subview %view[%arg22, 0, 0] [1, 32, 32] [1, 1, 1] : memref<2x32x32xf32, #hivm.address_space<gm>> to memref<1x32x32xf32, strided<[1024, 32, 1], offset: ?>, #hivm.address_space<gm>>
       %collapse_shape = memref.collapse_shape %subview_22 [[0, 1], [2]] : memref<1x32x32xf32, strided<[1024, 32, 1], offset: ?>, #hivm.address_space<gm>> into memref<32x32xf32, strided<[32, 1], offset: ?>, #hivm.address_space<gm>>
       %64 = arith.index_cast %arg22 : index to i64
       hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %64
       %65 = affine.apply affine_map<()[s0] -> (s0 + 2)>()[%arg22]
       %66 = arith.index_cast %65 : index to i64
-      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
-      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT1]]>]
       // CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
       hivm.hir.fixpipe {enable_nz2nd} ins(%cast_16 : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%collapse_shape : memref<32x32xf32, strided<[32, 1], offset: ?>, #hivm.address_space<gm>>)
-      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID0>]
+      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT0]]>]
       hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = %66
     } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, multibuffer_unroll_factor = 2 : i32}
     scf.for %arg22 = %c0 to %46 step %c1 {
@@ -475,23 +477,23 @@ func.func @_fwd_kernel_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_b
       hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %62
       %63 = hivm.hir.pointer_cast(%c4096_i64) : memref<8x2x16x16xf32, #hivm.address_space<cc>>
       %cast_18 = memref.cast %63 : memref<8x2x16x16xf32, #hivm.address_space<cc>> to memref<?x?x?x?xf32, #hivm.address_space<cc>>
-      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
-      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT2:EVENT_ID[0-7]]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
       // CHECK-UF-ON: hivm.hir.mmadL1 {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
       hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%cast_17, %cast_12, %true, %c32, %c32, %c128 : memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xbf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_18 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
-      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT3:EVENT_ID[0-7]]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
       %subview_19 = memref.subview %view_10[%arg22, 0, 0] [1, 32, 128] [1, 1, 1] : memref<2x32x128xf32, #hivm.address_space<gm>> to memref<1x32x128xf32, strided<[4096, 128, 1], offset: ?>, #hivm.address_space<gm>>
       %collapse_shape = memref.collapse_shape %subview_19 [[0, 1], [2]] : memref<1x32x128xf32, strided<[4096, 128, 1], offset: ?>, #hivm.address_space<gm>> into memref<32x128xf32, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>
       %64 = affine.apply affine_map<()[s0] -> (s0 + 6)>()[%arg22]
       %65 = arith.index_cast %64 : index to i64
       hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %65
-      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
-      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID1>]
+      // CHECK-UF-OFF: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <[[EVENT3]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID{{[0-7]}}>]
       // CHECK-UF-ON: hivm.hir.fixpipe {{.*}} unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
       hivm.hir.fixpipe {enable_nz2nd} ins(%cast_18 : memref<?x?x?x?xf32, #hivm.address_space<cc>>) outs(%collapse_shape : memref<32x128xf32, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>)
-      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
-      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID1>]
+      // CHECK-UF-OFF: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <[[EVENT2]]>]
+      // CHECK-UF-ON-NOT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_M>, <EVENT_ID{{[0-7]}}>]
       hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = %60
     } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, multibuffer_unroll_factor = 2 : i32}
   }

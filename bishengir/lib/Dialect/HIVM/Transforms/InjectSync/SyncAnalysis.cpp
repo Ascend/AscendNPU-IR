@@ -673,7 +673,7 @@ void SyncAnalyzer::InsertBlockSyncOperation(
 
     auto parentLoops =
         getBlockSyncMultibufferEnabledLoops(nowCompound, frontCompound);
-    if (parentLoops.has_value()) {
+    if (parentLoops.has_value() && forEndIndex.has_value()) {
       auto [nowParentLoop, frontParentLoop] = parentLoops.value();
       std::optional<int> eventIdNumOpt =
           getBlockSyncOpEventIdNum(nowParentLoop, frontParentLoop);
@@ -984,14 +984,13 @@ std::optional<UnitFlagInfo> SyncAnalyzer::checkUnitFlagPatterns(
           frontCompound->elementOp, nowCompound->elementOp,
           frontCompound->unitFlagInfo, nowCompound->unitFlagInfo,
           backwardSyncLoop)) {
-    return unitFlagInfo;
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
-
   if (auto unitFlagInfo = checkUnitFlagOpLoopOpPattern(
           frontCompound->elementOp, nowCompound->elementOp,
           frontCompound->unitFlagInfo, nowCompound->unitFlagInfo,
           backwardSyncLoop)) {
-    return unitFlagInfo;
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
   return {};
 }
@@ -1010,7 +1009,7 @@ bool SyncAnalyzer::checkUnitFlagAlreadySync(
     if (!inserted) {
       break;
     }
-    if (curElement == frontCompound) {
+    if (curElement == nowCompound) {
       return true;
     }
     curElement = curElement->unitFlagInfo.linkedElementAsSet;

@@ -15,28 +15,28 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTest.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTester.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
-#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include <algorithm>
 #include <climits>
-#include <memory>
+#include <numeric>
 #include <utility>
 
-#define DEBUG_TYPE "hivm-graph-sync-solver"
+#define DEBUG_TYPE "hivm-gss-solver-test"
 
 using namespace mlir;
 using namespace hivm::syncsolver;
 
-// Lightweight memory-conflict checker used by the test harness (integer ptr model).
-bool Solver::checkTestRWMemoryConflicts(
+// Lightweight memory-conflict checker used by the test harness (integer ptr
+// model).
+bool SolverTest::checkTestRWMemoryConflicts(
     const llvm::SmallVector<llvm::SmallVector<int>> &memValsList1,
     const llvm::SmallVector<llvm::SmallVector<int>> &memValsList2) {
   for (auto &ptr1 : memValsList1) {
@@ -56,32 +56,34 @@ bool Solver::checkTestRWMemoryConflicts(
 // Compute candidate pipe pairs for memory conflicts between two RW operations
 // using the test-model memory lists.
 std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
-Solver::checkTestMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
+SolverTest::checkTestMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  auto [it, inserted] =
+  auto [it, isInserted] =
       checkTestMemoryConflictsMem.insert({{rwOp1, rwOp2}, {}});
-  if (!inserted) {
+  if (!isInserted) {
     return it->second;
   }
-  std::vector<std::pair<hivm::PIPE, hivm::PIPE>> collectedConflicts;
+  llvm::SetVector<std::pair<hivm::PIPE, hivm::PIPE>> collectedConflictsSet;
   if (checkTestRWMemoryConflicts(rwOp1->testReadMemVals,
                                  rwOp2->testWriteMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeRead, rwOp2->pipeWrite);
+    collectedConflictsSet.insert({rwOp1->pipeRead, rwOp2->pipeWrite});
   }
   if (checkTestRWMemoryConflicts(rwOp1->testWriteMemVals,
                                  rwOp2->testReadMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeWrite, rwOp2->pipeRead);
+    collectedConflictsSet.insert({rwOp1->pipeWrite, rwOp2->pipeRead});
   }
   if (checkTestRWMemoryConflicts(rwOp1->testWriteMemVals,
                                  rwOp2->testWriteMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeWrite, rwOp2->pipeWrite);
+    collectedConflictsSet.insert({rwOp1->pipeWrite, rwOp2->pipeWrite});
   }
+  std::vector<std::pair<hivm::PIPE, hivm::PIPE>> collectedConflicts(
+      collectedConflictsSet.begin(), collectedConflictsSet.end());
   return it->second = collectedConflicts;
 }
 
 // Validate whether a chosen eventIdNum avoids conflicts across repeating
 // memory access patterns (LCM coverage check).
-bool Solver::checkEventIdNum(
+bool SolverTest::checkEventIdNum(
     const llvm::SmallVector<llvm::SmallVector<int>> &memValsList1,
     const llvm::SmallVector<llvm::SmallVector<int>> &memValsList2, int lcmLen,
     int eventIdNum) {
@@ -106,28 +108,28 @@ bool Solver::checkEventIdNum(
 }
 
 // Find maximum safe number of event ids for two RW test ops based on shapes.
-uint32_t Solver::getTestEventIdNum(RWOperation *rwOp1, RWOperation *rwOp2) {
+int64_t SolverTest::getTestEventIdNum(RWOperation *rwOp1, RWOperation *rwOp2) {
   int lcm = 1;
   int minWriteSize = INT_MAX;
 
-  for (auto ptr : rwOp1->testReadMemVals) {
+  for (auto &ptr : rwOp1->testReadMemVals) {
     if (auto sz = static_cast<int>(ptr.size()); sz)
       lcm = (lcm * sz) / std::gcd(lcm, sz);
   }
 
-  for (auto ptr : rwOp1->testWriteMemVals) {
+  for (auto &ptr : rwOp1->testWriteMemVals) {
     if (auto sz = static_cast<int>(ptr.size()); sz) {
       minWriteSize = std::min(minWriteSize, sz);
       lcm = (lcm * sz) / std::gcd(lcm, sz);
     }
   }
 
-  for (auto ptr : rwOp2->testReadMemVals) {
+  for (auto &ptr : rwOp2->testReadMemVals) {
     if (auto sz = static_cast<int>(ptr.size()); sz)
       lcm = (lcm * sz) / std::gcd(lcm, sz);
   }
 
-  for (auto ptr : rwOp2->testWriteMemVals) {
+  for (auto &ptr : rwOp2->testWriteMemVals) {
     if (auto sz = static_cast<int>(ptr.size()); sz) {
       minWriteSize = std::min(minWriteSize, sz);
       lcm = (lcm * sz) / std::gcd(lcm, sz);
@@ -142,17 +144,14 @@ uint32_t Solver::getTestEventIdNum(RWOperation *rwOp1, RWOperation *rwOp2) {
   while (eventIdNum > 1) {
     int lcmLen = (lcm * eventIdNum) / std::gcd(lcm, eventIdNum);
 
-    bool okRW = checkEventIdNum(rwOp1->testReadMemVals,
-                                rwOp2->testWriteMemVals,
+    bool okRW = checkEventIdNum(rwOp1->testReadMemVals, rwOp2->testWriteMemVals,
                                 lcmLen, eventIdNum);
-    
-    bool okWR = checkEventIdNum(rwOp1->testWriteMemVals,
-                                rwOp2->testReadMemVals,
+
+    bool okWR = checkEventIdNum(rwOp1->testWriteMemVals, rwOp2->testReadMemVals,
                                 lcmLen, eventIdNum);
-    
+
     bool okWW = checkEventIdNum(rwOp1->testWriteMemVals,
-                                rwOp2->testWriteMemVals,
-                                lcmLen, eventIdNum);
+                                rwOp2->testWriteMemVals, lcmLen, eventIdNum);
 
     if (okRW && okWR && okWW)
       break;
@@ -164,183 +163,49 @@ uint32_t Solver::getTestEventIdNum(RWOperation *rwOp1, RWOperation *rwOp2) {
 }
 
 // Test-mode variant of getTestEventIdNum that uses occurrences (wraps ops).
-uint32_t Solver::getTestEventIdNum(Occurrence *occ1, Occurrence *occ2,
-                                   hivm::PIPE setPipe, hivm::PIPE waitPipe) {
-  assert(occ1 && occ2);
-  assert(occ1->op && occ2->op);
+int64_t SolverTest::getTestEventIdNum(Occurrence *occ1, Occurrence *occ2,
+                                      hivm::PIPE setPipe, hivm::PIPE waitPipe) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  assert(occ1->op != nullptr && occ2->op != nullptr);
 
-  if (barrierAllPairs.contains({setPipe, waitPipe}))
+  if (!isBackwardSync(occ1, occ2)) {
     return 1;
+  }
 
-  if (!isBackwardSync(occ1, occ2))
+  auto *parLoop1 = OperationBase::getParentloop(occ1->op);
+  auto *parLoop2 = OperationBase::getParentloop(occ2->op);
+
+  if (parLoop1 == nullptr || parLoop2 == nullptr) {
     return 1;
-
-  auto parLoop1 = OperationBase::getParentloop(occ1->op);
-  auto parLoop2 = OperationBase::getParentloop(occ2->op);
-
-  if (parLoop1 == nullptr || parLoop2 == nullptr || parLoop1 != parLoop2)
+  }
+  if (parLoop1 != parLoop2) {
     return 1;
+  }
 
   auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
-  if (isa<Ghost>(setOcc->op) || isa<Ghost>(waitOcc->op))
-    return 1;
-
-  assert(setOcc->op && waitOcc->op);
-
+  assert(setOcc->op != nullptr);
+  assert(waitOcc->op != nullptr);
   if (!parLoop1->isProperAncestor(setOcc->op) ||
-      !parLoop1->isProperAncestor(waitOcc->op))
+      !parLoop1->isProperAncestor(waitOcc->op)) {
     return 1;
-  
-  auto rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
-  auto rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
+  }
+
+  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 && rwOp2);
 
   return getTestEventIdNum(rwOp1, rwOp2);
 }
 
-// Process the processing orders in test mode, discover conflicts and call the handler.
-void Solver::processOrdersTest() {
-  for (auto &[curOcc, start, end, reverseOrder, isUseless, skip] :
-       processingOrders) {
-    assert(start <= end + 1);
-
-    if (start > end)
-      continue;
-
-    if (skip) {
-      for (int i = start; i <= end; ++i)
-        skipOcc.insert(syncIr[i].get());
-      continue;
-    }
-
-    if (checkSkippable(curOcc))
-      continue;
-
-    assert(llvm::isa_and_present<RWOperation>(curOcc->op));
-
-    int iStart = reverseOrder ? end : start;
-    int iEnd = reverseOrder ? start - 1 : end + 1;
-    int iStep = reverseOrder ? -1 : 1;
-
-    for (int i = iStart; i != iEnd; i += iStep) {
-      auto op = syncIr[i]->op;
-      if (!llvm::isa_and_present<RWOperation>(op))
-        continue;
-
-      Occurrence *occ1 = reverseOrder ? syncIr[i].get() : curOcc;
-      Occurrence *occ2 = reverseOrder ? curOcc : syncIr[i].get();
-
-      if (checkSkippable(occ1) || checkVisited(occ1, occ2) ||
-          checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2))
-        continue;
-
-      auto rwOp1 = dyn_cast<RWOperation>(occ1->op);
-      auto rwOp2 = dyn_cast<RWOperation>(occ2->op);
-      assert(rwOp1 && rwOp2);
-
-      LLVM_DEBUG({
-        llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
-        llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->op->str(0, false)
-                     << '\n';
-        llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->op->str(0, false)
-                     << '\n';
-        llvm::dbgs() << "memConflictsNum: "
-                     << checkTestMemoryConflicts(rwOp1, rwOp2).size() << '\n';
-      });
-      for (auto [setPipe, waitPipe] : checkTestMemoryConflicts(rwOp1, rwOp2)) {
-        auto eventIdNum = getTestEventIdNum(occ1, occ2, setPipe, waitPipe);
-        if (checkGraphConflict(occ1, occ2, setPipe, waitPipe, eventIdNum)) {
-          handleConflict(occ1, occ2, setPipe, waitPipe, isUseless, eventIdNum,
-                         nullptr);
-        }
-      }
-    }
+void SolverTest::processConflict(Occurrence *occ1, Occurrence *occ2,
+                                 RWOperation *rwOp1, RWOperation *rwOp2,
+                                 bool isUseless) {
+  for (auto [setPipe, waitPipe] : checkTestMemoryConflicts(rwOp1, rwOp2)) {
+    auto corePipeSrc = CorePipeInfo(rwOp1->coreType, setPipe);
+    auto corePipeDst = CorePipeInfo(rwOp2->coreType, waitPipe);
+    auto eventIdNum = getTestEventIdNum(occ1, occ2, setPipe, waitPipe);
+    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+                   isUseless, eventIdNum,
+                   /*multibufferLoopPar=*/nullptr);
   }
-}
-
-// Orchestrate iterative test-mode solving passes and optional merging behavior.
-void Solver::solveTest(int runNum) {
-  LLVM_DEBUG(llvm::dbgs() << "runNum: " << runNum << '\n');
-  processOrdersTest();
-  if (reuseSyncPairToSaveEventIds && !barrierAllPairs.empty()) {
-    reusePairs.clear();
-    for (auto [pipeSrc, pipeDst] : barrierAllPairs) {
-      reusePairs[{pipeSrc, pipeDst}] = 1;
-    }
-    barrierAllPairs.clear();
-    reset();
-    insertedBarrierAllBefore.clear();
-    processOrdersTest();
-  }
-  if (disableMultiEventIdForBarrierAllPairs && !barrierAllPairs.empty()) {
-    reset();
-    insertedBarrierAllBefore.clear();
-    processOrdersTest();
-  }
-  if (considerMergedBackwardSyncEventIds) {
-    getBeforeAfterSyncMaps();
-    backwardSyncEventsAfterMerge = backwardSyncEvents;
-    reset();
-    insertedBarrierAllBefore.clear();
-    processOrdersTest();
-  }
-  if (!insertedBarrierAllBefore.empty() && runNum < 99) {
-    reset();
-    pickAndInsertABarrierAll();
-    insertedBarrierAllBefore.clear();
-    backwardSyncEventsAfterMerge.clear();
-    barrierAllPairs.clear();
-    solveTest(runNum + 1);
-  }
-}
-
-// If environment indicates tester mode, parse env vars and run SyncTester.
-bool SyncTester::runTestMode() {
-  const char *testModeEnvRaw = std::getenv("BISHENGIR_GSS_TESTER");
-  std::string testModeEnv = testModeEnvRaw ? std::string(testModeEnvRaw) : "";
-  bool testMode = false;
-  if (!testModeEnv.empty())
-    testMode = std::stoull(testModeEnv) != 0;
-
-  if (!testMode)
-    return false;
-
-  std::optional<uint64_t> seed;
-  const char *seedEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_SEED");
-  const std::string seedEnv = seedEnvRaw ? seedEnvRaw : "";
-  if (!seedEnv.empty())
-    seed = std::stoull(seedEnv);
-
-  int numOperations = 40;
-  const char *numOpsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_OPS");
-  const std::string numOpsEnv = numOpsEnvRaw ? numOpsEnvRaw : "";
-  if (!numOpsEnv.empty())
-    numOperations = static_cast<int>(std::stoull(numOpsEnv));
-
-  int numPointers = 20;
-  const char *numPtrsEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_NUM_PTRS");
-  const std::string numPtrsEnv = numPtrsEnvRaw ? numPtrsEnvRaw : "";
-  if (!numPtrsEnv.empty())
-    numPointers = static_cast<int>(std::stoull(numPtrsEnv));
-
-  bool enableMultiBuffer = false;
-  const char *multiBufEnvRaw = std::getenv("BISHENGIR_GSS_TESTER_ENABLE_MULTIBUFFER");
-  const std::string multiBufEnv = multiBufEnvRaw ? multiBufEnvRaw : "";
-  if (!multiBufEnv.empty())
-    enableMultiBuffer = std::stoull(multiBufEnv) != 0;
-
-  unsigned usedPipesMask = 0u;
-  for (auto pipe : { hivm::PIPE::PIPE_MTE1,
-                     hivm::PIPE::PIPE_MTE2,
-                     hivm::PIPE::PIPE_MTE3}) {
-    usedPipesMask |= (1u << static_cast<unsigned>(pipe));
-  }
-
-  // Construct tester with fully validated params.
-  SyncTester tester(numOperations, numPointers, usedPipesMask,
-                    enableMultiBuffer, seed);
-  
-  auto status = tester.test();
-  llvm::outs() << (llvm::succeeded(status) ? "succeeded" : "failed") << "\n";
-  return true;
 }

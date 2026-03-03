@@ -318,7 +318,7 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   let arguments = (ins AnyShaped:$src,
                        AnyShaped:$dst,
                        Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flge mode, 
+                        An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
 #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES

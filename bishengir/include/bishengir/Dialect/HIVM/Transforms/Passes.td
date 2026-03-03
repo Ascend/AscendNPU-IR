@@ -208,10 +208,34 @@ def InjectBlockSync : Pass<"hivm-inject-block-sync", "func::FuncOp"> {
 def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
   let summary = "graph sync solver ";
   let constructor = "mlir::hivm::createGraphSyncSolverPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
   let options = [Option<"enableUnitFlag", "enable-unit-flag", "bool",
                         /*default=*/"false",
-                        "Enable unit-flag modes for synchronization">];
+                        "Enable unit-flag modes for synchronization">,
+                 Option<"enableTesterMode", "enable-tester-mode", "bool",
+                        /*default=*/"false", "Enable sync-tester mode">,
+                 ListOption<"syncTesterOptions", "sync-tester-options",
+                            "int64_t",
+                            "Sync-tester options (num_runs, init_seed, "
+                            "num_ops, num_ptrs, enable-multibuffer)">,
+  ];
+}
+
+def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
+  let summary = "cross-core graph-sync-solver ";
+  let constructor = "mlir::hivm::createCrossCoreGSSPass()";
+  let dependentDialects = ["hacc::HACCDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect"];
+  let options =
+      [Option<"blockAllSync", "block-all-sync", "bool", /*default=*/"false",
+              "Enable inject all block sync for HIVM injectBlockSync.">,
+       Option<"disableAutoInjectBlockSync", "disable-auto-inject-block-sync",
+              "bool", /*default=*/"false",
+              "Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp">,
+       Option<"alwaysUsePipeSAsWaitingPipe", "always-use-pipe-s",
+              "bool", /*default=*/"false",
+              "Always use scalar pipeline as waiting pipeline for wait_flag ops.">
+  ];
 }
 
 def HIVMDecomposeOp : Pass<"hivm-decompose-op", "func::FuncOp"> {
@@ -371,7 +395,8 @@ def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";
-  let dependentDialects = ["func::FuncDialect"];
+  let dependentDialects = ["func::FuncDialect", "annotation::AnnotationDialect",
+                           "hacc::HACCDialect"];
   let options = [Option<"removeCoreTypeAttrs", "remove-core-type-attrs", "bool",
                         /*default=*/"false",
                         "Remove all core type attributes. If set to true, this "
