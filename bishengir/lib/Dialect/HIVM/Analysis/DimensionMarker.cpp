@@ -126,17 +126,17 @@ void DimensionAnalyzer::processBFS() {
           bfsQueue.push(result);
         }
       }
-      if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
-        auto *yieldParentOp = yieldOp->getParentOp();
-        LDBG("Encounter yieldOp. Parent " << *yieldParentOp);
-        processOperation(yieldParentOp, current);
-        for (Value result : yieldParentOp->getResults()) {
+      if (isa<scf::YieldOp, scope::ReturnOp>(user)) {
+        auto parentOp = user->getParentOp();
+        LDBG("Encounter terminator. Parent " << *parentOp);
+        processOperation(parentOp, current);
+        for (Value result : parentOp->getResults()) {
           updatePreviousType(result);
           if (visited.insert(result).second) {
             bfsQueue.push(result);
           }
         }
-        if (auto loopOp = dyn_cast<LoopLikeOpInterface>(yieldParentOp)) {
+        if (auto loopOp = dyn_cast<LoopLikeOpInterface>(parentOp)) {
           for (Value init : loopOp.getInits()) {
             updatePreviousType(init);
             if (visited.insert(init).second) {
@@ -183,6 +183,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
     processReshapeOp(expandShapeOp);
   } else if (auto collapseShapeOp = dyn_cast<tensor::CollapseShapeOp>(op)) {
     processReshapeOp(collapseShapeOp);
+  } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+    processScopeOp(scopeOp);
   } else if (isElemwiseNaryOpImpl(op) || isa_and_nonnull<CopyOpInterface>(op) ||
              utils::isAllocLikeOp(op)) {
     processParallelOp(op, current);
@@ -494,6 +496,17 @@ template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
       joinShape(outputArgs[*filteredOutputIdx.begin()],
                 inputArgs[*filteredInputIdx.begin()]);
     }
+  }
+}
+
+void DimensionAnalyzer::processScopeOp(scope::ScopeOp op) {
+  LDBG("Processing ScopeOp " << op);
+  auto returnOp =
+      cast<scope::ReturnOp>(op.getRegion().front().getTerminator());
+  for (auto [res, ret] :
+       llvm::zip_equal(op.getResults(), returnOp.getResults())) {
+    createDummyRefIfNotExist({res, ret});
+    processValue(res, ret);
   }
 }
 
