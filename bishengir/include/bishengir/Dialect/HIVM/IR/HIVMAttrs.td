@@ -92,6 +92,9 @@ def HIVM_DataLayoutnZ : I32EnumAttrCase<"nZ", 4, "nZ">;
 def HIVM_DataLayoutzN : I32EnumAttrCase<"zN", 5, "zN">;
 def HIVM_DataLayoutND : I32EnumAttrCase<"ND", 6, "ND">;
 def HIVM_DataLayoutFractal : I32EnumAttrCase<"Fractal", 7, "Fractal">;
+def HIVM_DataLayoutNCHW : I32EnumAttrCase<"NCHW", 8, "NCHW">;
+def HIVM_DataLayoutNC1HWC0 : I32EnumAttrCase<"NC1HWC0", 9, "NC1HWC0">;
+def HIVM_DataLayoutC1HWNC0 : I32EnumAttrCase<"C1HWNC0", 10, "C1HWNC0">;
 
 def HIVM_DataLayoutEnum : HIVM_I32Enum<
   "DataLayout", "HIVM data layout", [
@@ -101,7 +104,10 @@ def HIVM_DataLayoutEnum : HIVM_I32Enum<
     HIVM_DataLayoutnZ,
     HIVM_DataLayoutzN,
     HIVM_DataLayoutND,
-    HIVM_DataLayoutFractal
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutNCHW,
+    HIVM_DataLayoutNC1HWC0,
+    HIVM_DataLayoutC1HWNC0
   ]>;
 
 def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
