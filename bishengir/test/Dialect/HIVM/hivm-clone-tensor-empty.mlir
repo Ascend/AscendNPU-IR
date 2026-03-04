@@ -166,3 +166,32 @@ func.func @rewrite_tensor_before_use(%arg0: memref<?xi32>) {
     }
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @clone_tensor_empty_with_annotation
+// NO-CLONE-LABEL: func.func @clone_tensor_empty_with_annotation
+// CLONE-LABEL: func.func @clone_tensor_empty_with_annotation
+// This test verifies that annotation.mark is copied when cloning tensor.empty.
+// The original tensor.empty has annotation.mark, and each cloned copy should
+// also have the annotation.mark copied.
+// CHECK: tensor.empty() : tensor<16x16xf16>
+// CHECK: annotation.mark {{.*}} {buffer_size_in_byte = 4096 : i64}
+// CHECK: tensor.empty() : tensor<16x16xf16>
+// CHECK: annotation.mark {{.*}} {buffer_size_in_byte = 4096 : i64}
+// CHECK: hivm.hir.copy
+// NO-CLONE: memref.alloc() {{.*}} : memref<16x16xf16>
+// NO-CLONE: annotation.mark {{.*}} {buffer_size_in_byte = 4096 : i64}
+// CLONE: memref.alloc() {{.*}} : memref<16x16xf16>
+// CLONE: annotation.mark {{.*}} {buffer_size_in_byte = 4096 : i64}
+module {
+  func.func @clone_tensor_empty_with_annotation(%arg0 : tensor<16x16xf16>,
+                                                %arg1 : tensor<16x16xf16>,
+                                                %arg2 : tensor<16x16xf16>) -> tensor<16x16xf16> {
+    %0 = tensor.empty() : tensor<16x16xf16>
+    annotation.mark %0 {buffer_size_in_byte = 4096 : i64} : tensor<16x16xf16>
+    %1 = hivm.hir.copy ins(%arg0 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %2 = hivm.hir.copy ins(%arg1 : tensor<16x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.copy ins(%2 : tensor<16x16xf16>) outs(%arg2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    return %1 : tensor<16x16xf16>
+  }
+}

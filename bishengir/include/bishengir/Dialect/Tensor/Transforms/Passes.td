@@ -145,6 +145,7 @@ def NormalizeLastDimUnalignedTensorOp : Pass<"normalize-last-dim-unaligned-tenso
   let dependentDialects = [
     "tensor::TensorDialect",
     "linalg::LinalgDialect",
+    "annotation::AnnotationDialect",
   ];
 }
 
