@@ -2635,191 +2635,59 @@ func.func @test_gathermask(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memr
 }
 
 // -----
-// CHECK-LABEL: func.func @test_compare_i32_lt_hint
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_INIT:.*]] = tensor.empty() : tensor<16x32xi32>
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG1]], %[[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>) outs(%[[SUB_INIT]] : tensor<16x32xi32>) -> tensor<16x32xi32>
-// CHECK: %[[CAST_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[SUB_RES]] : tensor<16x32xi32>) outs(%[[CAST_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[FILL_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[FILL_RES:.*]] = linalg.fill ins(%[[CST_0]] : f32) outs(%[[FILL_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[CMP_INIT:.*]] = tensor.empty() : tensor<16x32xi1>
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[CAST_RES]], %[[FILL_RES]] : tensor<16x32xf32>, tensor<16x32xf32>) outs(%[[CMP_INIT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
-// CHECK: annotation.mark %[[COND1]] {enable_high_performance_compare} : tensor<16x32xi1>
-// CHECK: return %[[COND1]] : tensor<16x32xi1>
-func.func @test_compare_i32_lt_hint(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vlt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
-  annotation.mark %ret {enable_high_performance_compare} : tensor<16x32xi1>
-  return %ret : tensor<16x32xi1>
-}
-
-// -----
-// CHECK-LABEL: func.func @test_compare_i32_le_hint
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_INIT:.*]] = tensor.empty() : tensor<16x32xi32>
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG1]], %[[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>) outs(%[[SUB_INIT]] : tensor<16x32xi32>) -> tensor<16x32xi32>
-// CHECK: %[[CAST_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[SUB_RES]] : tensor<16x32xi32>) outs(%[[CAST_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[FILL_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[FILL_RES:.*]] = linalg.fill ins(%[[CST_0]] : f32) outs(%[[FILL_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[CMP_INIT:.*]] = tensor.empty() : tensor<16x32xi1>
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[CAST_RES]], %[[FILL_RES]] : tensor<16x32xf32>, tensor<16x32xf32>) outs(%[[CMP_INIT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
-// CHECK: annotation.mark %[[COND1]] {enable_high_performance_compare} : tensor<16x32xi1>
-// CHECK: return %[[COND1]] : tensor<16x32xi1>
-func.func @test_compare_i32_le_hint(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vle>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
-  annotation.mark %ret {enable_high_performance_compare} : tensor<16x32xi1>
-  return %ret : tensor<16x32xi1>
-}
-
-// -----
-// CHECK-LABEL: func.func @test_compare_i32_gt_hint
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_INIT:.*]] = tensor.empty() : tensor<16x32xi32>
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs(%[[SUB_INIT]] : tensor<16x32xi32>) -> tensor<16x32xi32>
-// CHECK: %[[CAST_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[SUB_RES]] : tensor<16x32xi32>) outs(%[[CAST_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[FILL_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[FILL_RES:.*]] = linalg.fill ins(%[[CST_0]] : f32) outs(%[[FILL_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[CMP_INIT:.*]] = tensor.empty() : tensor<16x32xi1>
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[CAST_RES]], %[[FILL_RES]] : tensor<16x32xf32>, tensor<16x32xf32>) outs(%[[CMP_INIT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
-// CHECK: annotation.mark %[[COND1]] {enable_high_performance_compare} : tensor<16x32xi1>
-// CHECK: return %[[COND1]] : tensor<16x32xi1>
-func.func @test_compare_i32_gt_hint(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vgt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
-  annotation.mark %ret {enable_high_performance_compare} : tensor<16x32xi1>
-  return %ret : tensor<16x32xi1>
-}
-
-// -----
-// CHECK-LABEL: func.func @test_compare_i32_ge_hint
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_INIT:.*]] = tensor.empty() : tensor<16x32xi32>
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs(%[[SUB_INIT]] : tensor<16x32xi32>) -> tensor<16x32xi32>
-// CHECK: %[[CAST_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[SUB_RES]] : tensor<16x32xi32>) outs(%[[CAST_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[FILL_INIT:.*]] = tensor.empty() : tensor<16x32xf32>
-// CHECK: %[[FILL_RES:.*]] = linalg.fill ins(%[[CST_0]] : f32) outs(%[[FILL_INIT]] : tensor<16x32xf32>) -> tensor<16x32xf32>
-// CHECK: %[[CMP_INIT:.*]] = tensor.empty() : tensor<16x32xi1>
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[CAST_RES]], %[[FILL_RES]] : tensor<16x32xf32>, tensor<16x32xf32>) outs(%[[CMP_INIT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
-// CHECK: annotation.mark %[[COND1]] {enable_high_performance_compare} : tensor<16x32xi1>
-// CHECK: return %[[COND1]] : tensor<16x32xi1>
-func.func @test_compare_i32_ge_hint(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
-  annotation.mark %ret {enable_high_performance_compare} : tensor<16x32xi1>
-  return %ret : tensor<16x32xi1>
-}
-
-// -----
 // CHECK-LABEL: func.func @test_compare_i32_lt
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[C31:.*]] = arith.constant 31 : i32
-// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG1]], %[[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {{.*}} ins(%[[SUB_RES]] : tensor<16x32xi32>)
-// CHECK: %[[FILL_F32:.*]] = linalg.fill ins(%[[CST_0]] : f32)
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[CAST_RES]], %[[FILL_F32]] : tensor<16x32xf32>, tensor<16x32xf32>)
-// CHECK: %[[A_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG1]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[B_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG0]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[SAME_SIGN:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[B_SIGN]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[FILL_I32:.*]] = linalg.fill ins(%[[C0]] : i32)
-// CHECK: %[[A_EQ_0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[FILL_I32]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[B_SIGN_F32:.*]] = hfusion.cast {{.*}} ins(%[[B_SIGN]] : tensor<16x32xi32>)
-// CHECK: %[[B_EQ_0_F32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[B_SIGN_F32]], %[[CST_0]] : tensor<16x32xf32>, f32)
-// CHECK: %[[B_NEQ_0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[B_EQ_0_F32]] : tensor<16x32xi1>)
-// CHECK: %[[COND2:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[A_EQ_0]], %[[B_NEQ_0]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[SAFE_COND1:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[COND1]], %[[SAME_SIGN]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[FINAL_RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[SAFE_COND1]], %[[COND2]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: return %[[FINAL_RES]] : tensor<16x32xi1>
+// CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_lt(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vlt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vlt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
   return %ret : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I32:%.*]] = tensor.empty() : tensor<16x32xi32>
+// CHECK:     [[MAX_VAL:%.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins([[ARG0]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I32]] : tensor<16x32xi32>) -> tensor<16x32xi32>
+// CHECK-DAG: [[EMPTY_I1_OUT:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I1_MID:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK:     [[CMP_EQ:%.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins([[MAX_VAL]], [[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I1_MID]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     [[FINAL_RES:%.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins([[CMP_EQ]] : tensor<16x32xi1>) outs([[EMPTY_I1_OUT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     return [[FINAL_RES]] : tensor<16x32xi1>
 }
 
 // -----
 // CHECK-LABEL: func.func @test_compare_i32_le
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[C31:.*]] = arith.constant 31 : i32
-// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG1]], %[[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {{.*}} ins(%[[SUB_RES]] : tensor<16x32xi32>)
-// CHECK: %[[FILL_F32:.*]] = linalg.fill ins(%[[CST_0]] : f32)
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[CAST_RES]], %[[FILL_F32]] : tensor<16x32xf32>, tensor<16x32xf32>)
-// CHECK: %[[A_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG1]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[B_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG0]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[SAME_SIGN:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[B_SIGN]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[FILL_I32:.*]] = linalg.fill ins(%[[C0]] : i32)
-// CHECK: %[[A_EQ_0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[FILL_I32]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[B_SIGN_F32:.*]] = hfusion.cast {{.*}} ins(%[[B_SIGN]] : tensor<16x32xi32>)
-// CHECK: %[[B_EQ_0_F32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[B_SIGN_F32]], %[[CST_0]] : tensor<16x32xf32>, f32)
-// CHECK: %[[B_NEQ_0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[B_EQ_0_F32]] : tensor<16x32xi1>)
-// CHECK: %[[COND2:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[A_EQ_0]], %[[B_NEQ_0]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[SAFE_COND1:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[COND1]], %[[SAME_SIGN]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[FINAL_RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[SAFE_COND1]], %[[COND2]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: return %[[FINAL_RES]] : tensor<16x32xi1>
+// CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_le(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vle>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vle>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
   return %ret : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I32:%.*]] = tensor.empty() : tensor<16x32xi32>
+// CHECK:     [[MAX_VAL:%.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins([[ARG0]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I32]] : tensor<16x32xi32>) -> tensor<16x32xi32>
+// CHECK-DAG: [[EMPTY_I1_MID:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK:     [[FINAL_RES:%.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins([[MAX_VAL]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I1_MID]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     return [[FINAL_RES]] : tensor<16x32xi1>
 }
 
 // -----
 // CHECK-LABEL: func.func @test_compare_i32_gt
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[C31:.*]] = arith.constant 31 : i32
-// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {{.*}} ins(%[[SUB_RES]] : tensor<16x32xi32>)
-// CHECK: %[[FILL_F32:.*]] = linalg.fill ins(%[[CST_0]] : f32)
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>} ins(%[[CAST_RES]], %[[FILL_F32]] : tensor<16x32xf32>, tensor<16x32xf32>)
-// CHECK: %[[A_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG0]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[B_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG1]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[SAME_SIGN:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[B_SIGN]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[FILL_I32:.*]] = linalg.fill ins(%[[C0]] : i32)
-// CHECK: %[[A_EQ_0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[FILL_I32]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[B_SIGN_F32:.*]] = hfusion.cast {{.*}} ins(%[[B_SIGN]] : tensor<16x32xi32>)
-// CHECK: %[[B_EQ_0_F32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[B_SIGN_F32]], %[[CST_0]] : tensor<16x32xf32>, f32)
-// CHECK: %[[B_NEQ_0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[B_EQ_0_F32]] : tensor<16x32xi1>)
-// CHECK: %[[COND2:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[A_EQ_0]], %[[B_NEQ_0]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[SAFE_COND1:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[COND1]], %[[SAME_SIGN]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[FINAL_RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[SAFE_COND1]], %[[COND2]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: return %[[FINAL_RES]] : tensor<16x32xi1>
+// CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_gt(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vgt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vgt>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
   return %ret : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I32:%.*]] = tensor.empty() : tensor<16x32xi32>
+// CHECK:     [[MAX_VAL:%.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins([[ARG0]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I32]] : tensor<16x32xi32>) -> tensor<16x32xi32>
+// CHECK-DAG: [[EMPTY_I1_OUT:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I1_MID:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK:     [[CMP_EQ:%.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins([[MAX_VAL]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I1_MID]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     [[FINAL_RES:%.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins([[CMP_EQ]] : tensor<16x32xi1>) outs([[EMPTY_I1_OUT]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     return [[FINAL_RES]] : tensor<16x32xi1>
 }
 
 // -----
 // CHECK-LABEL: func.func @test_compare_i32_ge
-// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xi32>, %[[ARG1:.*]]: tensor<16x32xi32>, %[[ARG2:.*]]: tensor<16x32xi1>)
-// CHECK-DAG: %[[C31:.*]] = arith.constant 31 : i32
-// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i32
-// CHECK-DAG: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK: %[[SUB_RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[CAST_RES:.*]] = hfusion.cast {{.*}} ins(%[[SUB_RES]] : tensor<16x32xi32>)
-// CHECK: %[[FILL_F32:.*]] = linalg.fill ins(%[[CST_0]] : f32)
-// CHECK: %[[COND1:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[CAST_RES]], %[[FILL_F32]] : tensor<16x32xf32>, tensor<16x32xf32>)
-// CHECK: %[[A_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG0]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[B_SIGN:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%[[ARG1]], %[[C31]] : tensor<16x32xi32>, i32)
-// CHECK: %[[SAME_SIGN:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[B_SIGN]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[FILL_I32:.*]] = linalg.fill ins(%[[C0]] : i32)
-// CHECK: %[[A_EQ_0:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[A_SIGN]], %[[FILL_I32]] : tensor<16x32xi32>, tensor<16x32xi32>)
-// CHECK: %[[B_SIGN_F32:.*]] = hfusion.cast {{.*}} ins(%[[B_SIGN]] : tensor<16x32xi32>)
-// CHECK: %[[B_EQ_0_F32:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[B_SIGN_F32]], %[[CST_0]] : tensor<16x32xf32>, f32)
-// CHECK: %[[B_NEQ_0:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[B_EQ_0_F32]] : tensor<16x32xi1>)
-// CHECK: %[[COND2:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[A_EQ_0]], %[[B_NEQ_0]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[SAFE_COND1:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[COND1]], %[[SAME_SIGN]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: %[[FINAL_RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[SAFE_COND1]], %[[COND2]] : tensor<16x32xi1>, tensor<16x32xi1>)
-// CHECK: return %[[FINAL_RES]] : tensor<16x32xi1>
+// CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_ge(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
-  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>)outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vge>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi1>) -> tensor<16x32xi1>
   return %ret : tensor<16x32xi1>
+// CHECK-DAG: [[EMPTY_I32:%.*]] = tensor.empty() : tensor<16x32xi32>
+// CHECK:     [[MAX_VAL:%.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins([[ARG0]], [[ARG1]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I32]] : tensor<16x32xi32>) -> tensor<16x32xi32>
+// CHECK-DAG: [[EMPTY_I1_MID:%.*]] = tensor.empty() : tensor<16x32xi1>
+// CHECK:     [[FINAL_RES:%.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins([[MAX_VAL]], [[ARG0]] : tensor<16x32xi32>, tensor<16x32xi32>) outs([[EMPTY_I1_MID]] : tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK:     return [[FINAL_RES]] : tensor<16x32xi1>
 }
 
 // -----
