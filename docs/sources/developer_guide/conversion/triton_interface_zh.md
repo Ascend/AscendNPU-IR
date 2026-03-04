@@ -633,7 +633,7 @@ def triton_matmul_exp(
 
 #### parallel
 
-昇腾扩展了 Python 标准的 `range` 功能，增加具有**平行执行语义**的`parallel`迭代器。
+昇腾扩展了 Python 标准的 `range` 功能，增加具有**并行执行语义**的`parallel`迭代器。
 
 **参数说明**
 
@@ -1151,7 +1151,7 @@ scatter_ub_to_out(
 - `read_shape[dim]` 必须为 `-1`
 - `src_offset[dim]` 可以为 `-1`（将被忽略）
 - 边界处理：当 `src_offset + read_shape > src_shape` 时，会自动截断到 `src_shape` 边界
-- **不检查** `index` 是否包含越界值
+- **不进行检查** `index` 是否包含越界值
 
 **返回值**
 - **返回类型**: tensor
