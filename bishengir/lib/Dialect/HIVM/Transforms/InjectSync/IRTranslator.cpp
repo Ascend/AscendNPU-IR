@@ -73,12 +73,7 @@ void IRTranslator::UpdateKernelArgMemInfo() {
 
 void IRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    auto aliasPairs = getOperationAliasInfo(op);
-    if (!aliasPairs.empty()) {
-      for (auto aliasPair : aliasPairs) {
-        UpdateAliasBufferInfo(aliasPair.first, aliasPair.second);
-      }
-    } else if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
+    if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
       if (failed(UpdateAllocLikeOpMemInfo(op))) {
         return WalkResult::interrupt();
       }
@@ -103,6 +98,11 @@ void IRTranslator::RecursionIR(Region *region) {
       UpdateStoreOrLoadOpInform(affineLoadOp);
     } else if (auto affineStoreOp = dyn_cast<affine::AffineStoreOp>(op)) {
       UpdateStoreOrLoadOpInform(affineStoreOp);
+    } else if (auto aliasPairs = getOperationAliasInfo(op);
+               !aliasPairs.empty()) {
+      for (auto aliasPair : aliasPairs) {
+        UpdateAliasBufferInfo(aliasPair.first, aliasPair.second);
+      }
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }

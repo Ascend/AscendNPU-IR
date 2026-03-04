@@ -105,6 +105,10 @@ createInjectSyncPass(const InjectSyncOptions &options = {});
 std::unique_ptr<Pass>
 createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
 
+/// Create a pass to cross-core graph-sync-solver.
+std::unique_ptr<Pass>
+createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
+
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
 createInjectBlockSyncPass(const InjectBlockSyncOptions &options = {});

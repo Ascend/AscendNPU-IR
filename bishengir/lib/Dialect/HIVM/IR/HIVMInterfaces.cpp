@@ -20,12 +20,15 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/TypeUtilities.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 
 #include <algorithm>
 
@@ -376,90 +379,61 @@ LogicalResult verifyStructuredOpInterface(Operation *op) {
   return success();
 }
 
-Value getIsFirstIterationValue(scf::ForOp forOp, Location loc,
-                               PatternRewriter &rewriter) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToStart(forOp.getBody());
-  Value lowerBound = forOp.getLowerBound();
-  Value currentInd = forOp.getInductionVar();
-  Value isFirstIter = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, lowerBound, currentInd);
-  return isFirstIter;
+LogicalResult verifyUnitFlagEnabledInterface(UnitFlagEnabledInterface op) {
+  if (auto unitFlagModesOpt = op.getUnitFlagModes()) {
+    auto unitFlagModes = unitFlagModesOpt.value();
+    if (auto unitFlagCondsOpt = op.getUnitFlagConditions()) {
+      auto unitFlagConds = unitFlagCondsOpt.value();
+      if (unitFlagModes.size() != unitFlagConds.size()) {
+        return op.emitError() << "Number of unit-flag conditions should be "
+                                 "equal to the number of unit-flag modes.";
+      }
+    } else if (unitFlagModes.size() > 1) {
+      return op.emitError() << "Cannot have multiple unit-flag modes without "
+                               "having equal number of unit-flag conditions.";
+    }
+  } else if (auto unitFlagCondsOpt = op.getUnitFlagConditions()) {
+    return op.emitError()
+           << "Cannot have unit-flag conditions without unit-flag modes.";
+  }
+  return llvm::success();
 }
 
-Value getIsLastIterationValue(scf::ForOp forOp, Location loc,
-                              PatternRewriter &rewriter) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToStart(forOp.getBody());
-  Value upperBound = forOp.getUpperBound();
-  Value step = forOp.getStep();
-  Value currentInd = forOp.getInductionVar();
-  Value nextInd = rewriter.create<arith::AddIOp>(loc, currentInd, step);
-  Value isLastIter = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::sge, nextInd, upperBound);
-  return isLastIter;
-}
-
-Value getSelectedUnitFlagMode(Value isEnabled, PatternRewriter &rewriter,
-                              std::optional<UNIT_FLAG> isEnabledMode = {}) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointAfter(isEnabled.getDefiningOp());
-  Value disabledVal = rewriter.create<arith::ConstantOp>(
-      isEnabled.getLoc(), rewriter.getI8Type(),
-      rewriter.getI8IntegerAttr(static_cast<uint8_t>(UNIT_FLAG::DISABLED)));
-  Value enabledVal = rewriter.create<arith::ConstantOp>(
-      isEnabled.getLoc(), rewriter.getI8Type(),
-      rewriter.getI8IntegerAttr(static_cast<uint8_t>(
-          isEnabledMode.has_value() ? isEnabledMode.value()
-                                    : UNIT_FLAG::ENABLED_WITH_UPDATE)));
-  return rewriter.create<arith::SelectOp>(isEnabled.getLoc(),
-                                          rewriter.getI8Type(), isEnabled,
-                                          enabledVal, disabledVal);
-}
-
-Value getUnitFlagModeLibValueImpl(HIVMUnitFlagEnabled op,
+Value getUnitFlagModeLibValueImpl(UnitFlagEnabledInterface op,
                                   PatternRewriter &rewriter) {
   OpBuilder::InsertionGuard guard(rewriter);
+  auto getUnitFlagValue = [&op, &rewriter](UNIT_FLAG unitFlagMode) {
+    return rewriter.create<arith::ConstantOp>(
+        op->getLoc(), rewriter.getI8Type(),
+        rewriter.getI8IntegerAttr(static_cast<uint8_t>(unitFlagMode)));
+  };
 
-  UNIT_FLAG unitFlagMode =
-      op.getUnitFlagModeValue()
-          .value_or(UnitFlagAttr::get(op->getContext(), UNIT_FLAG::DISABLED))
-          .getUnitFlag();
-  if (unitFlagMode == UNIT_FLAG::DISABLED ||
-      unitFlagMode == UNIT_FLAG::ENABLED_WITH_UPDATE ||
-      unitFlagMode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
-    rewriter.setInsertionPoint(op);
-    if (op.getUnitFlagModeCondition().has_value() &&
-        op.getUnitFlagModeCondition().value()) {
-      return getSelectedUnitFlagMode(op.getUnitFlagModeCondition().value(),
-                                     rewriter, unitFlagMode);
-    } else {
-      return rewriter.create<arith::ConstantOp>(
-          op->getLoc(), rewriter.getI8Type(),
-          rewriter.getI8IntegerAttr(static_cast<uint8_t>(unitFlagMode)));
-    }
-  } else if (unitFlagMode == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-    auto forOp = dyn_cast<scf::ForOp>(op->getParentOp());
-    assert(forOp);
-    Value isFirstIter = getIsFirstIterationValue(forOp, op->getLoc(), rewriter);
-    return getSelectedUnitFlagMode(isFirstIter, rewriter);
-  } else if (unitFlagMode == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-    auto forOp = dyn_cast<scf::ForOp>(op->getParentOp());
-    assert(forOp);
-    Value isLastIter = getIsLastIterationValue(forOp, op->getLoc(), rewriter);
-    return getSelectedUnitFlagMode(isLastIter, rewriter);
-  } else if (unitFlagMode == UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS) {
-    auto forOp = dyn_cast<scf::ForOp>(op->getParentOp());
-    assert(forOp);
-    Value isFirstIter = getIsFirstIterationValue(forOp, op->getLoc(), rewriter);
-    Value isLastIter = getIsLastIterationValue(forOp, op->getLoc(), rewriter);
-    rewriter.setInsertionPoint(op);
-    Value isFirstOrLastIter =
-        rewriter.create<arith::OrIOp>(op->getLoc(), isFirstIter, isLastIter);
-    return getSelectedUnitFlagMode(isFirstOrLastIter, rewriter);
-  } else {
-    llvm_unreachable("unsupported unit-flag mode to be lowered to std");
+  auto unitFlagModesOpt = op.getUnitFlagModes();
+  if (!unitFlagModesOpt.has_value() || unitFlagModesOpt->empty()) {
+    return getUnitFlagValue(UNIT_FLAG::DISABLED);
   }
+  auto unitFlagModes = unitFlagModesOpt.value();
+
+  auto unitFlagConditionsOpt = op.getUnitFlagConditions();
+  if (!unitFlagConditionsOpt.has_value() ||
+      unitFlagConditionsOpt.value().empty()) {
+    assert(unitFlagModes.size() == 1);
+    return getUnitFlagValue(unitFlagModes.front().getUnitFlag());
+  }
+  auto unitFlagConditions = unitFlagConditionsOpt.value();
+
+  Value retValue = getUnitFlagValue(UNIT_FLAG::DISABLED);
+  assert(unitFlagModes.size() == unitFlagConditions.size());
+  for (auto [unitFlagMode, condValue] :
+       llvm::reverse(llvm::zip(unitFlagModes, unitFlagConditions))) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(op);
+    Value selectOp = rewriter.create<arith::SelectOp>(
+        op->getLoc(), condValue, getUnitFlagValue(unitFlagMode.getUnitFlag()),
+        retValue);
+    retValue = selectOp;
+  }
+  return retValue;
 }
 
 } // namespace detail

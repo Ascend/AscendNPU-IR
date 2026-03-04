@@ -132,6 +132,14 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableHIVMCrossCoreGSS : FeatureControlOptions<
+  "Use hivm cross-core graph-sync-solver instead of inject-block-sync.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
   "In combination with the disableAutoInjectBlockSync option.",
   "bool",

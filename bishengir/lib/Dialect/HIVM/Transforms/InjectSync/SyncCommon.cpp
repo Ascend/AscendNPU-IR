@@ -20,8 +20,11 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <memory>
 #include <utility>
@@ -194,89 +197,12 @@ bool PlaceHolderInstanceElement::classof(const InstanceElement *e) {
   return e->GetKind() == KindTy::PLACE_HOLDER;
 }
 
-UNIT_FLAG CompoundInstanceElement::getUnitFlagMode() const {
-  static DenseMap<std::pair<UNIT_FLAG, UNIT_FLAG>, UNIT_FLAG> possibleStates = {
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::DISABLED},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                      UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                      UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::DISABLED, UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_ONLY_FIRST_ITER},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                      UNIT_FLAG::ENABLED_WITH_UPDATE),
-       UNIT_FLAG::ENABLED_WITH_UPDATE},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER, UNIT_FLAG::DISABLED),
-       UNIT_FLAG::ENABLED_ONLY_LAST_ITER},
-      {std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                      UNIT_FLAG::ENABLED_ONLY_FIRST_ITER),
-       UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS},
-  };
-  auto it = possibleStates.find(
-      std::make_pair(unitFlagModeAsSet, unitFlagModeAsWait));
-  if (it == possibleStates.end()) {
-    llvm_unreachable("unit-flag state not handled");
-  }
-  return it->second;
-}
-
-Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                            IRRewriter &rewriter) {
-  Value upperBound = forOp.getUpperBound();
-  Value lowerBound = forOp.getLowerBound();
-  return rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                        lowerBound, upperBound);
-}
-
-std::optional<mlir::Value>
-CompoundInstanceElement::getUnitFlagCond(Location loc, IRRewriter &rewriter) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  SmallVector<Value> conditions;
-  if (linkedUnitFlagCompAsWait &&
-      (linkedUnitFlagCompAsWait->unitFlagModeAsSet ==
-           UNIT_FLAG::ENABLED_ONLY_LAST_ITER ||
-       linkedUnitFlagCompAsWait->unitFlagModeAsSet ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS)) {
-    if (auto forOp = dyn_cast<scf::ForOp>(
-            linkedUnitFlagCompAsWait->elementOp->getParentOp())) {
-      rewriter.setInsertionPoint(forOp);
-      Value cond = getIsNotDeadLoopValue(forOp, loc, rewriter);
-      conditions.push_back(cond);
-    }
-  }
-  if (linkedUnitFlagCompAsSet &&
-      (linkedUnitFlagCompAsSet->unitFlagModeAsWait ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_ITER ||
-       linkedUnitFlagCompAsSet->unitFlagModeAsWait ==
-           UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS)) {
-    if (auto forOp = dyn_cast<scf::ForOp>(
-            linkedUnitFlagCompAsSet->elementOp->getParentOp())) {
-      rewriter.setInsertionPoint(elementOp);
-      Value cond = getIsNotDeadLoopValue(forOp, loc, rewriter);
-      conditions.push_back(cond);
-    }
-  }
-
-  if (conditions.empty()) {
-    return nullptr;
-  } else if (conditions.size() == 1) {
-    return conditions[0];
-  } else if (conditions.size() == 2) {
-    rewriter.setInsertionPoint(elementOp);
-    return rewriter.create<arith::OrIOp>(loc, conditions[0], conditions[1]);
-  } else {
-    llvm_unreachable("unexpected/unhandled number of unit-flag conditions.");
-  }
-}
-
 namespace mlir::hivm {
+
+bool isBackwardSync(const CompoundInstanceElement *nowCompound,
+                    const CompoundInstanceElement *frontCompound) {
+  return frontCompound->GetIndex() > nowCompound->GetIndex();
+}
 
 bool checkAllParentLoopsAreForLoops(Operation *op) {
   while ((op = op->getParentOfType<LoopLikeOpInterface>())) {

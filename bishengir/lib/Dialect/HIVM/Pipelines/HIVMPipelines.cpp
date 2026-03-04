@@ -49,7 +49,8 @@ static void
 hivmNormSyncPipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {
   if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
-      !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
+      !hivmPipelineOptions.enableHIVMInjectBarrierAllSync &&
+      !hivmPipelineOptions.disableHIVMAutoInjectSync) {
     GraphSyncSolverOptions gssOptions;
     gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
@@ -72,14 +73,20 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   // synchronization passes recognize cross-core scalar-pipeline conflicts and
   // insert needed sync operations.
   pm.addPass(createMarkRealCoreTypePass());
-  InjectBlockSyncOptions blockSyncOption;
-  blockSyncOption.blockAllSync =
-      hivmPipelineOptions.enableHIVMInjectBlockAllSync;
-  blockSyncOption.assumeAliveLoops =
-      hivmPipelineOptions.enableHIVMAssumeAliveLoops;
-  blockSyncOption.disableAutoInjectBlockSync =
-      hivmPipelineOptions.disableAutoInjectBlockSync;
-  pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
+  if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
+      !hivmPipelineOptions.enableHIVMInjectBlockAllSync &&
+      !hivmPipelineOptions.disableAutoInjectBlockSync) {
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+  } else {
+    InjectBlockSyncOptions blockSyncOption;
+    blockSyncOption.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    blockSyncOption.assumeAliveLoops =
+        hivmPipelineOptions.enableHIVMAssumeAliveLoops;
+    blockSyncOption.disableAutoInjectBlockSync =
+        hivmPipelineOptions.disableAutoInjectBlockSync;
+    pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
+  }
   // Clear inserted core-type attributes as they are not needed for other
   // passes. Note that they are only inserted by mark-real-core-type pass so
   // it's safe to remove them. And after split-mix-kernel pass, they are not

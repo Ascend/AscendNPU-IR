@@ -466,19 +466,13 @@ def HIVM_UNIT_FLAG_DISABLED : I32EnumAttrCase<"DISABLED", 0>;
 def HIVM_UNIT_FLAG_RESERVED : I32EnumAttrCase<"RESERVED", 1>;
 def HIVM_UNIT_FLAG_ENABLED_WITHOUT_UPDATE : I32EnumAttrCase<"ENABLED_WITHOUT_UPDATE", 2>;
 def HIVM_UNIT_FLAG_ENABLED_WITH_UPDATE : I32EnumAttrCase<"ENABLED_WITH_UPDATE", 3>;
-def HIVM_UNIT_FLAG_ENABLED_ONLY_LAST_ITER : I32EnumAttrCase<"ENABLED_ONLY_LAST_ITER", 4>;
-def HIVM_UNIT_FLAG_ENABLED_ONLY_FIRST_ITER : I32EnumAttrCase<"ENABLED_ONLY_FIRST_ITER", 5>;
-def HIVM_UNIT_FLAG_ENABLED_ONLY_FIRST_AND_LAST_ITERS : I32EnumAttrCase<"ENABLED_ONLY_FIRST_AND_LAST_ITERS", 6>;
 
 def HIVM_UnitFlagEnum : HIVM_I32Enum<
   "UNIT_FLAG", "Unit Flag Mode for Synchronization", [
     HIVM_UNIT_FLAG_DISABLED,
     HIVM_UNIT_FLAG_RESERVED,
     HIVM_UNIT_FLAG_ENABLED_WITHOUT_UPDATE,
-    HIVM_UNIT_FLAG_ENABLED_WITH_UPDATE,
-    HIVM_UNIT_FLAG_ENABLED_ONLY_LAST_ITER,
-    HIVM_UNIT_FLAG_ENABLED_ONLY_FIRST_ITER,
-    HIVM_UNIT_FLAG_ENABLED_ONLY_FIRST_AND_LAST_ITERS
+    HIVM_UNIT_FLAG_ENABLED_WITH_UPDATE
   ]>;
 
 def HIVM_UnitFlagAttr : HIVM_Attr<"UnitFlag", "unit_flag"> {
@@ -488,6 +482,9 @@ def HIVM_UnitFlagAttr : HIVM_Attr<"UnitFlag", "unit_flag"> {
     HIVM unit flag attribute for synchronization.
   }];
 }
+
+def UnitFlagArrayAttr : TypedArrayAttrBase<HIVM_UnitFlagAttr,
+                                           "unit-flag mode array attribute">;
 
 //===----------------------------------------------------------------------===//
 // Sync Block Mode

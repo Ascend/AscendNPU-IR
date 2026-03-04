@@ -17,57 +17,34 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIRTranslator.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/AsmState.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include <deque>
+#include "llvm/Support/LogicalResult.h"
 #include <memory>
 #include <optional>
 #include <tuple>
 #include <utility>
 
-using SyncMap =
-    std::map<mlir::hivm::syncsolver::OperationBase *,
-             std::deque<std::unique_ptr<mlir::hivm::syncsolver::SyncOp>>>;
-using SyncBeforeAfterMap = std::pair<SyncMap, SyncMap>;
-
 namespace mlir::hivm::syncsolver {
-
-struct ProcessingOrder {
-  Occurrence *occ{nullptr};
-  int start{-1};
-  int end{-1};
-  bool reverseOrder{false};
-  bool isUseless{false};
-  bool skip{false};
-  ProcessingOrder(Occurrence *occ, int start, int end, bool reverseOrder,
-                  bool isUseless, bool skip = false)
-      : occ(occ), start(start), end(end), reverseOrder(reverseOrder),
-        isUseless(isUseless), skip(skip) {}
-};
 
 class Solver {
 public:
-  uint64_t globalIndex{0};
-  uint64_t globalCodeGenIndex{0};
-  bool resultFuncIrWasGenerated{false};
-  bool considerMergedBackwardSyncEventIds{true};
-  bool disableMultiEventIdForBarrierAllPairs{true};
-  bool reuseSyncPairToSaveEventIds{false};
-  bool enableUnitFlagFeature{false};
-  bool decomposeMmadl1Op{true};
+  // Configuration options.
+  const SyncSolverOptions options;
 
   // Original MLIR function being processed (may be null for test-only Solver).
-  func::FuncOp func;
+  func::FuncOp funcOp;
 
   // In-memory hierarchical IR (Function -> Scopes -> Ops) used by the solver.
   std::unique_ptr<OperationBase> funcIr;
@@ -76,26 +53,40 @@ public:
   // represents one appearance of an operation in the sync-analysis order.
   std::vector<std::unique_ptr<Occurrence>> syncIr;
 
-  // Map op -> list of occurrences in syncIr (quick lookup for an op's
-  // occurrences).
-  llvm::DenseMap<OperationBase *, std::vector<Occurrence *>> opAllOccurrences;
+  // Set of RW operations that expose unit-flag feature and need special
+  // handling.
+  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
 
   // Collected conflict pairs chosen by the algorithm for insertion (and
   // persistent ones that survive multiple passes).
   std::vector<std::unique_ptr<ConflictPair>> chosenConflictedPairs,
       persistentChosenConflictedPairs;
 
+protected:
+  int64_t globalSetWaitIndex{0};
+  int64_t maxReuseNum{20};
+  int64_t maxRunNum{99};
+
+  llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE>,
+                 std::unique_ptr<EventIdSolver>>
+      eventIdSolver;
+
+  // Map op -> list of occurrences in syncIr (quick lookup for an op's
+  // occurrences).
+  llvm::DenseMap<OperationBase *, std::vector<Occurrence *>> opAllOccurrences;
+
   // Bookkeeping map used to record that a pair (scopeOp, op1, op2, setPipe,
   // waitPipe) has already been synchronized and which ConflictPair performed
   // it.
   llvm::DenseMap<std::tuple<OperationBase *, OperationBase *, OperationBase *,
-                            hivm::PIPE, hivm::PIPE>,
-                 ConflictPair *>
-      syncedPairs, replacedWithReusableSyncedPairs;
+                            CorePipeInfo, CorePipeInfo>,
+                 llvm::DenseSet<ConflictPair *>>
+      syncedPairs;
 
-  // For fast lookup of chosen conflicts relevant to a particular scope op.
-  llvm::DenseMap<OperationBase *, llvm::DenseSet<ConflictPair *>>
-      scopeOpChosenConflicts;
+  llvm::DenseMap<std::tuple<OperationBase *, OperationBase *, OperationBase *,
+                            CorePipeInfo, CorePipeInfo>,
+                 ConflictPair *>
+      replacedWithReusableSyncedPairs;
 
   // Chosen conflicts keyed by occurrence (scope occurrence) to allow retrieving
   // conflicts that affect a particular occurrence subtree.
@@ -108,11 +99,6 @@ public:
                  llvm::DenseSet<ConflictPair *>>
       scopeOccPairChosenConflicts, persistentScopeOccPairChosenConflicts;
 
-  // Chosen conflicts keyed by a pair of operations (useful for reuse search).
-  llvm::DenseMap<std::pair<OperationBase *, OperationBase *>,
-                 llvm::DenseSet<ConflictPair *>>
-      scopeOpPairChosenConflicts;
-
   // Processing order list created from syncIr that drives pairwise conflict
   // checks.
   std::vector<ProcessingOrder> processingOrders;
@@ -121,53 +107,38 @@ public:
   llvm::DenseSet<std::pair<Occurrence *, Occurrence *>> processedOccPairs;
 
   // Occurrences marked skippable (exclusion set used during processing).
-  llvm::DenseSet<Occurrence *> skipOcc;
-
-  // Per-multibuffer loop cached helper: nested index modular counters created
-  // during codegen and reused to select between multi-buffer event ids.
-  llvm::DenseMap<LoopLikeOpInterface, Value> nestedIndexModularMem;
-
-  // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
-  // that chooses which buffer/event id to use at runtime.
-  llvm::DenseMap<LoopLikeOpInterface,
-                 llvm::DenseMap<std::pair<hivm::EVENT, hivm::EVENT>, Value>>
-      bufferSelectedMem;
-
-  // For a parent occurrence, list of its child occurrences.
-  llvm::DenseMap<Occurrence *, llvm::SmallVector<Occurrence *>> occChildrenMem;
+  llvm::DenseMap<uint8_t, llvm::DenseSet<Occurrence *>> skipOcc;
 
   // Accumulated backward-sync events for each operation (recorded instead of
   // inserting explicit conflict pairs). The outer map key is the scope op; the
   // inner map key is (setPipe, waitPipe) and value is the set of event ids
   // used.
-  std::map<OperationBase *, llvm::DenseMap<std::pair<hivm::PIPE, hivm::PIPE>,
-                                           llvm::DenseSet<hivm::EVENT>>>
-      backwardSyncEvents, backwardSyncEventsAfterMerge;
+  llvm::MapVector<OperationBase *,
+                  llvm::DenseMap<std::tuple<CorePipeInfo, CorePipeInfo>,
+                                 llvm::DenseSet<int64_t>>>
+      backwardSyncEvents;
 
-  // Indices allocated during codegen walk: start/end and inclusive variants
-  // used to evaluate ordering relationships between ops during merging checks.
-  llvm::DenseMap<OperationBase *, uint64_t> codeGenStartIndex, codeGenEndIndex;
-  llvm::DenseMap<OperationBase *, uint64_t> codeGenInclusiveStartIndex,
-      codeGenInclusiveEndIndex;
-
-  // Index of set/wait ops: key=(setPipe,waitPipe,eventId) -> ordered set of
-  // (codegen-index, SetWaitOp*) for quick queries.
-  llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE, hivm::EVENT>,
-                 std::set<std::pair<uint64_t, SetWaitOp *>>>
-      setWaitFlagOpsIndex;
+  llvm::MapVector<OperationBase *,
+                  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo>>>
+      backwardSyncEventsAfterMerge;
 
   // Memoization of memory-conflict discovery between specific RWOperation
   // pairs.
   llvm::DenseMap<
       std::pair<syncsolver::RWOperation *, syncsolver::RWOperation *>,
-      std::vector<std::pair<hivm::PIPE, hivm::PIPE>>>
-      checkMemoryConflictsMem, checkTestMemoryConflictsMem;
+      llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>>
+      checkMemoryConflictsMem;
 
   // Set of pipe pairs that were forced to barrier-all (no event ids available).
-  llvm::DenseSet<std::pair<hivm::PIPE, hivm::PIPE>> barrierAllPairs;
+  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo>> barrierAllPairs;
+
+  // Set of pipe pairs for which multi-event-id usage is disabled.
+  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo>>
+      disabledMultiEventIdPairs;
 
   // Count-per-pipe-pair used to limit reuse of conflict pairs (reuse budget).
-  llvm::DenseMap<std::pair<hivm::PIPE, hivm::PIPE>, int> reusePairs;
+  llvm::DenseMap<std::tuple<CorePipeInfo, CorePipeInfo>, int> reusePairs,
+      reusedPairs;
 
   // Tracks inserted barrier-all markers before occurrences: op -> set of (occ,
   // isUseless).
@@ -175,101 +146,57 @@ public:
                  llvm::DenseSet<std::pair<Occurrence *, int32_t>>>
       insertedBarrierAllBefore;
 
-  // Per-MMAD L1 op arguments collected during sync codegen insertion.
-  llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
+  // Indices allocated during codegen walk: start/end and inclusive variants
+  // used to evaluate ordering relationships between ops during merging checks.
+  llvm::DenseMap<OperationBase *, int64_t> setWaitStartIndex, setWaitEndIndex,
+      setWaitStartIndexInclusive, setWaitEndIndexInclusive;
 
-  // Set of RW operations that expose unit-flag feature and need special
-  // handling.
-  llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
-
-  // Mapping to cache loop DB conditions used during codegen insertion.
-  llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
+  // Index of set/wait ops: key=(setPipe,waitPipe,eventId) -> ordered set of
+  // (codegen-index, SetWaitOp*) for quick queries.
+  llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE, int64_t>,
+                 std::set<std::pair<int64_t, SetWaitOp *>>>
+      setWaitFlagOpsIndex;
 
 public:
-  Solver(func::FuncOp func) : func(func) {
-    syncsolver::OperationBase::resetLCAMem();
-    syncsolver::Occurrence::resetLCAMem();
-    auto funcOp = std::make_unique<syncsolver::Function>(func.getOperation());
-    auto scopeOp = funcIrBuilder(func.getRegion(), funcOp.get());
-    funcOp->body.push_back(std::move(scopeOp));
-    funcIr = std::move(funcOp);
-    syncIrBuilder(funcIr.get());
-  }
-  Solver(std::unique_ptr<OperationBase> funcIr) : funcIr(std::move(funcIr)) {
-    syncsolver::OperationBase::resetLCAMem();
-    syncsolver::Occurrence::resetLCAMem();
-    syncIrBuilder(this->funcIr.get());
+  Solver() = delete;
+  virtual ~Solver() = default;
+
+  Solver(std::unique_ptr<IRTranslator> irTranslator)
+      : options(irTranslator->options) {
+    init(std::move(irTranslator));
   }
 
   // Orchestrate the solving process (entry point).
-  void solve(int runNum = 0);
-
-  // Solve function variant used in tests (keeps internal behaviour compatible).
-  void solveTest(int runNum = 0);
-
-  // Insert sync ops into func-ir.
-  void generateFuncIrResultOps();
-
-  // Insert sync ops into actual MLIR IR using rewriter.
-  void generateResultOps();
+  void solve();
 
   // Build before/after maps of sync ops computed from chosen conflicts.
   SyncBeforeAfterMap getBeforeAfterSyncMaps();
 
-private:
+protected:
+  void init(std::unique_ptr<IRTranslator> irTranslator) {
+    funcOp = irTranslator->funcOp;
+    funcIr = std::move(irTranslator->funcIr);
+    syncIr = std::move(irTranslator->syncIr);
+    unitFlagFeaturedOps = std::move(irTranslator->unitFlagFeaturedOps);
+    opAllOccurrences = std::move(irTranslator->opAllOccurrences);
+    processingOrders = std::move(irTranslator->processingOrders);
+  }
+
   // Reset solver internal bookkeeping prior to another pass.
-  void reset();
+  void reset(bool resetEventIdRanOutOpts = false);
+
+  llvm::LogicalResult runSolver(bool enableOpts1 = true,
+                                bool enableOpts2 = true);
+
+  // Reset unit-flag related bookkeeping prior to another pass.
+  void resetUnitFlag();
 
   // Walk and process the generated processingOrders to choose conflicts.
   void processOrders();
 
-  // Alternative processing used for tests.
-  void processOrdersTest();
-
-  // Convert MLIR Region into the in-memory funcIr Scope representation.
-  std::unique_ptr<Scope> funcIrBuilder(Region &region, OperationBase *parentOp);
-
-  // Create a decomposed representation for certain MMAD L1 ops if enabled.
-  std::unique_ptr<OperationBase> getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
-                                                     OperationBase *parentOp);
-
-  // Generate processing orders (various flavors) used by the main algorithm.
-  void generateProcessingOrders(Occurrence *scopeOcc, int l, int r,
-                                bool isUseless);
-
-  void generateProcessingOrders(int l, int r, bool isUseless);
-
-  void generateProcessingOrders(int l1, int r1, int l2, int r2, bool isUseless);
-
-  // Build sync IR occurrences from the operation tree.
-  void syncIrBuilder(OperationBase *op, Occurrence *parentOcc = nullptr,
-                     int depth = 0, bool isUseless = false);
-
-  // Collect pointer-like operands reachable from a Value.
-  llvm::SmallVector<Value> collectPointerOps(Value val);
-
-  // Extract memory-related Values from a list of pointer values.
-  llvm::SmallVector<Value> getMemOps(const SmallVector<Value> &vals);
-
-  // Return read and write memory operand lists for an MLIR operation.
-  std::pair<llvm::SmallVector<Value>, llvm::SmallVector<Value>>
-  getReadWriteMemOps(Operation *op);
-
-  // Return a wrapped Load/Store RWOperation when encountering affine/memref
-  // load/store ops.
-  template <typename OP>
-  typename std::enable_if<std::is_same_v<OP, memref::LoadOp> ||
-                              std::is_same_v<OP, affine::AffineLoadOp> ||
-                              std::is_same_v<OP, affine::AffineStoreOp> ||
-                              std::is_same_v<OP, memref::StoreOp>,
-                          std::unique_ptr<OperationBase>>::type
-  getLoadStoreOp(OP *op, OperationBase *parentOp);
-
-  // Check if given eventIdNum can be used without RW conflicts.
-  bool
-  checkEventIdNum(const llvm::SmallVector<llvm::SmallVector<int>> &memValsList1,
-                  const llvm::SmallVector<llvm::SmallVector<int>> &memValsList2,
-                  int lcmLen, int eventIdNum);
+  virtual void processConflict(Occurrence *occ1, Occurrence *occ2,
+                               RWOperation *rwOp1, RWOperation *rwOp2,
+                               bool isUseless);
 
   // Multi-buffer/event-related helpers that determine if double event id can be
   // used.
@@ -281,94 +208,109 @@ private:
   checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
                                 hivm::PointerCastOp pointerCastOp2);
 
+  std::optional<LoopLikeOpInterface> checkDoubleMultiBufferEventId(
+      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
+      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
+
   std::optional<LoopLikeOpInterface>
   checkDoubleMultiBufferEventId(RWOperation *rwOp1, RWOperation *rwOp2);
 
   // Determine how many event ids are needed for a particular occurrence pair.
-  std::pair<uint32_t, LoopLikeOpInterface> getEventIdNum(Occurrence *occ1,
-                                                         Occurrence *occ2,
-                                                         hivm::PIPE setPipe,
-                                                         hivm::PIPE waitPipe);
+  std::pair<int64_t, LoopLikeOpInterface>
+  getEventIdNum(Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+                CorePipeInfo corePipeDst);
 
-  // Helpers for test-mode event id num estimation.
-  uint32_t getTestEventIdNum(RWOperation *rwOp1, RWOperation *rwOp2);
-
-  uint32_t getTestEventIdNum(Occurrence *occ1, Occurrence *occ2,
-                             hivm::PIPE setPipe, hivm::PIPE waitPipe);
+  std::optional<int64_t> checkCVMultiBufferEventId(RWOperation *rwOp1,
+                                                   RWOperation *rwOp2);
 
   // Graph-based conflict checking and memory conflict detection helpers.
-  bool checkGraphConflict(Occurrence *occ1, Occurrence *occ2,
-                          hivm::PIPE startPipe, hivm::PIPE endPipe,
-                          uint32_t eventIdNum);
+  bool checkGraphConflict(
+      Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+      CorePipeInfo corePipeDst, int64_t eventIdNum,
+      std::optional<int> startIndex = {}, std::optional<int> endIndex = {},
+      const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
+      const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
 
-  std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
+  llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
   checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
-  std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
-  checkTestMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
+                                              Occurrence *occ2);
 
   bool checkRWMemoryConflicts(const llvm::SmallVector<Value> &memValsList1,
                               const llvm::SmallVector<Value> &memValsList2);
 
-  bool checkTestRWMemoryConflicts(
-      const llvm::SmallVector<llvm::SmallVector<int>> &memValsList1,
-      const llvm::SmallVector<llvm::SmallVector<int>> &memValsList2);
-
   bool checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
                                    hivm::PointerCastOp pointerCastOp2);
 
-  // Feasibility checks and bookkeeping accessors used by the solver loop.
-  bool checkImpossibleOpPair(OperationBase *op1, OperationBase *op2);
+  bool checkAllocWorkSpaceMemConflict(
+      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
+      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
 
+  // Feasibility checks and bookkeeping accessors used by the solver loop.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
+
+  bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
 
   bool checkAlreadySynced(Occurrence *occ1, Occurrence *occ2);
 
-  bool checkAlreadySyncedWithUnitFlag(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkAlreadySyncedWithUnitFlag(Occurrence *occ1, Occurrence *occ2);
 
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
+  bool checkSyncOpsConflicts(ConflictPair *conflictPair1,
+                             ConflictPair *conflictPair2, int64_t eventIdNum);
+
+  // Check whether two ConflictPair ranges/event mapping intersect (same
+  // pipes/events).
+  bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2,
+                      int64_t eventIdNum = 0);
+
   // Event-id allocation and reuse helpers.
-  llvm::SmallVector<hivm::EVENT>
-  getAvailableEventIds(ConflictPair *conflictPair);
-
-  llvm::SmallVector<hivm::EVENT>
-  getAnyAvailableEventId(ConflictPair *conflictPair, uint32_t count,
-                         bool reversedPriority);
-
-  llvm::SmallVector<hivm::EVENT>
-  getAnyAvailableMultiBufferEventIds(ConflictPair *conflictPair, uint32_t count,
-                                     bool reversedPriority);
+  std::vector<ConflictPair *>
+  getIntersectingConflictPairs(ConflictPair *conflictPair, int64_t eventIdNum);
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);
 
-  bool checkSkippable(Occurrence *occ);
+  bool checkSkippable(bool reverseOrder, Occurrence *occ);
 
   // Bookkeeping for previously synchronized pairs within a scope to reuse their
   // event-ids.
-  std::optional<llvm::SmallVector<hivm::EVENT>>
-  getOldEventIdIfExists(OperationBase *scopeOp, Occurrence *occ1,
-                        Occurrence *occ2, ConflictPair *conflictPair);
+  EventIdNode *getOldEventIdNodeIfExists(ConflictPair *conflictPair);
 
-  void memorizeSyncedPair(OperationBase *scopeOp, ConflictPair *conflictPair);
+  void memorizeSyncedPair(ConflictPair *conflictPair);
 
-  void memorizeReusedSyncedPair(OperationBase *scopeOp,
-                                ConflictPair *conflictPair,
+  llvm::DenseSet<ConflictPair *>
+  getMemorizedSyncedPairs(ConflictPair *conflictPair);
+
+  void memorizeReusedSyncedPair(ConflictPair *conflictPair,
                                 ConflictPair *reusedConflictPair);
 
-  void forgetSyncedPair(OperationBase *scopeOp, ConflictPair *conflictPair);
+  void forgetSyncedPair(ConflictPair *conflictPair);
 
   // Utilities to map an occurrence pair to their set/wait occurrences.
   std::pair<Occurrence *, Occurrence *> getSetWaitOcc(Occurrence *occ1,
                                                       Occurrence *occ2);
+  std::pair<Occurrence *, Occurrence *> getFixedSetWaitOcc(Occurrence *occ1,
+                                                           Occurrence *occ2);
 
-  // Convenience to insert barrier-all before a given occurrence.
-  void insertBarrierAllBefore(Occurrence *occ, bool isUseless,
-                              bool isPersistent = false);
+  Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
+
+  std::optional<std::pair<Occurrence *, Occurrence *>>
+  getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
+
+  // Convenience to insert barrier-all before a given occurrence/op.
+  void insertBarrierAllBeforeOcc(Occurrence *occ, bool isUseless,
+                                 bool isPersistent = false);
+
+  void insertBarrierAllBeforeOp(OperationBase *op, bool isUseless,
+                                bool isPersistent);
 
   // Determine the direction (backward) of a synchronization candidate.
   bool isBackwardSync(Occurrence *occ1, Occurrence *occ2);
+
+  bool reuseCmp(ConflictPair *conflictPair1, ConflictPair *conflictPair2);
 
   // Reuse existing conflict pairs where possible to save event ids.
   ConflictPair *getReusableConflictPair(
@@ -378,103 +320,89 @@ private:
   bool reuseConflictPair(ConflictPair *conflictPair, Occurrence *scopeOcc1,
                          Occurrence *scopeOcc2);
 
+  std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
+                                                      hivm::PIPE pipeDst);
+
   // Primary handler invoked to register/record a found conflict.
-  void handleConflict(Occurrence *occ1, Occurrence *occ2, hivm::PIPE setPipe,
-                      hivm::PIPE waitPipe, bool isUseless, uint32_t eventIdNum,
+  void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
+                      RWOperation *rwOp2, CorePipeInfo corePipeSrc,
+                      CorePipeInfo corePipeDst, bool isUseless,
+                      int64_t eventIdNum,
                       LoopLikeOpInterface multibufferLoopPar);
 
-  // Location/IR insertion helpers and event id value creation.
-  Location getProperLoc(OperationBase *opBase);
+  void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
+                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                             bool isUseless);
 
-  void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
-                               bool insertAfterOp);
+  void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
+                             CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                             bool isUseless, int64_t eventIdNum,
+                             LoopLikeOpInterface multibufferLoopPar);
 
-  void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
-                       BarrierOp *barrierOp, bool insertAfterOp);
+  void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
+                              CorePipeInfo corePipeSrc,
+                              CorePipeInfo corePipeDst,
+                              UnitFlagInfo unitFlagInfo, bool isUseless,
+                              LoopLikeOpInterface multibufferLoopPar);
 
-  void insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
-                       SetFlagOp *setFlagOp, bool insertAfterOp);
-
-  void insertWaitFlagOp(IRRewriter &rewriter, OperationBase *opBase,
-                        WaitFlagOp *waitFlagOp, bool insertAfterOp);
-
-  Value getEventIdValue(IRRewriter &rewriter, SetWaitOp *setWaitOp,
-                        Location loc);
-
-  llvm::LogicalResult handleMmadL1SyncOps(IRRewriter &rewriter,
-                                          OperationBase *opBase,
-                                          SyncOp *syncOp);
-
-  Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
-
-  void insertMultiBufferSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
-                                  SetFlagOp *setFlagOp, bool insertAfterOp);
-
-  void insertMultiBufferWaitFlagOp(IRRewriter &rewriter, OperationBase *opBase,
-                                   WaitFlagOp *waitFlagOp, bool insertAfterOp);
-
-  Value getLoopDBCond(IRRewriter &rewriter, Operation *op);
-
-  void insertMmadL1SyncArgs(IRRewriter &rewriter);
-
-  // Unit-flag helpers (detection and applying modes to ops).
-  hivm::UNIT_FLAG getUnitFlagMode(RWOperation *rwOp);
-
-  Value getIsNotDeadLoopValue(scf::ForOp forOp, Location loc,
-                              IRRewriter &rewriter);
-
-  std::optional<mlir::Value> getUnitFlagCond(IRRewriter &rewriter,
-                                             RWOperation *rwOp);
-
-  void handleUnitFlagEnabledOps(IRRewriter &rewriter);
-
-  // Ensure a barrier-all exists before function return.
-  void insertBarrierAllBeforeReturn(IRRewriter &rewriter);
-
-  // Helper utilities for iter/loop occurrence finding and L0 optimizations.
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 
   Occurrence *getLastIterOcc(Occurrence *occ, Occurrence *parOcc);
 
-  std::pair<Occurrence *, Occurrence *>
+  std::optional<std::pair<Occurrence *, Occurrence *>>
   checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
                              Occurrence *occ2, Occurrence *parOcc1,
                              Occurrence *parOcc2);
 
   // Unit-flag pattern checks used to transform sync into unit-flag modes.
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-  checkUnitFlagPatterns(ConflictPair *conflictPair, Occurrence *occ1,
-                        Occurrence *occ2, Occurrence *parentLCALoopOcc);
+  std::optional<UnitFlagInfo> checkUnitFlagPatterns(Occurrence *occ1,
+                                                    Occurrence *occ2);
 
-  std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-  checkMmadl1FixpipeUnitFlagPattern(RWOperation *rwOp1, RWOperation *rwOp2,
-                                    hivm::PIPE pipe1, hivm::PIPE pipe2);
+  void pickAndInsertABarrierAll();
 
-  std::optional<std::pair<hivm::UNIT_FLAG, hivm::UNIT_FLAG>>
-  checkMmadl1FixpipeSingleForLoopUnitFlagPattern(RWOperation *rwOp1,
-                                                 RWOperation *rwOp2,
-                                                 hivm::PIPE pipe1,
-                                                 hivm::PIPE pipe2,
-                                                 bool rw1IsFrontOcc);
+  void calcAllEventIds();
 
-  std::pair<bool, Occurrence *> checkMmadl0BackwardSyncOpt(Occurrence *loopOcc);
+  void collectBackwardSyncEventIds();
 
-  void resetAndBuildSetWaitOpIndex(SyncMap &syncMapBefore,
-                                   SyncMap &syncMapAfter);
+  void resetAndBuildSetWaitOpIndex(const SyncMap &syncMapBefore,
+                                   const SyncMap &syncMapAfter);
 
-  void collectSetWaitOpsIndexes(OperationBase *op, SyncMap &syncMapBefore,
-                                SyncMap &syncMapAfter);
+  std::set<std::pair<int64_t, SetWaitOp *>> &
+  getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
+                        int64_t eventId);
+
+  void collectSetWaitOpsIndexes(OperationBase *op, const SyncMap &syncMapBefore,
+                                const SyncMap &syncMapAfter);
+
+  bool checkBackwardSyncEventsContains(OperationBase *op,
+                                       CorePipeInfo corePipeSrc,
+                                       CorePipeInfo corePipeDst,
+                                       int64_t eventId);
+
+  bool checkBackwardSyncEventsContainsAfterMerge(OperationBase *op,
+                                                 CorePipeInfo corePipeSrc,
+                                                 CorePipeInfo corePipeDst);
 
   // Merge-related helpers for backward sync events and scope-level
   // optimizations.
-  bool checkMergeable(Scope *scopeOp, hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
-                      hivm::EVENT eventId, bool shouldBeUsedAtleastOnce);
+  bool checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
+                      CorePipeInfo corePipeDst, int64_t eventId,
+                      bool shouldBeUsedAtleastOnce = true);
 
   void mergeBackwardSyncEventIds(OperationBase *op);
 
-  void mergeRootBackwardSyncEventIds(OperationBase *op);
+  void insertMergedBackwardSyncPairs();
 
-  void pickAndInsertABarrierAll();
+  llvm::LogicalResult considerOuterBackwardSyncPairs();
+
+  llvm::LogicalResult reuseSyncPairToSaveEventIds();
+
+  llvm::LogicalResult disableMultiEventIdForBarrierAllPairs();
+
+  Occurrence *getBeforePlaceHolderOcc(Occurrence *occ);
+  Occurrence *getAfterPlaceHolderOcc(Occurrence *occ);
+  Occurrence *getScopeBeginPlaceHolderOcc(Occurrence *occ);
+  Occurrence *getScopeEndPlaceHolderOcc(Occurrence *occ);
 };
 
 } // namespace mlir::hivm::syncsolver

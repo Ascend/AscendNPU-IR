@@ -77,8 +77,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         synchronization instructions, they are 
                         managed by inject-sync passes.
                        }]>:$sync_related_args,
-                       Arg<Optional<I1>, [{
-                        An optional condition to enable unit-flge mode, 
+                       Arg<Variadic<I1>, [{
+                        An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        Optional<TensorOrMemref>:$per_channel_bias,
@@ -93,10 +93,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         to HF32 by CUBE before matrix multiplication, which achieves
                         double performance of MMAD.F32 but losing precision.
                        }]>:$enable_HF32,
-                       Arg<OptionalAttr<HIVM_UnitFlagAttr>, [{
-                        Enable unit-flag for synchronization, it is 
-                        managed by inject-sync passes.
-                       }]>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
                        );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{
@@ -113,9 +110,6 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
-    // Needed for unit-flag-enabled interface.
-    ::std::optional<::mlir::hivm::UnitFlagAttr> getUnitFlagModeValue();
-    ::std::optional<::mlir::Value> getUnitFlagModeCondition();
   }];
   string localMmadBaseDes = [{
     The computation logic is:
@@ -143,7 +137,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
-    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
+    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensors)^)?
   }];
 

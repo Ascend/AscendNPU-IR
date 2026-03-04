@@ -23,6 +23,7 @@
 #define BISHENGIR_DIALECT_HIVM_INTERFACES_OPLAYOUTINTERFACE_TD
 
 include "mlir/IR/OpBase.td"
+include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 
 def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
   let description = [{

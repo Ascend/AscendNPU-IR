@@ -17,7 +17,6 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_GRAPHSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_GRAPHSOLVER_H
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include <set>
 
@@ -26,30 +25,38 @@ namespace mlir::hivm::syncsolver {
 class GraphSolver {
 public:
   struct Edge {
-    mlir::hivm::PIPE pipeFromId{mlir::hivm::PIPE::PIPE_UNASSIGNED};
-    mlir::hivm::PIPE pipeToId{mlir::hivm::PIPE::PIPE_UNASSIGNED};
-    int startIndex{-1};
-    int endIndex{-1};
+    ConflictPair *const conflictPair;
+    const CorePipeInfo corePipeSrc;
+    const CorePipeInfo corePipeDst;
+    const int startIndex;
+    const int endIndex;
+    const bool isUnitFlag;
     Edge() = delete;
-    Edge(mlir::hivm::PIPE pipeFromId, mlir::hivm::PIPE pipeToId, int startIndex,
+    Edge(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
+         CorePipeInfo corePipeDst, int startIndex, int endIndex,
+         bool isUnitFlag)
+        : conflictPair(conflictPair), corePipeSrc(corePipeSrc),
+          corePipeDst(corePipeDst), startIndex(startIndex), endIndex(endIndex),
+          isUnitFlag(isUnitFlag) {}
+    Edge(CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst, int startIndex,
          int endIndex)
-        : pipeFromId(pipeFromId), pipeToId(pipeToId), startIndex(startIndex),
-          endIndex(endIndex) {}
+        : Edge(nullptr, corePipeSrc, corePipeDst, startIndex, endIndex, false) {
+    }
     bool operator<(const Edge &other) const;
   };
 
-  // adjacencyList[pipeFrom][pipeTo] stores a set of Edge objects representing
-  // directed transitions from pipeFrom to pipeTo that are valid for a given
+  // adjacencyList[pipeSrc][pipeDst] stores a set of Edge objects representing
+  // directed transitions from pipeSrc to pipeDst that are valid for a given
   // (startIndex,endIndex) lifetime. Used by runDijkstra to compute minimum
   // distance paths between two pipe ids taking ordering constraints into
   // account.
-  llvm::DenseMap<mlir::hivm::PIPE,
-                 llvm::DenseMap<mlir::hivm::PIPE, std::set<Edge>>>
+  llvm::DenseMap<CorePipeInfo, llvm::DenseMap<CorePipeInfo, std::set<Edge>>>
       adjacencyList;
 
   // Add a pipe-pair edge annotated with its active index interval.
-  void addPair(mlir::hivm::PIPE startPipeId, mlir::hivm::PIPE endPipeId,
-               int startIndex, int endIndex);
+  void addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,
+               CorePipeInfo corePipeDst, int startIndex, int endIndex,
+               bool isUnitFlag = false);
 
   // Build adjacency list from a ConflictPair by decomposing it into edges.
   void addConflictPair(syncsolver::ConflictPair *conflictPair);
@@ -59,9 +66,15 @@ public:
 
   // Run shortest-path search (Dijkstra-like) with ordering constraints to find
   // the minimal reachable index for a path from startPipe to endPipe.
-  std::optional<int> runDijkstra(mlir::hivm::PIPE startPipe,
-                                 mlir::hivm::PIPE endPipe, int startIndex,
-                                 int maxDistance);
+  std::optional<int> runDijkstra(CorePipeInfo corePipeSrc,
+                                 CorePipeInfo corePipeDst, int startIndex,
+                                 int endIndex);
+
+  std::optional<int> runDijkstraUnitFlagEnabled(Occurrence *occ1,
+                                                Occurrence *occ2,
+                                                CorePipeInfo corePipeSrc,
+                                                CorePipeInfo corePipeDst,
+                                                int startIndex, int endIndex);
 };
 } // namespace mlir::hivm::syncsolver
 

@@ -73,6 +73,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TileBatchMMIntoLoop.cpp
   TileCubeVectorLoop.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
+  UnitFlagInfoBase.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms
