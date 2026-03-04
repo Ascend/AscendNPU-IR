@@ -1,0 +1,34 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+import sys
+
+ON = 1
+OFF = 0
+
+config.mlir_obj_root = "@MLIR_BINARY_DIR@"
+config.llvm_shlib_ext = "@SHLIBEXT@"
+config.host_cxx = "@HOST_CXX@"
+config.host_cc = "@HOST_CC@"
+config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
+config.mlir_tools_dir = "@MLIR_TOOLS_DIR@"
+config.bishengir_tools_dir = "@BISHENGIR_TOOLS_DIR@"
+config.bishengir_src_root = "@BISHENGIR_SRC_DIR@"
+config.bishengir_obj_root = "@BISHENGIR_BINARY_DIR@"
+config.enable_assertions = @ENABLE_ASSERTIONS@
+config.enable_bindings_python = @MLIR_ENABLE_BINDINGS_PYTHON@
+config.bishengir_enable_torch_conversions = @BISHENGIR_ENABLE_TORCH_CONVERSIONS@
+config.disable_cann = @BISHENGIR_DISABLE_CANN@
+config.bisheng_compiler_executable = "@BISHENG_COMPILER_EXECUTABLE@"
+config.bishengir_include_integration_tests = @MLIR_INCLUDE_INTEGRATION_TESTS@
+config.bishengir_enable_triton_compile = @BISHENGIR_ENABLE_TRITON_COMPILE@
+config.bspriv_davinci_bishengir = @BSPRIV_DAVINCI_BISHENGIR@
+
+if 'bisheng' not in config.bisheng_compiler_executable:
+    config.bisheng_compiler_executable = os.path.join("@BISHENG_COMPILER_PATH@", 'bisheng')
+config.enable_execution_engine = @MLIR_ENABLE_EXECUTION_ENGINE@
+
+import lit.llvm
+lit.llvm.initialize(lit_config, config)
+
+# Let the main config do the real work.
+lit_config.load_config(config, "@BISHENGIR_SRC_DIR@/test/lit.cfg.py")

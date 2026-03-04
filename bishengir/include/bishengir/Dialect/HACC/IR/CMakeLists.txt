@@ -1,0 +1,25 @@
+add_mlir_dialect(HACCBase hacc)
+add_bishengir_doc(HACCBase HACCDialect Dialects/ -gen-dialect-doc)
+
+# HACC IR depends on TargetSpec
+add_dependencies(MLIRHACCBaseIncGen BiShengIRNPUTargetSpecIncGen)
+
+set(LLVM_TARGET_DEFINITIONS HACCAttrs.td)
+mlir_tablegen(HACCEnums.h.inc -gen-enum-decls)
+mlir_tablegen(HACCEnums.cpp.inc -gen-enum-defs)
+mlir_tablegen(HACCAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=hacc)
+mlir_tablegen(HACCAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=hacc)
+mlir_tablegen(HACCTypes.h.inc -gen-typedef-decls -typedefs-dialect=hacc)
+mlir_tablegen(HACCTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=hacc)
+add_public_tablegen_target(MLIRHACCEnumsIncGen)
+add_public_tablegen_target(MLIRHACCAttributesIncGen)
+add_dependencies(mlir-headers MLIRHACCEnumsIncGen)
+add_dependencies(mlir-headers MLIRHACCAttributesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS HACCInterfaces.td)
+mlir_tablegen(HACCInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(HACCInterfaces.cpp.inc -gen-op-interface-defs)
+mlir_tablegen(HACCAttrInterfaces.h.inc -gen-attr-interface-decls)
+mlir_tablegen(HACCAttrInterfaces.cpp.inc -gen-attr-interface-defs)
+add_public_tablegen_target(BiShengIRHACCInterfacesIncGen)
+add_dependencies(mlir-headers BiShengIRHACCInterfacesIncGen)

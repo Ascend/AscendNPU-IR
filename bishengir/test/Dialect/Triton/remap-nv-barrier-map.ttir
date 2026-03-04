@@ -1,0 +1,14 @@
+// RUN: bishengir-compile %s --mlir-print-ir-after=triton-remap --target=Ascend950PR_9589 --enable-triton-ir-compile --pure-simt --num-warps=1 --threads-per-warp=32 -o kernel.o 2>&1 | FileCheck %s
+
+// CHECK-NOT: nvvm.bar.warp.sync
+// CHECK: hivm_regbaseintrins.thread_id_x
+
+module {
+  tt.func public @store_program_id(%arg0: !tt.ptr<i32> {tt.divisibility = 16 : i32}) attributes {noinline = false} {
+    %0 = tt.get_program_id x : i32
+    %1 = tt.addptr %arg0, %0 : !tt.ptr<i32>, i32
+    // use tt.store in case DCE OPT
+    tt.store %1, %0 : !tt.ptr<i32>
+    tt.return
+  }
+}

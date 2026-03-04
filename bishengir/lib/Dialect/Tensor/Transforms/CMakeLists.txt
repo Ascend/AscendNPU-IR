@@ -1,0 +1,50 @@
+add_bishengir_library(BiShengIRTensorTransforms
+  BubblePadUp.cpp
+  BubbleUpExtractSlice.cpp
+  CanonicalizeTensorReshape.cpp
+  DecomposeTensorConcat.cpp
+  FoldTensorEmpty.cpp
+  MergeConsecutiveInsertExtractSlice.cpp
+  MeshShardingInterfaceImpl.cpp
+  NarrowTensorOp.cpp
+  NormalizeLastDimUnalignedTensorOp.cpp
+  NormalizeTensorOps.cpp
+  OptimizeDpsOpWithYieldedInsertSlice.cpp
+  PropagateReshape.cpp
+  PropagateReshape/PropagateCollapseDown.cpp
+  PropagateReshape/PropagateExpandUp.cpp
+  PropagateReshape/PropagateNearEndExpandDown.cpp
+  PropagateReshape/PropagateOp/AnnotationMark.cpp
+  PropagateReshape/PropagateOp/PropagatableOp.cpp
+  PropagateReshape/PropagateOp/ScfForOp.cpp
+  PropagateReshape/PropagateOp/MulExt.cpp
+  PropagateReshape/SwapCollapseExpand.cpp
+  PropagateReshape/Utils.cpp
+  PropagateReshape/Utils/ConcatUtils.cpp
+  TilingInterfaceImpl.cpp
+  TrickleConcatDown.cpp
+
+  ADDITIONAL_HEADER_DIRS
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/Tensor/Transforms
+
+  DEPENDS
+  MLIRTensorTransformsIncGen
+
+  LINK_LIBS PUBLIC
+  BiShengIRDialectUtils
+  BishengIRMemRefTransforms
+  BishengIRTensorUtils
+  MLIRControlFlowDialect
+  MLIRTensorDialect
+  MLIRLinalgDialect
+  MLIRIR
+  MLIRDialect
+  MLIRPass
+  MLIRAnnotationDialect
+  MLIRHFusionDialect
+  MLIRHFusionUtils
+  MLIRHIVMDialect
+  MLIRMeshDialect
+  MLIRMeshTransforms
+  MLIRShardingInterface
+)

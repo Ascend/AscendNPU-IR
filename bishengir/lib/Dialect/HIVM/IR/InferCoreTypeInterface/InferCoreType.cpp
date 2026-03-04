@@ -1,0 +1,333 @@
+//===- InferCoreType.cpp - InferCoreType Interface Impl. ------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "llvm/ADT/DenseSet.h"
+
+#include <numeric>
+
+using namespace mlir;
+using namespace mlir::hivm;
+
+namespace mlir {
+namespace hivm {
+
+bool checkPipeInferredCoreType(hivm::PIPE pipe, hivm::TCoreType coreType,
+                               bool strict) {
+  if (auto inferredCoreTypeOpt = inferCoreTypeBasedOnPipes({pipe})) {
+    auto inferredCoreType = inferredCoreTypeOpt.value();
+    if (inferredCoreType == coreType ||
+        (!strict && inferredCoreType == TCoreType::CUBE_OR_VECTOR)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<TCoreType> inferCoreTypeBasedOnPipes(ArrayRef<hivm::PIPE> pipes) {
+  if (pipes.empty()) {
+    return std::nullopt;
+  }
+  const llvm::DenseSet<hivm::PIPE> cubeOnlyPipes = {
+      hivm::PIPE::PIPE_M, hivm::PIPE::PIPE_MTE1, hivm::PIPE::PIPE_FIX};
+  const llvm::DenseSet<hivm::PIPE> vecOnlyPipes = {hivm::PIPE::PIPE_V,
+                                                   hivm::PIPE::PIPE_MTE3};
+  SmallVector<TCoreType> coreTypes(pipes.size(), TCoreType::CUBE_OR_VECTOR);
+  std::transform(pipes.begin(), pipes.end(), coreTypes.begin(),
+                 [&cubeOnlyPipes, &vecOnlyPipes](hivm::PIPE pipe) -> TCoreType {
+                   if (cubeOnlyPipes.contains(pipe)) {
+                     return TCoreType::CUBE;
+                   }
+                   if (vecOnlyPipes.contains(pipe)) {
+                     return TCoreType::VECTOR;
+                   }
+                   return TCoreType::CUBE_OR_VECTOR;
+                 });
+  auto accCoreType = [](std::optional<TCoreType> acc,
+                        TCoreType t2) -> std::optional<TCoreType> {
+    if (!acc.has_value()) {
+      return std::nullopt;
+    }
+    TCoreType t1 = acc.value();
+    if (t1 == TCoreType::CUBE_OR_VECTOR) {
+      return t2;
+    }
+    if (t2 == TCoreType::CUBE_OR_VECTOR) {
+      return t1;
+    }
+    if (t1 == t2) {
+      return t1;
+    }
+    return std::nullopt;
+  };
+  return std::accumulate(coreTypes.begin(), coreTypes.end(),
+                         std::optional<TCoreType>(TCoreType::CUBE_OR_VECTOR),
+                         accCoreType);
+}
+
+template <typename GlobalMixMatmulTy>
+std::optional<TCoreType>
+inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
+  TCoreType coreType = TCoreType::CUBE_AND_VECTOR;
+  func::FuncOp enclosingFunc =
+      (*mixMatmulOp)->template getParentOfType<func::FuncOp>();
+  if (!enclosingFunc)
+    return coreType;
+
+  auto funcCoreTypeAttr =
+      enclosingFunc->getAttrOfType<TFuncCoreTypeAttr>(TFuncCoreTypeAttr::name);
+  if (!funcCoreTypeAttr)
+    return coreType;
+
+  // if the mix matmul is inside a aiv/aic function, then the op's core type
+  // is consistent with the function type
+  switch (funcCoreTypeAttr.getFuncCoreType()) {
+  case TFuncCoreType::AIC:
+    coreType = TCoreType::CUBE;
+    break;
+  case TFuncCoreType::AIV:
+    coreType = TCoreType::VECTOR;
+    break;
+  default:
+    break;
+  }
+  return coreType;
+}
+
+} // namespace hivm
+} // namespace mlir
+
+//===----------------------------------------------------------------------===//
+// HIVM Ops
+//===----------------------------------------------------------------------===//
+
+std::optional<TCoreType> ConvertLayoutOp::inferCoreType() {
+  TCoreType result = TCoreType::CUBE_OR_VECTOR;
+
+  std::optional<hivm::AddressSpace> addrSpace =
+      getOptionalHIVMAddressSpace(getSource().getType());
+  if (!addrSpace) {
+    return result;
+  }
+
+  if (addrSpace == hivm::AddressSpace::UB) {
+    result = TCoreType::VECTOR;
+  } else if (addrSpace == hivm::AddressSpace::L1 ||
+             addrSpace == hivm::AddressSpace::L0A ||
+             addrSpace == hivm::AddressSpace::L0B ||
+             addrSpace == hivm::AddressSpace::L0C) {
+    result = TCoreType::CUBE;
+  }
+
+  return result;
+}
+
+std::optional<TCoreType> DebugOp::inferCoreType() {
+  std::optional<hivm::TCoreTypeAttr> maybeTCoreTypeAttr = this->getTcoretype();
+  if (maybeTCoreTypeAttr.has_value() &&
+      maybeTCoreTypeAttr.value().getTcoretype() !=
+          hivm::TCoreType::CUBE_OR_VECTOR) {
+    return maybeTCoreTypeAttr.value().getTcoretype();
+  } else {
+    mlir::Value arg = this->getArg();
+    if (auto maybeSpaceCast = traceDefOp<memref::MemorySpaceCastOp>(arg)) {
+      auto spaceCastOp = cast<memref::MemorySpaceCastOp>(*maybeSpaceCast);
+      auto hivmSpace = dyn_cast<hivm::AddressSpaceAttr>(spaceCastOp.getSource().getType().getMemorySpace());
+      if (hivmSpace) {
+        if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB) {
+          return TCoreType::VECTOR;
+        }
+      }
+    }
+    // first try the definingOp (TODO: change to tracing)
+    Operation *definingOp = arg.getDefiningOp();
+    if (definingOp) {
+      auto res = getCoreType(definingOp);
+      if (succeeded(res)) {
+        this->setTcoretypeAttr(
+            hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
+        return res.value();
+      }
+    }
+    // finally if we cannot get a definite answer, just use CUBE_OR_VECTOR
+    this->setTcoretypeAttr(hivm::TCoreTypeAttr::get(
+        this->getContext(), hivm::TCoreType::CUBE_OR_VECTOR));
+    return TCoreType::CUBE_OR_VECTOR;
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Synchronization Ops
+//===----------------------------------------------------------------------===//
+
+std::optional<TCoreType> SetFlagOp::inferCoreType() {
+  hivm::PIPE p1 = getSetPipe().getPipe();
+  hivm::PIPE p2 = getWaitPipe().getPipe();
+  return inferCoreTypeBasedOnPipes({p1, p2});
+}
+
+std::optional<TCoreType> WaitFlagOp::inferCoreType() {
+  hivm::PIPE p1 = getSetPipe().getPipe();
+  hivm::PIPE p2 = getWaitPipe().getPipe();
+  return inferCoreTypeBasedOnPipes({p1, p2});
+}
+
+std::optional<TCoreType> SyncBlockSetOp::inferCoreType() {
+  return getTcoreTypeAttr().getTcoretype();
+}
+
+std::optional<TCoreType> PipeBarrierOp::inferCoreType() {
+  hivm::PIPE pipe = getPipeAttr().getPipe();
+  return inferCoreTypeBasedOnPipes({pipe});
+}
+
+std::optional<TCoreType> SyncBlockWaitOp::inferCoreType() {
+  return getTcoreTypeAttr().getTcoretype();
+}
+
+std::optional<TCoreType> SyncBlockOp::inferCoreType() {
+  hivm::SyncBlockMode mode = getSyncBlockModeAttr().getSyncMode();
+
+  hivm::TCoreType result = TCoreType::CUBE_OR_VECTOR;
+  if (mode == hivm::SyncBlockMode::BARRIER_CUBE ||
+      mode == hivm::SyncBlockMode::ALL_CUBE) {
+    result = TCoreType::CUBE;
+  } else if (mode == hivm::SyncBlockMode::BARRIER_VECTOR ||
+             mode == hivm::SyncBlockMode::ALL_VECTOR ||
+             mode == hivm::SyncBlockMode::ALL_SUB_VECTOR) {
+    result = TCoreType::VECTOR;
+  }
+
+  return result;
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM DMA Ops
+//===----------------------------------------------------------------------===//
+
+std::optional<TCoreType> LoadOp::inferCoreType() {
+  MemRefType srcMemRefTy = dyn_cast<MemRefType>(getSrc().getType());
+  MemRefType dstMemRefTy = dyn_cast<MemRefType>(getDst().getType());
+  if (srcMemRefTy && dstMemRefTy) {
+    auto fromAddrSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(srcMemRefTy.getMemorySpace());
+    auto toAddrSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(dstMemRefTy.getMemorySpace());
+    if (fromAddrSpace && toAddrSpace) {
+      bool isGMToUB =
+          fromAddrSpace.getAddressSpace() == hivm::AddressSpace::GM &&
+          toAddrSpace.getAddressSpace() == hivm::AddressSpace::UB;
+
+      return isGMToUB ? TCoreType::VECTOR : TCoreType::CUBE;
+    }
+  }
+
+  auto dstAllocVal =
+      dstMemRefTy ? utils::tracebackMemRef(getDst()) : getResult(0);
+  auto userAllCube = utils::checkUsersAllWithCondition(
+      dstAllocVal, getOperation(),
+      [](Operation *op) {
+        auto coreType = hivm::detail::queryCoreTypeHelper(op);
+        return coreType == TCoreType::CUBE;
+      },
+      [](Operation *op) {
+        auto coreType = hivm::detail::queryCoreTypeHelper(op);
+        return !coreType;
+      });
+  if (userAllCube.has_value() && userAllCube.value()) {
+    return TCoreType::CUBE;
+  }
+  auto userAllVec = utils::checkUsersAllWithCondition(
+      dstAllocVal, getOperation(),
+      [](Operation *op) {
+        auto coreType = hivm::detail::queryCoreTypeHelper(op);
+        return coreType == TCoreType::VECTOR;
+      },
+      [](Operation *op) {
+        auto coreType = hivm::detail::queryCoreTypeHelper(op);
+        return !coreType;
+      });
+  if (userAllVec.has_value() && userAllVec.value()) {
+    return TCoreType::VECTOR;
+  }
+
+  return TCoreType::CUBE_OR_VECTOR;
+}
+
+std::optional<TCoreType> StoreOp::inferCoreType() {
+  // On 910B, fixpipe handles L0C to GM. Thus reaching here
+  // means core type is VECTOR.
+  return TCoreType::VECTOR;
+}
+
+// NOTICE: coretype inference for CopyOp never fail!
+std::optional<TCoreType> CopyOp::inferCoreType() {
+  if (hasPureTensorSemantics()) {
+    return TCoreType::CUBE_OR_VECTOR;
+  }
+
+  MemRefType srcMemRefTy = dyn_cast<MemRefType>(getSrc().getType());
+  MemRefType dstMemRefTy = dyn_cast<MemRefType>(getDst().getType());
+  if (srcMemRefTy && dstMemRefTy) {
+    auto fromAddrSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(srcMemRefTy.getMemorySpace());
+    auto toAddrSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(dstMemRefTy.getMemorySpace());
+    if (fromAddrSpace && toAddrSpace) {
+      static const std::set<std::pair<hivm::AddressSpace, hivm::AddressSpace>>
+          vectorTypeSet{
+              std::pair{hivm::AddressSpace::UB, hivm::AddressSpace::UB},
+              std::pair{hivm::AddressSpace::UB, hivm::AddressSpace::L1},
+          };
+
+      return vectorTypeSet.count(std::pair{fromAddrSpace.getAddressSpace(),
+                                           toAddrSpace.getAddressSpace()})
+                 ? TCoreType::VECTOR
+                 : TCoreType::CUBE;
+    }
+  }
+
+  return TCoreType::CUBE_OR_VECTOR;
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Macro Ops
+//===----------------------------------------------------------------------===//
+
+std::optional<TCoreType> MatmulOp::inferCoreType() { return TCoreType::CUBE; }
+
+std::optional<TCoreType> MixMatmulOp::inferCoreType() {
+  return inferCoreTypeForGlobalMixMatmulOps<MixMatmulOp>(this);
+}
+
+std::optional<TCoreType> MixGroupMatmulOp::inferCoreType() {
+  return inferCoreTypeForGlobalMixMatmulOps<MixGroupMatmulOp>(this);
+}
+
+std::optional<TCoreType> VBrcOp::inferCoreType() {
+  Type dstType = this->getDst().getType();
+  auto mayAddrSpace = getOptionalHIVMAddressSpace(dstType);
+  if (!mayAddrSpace.has_value()) {
+    // normally brc is vector op for L1 brc, it will only appear after load
+    // decomposition and at that phase there is mem scope already
+    return TCoreType::VECTOR;
+  }
+
+  if (mayAddrSpace.value() == hivm::AddressSpace::L1) {
+    return TCoreType::CUBE;
+  } else if (mayAddrSpace.value() == hivm::AddressSpace::UB) {
+    return TCoreType::VECTOR;
+  } else {
+    llvm_unreachable("unsupport mem scope for vbrc");
+  }
+}

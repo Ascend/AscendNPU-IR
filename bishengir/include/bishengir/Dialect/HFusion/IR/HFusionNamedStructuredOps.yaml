@@ -1,0 +1,419 @@
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: load
+  cpp_class_name: LoadOp
+  doc: |-
+    Loads the tensor elementwise.
+
+    No numeric casting is performed on the input operand.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: I
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_arg: I
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: store
+  cpp_class_name: StoreOp
+  doc: |-
+    Stores the tensor elementwise.
+
+    No numeric casting is performed on the input operand.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: I
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: atomic_kind
+    kind: atomic_kind_attr
+    default_fn: NONE
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: atomic_kind
+        attr_names:
+          - atomic_kind
+        type_var: U
+        operands:
+        - !ScalarExpression
+          scalar_arg: I
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: elemwise_unary
+  cpp_class_name: ElemwiseUnaryOp
+  doc: |-
+    Applies the unary function fun elementwise.
+
+    Numeric casting is performed on the input operand, promoting it to the same
+    data type as the accumulator/output.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: I
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: fun
+    kind: unary_fn_attr
+    default_fn: sqrt
+  - !HFusionOperandDefConfig
+    name: cast
+    kind: type_fn_attr
+    default_fn: cast_signed
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: unary
+        attr_names:
+          - fun
+        operands:
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: I
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: elemwise_binary
+  cpp_class_name: ElemwiseBinaryOp
+  doc: |-
+    Applies the binary function fun elementwise.
+
+    Numeric casting is performed on the input operand, promoting it to the same
+    data type as the accumulator/output.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: lhs
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: rhs
+    kind: input_tensor
+    type_var: T2
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: fun
+    kind: binary_fn_attr
+    default_fn: vand
+  - !HFusionOperandDefConfig
+    name: cast
+    kind: type_fn_attr
+    default_fn: cast_signed
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: binary
+        attr_names:
+          - fun
+        operands:
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: lhs
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: rhs
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: compare
+  cpp_class_name: CompareOp
+  doc: |-
+    Applies the compare function fun elementwise.
+
+    No Numeric casting is performed on the input operand.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: lhs
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: rhs
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: compare_fn
+    kind: compare_fn_attr
+    default_fn: veq
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: compare
+        attr_names:
+          - compare_fn
+        operands:
+        - !ScalarExpression
+          scalar_arg: lhs
+        - !ScalarExpression
+          scalar_arg: rhs
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: select
+  cpp_class_name: SelectOp
+  doc: |-
+    Chooses one value based on a binary condition supplied as its first operand.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: cond
+    kind: input_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: lhs
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: rhs
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: ternary
+        fn_name: select
+        attr_names:
+        operands:
+        - !ScalarExpression
+          scalar_arg: cond
+        - !ScalarExpression
+          scalar_arg: lhs
+        - !ScalarExpression
+          scalar_arg: rhs
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: cast
+  cpp_class_name: CastOp
+  doc: |-
+    Applies the cast function elementwise.
+  defines:
+  - hasCanonicalizer
+  - hasVerifier
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: I
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: round_mode
+    kind: round_mode_attr
+    default_fn: RINT
+  - !HFusionOperandDefConfig
+    name: enable_overflow
+    kind: enable_overflow_attr
+    default_fn: true
+  - !HFusionOperandDefConfig
+    name: enable_saturate
+    kind: enable_saturate_attr
+    default_fn: false
+  - !HFusionOperandDefConfig
+    name: cast
+    kind: type_fn_attr
+    default_fn: cast_signed
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: round
+        attr_names:
+          - cast
+          - round_mode
+        type_var: U
+        operands:
+        - !ScalarExpression
+          scalar_arg: I
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: bitcast
+  cpp_class_name: BitcastOp
+  doc: |-
+    Applies the bitcast function elementwise.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: I
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: type
+        fn_name: bitcast
+        attr_names:
+        type_var: U
+        operands:
+        - !ScalarExpression
+          scalar_arg: I
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
+  name: group_matmul
+  cpp_class_name: GroupMatmulOp
+  doc: |-
+    Performs grouped matrix multiplications between expert weights and token embeddings.
+    For each expert, multiplies its weight matrix with its assigned tokens.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: w1
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<(d0, d1, d2) -> (d2, d1, d0)>
+  - !HFusionOperandDefConfig
+    name: tokens
+    kind: input_tensor
+    type_var: T2
+    shape_map: affine_map<(d0, d1, d2) -> (d1, d2)>
+  - !HFusionOperandDefConfig
+    name: tokens_per_expert
+    kind: input_tensor
+    type_var: T3
+    shape_map: affine_map<(d0, d1, d2) -> (1)>
+  - !HFusionOperandDefConfig
+    name: output
+    kind: output_tensor
+    type_var: T4
+    shape_map: affine_map<(d0, d1, d2) -> (d0, d0)>
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<(d0, d1, d2) -> (d2, d1, d0)>  # w1: tensor<?x?x?xf32>
+    - affine_map<(d0, d1) -> (d0, d1)>          # tokens: tensor<?x?xf32>
+    - affine_map<(d0) -> (0)>                   # tokens_per_expert: tensor<1xi64> (fixed)
+    - affine_map<(d0, d1, d2) -> (d0, d0)>      # output: tensor<?x?xf32>
+  iterator_types: ["parallel", "parallel", "reduction"]
+  assignments:
+  - !ScalarAssign
+    arg: output
+    value: !ScalarExpression
+      scalar_arg: output # we don't do anything here, just return the empty outs

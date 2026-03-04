@@ -1,0 +1,120 @@
+file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
+file(GLOB BUBBLE_UP_EXTRACT_SLICE ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
+file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
+file(GLOB GRAPH_SYNC_CONFLICT_SOLVER ${CMAKE_CURRENT_SOURCE_DIR}/GraphSyncSolver/*.cpp)
+file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
+file(GLOB TILE_AND_BIND_SUB_BLOCK ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/*.cpp)
+
+add_bishengir_dialect_library(MLIRHIVMTransforms
+  ${ALIGN_BUFFER}
+  ${BUBBLE_UP_EXTRACT_SLICE}
+  ${INJECT_SYNC}
+  ${GRAPH_SYNC_CONFLICT_SOLVER}
+  ${TILING}
+  ${TILE_AND_BIND_SUB_BLOCK}
+  AllocExtraBuffer.cpp
+  AllocToPointerCast.cpp
+  AnnotateVFAlias.cpp
+  AutoBlockifyParallelLoop.cpp
+  AutoInferBufferSize.cpp
+  AutoScope.cpp
+  BindSyncBlockLockArg.cpp
+  BindWorkSpaceArg.cpp
+  BufferizableOpInterfaceImpl.cpp
+  CloneSCFIfYieldOperand.cpp
+  CloneTensorEmpty.cpp
+  ComposeCollapseExpand.cpp
+  ConstantizeBufferSize.cpp
+  ConvertToHIVMOp.cpp
+  CVPipelining.cpp
+  EnableMultiBuffer.cpp
+  FlattenOps.cpp
+  HIVMAggregatedDecomposeOp.cpp
+  HIVMBubbleUpExtractSlice.cpp
+  HIVMDecomposeOp.cpp
+  HIVMInlineOTFLoadStore.cpp
+  HIVMLowerToLoops.cpp
+  HIVMMapForallToBlocks.cpp
+  HIVMOptFuncOutput.cpp
+  HIVMOptSinglePoint.cpp
+  HIVMVectorizeOps.cpp
+  InferFuncCoreType.cpp
+  InferHIVMDataLayout.cpp
+  InferHIVMMemScope.cpp
+  InferSimtVFMemEffect.cpp
+  InferVFMode.cpp
+  InitEntryKernel.cpp
+  InjectBlockSync.cpp
+  InlineFixpipe.cpp
+  InlineOTFBroadcast.cpp
+  InsertCVTightCoupledBuffer.cpp
+  InsertInferSyncBlockLockNumAndInitFunc.cpp
+  InsertInferVFModeFunc.cpp
+  InsertInferWorkSpaceSizeFunc.cpp
+  InsertLoadStoreForMixCV.cpp
+  InsertLoadStoreForScalar.cpp
+  InsertMemSemanticForSimtVF.cpp
+  InsertNZ2NDForDebug.cpp
+  InsertL12UBForDebug.cpp
+  InsertWorkSpaceForMixCV.cpp
+  LegalizeForLLVMExport.cpp
+  LiftLowestStride.cpp
+  LiftZeroRank.cpp
+  LowerCreateSyncBlockLock.cpp
+  MarkDisableLoad.cpp
+  MarkMultiBuffer.cpp
+  MarkRealCoreType.cpp
+  NormalizeLoopIterator.cpp
+  NormalizeMatmul.cpp
+  OptMemPlanForPipeline.cpp
+  OutlineAllocInVF.cpp
+  PlanMemory.cpp
+  RecognizeDeinterleaveOp.cpp
+  ReduceRankSubview.cpp
+  RemoveCopyOps.cpp
+  SetBufferSize.cpp
+  SinkOpToConsumerInLoop.cpp
+  SplitMixKernel.cpp
+  SplitSimtModule.cpp
+  SyncBlockHoisting.cpp
+  TileAndBindSubBlock.cpp
+  TileBatchMMIntoLoop.cpp
+  TritonGlobalKernelArgsToHIVMOp.cpp
+  UnitFlagInfoBase.cpp
+  AnalyzeArithVectorMask.cpp
+  ADDITIONAL_HEADER_DIRS
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/Symbol
+
+  DEPENDS
+  MLIRHIVMConversionsIncGen
+  MLIRHIVMTransformsIncGen
+
+  LINK_LIBS PUBLIC
+  MLIRAffineDialect
+  MLIRAffineTransforms
+  MLIRArithDialect
+  MLIRArithUtils
+  MLIRAnnotationDialect
+  MLIRBufferizationDialect
+  MLIRBufferizationTransforms
+  MLIRBufferizationTransformOps
+  MLIRDestinationStyleOpInterface
+  MLIRDialectUtils
+  MLIRHACCUtils
+  MLIRHACCDialect
+  MLIRHIVMAnalysis
+  MLIRHIVMDialect
+  MLIRHIVMUtils
+  BiShengIRScopeDialect
+  MLIRIR
+  MLIRLinalgDialect
+  MLIRLinalgUtils
+  MLIRLLVMCommonConversion
+  MLIRLLVMDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRMemRefExtDialect
+  BiShengIRDialectUtils
+  )

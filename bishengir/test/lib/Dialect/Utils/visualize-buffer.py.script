@@ -1,0 +1,350 @@
+import re
+import html
+import hashlib
+import sys
+
+def generate_color_from_text(text):
+    """Generate a consistent color based on instruction text"""
+    hash_object = hashlib.md5(text.encode())
+    hash_hex = hash_object.hexdigest()
+    
+    r = int(hash_hex[:2], 16)
+    g = int(hash_hex[2:4], 16)
+    b = int(hash_hex[4:6], 16)
+    
+    # Adjust colors to make them lighter
+    r = int((r + 255) / 2)
+    g = int((g + 255) / 2)
+    b = int((b + 255) / 2)
+
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+def get_instruction_type(line):
+    """Extract the core instruction type from the line"""
+    if 'block argument' in line:
+        return 'block_argument'
+
+    match = re.search(r'%\d+ = ([a-zA-Z0-9_.]+)', line)
+    if match:
+        return match.group(1)
+
+    return 'unknown'
+
+def parse_live_ranges(text):
+    live_ranges = []
+    current_range = None
+    instruction_colors = {}
+
+    for line in text.split('\n'):
+        range_header = re.match(r'Live Range #(\d+):', line)
+        if range_header:
+            if current_range:
+                live_ranges.append(current_range)
+            current_range = {
+                'index': int(range_header.group(1)),
+                'instruction': None,
+                'ranges': []
+            }
+            continue
+
+        if current_range and (line.strip().startswith('%') or 'block argument' in line):
+            instruction = line.strip()
+            current_range['instruction'] = instruction
+
+            # Get core instruction type for coloring
+            inst_type = get_instruction_type(instruction)
+            if inst_type not in instruction_colors:
+                instruction_colors[inst_type] = generate_color_from_text(inst_type)
+            current_range['color'] = instruction_colors[inst_type]
+            continue
+
+        numbers = re.match(r'(\d+) (\d+) (\d+)', line.strip())
+        if numbers:
+            current_range['ranges'].append({
+                'start': int(numbers.group(1)),
+                'end': int(numbers.group(2)),
+                'weight': int(numbers.group(3))
+            })
+
+    if current_range:
+        live_ranges.append(current_range)
+
+    return live_ranges
+
+def generate_html_visualization(live_ranges):
+    # Compute max_time
+    max_time = 0
+    for r in live_ranges:
+        for interval in r['ranges']:
+            if interval['end'] > max_time:
+                max_time = interval['end']
+
+    # Compute the maximum overlap using line sweep
+    events = []
+    for r in live_ranges:
+        for interval in r['ranges']:
+            if interval['weight'] > 0:
+                events.append((interval['start'], 'start', interval['weight']))
+                events.append((interval['end'] + 1, 'end', interval['weight']))  # +1 because end is inclusive
+
+    # Sort events by time, 'end' events before 'start' events at the same time
+    events.sort(key=lambda x: (x[0], 0 if x[1] == 'start' else 1))
+
+    current_overlap = 0
+    max_overlap = 0
+    times_of_max_overlap = []
+
+    for time, event_type, ww in events:
+        if event_type == 'start':
+            current_overlap += ww
+            if current_overlap > max_overlap:
+                max_overlap = current_overlap
+                times_of_max_overlap = [time]
+            elif current_overlap == max_overlap:
+                times_of_max_overlap.append(time)
+        else:
+            current_overlap -= ww
+
+    # Remove duplicates from times_of_max_overlap
+    times_of_max_overlap = list(set(times_of_max_overlap))
+    times_of_max_overlap.sort()
+
+    # Collect instruction types for the legend
+    instruction_types = {}
+    for range_info in live_ranges:
+        if range_info.get('instruction'):
+            inst_type = get_instruction_type(range_info['instruction'])
+            instruction_types[inst_type] = range_info.get('color', '#cccccc')
+
+    # Start generating HTML content
+    html_content = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #f0f2f5;
+            }
+            .container {
+                position: relative;
+                margin: 20px;
+                padding: 20px;
+                background: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            }
+            .timeline {
+                position: relative;
+                height: 30px;
+                margin-bottom: 5px;
+            }
+            .range {
+                position: absolute;
+                height: 24px;
+                border-radius: 4px;
+                border: 1px solid rgba(0,0,0,0.2);
+                /* Remove or comment out the overflow property */
+                /* overflow: hidden; */
+                /* Or explicitly set it to visible */
+                overflow: visible;
+            }
+            .range-label {
+                position: absolute;
+                font-size: 12px;
+                left: 5px;
+                top: 4px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: calc(100% - 10px);
+                color: #fff;
+                text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            }
+            .range:hover .range-label {
+                background: rgba(0,0,0,0.5);
+                padding: 2px 4px;
+                border-radius: 4px;
+            }
+            .time-axis {
+                position: relative;
+                height: 30px;
+                margin-top: 40px;
+                border-top: 1px solid #ccc;
+            }
+            .time-marker {
+                position: absolute;
+                width: 2px;
+                height: 10px;
+                background: #ccc;
+                bottom: 0;
+            }
+            .time-label {
+                position: absolute;
+                font-size: 12px;
+                transform: translateX(-50%);
+                bottom: 12px;
+            }
+            .max-overlap-line {
+                position: absolute;
+                width: 2px;
+                top: 0;
+                bottom: 0;
+                background: red;
+                z-index: 1;
+            }
+            .tooltip {
+                display: none;
+                position: absolute;
+                background: rgba(0,0,0,0.75);
+                color: #fff;
+                padding: 5px;
+                font-size: 12px;
+                border-radius: 4px;
+                white-space: nowrap;
+            }
+            .timeline:hover .tooltip {
+                display: block;
+            }
+            .legend {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .legend-item {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                font-size: 14px;
+            }
+            .color-box {
+                width: 20px;
+                height: 20px;
+                border: 1px solid rgba(0,0,0,0.2);
+                border-radius: 3px;
+            }
+            .max-overlap-info {
+                margin-top: 10px;
+                font-size: 14px;
+                color: #333;
+            }
+        </style>
+    </head>
+    <body>
+    '''
+
+    # Add legend
+    html_content += '<div class="container">'
+    html_content += '<div class="legend">'
+    for inst_type, color in sorted(instruction_types.items()):
+        html_content += f'''
+            <div class="legend-item">
+                <div class="color-box" style="background: {color};"></div>
+                <span>{html.escape(inst_type)}</span>
+            </div>
+        '''
+    html_content += '</div>'
+
+    # Add max overlap info
+    times_str = ', '.join(str(t) for t in times_of_max_overlap)
+    html_content += f'''
+    <div class="max-overlap-info">
+        Maximum overlap of {max_overlap} occurs at time(s): {times_str}
+    </div>
+    '''
+
+    # Prepare scale
+    scale_factor = 10  # pixels per time unit
+    container_width = (max_time + 2) * scale_factor  # add some padding
+
+    html_content += f'<div class="timelines" style="position: relative; width: {container_width}px;">'
+
+    # Generate timelines
+    for range_info in live_ranges:
+        for r in range_info['ranges']:
+            if r['weight'] > 0:
+                start_pos = r['start'] * scale_factor
+                width = (r['end'] - r['start'] + 1) * scale_factor  # +1 because end is inclusive
+
+                instruction = html.escape(range_info.get('instruction', ''))
+
+                html_content += f'''
+                <div class="timeline" style="width: {container_width}px;">
+                    <div class="range" style="
+                        left: {start_pos}px;
+                        width: {width}px;
+                        background: {range_info.get('color', '#cccccc')};
+                    ">
+                        <div class="range-label">
+                            #{range_info['index']} (w:{r['weight']})
+                        </div>
+                        <div class="tooltip" style="z-index:100">
+                            Instruction: {instruction}<br>
+                            Start: {r['start']}<br>
+                            End: {r['end']}<br>
+                            Weight: {r['weight']}
+                        </div>
+                    </div>
+                </div>
+                '''
+
+    # Add time axis
+    html_content += '<div class="time-axis" style="width: {0}px;">'.format(container_width)
+    for t in range(0, max_time + 2, 10):
+        pos = t * scale_factor
+        html_content += f'''
+            <div class="time-marker" style="left: {pos}px;">
+                <div class="time-label" style="left: {pos}px;">{t}</div>
+            </div>
+        '''
+    html_content += '</div>'
+
+    # Add vertical lines at times of max overlap
+    for t in times_of_max_overlap:
+        pos = t * scale_factor
+        html_content += f'''
+        <div class="max-overlap-line" style="left: {pos}px;"></div>
+        '''
+
+    html_content += '</div>'  # Close timelines
+    html_content += '</div>'  # Close container
+
+    html_content += '''
+    </body>
+    </html>
+    '''
+
+    return html_content
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python parser.py <input_file>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output_file = input_file.rsplit('.', 1)[0] + '_visualization.html'
+
+    try:
+        with open(input_file, 'r') as f:
+            text = f.read()
+    except FileNotFoundError:
+        print(f"Error: File '{input_file}' not found")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        sys.exit(1)
+
+    live_ranges = parse_live_ranges(text)
+    html_content = generate_html_visualization(live_ranges)
+
+    try:
+        with open(output_file, 'w') as f:
+            f.write(html_content)
+        print(f"Visualization has been generated in '{output_file}'")
+    except Exception as e:
+        print(f"Error writing output file: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
