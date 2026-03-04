@@ -6,9 +6,13 @@ Welcome to AscendNPU IR 文档
 
 **AscendNPU IR** 是基于 MLIR 的昇腾亲和算子编译中间表示（Intermediate Representation），面向昇腾 AI 处理器提供多级抽象与编译优化能力，支持生态框架灵活对接，在保证易用性的同时支持细粒度性能调优。
 
-- `GitCode 仓库 <https://gitcode.com/Ascend/AscendNPU-IR>`_
-- `GitHub 仓库 <https://github.com/Ascend/AscendNPU-IR>`_
-- `AscendNPU IR 文档 <https://npuir.readthedocs.io/>`_
+.. raw:: html
+
+    <ul>
+    <li><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">GitCode 仓库</a></li>
+    <li><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">GitHub 仓库</a></li>
+    <li><a href="https://ascendnpu-ir.readthedocs.io/" target="_blank">AscendNPU IR 文档</a></li>
+    </ul>
 
 Getting Started
 ----------------------
@@ -21,9 +25,9 @@ Getting Started
 User Guide / 用户指南
 ---------------------
 
-- :doc:`编译选项 <sources/user_guide/compile_option_zh>` — 编译选项与功能说明
-- :doc:`调试调测 <sources/user_guide/debug_option_zh>` — 调试方法介绍
-- :doc:`最佳实践 <sources/user_guide/best_practice_zh>` — 编程案例详解与算子改写
+- :doc:`编译选项 <sources/user_guide/compile_option_zh>` - 编译选项与功能说明
+- :doc:`调试调测 <sources/user_guide/debug_option_zh>` - 调试方法介绍
+- :doc:`最佳实践 <sources/user_guide/best_practice_zh>` - 编程案例详解与算子改写
 
 Developer Guide / 开发者指南
 ----------------------------
@@ -92,3 +96,4 @@ About / 更多
 
    sources/reference/thanks_zh
    sources/reference/talk_and_course_zh
+
