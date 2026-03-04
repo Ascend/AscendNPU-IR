@@ -1,18 +1,267 @@
 # 最佳实践案例
 
 ## 性能优化案例
-## 1. tiling策略(计算)
-### 待补充
-## 2. kernel昇腾亲和改写(计算)
-### 待补充
-## 3. 性能优化选项使用(编译器)
-### 常见案例
-## 4. compile_hint使用(编译器)
-### 常见案例
 
-## 5. CV算子核间优化分析(编译器)
-### 流水图
-### 流水分析
+## 1.  tiling策略
+### 案例说明
+基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销
+建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能
+本案例使用triton实现
+
+``` python
+out = torch.gather(x, dim=1, index=idx)
+```
+
+输入:
+
+| Input | Shape  |
+|-------|--------|
+| x     | (B, C) |
+| idx   | (B, K) |
+
+输出
+
+| Input | Shape  |
+|-------|--------|
+| out   | (B, K) |
+
+### 案例差异点详解
+
+Code diff of NPU and CUDA
+
+```diff
+@triton.jit
+def gather_dim1_kernel(
+        x_ptr,  # *x  [B, C]
+        idx_ptr,  # *idx[B, K]
+        out_ptr,  # *out[B, K]
+        stride_xb, stride_xc,
+        stride_ib, stride_ik,
+        stride_ob, stride_ok,
+        B, K,
+        BLOCK_B: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+):
+    pid_b = tl.program_id(0)  # 1 block per batch row
+-   # GPU实现
+-   pid_k = tl.program_id(1)  # 1 block per K-tile
+
+-   k_off = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
+-   mask = k_off < K
+
+-   idx = tl.load(idx_ptr + pid_b * stride_ib + k_off * stride_ik, mask=mask)  # [BLOCK_K]
+
+-   x_val = tl.load(x_ptr + pid_b * stride_xb + idx * stride_xc, mask=mask)
+
+-   tl.store(out_ptr + pid_b * stride_ob + k_off * stride_ok, x_val, mask=mask)
+
++   #NPU实现
++   b_idx = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
++   b_mask = b_idx < B
+
++   # 对 K 维进行循环
++   for k_start in range(0, K, BLOCK_K):
++       ks = tl.arange(0, BLOCK_K)
++       k_mask = ks < K - k_start
+
++       idx_off = (b_idx[:, None] * stride_ib +
++                  (k_start + ks)[None, :] * stride_ik)
++       col_idx = tl.load(idx_ptr + idx_off, mask=b_mask[:, None] & k_mask)
+
++       x_off = (b_idx[:, None] * stride_xb +
++                col_idx * stride_xc)
++       x_val = tl.load(x_ptr + x_off, mask=b_mask[:, None] & k_mask)
+
++       out_off = (b_idx[:, None] * stride_ob +
++                  (k_start + ks)[None, :] * stride_ok)
++       tl.store(out_ptr + out_off, x_val, mask=b_mask[:, None] & k_mask)
+
+# 调用
+B = 128  # batch dim
+K = 64  
+
+BLOCK_B = 4
+BLOCK_K = 128
+
+— # GPU  
+- grid = (B, triton.cdiv(K, BLOCK_K))
++ # NPU
++ grid = (triton.cdiv(B, BLOCK_B),)
+
+gather_dim1_kernel[grid](
+    x, idx, out,
+    x.stride(0), x.stride(1),
+    idx.stride(0), idx.stride(1),
+    out.stride(0), out.stride(1),
+    B, K,
+    BLOCK_B=BLOCK_B,
+    BLOCK_K=BLOCK_K,
+)
+
+```
+
+### 案例说明
+基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销
+建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能
+本案例使用triton实现
+
+``` python
+out = torch.gather(x, dim=1, index=idx)
+```
+
+输入:
+
+| Input | Shape  |
+|-------|--------|
+| x     | (B, C) |
+| idx   | (B, K) |
+
+输出
+
+| Input | Shape  |
+|-------|--------|
+| out   | (B, K) |
+
+### 案例差异点详解
+
+Code diff of NPU and CUDA
+
+```diff
+@triton.jit
+def gather_dim1_kernel(
+        x_ptr,  # *x  [B, C]
+        idx_ptr,  # *idx[B, K]
+        out_ptr,  # *out[B, K]
+        stride_xb, stride_xc,
+        stride_ib, stride_ik,
+        stride_ob, stride_ok,
+        B, K,
+        BLOCK_B: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+):
+    pid_b = tl.program_id(0)  # 1 block per batch row
+-   # GPU实现
+-   pid_k = tl.program_id(1)  # 1 block per K-tile
+
+-   k_off = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
+-   mask = k_off < K
+
+-   idx = tl.load(idx_ptr + pid_b * stride_ib + k_off * stride_ik, mask=mask)  # [BLOCK_K]
+
+-   x_val = tl.load(x_ptr + pid_b * stride_xb + idx * stride_xc, mask=mask)
+
+-   tl.store(out_ptr + pid_b * stride_ob + k_off * stride_ok, x_val, mask=mask)
+
++   #NPU实现
++   b_idx = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
++   b_mask = b_idx < B
+
++   # 对 K 维进行循环
++   for k_start in range(0, K, BLOCK_K):
++       ks = tl.arange(0, BLOCK_K)
++       k_mask = ks < K - k_start
+
++       idx_off = (b_idx[:, None] * stride_ib +
++                  (k_start + ks)[None, :] * stride_ik)
++       col_idx = tl.load(idx_ptr + idx_off, mask=b_mask[:, None] & k_mask)
+
++       x_off = (b_idx[:, None] * stride_xb +
++                col_idx * stride_xc)
++       x_val = tl.load(x_ptr + x_off, mask=b_mask[:, None] & k_mask)
+
++       out_off = (b_idx[:, None] * stride_ob +
++                  (k_start + ks)[None, :] * stride_ok)
++       tl.store(out_ptr + out_off, x_val, mask=b_mask[:, None] & k_mask)
+
+# 调用
+B = 128  # batch dim
+K = 64  
+
+BLOCK_B = 4
+BLOCK_K = 128
+
+— # GPU  
+- grid = (B, triton.cdiv(K, BLOCK_K))
++ # NPU
++ grid = (triton.cdiv(B, BLOCK_B),)
+
+gather_dim1_kernel[grid](
+    x, idx, out,
+    x.stride(0), x.stride(1),
+    idx.stride(0), idx.stride(1),
+    out.stride(0), out.stride(1),
+    B, K,
+    BLOCK_B=BLOCK_B,
+    BLOCK_K=BLOCK_K,
+)
+
+```
+
+## 2.  kernel昇腾亲和改写
+### 案例说明
+原始gpu计算流程i64/i32 cmp操作在npu设备上无法使能vector，退化为scalar计算效率降低；通过转化为fp32来利用vec_cast和vec_cmp实现vector操作加速  
+需要注意的是，在tl.load和tl.save中的mask使用cmp功能，大部分情况下编译器可以自动优化为vec操作，本例中tl.where则需要手动转换
+本案例以layerNorm为例说明实现向量化cmp加速npu计算流程，该cmp操作用于处理layerNorm中的尾块处理
+
+### 案例差异点详解
+
+Code diff of NPU and CUDA
+```diff
+@triton.jit
+def npu_vector_cmp_kernel(
+    X,                 # [Tensor] input tensor (row x col)
+    Out,               # [Tensor] output tensor (row x col)
+    Mean,              # [Vector] mean tensor (row, ) of X
+    Rstd,              # [Vector] std tensor (row, ) of X
+    stride_x_row,      # [Scalar] stride of row in X
+    stride_out_row,    # [Scalar] stride of row in Out, normally equals to stride_x_row
+    M,                 # [Scalar] row number
+    N,                 # [Scalar] col number
+    eps,               # [Scalar] epsilon to aviod division by zeros
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr
+):
+    """
+    an example of layernorm to checkout Vector Cmp
+    Out = ((X - E[X]) / sqrt(V[X] + eps)) on dim -1
+    
+    just for easy case, we assume that:
+    1. BLOCK_N >= X.shape(-1), group_n = 0 only
+    2. BLOCK_M = 1, group_m = range(0, row, 1)
+    """
+    group_m = tl.program_id(0)
+    group_n = tl.program_id(1)
+    row = group_m
+
+    # calculate index & offset
+    Mean = Mean + group_n * M
+    Rstd = Rstd + group_n * M
+    X = X + row * stride_x_row + group_n * N
+    Out = Out + row * stride_out_row + group_n * N
+
+    cols = tl.arange(0, BLOCK_N)  # cols is int64
+    x = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
+
+    # calculate mean & rstd
+    mean = tl.sum(x, axis=0) / N
+    tl.store(Mean + row, mean)
+    
+-   xbar = tl.where(cols < N, X - mean, 0.0)
++   # change cols(i64) into cols_cmp(f32) to enable vector processing
++   cols_cmp = cols.to(tl.float32)
++   xbar = tl.where(cols_cmp < N, x - mean, 0.0)
+
+    var = tl.sum(xbar * xbar, axis=0) / N
+    rstd = 1 / tl.sqrt(var + eps)
+    tl.store(Rstd + row, rstd)
+
+    # calculate Out
+    mask = cols < N
+    out = (x - mean) * rstd
+    tl.store(Out + cols, out, mask=mask)
+
+```
+
 ## 功能或精度案例
 
 本章节介绍常见功能或精度案例
@@ -81,10 +330,95 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且再[0, seqlen]范围内。
 
 
-## 4. ub overflow类问题(计算)
-### 4.1. tiling值
-### 4.2. stride_align类
-### 4.3. 待补充
+## 4. ub overflow类问题
+### triton argmax op 先32B对齐，再融轴，浪费大量UB空间
+
+mlir代码如下：
+
+```javascript
+%reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [256, 9, 11], strides: [99, 11, 1] : memref<?xi8, #hivm.address_space<gm>> to memref<256x9x11xi8, strided<[99, 11, 1]>, #hivm.address_space<gm>>
+%2 = hivm.hir.pointer_cast(%c0_i64) : memref<256x32x11x1xi8, #hivm.address_space<ub>>
+%subview = memref.subview %2[0, 0, 0, 0] [256, 9, 11, 1] [1, 1, 1, 1] : memref<256x32x11x1xi8, #hivm.address_space<ub>> to memref<256x9x11xi8, strided<[352, 11, 1]>, #hivm.address_space<ub>>
+%collapse_shape = memref.collapse_shape %reinterpret_cast [[0], [1, 2]] : memref<256x9x11xi8, strided<[99, 11, 1]>, #hivm.address_space<gm>> into memref<256x99xi8, strided<[99, 1]>, #hivm.address_space<gm>>
+%collapse_shape_0 = memref.collapse_shape %subview [[0], [1, 2]] : memref<256x9x11xi8, strided<[352, 11, 1]>, #hivm.address_space<ub>> into memref<256x99xi8, strided<[352, 1]>, #hivm.address_space<ub>>
+hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.address_space<gm>>) outs(%collapse_shape_0 : memref<256x99xi8, strided<[352, 1]>, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+```
+
+- 分析：
+
+    第1行，原始的数据大小为256x9x11xi8，保存在GM中(kernel的参数%arg3)；
+    第2行，申请一块大小为256x32x11x1xi8的UB空间，用于从GM中COPY数据到UB，这里对第1轴进行了32字节对齐操作，同时尾轴增加一维；
+    第3行，对第2行申请的UB形状256×32×11×1xi8，通过subview提取256x9x11xi8的子视图；
+    第4行，通过collapse_shape，对第1行的GM中的视图256x9x11xi8，进行合并维度，变成256x99xi8类型；
+    第5行，通过collapse_shape，对第3行的UB中的视图256x9x11xi8，进行合并维度，变成256x99xi8类型；
+    第6行，将第4行的GM中形状为256x99xi8的数据，COPY到第5行的UB中的256x99xi8形状中；
+
+- 总结：
+
+    原始的数据256x9x11xi8大小：25344B；从GM中load到ub，ub中占用的大小（256x32x11x1xi8）：90112B，占用的ub大小为原始数据大小的3.5倍多。
+
+
+
+### triton op不合理的实现，导致额外占用内存
+
+Triton Not OP的实现，在NPU-IR中，被转成VOR、VAND、VNOT、VAND等一些列操作来处理，实际上可以只执行VNOT操作：
+
+mlir代码如下：
+
+```javascript
+  %2 = hivm.hir.pointer_cast(%c0_i64) : memref<65536xi8, #hivm.address_space<ub>>
+  hivm.hir.load ins(%reinterpret_cast : memref<65536xi8, strided<[1]>, #hivm.address_space<gm>>) outs(%2 : memref<65536xi8, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  %3 = hivm.hir.pointer_cast(%c131072_i64) : memref<65536xi8, #hivm.address_space<ub>>
+  hivm.hir.vbrc ins(%c-1_i8 : i8) outs(%3 : memref<65536xi8, #hivm.address_space<ub>>)
+  %4 = hivm.hir.pointer_cast(%c65536_i64) : memref<65536xi8, #hivm.address_space<ub>>
+  hivm.hir.vor ins(%2, %3 : memref<65536xi8, #hivm.address_space<ub>>, memref<65536xi8, #hivm.address_space<ub>>) outs(%4 : memref<65536xi8, #hivm.address_space<ub>>)
+  %5 = hivm.hir.pointer_cast(%c0_i64) : memref<65536xi8, #hivm.address_space<ub>>
+  hivm.hir.vand ins(%2, %3 : memref<65536xi8, #hivm.address_space<ub>>, memref<65536xi8, #hivm.address_space<ub>>) outs(%5 : memref<65536xi8, #hivm.address_space<ub>>)
+  hivm.hir.vnot ins(%5 : memref<65536xi8, #hivm.address_space<ub>>) outs(%5 : memref<65536xi8, #hivm.address_space<ub>>)
+  %6 = hivm.hir.pointer_cast(%c65536_i64) : memref<65536xi8, #hivm.address_space<ub>>
+  hivm.hir.vand ins(%5, %4 : memref<65536xi8, #hivm.address_space<ub>>, memref<65536xi8, #hivm.address_space<ub>>) outs(%6 : memref<65536xi8, #hivm.address_space<ub>>)
+```
+
+- 分析
+
+    第1行，原始的数据大小为65536xi8，保存在GM中(kernel的参数%arg3)；
+    第2行，申请一块大小为65536xi8的UB空间；
+    第3行，将第1行的GM中的形状为65536xi8的数据，COPY到第2行的现状为65536xi8的UB空间中；
+    第4行，申请一块大小为65536xi8的UB空间；
+    第5行，将第4行申请的65536xi8的UB空间，全填充-1；
+    第6行：申请一块大小为65536xi8的UB空间；
+    第7行：“输入数据”与“-1”做or运算，结果存储到第6行申请的UB空间中；
+    第8行：申请一块大小为65536xi8的UB空间；
+    第9行：“输入数据”与“-1”做and运算，结果存储到第8行申请的UB空间中；
+    第10行：再对第9行的结果做not运算，将结果存储到第8行申请的UB空间中；
+    第11行：申请一块大小为65536xi8的UB空间；
+    第12行：将第7行的结果，与第10行的结果，进行and运算，将结果存储到第11行申请的UB空间中；
+
+- 总结
+
+    对输入数据input_data进行not操作，mlir翻译成了如下运算：(input_data|(-1))&(!(input_data&(-1)))。
+
+    原始的数据大小为：65536B，为了完成(input_data|(-1))&(!(input_data&(-1)))运算，申请了 5 * 65536B 的UB空间。
+
+### triton max_dim0 op 在int64类型输入下，先执行PlanMemory，再执行HIVMLowerToLoops，浪费大量UB空间
+
+mlir代码如下：
+
+```mlir
+%2 = hivm.hir.pointer_cast(%c0_i64) : memref<2x4912xi64, #hivm.address_space<ub>>
+%3 = hivm.hir.pointer_cast(%c78592_i64) : memref<1x4912xi64, #hivm.address_space<ub>>
+%4 = hivm.hir.pointer_cast(%c117888_i64) : memref<9824xi64, #hivm.address_space<ub>>
+hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hivm.address_space<ub>>) outs(%3 : memref<1x4912xi64, #hivm.address_space<ub>>) temp_buffer(%4 : memref<9824xi64, #hivm.address_space<ub>>) reduce_dims = [0]
+```
+
+- 分析：
+
+第1行，输入数据大小为2x4912xi64，在ub中分配，数据来源于GM
+第2行，输出数据大小为1x4912xi64，在ub中分配，存储计算结果，最后存储到GM中
+第3行，申请一块大小为9824xi64的ub空间作为vreduce操作的临时节点
+第4行，对于int64的输入，vreduce操作会在后面lower为loop scalar操作，并将temp_buffer删掉
+
+- 总结：PlanMemory时考虑的temp_buffer在最后计算时并未使用，导致误报ub overflow，需要在PlanMemory前分配temp_buffer的步骤中修改临时节点分配规则
 
 ## 5. d-cache类
 
@@ -111,93 +445,6 @@ A=torch.empty(shape, dtype, device=DEVICE).npu()
 
 ### 5.3. 使用非负数iter arg作为访存索引
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
-## 4.load行为(编译器)
-### 4.1.load非预期引入vtranspose op导致ub overflow(编译器)
-### 4.2.Load隐式转置(编译器)
-- **现象** “隐式转置”是指在加载或存储数据的同时完成矩阵转置操作，避免单独执行一个转置内核或额外的显式数据重排。
-它通常通过调整指针的步长和形状来实现，使得内存访问模式隐含地完成维度交换。
-这种技术可以节省全局内存带宽、减少内核启动开销，并提高计算效率。
-
-`tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)`
-order参数指定内存中元素的迭代顺序，可以用来实现转置。或者，通过设置strides参数来指示转置后的步长。
-实际上，对于矩阵转置，如果我们有一个输入矩阵A (M, K) 和输出矩阵B (K, M)，我们可以让每个线程块处理B的一个块，
-并从A中加载对应的转置块。加载时，可以使用make_block_ptr从A中加载，但步长设置为导致转置加载的步长？
-或者，更常见的做法是加载一个正常的A块，然后使用tl.trans转置后再存储到B。
-
-#### example
-```python
-import triton
-import triton.language as tl
-
-
-@triton.jit
-def transpose_kernel(
-    x_ptr, y_ptr,
-    M, N,
-    stride_xm, stride_xn,
-    stride_ym, stride_yn,
-    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
-):
-    """
-    矩阵转置内核：Y = X^T, 其中 X 形状 (M, N)，Y 形状 (N, M)。
-    每个程序块处理 Y 的一个 (BLOCK_N, BLOCK_M) 子块。
-    通过交换输入指针的步长，实现隐式转置加载。
-    """
-    pid_n = tl.program_id(0)  # 输出矩阵的行块索引（原列块）
-    pid_m = tl.program_id(1)  # 输出矩阵的列块索引（原行块）
-
-    bn = pid_n * BLOCK_N  # 输出矩阵的行起始 = 原列起始
-    bm = pid_m * BLOCK_M  # 输出矩阵的列起始 = 原行起始
-
-    # 构建输入指针：使用交换后的步长，形状 (N, M) 以匹配转置访问
-    x_ptr_t = tl.make_block_ptr(
-        base=x_ptr,
-        shape=(N, M),
-        strides=(stride_xn, stride_xm),
-        offsets=(bn, bm),
-        block_shape=(BLOCK_N, BLOCK_M),
-        order=(1, 0)
-    )
-
-    # 构建输出指针：正常行主序步长，形状 (N, M)
-    y_ptr_b = tl.make_block_ptr(
-        base=y_ptr,
-        shape=(N, M),
-        strides=(stride_ym, stride_yn),
-        offsets=(bn, bm),
-        block_shape=(BLOCK_N, BLOCK_M),
-        order=(1, 0)
-    )
-
-    # 加载输入块（已隐式转置），边界检查防止越界
-    x_tile = tl.load(x_ptr_t, boundary_check=(0, 1))
-
-    # 存储到输出矩阵
-    tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
-```
-### 4.3.数据load方式不合理
-### 4.4.待补充
-
-
-以GDN网络的`causal_conv1d_fwd_kernel`算子为例，原代码逻辑为
-
-```python
-for i_w in tl.static_range(-W + 1, 1):
-  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
-  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
-  if HAS_WEIGHT:
-    b_yi *= tl.sum(b_w * (o_w == (i_w + W - 1)), 1)
-```
-
-由于`i_w`可为负数，以上算子需改写为
-
-```python
-for i_w in tl.static_range(W):
-  p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
-  b_yi = tl.load(p_yi, boundary_check=(0, 1)).to(tl.float32)
-  if HAS_WEIGHT:
-    b_yi *= tl.sum(b_w * (o_w == i_w), 1)
-```
 
 ## 6. 访存类
 ### 6.1. load非预期引入vtranspose op导致ub overflow
@@ -512,7 +759,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 ```
 <hr>
 
-## 7.baseline(计算) 	 
+## 7.baseline(计算)
+### TO DO 	 
 ### 7.1.TRITON_INTERPRET模式(计算)	 
 ### 7.2.GPU特有运算逻辑(计算)	 
 ### 7.3.待补充
