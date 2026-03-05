@@ -22,17 +22,29 @@ help:
 
 # Build English docs (conf.py reads READTHEDOCS_LANGUAGE for exclude_patterns)
 html:
-	@READTHEDOCS_LANGUAGE=en $(SPHINXBUILD) -b html -D language=en -D root_doc=index "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
+	@LANGUAGE=en $(SPHINXBUILD) -b html -D language=en -D root_doc=index "$(SOURCEDIR)" "$(BUILDDIR)/en" $(SPHINXOPTS) $(O)
 	@echo "English HTML built in $(BUILDDIR)/html"
+	@printf '%s\n' '<!DOCTYPE html>' \
+		'<html>' \
+		'<head>' \
+		'  <meta charset="utf-8"/>' \
+		'  <meta http-equiv="refresh" content="0; url=en/index.html"/>' \
+		'  <title>AscendNPU IR Docs</title>' \
+		'</head>' \
+		'<body>' \
+		'  <p>Redirecting to <a href="en/index.html">English documentation</a>...</p>' \
+		'</body>' \
+		'</html>' > "$(BUILDDIR)/index.html"
+	@echo "Root $(BUILDDIR)/index.html created (default → English)"
 
 # Build Chinese docs (conf.py writes index.html redirect via build-finished for RTD + local)
 html-zh:
-	@READTHEDOCS_LANGUAGE=zh_CN $(SPHINXBUILD) -b html -D language=zh_CN -D root_doc=index_zh "$(SOURCEDIR)" "$(BUILDDIR)/html_zh" $(SPHINXOPTS) $(O)
-	@echo "Chinese HTML built in $(BUILDDIR)/html_zh"
+	@LANGUAGE=zh_CN $(SPHINXBUILD) -b html -D language=zh_CN -D root_doc=index_zh "$(SOURCEDIR)" "$(BUILDDIR)/zh_cn" $(SPHINXOPTS) $(O)
+	@echo "Chinese HTML built in $(BUILDDIR)/zh_cn"
 
 # Build both: English in _build/html, Chinese in _build/html_zh (for local preview)
 html-all: clean html html-zh
-	@echo "Both languages built. Serve e.g. _build/html and _build/html_zh."
+	@echo "Both languages built. Serve e.g. _build/en and _build/zh_cn."
 
 .PHONY: all clean help Makefile html html-zh html-all
 
