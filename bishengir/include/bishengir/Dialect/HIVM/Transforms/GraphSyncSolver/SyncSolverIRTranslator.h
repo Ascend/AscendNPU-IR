@@ -138,6 +138,8 @@ private:
                   const llvm::SmallVector<Value> &writeMemInfo);
 
   bool isUnlikelyCondition(Condition *condOp);
+
+  bool isParallelLoop(Loop *loopOp);
 };
 
 } // namespace mlir::hivm::syncsolver

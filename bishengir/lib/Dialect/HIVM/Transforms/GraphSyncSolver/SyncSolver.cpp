@@ -126,6 +126,18 @@ bool Solver::checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2) {
   return false;
 }
 
+bool Solver::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
+  if (!isBackwardSync(occ1, occ2)) {
+    return false;
+  }
+  auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+  auto *parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
+  assert(parentLCALoopOcc != nullptr);
+  auto *parentLCALoopOp = llvm::cast<Loop>(parentLCALoopOcc->op);
+  return parentLCALoopOp->isParallel;
+}
+
 // Check whether occurrences belong to impossible (if-else) pairing.
 bool Solver::checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
@@ -145,13 +157,31 @@ bool Solver::checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2) {
 bool Solver::checkAlreadySynced(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
   assert(occ1->op != nullptr && occ2->op != nullptr);
+
   auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
   assert(parOcc1->parentOcc != nullptr && parOcc2->parentOcc != nullptr);
+
   auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
   assert(parOp1 != nullptr && parOp2 != nullptr);
   assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
-  return OperationBase::getParentloop(parOcc1->op) !=
-         OperationBase::getParentloop(parOp1);
+
+  auto *parentLoop = OperationBase::getParentloop(parOcc1->op);
+  auto *curLoop = OperationBase::getParentloop(parOp1);
+  if (parentLoop == nullptr || parentLoop == curLoop) {
+    return false;
+  }
+
+  assert(curLoop != nullptr);
+  assert(parentLoop->isProperAncestor(curLoop));
+  while (curLoop != parentLoop) {
+    if (!llvm::cast<Loop>(curLoop)->isParallel) {
+      return true;
+    }
+    curLoop = OperationBase::getParentloop(curLoop);
+    assert(curLoop != nullptr);
+  }
+  return false;
 }
 
 // Unit-flag reuse check between two RWOperations.
@@ -1063,10 +1093,44 @@ Occurrence *Solver::getScopeEndPlaceHolderOcc(Occurrence *occ) {
 }
 
 std::pair<Occurrence *, Occurrence *>
+Solver::getSetWaitLCAPairOcc(Occurrence *occ1, Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+
+  auto [grandParOcc1, grandParOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(grandParOcc1 != nullptr && grandParOcc2 != nullptr);
+  assert(grandParOcc1->parentOcc != nullptr &&
+         grandParOcc2->parentOcc != nullptr);
+
+  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
+  assert(parOp1 != nullptr && parOp2 != nullptr);
+  assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
+  assert(parOp1->parentOp == parOp2->parentOp);
+
+  auto *parOcc1 = occ1->getParentWithOp(parOp1->parentOp);
+  auto *parOcc2 = occ2->getParentWithOp(parOp2->parentOp);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+  assert(parOcc1 != occ1 && parOcc2 != occ2);
+
+  auto *setOcc = occ1->getNthParent(occ1->depth - parOcc1->depth - 1);
+  auto *waitOcc = occ2->getNthParent(occ2->depth - parOcc2->depth - 1);
+  assert(setOcc != nullptr && waitOcc != nullptr);
+  assert(parOcc1->isProperAncestor(setOcc));
+  assert(parOcc2->isProperAncestor(waitOcc));
+
+  auto *parLoop = Occurrence::getParentloop(setOcc);
+  while (parLoop != nullptr && grandParOcc1->isProperAncestor(parLoop)) {
+    setOcc = parLoop;
+    waitOcc = Occurrence::getParentloop(waitOcc);
+    parLoop = Occurrence::getParentloop(setOcc);
+  }
+  return std::make_pair(setOcc, waitOcc);
+}
+
+std::pair<Occurrence *, Occurrence *>
 Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
   // - get setOcc waitOcc where:
   // setOcc->op->parent = waitOcc->op->parent = lca(occ1, occ2)->op
-  auto [setOcc, waitOcc] = getLCAPairOcc(occ1, occ2);
+  auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);
 
   // - check if it's the case of while loop:
   // while{
@@ -1097,7 +1161,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
             llvm::dyn_cast_if_present<Loop>(setOcc->parentOcc->op)) {
       if (parLoopOp->body.size() > 1 && !isa<PlaceHolder>(waitOcc->op)) {
         auto *placeHolderOcc = getScopeEndPlaceHolderOcc(setOcc);
-        std::tie(setOcc, waitOcc) = getLCAPairOcc(occ1, placeHolderOcc);
+        std::tie(setOcc, waitOcc) = getSetWaitLCAPairOcc(occ1, placeHolderOcc);
       }
     }
   }
@@ -2277,6 +2341,7 @@ void Solver::processOrders() {
     }
     if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
         skipMMad1DecomposedLoopOpt(occ1, occ2) ||
+        checkSkipParallelLoop(occ1, occ2) ||
         checkSkipCrossCorePair(occ1, occ2)) {
       continue;
     }

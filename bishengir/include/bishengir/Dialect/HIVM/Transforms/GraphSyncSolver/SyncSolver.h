@@ -252,6 +252,8 @@ protected:
 
   bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
 
+  bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
+
   bool checkAlreadySynced(Occurrence *occ1, Occurrence *occ2);
 
   bool checkAlreadySyncedWithUnitFlag(Occurrence *occ1, Occurrence *occ2);
@@ -290,6 +292,8 @@ protected:
   void forgetSyncedPair(ConflictPair *conflictPair);
 
   // Utilities to map an occurrence pair to their set/wait occurrences.
+  std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
+                                                             Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *> getSetWaitOcc(Occurrence *occ1,
                                                       Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *> getFixedSetWaitOcc(Occurrence *occ1,

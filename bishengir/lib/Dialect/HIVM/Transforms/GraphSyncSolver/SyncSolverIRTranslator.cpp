@@ -449,6 +449,14 @@ bool IRTranslator::isUnlikelyCondition(Condition *condOp) {
   return false;
 }
 
+bool IRTranslator::isParallelLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name);
+  }
+  return false;
+}
+
 // Build a Scope tree (funcIr) from MLIR Region recursively.
 std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
                                                    OperationBase *parentOp,
@@ -482,6 +490,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       }
       if (isa<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, scopeOp.get());
+        loopOp->isParallel = isParallelLoop(loopOp.get());
         for (auto &region : op.getRegions()) {
           auto regionOp = funcIrBuilder(region, loopOp.get(), skipEmptyScopes);
           loopOp->body.push_back(std::move(regionOp));
