@@ -241,9 +241,8 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
 
   auto dstAllocVal =
       dstMemRefTy ? utils::tracebackMemRef(getDst()) : getResult(0);
-  DenseSet<Value> visited;
   auto userAllCube = utils::checkUsersAllWithCondition(
-      dstAllocVal, getOperation(), visited,
+      dstAllocVal, getOperation(),
       [](Operation *op) {
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return coreType == TCoreType::CUBE;
@@ -255,9 +254,8 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
   if (userAllCube.has_value() && userAllCube.value()) {
     return TCoreType::CUBE;
   }
-  visited.clear();
   auto userAllVec = utils::checkUsersAllWithCondition(
-      dstAllocVal, getOperation(), visited,
+      dstAllocVal, getOperation(),
       [](Operation *op) {
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return coreType == TCoreType::VECTOR;
@@ -266,7 +264,6 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
       });
-  visited.clear();
   if (userAllVec.has_value() && userAllVec.value()) {
     return TCoreType::VECTOR;
   }
