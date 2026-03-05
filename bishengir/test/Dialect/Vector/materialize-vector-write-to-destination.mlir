@@ -189,6 +189,26 @@ attributes {hacc.inline = "inline", noinline, outline = true, vector_mode = "sim
 
 // -----
 
+// Test that FoldInsertSliceToTransferWrite preserves mask when vector size
+// exceeds destination tensor size (e.g. vector<4x1x16> -> tensor<2x1x16>)
+// CHECK-LABEL: func.func @test_preserve_transfer_write_mask
+// CHECK: %[[mask:.*]] = vector.constant_mask [2, 1, 16]
+// CHECK: tensor.extract_slice
+// CHECK: vector.transfer_write {{.*}}], %[[mask]] {in_bounds = [false, true, true]}
+func.func @test_preserve_transfer_write_mask(%arg0: tensor<8x2x16xf16>) -> tensor<8x2x16xf16>
+attributes {hacc.inline = "inline", noinline, outline = true, vector_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %0 = tensor.empty() : tensor<2x1x16xf16>
+  %vec = vector.broadcast %cst : f16 to vector<4x1x16xf16>
+  %mask = vector.constant_mask [2, 1, 16] : vector<4x1x16xi1>
+  %1 = vector.transfer_write %vec, %0[%c0, %c0, %c0], %mask {in_bounds = [false, true, true]} : vector<4x1x16xf16>, tensor<2x1x16xf16>
+  %2 = tensor.insert_slice %1 into %arg0[0, 0, 0] [2, 1, 16] [1, 1, 1] : tensor<2x1x16xf16> into tensor<8x2x16xf16>
+  return %2 : tensor<8x2x16xf16>
+}
+
+// -----
+
 // test should fail for func not marked as manual vf
 // CHECK-LABEL: func @redirect_write_dst_to_iter_arg_fail_1(
 // CHECK-SAME: %[[arg0:.*]]: tensor<1x64xf32>, %[[arg1:.*]]: tensor<1x64xf32>)

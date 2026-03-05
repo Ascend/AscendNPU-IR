@@ -84,7 +84,7 @@ struct FoldInsertSliceToTransferWrite
         transferWriteOp.getLoc(), transferWriteOp.getVector(),
         extractOp.getResult(), // Dst is now the extracted slice
         transferWriteOp.getIndices(), transferWriteOp.getPermutationMapAttr(),
-        transferWriteOp.getInBoundsAttr());
+        transferWriteOp.getMask(), transferWriteOp.getInBoundsAttr());
 
     // 6. Replace the old transfer_write with the new result
     rewriter.replaceOp(transferWriteOp, newTransferWriteOp.getResult());
