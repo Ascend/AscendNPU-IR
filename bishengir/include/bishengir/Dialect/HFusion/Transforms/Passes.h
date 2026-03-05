@@ -109,6 +109,9 @@ createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 
+/// Create a pass that pulls extract_slice/insert_slice into VF callees.
+std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
+
 /// Create an auto vectorizer v2 pass.
 std::unique_ptr<Pass>
 createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
