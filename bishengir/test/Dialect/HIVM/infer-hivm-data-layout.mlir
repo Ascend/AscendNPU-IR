@@ -574,7 +574,7 @@ func.func @mm_erase_convert_layout_op(%arg0: memref<128x128xf16, strided<[?, ?],
   annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<8x8x16x16xf16, #hivm.address_space<cbuf>>
   // CHECK-NOT: hivm.hir.convert_layout
   // CHECK-NOT: hivm.hir.nd2nz
-  %2 = hivm.hir.convert_layout %alloc {dstLayout = #hivm.data_layout<dotA_ND, transpose = 0>, srcLayout = #hivm.data_layout<nZ>} : (memref<8x8x16x16xf16, #hivm.address_space<cbuf>>) -> memref<128x128xf16, #hivm.address_space<cbuf>>
+  %2 = hivm.hir.convert_layout %alloc output_shape [128, 128] {dstLayout = #hivm.data_layout<dotA_ND, transpose = false>, srcLayout = #hivm.data_layout<nZ>} : (memref<8x8x16x16xf16, #hivm.address_space<cbuf>>) -> memref<128x128xf16, #hivm.address_space<cbuf>>
   %alloc_0 = memref.alloc() : memref<128x128xf16, #hivm.address_space<cbuf>>
   %subview = memref.subview %arg0[0, 0] [%1, 128] [1, 1] : memref<128x128xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>> to memref<?x128xf16, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>
   %subview_1 = memref.subview %alloc_0[0, 0] [%1, 128] [1, 1] : memref<128x128xf16, #hivm.address_space<cbuf>> to memref<?x128xf16, strided<[128, 1]>, #hivm.address_space<cbuf>>

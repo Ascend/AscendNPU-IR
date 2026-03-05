@@ -169,6 +169,7 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetFractalLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
   }];
 }

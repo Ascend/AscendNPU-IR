@@ -258,8 +258,6 @@ FailureOr<SmallVector<Operation *>> traceForPotentialMatrixC(Value v,
 uint32_t getHWAlignBytes(Attribute spaceAttr);
 std::optional<uint32_t> getHWAlignBytes(Type t);
 
-bool isMarkedAsHIVMElementwiseOp(Operation *op);
-
 bool isMixModule(ModuleOp mod);
 
 /// Getter setter of the hivm.module_core_type attribute.

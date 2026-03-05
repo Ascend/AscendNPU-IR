@@ -33,14 +33,14 @@ func.func @data_layout() {
   "test.data_layout"() {
     // CHECK: #hivm.data_layout<ND>
     ND = #hivm.data_layout<ND>,
-    // CHECK: #hivm.data_layout<dotA_ND, transpose = 1>
-    dotA_ND_transpose = #hivm.data_layout<dotA_ND, transpose = 1>,
-    // CHECK: #hivm.data_layout<dotA_ND, transpose = 0>
-    dotA_ND_transpose_false = #hivm.data_layout<dotA_ND, transpose = 0>,
-    // CHECK: #hivm.data_layout<dotB_ND, transpose = 1>
-    dotB_ND_transpose = #hivm.data_layout<dotB_ND, transpose = 1>,
-    // CHECK: #hivm.data_layout<dotB_ND, transpose = 0>
-    dotB_ND_transpose_false = #hivm.data_layout<dotB_ND, transpose = 0>,
+    // CHECK: #hivm.data_layout<dotA_ND, transpose = true>
+    dotA_ND_transpose = #hivm.data_layout<dotA_ND, transpose = true>,
+    // CHECK: #hivm.data_layout<dotA_ND, transpose = false>
+    dotA_ND_transpose_false = #hivm.data_layout<dotA_ND, transpose = false>,
+    // CHECK: #hivm.data_layout<dotB_ND, transpose = true>
+    dotB_ND_transpose = #hivm.data_layout<dotB_ND, transpose = true>,
+    // CHECK: #hivm.data_layout<dotB_ND, transpose = false>
+    dotB_ND_transpose_false = #hivm.data_layout<dotB_ND, transpose = false>,
     // CHECK: #hivm.data_layout<dotC_ND>
     dotC_ND = #hivm.data_layout<dotC_ND>,
     // CHECK: #hivm.data_layout<nZ>

@@ -113,7 +113,7 @@ func.func @test_batchMmadL1() {
 func.func @test_convert_layout(%arg : memref<128x128xf16, strided<[?, ?], offset: ?>>) {
   %alloc = memref.alloc() : memref<128x128xf16>
   memref.copy %arg, %alloc : memref<128x128xf16, strided<[?, ?], offset: ?>> to memref<128x128xf16>
-  %alloc_new_layout = hivm.hir.convert_layout %alloc {srcLayout = #dot_a_layout, dstLayout = #nZ_layout} : (memref<128x128xf16>) -> memref<8x8x16x16xf16>
+  %alloc_new_layout = hivm.hir.convert_layout %alloc output_shape [8, 8, 16, 16] {srcLayout = #dot_a_layout, dstLayout = #nZ_layout} : (memref<128x128xf16>) -> memref<8x8x16x16xf16>
   "some_use"(%alloc_new_layout) : (memref<8x8x16x16xf16>) -> ()
   return
 }
@@ -349,4 +349,15 @@ module {
     hivm.hir.scatter_store  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %data: tensor<16x400xf32>, %c1_i64: i64, %mask: tensor<16x400xi1>) { boundaryCheck = array<i32: 1>, cache = 1 : i32, evictionpolicy = 2 : i32 }
     return
   }
+}
+
+// -----
+// CHECK-LABEL: test_convert_layout_tensor
+// CHECK: hivm.hir.convert_layout
+#dot_a_layout = #hivm.data_layout<dotA_ND, transpose = false>
+#nZ_layout = #hivm.data_layout<nZ>
+func.func @test_convert_layout_tensor(%arg : tensor<128x128xf16>) -> tensor<8x8x16x16xf16> {
+  %alloc_new_layout = hivm.hir.convert_layout %arg output_shape [8, 8, 16, 16] {srcLayout = #dot_a_layout, dstLayout = #nZ_layout}
+                      : (tensor<128x128xf16>) -> tensor<8x8x16x16xf16>
+  return %alloc_new_layout : tensor<8x8x16x16xf16>
 }

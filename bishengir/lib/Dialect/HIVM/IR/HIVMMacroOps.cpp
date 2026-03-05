@@ -304,6 +304,14 @@ getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
   return ss.str();
 }
 
+/// @brief Computes the block sizes for a given operand based on its element type.
+///
+/// Returns a vector containing the fractal block number and the block size,
+/// where the block size is determined by dividing the intrinsic bytes per block
+/// by the byte width of the operand's element type.
+///
+/// @param oper The MLIR value whose element type is used to compute block sizes.
+/// @return A SmallVector containing two elements: [FRACTAL_BLOCK_NUM, kBlockSize].
 llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
@@ -314,7 +322,20 @@ llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   kBlockSizes.push_back(kBlockSize);
   return kBlockSizes;
 }
-// Currently, the B8 implementation is aligned with CATLASS constraints.
+
+/// @brief Computes the block sizes for the B operand, with special handling
+///        for transpose and A5 configurations.
+///
+/// Currently, the B8 implementation is aligned with CATLASS constraints.
+///
+/// When `isA5` is true and the element size is 1 byte with `isBTranspose`
+/// set to false, the fractal block number is overridden to 32. Otherwise,
+/// the default `FRACTAL_BLOCK_NUM` is used.
+///
+/// @param oper         The MLIR value whose element type is used to compute block sizes.
+/// @param isBTranspose Whether the B operand is transposed.
+/// @param isA5         Whether the A5-specific block size logic should be applied.
+/// @return A SmallVector containing two elements: [factalBlockNum, kBlockSize].
 llvm::SmallVector<int64_t> getBlockSizesB(mlir::Value oper, bool isBTranspose,
                                           bool isA5) {
   llvm::SmallVector<int64_t> kBlockSizes;
@@ -558,6 +579,23 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
              : MatmulBiasMode::ElementwiseAdd;
 }
 
+/// @brief Computes the target data layout for each operand of the MmadL1 operation.
+///
+/// Constructs a mapping from each operand value to its corresponding
+/// DataLayoutAttr, determining the appropriate layout (nZ or zN) and block
+/// sizes based on operand type and transpose configuration:
+///
+/// - **Operand A**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
+///   are derived from the element type via `getBlockSizes()`.
+/// - **Operand B**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
+///   are computed via `getBlockSizesB()`, which applies A5-specific logic.
+/// - **Operand C**: Always uses `zN` layout with a fixed
+///   `FRACTAL_BLOCK_NUM × FRACTAL_BLOCK_NUM` block size.
+/// - **Per-channel bias** (optional): Uses `ND` layout with no block size
+///   specification.
+///
+/// @return A SmallDenseMap mapping each operand `Value` to its target
+///         `DataLayoutAttr`.
 llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
 
@@ -566,7 +604,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
-      std::nullopt,
+      nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
@@ -577,7 +615,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
-      std::nullopt,
+      nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
 
@@ -585,13 +623,56 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   auto mCLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::zN, std::nullopt,
+      getContext(), DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
   valLayoutMap[getC()] = mCLayoutAttr;
 
   if (auto bias = getPerChannelBias()) {
     auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              std::nullopt, std::nullopt);
+                                              nullptr, nullptr);
+    valLayoutMap[bias] = biasLayoutAttr;
+  }
+  return valLayoutMap;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadL1Op::getOperandsTargetFractalLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizes(operA);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[getC()] = mCLayoutAttr;
+
+  if (valLayoutMap.size() != 3) {
+    llvm::report_fatal_error("Ambiguous target layout mapping on matmul");
+  }
+  if (auto bias = getPerChannelBias()) {
+    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
+                                              nullptr, nullptr);
     valLayoutMap[bias] = biasLayoutAttr;
   }
   return valLayoutMap;
@@ -612,7 +693,7 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
     // fractal block sizes.
     return DataLayoutAttr::get(
         getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
-        std::nullopt,
+        BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -636,7 +717,7 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandBLayout() {
     // fractal block sizes.
     return DataLayoutAttr::get(
         getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
-        std::nullopt,
+        BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
