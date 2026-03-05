@@ -92,6 +92,24 @@ def ConvertHFusionToHIVM : Pass<"convert-hfusion-to-hivm"> {
   ];
 }
 
+
+//===----------------------------------------------------------------------===//
+// HIVMToStandard
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
+  let summary = "Convert the operations from the hivm dialect into the "
+                "Standard dialect";
+  let constructor = "mlir::createConvertHIVMToStandardPass()";
+  let dependentDialects =
+      ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
+  let options = [
+        Option<"isOpsAligned", "is-ops-aligned", "bool", /*default*/"false",
+               "Regard All Ops already dims aligned except last axis of "
+               "brc and reduce">
+  ];
+}
+
 //===----------------------------------------------------------------------===//
 // TensorToHFusion
 //===----------------------------------------------------------------------===//

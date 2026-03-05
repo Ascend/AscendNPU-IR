@@ -1,0 +1,1 @@
+compile_cpp_to_bc("host")

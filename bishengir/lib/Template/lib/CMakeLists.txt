@@ -1,0 +1,7 @@
+add_subdirectory(Debug)
+add_subdirectory(DMA)
+add_subdirectory(Fixpipe)
+add_subdirectory(Vector)
+add_subdirectory(Cube)
+add_subdirectory(Host)
+add_subdirectory(Synchronization)
