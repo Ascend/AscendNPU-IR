@@ -122,6 +122,11 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
     processReshapeOp(expandShapeOp);
   } else if (auto collapseShapeOp = dyn_cast<tensor::CollapseShapeOp>(op)) {
     processReshapeOp(collapseShapeOp);
+  } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
+             markOp && markOp->hasAttr("tiling_dim_mapping")) {
+    auto expandShapeOp = markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
+    auto tilingDimMapping = markOp->getAttrOfType<DictionaryAttr>("tiling_dim_mapping");
+    processTilingDimMapping(expandShapeOp, tilingDimMapping);
   } else if (isElemwiseNaryOpImpl(op) || isa_and_nonnull<CopyOpInterface>(op) ||
              utils::isAllocLikeOp(op)) {
     processParallelOp(op, current);
@@ -330,6 +335,22 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
        zip_equal(op.getRegionIterArgs(), op.getInitArgs())) {
     createDummyRefIfNotExist({regionArg, initArg});
     processValue(regionArg, initArg);
+  }
+}
+
+void DimensionAnalyzer::processTilingDimMapping(
+    tensor::ExpandShapeOp expandShapeOp, DictionaryAttr tilingDimMapping) {
+  auto src = expandShapeOp.getSrc();
+  auto res = expandShapeOp.getResult();
+  createDummyRefIfNotExist({src, res});
+
+  auto srcArgs = getArgumentRef(src);
+  auto resArgs = getArgumentRef(res);
+  for (NamedAttribute dimMappingAttr : tilingDimMapping) {
+      int srcDim;
+      int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
+      llvm::to_integer(dimMappingAttr.getName(), srcDim);
+      joinCollapser(srcArgs[srcDim], resArgs[resDim]);
   }
 }
 

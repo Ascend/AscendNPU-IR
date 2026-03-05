@@ -519,7 +519,9 @@ def InsertCVTightCoupledBuffer
     : Pass<"hivm-insert-cv-tight-coupled-buffer", "func::FuncOp"> {
   let summary = "insert cv tight coupled buffer for mix cv";
   let constructor = "mlir::hivm::createInsertCVTightCoupledBufferPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "bufferization::BufferizationDialect"];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bufferization::BufferizationDialect",
+                           "annotation::AnnotationDialect"];
 }
 
 def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",

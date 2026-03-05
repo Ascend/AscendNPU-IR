@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
@@ -241,6 +242,11 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     auto dstTy = RankedTensorType::get({M1, 16, N1, blk}, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
+    auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
+        NamedAttribute(rewriter.getStringAttr("0"), rewriter.getIndexAttr(0)),
+        NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(2))});
+    markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
     auto emptyTensorType = RankedTensorType::get({N1, M1, 16, blk}, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());

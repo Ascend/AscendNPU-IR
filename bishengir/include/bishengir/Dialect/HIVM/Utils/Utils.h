@@ -55,6 +55,9 @@ static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
 
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
+static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
+    "tiling_dim_mapping";
+
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr int VBITSORT_NUM_PER_REPEAT = 32;
 

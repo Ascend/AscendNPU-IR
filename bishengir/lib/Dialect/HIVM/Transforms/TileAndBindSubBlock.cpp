@@ -84,15 +84,9 @@ namespace {
 
 struct TileAndBindSubBlockPass
     : public impl::TileAndBindSubBlockBase<TileAndBindSubBlockPass> {
-public:
   using Base::Base;
   FailureOr<func::FuncOp> attemptBindSubBlock(func::FuncOp func);
   void runOnOperation() override;
-
-private:
-  DenseMap<int32_t, int64_t> tightlyCoupledBufferToTilingDim;
-
-  LogicalResult tileAndSliceStore(func::FuncOp func);
 };
 } // namespace
 
@@ -512,28 +506,12 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm) {
   pm.addPass(createCSEPass());
 }
 
-LogicalResult TileAndBindSubBlockPass::tileAndSliceStore(func::FuncOp func) {
+static LogicalResult tileAndSliceOp(func::FuncOp func) {
   hivm::detail::DimensionAnalyzer analyzer(func);
   if (failed(analyzer.initialize()))
     return failure();
 
   analyzer.computeTilingDim();
-
-  func->walk([&](annotation::MarkOp markOp) {
-    if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-            hivm::HIVMTightlyCoupledBufferAttr::name)) {
-      auto tilingDim = analyzer.getTilingDim(markOp.getSrc());
-      markOp->setAttr(
-          "hivm.tiling_dim",
-          IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
-      auto maybeId = attr.getId();
-      if (!maybeId) {
-        markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
-        return;
-      }
-      tightlyCoupledBufferToTilingDim[maybeId.value()] = tilingDim;
-    }
-  });
 
   // Check there is no dynamic shape store, if there is, we cannot tile it to 2
   // for now.
@@ -622,7 +600,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
-  if (failed(tileAndSliceStore(newFunc))) {
+  if (failed(tileAndSliceOp(newFunc))) {
     failAndRevert(newFunc);
     return failure();
   }
@@ -632,7 +610,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
     if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp->hasAttr("tiling_dim_mapping")) {
+        markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
       op->erase();
       return WalkResult::advance();
     }
@@ -880,6 +858,15 @@ void TileAndBindSubBlockPass::runOnOperation() {
     OpBuilder builder(originalFunc);
     // Attempt transformation on the clone
     FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
+    SmallVector<Operation *> toBeErased;
+    moduleOp->walk([&toBeErased](Operation *op) {
+      if (auto markOp = dyn_cast<annotation::MarkOp>(op);
+          markOp && markOp->hasAttr("tiling_dim_mapping")) {
+        toBeErased.push_back(op);
+      }
+    });
+    for (auto *op : toBeErased)
+      op->erase();
     if (failed(res)) {
       if (failed(limitUniqueSubBlockToStore(originalFunc))) {
         LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
@@ -918,23 +905,6 @@ void TileAndBindSubBlockPass::runOnOperation() {
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
   if (aivSuccessFlag && archIs950) {
     for (func::FuncOp originalFunc : aicFunctions) {
-      originalFunc->walk([&](annotation::MarkOp markOp) {
-        if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-                hivm::HIVMTightlyCoupledBufferAttr::name)) {
-          auto maybeId = attr.getId();
-          if (!maybeId) {
-            markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
-            return;
-          }
-          auto id = maybeId.value();
-          auto tilingDim = -1;
-          if (tightlyCoupledBufferToTilingDim.contains(id))
-            tilingDim = tightlyCoupledBufferToTilingDim.at(id);
-          markOp->setAttr(
-              "hivm.tiling_dim",
-              IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
-        }
-      });
       if (failed(tileAndSliceOpAIC(originalFunc)))
         signalPassFailure();
     }
