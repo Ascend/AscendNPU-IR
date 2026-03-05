@@ -458,3 +458,67 @@ func.func @vfreuse_store_subview_collapseshape(%arg2: memref<?xbf16, #hivm.addre
   }
   return
 }
+
+// -----
+
+// VF: read arg0, arg1; write arg2. Arg2 can inplace-reuse arg0 or arg1 from callee perspective.
+func.func @no_inplace_reuse_vf_args_same_alloc_vf(
+    %arg0: memref<64xbf16, #hivm.address_space<ub>>,
+    %arg1: memref<64x320xbf16, #hivm.address_space<ub>>,
+    %arg2: memref<64x320xbf16, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst_1 = arith.constant 0.000000e+00 : bf16
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %c320 = arith.constant 320 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg3 = %c0 to %c64 step %c1 {
+    %subview = memref.subview %arg0[%arg3] [1] [1] : memref<64xbf16, #hivm.address_space<ub>> to memref<1xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    scf.for %arg4 = %c0 to %c320 step %c64 {
+      %subview_2 = memref.subview %arg1[%arg3, %arg4] [1, 64] [1, 1] : memref<64x320xbf16, #hivm.address_space<ub>> to memref<1x64xbf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
+      %subview_3 = memref.subview %arg2[%arg3, %arg4] [1, 64] [1, 1] : memref<64x320xbf16, #hivm.address_space<ub>> to memref<1x64xbf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
+      %0 = vector.transfer_read %subview_2[%c0, %c0], %cst_1 {in_bounds = [true, true]} : memref<1x64xbf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x64xbf16>
+      %1 = vector.transfer_read %subview[%c0], %cst_1 {in_bounds = [true, true], permutation_map = affine_map<(d0) -> (d0, 0)>} : memref<1xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<1x64xbf16>
+      %2 = arith.extf %1 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>} : vector<1x64xbf16> to vector<1x64xf32>
+      %3 = math.exp %2 : vector<1x64xf32>
+      %4 = arith.extf %0 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>} : vector<1x64xbf16> to vector<1x64xf32>
+      %5 = arith.mulf %4, %3 : vector<1x64xf32>
+      %6 = arith.truncf %5 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>} : vector<1x64xf32> to vector<1x64xbf16>
+      vector.transfer_write %6, %subview_3[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xbf16>, memref<1x64xbf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
+    }
+  }
+  return
+}
+
+// Test: no inplace reuse when arg1 and arg2 are the same alloc.
+// vf.call(%a, %b, %b) - reusing arg2 with arg0 would make %a,%b share memory while %b is
+// also used as arg1. Skip to avoid unsound VF optimizations.
+// CHECK-LABEL: func.func @plan_memory_no_inplace_reuse_vf_args_same_alloc
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C1:.*]] = arith.constant 128 : i64
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C0]]) : memref<64xbf16, #hivm.address_space<ub>>
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C1]]) : memref<64x320xbf16, #hivm.address_space<ub>>
+func.func @plan_memory_no_inplace_reuse_vf_args_same_alloc() {
+  %alloc_3 = memref.alloc() : memref<64xbf16, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<64x320xbf16, #hivm.address_space<ub>>
+  call @no_inplace_reuse_vf_args_same_alloc_vf(%alloc_3, %alloc, %alloc) {hivm.vector_function} :
+    (memref<64xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>) -> ()
+  return
+}
+
+// Test: no inplace reuse when arg1 and arg2 trace to same alloc via reshape.
+// %c = collapse_shape(expand_shape %alloc_b) - %b and %c share alloc.
+// vf.call(%a, %b, %c): reusing arg2 with arg0 would make %a,%b,%c share memory. Skip.
+// CHECK-LABEL: func.func @plan_memory_no_inplace_reuse_vf_args_reshape_share_alloc
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C1:.*]] = arith.constant 128 : i64
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C0]]) : memref<64xbf16, #hivm.address_space<ub>>
+// CHECK-DAG: hivm.hir.pointer_cast(%[[C1]]) : memref<64x320xbf16, #hivm.address_space<ub>>
+func.func @plan_memory_no_inplace_reuse_vf_args_reshape_share_alloc() {
+  %alloc_3 = memref.alloc() : memref<64xbf16, #hivm.address_space<ub>>
+  %alloc_b = memref.alloc() : memref<64x320xbf16, #hivm.address_space<ub>>
+  %expanded = memref.expand_shape %alloc_b [[0], [1, 2]] output_shape [64, 320, 1] : memref<64x320xbf16, #hivm.address_space<ub>> into memref<64x320x1xbf16, #hivm.address_space<ub>>
+  %collapsed = memref.collapse_shape %expanded [[0], [1, 2]] : memref<64x320x1xbf16, #hivm.address_space<ub>> into memref<64x320xbf16, #hivm.address_space<ub>>
+  call @no_inplace_reuse_vf_args_same_alloc_vf(%alloc_3, %alloc_b, %collapsed) {hivm.vector_function} :
+    (memref<64xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>) -> ()
+  return
+}

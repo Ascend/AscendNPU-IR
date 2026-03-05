@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
 
 using namespace mlir;
@@ -143,8 +144,7 @@ bool isFuncArg(Value value) {
   return isa<func::FuncOp>(arg.getParentBlock()->getParentOp());
 }
 
-template <typename T>
-bool hasSameType(Value lhs, Value rhs) {
+template <typename T> bool hasSameType(Value lhs, Value rhs) {
   if constexpr (std::is_same_v<T, BlockArgument>) {
     return isa<T>(lhs) && isa<T>(rhs);
   } else {
@@ -154,8 +154,7 @@ bool hasSameType(Value lhs, Value rhs) {
   }
 }
 
-template <typename T>
-bool isEqualSlice(T lhs, T rhs) {
+template <typename T> bool isEqualSlice(T lhs, T rhs) {
   if (lhs == rhs) {
     return true;
   }
@@ -343,6 +342,20 @@ bool VFCallInplaceReuseInfo::isInplaceReusable(Operation *op, Value genBuffer,
   }
   VFArgListT replaceList = replaceInfo[genBuffer];
   return replaceList.contains(killBuffer);
+}
+
+bool VFCallInplaceReuseInfo::hasAliasArgRisk(Operation *op) {
+  if (!hivm::isVFCall(op))
+    return false;
+  DenseSet<Operation *> seenAllocs;
+  for (Value operand : op->getOperands()) {
+    auto alloc = utils::tracebackMemRefToAlloc(operand);
+    if (!alloc.has_value())
+      continue;
+    if (!seenAllocs.insert(alloc->getOperation()).second)
+      return true; // duplicate alloc
+  }
+  return false;
 }
 
 Value traceAllocBuffer(Value value) {

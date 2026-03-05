@@ -77,6 +77,10 @@ public:
   /// Dumps the vf call inplace-reuse information to the given stream.
   void print(raw_ostream &os) const;
 
+  /// Returns true if any two VF operands trace to the same alloc.
+  /// If so, skip inplace reuse for this call to avoid unsound optimizations.
+  static bool hasAliasArgRisk(Operation *op);
+
 private:
   // Map call site to inplace reuse buffers (i.e. alloc) for caller arguments.
   //

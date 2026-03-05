@@ -1116,8 +1116,8 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
             killBufferIter->second.constBits >= genBufferIter->second.constBits;
         Operation *op = it->first->operation;
         bool isReuseVFCall = false;
-        // Simply not inplace-reuse if operands not reusable from vf callee side
-        if (vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
+        if (!VFCallInplaceReuseInfo::hasAliasArgRisk(op) &&
+            vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
           if (record.find({genBuffer, killBuffer}) == record.end()) {
             record.try_emplace({genBuffer, killBuffer},
                                IsReuseVFCall(genBuffer, killBuffer));
