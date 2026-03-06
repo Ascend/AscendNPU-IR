@@ -1596,7 +1596,6 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
     and returns the `dst` tensor as `result` for functional compatibility.
     The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
-    (currently only support 1D)
 
     Arguments:
       * `src`: the tensor/memref from which to gather elements

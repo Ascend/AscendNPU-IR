@@ -262,7 +262,6 @@ def GatherMaskOp
     and returns `init` as `result` for functional compatibility.
     The `init`/`result` tensor has the same shape and element type as the `src` tensor.
     Additionally, returns `dst_size` which represents the actual length of the gathered data.
-    (currently only support 1D)
 
     Usage:
       result, dst_size = gather_mask(src, mask, init)  
