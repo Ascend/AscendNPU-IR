@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/Utility.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -203,6 +204,12 @@ bool hasSplitModules(ModuleOp topMod) {
 
 llvm::LogicalResult
 inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
+  // check scope
+  if (module.walk([](scope::ScopeOp) { return mlir::WalkResult::interrupt(); })
+          .wasInterrupted()) {
+    return success();
+  }
+
   auto funcs = llvm::make_filter_range(
       module.getOps<func::FuncOp>(),
       [](const func::FuncOp &func) { return func->hasAttr("mix_mode"); });
