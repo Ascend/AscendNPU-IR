@@ -95,3 +95,49 @@ func.func @_attn_fwd_scope_3_outlined_manual_vf_0(%arg0: tensor<64x64xf32>, %arg
   }
   return %0#0, %0#1, %0#2 : tensor<64x64xf32>, tensor<64xf32>, tensor<4x64x16xf16>
 }
+
+// -----
+
+// CHECK-LABLE: func.func @_attn_fwd_mix_aiv_outlined_vf_10
+#map6 = affine_map<(d0) -> (-d0 + 80, 64)>
+  func.func @_attn_fwd_mix_aiv_outlined_vf_10(%arg0: tensor<80xf32>, %arg1: tensor<80xi1>, %arg2: f32, %arg3: tensor<80xi32>, %arg4: tensor<80xi1>) -> tensor<80xi1> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<0> : vector<64xi32>
+    %cst_0 = arith.constant dense<-1> : vector<64xi32>
+    %c0_i32 = arith.constant 0 : i32
+    %cst_1 = arith.constant dense<6.400000e+02> : vector<64xf32>
+    %false = arith.constant false
+    %cst_2 = arith.constant 0.000000e+00 : f32
+    %c64 = arith.constant 64 : index
+    %c80 = arith.constant 80 : index
+    %c0 = arith.constant 0 : index
+    %0 = scf.for %arg5 = %c0 to %c80 step %c64 iter_args(%arg6 = %arg4) -> (tensor<80xi1>) {
+      %1 = affine.min #map6(%arg5)
+      %extracted_slice = tensor.extract_slice %arg0[%arg5] [%1] [1] : tensor<80xf32> to tensor<?xf32>
+      %extracted_slice_3 = tensor.extract_slice %arg1[%arg5] [%1] [1] : tensor<80xi1> to tensor<?xi1>
+      %2 = vector.create_mask %1 : vector<64xi1>
+      %3 = vector.transfer_read %extracted_slice[%c0], %cst_2, %2 {in_bounds = [true]} : tensor<?xf32>, vector<64xf32>
+      %4 = vector.broadcast %arg2 : f32 to vector<64xf32>
+      %5 = arith.addf %3, %4 : vector<64xf32>
+      %6 = arith.cmpf olt, %5, %cst_1 : vector<64xf32>
+      // CHECK: vector.transfer_write %6, %extracted_slice_3[%c0], %2
+      %7 = vector.transfer_write %6, %extracted_slice_3[%c0], %2 {in_bounds = [true]} : vector<64xi1>, tensor<?xi1>
+      %extracted_slice_4 = tensor.extract_slice %arg3[%arg5] [%1] [1] : tensor<80xi32> to tensor<?xi32>
+      %dim = tensor.dim %7, %c0 : tensor<?xi1>
+      %8 = vector.create_mask %dim : vector<64xi1>
+      %9 = vector.transfer_read %7[%c0], %false, %8 {in_bounds = [true]} : tensor<?xi1>, vector<64xi1>
+      %10 = vector.transfer_read %extracted_slice_4[%c0], %c0_i32, %8 {in_bounds = [true]} : tensor<?xi32>, vector<64xi32>
+      %11 = arith.select %9, %10, %cst_0 : vector<64xi1>, vector<64xi32>
+      %12 = arith.cmpi sge, %11, %cst : vector<64xi32>
+      %13 = vector.transfer_write %12, %extracted_slice_3[%c0], %8 {in_bounds = [true]} : vector<64xi1>, tensor<?xi1>
+      %extracted_slice_5 = tensor.extract_slice %arg6[%arg5] [%1] [1] : tensor<80xi1> to tensor<?xi1>
+      %dim_6 = tensor.dim %13, %c0 : tensor<?xi1>
+      %14 = vector.create_mask %dim_6 : vector<64xi1>
+      %15 = vector.transfer_read %13[%c0], %false, %14 {in_bounds = [true]} : tensor<?xi1>, vector<64xi1>
+      %16 = vector.transfer_read %7[%c0], %false, %14 {in_bounds = [true]} : tensor<?xi1>, vector<64xi1>
+      %17 = arith.andi %15, %16 : vector<64xi1>
+      %18 = vector.transfer_write %17, %extracted_slice_5[%c0], %14 {in_bounds = [true]} : vector<64xi1>, tensor<?xi1>
+      %inserted_slice = tensor.insert_slice %18 into %arg6[%arg5] [%1] [1] : tensor<?xi1> into tensor<80xi1>
+      scf.yield %inserted_slice : tensor<80xi1>
+    }
+    return %0 : tensor<80xi1>
+  }

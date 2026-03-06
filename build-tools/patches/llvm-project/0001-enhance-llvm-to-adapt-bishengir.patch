@@ -22924,7 +22924,7 @@ index df3a59ed80ad..c20c7e878a1d 100644
      Value vec = defWrite.getVector();
      // TODO: loop through the chain of transfer_write if we can prove that they
      // don't overlap with the transfer_read. This requires improving
-@@ -4325,9 +4497,334 @@ struct TransferReadAfterWriteToBroadcast
+@@ -4325,9 +4497,339 @@ struct TransferReadAfterWriteToBroadcast
  };
  } // namespace
  
@@ -22969,10 +22969,15 @@ index df3a59ed80ad..c20c7e878a1d 100644
 +      return failure();
 +    // check if the write mask is 1
 +    if (auto writeMask = defWrite.getMask()) {
-+      auto maskDimSizes = writeMask.getDefiningOp<vector::ConstantMaskOp>().getMaskDimSizes();
-+      if (maskDimSizes.size() != 1 ||
-+          mlir::dyn_cast<IntegerAttr>(maskDimSizes[0]).getValue() != 1)
++      if (auto constantMask =
++              writeMask.getDefiningOp<vector::ConstantMaskOp>()) {
++        auto maskDimSizes = constantMask.getMaskDimSizes();
++        if (maskDimSizes.size() != 1 ||
++            mlir::dyn_cast<IntegerAttr>(maskDimSizes[0]).getValue() != 1)
++          return failure();
++      } else {
 +        return failure();
++      }
 +    } else {
 +      return failure();
 +    }
