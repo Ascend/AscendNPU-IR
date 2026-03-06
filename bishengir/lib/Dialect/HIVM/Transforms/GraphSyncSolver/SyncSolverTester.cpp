@@ -649,7 +649,8 @@ llvm::LogicalResult SyncTester::test() {
   auto funcIr = getGeneratedRandomTest();
   LLVM_DEBUG(llvm::dbgs() << "before:\n" << funcIr->str(0, true) << '\n';);
 
-  SyncSolverOptions options(syncMode);
+  SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
+                            /*isRegBasedArch=*/false);
   auto irTranslator =
       std::make_unique<IRTranslator>(std::move(funcIr), options);
 

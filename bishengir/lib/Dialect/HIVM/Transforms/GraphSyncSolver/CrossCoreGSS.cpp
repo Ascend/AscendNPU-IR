@@ -112,9 +112,8 @@ void CrossCoreGSSPass::runOnOperation() {
     return;
   }
 
-  SyncSolverOptions options(SyncMode::CROSS_CORE_SYNC);
-  options.isMemBasedArch = isMemBasedArch;
-  options.isRegBasedArch = isRegBasedArch;
+  SyncSolverOptions options(SyncMode::CROSS_CORE_SYNC, isMemBasedArch,
+                            isRegBasedArch);
   if (this->alwaysUsePipeSAsWaitingPipe) {
     options.alwaysUsePipeSAsWaitingPipe = true;
   }

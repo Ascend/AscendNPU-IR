@@ -28,6 +28,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace mlir::hivm::syncsolver {
@@ -146,6 +147,8 @@ private:
   bool isUnlikelyCondition(Condition *condOp);
 
   bool isParallelLoop(Loop *loopOp);
+  
+  std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
 };
 
 } // namespace mlir::hivm::syncsolver

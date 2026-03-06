@@ -21,11 +21,9 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
-
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include <deque>
@@ -106,10 +104,10 @@ struct SyncSolverOptions {
   const SyncMode syncMode;
 
   // Architecture is memory based (A2/A3).
-  bool isMemBasedArch{false};
+  const bool isMemBasedArch;
 
   // Architecture is register based (A5).
-  bool isRegBasedArch{false};
+  const bool isRegBasedArch;
 
   // Decompose MMAD L1 ops into simpler ops for better sync handling.
   bool decomposeMmadl1Op{false};
@@ -132,7 +130,9 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
-  SyncSolverOptions(SyncMode syncMode) : syncMode(syncMode) {
+  SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
+      : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
+        isRegBasedArch(isRegBasedArch) {
     decomposeMmadl1Op = isIntraCoreMode();
     alwaysUsePipeSAsWaitingPipe =
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
@@ -280,11 +280,11 @@ struct ConflictPair {
   bool dontReuse{false};
   bool dontCheckForConflict{false};
   bool couldNotRun{false};
-  LoopLikeOpInterface multibufferLoopPar{nullptr};
   bool setOnLastIterOnly{false};
   bool waitOnFirstIterOnly{false};
   bool replacedWithUnitFlag{false};
   Loop *backwardSyncLoop{nullptr};
+  EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
@@ -324,11 +324,11 @@ struct ConflictPair {
     clonedConflictPair->isUseless = isUseless;
     clonedConflictPair->dontReuse = dontReuse;
     clonedConflictPair->couldNotRun = couldNotRun;
-    clonedConflictPair->multibufferLoopPar = multibufferLoopPar;
     clonedConflictPair->setOnLastIterOnly = setOnLastIterOnly;
     clonedConflictPair->waitOnFirstIterOnly = waitOnFirstIterOnly;
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
     clonedConflictPair->backwardSyncLoop = backwardSyncLoop;
+    clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
     return clonedConflictPair;
   }

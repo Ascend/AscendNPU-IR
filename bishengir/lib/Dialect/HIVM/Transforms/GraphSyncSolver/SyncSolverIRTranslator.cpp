@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/SCF/Utils/Utils.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -462,6 +463,25 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  auto forOp = dyn_cast<scf::ForOp>(loopOp->op);
+  if (!forOp) {
+    return {};
+  }
+  if (auto intAttr =
+          forOp->getAttrOfType<IntegerAttr>(kMultibufferUnrollAttrName)) {
+    if (!scf::utils::isNormalized(forOp)) {
+      // TODO: call normalize loop pass before plan memory, currently
+      // CVPipelining ensure the loop is normalized
+      forOp->emitOpError("multibuffer-enabled loop expected to be normalized");
+      return {};
+    }
+    return intAttr.getInt();
+  }
+  return {};
+}
+
 void IRTranslator::updateBlockArgAliases(Block *block,
                                          OperandRange destOperands) {
   assert(block->getArguments().size() == destOperands.size());
@@ -518,6 +538,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (isa<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->multibufferUnrollNum =
+            getLoopMultibufferUnrollNum(loopOp.get());
         for (auto &region : op.getRegions()) {
           auto regionOp = funcIrBuilder(region, loopOp.get(), skipEmptyScopes);
           loopOp->body.push_back(std::move(regionOp));

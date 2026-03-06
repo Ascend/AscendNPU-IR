@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include <memory>
 #include <utility>
 
@@ -33,6 +34,15 @@ class Condition;
 class RWOperation;
 class MmadL0Operation;
 using Body = std::vector<std::unique_ptr<OperationBase>>;
+
+struct EventIdInfo {
+  int64_t eventIdNum{0};
+  LoopLikeOpInterface multibufferLoop{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop1{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop2{nullptr};
+  EventIdInfo() {};
+  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum) {};
+};
 
 enum struct OpType {
   OPERATION,
@@ -97,6 +107,14 @@ public:
   // LCA.
   static std::pair<OperationBase *, OperationBase *>
   getLCAPair(OperationBase *op1, OperationBase *op2);
+
+  template <typename TyOp> TyOp *getParentOfType() {
+    OperationBase *cur = this->parentOp;
+    while (cur != nullptr && !isa<TyOp>(cur)) {
+      cur = cur->parentOp;
+    }
+    return llvm::dyn_cast_if_present<TyOp>(cur);
+  }
 
   // Find nearest parent operation that is a loop-like construct, or nullptr.
   static OperationBase *getParentloop(OperationBase *op);
@@ -175,6 +193,7 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
 
@@ -357,7 +376,7 @@ public:
   hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeSrc{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeDst{hivm::PIPE::PIPE_UNASSIGNED};
-  LoopLikeOpInterface multibufferLoopPar{nullptr};
+  EventIdInfo eventIdInfo;
   bool allAtOnce{false};
   bool checkFirstIter{false};
   bool checkLastIter{false};

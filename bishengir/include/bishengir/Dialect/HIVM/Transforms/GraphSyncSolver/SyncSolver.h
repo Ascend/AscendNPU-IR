@@ -216,17 +216,22 @@ protected:
   checkDoubleMultiBufferEventId(RWOperation *rwOp1, RWOperation *rwOp2);
 
   // Determine how many event ids are needed for a particular occurrence pair.
-  std::pair<int64_t, LoopLikeOpInterface>
-  getEventIdNum(Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-                CorePipeInfo corePipeDst);
+  EventIdInfo getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
+                             RWOperation *rwOp1, RWOperation *rwOp2,
+                             CorePipeInfo corePipeSrc,
+                             CorePipeInfo corePipeDst);
 
-  std::optional<int64_t> checkCVMultiBufferEventId(RWOperation *rwOp1,
-                                                   RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkCVMultiBufferEventIdInfo(RWOperation *rwOp1,
+                                                           RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,
+                                                         Occurrence *occ2,
+                                                         RWOperation *rwOp1,
+                                                         RWOperation *rwOp2);
 
   // Graph-based conflict checking and memory conflict detection helpers.
   bool checkGraphConflict(
       Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-      CorePipeInfo corePipeDst, int64_t eventIdNum,
+      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
       std::optional<int> startIndex = {}, std::optional<int> endIndex = {},
       const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
       const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
@@ -261,16 +266,15 @@ protected:
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
   bool checkSyncOpsConflicts(ConflictPair *conflictPair1,
-                             ConflictPair *conflictPair2, int64_t eventIdNum);
+                             ConflictPair *conflictPair2);
 
   // Check whether two ConflictPair ranges/event mapping intersect (same
   // pipes/events).
-  bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2,
-                      int64_t eventIdNum = 0);
+  bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2);
 
   // Event-id allocation and reuse helpers.
   std::vector<ConflictPair *>
-  getIntersectingConflictPairs(ConflictPair *conflictPair, int64_t eventIdNum);
+  getIntersectingConflictPairs(ConflictPair *conflictPair);
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);
@@ -334,8 +338,7 @@ protected:
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                       RWOperation *rwOp2, CorePipeInfo corePipeSrc,
                       CorePipeInfo corePipeDst, bool isUseless,
-                      int64_t eventIdNum,
-                      LoopLikeOpInterface multibufferLoopPar);
+                      EventIdInfo eventIdInfo);
 
   void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
@@ -343,14 +346,12 @@ protected:
 
   void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             bool isUseless, int64_t eventIdNum,
-                             LoopLikeOpInterface multibufferLoopPar);
+                             bool isUseless, EventIdInfo eventIdInfo);
 
   void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                               CorePipeInfo corePipeSrc,
                               CorePipeInfo corePipeDst,
-                              UnitFlagInfo unitFlagInfo, bool isUseless,
-                              LoopLikeOpInterface multibufferLoopPar);
+                              UnitFlagInfo unitFlagInfo, bool isUseless);
 
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 

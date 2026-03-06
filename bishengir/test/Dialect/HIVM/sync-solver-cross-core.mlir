@@ -200,9 +200,9 @@ module {
         %46 = bufferization.to_tensor %alloc_11 restrict writable : memref<16x64xf16>
         %47 = hivm.hir.mmadL1 {b_transpose} ins(%17, %46, %true, %c64, %c64, %c16 : tensor<64x64xf16>, tensor<16x64xf16>, i1, index, index, index) outs(%9 : tensor<64x16xf32>) -> tensor<64x16xf32>
         %extracted_slice = tensor.extract_slice %arg24[%arg21, 0, 0] [1, 64, 16] [1, 1, 1] : tensor<2x64x16xf32> to tensor<64x16xf32>
-        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %45
+        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT0:%[0-9]]]
         %48 = hivm.hir.fixpipe {enable_nz2nd} ins(%47 : tensor<64x16xf32>) outs(%extracted_slice : tensor<64x16xf32>) -> tensor<64x16xf32>
-        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 6
+        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = [[EVENT1:[0-9]+]]
         %49 = arith.addi %arg23, %c1024 : index
         %50 = arith.addi %49, %arg20 : index
         %reinterpret_cast_12 = memref.reinterpret_cast %arg3 to offset: [%50], sizes: [16, 64], strides: [64, 1] : memref<?xf16> to memref<16x64xf16, strided<[64, 1], offset: ?>>
@@ -226,9 +226,9 @@ module {
         %46 = arith.select %44, %c3_i64, %c4_i64 : i64
         %47 = tensor.empty() : tensor<64x16xf16>
         %extracted_slice = tensor.extract_slice %34#2[%arg21, 0, 0] [1, 64, 16] [1, 1, 1] : tensor<2x64x16xf32> to tensor<64x16xf32>
-        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 6
+        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = [[EVENT1]]
         %48 = hivm.hir.load ins(%extracted_slice : tensor<64x16xf32>) outs(%9 : tensor<64x16xf32>) -> tensor<64x16xf32>
-        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = %45
+        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT0]]
         %expanded_11 = tensor.expand_shape %6 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
         %49 = hivm.hir.vreduce <max> ins(%48 : tensor<64x16xf32>) outs(%expanded_11 : tensor<64x1xf32>) reduce_dims = [1] -> tensor<64x1xf32>
         %collapsed = tensor.collapse_shape %49 [[0, 1]] : tensor<64x1xf32> into tensor<64xf32>
@@ -253,9 +253,9 @@ module {
         %64 = hivm.hir.vmul ins(%arg13, %63 : tensor<64x64xf32>, tensor<64x64xf32>) outs(%extracted_slice_15 : tensor<64x64xf32>) -> tensor<64x64xf32>
         %65 = hivm.hir.vcast ins(%56 : tensor<64x16xf32>) outs(%47 : tensor<64x16xf16>) -> tensor<64x16xf16>
         %extracted_slice_16 = tensor.extract_slice %arg25[%arg21, 0, 0] [1, 64, 16] [1, 1, 1] : tensor<2x64x16xf16> to tensor<64x16xf16>
-        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = %46
+        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT2:%[0-9]]]
         %66 = hivm.hir.store ins(%65 : tensor<64x16xf16>) outs(%extracted_slice_16 : tensor<64x16xf16>) -> tensor<64x16xf16>
-        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 7
+        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = [[EVENT3:[0-9]+]]
         %67 = hivm.hir.vmul ins(%51, %extracted : tensor<64xf32>, f32) outs(%6 : tensor<64xf32>) -> tensor<64xf32>
         %68 = hivm.hir.vbrc ins(%cst_3 : f32) outs(%6 : tensor<64xf32>) -> tensor<64xf32>
         %69 = hivm.hir.vdiv ins(%67, %68 : tensor<64xf32>, tensor<64xf32>) outs(%6 : tensor<64xf32>) -> tensor<64xf32>
@@ -281,14 +281,14 @@ module {
         %47 = bufferization.to_tensor %alloc_11 restrict writable : memref<16x64xf16>
         %48 = tensor.empty() : tensor<64x16xf16>
         %extracted_slice = tensor.extract_slice %36#3[%arg21, 0, 0] [1, 64, 16] [1, 1, 1] : tensor<2x64x16xf16> to tensor<64x16xf16>
-        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 7
+        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = [[EVENT3]]
         %49 = hivm.hir.load ins(%extracted_slice : tensor<64x16xf16>) outs(%48 : tensor<64x16xf16>) -> tensor<64x16xf16>
-        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %45
+        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT4:%[0-9]]]
         %50 = hivm.hir.mmadL1 ins(%49, %47, %true, %c64, %c16, %c64 : tensor<64x16xf16>, tensor<16x64xf16>, i1, index, index, index) outs(%10 : tensor<64x64xf32>) -> tensor<64x64xf32>
         %extracted_slice_12 = tensor.extract_slice %arg24[%arg21, 0, 0] [1, 64, 64] [1, 1, 1] : tensor<2x64x64xf32> to tensor<64x64xf32>
-        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = %46
+        // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT2]]
         %51 = hivm.hir.fixpipe {enable_nz2nd} ins(%50 : tensor<64x64xf32>) outs(%extracted_slice_12 : tensor<64x64xf32>) -> tensor<64x64xf32>
-        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 6
+        // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = [[EVENT5:[0-9]+]]
         %52 = arith.addi %arg23, %c1024 : index
         %53 = arith.addi %52, %arg18 : index
         %reinterpret_cast_13 = memref.reinterpret_cast %arg4 to offset: [%53], sizes: [16, 64], strides: [64, 1] : memref<?xf16> to memref<16x64xf16, strided<[64, 1], offset: ?>>
@@ -307,9 +307,9 @@ module {
         %c2_i64 = arith.constant 2 : i64
         %45 = arith.select %44, %c1_i64, %c2_i64 : i64
         %extracted_slice = tensor.extract_slice %37#2[%arg21, 0, 0] [1, 64, 64] [1, 1, 1] : tensor<2x64x64xf32> to tensor<64x64xf32>
-        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 6
+        // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = [[EVENT5]]
         %46 = hivm.hir.load ins(%extracted_slice : tensor<64x64xf32>) outs(%10 : tensor<64x64xf32>) -> tensor<64x64xf32>
-        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = %45
+        // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = [[EVENT4]]
         %extracted_slice_11 = tensor.extract_slice %36#2[%arg21, 0, 0] [1, 64, 64] [1, 1, 1] : tensor<2x64x64xf32> to tensor<64x64xf32>
         %47 = hivm.hir.vadd ins(%46, %extracted_slice_11 : tensor<64x64xf32>, tensor<64x64xf32>) outs(%10 : tensor<64x64xf32>) -> tensor<64x64xf32>
         scf.yield %47 : tensor<64x64xf32>
