@@ -57,8 +57,11 @@ constexpr const int SPEC_LEVEL_0 = 0;
 /// continuous instructions caused by plan, offset = 1.
 constexpr const int SPEC_LEVEL_1 = 1;
 
-/// pipe conflict opt.
+/// do not reuse the buffer in same loop when pipe conflicts between vector and dma.
 constexpr const int SPEC_LEVEL_2 = 2;
+
+/// do not reuse buffer when pipe conflicts.
+constexpr const int SPEC_LEVEL_3 = 3;
 
 /// plan information of alloc buffer.
 struct BufferInfo {
@@ -199,9 +202,9 @@ struct PlanRecord {
 using PlanRecHis = SmallVector<PlanRecord>;
 
 struct SpecInfo {
-  int maxLevel = SPEC_LEVEL_2;
+  int maxLevel = SPEC_LEVEL_3;
   int minLevel = SPEC_LEVEL_0;
-  int specLevel = SPEC_LEVEL_2;
+  int specLevel = SPEC_LEVEL_3;
   int childIdx = -1;
   int specStartIdx = 0;
   int rollbackIdx = -1;
@@ -556,7 +559,20 @@ private:
   LogicalResult SpecAlloc(MemBoundList &outline, PlanRecHis &his,
                           StorageEntry *e, const SpecInfo &si, int localLevel);
 
-  /// spec_level == SPEC_LEVEL_2, mte2/3 do not reuse with vector.
+  /// Check whether current buffer conflicts with the history buffers.
+  bool VerifyConflictStageCommon(
+      PlanRecHis &his, const StorageEntry *e, MemBoundListConstIter &start,
+      const MemBoundList &outline,
+      std::function<bool(const StorageEntry *, const StorageEntry *)>
+          conflictChecker);
+
+  /// spec_level == SPEC_LEVEL_3, do not reuse buffer when pipe conflicts.
+  bool VerifyConflictStage3(PlanRecHis &his, const StorageEntry *e,
+                            int specLevel, MemBoundListConstIter &start,
+                            const MemBoundList &outline);
+
+  /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
+  /// conflicts between vector and dma.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
                             int specLevel, MemBoundListConstIter &start,
                             const MemBoundList &outline);
@@ -571,7 +587,10 @@ private:
   bool PipeConflict(const StorageEntry *e1, const StorageEntry *e2,
                     DenseMap<StorageEntryPair, bool> &conflictMap);
 
-  /// spec_level == SPEC_LEVEL_2, MTE2/MTE3 is pipe conflict with all existing
+  /// check if e1 and e2 has same parent loop.
+  bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
+
+  /// spec_level == SPEC_LEVEL_3, MTE2/MTE3 is pipe conflict with all existing
   /// allocation. check if current entry has OptDmaPipe-conflict with buffers
   /// already allocate at current position. if conflict exists, continue loop
   /// until first not-conflict iter is found. Then update start as the first
