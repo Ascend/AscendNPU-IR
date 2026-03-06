@@ -98,7 +98,11 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
         return getMemRefAlloc(initSource);
       })
       .Case<bufferization::ToTensorOp>([&](bufferization::ToTensorOp op) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
         return getMemRefAlloc(op.getMemref());
+#else
+        return getMemRefAlloc(op.getBuffer());
+#endif
       })
       .Default([&](Operation *op) {
         LDBG("Unsupported op for finding the root alloc.");
@@ -661,7 +665,12 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps) {
     if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp,
             memref::CollapseShapeOp, memref::ExpandShapeOp, memref::SubViewOp,
             memref::ViewOp, memref::ReinterpretCastOp,
-            bufferization::ToMemrefOp, bufferization::ToTensorOp>(userOp)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            bufferization::ToMemrefOp,
+#else
+            bufferization::ToBufferOp,
+#endif
+            bufferization::ToTensorOp>(userOp)) {
       getOpUsers(userOp, userOps);
     } else {
       userOps.push_back(userOp);
@@ -795,8 +804,15 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
       rewriter, loc, SmallVector<int64_t>(targetShapes), elementType);
 
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
+#else
+  // return tensor type
+  auto tensorType = RankedTensorType::get(targetShapes, elementType);
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, localWorkSpace, true, true);
+#endif
   return toTensor;
 }
 
@@ -813,43 +829,66 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
 }
 
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
-
   std::vector<std::pair<Value, Value>> result;
-  if (auto subViewOp = dyn_cast<memref::SubViewOp>(op)) {
-    result.emplace_back(subViewOp.getResult(), subViewOp.getViewSource());
-  } else if (auto extSliceOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-    result.emplace_back(extSliceOp.getResult(), extSliceOp.getSource());
-  } else if (auto collapseShapeOp = dyn_cast<memref::CollapseShapeOp>(op)) {
-    result.emplace_back(collapseShapeOp.getResult(),
-                        collapseShapeOp.getViewSource());
-  } else if (auto expandShapeOp = dyn_cast<memref::ExpandShapeOp>(op)) {
-    result.emplace_back(expandShapeOp.getResult(),
-                        expandShapeOp.getViewSource());
-  } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
-    result.emplace_back(expandShapeOp.getResult(), expandShapeOp.getSrc());
-  } else if (auto viewOp = dyn_cast<memref::ViewOp>(op)) {
-    result.emplace_back(viewOp.getResult(), viewOp.getViewSource());
-  } else if (auto reinterpretCastOp = dyn_cast<memref::ReinterpretCastOp>(op)) {
-    result.emplace_back(reinterpretCastOp.getResult(),
-                        reinterpretCastOp.getViewSource());
-  } else if (auto reshapeOp = dyn_cast<memref::ReshapeOp>(op)) {
-    result.emplace_back(reshapeOp.getResult(), reshapeOp.getViewSource());
-  } else if (auto castOp = dyn_cast<memref::CastOp>(op)) {
-    result.emplace_back(castOp.getResult(), castOp.getViewSource());
-  } else if (auto extractStridedMetadataOp =
-                 dyn_cast<memref::ExtractStridedMetadataOp>(op)) {
-    result.emplace_back(extractStridedMetadataOp.getBaseBuffer(),
-                        extractStridedMetadataOp.getViewSource());
-  } else if (auto toMemrefOp = dyn_cast<bufferization::ToMemrefOp>(op)) {
-    result.emplace_back(toMemrefOp.getResult(), toMemrefOp.getOperand());
-  } else if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
-    result.emplace_back(toTensorOp.getResult(), toTensorOp.getOperand());
-  } else if (auto bitCastOp = dyn_cast<hivm::BitcastOp>(op)) {
-    result.emplace_back(bitCastOp.getResult(), bitCastOp.getSrc());
-  } else if (auto selectOp = dyn_cast<arith::SelectOp>(op)) {
-    result.emplace_back(selectOp.getResult(), selectOp.getTrueValue());
-    result.emplace_back(selectOp.getResult(), selectOp.getFalseValue());
-  }
+  TypeSwitch<Operation *, void>(op)
+      .Case([&](arith::SelectOp op) {
+        result.emplace_back(op.getResult(), op.getTrueValue());
+        result.emplace_back(op.getResult(), op.getFalseValue());
+      })
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+      .Case([&](bufferization::ToMemrefOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+#else
+      .Case([&](bufferization::ToBufferOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+#endif
+      .Case([&](bufferization::ToTensorOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+      .Case([&](hivm::BitcastOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](memref::CastOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::CollapseShapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ExpandShapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ExtractStridedMetadataOp op) {
+        result.emplace_back(op.getBaseBuffer(), op.getViewSource());
+      })
+      .Case([&](memref::MemorySpaceCastOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+      .Case([&](memref::ReinterpretCastOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ReshapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::SubViewOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::TransposeOp op) {
+        result.emplace_back(op.getResult(), op.getIn());
+      })
+      .Case([&](memref::ViewOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](tensor::CollapseShapeOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](tensor::ExpandShapeOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](tensor::ExtractSliceOp op) {
+        result.emplace_back(op.getResult(), op.getSource());
+      });
   return result;
 }
 

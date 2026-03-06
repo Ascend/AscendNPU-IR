@@ -20,6 +20,15 @@ if(LLVM_MAJOR_VERSION_21_COMPATIBLE)
   add_definitions(-D__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 endif()
 
+# Some compatibility changes for LLVM 21 are also needed on LLVM 22.
+# Therefore __LLVM_MAJOR_VERSION_21_COMPATIBLE__ would be enabled too.
+option(LLVM_MAJOR_VERSION_22_COMPATIBLE "NPUIR build with LLVM 22" OFF)
+if(LLVM_MAJOR_VERSION_22_COMPATIBLE)
+  message(STATUS "Building with LLVM 22 or later")
+  add_definitions(-D__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+  add_definitions(-D__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+endif()
+
 # -------------------------------------------------------------------------------
 # Handle Option
 # -------------------------------------------------------------------------------

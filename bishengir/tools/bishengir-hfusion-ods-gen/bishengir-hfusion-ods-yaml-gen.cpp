@@ -607,6 +607,7 @@ def {0} : HFusionStructuredBase_Op<"{1}", !listconcat([AttrSizedOperandSegments]
       // Auto-generated.
       SmallVector<utils::IteratorType> getIteratorTypesArray();
       ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       static void regionBuilder(ImplicitLocOpBuilder &b,
                                 Block &block, ArrayRef<NamedAttribute> attrs);
       static std::function<void(ImplicitLocOpBuilder &,
@@ -614,6 +615,17 @@ def {0} : HFusionStructuredBase_Op<"{1}", !listconcat([AttrSizedOperandSegments]
       getRegionBuilder() {{
         return regionBuilder;
       }
+#else
+      static void regionBuilder(ImplicitLocOpBuilder &b,
+                                Block &block, ArrayRef<NamedAttribute> attrs,
+                                mlir::function_ref<mlir::InFlightDiagnostic()> emitError);
+      static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                                mlir::ArrayRef<mlir::NamedAttribute>,
+                                mlir::function_ref<mlir::InFlightDiagnostic()>)>
+      getRegionBuilder() {{
+        return regionBuilder;
+      }
+#endif
 
       ::mlir::MutableOperandRange getDpsInitsMutable() {{
         return getOutputsMutable();
@@ -1055,7 +1067,11 @@ LogicalResult {0}::verifyIndexingMapRequiredAttributes() {{
     // {3}: Statements
     static const char structuredOpRegionBuilderFormat[] = R"FMT(
 void {0}::regionBuilder(ImplicitLocOpBuilder &b,
-                        Block &block, ArrayRef<NamedAttribute> attrs) {{
+                        Block &block, ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+                        , mlir::function_ref<mlir::InFlightDiagnostic()> emitError
+#endif
+) {{
   assert({1} > 0 && block.getNumArguments() == {1} &&
          "{0} regionBuilder expects {1} (>=0) args");
   RegionBuilderHelper helper(block.getArgument(0).getContext(), block);

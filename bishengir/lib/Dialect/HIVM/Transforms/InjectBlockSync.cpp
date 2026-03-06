@@ -76,20 +76,19 @@ private:
 
   LogicalResult checkWorkSpaceValidity() {
     auto funcOp = getOperation();
-    auto funcParamSize = funcOp.getNumArguments();
-    for (size_t i = 0; i < funcParamSize; i++) {
+    for (auto [i, arg] : llvm::enumerate(funcOp.getArguments())) {
       if (!hacc::utils::isKernelArg(funcOp, i,
                                     hacc::KernelArgType::kWorkspace)) {
         continue;
       }
-      for (Operation *user : funcOp.getArgument(i).getUsers()) {
-        auto allocWorkUser =
-            dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(user);
-        if (!allocWorkUser) {
-          user->emitError(
-              "All users of workspace arg must be AllocWorkspaceOp!");
-          return failure();
-        }
+      auto argUsers = arg.getUsers();
+      auto noneAllocWorkSpaceUserIter =
+          llvm::find_if(argUsers, [](Operation *user) {
+            return !isa<bishengir::memref_ext::AllocWorkspaceOp>(user);
+          });
+      if (noneAllocWorkSpaceUserIter != argUsers.end()) {
+        return noneAllocWorkSpaceUserIter->emitError(
+            "All users of workspace arg must be AllocWorkspaceOp!");
       }
     }
     return success();
@@ -228,12 +227,7 @@ void SyncBlockIRTranslator::SyncBlockBuild() {
 
 void SyncBlockIRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    auto aliasPairs = getOperationAliasInfo(op);
-    if (!aliasPairs.empty()) {
-      for (auto aliasPair : aliasPairs) {
-        UpdateAliasBufferInfo(aliasPair.first, aliasPair.second);
-      }
-    } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       UpdateForOpInfo(forOp);
       std::unique_ptr<InstanceElement> &forEndElement = syncIR.back();
       assert(forEndElement->GetKind() == InstanceElement::KindTy::LOOP);
@@ -270,6 +264,11 @@ void SyncBlockIRTranslator::RecursionIR(Region *region) {
       UpdateStoreOrLoadOpInfoBlockSync(affineLoadOp);
     } else if (auto affineStoreOp = dyn_cast<affine::AffineStoreOp>(op)) {
       UpdateStoreOrLoadOpInfoBlockSync(affineStoreOp);
+    } else if (auto aliasPairs = getOperationAliasInfo(op);
+               !aliasPairs.empty()) {
+      for (auto aliasPair : aliasPairs) {
+        UpdateAliasBufferInfo(aliasPair.first, aliasPair.second);
+      }
     }
     return WalkResult::advance();
   });

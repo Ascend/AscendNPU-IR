@@ -1025,6 +1025,30 @@ struct HFusionToHIVMAtomicXchgOp
 };
 
 //===----------------------------------------------------------------------===//
+// HFusionToHIVMConv1DOp
+//===----------------------------------------------------------------------===//
+struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
+  using OpRewritePattern<hfusion::Conv1DOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hfusion::Conv1DOp op,
+                                PatternRewriter &rewriter) const override {
+    mlir::IntegerType int1Type = rewriter.getIntegerType(1);
+    auto resType = op->getResults().front().getType();
+    auto init = op.getInit();
+    auto input = op.getInput();
+    auto weight = op.getWeight();
+    auto bias = op.getBias();
+    auto group = op.getGroups();
+    auto padding = op.getPadding();
+    Value initCondition =
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
+    rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
+                                                  bias, init, initCondition,
+                                                  ValueRange{}, padding, group);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // HFusionToHIVMSortOp
 //===----------------------------------------------------------------------===//
 struct HFusionToHIVMSortOp : public OpRewritePattern<hfusion::SortOp> {
@@ -1135,7 +1159,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
     HFusionToHIVMAtomicCasOp,
     HFusionToHIVMAtomicXchgOp,
-    HFusionToHIVMAtomicRMWOp
+    HFusionToHIVMAtomicRMWOp,
+    HFusionToHIVMConv1DOp
   >(patterns.getContext());
   // clang-format on
 }

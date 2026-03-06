@@ -16,19 +16,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTester.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverCodeGen.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverTest.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <asm-generic/errno.h>
 #include <memory>
-#include <set>
 #include <utility>
 #include <vector>
 
-#define DEBUG_TYPE "hivm-graph-sync-solver-tester"
+#define DEBUG_TYPE "hivm-gss-sync-tester"
 
 using namespace mlir;
 using namespace hivm::syncsolver;
@@ -37,11 +39,14 @@ using namespace hivm::syncsolver;
 // ops. Used by the tester to create synthetic cases exercising the solver.
 void SyncTester::generateRandTest(Scope *scopeOp,
                                   const std::vector<int> &pointerOps,
-                                  const std::vector<hivm::PIPE> &pipesVec,
+                                  const llvm::SmallVector<hivm::PIPE> &pipesVec,
                                   int &remOpNum, int depth) {
+  auto blockBeginPlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, scopeOp);
+  blockBeginPlaceHolderOp->scopeBegin = scopeOp;
+  scopeOp->body.push_back(std::move(blockBeginPlaceHolderOp));
   bool empty = true;
   while (remOpNum > 0) {
-
     if (depth < max_depth &&
         isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
         isTrueWithProbability(scope_for_loop_prob_a, scope_for_loop_prob_b)) {
@@ -51,7 +56,15 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       generateRandTest(loopBlock.get(), pointerOps, pipesVec, remOpNum,
                        depth + 1);
       loopOp->body.push_back(std::move(loopBlock));
+      auto beforePlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      beforePlaceHolderOp->beforeOp = loopOp.get();
+      auto afterPlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      afterPlaceHolderOp->afterOp = loopOp.get();
+      scopeOp->body.push_back(std::move(beforePlaceHolderOp));
       scopeOp->body.push_back(std::move(loopOp));
+      scopeOp->body.push_back(std::move(afterPlaceHolderOp));
       empty = false;
     } else if (depth < max_depth &&
                isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
@@ -68,13 +81,23 @@ void SyncTester::generateRandTest(Scope *scopeOp,
                        depth + 1);
       loopOp->body.push_back(std::move(beforeBlock));
       loopOp->body.push_back(std::move(afterBlock));
+      auto beforePlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      beforePlaceHolderOp->beforeOp = loopOp.get();
+      auto afterPlaceHolderOp =
+          std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
+      afterPlaceHolderOp->afterOp = loopOp.get();
+      scopeOp->body.push_back(std::move(beforePlaceHolderOp));
       scopeOp->body.push_back(std::move(loopOp));
+      scopeOp->body.push_back(std::move(afterPlaceHolderOp));
       empty = false;
     } else if (depth < max_depth &&
                isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
                isTrueWithProbability(scope_cond_prob_a, scope_cond_prob_b)) {
       auto conditionOp =
           std::make_unique<Condition>(nullptr, scopeOp, nullptr, nullptr);
+      conditionOp->isUnlikely =
+          isTrueWithProbability(unlikely_cond_prob_a, unlikely_cond_prob_b);
       auto trueBlock = std::make_unique<Scope>();
       trueBlock->parentOp = conditionOp.get();
       generateRandTest(trueBlock.get(), pointerOps, pipesVec, remOpNum,
@@ -88,7 +111,8 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       scopeOp->body.push_back(std::move(conditionOp));
       empty = false;
     } else {
-      hivm::PIPE pipeRead = pipesVec[getRand() % static_cast<int>(pipesVec.size())];
+      hivm::PIPE pipeRead =
+          pipesVec[getRand() % static_cast<int>(pipesVec.size())];
       // hivm::PIPE pipeWrite = pipesVec[getRand() % pipesVec.size()];
       hivm::PIPE pipeWrite = pipeRead;
 
@@ -107,10 +131,13 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       for (auto i : getNDifferentRandNums(writeValsNum, pointerOps.size())) {
         writeVals.back().push_back(pointerOps[i]);
       }
-
+      auto coreType = hivm::TCoreType::CUBE_OR_VECTOR;
+      if (syncMode == SyncMode::TEST_CROSS_CORE_MODE) {
+        coreType =
+            (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
+      }
       auto rwOp = std::make_unique<RWOperation>(
-          nullptr, scopeOp, pipeRead, pipeWrite,
-          hivm::TCoreType::CUBE_OR_VECTOR, SmallVector<Value>(),
+          nullptr, scopeOp, coreType, pipeRead, pipeWrite, SmallVector<Value>(),
           SmallVector<Value>());
       rwOp->testReadMemVals = readVals;
       rwOp->testWriteMemVals = writeVals;
@@ -119,27 +146,22 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       empty = false;
       remOpNum--;
     }
-
     if (!empty && (scopeOp->parentOp != nullptr) &&
         isTrueWithProbability(scope_out_prob_a, scope_out_prob_b)) {
       break;
     }
   }
-
-  auto ghostOp = std::make_unique<Ghost>(nullptr, scopeOp, nullptr);
-  scopeOp->body.push_back(std::move(ghostOp));
+  auto blockEndPlaceHolderOp = std::make_unique<PlaceHolder>(nullptr, scopeOp);
+  blockEndPlaceHolderOp->scopeEnd = scopeOp;
+  scopeOp->body.push_back(std::move(blockEndPlaceHolderOp));
 }
 
 std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
   std::vector<int> pointerOps(numPointers);
   std::iota(pointerOps.begin(), pointerOps.end(), 0);
 
-  std::vector<hivm::PIPE> pipesVec;
-  for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-    if ((static_cast<unsigned>(usedPipesMask) >> i) & 1u) {
-      pipesVec.push_back(static_cast<hivm::PIPE>(i));
-    }
-  }
+  const llvm::SmallVector<hivm::PIPE> pipesVec = {
+      hivm::PIPE::PIPE_MTE1, hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_MTE3};
 
   int remOpNum = numOperations;
   auto funcIr = std::make_unique<Function>(nullptr);
@@ -204,41 +226,42 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
     return;
   }
 
-  if (auto *setOp = dyn_cast<const SetFlagOp>(op)) {
-    assert(!setOp->eventIds.empty());
-    auto pipeline = setOp->pipeSrc;
-    if (!setOp->allAtOnce) {
-      pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, loopIdx}});
+  if (auto *setFlagOp = dyn_cast<const SetFlagOp>(op)) {
+    assert(!setFlagOp->eventIds.empty());
+    CorePipeInfo corePipe(setFlagOp->coreType, setFlagOp->pipeSrc);
+    if (!setFlagOp->allAtOnce) {
+      pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     } else {
-      for (size_t i = 0; i < setOp->eventIds.size(); i++) {
-        pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, i}});
+      for (size_t i = 0; i < setFlagOp->eventIds.size(); i++) {
+        pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, i}});
       }
     }
     return;
   }
 
-  if (auto *waitOp = dyn_cast<const WaitFlagOp>(op)) {
-    assert(!waitOp->eventIds.empty());
-    auto pipeline = waitOp->pipeDst;
-    if (!waitOp->allAtOnce) {
-      pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, loopIdx}});
+  if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(op)) {
+    assert(!waitFlagOp->eventIds.empty());
+    CorePipeInfo corePipe(waitFlagOp->coreType, waitFlagOp->pipeDst);
+    if (!waitFlagOp->allAtOnce) {
+      pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     } else {
-      for (size_t i = 0; i < waitOp->eventIds.size(); i++) {
-        pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, i}});
+      for (size_t i = 0; i < waitFlagOp->eventIds.size(); i++) {
+        pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, i}});
       }
     }
     return;
   }
 
   if (auto *barrierOp = dyn_cast<const BarrierOp>(op)) {
-    auto pipeline = barrierOp->pipe;
-    pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, loopIdx}});
+    assert(syncMode == SyncMode::TEST_INTRA_CORE_MODE);
+    CorePipeInfo corePipe(hivm::TCoreType::CUBE_OR_VECTOR, barrierOp->pipe);
+    pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     return;
   }
 
   if (auto *rwOp = dyn_cast<const RWOperation>(op)) {
-    auto pipeline = rwOp->pipeRead;
-    pipelineQue[pipeline].push_back({{idx++, getRand()}, {op, loopIdx}});
+    CorePipeInfo corePipe(rwOp->coreType, rwOp->pipeRead);
+    pipelineQue[corePipe].push_back({{idx++, getRand()}, {op, loopIdx}});
     return;
   }
 }
@@ -247,10 +270,10 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
 // violations. Returns success when no conflicts occur for the run.
 llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
-  auto compairPipelines = [&](const hivm::PIPE &pipe1,
-                              const hivm::PIPE &pipe2) {
-    auto &pipeQue1 = pipelineQue[pipe1];
-    auto &pipeQue2 = pipelineQue[pipe2];
+  auto compairPipelines = [&](const CorePipeInfo &corePipe1,
+                              const CorePipeInfo &corePipe2) {
+    auto &pipeQue1 = pipelineQue[corePipe1];
+    auto &pipeQue2 = pipelineQue[corePipe2];
     assert(!pipeQue1.empty() || !pipeQue2.empty());
     if (pipeQue1.empty() || pipeQue2.empty()) {
       return pipeQue1.empty();
@@ -272,52 +295,71 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
             !isa<SetFlagOp, BarrierOp>(op2));
   };
 
-  std::set<hivm::PIPE, decltype(compairPipelines)> mainQue(compairPipelines);
-  llvm::DenseMap<int, llvm::DenseSet<const RWOperation *>> ongoingWrites,
-      ongoingReads;
-  llvm::DenseMap<hivm::PIPE, std::vector<std::pair<const RWOperation *, int>>>
+  std::set<CorePipeInfo, decltype(compairPipelines)> mainQue(compairPipelines);
+  llvm::DenseMap<hivm::TCoreType,
+                 llvm::DenseMap<int, llvm::DenseSet<const RWOperation *>>>
+      ongoingWrites, ongoingReads;
+  llvm::DenseMap<CorePipeInfo, std::vector<std::pair<const RWOperation *, int>>>
       runningOps;
-  llvm::DenseMap<hivm::PIPE,
-                 llvm::DenseMap<hivm::PIPE, std::multiset<hivm::EVENT>>>
+  llvm::DenseMap<std::pair<hivm::PIPE, hivm::PIPE>, std::multiset<int64_t>>
       triggeredSetFlagOps;
   std::set<int> allIndexes;
-  auto &pipeAllQue = pipelineQue[hivm::PIPE::PIPE_ALL];
+  auto corePipeAll =
+      CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL);
+  auto &pipeAllQue = pipelineQue[corePipeAll];
 
-  for (auto &[pipeId, pipeQue] : pipelineQue) {
-    if (pipeId != hivm::PIPE::PIPE_ALL) {
-      mainQue.insert(pipeId);
+  for (auto &[corePipe, pipeQue] : pipelineQue) {
+    if (corePipe != corePipeAll) {
+      mainQue.insert(corePipe);
     }
   }
   for (int i = 0; i < idx; i++) {
     allIndexes.insert(i);
   }
 
-  auto refreshPipeQue = [&](const hivm::PIPE &pipe) {
-    if (pipe == hivm::PIPE::PIPE_ALL) {
+  auto getTriggeredGroup = [this](const SetWaitOp *syncOp) {
+    if (syncMode == SyncMode::TEST_INTRA_CORE_MODE) {
+      return std::make_pair(syncOp->pipeSrc, syncOp->pipeDst);
+    } else {
+      return std::make_pair(hivm::PIPE::PIPE_UNASSIGNED,
+                            hivm::PIPE::PIPE_UNASSIGNED);
+    }
+  };
+
+  auto refreshPipeQue = [&](const CorePipeInfo &corePipe) {
+    if (corePipe == corePipeAll) {
       return;
     }
-    mainQue.erase(pipe);
-    auto &pipeQue = pipelineQue[pipe];
+    mainQue.erase(corePipe);
+    auto &pipeQue = pipelineQue[corePipe];
     while (!pipeQue.empty()) {
       auto [op, loopIdx] = pipeQue.front().second;
-      if (auto *waitOp = dyn_cast<const WaitFlagOp>(op)) {
-        assert(waitOp->pipeDst == pipe);
-        auto &triggeredOps =
-            triggeredSetFlagOps[waitOp->pipeSrc][waitOp->pipeDst];
-        assert(!waitOp->eventIds.empty());
-        auto it = triggeredOps.find(
-            waitOp->eventIds[loopIdx % waitOp->eventIds.size()]);
+      if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(op)) {
+        assert(CorePipeInfo(waitFlagOp->coreType, waitFlagOp->pipeDst) ==
+               corePipe);
+        auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
+        assert(!waitFlagOp->eventIds.empty());
+        auto eventId =
+            waitFlagOp->eventIds[loopIdx % waitFlagOp->eventIds.size()];
+        auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
+          assert((*it) == eventId);
           triggeredOps.erase(it);
           allIndexes.erase(pipeQue.front().first.first);
           pipeQue.pop_front();
+          LLVM_DEBUG({
+            if (debugPrint) {
+              llvm::dbgs() << "wait-flag triggered: "
+                           << waitFlagOp->str(0, false) << '\n';
+            }
+          });
           continue;
         }
       }
       break;
     }
     if (!pipeQue.empty()) {
-      mainQue.insert(pipe);
+      mainQue.insert(corePipe);
     }
   };
 
@@ -332,28 +374,36 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     return true;
   };
 
-  auto getCurPipe = [&]() {
+  auto getCurCorePipe = [&]() -> CorePipeInfo {
     if (checkPipeAll()) {
-      return hivm::PIPE::PIPE_ALL;
+      return corePipeAll;
     }
-    auto retPipe = hivm::PIPE::PIPE_UNASSIGNED;
-    for (auto pipe : mainQue) {
-      if (pipeAllQue.empty() || (pipelineQue[pipe].front().first.first <
+    std::optional<CorePipeInfo> retCorePipe;
+    for (auto corePipe : mainQue) {
+      if (pipeAllQue.empty() || (pipelineQue[corePipe].front().first.first <
                                  pipeAllQue.front().first.first)) {
-        retPipe = pipe;
+        retCorePipe = corePipe;
         break;
       }
     }
-    assert(retPipe != hivm::PIPE::PIPE_UNASSIGNED);
-    mainQue.erase(retPipe);
-    return retPipe;
+    assert(retCorePipe.has_value());
+    mainQue.erase(retCorePipe.value());
+    return retCorePipe.value();
   };
 
   [[maybe_unused]] auto printMainQue = [&]() {
-    for (auto pipe : mainQue) {
+    for (auto &[triggerGroup, eventIds] : triggeredSetFlagOps)
+      if (!eventIds.empty()) {
+        llvm::dbgs() << triggerGroup.first << ' ' << triggerGroup.second << ' ';
+        for (auto e : eventIds) {
+          llvm::dbgs() << e << ' ';
+        }
+        llvm::dbgs() << '\n';
+      }
+    for (auto corePipe : mainQue) {
       int szLimit = 100;
-      llvm::dbgs() << stringifyPIPE(pipe).str() << ": ";
-      for (auto e : pipelineQue[pipe]) {
+      llvm::dbgs() << corePipe.coreType << ' ' << corePipe.pipe << ": ";
+      for (auto e : pipelineQue[corePipe]) {
         if (!szLimit--) {
           break;
         }
@@ -361,10 +411,10 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       }
       llvm::dbgs() << '\n';
     }
-    for (auto pipe : {hivm::PIPE::PIPE_ALL}) {
+    for (auto corePipe : {corePipeAll}) {
       int szLimit = 100;
-      llvm::dbgs() << stringifyPIPE(pipe).str() << ": ";
-      for (auto e : pipelineQue[pipe]) {
+      llvm::dbgs() << corePipe.coreType << ' ' << corePipe.pipe << ": ";
+      for (auto e : pipelineQue[corePipe]) {
         if (!szLimit--) {
           break;
         }
@@ -389,10 +439,12 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
   };
 
   auto checkMemoryConflict = [&](const RWOperation *rwOp, int loopIndex) {
+    auto curCoreType = rwOp->coreType;
+    auto oppCoreType = getOppositeCoreType(curCoreType);
     for (const auto &readPtr : rwOp->testReadMemVals) {
       auto index = loopIndex % static_cast<int>(readPtr.size());
       auto ptrVal = readPtr[index];
-      auto ongoingWriteOps = ongoingWrites[ptrVal];
+      auto ongoingWriteOps = ongoingWrites[oppCoreType][ptrVal];
       if (!ongoingWriteOps.empty()) {
         LLVM_DEBUG({
           if (debugPrint) {
@@ -411,8 +463,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     for (const auto &writePtr : rwOp->testWriteMemVals) {
       auto index = loopIndex % static_cast<int>(writePtr.size());
       auto ptrVal = writePtr[index];
-      auto ongoingReadOps = ongoingReads[ptrVal];
-      auto ongoingWriteOps = ongoingWrites[ptrVal];
+      auto ongoingReadOps = ongoingReads[oppCoreType][ptrVal];
+      auto ongoingWriteOps = ongoingWrites[oppCoreType][ptrVal];
       if (!ongoingReadOps.empty()) {
         LLVM_DEBUG({
           if (debugPrint) {
@@ -449,61 +501,65 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     for (const auto &readPtr : rwOp->testReadMemVals) {
       auto index = loopIndex % static_cast<int>(readPtr.size());
       auto ptrVal = readPtr[index];
-      ongoingReads[ptrVal].insert(rwOp);
+      ongoingReads[rwOp->coreType][ptrVal].insert(rwOp);
     }
     for (const auto &writePtr : rwOp->testWriteMemVals) {
       auto index = loopIndex % static_cast<int>(writePtr.size());
       auto ptrVal = writePtr[index];
-      ongoingWrites[ptrVal].insert(rwOp);
+      ongoingWrites[rwOp->coreType][ptrVal].insert(rwOp);
     }
-    auto rwPipe = rwOp->pipeRead;
+    CorePipeInfo corePipe(rwOp->coreType, rwOp->pipeRead);
     assert(rwOp->pipeRead == rwOp->pipeWrite);
-    runningOps[rwPipe].emplace_back(rwOp, loopIndex);
+    runningOps[corePipe].emplace_back(rwOp, loopIndex);
   };
 
   auto handleSetFlagOp = [&](const SetFlagOp *setFlagOp, int loopIndex) {
-    for (auto [rwOp, loopIdx] : runningOps[setFlagOp->pipeSrc]) {
+    CorePipeInfo corePipeSrc(setFlagOp->coreType, setFlagOp->pipeSrc);
+    CorePipeInfo corePipeDst(getOppositeCoreType(setFlagOp->coreType),
+                             setFlagOp->pipeDst);
+    for (auto [rwOp, loopIdx] : runningOps[corePipeSrc]) {
       for (auto readPtr : rwOp->testReadMemVals) {
         auto index = loopIdx % static_cast<int>(readPtr.size());
         auto ptrVal = readPtr[index];
-        ongoingReads[ptrVal].erase(rwOp);
+        ongoingReads[setFlagOp->coreType][ptrVal].erase(rwOp);
       }
       for (auto writePtr : rwOp->testWriteMemVals) {
         auto index = loopIdx % static_cast<int>(writePtr.size());
         auto ptrVal = writePtr[index];
-        ongoingWrites[ptrVal].erase(rwOp);
+        ongoingWrites[setFlagOp->coreType][ptrVal].erase(rwOp);
       }
     }
     assert(!setFlagOp->eventIds.empty());
-    triggeredSetFlagOps[setFlagOp->pipeSrc][setFlagOp->pipeDst].insert(
+    triggeredSetFlagOps[getTriggeredGroup(setFlagOp)].insert(
         setFlagOp->eventIds[loopIndex % setFlagOp->eventIds.size()]);
-    refreshPipeQue(setFlagOp->pipeDst);
+    refreshPipeQue(corePipeDst);
   };
 
-  auto clearPipeline = [&](const hivm::PIPE &pipe) {
-    for (auto [rwOp, loopIdx] : runningOps[pipe]) {
+  auto clearPipeline = [&](const CorePipeInfo &corePipe) {
+    for (auto [rwOp, loopIdx] : runningOps[corePipe]) {
       for (auto readPtr : rwOp->testReadMemVals) {
         auto index = loopIdx % static_cast<int>(readPtr.size());
         auto ptrVal = readPtr[index];
-        ongoingReads[ptrVal].erase(rwOp);
+        ongoingReads[rwOp->coreType][ptrVal].erase(rwOp);
       }
     }
-    for (auto [rwOp, loopIdx] : runningOps[pipe]) {
+    for (auto [rwOp, loopIdx] : runningOps[corePipe]) {
       for (auto writePtr : rwOp->testWriteMemVals) {
         auto index = loopIdx % static_cast<int>(writePtr.size());
         auto ptrVal = writePtr[index];
-        ongoingWrites[ptrVal].erase(rwOp);
+        ongoingWrites[rwOp->coreType][ptrVal].erase(rwOp);
       }
     }
   };
 
   auto handleBarrierOp = [&](const BarrierOp *barrierOp) {
     if (barrierOp->pipe == hivm::PIPE::PIPE_ALL) {
-      for (auto &[pipe, rwOps] : runningOps) {
-        clearPipeline(pipe);
+      for (auto &[corePipe, rwOps] : runningOps) {
+        clearPipeline(corePipe);
       }
     } else {
-      clearPipeline(barrierOp->pipe);
+      clearPipeline(
+          CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, barrierOp->pipe));
     }
   };
 
@@ -515,7 +571,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       }
     });
 
-    auto curPipe = getCurPipe();
+    auto curPipe = getCurCorePipe();
     auto &pipeQue = pipelineQue[curPipe];
     assert(!pipeQue.empty());
     auto [curOp, curLoopIdx] = pipeQue.front().second;
@@ -539,11 +595,11 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       handleSetFlagOp(setFlagOp, curLoopIdx);
     } else if (auto *barrierOp = dyn_cast<const BarrierOp>(curOp)) {
       handleBarrierOp(barrierOp);
-    } else if (auto *waitOp = dyn_cast<const WaitFlagOp>(curOp)) {
+    } else if (auto *waitFlagOp = dyn_cast<const WaitFlagOp>(curOp)) {
       LLVM_DEBUG({
         if (debugPrint) {
-          llvm::dbgs() << "untriggered waitOp: " << waitOp->str(0, false)
-                       << '\n';
+          llvm::dbgs() << "untriggered waitFlagOp: "
+                       << waitFlagOp->str(0, false) << '\n';
         }
       });
       return failure();
@@ -564,17 +620,17 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 // High-level test runner: generate random test, run solver, generate result
 // ops, and run multiple simulation runs to verify correctness.
 llvm::LogicalResult SyncTester::test() {
-  llvm::outs() << "generated test with: "
-               << " seed(" << seed << ")"
-               << " multibuffer(" << enableMultiBuffer << ")"
-               << " num_ops(" << numOperations << ")"
-               << " num_ptrs(" << numPointers << ") :\n";
+  auto funcIr = getGeneratedRandomTest();
+  LLVM_DEBUG(llvm::dbgs() << "before:\n" << funcIr->str(0, true) << '\n';);
 
-  Solver solver(getGeneratedRandomTest());
-  LLVM_DEBUG(llvm::dbgs() << solver.funcIr->str(0, true) << '\n';);
+  SyncSolverOptions options(syncMode);
+  auto irTranslator =
+      std::make_unique<IRTranslator>(std::move(funcIr), options);
 
-  LLVM_DEBUG({
-    for (auto &occ : solver.syncIr) {
+  auto solver = std::make_unique<SolverTest>(std::move(irTranslator));
+
+  DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
+    for (auto &occ : solver->syncIr) {
       llvm::dbgs() << std::string(occ->depth, ' ') << occ->op->id << ' '
                    << occ->syncIrIndex << ' ' << occ->startIndex << ' '
                    << occ->endIndex << '\n';
@@ -582,27 +638,73 @@ llvm::LogicalResult SyncTester::test() {
     }
   });
 
-  solver.solveTest();
-  solver.generateFuncIrResultOps();
-  llvm::outs() << solver.funcIr->str(0, true) << '\n';
+  solver->solve();
+
+  CodeGenerator codeGen(std::move(solver));
+  codeGen.generateFuncIrResultOps();
+
+  llvm::outs() << codeGen.funcIr->str(0, true) << '\n';
   llvm::outs().flush();
 
   int simulatedRuns = 100;
+  auto result = llvm::success();
+  std::unique_ptr<std::mt19937> tmpRandGenerator = std::move(randGenerator);
   for (int i = 0; i < simulatedRuns; i++) {
     reset();
     randGenerator = std::make_unique<std::mt19937>(i);
-    fillPipelines(solver.funcIr.get());
+    fillPipelines(codeGen.funcIr.get());
     if (llvm::failed(runSimulation(i))) {
       LLVM_DEBUG({
         reset();
         randGenerator = std::make_unique<std::mt19937>(i);
-        fillPipelines(solver.funcIr.get());
+        fillPipelines(codeGen.funcIr.get());
         auto status = runSimulation(i, true);
         assert(llvm::failed(status));
         llvm::dbgs() << "runId: " << i << '\n';
       });
-      return llvm::failure();
+      result = llvm::failure();
+      break;
     }
   }
-  return llvm::success();
+  randGenerator = std::move(tmpRandGenerator);
+  return result;
+}
+
+// If environment indicates tester mode, parse env vars and run SyncTester.
+void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
+  if (options.size() != SyncTester::getOptionsNum()) {
+    llvm_unreachable(("Expected size of sync-tester options to be equal to " +
+                      std::to_string(SyncTester::getOptionsNum()))
+                         .c_str());
+    return;
+  }
+
+  int64_t numRuns = options[0];
+  int64_t initSeed = options[1];
+  int64_t numOperations = options[2];
+  int64_t numPointers = options[3];
+  int64_t enableMultiBuffer = options[4];
+  int64_t enableCrossCoreMode = options[5];
+
+  llvm::outs() << "tester-options:"
+               << " seed(" << initSeed << ")"
+               << " num_ops(" << numOperations << ")"
+               << " num_ptrs(" << numPointers << ")"
+               << " multibuffer(" << enableMultiBuffer << ")"
+               << " enableCrossCoreMode(" << enableCrossCoreMode << ")"
+               << "\n";
+
+  SyncTester tester(numOperations, numPointers, enableMultiBuffer,
+                    enableCrossCoreMode, initSeed);
+
+  llvm::LogicalResult result = llvm::success();
+  for (int64_t runI = 0; runI < numRuns; ++runI) {
+    auto status = tester.test();
+    if (llvm::failed(status)) {
+      result = llvm::failure();
+      break;
+    }
+  }
+
+  llvm::outs() << (llvm::succeeded(result) ? "succeeded" : "failed") << "\n";
 }

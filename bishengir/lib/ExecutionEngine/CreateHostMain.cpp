@@ -225,8 +225,13 @@ struct CreateHostMainPass
     bool toTensor = isAnyMemRefType(sourceType) && isAnyTensorType(targetType);
 
     if (toMemRef) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       result = rewriter.create<bufferization::ToMemrefOp>(loc, targetType,
                                                           result, nullptr);
+#else
+      result = rewriter.create<bufferization::ToBufferOp>(loc, targetType,
+                                                          result, nullptr);
+#endif
     } else if (toTensor) {
       result = rewriter.create<bufferization::ToTensorOp>(
           loc, targetType, result, rewriter.getUnitAttr(),

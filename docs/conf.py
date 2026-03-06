@@ -10,7 +10,14 @@ copyright = '2026, Huawei'
 author = 'Huawei'
 
 # -- I18n: detect language and root doc ---------------------------------------
-_build_lang = (os.environ.get('READTHEDOCS_LANGUAGE') or 'zh_CN').strip().lower().replace('_', '-')
+_readthedocs_lang = os.environ.get('READTHEDOCS_LANGUAGE')
+_is_build_by_readthedocs = _readthedocs_lang is not None
+
+if _readthedocs_lang:
+    _build_lang = _readthedocs_lang.strip().lower().replace('_', '-')
+else:
+    _build_lang = (os.environ.get('LANGUAGE') or 'en').strip().lower().replace('_', '-')
+
 _is_zh = _build_lang in ('zh-cn', 'zh') or _build_lang.startswith('zh-')
 language = 'zh_CN' if _is_zh else 'en'
 root_doc = 'index_zh' if _is_zh else 'index'
@@ -95,7 +102,6 @@ source_suffix = {
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
-
 def setup(app):
     """Register Pygments lexer aliases; for zh build copy index_zh.html to index.html (RTD + local)."""
     from sphinx.highlighting import lexers
@@ -119,4 +125,7 @@ def setup(app):
             pass
 
     app.connect('build-finished', _copy_index_zh_to_index)
+    if not _is_build_by_readthedocs:
+        app.add_js_file('lang-switcher.js')
+        app.add_css_file('lang-switcher.css')
     return {'version': '0.1', 'parallel_read_safe': True}

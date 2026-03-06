@@ -317,8 +317,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
 #endif // BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
   let arguments = (ins AnyShaped:$src,
                        AnyShaped:$dst,
-                       Arg<Optional<I1>, [{
-                        An optional condition to enable unit-flge mode,
+                       Arg<Variadic<I1>, [{
+                        An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
 #ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
@@ -334,10 +334,7 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
                          "FixpipePreReluMode::NO_RELU">:$pre_relu,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
-                       Arg<OptionalAttr<HIVM_UnitFlagAttr>, [{
-                        Enable unit-flag for synchronization, it is
-                        managed by inject-sync passes.
-                       }]>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
@@ -368,7 +365,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     attr-dict	
     `ins` `(` $src `:` type($src) `)`	
     `outs` `(` $dst `:` type($dst) `)`
-    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?	
+    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensor)^)?	
   }];	
 #else
@@ -377,7 +375,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
     (`dual_dst_mode` `=` $dual_dst_mode^)?
-    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
+    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensor)^)?
   }];
   let hasVerifier = 1; // verify parameter according to hardware version
@@ -387,9 +386,6 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     int getFixpipeState();
     int needFixpipePreFuse();
     bool hasStore();
-    // Needed for unit-flag-enabled interface.
-    ::std::optional<::mlir::hivm::UnitFlagAttr> getUnitFlagModeValue();
-    ::std::optional<::mlir::Value> getUnitFlagModeCondition();
   }];
 }
 

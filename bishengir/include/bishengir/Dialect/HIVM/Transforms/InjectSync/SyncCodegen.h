@@ -67,7 +67,7 @@ class SyncCodegen {
 public:
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
               SyncAnalysisMode syncAnalysisMode)
-      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode) {};
+      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode){};
 
   ~SyncCodegen() = default;
 
@@ -153,8 +153,9 @@ private:
   /// MmadL1 and the library.
   void UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter);
 
-  void HandleEnableUnitFlag(IRRewriter &rewriter,
-                            CompoundInstanceElement *nowCompound) const;
+  void HandleUnitFlagEnabledOp(IRRewriter &rewriter,
+                               UnitFlagEnabledInterface unitFlagEnabledOp,
+                               UnitFlagInfo unitFlagInfo) const;
 
 private:
   /// Save the Global syncIR.

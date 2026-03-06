@@ -165,19 +165,6 @@ LogicalResult markAllocAlign(func::FuncOp funcOp) {
         return WalkResult::interrupt();
       }
       return WalkResult::skip();
-    } else if (auto castOp = dyn_cast<hivm::VCastOp>(op)) {
-      auto srcType = getElementTypeOrSelf(castOp.getSrc()[0]);
-      auto dstType = getElementTypeOrSelf(castOp.getDst()[0]);
-      const bool isI32ToI8 = srcType.isInteger(32) && dstType.isInteger(8);
-      const bool isI16ToI8 = srcType.isInteger(16) && dstType.isInteger(8);
-      if (!isI32ToI8 && !isI16ToI8) {
-        return WalkResult::skip();
-      }
-
-      if (failed(alignAllocSize(castOp, builder))) {
-        return WalkResult::interrupt();
-      }
-      return WalkResult::skip();
     } else if (auto sortOp = dyn_cast<hivm::VSortOp>(op)) {
       if (failed(alignAllocSize(sortOp, builder))) {
         return WalkResult::interrupt();

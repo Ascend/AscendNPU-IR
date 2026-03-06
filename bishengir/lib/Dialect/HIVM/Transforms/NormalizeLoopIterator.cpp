@@ -141,8 +141,9 @@ bool existIterArgUseAfterYieldValInit(Value iterArg, Operation *yieldInit) {
       auto aliasPairs = getOperationAliasInfo(useOp);
       if (!aliasPairs.empty()) {
         for (auto aliasPair : aliasPairs) {
-          assert(curAlias == aliasPair.second);
-          memmoryAlias.push_back(aliasPair.first);
+          if (curAlias == aliasPair.second) {
+            memmoryAlias.push_back(aliasPair.first);
+          }
         }
       }
       if (useOp == yieldInit || isBefore(useOp, yieldInit))

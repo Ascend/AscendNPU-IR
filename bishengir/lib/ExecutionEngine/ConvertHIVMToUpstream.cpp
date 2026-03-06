@@ -716,15 +716,20 @@ struct RewriteLoadOp : public OpRewritePattern<hivm::LoadOp> {
     const auto isTensor = isa<TensorType>(src.getType());
 
     if (isTensor) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+      using bufferCastOp = bufferization::ToMemrefOp;
+#else
+      using bufferCastOp = bufferization::ToBufferOp;
+#endif
       src = cast<ShapedValue>(
           rewriter
-              .create<bufferization::ToMemrefOp>(
+              .create<bufferCastOp>(
                   loc,
                   MemRefType::get(srcShape, src.getType().getElementType()),
                   src, rewriter.getUnitAttr())
               .getResult());
 
-      auto originalDst = rewriter.create<bufferization::ToMemrefOp>(
+      auto originalDst = rewriter.create<bufferCastOp>(
           loc, MemRefType::get(dstShape, dst.getType().getElementType()), dst,
           nullptr);
       dst = cast<ShapedValue>(

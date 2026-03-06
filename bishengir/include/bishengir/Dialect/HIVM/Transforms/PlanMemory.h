@@ -354,9 +354,16 @@ private:
   /// Update temp buffer for ignoring inplace.
   void UpdateExtraBufferIgnoreInplace(const ValueRange &results);
 
-  /// Update alias buffer and its condition.
-  void UpdateBuffer2AliasVec(const SetVector<Value> &buffers,
-                             const SetVector<Value> &aliasBuffers,
+  /// Update the alias relationship between buffer and aliasBuffer according to
+  /// condition.
+  /// NOTE :
+  /// 1. aliasBuffersOfBuffer: the alias buffers of `buffer`, including `buffer`
+  /// itself
+  /// 2. aliasBuffersOfAliasBuffer: the alias buffers of `aliasBuffer`,
+  /// including `aliasBuffer` itself
+  void UpdateBuffer2AliasVec(Value buffer, Value aliasBuffer,
+                             const SetVector<Value> &aliasBuffersOfBuffer,
+                             const SetVector<Value> &aliasBuffersOfAliasBuffer,
                              bool hasCond);
 
   /// Update the relationship of buffer aliases.

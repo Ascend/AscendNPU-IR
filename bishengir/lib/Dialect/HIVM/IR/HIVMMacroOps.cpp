@@ -25,10 +25,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -50,7 +52,9 @@ namespace {
 // Design for 1D bias specially
 constexpr size_t kDimOne = 1;
 constexpr size_t kDimTwo = 2;
+constexpr size_t kDimThree = 3;
 constexpr size_t kDimFour = 4;
+constexpr size_t kDimFive = 5;
 
 FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
   auto valType = dyn_cast<ShapedType>(val.getType());
@@ -232,8 +236,8 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      UnitAttr enable_HF32) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ Value{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ UnitFlagAttr{});
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
+        enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -567,8 +571,8 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           UnitAttr enable_HF32) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ Value{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ UnitFlagAttr{});
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
+        enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -722,4 +726,86 @@ LogicalResult MixGroupMatmulOp::verify() {
     return failure();
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Conv1DL1Op
+//===----------------------------------------------------------------------===//
+
+bool Conv1DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv1DL1Op>(this, cst);
+}
+
+void Conv1DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
+  auto rank = getRankFromShapedTypeValue(getInput());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
+  auto rank = getRankFromShapedTypeValue(getWeight());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getBiasLayout() {
+  return DataLayoutAttr::get(getContext(), DataLayout::ND);
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getInitLayout() {
+  auto rank = getRankFromShapedTypeValue(getInit());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
+int Conv1DL1Op::getNumSyncRelatedArgs() { return 6; }
+
+SmallVector<Value>
+Conv1DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getInput());
+  retOperands.push_back(getWeight());
+  retOperands.push_back(getInitCondition());
+  if (getBias()) {
+    retOperands.push_back(getBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
 }

@@ -18,9 +18,11 @@
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncAnalysis.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
@@ -135,6 +137,18 @@ bool SyncAnalyzer::checkUnderParallelLoop(
   return isParallelLoop(forOp1);
 }
 
+bool SyncAnalyzer::isBackwardSyncUnderForLoop(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    const std::optional<unsigned> &forEndIndex) const {
+  if (forEndIndex.has_value()) {
+    if (frontCompound->GetIndex() > nowCompound->GetIndex()) {
+      return dyn_cast<scf::ForOp>(syncIR[forEndIndex.value()]->elementOp);
+    }
+  }
+  return false;
+}
+
 void SyncAnalyzer::DealWithLoopSync(LoopInstanceElement *nowElement) {
   // insert backward sync:
   // Copy the original command to the back.
@@ -242,17 +256,17 @@ void SyncAnalyzer::InsertSeqSync(CompoundInstanceElement *nowCompound,
     } else if (auto *forInstance =
                    dyn_cast<LoopInstanceElement>(frontPtr.get())) {
       assert(syncIR[frontIndex]->pipeAfter.empty());
-      int skipLoop = 
-          static_cast<int>(InsertLoopSync(i, nowCompound, begin, forInstance, syncElement,
-                           syncRecordList, forEndIndex));
+      int skipLoop = static_cast<int>(
+          InsertLoopSync(i, nowCompound, begin, forInstance, syncElement,
+                         syncRecordList, forEndIndex));
       assert(syncIR[frontIndex]->pipeBefore.empty());
       i -= skipLoop;
     } else if (auto *branchElement =
                    dyn_cast<BranchInstanceElement>(frontPtr.get())) {
       assert(syncIR[frontIndex]->pipeBefore.empty());
       assert(syncIR[frontIndex]->pipeAfter.empty());
-      int skipBranch =
-          static_cast<int>(InsertBranchSync(i, nowCompound, begin, branchElement, syncElement,
+      int skipBranch = static_cast<int>(
+          InsertBranchSync(i, nowCompound, begin, branchElement, syncElement,
                            syncRecordList, forEndIndex));
       i -= skipBranch;
     }
@@ -276,7 +290,7 @@ void SyncAnalyzer::UpdateAlreadySync(const SyncOps &syncVector,
 void SyncAnalyzer::UpdateSyncRecord(const SyncOperation *sync,
                                     SyncRecord &syncRecord,
                                     hivm::PIPE nowPipeValue) {
-  auto &[recordAlready, recordFinder] = syncRecord;
+  auto &[alreadySync, syncFinder] = syncRecord;
   const hivm::PIPE setPipeValue = sync->GetSrcPipe();
   hivm::PIPE waitPipeValue = sync->GetDstPipe();
   if (syncAnalysisMode == SyncAnalysisMode::BLOCKSYNC) {
@@ -286,21 +300,20 @@ void SyncAnalyzer::UpdateSyncRecord(const SyncOperation *sync,
     nowPipeValue = hivm::PIPE::PIPE_S;
     waitPipeValue = hivm::PIPE::PIPE_S;
   }
-
   bool barrierFinder = (nowPipeValue == waitPipeValue) &&
                        (sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER);
   if (barrierFinder) {
-    recordAlready[static_cast<unsigned int>(nowPipeValue)] = true;
-  } else if (recordAlready[static_cast<unsigned int>(waitPipeValue)] ||
+    alreadySync[static_cast<unsigned int>(nowPipeValue)] = true;
+  } else if (alreadySync[static_cast<unsigned int>(waitPipeValue)] ||
              (nowPipeValue == waitPipeValue)) {
-    if (recordFinder[sync->GetSyncIndex()] &&
+    if (syncFinder[sync->GetSyncIndex()] &&
         (sync->GetType() == SyncOperation::TYPE::SET_EVENT ||
          sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET)) {
-      recordAlready[static_cast<unsigned int>(setPipeValue)] = true;
+      alreadySync[static_cast<unsigned int>(setPipeValue)] = true;
     }
     if (sync->GetType() == SyncOperation::TYPE::WAIT_EVENT ||
         sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
-      recordFinder[sync->GetSyncIndex()] = true;
+      syncFinder[sync->GetSyncIndex()] = true;
     }
   }
 }
@@ -473,6 +486,9 @@ bool SyncAnalyzer::isAlreadySync(CompoundInstanceElement *nowCompound,
     // insert redundant barrier.all instructions.
     return false;
   }
+  if (checkUnitFlagAlreadySync(nowCompound, frontCompound)) {
+    return true;
+  }
   const hivm::PIPE frontPipeValue = frontCompound->kPipeValue;
   if (syncRecordList[recordListIndex]
           .alreadySync[static_cast<unsigned int>(frontPipeValue)]) {
@@ -537,11 +553,10 @@ void SyncAnalyzer::MemAnalyze(CompoundInstanceElement *nowCompound,
                              forEndIndex);
   } else {
     assert(syncAnalysisMode == SyncAnalysisMode::NORMALSYNC);
-    if (auto unitFlagMode =
+    if (auto unitFlagInfo =
             checkUnitFlagPatterns(nowCompound, frontCompound, forEndIndex)) {
       insertUnitFlagEnabledSyncOperations(nowCompound, frontCompound,
-                                          forEndIndex, unitFlagMode->first,
-                                          unitFlagMode->second);
+                                          forEndIndex, unitFlagInfo.value());
     } else {
       InsertSyncOperation(nowCompound, frontCompound, depBaseMemInfosVec,
                           forEndIndex);
@@ -552,11 +567,12 @@ void SyncAnalyzer::MemAnalyze(CompoundInstanceElement *nowCompound,
 
 void SyncAnalyzer::UpdateSyncRecordInfo(CompoundInstanceElement *frontCompound,
                                         SyncRecordList &syncRecordList) {
+  assert(!syncOperations.empty());
+  auto &syncPair = syncOperations.back();
+  assert(!syncPair.empty());
+  auto *newSync = syncPair.front().get();
+  assert(newSync != nullptr);
   for (size_t i = 0; i < syncRecordList.size(); i++) {
-    assert(!syncOperations.empty());
-    auto &syncPair = syncOperations.back();
-
-    auto *newSync = syncPair[0].get();
     if (i == 0 && newSync->eventIdNum > 1) {
       continue;
     }
@@ -657,7 +673,7 @@ void SyncAnalyzer::InsertBlockSyncOperation(
 
     auto parentLoops =
         getBlockSyncMultibufferEnabledLoops(nowCompound, frontCompound);
-    if (parentLoops.has_value()) {
+    if (parentLoops.has_value() && forEndIndex.has_value()) {
       auto [nowParentLoop, frontParentLoop] = parentLoops.value();
       std::optional<int> eventIdNumOpt =
           getBlockSyncOpEventIdNum(nowParentLoop, frontParentLoop);
@@ -873,44 +889,50 @@ void SyncAnalyzer::InsertSyncOperation(
   assert(syncOperations.size() == syncIndex);
 }
 
+void SyncAnalyzer::updateUnitFlagInfo(CompoundInstanceElement *nowCompound,
+                                      CompoundInstanceElement *frontCompound,
+                                      UnitFlagInfo unitFlagInfo) {
+  auto insertSetId = frontCompound->GetIndex();
+  auto insertWaitId = nowCompound->GetIndex();
+  checkSyncIRIndex(syncIR, insertSetId);
+  checkSyncIRIndex(syncIR, insertWaitId);
+  auto *setCompound =
+      dyn_cast<CompoundInstanceElement>(syncIR[insertSetId].get());
+  auto *waitCompound =
+      dyn_cast<CompoundInstanceElement>(syncIR[insertWaitId].get());
+  assert(setCompound && waitCompound);
+  if (setCompound != frontCompound) {
+    setCompound->unitFlagInfo.merge(unitFlagInfo, waitCompound, setCompound,
+                                    /*asSet=*/true, /*asWait=*/false);
+    setCompound->unitFlagInfo.linkedElementAsSet = waitCompound;
+  }
+  if (waitCompound != nowCompound) {
+    waitCompound->unitFlagInfo.merge(unitFlagInfo, waitCompound, setCompound,
+                                     /*asSet=*/false, /*asWait=*/true);
+  }
+  frontCompound->unitFlagInfo.merge(unitFlagInfo, nowCompound, frontCompound,
+                                    /*asSet=*/true, /*asWait=*/false);
+  nowCompound->unitFlagInfo.merge(unitFlagInfo, nowCompound, frontCompound,
+                                  /*asSet=*/false, /*asWait=*/true);
+}
+
 void SyncAnalyzer::insertUnitFlagEnabledSyncOperations(
     CompoundInstanceElement *nowCompound,
     CompoundInstanceElement *frontCompound,
-    const std::optional<unsigned> &forEndIndex, UNIT_FLAG frontUnitFlagMode,
-    UNIT_FLAG nowUnitFlagMode) {
+    const std::optional<unsigned> &forEndIndex, UnitFlagInfo unitFlagInfo) {
+  updateUnitFlagInfo(nowCompound, frontCompound, unitFlagInfo);
   auto nowPipe = nowCompound->kPipeValue;
   auto frontPipe = frontCompound->kPipeValue;
-  unsigned insertWaitId = nowCompound->GetIndex();
-  unsigned insertSetId = frontCompound->GetIndex();
-
-  auto setFlag = std::make_unique<SyncOperation>(
-      SyncOperation{SyncOperation::TYPE::SET_EVENT, frontPipe, nowPipe,
-                    syncIndex, insertSetId, forEndIndex});
+  auto insertSetId = frontCompound->GetIndex();
+  auto insertWaitId = nowCompound->GetIndex();
+  auto setFlag = std::make_unique<SyncOperation>(SyncOperation::TYPE::SET_EVENT,
+                                                 frontPipe, nowPipe, syncIndex,
+                                                 insertSetId, forEndIndex);
   auto waitFlag = setFlag->GetMatchSync(insertWaitId);
-
-  if (forEndIndex.has_value()) {
-    auto *setCompound =
-        dyn_cast<CompoundInstanceElement>(syncIR[insertSetId].get());
-    auto *waitCompound =
-        dyn_cast<CompoundInstanceElement>(syncIR[insertWaitId].get());
-    if (!setCompound || !waitCompound ||
-        setCompound->elementOp != frontCompound->elementOp ||
-        waitCompound->elementOp != nowCompound->elementOp) {
-      llvm_unreachable("now/front compounds indexes don't match");
-    }
-    setCompound->unitFlagModeAsSet = frontUnitFlagMode;
-    waitCompound->unitFlagModeAsWait = nowUnitFlagMode;
-    setCompound->linkedUnitFlagCompAsSet = waitCompound;
-    waitCompound->linkedUnitFlagCompAsWait = setCompound;
-  }
-  frontCompound->unitFlagModeAsSet = frontUnitFlagMode;
-  nowCompound->unitFlagModeAsWait = nowUnitFlagMode;
-  frontCompound->linkedUnitFlagCompAsSet = nowCompound;
-  nowCompound->linkedUnitFlagCompAsWait = frontCompound;
-
   setFlag->uselessSync = true;
   waitFlag->uselessSync = true;
-
+  setFlag->replacedWithUnitFlag = true;
+  waitFlag->replacedWithUnitFlag = true;
   syncIR[insertSetId]->pipeAfter.push_back(setFlag.get());
   syncIR[insertWaitId]->pipeBefore.push_back(waitFlag.get());
   SmallVector<std::unique_ptr<SyncOperation>> newSync;
@@ -921,21 +943,32 @@ void SyncAnalyzer::insertUnitFlagEnabledSyncOperations(
   assert(syncOperations.size() == syncIndex);
 }
 
-std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-SyncAnalyzer::checkUnitFlagPatterns(
+std::optional<UnitFlagInfo> SyncAnalyzer::checkUnitFlagPatterns(
     CompoundInstanceElement *nowCompound,
     CompoundInstanceElement *frontCompound,
     const std::optional<unsigned> &forEndIndex) {
   if (!enableUnitFlag) {
     return {};
   }
-  if (frontCompound->unitFlagModeAsSet != UNIT_FLAG::DISABLED ||
-      nowCompound->unitFlagModeAsWait != UNIT_FLAG::DISABLED) {
+  if (!isa<UnitFlagEnabledInterface>(nowCompound->elementOp) ||
+      !isa<UnitFlagEnabledInterface>(frontCompound->elementOp)) {
     return {};
   }
-  if (forEndIndex.has_value()) {
+  scf::ForOp backwardSyncLoop;
+  if (isBackwardSync(nowCompound, frontCompound)) {
+    assert(forEndIndex.has_value());
+    // unit-flag is not supported cross nested loops.
     if (nowCompound->elementOp->getParentOp() !=
         syncIR[forEndIndex.value()]->elementOp) {
+      return {};
+    }
+    if (frontCompound->elementOp->getParentOp() !=
+        syncIR[forEndIndex.value()]->elementOp) {
+      return {};
+    }
+    // backward sync using unit-flag is only supported for for-loops.
+    if (!(backwardSyncLoop =
+              dyn_cast<scf::ForOp>(syncIR[forEndIndex.value()]->elementOp))) {
       return {};
     }
   }
@@ -943,95 +976,45 @@ SyncAnalyzer::checkUnitFlagPatterns(
                                           forEndIndex)) {
     return {};
   }
-  if (frontCompound->unitFlagModeAsWait == UNIT_FLAG::ENABLED_WITH_UPDATE ||
-      frontCompound->unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER ||
-      frontCompound->unitFlagModeAsWait ==
-          UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS) {
-    // fixpipe expect unit-flag to be enabled in a mmadl1 operation before it,
-    // so by this condition, we are making sure to not link a fixpipe
-    // operation with an operation after it if it was not linked with an
-    // operation before it
-    if (auto unitFlagMode =
-            checkMmadl1FixpipeUnitFlagPattern(nowCompound, frontCompound)) {
-      return unitFlagMode;
-    }
-    if (auto unitFlagMode = checkMmadl1FixpipeSingleForLoopUnitFlagPattern(
-            nowCompound, frontCompound, /*op1IsFrontCompound=*/false)) {
-      return unitFlagMode;
-    }
+  if (!frontCompound->unitFlagInfo.disabledAsSet() ||
+      !nowCompound->unitFlagInfo.disabledAsWait()) {
+    return {};
   }
-  if (auto unitFlagMode =
-          checkMmadl1FixpipeUnitFlagPattern(frontCompound, nowCompound)) {
-    return unitFlagMode;
+  if (auto unitFlagInfo = checkUnitFlagSameBlockPattern(
+          frontCompound->elementOp, nowCompound->elementOp,
+          frontCompound->unitFlagInfo, nowCompound->unitFlagInfo,
+          backwardSyncLoop)) {
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
-  if (auto unitFlagMode = checkMmadl1FixpipeSingleForLoopUnitFlagPattern(
-          frontCompound, nowCompound, /*op1IsFrontCompound=*/true)) {
-    return unitFlagMode;
+  if (auto unitFlagInfo = checkUnitFlagOpLoopOpPattern(
+          frontCompound->elementOp, nowCompound->elementOp,
+          frontCompound->unitFlagInfo, nowCompound->unitFlagInfo,
+          backwardSyncLoop)) {
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
   return {};
 }
 
-std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-SyncAnalyzer::checkMmadl1FixpipeUnitFlagPattern(
-    CompoundInstanceElement *op1, CompoundInstanceElement *op2) const {
-  auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op1->elementOp);
-  auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(op2->elementOp);
-  if (!fixpipeOp || !mmadl1Op) {
-    return {};
+bool SyncAnalyzer::checkUnitFlagAlreadySync(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound) const {
+  if (!enableUnitFlag) {
+    return false;
   }
-  if (op1->kPipeValue != PIPE::PIPE_M) {
-    return {};
-  }
-  if (fixpipeOp.getSrc() != mmadl1Op.getC()) {
-    return {};
-  }
-  if (fixpipeOp->getParentRegion() != mmadl1Op->getParentRegion()) {
-    return {};
-  }
-  return std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                        UNIT_FLAG::ENABLED_WITH_UPDATE);
-}
-
-std::optional<std::pair<UNIT_FLAG, UNIT_FLAG>>
-SyncAnalyzer::checkMmadl1FixpipeSingleForLoopUnitFlagPattern(
-    CompoundInstanceElement *op1, CompoundInstanceElement *op2,
-    bool op1IsFrontCompound) const {
-  auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op1->elementOp);
-  auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(op2->elementOp);
-  if (!fixpipeOp || !mmadl1Op) {
-    return {};
-  }
-  if (op1->kPipeValue != PIPE::PIPE_M) {
-    return {};
-  }
-  if (fixpipeOp.getSrc() != mmadl1Op.getC()) {
-    return {};
-  }
-  auto mmadl1ForOp = dyn_cast<scf::ForOp>(mmadl1Op->getParentOp());
-  auto fixpipeOpForOp = dyn_cast<scf::ForOp>(fixpipeOp->getParentOp());
-  if (mmadl1ForOp && fixpipeOpForOp) {
-    if (mmadl1ForOp->getParentRegion() == fixpipeOpForOp->getParentRegion()) {
-      return std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                            UNIT_FLAG::ENABLED_ONLY_FIRST_ITER);
+  llvm::DenseSet<CompoundInstanceElement *> visited;
+  CompoundInstanceElement *curElement =
+      frontCompound->unitFlagInfo.linkedElementAsSet;
+  while (curElement != nullptr) {
+    auto [it, inserted] = visited.insert(curElement);
+    if (!inserted) {
+      break;
     }
-  } else if (mmadl1ForOp) {
-    if (mmadl1ForOp->getParentRegion() == fixpipeOp->getParentRegion()) {
-      return op1IsFrontCompound
-                 ? std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                                  UNIT_FLAG::ENABLED_WITH_UPDATE)
-                 : std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                                  UNIT_FLAG::ENABLED_ONLY_FIRST_ITER);
+    if (curElement == nowCompound) {
+      return true;
     }
-  } else if (fixpipeOpForOp) {
-    if (fixpipeOpForOp->getParentRegion() == mmadl1Op->getParentRegion()) {
-      return op1IsFrontCompound
-                 ? std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                                  UNIT_FLAG::ENABLED_ONLY_FIRST_ITER)
-                 : std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                                  UNIT_FLAG::ENABLED_WITH_UPDATE);
-    }
+    curElement = curElement->unitFlagInfo.linkedElementAsSet;
   }
-  return {};
+  return false;
 }
 
 bool SyncAnalyzer::checkMemoryConflictBetweenExclusive(
@@ -1040,9 +1023,7 @@ bool SyncAnalyzer::checkMemoryConflictBetweenExclusive(
     const std::optional<unsigned> &forEndIndex) {
   auto checkMemoryConflictRangeExclusive =
       [this, nowCompound, frontCompound](unsigned l, unsigned r) {
-        if (l > r) {
-          llvm_unreachable("expected l <= r");
-        }
+        assert(l <= r);
         for (unsigned i = l + 1; i < r; i++) {
           if (auto *currentCompound =
                   dyn_cast<CompoundInstanceElement>(syncIR[i].get())) {
@@ -1058,22 +1039,18 @@ bool SyncAnalyzer::checkMemoryConflictBetweenExclusive(
         return false;
       };
 
-  unsigned nowIndex = nowCompound->GetIndex();
-  unsigned frontIndex = frontCompound->GetIndex();
+  auto nowIndex = nowCompound->GetIndex();
+  auto frontIndex = frontCompound->GetIndex();
   if (frontIndex <= nowIndex) {
     return checkMemoryConflictRangeExclusive(frontIndex, nowIndex);
   } else {
-    if (!forEndIndex.has_value()) {
-      llvm_unreachable("expected backward-sync mode.");
-    }
-    auto *forInst =
+    assert(forEndIndex.has_value());
+    auto *loopElement =
         dyn_cast<LoopInstanceElement>(syncIR[forEndIndex.value()].get());
-    if (!forInst || !(forInst->beginId < nowIndex && nowIndex < frontIndex &&
-                      frontIndex < forInst->endId)) {
-      llvm_unreachable("expected indexs to be within a for-op region.");
-    }
-    if (checkMemoryConflictRangeExclusive(forInst->beginId, nowIndex) ||
-        checkMemoryConflictRangeExclusive(frontIndex, forInst->endId)) {
+    assert(loopElement != nullptr);
+    assert(loopElement->beginId < nowIndex && frontIndex < loopElement->endId);
+    if (checkMemoryConflictRangeExclusive(loopElement->beginId, nowIndex) ||
+        checkMemoryConflictRangeExclusive(frontIndex, loopElement->endId)) {
       return true;
     }
   }
@@ -1112,8 +1089,10 @@ int SyncAnalyzer::GetEventIdNum(
   for (auto &depBaseMemInfos : depBaseMemInfosVec) {
     assert(depBaseMemInfos.first != nullptr &&
            depBaseMemInfos.second != nullptr);
-    int aBaseAddressesSize = static_cast<int>(depBaseMemInfos.first->baseAddresses.size());
-    int bBaseAddressesSize = static_cast<int>(depBaseMemInfos.second->baseAddresses.size());
+    int aBaseAddressesSize =
+        static_cast<int>(depBaseMemInfos.first->baseAddresses.size());
+    int bBaseAddressesSize =
+        static_cast<int>(depBaseMemInfos.second->baseAddresses.size());
     if ((aBaseAddressesSize == bBaseAddressesSize && aBaseAddressesSize == 1) ||
         aBaseAddressesSize != bBaseAddressesSize) {
       return singleBufferNum;

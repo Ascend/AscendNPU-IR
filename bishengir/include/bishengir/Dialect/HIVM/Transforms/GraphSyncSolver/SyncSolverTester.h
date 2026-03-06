@@ -20,6 +20,8 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include <climits>
 #include <deque>
@@ -28,83 +30,71 @@
 
 namespace mlir::hivm::syncsolver {
 
+// NOLINTBEGIN
 constexpr int max_depth = 4;
 constexpr int loop_unrolling_num = 3;
 constexpr int read_write_vals_max_num = 2;
 
-// constexpr int max_depth = 3;
-// constexpr int loop_unrolling_num = 5;
-// constexpr int read_write_vals_max_num = 3;
-
-// constexpr int max_depth = 2;
-// constexpr int loop_unrolling_num = 7;
-// constexpr int read_write_vals_max_num = 4;
-
 constexpr int true_branch_prob_a = 1;
 constexpr int true_branch_prob_b = 2;
+constexpr int unlikely_cond_prob_a = 1;
+constexpr int unlikely_cond_prob_b = 10;
 constexpr int dead_loop_prob_a = 1;
 constexpr int dead_loop_prob_b = 10;
 constexpr int all_dead_loops_prob_a = 1;
 constexpr int all_dead_loops_prob_b = 50;
 
-// default settings
-// constexpr int scope_in_prob_a = 1;
-// constexpr int scope_in_prob_b = 5;
-// constexpr int scope_for_loop_prob_a = 1;
-// constexpr int scope_for_loop_prob_b = 3;
-// constexpr int scope_while_loop_prob_a = 1;
-// constexpr int scope_while_loop_prob_b = 5;
-// constexpr int scope_cond_prob_a = 1;
-// constexpr int scope_cond_prob_b = 5;
-// constexpr int scope_out_prob_a = 1;
-// constexpr int scope_out_prob_b = 3;
-
-// high loop prob
 constexpr int scope_in_prob_a = 1;
-constexpr int scope_in_prob_b = 4;
+constexpr int scope_in_prob_b = 5;
 constexpr int scope_for_loop_prob_a = 1;
-constexpr int scope_for_loop_prob_b = 2;
+constexpr int scope_for_loop_prob_b = 3;
 constexpr int scope_while_loop_prob_a = 1;
 constexpr int scope_while_loop_prob_b = 5;
 constexpr int scope_cond_prob_a = 1;
 constexpr int scope_cond_prob_b = 5;
 constexpr int scope_out_prob_a = 1;
-constexpr int scope_out_prob_b = 4;
+constexpr int scope_out_prob_b = 3;
+// NOLINTEND
 
 class SyncTester {
 
 public:
 private:
-  uint64_t seed{42};
-  int numOperations{0};
-  int numPointers{0};
-  int usedPipesMask{0};
+  int64_t initSeed{42};
+  int numOperations{20};
+  int numPointers{10};
   bool enableMultiBuffer{false};
+  SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   std::unique_ptr<std::mt19937> randGenerator;
 
   int idx{0};
-  llvm::DenseMap<hivm::PIPE,
+  llvm::DenseMap<CorePipeInfo,
                  std::deque<std::pair<std::pair<int, int>,
                                       std::pair<const OperationBase *, int>>>>
       pipelineQue;
 
 public:
-  SyncTester(int numOperations, int numPointers, int usedPipesMask,
-             bool enableMultiBuffer, std::optional<uint64_t> seed = {})
+  SyncTester(int numOperations, int numPointers, bool enableMultiBuffer,
+             bool enableCrossCoreMode, std::optional<int64_t> seed = {})
       : numOperations(numOperations), numPointers(numPointers),
-        usedPipesMask(usedPipesMask), enableMultiBuffer(enableMultiBuffer) {
-    this->seed =
+        enableMultiBuffer(enableMultiBuffer),
+        syncMode(enableCrossCoreMode ? SyncMode::TEST_CROSS_CORE_MODE
+                                     : SyncMode::TEST_INTRA_CORE_MODE) {
+    this->initSeed =
         seed.has_value()
             ? seed.value()
-            : static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count());
-    randGenerator = std::make_unique<std::mt19937>(this->seed);
+            : static_cast<unsigned>(
+                  std::chrono::steady_clock::now().time_since_epoch().count());
+    randGenerator = std::make_unique<std::mt19937>(this->initSeed);
   }
 
   // Generate a full solver test, run the solver and simulate the result.
   llvm::LogicalResult test();
 
+  static size_t getOptionsNum() { return 6; }
+
   // Helper to toggle running as test mode (external use).
-  static bool runTestMode();
+  static void runTestMode(const SmallVector<int64_t> &options);
 
 private:
   void reset() {
@@ -146,8 +136,8 @@ private:
 
   // Recursively create a random region body (scopes/loops/cond/rw ops).
   void generateRandTest(Scope *scopeOp, const std::vector<int> &pointerOps,
-                        const std::vector<hivm::PIPE> &pipesVec, int &remOpNum,
-                        int depth);
+                        const llvm::SmallVector<hivm::PIPE> &pipesVec,
+                        int &remOpNum, int depth);
 
   // Walk the generated IR and place operations into pipeline queues for
   // simulation.
