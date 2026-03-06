@@ -20,7 +20,7 @@ def MapForToForall
     "tensor::TensorDialect"
   ];
   let options = [
-    Option<"simtMode", "simt-mode", "bool", "false", 
+    Option<"simtMode", "simt-mode", "bool", "false",
       "Activate for SIMT mode compilation">,];
 }
 
@@ -32,5 +32,13 @@ def RemoveRedundantLoopInit
     "tensor::TensorDialect"
   ];
 }
+
+ def CanonicalizeIterArg
+     : Pass<"scf-canonicalize-iter-arg", "func::FuncOp"> {
+   let constructor = "mlir::scf::createCanonicalizeIterArgPass()";
+   let dependentDialects = [
+     "scf::SCFDialect"
+   ];
+ }
 
 #endif // BISHENGIR_DIALECT_SCF_TRANSFORMS_PASSES_TD

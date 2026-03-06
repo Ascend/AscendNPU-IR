@@ -43,6 +43,7 @@ namespace hivm {
 
 void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.addPass(createArithToAffineConversionPass());
+  pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
   ADD_CANONICALIZER_PASS;
   pm.addPass(createSCFForLoopCanonicalizationPass());
   pm.addPass(createCSEPass());
