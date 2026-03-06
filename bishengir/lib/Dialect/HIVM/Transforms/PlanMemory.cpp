@@ -1004,18 +1004,18 @@ void MemPlan::UpdateBuffer2Offsets() {
 }
 
 void MemPlan::UpdateMultiBufferReuseExtraOffset() {
-  if (firstBufferEntry2RelationMultiBufferEntry.empty()) {
+  if (firstBufferEntry2RelationOtherBufferEntry.empty()) {
     return;
   }
 
-  for (auto &relationEntry : firstBufferEntry2RelationMultiBufferEntry) {
-    for (const std::unique_ptr<StorageEntry> &multiBufferEntry :
+  for (auto &relationEntry : firstBufferEntry2RelationOtherBufferEntry) {
+    for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
          relationEntry.second) {
-      if (!multiBufferEntry)
+      if (!otherBufferEntry)
         continue;
-      for (Value &buffer : multiBufferEntry->inplaceBuffers) {
+      for (Value &buffer : otherBufferEntry->inplaceBuffers) {
         buffer2Offsets[buffer].push_back(
-            (multiBufferEntry->bitsOffset + utils::kBitsToByte - 1) /
+            (otherBufferEntry->bitsOffset + utils::kBitsToByte - 1) /
             utils::kBitsToByte);
       }
     }
@@ -1161,7 +1161,7 @@ void MemPlan::ExpandMultiBufferStorageEntry() {
         entry->inplaceBuffers = StorageEntryVec[i]->inplaceBuffers;
         entry->multiBufferNum = StorageEntryVec[i]->multiBufferNum;
         // Store the entry pointer
-        StorageEntryVec[i]->multiBufferRelationEntries.push_back(entry.get());
+        StorageEntryVec[i]->otherBufferRelationEntries.push_back(entry.get());
         StorageEntryVec.push_back(std::move(entry));
       }
     }
@@ -1421,9 +1421,9 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
                                   touchPipeScalarStorageEntryVec.begin(),
                                   touchPipeScalarStorageEntryVec.end());
 
-  // Ensure that firstbuffer and multibuffer are continuously plan mem in the
+  // Ensure that firstbuffer and otherbuffer are continuously plan mem in the
   // multi buffer.
-  ReorderContinuousFirstBufferMultiBufferEntry(reorderedStorageEntryVec);
+  ReorderContinuousFirstBufferOtherBufferEntry(reorderedStorageEntryVec);
   StorageEntry *reorderedRootStorageEntry = reorderedStorageEntryVec[0];
   reorderedRootStorageEntry->mergedChildren.clear();
   for (size_t j = 1; j < reorderedStorageEntryVec.size(); ++j) {
@@ -1433,7 +1433,7 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
   return reorderedRootStorageEntry;
 }
 
-void MemPlan::ReorderContinuousFirstBufferMultiBufferEntry(
+void MemPlan::ReorderContinuousFirstBufferOtherBufferEntry(
     SmallVector<StorageEntry *> &storageEntryVec) {
   SmallVector<StorageEntry *> reorderedStorageEntryVec;
   for (auto &storageEntry : storageEntryVec) {
@@ -1441,8 +1441,8 @@ void MemPlan::ReorderContinuousFirstBufferMultiBufferEntry(
                         reorderedStorageEntryVec.end(), storageEntry);
     if (it == reorderedStorageEntryVec.end()) {
       reorderedStorageEntryVec.push_back(storageEntry);
-        // Add all relation entries for multi-buffer
-        for (StorageEntry *relationEntry : storageEntry->multiBufferRelationEntries) {
+        // Add all relation entries for otherbuffer
+        for (StorageEntry *relationEntry : storageEntry->otherBufferRelationEntries) {
           if(!relationEntry) {
             continue;
           }
@@ -1538,13 +1538,13 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
       if (size < e->alignedConstBits) {
         continue;
       }
-      // If SPEC_LEVEL_1, then the address of multibuffer offset needs to be
+      // If SPEC_LEVEL_1, then the address of otherbuffer offset needs to be
       // allocated.
-      SmallVector<uint64_t, 3> multiBufferOffsets;
+      SmallVector<uint64_t, 3> otherBufferOffsets;
       if (localLevel == SPEC_LEVEL_1 &&
           VerifyConflictStage1(outline, his, e,
                                OutlineSectionInfo(start, end, size, false),
-                               multiBufferOffsets)) {
+                               otherBufferOffsets)) {
         break;
       }
 
@@ -1557,12 +1557,12 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
 
       if (localLevel == SPEC_LEVEL_1) {
         // There is no conflict with the historical plan of buffer life, and
-        // the address of the multibuffer can be assigned.
-        assert(!multiBufferOffsets.empty() &&
-               "multiBufferOffsets should not be empty at SPEC_LEVEL_1");
-        PlanRelationMultiBufferEntryAddress(multiBufferOffsets, e);
-        for (uint64_t multiBufferOffset : multiBufferOffsets)
-          SpecAllocRelationMultiBufferEntry(outline, his, e, multiBufferOffset);
+        // the address of the otherbuffer can be assigned.
+        assert(!otherBufferOffsets.empty() &&
+               "otherBufferOffsets should not be empty at SPEC_LEVEL_1");
+        PlanRelationOtherBufferEntryAddress(otherBufferOffsets, e);
+        for (uint64_t otherBufferOffset : otherBufferOffsets)
+          SpecAllocRelationOtherBufferEntry(outline, his, e, otherBufferOffset);
       }
       LDBG("APPLY_SPEC_LEVEL:  " << localLevel << "\n");
       RecordAllocatedEntry(e);
@@ -1599,7 +1599,7 @@ MemPlan::GetBufferParentLoop(const SmallVector<Value> &buffers) {
 bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
                                    StorageEntry *e,
                                    const OutlineSectionInfo &outlineInfo,
-                                   SmallVectorImpl<uint64_t> &multiBufferOffsets) {
+                                   SmallVectorImpl<uint64_t> &otherBufferOffsets) {
   if (outlineInfo.mem_start != outlineInfo.mem_end) {
     return true;
   }
@@ -1609,37 +1609,37 @@ bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
     return true;
   }
 
-  // Collect all available multibuffer entries for the current reuse bound
-  // storage entry. In the multi-buffer case, there may be multiple multibuffer
-  // entries (stored in multiBufferRelationEntries).
-  SmallVector<StorageEntry *> multiBufferEntries;
+  // Collect all available otherbuffer entries for the current reuse bound
+  // storage entry. In the multi-buffer case, there may be multiple otherbuffer
+  // entries (stored in otherBufferRelationEntries).
+  SmallVector<StorageEntry *> otherBufferEntries;
   if (reuseBoundStorageEntry->multiBufferNum > 1) {
     for (StorageEntry *relationEntry :
-         reuseBoundStorageEntry->multiBufferRelationEntries) {
+         reuseBoundStorageEntry->otherBufferRelationEntries) {
       if (relationEntry && relationEntry->bitsOffset != 0) {
-        multiBufferEntries.push_back(relationEntry);
+        otherBufferEntries.push_back(relationEntry);
       }
     }
   } else {
     auto iter =
-        firstBufferEntry2RelationMultiBufferEntry.find(reuseBoundStorageEntry);
-    if (iter != firstBufferEntry2RelationMultiBufferEntry.end()) {
-      for (const std::unique_ptr<StorageEntry> &multiBufferEntry :
+        firstBufferEntry2RelationOtherBufferEntry.find(reuseBoundStorageEntry);
+    if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+      for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
            iter->second) {
-        if (multiBufferEntry && multiBufferEntry->bitsOffset != 0)
-          multiBufferEntries.push_back(multiBufferEntry.get());
+        if (otherBufferEntry && otherBufferEntry->bitsOffset != 0)
+          otherBufferEntries.push_back(otherBufferEntry.get());
       }
     }
   }
 
-  if (multiBufferEntries.empty()) {
-    // No valid multibuffer entry has been allocated on this reuse bound
+  if (otherBufferEntries.empty()) {
+    // No valid otherbuffer entry has been allocated on this reuse bound
     // storage entry, SPEC_LEVEL_1 reuse is not applicable.
     return true;
   }
 
   // The buffer to be planned and the reuse bound storage entry must belong to
-  // the same loop, otherwise they cannot participate in firstbuffer-multibuffer
+  // the same loop, otherwise they cannot participate in firstbuffer-otherbuffer
   // reuse.
   auto parentLoop1 = GetBufferParentLoop(e->inplaceBuffers);
   auto parentLoop2 =
@@ -1657,7 +1657,7 @@ bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
   // Multi-buffer case: require enough multibuffer entries for all buffer
   // instances.
   if (e->multiBufferNum > 1 &&
-      multiBufferEntries.size() < e->multiBufferNum) {
+      otherBufferEntries.size() < e->multiBufferNum) {
     // Not enough historical multibuffer entries to match current multi-buffer
     // requirement.
     return true;
@@ -1668,7 +1668,7 @@ bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
   // multi-buffer reuse fails. Only when all required multibuffer entries are
   // conflict-free can we reuse (return false).
   for (uint32_t i = 0; i < e->multiBufferNum; ++i) {
-    StorageEntry *multiRelationMultiBufferEntry = multiBufferEntries[i];
+    StorageEntry *multiRelationMultiBufferEntry = otherBufferEntries[i];
     if (!multiRelationMultiBufferEntry) {
       return true;
     }
@@ -1679,20 +1679,20 @@ bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
           return this->IsBufferLifeVecConflict(r, multiBufferOffset, e);
         });
     if (!conflict) {
-      multiBufferOffsets.push_back(multiBufferOffset);
+      otherBufferOffsets.push_back(multiBufferOffset);
     } else {
       // As long as one instance conflicts, the whole multi-buffer reuse fails.
-      multiBufferOffsets.clear();
+      otherBufferOffsets.clear();
       return true;
     }
   }
 
-  // All required multibuffer entries are conflict-free; multiBufferOffsets was
+  // All required multibuffer entries are conflict-free; otherBufferOffsets was
   // already filled in the loop above.
   return false;
 }
 
-void MemPlan::SpecAllocRelationMultiBufferEntry(MemBoundList &outline,
+void MemPlan::SpecAllocRelationOtherBufferEntry(MemBoundList &outline,
                                                 PlanRecHis &his,
                                                 StorageEntry *e,
                                                 uint64_t offset) {
@@ -1709,28 +1709,28 @@ void MemPlan::SpecAllocRelationMultiBufferEntry(MemBoundList &outline,
       if (size < e->alignedConstBits) {
         continue;
       }
-      StorageEntry *multiBufferStorageEntry = nullptr;
-      auto iter = firstBufferEntry2RelationMultiBufferEntry.find(e);
-      if (iter != firstBufferEntry2RelationMultiBufferEntry.end()) {
-        for (const std::unique_ptr<StorageEntry> &multiBufferEntry :
+      StorageEntry *otherBufferStorageEntry = nullptr;
+      auto iter = firstBufferEntry2RelationOtherBufferEntry.find(e);
+      if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+        for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
              iter->second) {
-          if (multiBufferEntry && multiBufferEntry->bitsOffset == offset) {
-            multiBufferStorageEntry = multiBufferEntry.get();
+          if (otherBufferEntry && otherBufferEntry->bitsOffset == offset) {
+            otherBufferStorageEntry = otherBufferEntry.get();
             break;
           }
         }
       }
-      if (!multiBufferStorageEntry && e->multiBufferNum > 1) {
-        for (StorageEntry *relationEntry : e->multiBufferRelationEntries) {
+      if (!otherBufferStorageEntry && e->multiBufferNum > 1) {
+        for (StorageEntry *relationEntry : e->otherBufferRelationEntries) {
           if (relationEntry && relationEntry->bitsOffset == offset) {
-            multiBufferStorageEntry = relationEntry;
+            otherBufferStorageEntry = relationEntry;
             break;
           }
         }
       }
-      assert(multiBufferStorageEntry &&
-             "MultiBuffer Storage Entry not found!");
-      UpdateOutline(outline, his, multiBufferStorageEntry,
+      assert(otherBufferStorageEntry &&
+             "otherBuffer Storage Entry not found!");
+      UpdateOutline(outline, his, otherBufferStorageEntry,
                     OutlineSectionInfo(start, end, size, true), SPEC_LEVEL_1);
       return;
     }
@@ -1748,16 +1748,16 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
   return false;
 }
 
-void MemPlan::PlanRelationMultiBufferEntryAddress(
-    llvm::ArrayRef<uint64_t> multiBufferOffsets, StorageEntry *e) {
+void MemPlan::PlanRelationOtherBufferEntryAddress(
+    llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e) {
   if (e->multiBufferNum == 1) {
     // Single-buffer entry expanded to use multibuffer. Create
     // one extra StorageEntry per multibuffer offset and store in
-    // firstBufferEntry2RelationMultiBufferEntry as a vector.
-    auto &vec = firstBufferEntry2RelationMultiBufferEntry[e];
+    // firstBufferEntry2RelationOtherBufferEntry as a vector.
+    auto &vec = firstBufferEntry2RelationOtherBufferEntry[e];
     vec.clear();
-    vec.reserve(multiBufferOffsets.size());
-    for (uint64_t offset : multiBufferOffsets) {
+    vec.reserve(otherBufferOffsets.size());
+    for (uint64_t offset : otherBufferOffsets) {
       auto entry = std::make_unique<StorageEntry>();
       entry->bufInfo = e->bufInfo;
       entry->bufferLifeVec = e->bufferLifeVec;
@@ -1767,13 +1767,13 @@ void MemPlan::PlanRelationMultiBufferEntryAddress(
       entry->bitsOffset = offset;
       vec.push_back(std::move(entry));
     }
-  } else if (e->multiBufferNum > 1 && !e->multiBufferRelationEntries.empty()) {
+  } else if (e->multiBufferNum > 1 && !e->otherBufferRelationEntries.empty()) {
     // Multi-buffer entry: assign each relation entry its multibuffer offset
-    // from multiBufferOffsets.
+    // from otherBufferOffsets.
     for (size_t i = 0;
-         i < e->multiBufferRelationEntries.size() && i < multiBufferOffsets.size(); ++i) {
-      if (StorageEntry *re = e->multiBufferRelationEntries[i])
-        re->bitsOffset = multiBufferOffsets[i];
+         i < e->otherBufferRelationEntries.size() && i < otherBufferOffsets.size(); ++i) {
+      if (StorageEntry *re = e->otherBufferRelationEntries[i])
+        re->bitsOffset = otherBufferOffsets[i];
     }
   }
 }
@@ -2111,12 +2111,12 @@ void MemPlan::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
     PlanRecord r =
         RollbackOutline(statusWrapper.history, statusWrapper.outline);
     auto iter =
-        firstBufferEntry2RelationMultiBufferEntry.find(r.entry);
-    if (iter != firstBufferEntry2RelationMultiBufferEntry.end()) {
-      firstBufferEntry2RelationMultiBufferEntry.erase(iter);
+        firstBufferEntry2RelationOtherBufferEntry.find(r.entry);
+    if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+      firstBufferEntry2RelationOtherBufferEntry.erase(iter);
     }
     if (r.isDirectlyRollback ||
-        (r.entry->multiBufferNum > 1 && r.entry->multiBufferRelationEntries.empty())) {
+        (r.entry->multiBufferNum > 1 && r.entry->otherBufferRelationEntries.empty())) {
       continue;
     }
     si->childIdx = r.childIdx;
