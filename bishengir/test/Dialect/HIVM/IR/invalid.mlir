@@ -30,7 +30,7 @@ func.func @test_invalid_convert_layout(%arg : memref<128x128xf16, strided<[?, ?]
   %alloc = memref.alloc() : memref<128x128xf16>
   memref.copy %arg, %alloc : memref<128x128xf16, strided<[?, ?], offset: ?>> to memref<128x128xf16>
   // expected-error@+1 {{'hivm.hir.convert_layout' op requires the same element type for all operands and results}}
-  %alloc_new_layout = hivm.hir.convert_layout %alloc {srcLayout = #dot_a_layout, dstLayout = #nZ_layout} : (memref<128x128xf16>) -> memref<8x8x16x16xf32>
+  %alloc_new_layout = hivm.hir.convert_layout %alloc output_shape [8, 8, 16, 16] {srcLayout = #dot_a_layout, dstLayout = #nZ_layout} : (memref<128x128xf16>) -> memref<8x8x16x16xf32>
   "some_use"(%alloc_new_layout) : (memref<8x8x16x16xf32>) -> ()
   return
 }
