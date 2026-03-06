@@ -11,7 +11,7 @@ Welcome to AscendNPU IR 文档
     <ul>
     <li><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">GitCode 仓库</a></li>
     <li><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">GitHub 仓库</a></li>
-    <li><a href="https://ascendnpu-ir.readthedocs.io/" target="_blank">AscendNPU IR 文档</a></li>
+    <li><a href="https://ascendnpu-ir.gitcode.com/en/index.html" target="_blank">AscendNPU IR 文档</a></li>
     </ul>
 
 Getting Started

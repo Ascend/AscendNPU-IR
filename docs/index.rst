@@ -10,7 +10,7 @@ Welcome to AscendNPU IR Docs
 
     <p><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitCode</a></p>
     <p><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitHub</a></p>
-    <p><a href="https://ascendnpu-ir.readthedocs.io/" target="_blank">Documentation on Read the Docs</a></p>
+    <p><a href="https://ascendnpu-ir.gitcode.com/en/index.html" target="_blank">Documentation on GitCode</a></p>
 
 Getting Started
 ---------------
