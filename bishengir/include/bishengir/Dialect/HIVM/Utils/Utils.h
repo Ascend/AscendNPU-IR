@@ -270,6 +270,10 @@ TModuleCoreTypeAttr getModuleCoreTypeAttr(ModuleOp mod);
 /// Constraints: Skip bufferization::ToMemrefOp
 void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 
+Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
+                          MemRefType memrefType, ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize, Type elemType);
+
 bool isLastDimTranspose(hivm::VTransposeOp op);
 
 // Create local workspace of current block
