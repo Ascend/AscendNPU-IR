@@ -310,19 +310,20 @@ module {
     // CHECK: scf.for %[[arg2:.*]] = %[[c0]] to %[[c16]] step %[[c4]] {
     scf.for %arg2 = %c0 to %c16 step %c4 {
       // CHECK: %[[T0:.*]] = affine.apply #map()[%[[arg2]]]
-      // CHECK: %[[T1:.*]] = arith.index_cast %[[T0]] : index to i1
+      // CHECK: %[[T1:.*]] = arith.index_cast %[[T0]] : index to i64
       // CHECK: %[[T2:.*]] = arith.constant 0 : i64
       // CHECK: %[[T3:.*]] = arith.constant 1 : i64
-      // CHECK: %[[T4:.*]] = arith.select %[[T1]], %[[T2]], %[[T3]] : i64
+      // CHECK: %[[T4:.*]] = arith.constant 1 : i64
+      // CHECK: %[[T5:.*]] = arith.cmpi eq, %1, %[[T4]] : i64
+      // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T3]], %[[T2]] : i64
       %0 = hivm.hir.pointer_cast(%c0_i64, %c32_i64) : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %0 {hivm.multi_buffer = 2 : i32} : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T4]]]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T6]]]
       hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
       // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
       hivm.hir.store ins(%0 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T4]]]
-
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T6]]]
     }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
@@ -352,32 +353,36 @@ module {
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
     // CHECK: scf.for %[[arg2:.*]] = %[[c0]] to %[[c16]] step %[[c4]] {
     scf.for %arg4 = %c0 to %c16 step %c4 {
-      // CHECK: %[[T0:.*]] = affine.apply #map()[%[[arg2]]]
-      // CHECK: %[[T1:.*]] = arith.index_cast %[[T0]] : index to i1
+// CHECK: %[[T0:.*]] = affine.apply #map()[%[[arg2]]]
+      // CHECK: %[[T1:.*]] = arith.index_cast %[[T0]] : index to i64
       // CHECK: %[[T2:.*]] = arith.constant 2 : i64
       // CHECK: %[[T3:.*]] = arith.constant 3 : i64
-      // CHECK: %[[T4:.*]] = arith.select %[[T1]], %[[T2]], %[[T3]] : i64
-      // CHECK: %[[T5:.*]] = arith.constant 0 : i64
-      // CHECK: %[[T6:.*]] = arith.constant 1 : i64
-      // CHECK: %[[T7:.*]] = arith.select %[[T1]], %[[T5]], %[[T6]] : i64
+      // CHECK: %[[T4:.*]] = arith.constant 1 : i64
+      // CHECK: %[[T5:.*]] = arith.cmpi eq, %[[T1]], %[[T4]] : i64
+      // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T3]], %[[T2]] : i64
+      // CHECK: %[[T7:.*]] = arith.constant 0 : i64
+      // CHECK: %[[T8:.*]] = arith.constant 1 : i64
+      // CHECK: %[[T9:.*]] = arith.constant 1 : i64
+      // CHECK: %[[T10:.*]] = arith.cmpi eq, %[[T1]], %[[T9]] : i64
+      // CHECK: %[[T11:.*]] = arith.select %[[T10]], %[[T8]], %[[T7]] : i64
 
       %0 = hivm.hir.pointer_cast(%c0_i64, %c32_i64) : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %0 {hivm.multi_buffer = 2 : i32} : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T7]]]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T11]]]
       hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
       // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
       hivm.hir.store ins(%0 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T7]]]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T11]]]
 
       %1 = hivm.hir.pointer_cast(%c64_i64, %c96_i64) : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %1 {hivm.multi_buffer = 2 : i32} : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T4]]]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T6]]]
       hivm.hir.load ins(%arg2 : memref<16xf16, #hivm.address_space<gm>>) outs(%1 : memref<16xf16, #hivm.address_space<ub>>)
       // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID1>]
       hivm.hir.store ins(%1 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg3 : memref<16xf16, #hivm.address_space<gm>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T4]]]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %[[T6]]]
 
     }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
@@ -650,4 +655,56 @@ module {
     // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
     return
   }
+}
+
+// -----
+func.func @triton_add_full_loop(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.storage_aligned, mix_mode = "aiv", parallel_mode = "simd"} {
+  %c14336_i64 = arith.constant 14336 : i64
+  %c12288_i64 = arith.constant 12288 : i64
+  %c10240_i64 = arith.constant 10240 : i64
+  %c2048_i64 = arith.constant 2048 : i64
+  %c8192_i64 = arith.constant 8192 : i64
+  %c6144_i64 = arith.constant 6144 : i64
+  %c4096_i64 = arith.constant 4096 : i64
+  %c0_i64 = arith.constant 0 : i64
+  %c1_i32 = arith.constant 1 : i32
+  %c5_i32 = arith.constant 5 : i32
+  %c0_i32 = arith.constant 0 : i32
+  hivm.hir.set_mask_norm
+  %0 = arith.muli %arg6, %arg7 : i32
+  %1 = arith.muli %0, %arg8 : i32
+  annotation.mark %1 {logical_block_num} : i32
+  %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<?xf32, #hivm.address_space<gm>> to memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<?xf32, #hivm.address_space<gm>> to memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [8, 8, 8], strides: [64, 8, 1] : memref<?xf32, #hivm.address_space<gm>> to memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>>
+  // CHECK:  hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+  // CHECK:  hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+  // CHECK:  hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
+  // CHECK:  hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
+  scf.for %arg9 = %c0_i32 to %c5_i32 step %c1_i32  : i32 {
+    %2 = hivm.hir.pointer_cast(%c0_i64, %c4096_i64, %c6144_i64, %c8192_i64) : memref<8x8x8xf32, #hivm.address_space<ub>>
+    annotation.mark %2 {hivm.multi_buffer = 4 : i32} : memref<8x8x8xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %
+    %3 = hivm.hir.pointer_cast(%c2048_i64, %c10240_i64, %c12288_i64, %c14336_i64) : memref<8x8x8xf32, #hivm.address_space<ub>>
+    annotation.mark %3 {hivm.multi_buffer = 4 : i32} : memref<8x8x8xf32, #hivm.address_space<ub>>
+    %4 = hivm.hir.pointer_cast(%c0_i64, %c4096_i64, %c6144_i64, %c8192_i64) : memref<8x8x8xf32, #hivm.address_space<ub>>
+    annotation.mark %4 {hivm.multi_buffer = 4 : i32} : memref<8x8x8xf32, #hivm.address_space<ub>>
+    %collapse_shape = memref.collapse_shape %reinterpret_cast [[0, 1, 2]] : memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>> into memref<512xf32, strided<[1]>, #hivm.address_space<gm>>
+    %collapse_shape_2 = memref.collapse_shape %4 [[0, 1, 2]] : memref<8x8x8xf32, #hivm.address_space<ub>> into memref<512xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%collapse_shape : memref<512xf32, strided<[1]>, #hivm.address_space<gm>>) outs(%collapse_shape_2 : memref<512xf32, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %collapse_shape_3 = memref.collapse_shape %reinterpret_cast_0 [[0, 1, 2]] : memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>> into memref<512xf32, strided<[1]>, #hivm.address_space<gm>>
+    %collapse_shape_4 = memref.collapse_shape %3 [[0, 1, 2]] : memref<8x8x8xf32, #hivm.address_space<ub>> into memref<512xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%collapse_shape_3 : memref<512xf32, strided<[1]>, #hivm.address_space<gm>>) outs(%collapse_shape_4 : memref<512xf32, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    %collapse_shape_5 = memref.collapse_shape %2 [[0, 1, 2]] : memref<8x8x8xf32, #hivm.address_space<ub>> into memref<512xf32, #hivm.address_space<ub>>
+    hivm.hir.vadd ins(%collapse_shape_2, %collapse_shape_4 : memref<512xf32, #hivm.address_space<ub>>, memref<512xf32, #hivm.address_space<ub>>) outs(%collapse_shape_5 : memref<512xf32, #hivm.address_space<ub>>)
+    %collapse_shape_6 = memref.collapse_shape %reinterpret_cast_1 [[0, 1, 2]] : memref<8x8x8xf32, strided<[64, 8, 1]>, #hivm.address_space<gm>> into memref<512xf32, strided<[1]>, #hivm.address_space<gm>>
+    hivm.hir.store ins(%collapse_shape_5 : memref<512xf32, #hivm.address_space<ub>>) outs(%collapse_shape_6 : memref<512xf32, strided<[1]>, #hivm.address_space<gm>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, %
+
+  }
+  // CHECK:  hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+  // CHECK:  hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+  // CHECK:  hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]
+  // CHECK:  hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID3>]
+  return
 }

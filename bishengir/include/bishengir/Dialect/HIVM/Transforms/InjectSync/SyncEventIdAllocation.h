@@ -160,6 +160,11 @@ private:
   /// Check wether block-all operations is used.
   void reserveBlockAllEventIds();
 
+  /// Check if any sync operations failed to allocate event IDs and if there are
+  /// multibuffer syncs, fall back multibuffer syncs to 2-buffer and or 1-buffer
+  /// depending on the multibuffer num is odd or even.
+  bool TryFallbackMultiBuffer();
+
 private:
   /// Save the Global syncIR.
   SyncIRs &syncIR;

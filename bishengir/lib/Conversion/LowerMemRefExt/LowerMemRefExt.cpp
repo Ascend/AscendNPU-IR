@@ -89,8 +89,10 @@ public:
       }
 
       assert(selectCounter);
+      Value selectCondition = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getI1Type(), selectCounter);
       localOffset = rewriter.create<arith::SelectOp>(
-          loc, rewriter.getIndexType(), selectCounter, offset[1], offset[0]);
+          loc, rewriter.getIndexType(), selectCondition, offset[1], offset[0]);
     }
 
     // 2. For workspace of current block, here get start address offset from

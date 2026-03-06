@@ -109,15 +109,14 @@ public:
   /// %1 = hivm.hir.pointer_cast(addr2) [] : memref<4x128xf32>
   /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %2 = affine.apply #map()[%iv]
-  //    %3 = arith.index_cast %2 : index to i1
-  //    %4 = arith.select %3, %0, %1 : memref<16xf16, #hivm.address_space<ub>>
+  ///   %3 = arith.index_cast %2 : index to i64
+  ///   %4 = ... // Select a value within [%0, %1] based on the value of %3.
   ///   "some_use"(%4) : (memref<4x128xf32, strided<...>) -> ()
   /// }
   /// ```
   LogicalResult extMultiBuffer() {
     LLVM_DEBUG(DBGS() << "Try multi buffer: " << ptrCastOp_ << "\n");
-    LLVM_DEBUG(DBGS() << "Currently only supports double buffering (factor = "
-                         "2) in split buffer mode\n");
+    LLVM_DEBUG(DBGS() << "Enable multi-buffer in split buffer mode\n");
 
     assert(ptrCastOp_ && "ptrCastOp can't be null.");
     if (!ptrCastOp_->getParentOfType<LoopLikeOpInterface>()) {
@@ -127,18 +126,34 @@ public:
 
     OpBuilder builder(ptrCastOp_);
     auto newPtrCastOps = createPtrCastOps(builder);
+    // Multi-buffer factor = number of physical buffers (one per addr)
+    const unsigned factor = newPtrCastOps.size();
+    if (factor < 2) {
+      LLVM_DEBUG(DBGS() << "multi-buffer factor < 2, skip\n");
+      return failure();
+    }
     createMarkOp(builder, newPtrCastOps);
 
-    // create affineApply and indexCast
     Location loc = ptrCastOp_->getLoc();
-    auto counter = createNestedIndexModular(builder, ptrCastOp_.getOperation());
+    auto idxType = builder.getI64Type();
+    Value modularIndex =
+        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor);
+    Value modularIdx =
+        builder.create<arith::IndexCastOp>(loc, idxType, modularIndex);
 
-    // TODO: currently only support double buffer.
-    assert(newPtrCastOps.size() >= 2);
-    auto ptrCastOp0 = newPtrCastOps[0];
-    auto ptrCastOp1 = newPtrCastOps[1];
-    Value selectedBuffer = builder.create<arith::SelectOp>(
-        loc, ptrCastOp_.getType(), counter, ptrCastOp0, ptrCastOp1);
+    // Build N-way selection:
+    //   selected = buf0;
+    //   for i in 1..factor-1:
+    //     if (idx == i) selected = bufi else keep previous
+    Value selectedBuffer = newPtrCastOps[0];
+    for (unsigned i = 1; i < factor; ++i) {
+      Value iVal = builder.create<arith::ConstantIntOp>(
+          loc, static_cast<int64_t>(i), idxType);
+      Value cond = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                 modularIdx, iVal);
+      selectedBuffer = builder.create<arith::SelectOp>(
+          loc, ptrCastOp_.getType(), cond, newPtrCastOps[i], selectedBuffer);
+    }
 
     ptrCastOp_.replaceAllUsesWith(selectedBuffer);
     ptrCastOp_.erase();
