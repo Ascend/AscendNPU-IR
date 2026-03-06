@@ -119,8 +119,14 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
   }];
 }
@@ -159,8 +165,14 @@ def ArangeOp : HFusionStructuredBase_Op<"arange", [AttrSizedOperandSegments,
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
     /// Precondition: `val` must be of type ShapedType
     static void getStridesFromValue(OpBuilder & builder, Location loc,
@@ -231,8 +243,14 @@ def GatherOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
 
     // Used for AggregateOpInterface to decompose into legal operations
@@ -287,8 +305,14 @@ def GatherMaskOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
   }];
 }

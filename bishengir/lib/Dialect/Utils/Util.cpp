@@ -1059,8 +1059,12 @@ bool isElementwiseOp(Operation *op) {
 
 bool isMarkedAsElementwiseOp(Operation *op) {
   // This would handle scalar as well
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   return isa_and_present<linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
                          linalg::FillOp>(op);
+#else
+  return isa_and_present<linalg::FillOp>(op) || isElementwiseOp(op);
+#endif
 }
 
 bool isZeroDimensionOp(Operation *op) {
@@ -1075,7 +1079,18 @@ bool isZeroDimensionOp(Operation *op) {
 
 bool isMarkedAsElementwiseUnaryOp(Operation *op) {
   // This would handle scalar as well
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   return isa_and_present<linalg::ElemwiseUnaryOp, linalg::FillOp>(op);
+#else
+  if (isa_and_present<linalg::FillOp>(op)) {
+    return true;
+  }
+  if (isElementwiseOp(op)) {
+    auto genericOp = dyn_cast<linalg::LinalgOp>(op);
+    return genericOp.getNumDpsInputs() == 1;
+  }
+  return false;
+#endif
 }
 
 bool isAllParallelOp(Operation *op) {
@@ -1091,7 +1106,9 @@ bool isAllParallelOp(Operation *op) {
 // TODO: Need to refactor this.
 bool isLegalOp(Operation *op) {
   if (isa<linalg::MapOp, linalg::FillOp, linalg::GenericOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
           linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
+#endif
           linalg::BroadcastOp, linalg::ReduceOp, linalg::TransposeOp,
           linalg::MatmulOp, linalg::MatmulTransposeAOp,
           linalg::MatmulTransposeBOp, tensor::ExtractOp>(op)) {

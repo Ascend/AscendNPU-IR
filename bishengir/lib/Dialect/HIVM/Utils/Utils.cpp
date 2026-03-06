@@ -98,7 +98,11 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
         return getMemRefAlloc(initSource);
       })
       .Case<bufferization::ToTensorOp>([&](bufferization::ToTensorOp op) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
         return getMemRefAlloc(op.getMemref());
+#else
+        return getMemRefAlloc(op.getBuffer());
+#endif
       })
       .Default([&](Operation *op) {
         LDBG("Unsupported op for finding the root alloc.");
@@ -661,7 +665,12 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps) {
     if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp,
             memref::CollapseShapeOp, memref::ExpandShapeOp, memref::SubViewOp,
             memref::ViewOp, memref::ReinterpretCastOp,
-            bufferization::ToMemrefOp, bufferization::ToTensorOp>(userOp)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            bufferization::ToMemrefOp,
+#else
+            bufferization::ToBufferOp,
+#endif
+            bufferization::ToTensorOp>(userOp)) {
       getOpUsers(userOp, userOps);
     } else {
       userOps.push_back(userOp);
@@ -795,8 +804,15 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
       rewriter, loc, SmallVector<int64_t>(targetShapes), elementType);
 
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
+#else
+  // return tensor type
+  auto tensorType = RankedTensorType::get(targetShapes, elementType);
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, localWorkSpace, true, true);
+#endif
   return toTensor;
 }
 
@@ -819,9 +835,15 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
         result.emplace_back(op.getResult(), op.getTrueValue());
         result.emplace_back(op.getResult(), op.getFalseValue());
       })
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       .Case([&](bufferization::ToMemrefOp op) {
         result.emplace_back(op.getResult(), op.getOperand());
       })
+#else
+      .Case([&](bufferization::ToBufferOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+#endif
       .Case([&](bufferization::ToTensorOp op) {
         result.emplace_back(op.getResult(), op.getOperand());
       })

@@ -67,8 +67,13 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
     return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain);
   } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
     return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
     return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain);
+#else
+  } else if (auto toBufferOp = v.getDefiningOp<bufferization::ToBufferOp>()) {
+    return traceDefOp<OpType>(toBufferOp.getOperand(), isSingleChain);
+#endif
   } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
     return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain);
   } else if (auto viewOp = v.getDefiningOp<memref::ViewOp>()) {

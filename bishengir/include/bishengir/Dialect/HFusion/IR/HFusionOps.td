@@ -572,14 +572,6 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
     `outs` `(` $acc `:` type($acc) `)`
     `->` type($result)
   }];
-
-  let builders = [
-    OpBuilder<(ins "Value":$inputA,
-                   "Value":$inputB,
-                   "Value":$scaleA,
-                   "Value":$scaleB,
-                   "Value":$acc)>
-  ];
 }
 
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD
