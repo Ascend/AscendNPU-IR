@@ -245,11 +245,11 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
     Value fixpipeDst = subviewMemrefValueWithoutBatch(
         originFixpipe.getLoc(), oriFixpipeDst, indexes[0], rewriter);
 
-    rewriter.create<hivm::FixpipeOp>(
-        originFixpipe.getLoc(), Type{}, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
-        originFixpipe.getDualDstModeAttr(), originFixpipe.getPreQuantAttr(),
-        originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+    SmallVector<Value> oprs({matrixToStore, fixpipeDst});
+    if (auto quantScale = originFixpipe.getQuantScale())
+      oprs.push_back(quantScale);
+    rewriter.create<hivm::FixpipeOp>(originFixpipe.getLoc(), TypeRange{}, oprs,
+                                     originFixpipe->getAttrs());
   } else if (isa<mlir::TensorType>(oriFixpipeDst.getType())) {
     assert(matrixToStore.getDefiningOp() &&
            matrixToStore.getDefiningOp()->getParentOp());
@@ -262,12 +262,11 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
         originFixpipe.getLoc(), iterationArg, indexes[0], rewriter);
     Type resultType =
         extractNonBatchType(dyn_cast<RankedTensorType>(iterationArg.getType()));
-
+    SmallVector<Value> oprs({matrixToStore, fixpipeDst});
+    if (auto quantScale = originFixpipe.getQuantScale())
+      oprs.push_back(quantScale);
     auto newfixpipe = rewriter.create<hivm::FixpipeOp>(
-        originFixpipe.getLoc(), resultType, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
-        originFixpipe.getDualDstModeAttr(), originFixpipe.getPreQuantAttr(),
-        originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+        originFixpipe.getLoc(), resultType, oprs, originFixpipe->getAttrs());
 
     Value insert = insertTensorValueWithoutBatch(
         originFixpipe.getLoc(), newfixpipe.getResults()[0], iterationArg,

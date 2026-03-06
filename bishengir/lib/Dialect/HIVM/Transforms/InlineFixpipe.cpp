@@ -204,6 +204,8 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
     return rewriter.getBF16Type();
   if (quant == FixpipePreQuantMode::S322I8)
     return rewriter.getI8Type();
+  if (quant == FixpipePreQuantMode::QF322F32_PRE)
+    return rewriter.getF32Type();
   llvm_unreachable("unsupported QuantMode");
 }
 
@@ -239,6 +241,7 @@ private:
     bool matched = false;
     auto loc = op.getLoc();
     auto *curOp = *(op.getResultTensor().getUsers().begin());
+    auto dualDstMode = op.getDualDstMode().getDualDstMode();
 
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
@@ -265,6 +268,13 @@ private:
         inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
                                  op.getDpsInputOperand(0)->get());
       }
+    } else if (llvm::isa_and_present<hivm::VMulOp>(curOp) &&
+               dualDstMode == FixpipeDualDstMode::NO_DUAL &&
+               op.getQuantScale() == nullptr && curOp->getNumResults() == 1 &&
+               traceDownStoreOpWithSingleChain(curOp->getResult(0))) {
+      auto vMulOp = cast<hivm::VMulOp>(curOp);
+      matched = true;
+      inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
     } else if (auto extractSliceOp =
                    dyn_cast_if_present<tensor::ExtractSliceOp>(curOp)) {
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
@@ -300,7 +310,6 @@ private:
     std::optional<FixpipePreQuantMode> quantMode = getQuantMode(castOp);
     auto quantModeAttr =
         FixpipePreQuantModeAttr::get(op.getContext(), quantMode.value());
-    auto reluModeAttr = op.getPreReluAttr();
 
     rewriter.setInsertionPointAfter(castOp);
     Value fixpipeInit =
@@ -308,10 +317,13 @@ private:
     MLIRContext *ctx = rewriter.getContext();
     FixpipeDMAModeAttr dmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    SmallVector<Value> oprs({newFixpipeSrcTensor, fixpipeInit});
+    if (auto quantScale = op.getQuantScale())
+      oprs.push_back(quantScale);
     auto newFixpipeOp = rewriter.create<FixpipeOp>(
-        loc, fixpipeInit.getType(), /*src=*/newFixpipeSrcTensor,
-        /*dst=*/fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{},
-        quantModeAttr, reluModeAttr);
+        op.getLoc(), fixpipeInit.getType(), oprs, op->getAttrs());
+    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
+    newFixpipeOp.setPreQuantAttr(quantModeAttr);
     rewriter.replaceAllUsesWith(castOp.getResult()[0],
                                 newFixpipeOp.getResultTensor());
     rewriter.eraseOp(castOp);
@@ -338,8 +350,11 @@ private:
     auto storeAttr = storeOp.getAtomicKindAttr();
     auto noneAtomicAttr =
         AtomicKindAttr::get(op->getContext(), ::mlir::hivm::AtomicKind::NONE);
-    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-        loc, TypeRange{}, ValueRange{fixpipeSrcTensor, dst}, op->getAttrs());
+    SmallVector<Value> oprs({fixpipeSrcTensor, dst});
+    if (auto quantScale = op.getQuantScale())
+      oprs.push_back(quantScale);
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange{}, oprs,
+                                                         op->getAttrs());
     if (storeAttr) {
       auto typeAttr =
           TypeAttr::get(mlir::cast<ShapedType>(dst.getType()).getElementType());
@@ -351,6 +366,53 @@ private:
     rewriter.eraseOp(storeOp);
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeEnd");
+  }
+
+  FixpipePreQuantMode
+  inferPreQuantMode(hivm::FixpipeOp op,
+                    std::optional<hivm::VMulOp> vMulOp) const {
+    LDBG("inferring pre quant mode");
+    auto curPreQuant = op.getPreQuant();
+    if (curPreQuant != FixpipePreQuantMode::NO_QUANT)
+      return curPreQuant;
+    Type srcElemType = getElementTypeOrSelf(op.getSrcOperandType());
+    Type dstElemType = getElementTypeOrSelf(op.getDstOperandType());
+    if (srcElemType.isF32() && dstElemType.isF32() &&
+        op.getDualDstMode().getDualDstMode() == FixpipeDualDstMode::NO_DUAL)
+      return FixpipePreQuantMode::QF322F32_PRE;
+    return curPreQuant;
+  }
+
+  void inlineFixPipeWithQuantScale(PatternRewriter &rewriter,
+                                   hivm::FixpipeOp op,
+                                   hivm::VMulOp vMulOp) const {
+    // it will infer the quant pre mode and set the quant scale
+    assert(op.getDualDstMode().getDualDstMode() ==
+               FixpipeDualDstMode::NO_DUAL &&
+           "illegal fixpipe config check ISA");
+    LDBG("inling fixpipe with quant scale");
+
+    rewriter.setInsertionPointAfter(vMulOp);
+    assert(vMulOp.getNumDpsInits() == 1);
+    Value vMulDst = *vMulOp.getDst().begin();
+    assert(vMulOp.getNumDpsInputs() == 2);
+    Value quantScaleValue =
+        vMulOp
+            .getDpsInputOperand(static_cast<unsigned>(
+                vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op))
+            ->get();
+    Value fixPipeSrc = op.getSource();
+    auto quantPreMode = inferPreQuantMode(op, vMulOp);
+    LDBG("inferred pre quant mode id:" << quantPreMode);
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+        op.getLoc(), vMulDst.getType(), fixPipeSrc, vMulDst,
+        op.getUnitFlagCond(), op.getDmaModeAttr(), op.getDualDstModeAttr(),
+        FixpipePreQuantModeAttr::get(rewriter.getContext(), quantPreMode),
+        op.getPreReluAttr(), op.getChannelSplitAttr(), op.getUnitFlagModeAttr(),
+        quantScaleValue);
+    rewriter.replaceOp(vMulOp, newFixpipeOp);
+    rewriter.eraseOp(op);
+    LDBG("inlineFixPipeWithPreQuantEnd");
   }
 
   void
@@ -368,8 +430,6 @@ private:
         extractSliceOp.getMixedStrides());
 
     auto newExtractSliceResult = newExtractSliceOp->getResult(0);
-    auto quantModeAttr = op.getPreQuantAttr();
-    auto reluModeAttr = op.getPreReluAttr();
     Value fixpipeInit = nullptr;
     fixpipeInit = utils::createEmptyOpWithTargetElemType(
         rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
@@ -377,10 +437,12 @@ private:
     MLIRContext *ctx = rewriter.getContext();
     FixpipeDMAModeAttr dmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    auto newFixpipeOp = rewriter.create<FixpipeOp>(
-        extractSliceOp.getLoc(), fixpipeInit.getType(),
-        /*src=*/newExtractSliceResult, /*dst=*/fixpipeInit, dmaModeAttr,
-        FixpipeDualDstModeAttr{}, quantModeAttr, reluModeAttr);
+    SmallVector<Value> oprs({newExtractSliceResult, fixpipeInit});
+    if (auto quantScale = op.getQuantScale())
+      oprs.push_back(quantScale);
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+        extractSliceOp.getLoc(), fixpipeInit.getType(), oprs, op->getAttrs());
+    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithExtractSliceReshape");
@@ -398,18 +460,18 @@ private:
         insertSliceOp.getMixedStrides());
 
     auto newInsertSliceResult = newInsertSliceOp->getResult(0);
-    auto quantModeAttr = op.getPreQuantAttr();
-    auto reluModeAttr = op.getPreReluAttr();
     Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
         rewriter, insertSliceOp.getLoc(), newInsertSliceResult,
         getInitType(newInsertSliceResult, op.getPreQuant(), rewriter));
     MLIRContext *ctx = rewriter.getContext();
     FixpipeDMAModeAttr dmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    auto newFixpipeOp = rewriter.create<FixpipeOp>(
-        insertSliceOp.getLoc(), TypeRange{fixpipeInit}, newInsertSliceResult,
-        fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{}, quantModeAttr,
-        reluModeAttr);
+    SmallVector<Value> oprs({newInsertSliceResult, fixpipeInit});
+    if (auto quantScale = op.getQuantScale())
+      oprs.push_back(quantScale);
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+        insertSliceOp.getLoc(), TypeRange{fixpipeInit}, oprs, op->getAttrs());
+    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
     rewriter.replaceOp(insertSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithInsertSliceOpReshape");
@@ -436,15 +498,16 @@ private:
       rewriter.setInsertionPointAfter(scfForOp);
       auto fixpipeInit =
           utils::createEmptyOp(rewriter, scfForOp->getLoc(), fixpipeResTensor);
-      auto quantModeAttr = fixPipeOp.getPreQuantAttr();
-      auto reluModeAttr = fixPipeOp.getPreReluAttr();
       MLIRContext *ctx = rewriter.getContext();
       FixpipeDMAModeAttr dmaModeAttr =
           FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-      auto newFixpipeOp = rewriter.create<FixpipeOp>(
-          fixPipeOp.getLoc(), TypeRange{fixpipeInit},
-          scfForOp->getResult(idx.value()), fixpipeInit, dmaModeAttr,
-          FixpipeDualDstModeAttr{}, quantModeAttr, reluModeAttr);
+      SmallVector<Value> oprs({scfForOp->getResult(idx.value()), fixpipeInit});
+      if (auto quantScale = fixPipeOp.getQuantScale())
+        oprs.push_back(quantScale);
+      auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+          fixPipeOp.getLoc(), TypeRange{fixpipeInit}, oprs,
+          fixPipeOp->getAttrs());
+      newFixpipeOp.setDmaModeAttr(dmaModeAttr);
       rewriter.replaceAllUsesExcept(scfForOp->getResult(idx.value()),
                                     newFixpipeOp.getResultTensor(),
                                     newFixpipeOp);

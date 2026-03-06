@@ -157,10 +157,11 @@ LogicalResult InsertOpHelper<InsertMode::MoveToUb>(
       }
       Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
           fixLoc, noUbMemrefType, alloc);
-      NamedAttrList attrs(fixpipeOp->getAttrs());
+      SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
+      if (auto quantScale = fixpipeOp.getQuantScale())
+        oprs.push_back(quantScale);
       auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-          fixLoc, TypeRange{}, ValueRange{fixpipeOp.getSrc(), alloc},
-          attrs.getAttrs());
+          fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
       rewriter.setInsertionPointAfter(newFixpipeOp);
       auto toTensor = rewriter.create<bufferization::ToTensorOp>(
           fixLoc, resultTensorType, noUb,

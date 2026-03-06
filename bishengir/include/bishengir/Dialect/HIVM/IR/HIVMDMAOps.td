@@ -244,6 +244,7 @@ def CopyOp : HIVM_DmaOp<"copy", [
 }
 
 def FixpipeOp : HIVM_DmaOp<"fixpipe", [
+  AttrSizedOperandSegments,
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_FIX">,
   HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
   HIVMUnitFlagEnabledInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
@@ -286,25 +287,31 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
                          "FixpipePreReluMode::NO_RELU">:$pre_relu,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+                       Optional<AnyFloat>:$quant_scale
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode, CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, 
+                    CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"Value", "nullptr">:$quant_scale)
     >,
     OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode, CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu,
+                    CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"Value", "nullptr">:$quant_scale)
     >
   ];
   let assemblyFormat = [{
     attr-dict
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`quant_scale` `=` $quant_scale^ `:` type($quant_scale) )?
     (`dual_dst_mode` `=` $dual_dst_mode^)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
