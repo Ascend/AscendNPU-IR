@@ -3049,10 +3049,19 @@ ParseResult Conv1DOp::parse(OpAsmParser &p, OperationState &result) {
   return success();
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 Conv1DOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+ 	   ) {
     RegionBuilderHelper helper(builder.getContext(), block);
     SmallVector<Value> yields;
 

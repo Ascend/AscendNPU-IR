@@ -377,8 +377,14 @@ def Conv1DOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
   }];
 }
