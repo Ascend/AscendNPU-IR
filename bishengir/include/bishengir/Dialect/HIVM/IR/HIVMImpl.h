@@ -267,9 +267,6 @@ LogicalResult getUnAlignSizeInfo(
     std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 LogicalResult getUnAlignSizeInfo(
-    VCastOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
-
-LogicalResult getUnAlignSizeInfo(
     VSortOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 // TODO: move to platform info
