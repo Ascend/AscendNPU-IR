@@ -166,6 +166,7 @@ class Loop : public Scope {
 
 private:
 public:
+  bool isParallel{false};
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
 

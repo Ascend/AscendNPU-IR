@@ -460,9 +460,6 @@ Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val);
 
 hivm::TCoreType getOppositeCoreType(hivm::TCoreType coreType);
 
-std::pair<Occurrence *, Occurrence *> getLCAPairOcc(Occurrence *occ1,
-                                                    Occurrence *occ2);
-
 template <typename OpTy>
 llvm::FailureOr<std::pair<OpTy, OpTy>> getFirstLastOp(Operation *parentOp) {
   OpTy firstOp{nullptr};
