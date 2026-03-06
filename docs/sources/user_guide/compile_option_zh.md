@@ -92,7 +92,7 @@
 
 ### 2.2 Options Shared with bishengir-hivm-compile:
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
-|--------|------|------|--------|----------|----------|
+|--------|------|------|--------|----------|
 | --enable-static-bare-ptr | Enable generating bare ptr calling convention for static shaped kernels. | bool | true | In use |
 | --enable-bin-relocation | Enable binary relocation. | bool | true | In use |
 | --enable-lir-compile | Enable BiShengLIR compilation. | bool | true | In use |

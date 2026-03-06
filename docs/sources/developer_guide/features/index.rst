@@ -7,9 +7,9 @@ Features
    AutoBlockify/AutoBlockify
    AutoFlatten/AutoFlatten
    AutoSchedule/HFusion_AutoSchedule
+   CV/CVOptimization
    AutoSubtiling/AutoSubtiling
    AutoSync/AutoSync
-   CV/CVOptimization
    CV/TileCubeAndVectorLoop
    CVPipeline/CVPipelining
    CustomOp/CustomOp
