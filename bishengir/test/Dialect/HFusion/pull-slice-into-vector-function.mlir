@@ -81,3 +81,35 @@ module {
     return %c : tensor<16x32xf32>
   }
 }
+
+// -----
+
+// Test rank-reduce: 2D to 1D extract_slice;
+// Same handling as Scenario 1.
+module {
+  // CHECK-LABEL: func @vf_rank_reduction(
+  // CHECK-SAME: tensor<2x64xf32>
+  // CHECK: tensor.extract_slice
+  // CHECK: linalg.elemwise
+  // CHECK: tensor.insert_slice
+  // CHECK: return
+  func.func @vf_rank_reduction(%arg0: tensor<64xf32>) -> tensor<64xf32> attributes {hivm.vector_function} {
+    %0 = tensor.empty() : tensor<64xf32>
+    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %arg0 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    return %1 : tensor<64xf32>
+  }
+
+  // CHECK-LABEL: func @test_rank_reduction(
+  // CHECK: %[[CALL:.*]] = call @vf_rank_reduction(%arg0
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK: return %[[CALL]]
+  func.func @test_rank_reduction(%arg0: tensor<2x64xf32>, %arg1: index) -> tensor<2x64xf32> {
+    %c0 = arith.constant 0 : index
+    %slice = tensor.extract_slice %arg0[%arg1, 0] [1, 64] [1, 1]
+        : tensor<2x64xf32> to tensor<64xf32>
+    %x = func.call @vf_rank_reduction(%slice) {hivm.vector_function}
+        : (tensor<64xf32>) -> tensor<64xf32>
+    %4 = tensor.insert_slice %x into %arg0[%arg1, 0] [1, 64] [1, 1] : tensor<64xf32> into tensor<2x64xf32>
+    return %4 : tensor<2x64xf32>
+  }
+}
