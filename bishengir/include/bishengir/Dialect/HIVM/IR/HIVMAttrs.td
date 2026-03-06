@@ -980,4 +980,11 @@ def HIVM_DisableAutoInjectBlockSyncAttr
   }];
 }
 
+def HIVM_TileMixCubeNumAttr
+    : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
+  let description = [{
+    Specifies the number of cube loops will be tiled in mix kernel
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD
