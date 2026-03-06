@@ -69,8 +69,14 @@ using namespace mlir::hfusion;
 // Support for named HFusion ops defined in ods-gen.
 //===----------------------------------------------------------------------===//
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
                                                 ArrayRef<NamedAttribute>)>;
+#else
+using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
+                                                ArrayRef<NamedAttribute>,
+                                                function_ref<InFlightDiagnostic()>)>;
+#endif
 
 /// Fills the region of a structured operation using the provided
 /// `regionBuilder`. The method is used by both named structured ops created by
@@ -104,7 +110,13 @@ static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
 
   opBuilder.setInsertionPointToStart(body);
   ImplicitLocOpBuilder b(opBuilder.getUnknownLoc(), opBuilder);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   regionBuilder(b, *body, attrs);
+#else
+  regionBuilder(b, *body, attrs, [&]() {
+    return mlir::emitError(opBuilder.getUnknownLoc());
+  });
+#endif
 
   // indexing_maps is an auto-generated method.
 
@@ -1018,10 +1030,19 @@ void codeGenWithIndexDispatch(OpBuilder &builder, Block &block, Type elemType,
   }
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>, 
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 ReduceWithIndexOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &b, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     // check numArgs
     constexpr int kNumArgsWithoutIndex = 3;
     auto numArgs = block.getNumArguments();
@@ -1821,7 +1842,13 @@ ParseResult ArangeOp::parse(OpAsmParser &parser, OperationState &result) {
   ImplicitLocOpBuilder builder(unknownLoc, parser.getContext());
   builder.setInsertionPointToStart(&block);
   // Build the region
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   getRegionBuilder()(builder, block, result.attributes.getAttrs());
+#else
+  getRegionBuilder()(builder, block, result.attributes.getAttrs(), [&]() {
+    return mlir::emitError(builder.getLoc());
+  });
+#endif
 
   return success();
 }
@@ -1846,10 +1873,19 @@ ArrayAttr ArangeOp::getIndexingMaps() {
   return builder.getAffineMapArrayAttr(maps);
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 ArangeOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     OpBuilder::InsertionGuard guard(builder);
 
     auto segmentSizes = cast_or_null<DenseI32ArrayAttr>(
@@ -2033,10 +2069,19 @@ void GatherOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
 ///   %cmp = arith.cmpi eq, <indexVal>, %iter
 ///   %sel = arith.select %cmp, <srcVal>, <outVal>
 ///   linalg.yield %sel
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 GatherOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     assert(block.getNumArguments() == 3 &&
            "GatherOp expecting 3 block arguments");
     Value srcVal = block.getArgument(0);
@@ -2273,10 +2318,19 @@ void GatherMaskOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     getRegionBuilder());
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 GatherMaskOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> /*attrs*/) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     assert(block.getNumArguments() == 3 &&
            "GatherMaskOp expecting 3 block arguments: src, mask, init");
     Value srcVal = block.getArgument(0);
@@ -2590,7 +2644,11 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   };
   auto cstInZero = [&](Value src) -> Value {
     auto ty = cast<IntegerType>(src.getType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     return b.create<arith::ConstantIntOp>(loc, 0, ty);
+#else
+    return b.create<arith::ConstantIntOp>(loc, ty, static_cast<int64_t>(0));
+#endif
   };
 
   // Constants

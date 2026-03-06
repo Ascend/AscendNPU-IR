@@ -37,7 +37,9 @@ def HFusion_Dialect : Dialect {
     "hacc::HACCDialect",
     "linalg::LinalgDialect",
     "mathExt::MathExtDialect",
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     "mesh::MeshDialect",
+#endif
     "symbol::SymbolDialect"
   ];
   let hasCanonicalizer = 1;

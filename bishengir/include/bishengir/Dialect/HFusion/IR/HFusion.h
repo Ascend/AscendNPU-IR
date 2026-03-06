@@ -18,7 +18,9 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_IR_HFUSION_H
 #define BISHENGIR_DIALECT_HFUSION_IR_HFUSION_H
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 #include "mlir/Dialect/Mesh/IR/MeshDialect.h"
+#endif
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"

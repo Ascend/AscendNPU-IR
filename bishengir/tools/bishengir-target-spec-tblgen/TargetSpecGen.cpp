@@ -102,15 +102,22 @@ static const char *const stringifyEnumDeclStr = R"(
 ///  {int AiCoreCount = 24;},
 static SmallVector<RecordVal>
 getSpecSuperClassEntries(const Record *derivedClassRecord) {
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
-  SmallVector<Record *> superClasses;
-#else
+#if defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+  // LLVM 22: return ArrayRef<std::pair<const Record *, SMRange>>
+  auto superClasses = derivedClassRecord->getDirectSuperClasses();
+  const Record *superClass = superClasses.front().first;
+#elif defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+  // LLVM 21: input SmallVector<const Record *>
   SmallVector<const Record *> superClasses;
-#endif
   derivedClassRecord->getDirectSuperClasses(superClasses);
-  auto *superClass = superClasses.front();
-  SmallVector<RecordVal> result = llvm::to_vector(superClass->getValues());
-  return result;
+  const Record *superClass = superClasses.front();
+#else
+  // LLVM 19: input SmallVector<Record *>
+  SmallVector<Record *> superClasses;
+  derivedClassRecord->getDirectSuperClasses(superClasses);
+  Record *superClass = superClasses.front();
+#endif
+  return llvm::to_vector(superClass->getValues());
 }
 
 /// Main entry to emit target spec decls.
