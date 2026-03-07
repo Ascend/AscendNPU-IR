@@ -590,17 +590,125 @@ struct RewriteVBrcOp : public OpRewritePattern<hivm::VBrcOp> {
 
   LogicalResult matchAndRewrite(hivm::VBrcOp op,
                                 PatternRewriter &rewriter) const final {
-    const auto resultType = cast<ShapedType>(op.getDst().getType());
+    Location loc = op.getLoc();
+    Value src = op.getSrc();
+    Value dst = op.getDst();
 
-    rewriter.replaceOpWithNewOp<linalg::GenericOp>(
-        op, op.getResultTypes(), op.getSrc(), op.getDst(),
-        op.getIndexingMapsArray(),
-        SmallVector<utils::IteratorType>(resultType.getRank(),
-                                         utils::IteratorType::parallel),
+    auto dstType = dyn_cast<ShapedType>(dst.getType());
+    if (!dstType || !dstType.hasRank()) {
+      return failure();
+    }
+
+    bool isMemRef = isa<MemRefType>(dstType);
+
+    auto replaceOpWithResult = [&](Operation *newOp) {
+      if (isMemRef) {
+        // MemRef: Linalg Op has no return value
+        if (op->getNumResults() > 0) {
+          rewriter.replaceOp(op, dst);
+        } else {
+          rewriter.eraseOp(op);
+        }
+      } else {
+        // Tensor: replace with new Op
+        rewriter.replaceOp(op, newOp->getResults());
+      }
+    };
+
+    if (auto a = op.getBroadcastDimsAttr()) {
+      SmallVector<int64_t> dims;
+      dims.assign(a.asArrayRef().begin(), a.asArrayRef().end());
+
+      // Case 1: scalar -> fill
+      if (!isa<ShapedType>(src.getType())) {
+        TypeRange resultTypes =
+            isMemRef ? TypeRange() : TypeRange(op.getResultTypes());
+        auto fillOp = rewriter.create<linalg::FillOp>(
+            loc, resultTypes, ValueRange{src}, ValueRange{dst});
+        replaceOpWithResult(fillOp);
+        return success();
+      }
+
+      // Case 2: ShapedType -> Collapse then Broadcast
+      auto srcTy = dyn_cast<ShapedType>(src.getType());
+      if (!srcTy || !srcTy.hasRank()) {
+        return failure();
+      }
+
+      Value bcastSrc = src;
+      SmallVector<int64_t> effDims;
+
+      collapseBroadcastDimensions(op, rewriter, srcTy, dims, bcastSrc, effDims);
+
+      auto bcastOp =
+          rewriter.create<linalg::BroadcastOp>(loc, bcastSrc, dst, effDims);
+      replaceOpWithResult(bcastOp);
+      return success();
+    }
+
+    SmallVector<utils::IteratorType> iterTypes(dstType.getRank(),
+                                               utils::IteratorType::parallel);
+
+    TypeRange genericResultTypes =
+        isMemRef ? TypeRange() : TypeRange(op.getResultTypes());
+
+    auto genericOp = rewriter.create<linalg::GenericOp>(
+        loc, genericResultTypes, ValueRange{op.getSrc()},
+        ValueRange{op.getDst()}, op.getIndexingMapsArray(), iterTypes,
         [](OpBuilder &rewriter, Location loc, ValueRange operands) {
           rewriter.create<linalg::YieldOp>(loc, operands[0]);
         });
+
+    replaceOpWithResult(genericOp);
+
     return success();
+  }
+
+  void collapseBroadcastDimensions(Operation *op, PatternRewriter &rewriter,
+                                   ShapedType srcTy, ArrayRef<int64_t> dims,
+                                   Value &outSrc,
+                                   SmallVectorImpl<int64_t> &outEffDims) const {
+    auto debugInfo = op->getLoc();
+    int64_t rank = srcTy.getRank();
+    llvm::BitVector rm(rank, false);
+    for (auto d : dims) {
+      rm.set(d);
+    }
+
+    outEffDims.assign(dims.begin(), dims.end());
+    SmallVector<int64_t> shape;
+    SmallVector<ReassociationIndices> reassoc;
+    ReassociationIndices cur;
+
+    auto srcShape = srcTy.getShape();
+
+    for (int64_t i = 0; i < rank; i += 1) {
+      cur.push_back(i);
+      if (!rm.test(i)) {
+        shape.push_back(srcShape[i]);
+        reassoc.push_back(cur);
+        cur.clear();
+      }
+    }
+
+    if (!cur.empty()) {
+      if (!reassoc.empty()) {
+        reassoc.back().append(cur.begin(), cur.end());
+      }
+    }
+
+    if (isa<RankedTensorType>(srcTy)) {
+      auto collapseTy = RankedTensorType::get(shape, srcTy.getElementType());
+      outSrc = rewriter.create<tensor::CollapseShapeOp>(debugInfo, collapseTy,
+                                                        outSrc, reassoc);
+    } else if (isa<MemRefType>(srcTy)) {
+      auto memrefTy = cast<MemRefType>(srcTy);
+      auto collapseTy = MemRefType::get(shape, srcTy.getElementType(),
+                                        MemRefLayoutAttrInterface{},
+                                        memrefTy.getMemorySpace());
+      outSrc = rewriter.create<memref::CollapseShapeOp>(debugInfo, collapseTy,
+                                                        outSrc, reassoc);
+    }
   }
 };
 

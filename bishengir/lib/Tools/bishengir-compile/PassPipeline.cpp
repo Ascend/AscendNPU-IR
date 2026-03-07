@@ -177,6 +177,15 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass());
       hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
       pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
+      // FIXME: we need convert hfusion back to hivm again beacsue rank-1
+      // `linalg.fill` is not  vectorized. It relies one hivm-single-point-opt
+      // pass to convert `memref.store` for performace .thie will be fixed
+      // after vectorize move to hivm.
+      ConvertHFusionToHIVMOptions hfs2hivmOptions;
+      hfs2hivmOptions.mmMapMode = convertToHIVMOptions.enableTritonKernelCompile
+                                      ? hfusion::MmMapMode::MacroInstr
+                                      : hfusion::MmMapMode::CoreOp;
+      pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
     }
     if (config.shouldEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createAutoScopePass());
