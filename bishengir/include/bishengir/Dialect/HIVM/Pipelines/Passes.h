@@ -30,7 +30,7 @@ namespace hivm {
 struct HIVMPipelineOptions
     : public mlir::PassPipelineOptions<HIVMPipelineOptions> {
 #define GEN_HIVM_OPTION_REGISTRATION
-#include "bishengir/Tools/bishengir-hivm-compile/HIVMPassPipelineOptions.cpp.inc"
+#include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
 };
 
 //===----------------------------------------------------------------------===//

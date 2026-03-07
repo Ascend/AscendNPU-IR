@@ -36,8 +36,8 @@ static cl::OptionCategory
 static cl::OptionCategory targetCategory("BiShengIR Target Options");
 static llvm::cl::OptionCategory
     enableCPURunnerCategory("BiShengIR CPU Runner Options");
-static cl::OptionCategory sharedWithDownstreamToolchainCategory(
-    "Options Shared with bishengir-hivm-compile");
+static cl::OptionCategory
+    sharedWithDownstreamToolchainCategory("Options Shared with HIVMC");
 
 /// This class is intended to manage the handling of command line options for
 /// creating bishengir-compile config. This is a singleton.

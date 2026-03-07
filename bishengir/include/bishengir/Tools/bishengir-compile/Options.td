@@ -66,7 +66,7 @@ def EnableUbufSaving : FeatureControlOptions<
   "bool",
   "false"
 >{
-  let passGroup = ["HFUSION", "HFUSION_TO_HIVM"];
+  let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
 }
 
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -132,19 +132,6 @@ def EnableBinRelocation : FeatureControlOptions<
 > {
   let emitGetterSetter = 0;
   bit isSharedWithDownstreamToolchain = 1;
-}
-
-def ConvertHIRToLIR : FeatureControlOptions<
-  "Enable converting from BiShengHIR to BiShengLIR.",
-  "bool",
-  "false"
-> {
-  // This option is still registered in the command line becuase
-  // `bishengir-hivm-compile` relies on it.
-  // However, it's hidden.
-  let additionalOptFlags = [{
-    llvm::cl::Hidden
-  }];
 }
 
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -563,7 +550,7 @@ def HIVMCArgs : BiShengIRCompileListOpt<
 /// Note that we don't own `mlir-print-ir-after-all` and
 /// `mlir-print-ir-before-all` as they are upstream options.
 /// We add it here because we can capture their values and forward
-/// them to `bishengir-hivm-compile` tool.
+/// them to `hivmc` tool.
 def MlirPrintIrAfterAll : BiShengIRCompileOpt<
   "Print IR after each pass.",
   "bool",

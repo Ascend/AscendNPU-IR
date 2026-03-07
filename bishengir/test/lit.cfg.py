@@ -14,11 +14,23 @@ from lit.llvm.subst import ToolSubst
 from lit.llvm.subst import FindTool
 
 # Configuration file for the 'lit' test runner.
+# NOTE: This file must be loaded via lit.site.cfg.py (generated in build dir).
+# Run tests from the build directory, e.g.:
+#   cd build && python bin/llvm-lit test/bishengir-compile/commandline.mlir
+
+if llvm_config is None:
+    raise SystemExit(
+        "lit.llvm.initialize() was not called. Run lit from the build "
+        "directory so that lit.site.cfg.py is loaded first, e.g.:\n"
+        "  cd build && python bin/llvm-lit test/bishengir-compile/commandline.mlir"
+    )
 
 # name: The name of this test suite.
 config.name = 'bishengir'
 
-config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
+# use_lit_shell may be None in some lit versions; use getattr for compatibility.
+use_lit_shell = getattr(llvm_config, 'use_lit_shell', False)
+config.test_format = lit.formats.ShTest(not use_lit_shell)
 
 # suffixes: A list of file extensions to treat as test files.
 config.suffixes = ['.td', '.mlir', '.toy', '.ll',
