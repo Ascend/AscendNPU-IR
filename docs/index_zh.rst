@@ -21,9 +21,9 @@ Getting Started
 User Guide / 用户指南
 ---------------------
 
-- :doc:`编译选项 <sources/user_guide/compile_option_zh>`
-- :doc:`调试调测 <sources/user_guide/debug_option_zh>`
-- :doc:`最佳实践 <sources/user_guide/best_practice_zh>`
+- :doc:`编译选项 <sources/user_guide/compile_option_zh>` — 编译选项与功能说明
+- :doc:`调试调测 <sources/user_guide/debug_option_zh>` — 调试方法介绍
+- :doc:`最佳实践 <sources/user_guide/best_practice_zh>` — 编程案例详解与算子改写
 
 Developer Guide / 开发者指南
 ----------------------------

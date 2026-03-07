@@ -1,4 +1,4 @@
-# AscendNPU IR 编译与执行示例
+# 编译与执行示例
 
 本示例展示如何用 `bishengir-compile` 将 IR 编译为设备端二进制，并基于 CANN 提供的 runtime 接口完成注册与上板执行。
 

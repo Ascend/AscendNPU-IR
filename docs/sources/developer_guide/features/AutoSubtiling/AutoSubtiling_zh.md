@@ -1,4 +1,4 @@
-# Auto-Subtiling 1:2使能
+# Auto-Subtiling
 
 ## 1.硬件背景
 
