@@ -26,6 +26,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
@@ -713,6 +714,25 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
   }
 
   return failure();
+}
+
+Value createAllocWithMark(PatternRewriter &rewriter,
+                          Location loc,
+                          MemRefType memrefType,
+                          ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize,
+                          Type elemType) {
+  Value alloc = rewriter.create<memref::AllocOp>(loc, memrefType, dynamicDims);
+  auto maybeStaticTotalSize = utils::getStaticTotalSizeInBits(staticAllocSize, elemType);
+  if (maybeStaticTotalSize.has_value()) {
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
+    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+    rewriter.getI64IntegerAttr(allocSizeInByte));
+  } else {
+    llvm_unreachable("Warning: Cannot calculate static size from mmadL1 shape\n");
+  }
+  return alloc;
 }
 
 bool isLastDimTranspose(hivm::VTransposeOp op) {

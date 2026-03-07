@@ -225,6 +225,30 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mmad_fixpipe_vadd_dynamic(
+  // CHECK-SAME: %{{.*}}: tensor<16x32xf32>, %{{.*}}: tensor<32x16xf32>, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index
+  // CHECK: %[[MINSI:.*]] = arith.minsi %[[ARG2]], %{{.*}} : index
+  // CHECK: %[[ALLOC:.*]] = memref.alloc(%[[MINSI]], %[[ARG3]]) : memref<?x?xf32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark %[[ALLOC]] {buffer_size_in_byte = 1024 : i64} : memref<?x?xf32, #hivm.address_space<ub>>
+
+  func.func @test_mmad_fixpipe_vadd_dynamic(%arg0: tensor<16x32xf32>, %arg1: tensor<32x16xf32>, %arg2: index, %arg3: index, %arg4: tensor<16x16xf32>, %arg5: tensor<16x16xf32>, %arg6: tensor<16x16xf32>) -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%arg0, %arg1, %true, %c16, %c32, %c16 : tensor<16x32xf32>, tensor<32x16xf32>, i1, index, index, index) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = arith.minsi %arg2, %c16 : index
+    %extracted_slice = tensor.extract_slice %1[0, 0] [%2, %arg3] [1, 1] : tensor<16x16xf32> to tensor<?x?xf32>
+    %3 = tensor.empty(%2, %arg3) : tensor<?x?xf32>
+    %4 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%extracted_slice : tensor<?x?xf32>) outs(%3 : tensor<?x?xf32>) -> tensor<?x?xf32>
+    %inserted_slice = tensor.insert_slice %4 into %arg4[0, 0] [%2, %arg3] [1, 1] : tensor<?x?xf32> into tensor<16x16xf32>
+    %5 = hivm.hir.vadd ins(%inserted_slice, %arg5 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%arg6 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %5 : tensor<16x16xf32>
+  }
+}
+
+// -----
+module {
   
   func.func @_attn_fwd_outlined_vf_3(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function} {
     %cst = arith.constant dense<5.000000e-01> : vector<1x64xf32>

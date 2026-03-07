@@ -119,7 +119,39 @@ LogicalResult InsertOpHelper<InsertMode::MoveToUb>(
     auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
     rewriter.setInsertionPoint(fixpipe);
     Location fixLoc = fixpipeOp.getLoc();
-    Value alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
+
+    Value alloc;
+    bool hasDynamicShape = llvm::any_of(
+      shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
+    // dynamic shape
+    if (hasDynamicShape) {
+      Value sourceVal = fixpipeOp.getSrc();
+      auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
+
+      if (maybeMmad.has_value()) {
+        auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
+        auto mmadResult = mmadOp.getResult(0);
+        auto mmadType = cast<ShapedType>(mmadResult.getType());
+        auto mmadShape = mmadType.getShape();
+        auto mmadElemType = mmadType.getElementType();
+
+        Value emptyTensor = fixpipeOp.getOperand(1);
+        auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
+        SmallVector<Value> dynamicDims;
+
+        if (emptyOp) {
+          dynamicDims.append(emptyOp.getDynamicSizes().begin(),
+                             emptyOp.getDynamicSizes().end());
+        }
+        alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
+                                    dynamicDims, mmadShape, mmadElemType);
+      } else {
+        llvm_unreachable(
+          "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
+      }
+    } else {
+      alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
+    }
     Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
         fixLoc, noUbMemrefType, alloc);
     auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
