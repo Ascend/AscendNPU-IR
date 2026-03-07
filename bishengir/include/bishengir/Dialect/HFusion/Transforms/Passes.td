@@ -104,6 +104,13 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "vector::VectorDialect"];
 }
 
+def PullSliceIntoVectorFunction : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
+  let summary = "Pull tensor.extract_slice/tensor.insert_slice into VF callees to reduce buffer copies";
+  let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
+  let dependentDialects = ["tensor::TensorDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect"];
+}
+
 def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
   let summary = "Tile, fuse and vectorize all linalg named ops, and outline loops as VF";
   let constructor = "mlir::hfusion::createHFusionAutoVectorizeV2Pass()";

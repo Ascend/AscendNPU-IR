@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hfusion-auto-vectorize | FileCheck %s
+// RUN: bishengir-opt %s -hfusion-auto-vectorize -hfusion-pull-slice-into-vector-function | FileCheck %s
 
 module {
   // CHECK-LABEL: func @test_vectorization_post_process_outlined_vf_0(
