@@ -1,6 +1,6 @@
 # 构建安装
 
-本文说明 AscendNPU IR 的依赖安装、构建方式（源码/二进制）及运行测试步骤。更多构建选项与脚本说明见项目根目录的 `HowToBuild.md`。
+本文说明 AscendNPU IR 的依赖安装、构建方式（源码/二进制）及运行测试步骤。
 
 ## 1 安装依赖
 
@@ -27,7 +27,7 @@ git clone https://gitcode.com/Ascend/ascendnpu-ir.git
 cd ascendnpu-ir
 ```
 
-2. 初始化并更新子模块（Submodules）
+1. 初始化并更新子模块（Submodules）
 
 本项目依赖LLVM、Torch-MLIR等三方库，需要拉取并更新到指定的commit id。
 
@@ -54,13 +54,11 @@ chmod +x Ascend-cann-A3-ops_8.5.0_linux-x86_64.run
 ./Ascend-cann-A3-ops_8.5.0_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
 ```
 
-3. 设置环境变量：
+1. 设置环境变量：
 
 ```bash
 source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 ```
-
-
 
 ## 2 构建指令
 
@@ -125,7 +123,7 @@ AscendNPU-IR有独立安装包以供使用。
 # 下载对应版本的AscendNPU-IR安装包
 ```
 
-2. 安装AscendNPU-IR
+1. 安装AscendNPU-IR
 
 ```bash
 # 以x86系统环境，AscendNPU-IR 1.0.0版本为例
@@ -141,8 +139,6 @@ chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 # 将bishengir-compile所在目录${PATH-TO-BISHENGIR-COMPILE}加入到PATH环境变量中
 export PATH=${PATH-TO-BISHENGIR-COMPILE}:$PATH
 ```
-
-
 
 ## 3 运行测试
 
@@ -160,8 +156,6 @@ cmake --build . --target "check-bishengir"
 ./bin/llvm-lit ../bishengir/test
 ```
 
-
-
 ## 4 FAQ
 
 Q：调用build-tools/build.sh脚本构建时，遇到报错"ninja: error: loading 'build.ninja': No such file or directory"应该如何处理？  
@@ -171,6 +165,7 @@ Q：构建时遇到报错"Too many open files"应该如何处理？
 A：文件同时打开数量超过了系统中配置的上限，可以通过"ulimit -n xxx"来修改文件同时打开数量上限，如"ulimit -n 65535"。
 
 Q：构建时遇到报错
+
 ```bash
  The CMAKE_CXX_COMPILER:
 
@@ -178,5 +173,6 @@ Q：构建时遇到报错
 
  is not a full path and was not found in the PATH.
 ```
+
 应该如何处理？  
 A：未指定C++编译器或C++编译器二进制存在问题，首先尝试通过"--cxx-compiler=${CXX-COMPILER-PATH}"指定要使用的C++编译器，如果已经指定了C++编译器仍然报错，则尝试重新安装或使用其他版本的C++编译器，如使用推荐的clang++-15。

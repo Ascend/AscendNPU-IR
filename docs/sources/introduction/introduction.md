@@ -1,3 +1,3 @@
 # Introduction
 
-(Full content is available in the Chinese version (`introduction_zh`).)
+Full content is available in the [Chinese version (中文版)](introduction_zh.md).

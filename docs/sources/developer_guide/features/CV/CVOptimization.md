@@ -1,3 +1,3 @@
 # CVOptimization
 
-(Full content is available in the Chinese version (`CVOptimization_zh`).)
+Full content is available in the [Chinese version (中文版)](CVOptimization_zh.md).

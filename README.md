@@ -8,6 +8,12 @@ AscendNPU IR offers multi-level abstraction interfaces: it provides a series of 
 
 AscendNPU IR supports flexible integration with ecosystem frameworks and efficiently enabling Ascend AI processors through open interfaces via the open-source community.
 
+## 🔗 Repository & Documentation
+
+- **GitCode:** [AscendNPU-IR](https://gitcode.com/Ascend/AscendNPU-IR)
+- **GitHub:** [AscendNPU-IR](https://github.com/Ascend/AscendNPU-IR)
+- **Documentation:** [Documentation](https://ascendnpu-ir.gitcode.com)
+
 ## 🔍 Repository Structure
 Key directories within the AscendNPU IR repository are as follows:
 ```
@@ -27,9 +33,31 @@ Key directories within the AscendNPU IR repository are as follows:
 └── README_zh.md
 ```
 
+## 📚 Documentation
+
+AscendNPU IR uses a Sphinx-based documentation project under `docs/`, with **dual-language support (English & Chinese)** through paired Markdown sources.
+
+- **Language / 语言**: see `docs/README.md` (English) and `docs/README_zh.md` (中文) for full details.
+- **File scheme**:
+  - **English**: default `.md` files, entry page `docs/index.rst`; content under `docs/sources/**/*.md`.
+  - **Chinese**: `*_zh.md` files, entry page `docs/index_zh.rst`; content under `docs/sources/**/*_zh.md`.
+- **Naming convention**: under `docs/` (including `docs/sources/`), directory and file names follow **snake_case**, for example: `quick_start/`, `installing_guide.md`, `installing_guide_zh.md`, `user_guide/`, `developer_guide/`, `contributing_guide/`.
+
+To build the documentation from the repository root:
+
+```bash
+make -C docs html      # English only → docs/_build/html
+make -C docs html-zh   # Chinese only → docs/_build/html_zh
+make -C docs html-all  # Both languages
+```
+
+For more options (local preview, Read the Docs deployment, adding new documents, and doc layout), please refer to `docs/README.md` (or `docs/README_zh.md` for Chinese).
+
 ## ⚡️ Quick Start
 
-For build instructions, see: [How to Build](./docs/HowToBuild.md)
+Quick Start Guide: [Quick Start](./docs/sources/introduction/quick_start/index.md)
+
+For build and installation instructions, see: [Build and Installation](./docs/sources/introduction/quick_start/installing_guide.md)
 
 For an example of building E2E cases, see: [README.md](./bishengir/test/Integration/README.md)
 

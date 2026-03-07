@@ -1,7 +1,7 @@
 # Cube-Vector软件流水优化
 
 
-本文介绍 HIVM 中的 **CV Pipelining** Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读 [CV Optimization](docs/sources/developer_guide/features/CV/CVOptimization.md)，了解CV编译相关术语。
+本文介绍 HIVM 中的 **CV Pipelining** Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读 [CV Optimization](../CV/CVOptimization_zh.md)，了解CV编译相关术语。
 
 ---
 
