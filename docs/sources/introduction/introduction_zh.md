@@ -21,7 +21,7 @@
 
 ## 下一步
 
-- :doc:`安装与构建 <sources/introduction/quick_start/installing_guide_zh>` — 环境与编译  
-- :doc:`快速开始 <sources/introduction/quick_start/index_zh>` — 示例与使用入口  
-- :doc:`架构设计 <sources/introduction/architecture_zh>` — 逻辑架构、代码架构与编译流程  
-- :doc:`编程模型 <sources/introduction/programming_model_zh>` — Host/Device 与 Tile 编程模型
+- [安装与构建](quick_start/installing_guide_zh) — 环境与编译
+- [快速开始](quick_start/index_zh) — 示例与使用入口
+- [架构设计](architecture_zh) — 逻辑架构、代码架构与编译流程
+- [编程模型](programming_model_zh) — Host/Device 与 Tile 编程模型

@@ -6,11 +6,11 @@ Welcome to AscendNPU IR Docs
 
 **AscendNPU IR** is an MLIR-based intermediate representation for Ascend NPU operator compilation, providing multi-level abstraction and compiler optimizations, with flexible integration for ecosystem frameworks and fine-grained performance tuning.
 
-`AscendNPU-IR on GitCode <https://gitcode.com/Ascend/AscendNPU-IR>`_
+.. raw:: html
 
-`AscendNPU-IR on GitHub <https://github.com/Ascend/AscendNPU-IR>`_
-
-`Documentation on Read the Docs <https://npuir.readthedocs.io/>`_
+    <p><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitCode</a></p>
+    <p><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitHub</a></p>
+    <p><a href="https://ascendnpu-ir.gitcode.com/en/index.html" target="_blank">Documentation on GitCode</a></p>
 
 Getting Started
 ---------------
