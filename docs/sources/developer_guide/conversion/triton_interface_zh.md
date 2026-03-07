@@ -271,7 +271,7 @@ git clone https://gitcode.com/Ascend/triton-ascend.git && cd triton-ascend/pytho
    ```bash
    cd triton-ascend && pip install -r requirements_dev.txt
    ```
-   运行实例: [01-vector-add.py](../../third_party/ascend/tutorials/01-vector-add.py)
+   运行示例文件：`third_party/ascend/tutorials/01-vector-add.py`
    ```bash
    # 设置CANN环境变量（以root用户默认安装路径`/usr/local/Ascend`为例）
    source /usr/local/Ascend/ascend-toolkit/set_env.sh
@@ -1317,7 +1317,7 @@ x = al.custom('my_custom_op', src, index, out=dst)
 out参数可以指明多个输出参数，`al.custom`返回一个元组包含这些输出参数：
 
 ```python
-x, y = al.custom('my_custom_op', src, index, out=(dst1, dst2)）
+x, y = al.custom('my_custom_op', src, index, out=(dst1, dst2))
 ```
 
 会将dst1返回给x，将dst2返回给y。
