@@ -371,6 +371,24 @@ func.func @store_with_memref_cast(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg
   bufferization.materialize_in_destination %0 in writable %cast : (tensor<1x1x1x1x1x1xf32>, memref<?x?x?x?x?x?xf32, strided<[1, 1, 1, 1, 1, 1], offset: ?>>) -> ()
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @store_with_memref_cast2
+// CHECK: %[[CAST_0:.*]] = memref.cast
+// CHECK: bufferization.materialize_in_destination %[[VAL0:.*]] in writable %[[CAST_0]] : (tensor<?x?xf32>, memref<?x?xf32, strided<[?, ?], offset: ?>>)
+func.func @store_with_memref_cast2(%arg0: tensor<?x?xf32>, %arg1: memref<?x?xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %dim = memref.dim %arg1, %c0 : memref<?x?xf32>
+  %dim_0 = memref.dim %arg1, %c1 : memref<?x?xf32>
+  %subview = memref.subview %arg1[0, 0] [%dim, %dim_0] [1, 1] : memref<?x?xf32> to memref<?x?xf32, strided<[?, 1]>>
+  %cast = memref.cast %subview : memref<?x?xf32, strided<[?, 1]>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+  %extracted_slice = tensor.extract_slice %arg0[0, 0] [%dim, %dim_0] [1, 1] : tensor<?x?xf32> to tensor<?x?xf32>
+  bufferization.materialize_in_destination %extracted_slice in writable %cast : (tensor<?x?xf32>, memref<?x?xf32, strided<[?, ?], offset: ?>>) -> ()
+  return
+}
+
 // -----
 
 // CHECK-LABEL: func.func @insert_slice_fallback_unit_dims

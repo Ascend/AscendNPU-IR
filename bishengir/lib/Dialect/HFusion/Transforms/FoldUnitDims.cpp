@@ -689,6 +689,11 @@ public:
     auto castOp = cast<memref::CastOp>(dstDefOp);
     auto castSrc = castOp.getSource();
     auto castSrcTy = cast<ShapedType>(castSrc.getType());
+    if (!castSrcTy.hasStaticShape()){
+      return rewriter.notifyMatchFailure(
+          copyOp, "[CanonicalizeBufMIDPattern] MaterializeInDestinationOp's "
+                  "dst is not defined by memref.cast with static shape");
+    }
     auto numElem = castSrcTy.getNumElements();
     if (numElem != 1) {
       return rewriter.notifyMatchFailure(
