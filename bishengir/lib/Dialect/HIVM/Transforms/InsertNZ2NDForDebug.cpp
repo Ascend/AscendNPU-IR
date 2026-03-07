@@ -90,6 +90,7 @@ public:
           rewriter.setInsertionPointAfter(definingOp);
           Value workSpaceTensor = getLocalWorkSpaceTensor(
               rewriter, definingOp->getLoc(), tensorType.getShape(),
+              hivm::getTensorDynamicValues(rewriter, definingOp->getLoc(), val),
               getElementTypeOrSelf(tensorType));
           auto res = rewriter.create<hivm::NZ2NDOp>(
               definingOp->getLoc(), workSpaceTensor.getType(),

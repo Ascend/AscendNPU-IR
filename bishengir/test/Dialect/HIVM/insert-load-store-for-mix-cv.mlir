@@ -448,7 +448,7 @@ module {
       %10 = hivm.hir.mmadL1 ins(%extracted_slice, %extracted_slice_5, %true, %c16, %c32, %c16 : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index) outs(%9 : tensor<16x16xf32>) -> tensor<16x16xf32>
       %extracted_slice_6 = tensor.extract_slice %arg10[%arg9, 0, 0] [1, 16, 16] [1, 1, 1] : tensor<3x16x16xf32> to tensor<16x16xf32>
       %11 = hivm.hir.fixpipe {enable_nz2nd} ins(%10 : tensor<16x16xf32>) outs(%extracted_slice_6 : tensor<16x16xf32>) -> tensor<16x16xf32>
-      %inserted_slice = tensor.insert_slice %11 into %arg10[%arg9, 0, 0] [1, 16, 16] [1, 1, 1] {ignore_load_store} : tensor<16x16xf32> into tensor<3x16x16xf32>
+      %inserted_slice = tensor.insert_slice %11 into %arg10[%arg9, 0, 0] [1, 16, 16] [1, 1, 1] {elide_after_bufferize} : tensor<16x16xf32> into tensor<3x16x16xf32>
       scf.yield %inserted_slice : tensor<3x16x16xf32>
     }
     // CHECK-NOT: %[[store:.*]] = hivm.hir.store

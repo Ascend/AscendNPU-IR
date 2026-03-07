@@ -31,6 +31,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Block.h"
@@ -773,35 +774,70 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
   return failure();
 }
 
+SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
+                                          Value src) {
+  SmallVector<Value> dynamicSizes;
+  if (auto reifiableOp = cast<tensor::EmptyOp>(src.getDefiningOp())) {
+    ReifiedRankedShapedTypeDims outputShapes;
+    if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
+      dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+    } else {
+      for (auto dimValue : outputShapes[0]) {
+        if (!getConstantIntValue(dimValue).has_value()) {
+          dynamicSizes.push_back(
+              getValueOrCreateConstantIndexOp(builder, loc, dimValue));
+        }
+      }
+    }
+  } else {
+    dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+  }
+  return dynamicSizes;
+}
+
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                SmallVector<int64_t> shape, Type elementType) {
-  assert(!ShapedType::isDynamicShape(shape) &&
-         "AllocWorkspaceOp only supports static shape");
-  Type allocWorkspaceType = MemRefType::get(shape, elementType);
+                                SmallVector<int64_t> targetShape,
+                                SmallVector<Value> dynamicSizes,
+                                Type elementType) {
+  Type allocWorkspaceType = MemRefType::get(targetShape, elementType);
 
   auto allocWorkspaceOp =
       builder.create<bishengir::memref_ext::AllocWorkspaceOp>(
           loc, allocWorkspaceType,
-          /*workspaceArg*/ Value(), ValueRange{},
+          /*workspaceArg*/ Value(), ValueRange{dynamicSizes},
           /*offset*/ ValueRange{});
   return allocWorkspaceOp.getMemref();
 }
 
-Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
-                              ArrayRef<int64_t> targetShapes,
-                              Type elementType) {
-#ifndef NDEBUG
-  std::optional<int64_t> totalStaticSize =
-      utils::getStaticTotalSize(targetShapes);
-  // TODO：support dynamic shape.
-  assert(totalStaticSize.has_value() && "Can only handle static shape");
-#endif
-
+Value getLocalWorkSpaceTensor(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
+    ArrayRef<Value> dynamicShape, Type elementType,
+    std::optional<ArrayRef<int64_t>> staticAllocShape) {
   // 1. Get AllocWorkspaceOp of current block
   Value localWorkSpace = createAllocLocalWorkSpace(
-      rewriter, loc, SmallVector<int64_t>(targetShapes), elementType);
+      rewriter, loc, SmallVector<int64_t>(targetShape),
+      SmallVector<Value>(dynamicShape), elementType);
 
-  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+  // 2. When staticAllocShape is provided, mark static alloc size for dynamic
+  // tensor case
+  if (staticAllocShape.has_value()) {
+    auto localWorkSpaceOp =
+        localWorkSpace.getDefiningOp<bishengir::memref_ext::AllocWorkspaceOp>();
+    auto maybeStaticTotalSize =
+        utils::getStaticTotalSizeInBits(*staticAllocShape, elementType);
+    if (!maybeStaticTotalSize.has_value()) {
+      emitError(localWorkSpaceOp->getLoc(), "shape has dynamic dimension");
+      llvm::report_fatal_error("shape has dynamic dimension");
+      return nullptr;
+    }
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
+        localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
+    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+                       rewriter.getI64IntegerAttr(allocSizeInByte));
+  }
+
+  // 3. Use bufferization::ToTensorOp to convert current workspace to tensor
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);

@@ -96,6 +96,15 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
 }
 
+static void inferAndSetBufferSizePipeline(OpPassManager &pm) {
+  pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
+  // convert arith to affine before constantize buffer size again becuase stride
+  // align may bring in arith ops
+  pm.addPass(createArithToAffineConversionPass());
+  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
+  pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
+}
+
 static void
 bufferizationPipeline(OpPassManager &pm,
                       const HIVMPipelineOptions &hivmPipelineOptions) {
@@ -203,6 +212,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   }
 
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
+    inferAndSetBufferSizePipeline(pm);
     PlanMemoryOptions planMemoryOption;
     planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
     planMemoryOption.enableGlobalReuse =
@@ -306,12 +316,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   // that constant dimensions are folded into an alloc. We can simply check for
   // the memref type to find the dynamic allocs.
   pm.addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
-  // convert arith to affine before constantize buffer size again becuase stride
-  // align may bring in arith ops
-  pm.addPass(createArithToAffineConversionPass());
-  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
-  pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
+  inferAndSetBufferSizePipeline(pm);
   pm.nest<func::FuncOp>().addPass(createFlattenOpsPass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_HIVM_FLATTEN_OPS;

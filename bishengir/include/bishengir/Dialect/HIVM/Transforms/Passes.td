@@ -520,7 +520,7 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let summary = "Convert ops to HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect", "annotation::AnnotationDialect"];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
@@ -613,7 +613,8 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
   let dependentDialects = [
     "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect"
+                         "bufferization::BufferizationDialect", 
+                         "annotation::AnnotationDialect"
   ];
 }
 
