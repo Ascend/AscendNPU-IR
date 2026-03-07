@@ -111,6 +111,8 @@ protected:
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
                             std::is_same_v<T, tensor::CollapseShapeOp>>>
   void processReshapeOp(T op);
+  void processTilingDimMapping(tensor::ExpandShapeOp expandShapeOp,
+                               DictionaryAttr tilingDimMapping);
 
   //===--------------------------------------------------------------------===//
   // Helper function
