@@ -335,7 +335,10 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
-  pm.nest<func::FuncOp>().addPass(createPlanMemoryPass());
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.enableMemoryDisplay =
+      hivmPipelineOptions.enableMemoryDisplay;
+  pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());

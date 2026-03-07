@@ -175,11 +175,18 @@ class DFXControlOptions<
 > : BiShengIRHIVMCompileOpt<desc, ty, defaultVal> {
   let compileOptionCategories = ["dfxCtrlCategory"];
   let passGroup = ["HIVM"];
-  bit isSharedWithDownstreamToolchain = 1;
 }
 
 def EnableSanitizer : DFXControlOptions<
   "Enable ascend sanitizer.",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableMemoryDisplay : DFXControlOptions<
+  "Enable ascend memory display tools.",
   "bool",
   "false"
 >;
@@ -188,14 +195,18 @@ def EnableDebugInfo : DFXControlOptions<
   "Enable debug info.",
   "bool",
   "false"
->;
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
 
 #ifndef BISHENGIR_PUBLISH
 def EnableCpuTraceIntrinsic : DFXControlOptions<
   "Enable to generate host-accepted IR by eliminating HIVM special traits.",
   "bool",
   "false"
->;
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
 #endif
 
 def InjectIRFromFile : DFXControlOptions<
@@ -203,7 +214,9 @@ def InjectIRFromFile : DFXControlOptions<
   "matching functions in the current module (inject-ir pass).",
   "std::string",
   "\"\""
->;
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
 
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options

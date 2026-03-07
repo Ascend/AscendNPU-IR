@@ -121,7 +121,8 @@ public:
 
     // DFX control options
     config.setEnableSanitizer(enableSanitizer)
-        .setEnableDebugInfo(enableDebugInfo);
+        .setEnableDebugInfo(enableDebugInfo)
+        .setEnableMemoryDisplay(enableMemoryDisplay);
 
     // Output setting options
     config.setOutputFile(outputFile);
@@ -158,6 +159,7 @@ public:
       &enableHIVMInjectBlockAllSync,
       &enableHivmNd2nzOnVector,
       &enableSanitizer,
+      &enableMemoryDisplay,
       &enableStaticBarePtr,
       &enableTritonKernelCompile,
       &enableHIVMUnitFlagSync,

@@ -408,10 +408,10 @@ private:
   void UpdateOpKillInfo(OpInfo *opInfo, Value operand, Liveness live);
 
   /// Whether afterBlock is after beforeBlock.
-  bool IsBlockAfter(Block *afterBlock,  Block *beforeBlock) const;
+  bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
 
   /// Whether the value is dead after a certain block.
-  bool IsDeadAfterBlock(Value value,  Block *block) const;
+  bool IsDeadAfterBlock(Value value, Block *block) const;
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
@@ -449,8 +449,9 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
-          bool restrictInplaceAsISA)
+          bool enableMemoryDisplay, bool restrictInplaceAsISA)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
+        enableMemoryDisplay(enableMemoryDisplay),
         restrictInplaceAsISA(restrictInplaceAsISA) {}
 
   LogicalResult plan();
@@ -489,6 +490,27 @@ public:
 
   func::FuncOp func_;
 
+  /// enable memory display tools.
+  bool enableMemoryDisplay;
+
+  /// when plan memory failed, record error info
+  DenseMap<hivm::AddressSpace, std::string> errorInfo;
+
+  void SetMemscope2rootSuccessStorageEntry();
+
+  DenseMap<hivm::AddressSpace, StorageEntry *> GetMemscope2rootStorageEntry() {
+    return memscope2rootStorageEntry;
+  }
+
+  DenseMap<hivm::AddressSpace, StorageEntry *>
+      GetMemscope2rootFailStorageEntry() {
+    return memscope2rootFailStorageEntry;
+  }
+
+  DenseMap<hivm::AddressSpace, StorageEntry *>
+      GetMemscope2rootSuccessStorageEntry() {
+    return memscope2rootSuccessStorageEntry;
+  }
 private:
   /// different mode for mem plan.
   MemPlanMode planMode;
@@ -769,6 +791,12 @@ private:
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
   std::map<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+
+  /// when plan memory fail, map from each scope to its root StorageEntry.
+  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootFailStorageEntry;
+
+  /// when plan memory success, map from each scope to its root StorageEntry.
+  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootSuccessStorageEntry;
 };
 
 } // namespace hivm
