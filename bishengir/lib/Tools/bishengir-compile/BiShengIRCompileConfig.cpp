@@ -60,6 +60,9 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableTritonIRCompileFlag), cl::init(false),
         cl::cat(featCtrlCategory));
 #endif
+    static cl::opt<bool, /*ExternalStorage=*/true> enableLayoutOptimization(
+        "enable-layout-optimization", cl::desc("Enable Layout Optimization"),
+        cl::location(enableLayoutOptimizationFlag), cl::init(false));
 
     static cl::opt<bool, /*ExternalStorage=*/true> enableMixedCV(
         "enable-mixed-cv", cl::desc("Enable mixed CV compilation"),

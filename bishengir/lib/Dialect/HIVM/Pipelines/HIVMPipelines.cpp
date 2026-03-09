@@ -61,7 +61,12 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
 
   if (hacc::utils::isAscend950(
           hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
-    pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
+    // New A5 convert layout pipeline
+    if (hivmPipelineOptions.enableLayoutOptimization) {
+      pm.nest<func::FuncOp>().addPass(createInsertCVDataMovementPass());
+    } else {
+      pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
+    }
     pm.nest<func::FuncOp>().addPass(mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
     pm.nest<func::FuncOp>().addPass(
@@ -182,16 +187,43 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
+
+  if (hivmPipelineOptions.enableLayoutOptimization) {
+    // Combine optimized folds:
+    // - load + convert layout
+    // - convert layout + fixpipe
+    // For regbase convert layout optimization is done early in the pass
+    // Inserts convert layout before and after cube operations
+    pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+    // Moves layout conversion to the start and end of the kernel
+    // TODO: This part needs the most improvement compared to others
+    pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass());
+
+    // Add canonicalization passes
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
+    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+  } else {
+    pm.addPass(mlir::hivm::createInlineFixpipePass());
+  }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  if (hacc::utils::isAscend950(hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
-    pm.addPass(createInsertL12UBForDebugPass());
+  if (hivmPipelineOptions.enableLayoutOptimization) {
+    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
   } else {
-    pm.addPass(createInsertNZ2NDForDebugPass());
+    if (hacc::utils::isAscend950(
+            hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+      pm.addPass(createInsertL12UBForDebugPass());
+    } else {
+      pm.addPass(createInsertNZ2NDForDebugPass());
+    }
+    pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (!hacc::utils::isAscend950(
           hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {

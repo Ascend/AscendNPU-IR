@@ -29,6 +29,9 @@ struct HIVMPipelineOptions
   PassOptions::Option<bool> enableMixedCV{
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
       llvm::cl::init(false)};
+  PassOptions::Option<bool> enableLayoutOptimization{
+      *this, "enable-layout-optimization",
+      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
   PassOptions::Option<bool> enableFullSIMTCompile{
       *this, "pure-simt", llvm::cl::desc("Enable full simt compile"),
       llvm::cl::init(false)};

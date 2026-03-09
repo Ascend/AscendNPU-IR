@@ -5,6 +5,9 @@ file(GLOB HIVM_AGGREGATED ${CMAKE_CURRENT_SOURCE_DIR}/BiShengIRAggregatedOpInter
 file(GLOB HIVM_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/ExtraBufferOpInterface/*.cpp)
 file(GLOB HIVM_IMPL_SCALAR ${CMAKE_CURRENT_SOURCE_DIR}/ImplByScalarOpInterface/*.cpp)
 file(GLOB HIVM_INFER_CORE_TYPE ${CMAKE_CURRENT_SOURCE_DIR}/InferCoreTypeInterface/*.cpp)
+file(GLOB HIVM_IMPL_SCALAR ${CMAKE_CURRENT_SOURCE_DIR}/ImplByScalarOpInterface/*.cpp)
+file(GLOB HIVM_INFER_CORE_TYPE ${CMAKE_CURRENT_SOURCE_DIR}/InferCoreTypeInterface/*.cpp)
+file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 
 add_bishengir_dialect_library(MLIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -13,6 +16,7 @@ add_bishengir_dialect_library(MLIRHIVMDialect
   ${HIVM_BUFFER}
   ${HIVM_IMPL_SCALAR}
   ${HIVM_INFER_CORE_TYPE}
+  ${HIVM_CANONICALIZATIONS}
   HIVM.cpp
   HIVMCanonicalizations.cpp
   HIVMDMAOps.cpp

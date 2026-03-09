@@ -41,6 +41,8 @@ namespace bishengir {
 void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
                               const BiShengIRCompileMainConfig &config) {
   hivmPipelineOptions.enableTritonKernelCompile = config.shouldCompileTriton();
+  hivmPipelineOptions.enableLayoutOptimization =
+      config.shouldEnableLayoutOptimization();
   hivmPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hivmPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
   hivmPipelineOptions.enableAutoBlockifyLoop = config.shouldAutoBlockifyLoop();
@@ -312,6 +314,10 @@ protected:
   // -------------------------------------------------------------------------//
   //                  General optimization control options
   // -------------------------------------------------------------------------//
+  Pass::Option<bool> enableLayoutOptimization{
+      *this, "enable-layout-optimization",
+      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
+
   Pass::Option<bool> enableMixedCV{
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
       llvm::cl::init(false)};

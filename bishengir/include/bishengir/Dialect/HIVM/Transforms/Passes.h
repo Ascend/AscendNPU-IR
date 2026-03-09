@@ -169,6 +169,9 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass> createInlineFixpipePass();
 
+// Create a pass to convert ops to fixpipe
+std::unique_ptr<Pass> createInlineFixpipeV2Pass();
+
 // Create a pass to tile batch matmul into loop
 std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
 
@@ -265,6 +268,13 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 
 // Create a pass to infer simt vf func args memory effect.
 std::unique_ptr<Pass> createInferSimtVFMemEffectPass();
+
+// Create a pass to insert convert layout operations for matmul ops
+std::unique_ptr<Pass> createInsertConvertLayoutPass();
+std::unique_ptr<Pass> createPropagateConvertLayoutPass();
+std::unique_ptr<Pass> createConvertLayoutToTransposePass();
+std::unique_ptr<Pass> createInsertCVDataMovementPass();
+std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
 
 // Create a pass to insert memory semantic for simt vf.
 std::unique_ptr<Pass> createInsertMemSemanticForSimtVFPass();

@@ -62,6 +62,8 @@ void setupHFusionPipelineOptions(
       config.shouldManageHostResource();
   hfusionPipelineOptions.enableTritonKernelCompile =
       config.shouldCompileTriton();
+  hfusionPipelineOptions.enableLayoutOptimization =
+      config.shouldEnableLayoutOptimization();
   hfusionPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hfusionPipelineOptions.disableHFusionVectorize =
       config.shouldDisableHFusionVectorize();
@@ -476,6 +478,10 @@ protected:
   // -------------------------------------------------------------------------//
   //                  General optimization control options
   // -------------------------------------------------------------------------//
+  Pass::Option<bool> enableLayoutOptimization{
+      *this, "enable-layout-optimization",
+      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
+
   Pass::Option<bool> enableMixedCV{
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
       llvm::cl::init(false)};

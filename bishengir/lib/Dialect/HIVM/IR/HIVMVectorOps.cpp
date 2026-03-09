@@ -901,7 +901,6 @@ LogicalResult VTransposeOp::verify() {
   if (tranposeAxisNum != supportedTransposeAxisNum) {
     int rank = srcVecType.getRank();
     int swaps = 0;
-    int supportedSwapNum = 2;
     if (rank == 4) {
       llvm::SmallVector<bool, 8> vis(permSize, false);
       for (size_t i = 0; i < permSize; ++i) {
@@ -915,12 +914,6 @@ LogicalResult VTransposeOp::verify() {
         }
         swaps += (int)len - 1;
       }
-    }
-    if (rank != 4 || swaps != supportedSwapNum) {
-      return emitOpError()
-             << "Vtranspose supports only swapping two axes; for rank-4, "
-                "also allows permutations equivalent to two swaps (got moved="
-             << tranposeAxisNum << ", swaps=" << swaps << ")";
     }
   }
 

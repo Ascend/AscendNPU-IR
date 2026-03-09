@@ -264,6 +264,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     auto tensorType = origTensor.getType().dyn_cast<RankedTensorType>();
     if (!tensorType)
       continue;
+
     Operation *consumerOp = consumerOperand->getOwner();
     Location loc = consumerOp->getLoc();
     rewriter.setInsertionPoint(consumerOp);

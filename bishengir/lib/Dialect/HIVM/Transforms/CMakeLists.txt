@@ -26,8 +26,21 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ConstantizeBufferSize.cpp
   ConvertToHIVMOp.cpp
+  ConvertLayout/CombineOptimizedConvertLayout.cpp
+  ConvertLayout/ConvertLayoutToTranspose.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
+  ConvertLayout/ConvertLayoutUtils.cpp
+  ConvertLayout/InsertConvertLayout.cpp
+  ConvertLayout/PropagateConvertLayout.cpp
+  ConvertLayout/PropagateConvertLayoutElementwise.cpp
+  ConvertLayout/PropagateConvertLayoutScfFor.cpp
+  ConvertLayout/PropagateConvertLayoutExtractSlice.cpp
   CVPipelining.cpp
   EnableMultiBuffer.cpp
+  Fixpipe/FixpipeExtractSlice.cpp
+  Fixpipe/InlineFixpipeV2.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp
   HIVMBubbleUpExtractSlice.cpp
@@ -47,6 +60,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   InjectBlockSync.cpp
   InlineFixpipe.cpp
   InlineOTFBroadcast.cpp
+  InsertCVDataMovement.cpp
   InsertCVTightCoupledBuffer.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferVFModeFunc.cpp

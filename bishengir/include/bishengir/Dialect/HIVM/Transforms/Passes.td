@@ -490,6 +490,13 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
+def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
+  let summary = "Convert ops to HIVM Fixpipe op";
+  let constructor = "mlir::hivm::createInlineFixpipeV2Pass()";
+  let dependentDialects =
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+}
+
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
   let summary = "Tile batch matmul into loop with iteration on batch dimension";
   let constructor = "mlir::hivm::createTileBatchMMIntoLoopPass()";
@@ -721,7 +728,38 @@ def InferSimtVFMemEffect : Pass<"infer-simt-vf-memory-effect"> {
   let summary = "Infer simt vf func args memory effect";
   let constructor = "mlir::hivm::createInferSimtVFMemEffectPass()";
 }
- 
+
+def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
+  let summary = "Insert convert layout for matmul operations";
+  let constructor = "mlir::hivm::createInsertConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
+  let summary = "Propagate convert layout for matmul operations";
+  let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {
+  let summary = "Convert layout to transpose decomposition";
+  let constructor = "mlir::hivm::createConvertLayoutToTransposePass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+def InsertCVDataMovement : Pass<"hivm-insert-cv-data-movement", "func::FuncOp"> {
+  let summary = "Cube vector data movement";
+  let constructor = "mlir::hivm::createInsertCVDataMovementPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+def CombineOptimizedConvertLayout : Pass<"hivm-combine-optimized-convert-layout", "func::FuncOp"> {
+  let summary = "Fold some convert layout patterns and change it into optimized form";
+  let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+
 def SplitSimtModule : Pass<"split-simt-module"> {
   let summary = "Split simt module for every simt vf";
   let constructor = "mlir::hivm::createSplitSimtModulePass()";

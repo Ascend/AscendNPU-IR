@@ -298,6 +298,15 @@ public:
   // -------------------------------------------------------------------------//
   //                  General optimization control options                    //
   // -------------------------------------------------------------------------//
+  BiShengIRCompileMainConfig &layoutOptimization(bool enable) {
+    enableLayoutOptimizationFlag = enable;
+    return *this;
+  }
+
+  bool shouldEnableLayoutOptimization() const {
+    return enableLayoutOptimizationFlag &&
+           hacc::utils::isAscend950(this->getTargetBackend());
+  }
 
   BiShengIRCompileMainConfig &mixedCV(bool enable) {
     enableMixedCVFlag = enable;
@@ -791,6 +800,9 @@ protected:
   // -------------------------------------------------------------------------//
   //                  General optimization control options                    //
   // -------------------------------------------------------------------------//
+
+  /// Enable Layout Optimization
+  bool enableLayoutOptimizationFlag{false};
 
   /// Enable mixed CV compilation
   bool enableMixedCVFlag{false};
