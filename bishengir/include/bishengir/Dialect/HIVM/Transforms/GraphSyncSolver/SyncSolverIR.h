@@ -39,6 +39,7 @@ enum struct OpType {
   PLACE_HOLDER,
   SCOPE,
   FUNCTION,
+  FUNCTION_BLOCK,
   LOOP,
   LOOP_END,
   MMAD_SCOPE,
@@ -87,7 +88,7 @@ public:
   static bool sameScope(OperationBase *op1, OperationBase *op2);
 
   // Compute the depth (levels up to root) of the provided operation.
-  static int getDepth(OperationBase *op);
+  int getDepth() const;
 
   // Return the ancestor `dist` levels above this operation.
   OperationBase *getNthParent(int dist);
@@ -151,6 +152,15 @@ public:
   std::string str(int indent, bool recursive) const override;
 };
 
+class FunctionBlock : public Scope {
+public:
+  FunctionBlock() : Scope(OpType::FUNCTION_BLOCK) {}
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::FUNCTION_BLOCK;
+  }
+};
+
 class Function : public Scope {
 public:
   Function(Operation *op) : Scope(OpType::FUNCTION, op, nullptr) {}
@@ -158,8 +168,6 @@ public:
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::FUNCTION;
   }
-
-  std::string str(int indent, bool recursive) const override;
 };
 
 class Loop : public Scope {

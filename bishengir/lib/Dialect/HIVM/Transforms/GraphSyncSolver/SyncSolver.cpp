@@ -1277,6 +1277,18 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 }
 
 std::optional<std::pair<Occurrence *, Occurrence *>>
+Solver::getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *parFunctionBlock1 = occ1->getParentOfType<FunctionBlock>();
+  auto *parFunctionBlock2 = occ2->getParentOfType<FunctionBlock>();
+  if (parFunctionBlock1 == parFunctionBlock2) {
+    return {};
+  }
+  auto *placeHolderOcc = getScopeBeginPlaceHolderOcc(parFunctionBlock2);
+  return std::make_pair(placeHolderOcc, occ2);
+}
+
+std::optional<std::pair<Occurrence *, Occurrence *>>
 Solver::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
   if (options.isCrossCoreMode() && isBackwardSync(occ1, occ2)) {
@@ -1309,6 +1321,9 @@ Solver::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 
 std::pair<Occurrence *, Occurrence *> Solver::getSetWaitOcc(Occurrence *occ1,
                                                             Occurrence *occ2) {
+  if (auto functionBlockOpt = getFunctionBlockSetWaitOcc(occ1, occ2)) {
+    std::tie(occ1, occ2) = functionBlockOpt.value();
+  }
   if (auto unlikelyOpt = getUnlikelyCondSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = unlikelyOpt.value();
   }
@@ -2129,6 +2144,9 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
     mergeBackwardSyncEventIds(op.get());
   }
 
+  if (llvm::isa_and_present<FunctionBlock>(op)) {
+    return;
+  }
   if (llvm::isa_and_present<Condition, Loop>(op->parentOp)) {
     return;
   }
@@ -2235,7 +2253,8 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
     assert(conflictPair->setOp != nullptr && conflictPair->waitOp != nullptr);
     if (conflictPair->isBarrier()) {
       auto barrierOp = std::make_unique<BarrierOp>(
-          nullptr, nullptr, conflictPair->waitCorePipeInfo.pipe);
+          conflictPair->waitOp->op, conflictPair->waitOp->parentOp,
+          conflictPair->waitCorePipeInfo.pipe);
       LLVM_DEBUG(barrierOp->debugId = conflictPair->id);
       syncMapBefore[conflictPair->waitOp].push_back(std::move(barrierOp));
     } else {
@@ -2422,7 +2441,7 @@ llvm::LogicalResult Solver::considerOuterBackwardSyncPairs() {
     if (backwardSyncEventsAfterMerge.contains(scopeOp)) {
       continue;
     }
-    int scopeOpDepth = OperationBase::getDepth(scopeOp);
+    int scopeOpDepth = scopeOp->getDepth();
     if (chosenOpsDepth == scopeOpDepth) {
       chosenOps.push_back(scopeOp);
     } else if (chosenOpsDepth == -1 || chosenOpsDepth < scopeOpDepth) {

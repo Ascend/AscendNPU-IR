@@ -166,9 +166,9 @@ bool OperationBase::sameScope(OperationBase *op1, OperationBase *op2) {
   return op1->parentOp == op2->parentOp;
 }
 
-int OperationBase::getDepth(OperationBase *op) {
-  assert(op != nullptr);
+int OperationBase::getDepth() const {
   int ret = 0;
+  const OperationBase *op = this;
   while (op != nullptr) {
     op = op->parentOp;
     ret++;
@@ -188,8 +188,8 @@ OperationBase *OperationBase::getNthParent(int dist) {
 std::pair<OperationBase *, OperationBase *>
 OperationBase::getLCAPair(OperationBase *op1, OperationBase *op2) {
   assert(op1 != nullptr && op2 != nullptr);
-  int depth1 = getDepth(op1);
-  int depth2 = getDepth(op2);
+  int depth1 = op1->getDepth();
+  int depth2 = op2->getDepth();
   if (depth1 < depth2) {
     op2 = op2->getNthParent(depth2 - depth1);
   } else if (depth1 > depth2) {
@@ -222,8 +222,8 @@ OperationBase *OperationBase::getParentCondition(OperationBase *op) {
 
 bool OperationBase::isProperAncestor(OperationBase *op) {
   assert(op != nullptr);
-  int depth1 = getDepth(this);
-  int depth2 = getDepth(op);
+  int depth1 = this->getDepth();
+  int depth2 = op->getDepth();
   if (depth1 >= depth2) {
     return false;
   }

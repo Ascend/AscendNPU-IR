@@ -235,6 +235,14 @@ struct Occurrence {
   static std::pair<Occurrence *, Occurrence *> getLCAPair(Occurrence *occ1,
                                                           Occurrence *occ2);
 
+  template <typename OpTy> Occurrence *getParentOfType() {
+    Occurrence *cur = this->parentOcc;
+    while (cur != nullptr && !isa<OpTy>(cur->op)) {
+      cur = cur->parentOcc;
+    }
+    return cur;
+  }
+
   // Find and return the nearest parent occurrence that is a loop.
   static Occurrence *getParentloop(Occurrence *occ);
 

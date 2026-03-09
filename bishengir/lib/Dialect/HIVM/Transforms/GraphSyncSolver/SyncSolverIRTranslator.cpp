@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -37,6 +38,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <climits>
 #include <memory>
@@ -80,6 +82,9 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
         auto yieldedValueBefore = whileOp.getConditionOp().getArgs()[argNum];
         collectedVals.push_back(yieldedValueBefore);
       }
+    }
+    if (blockArgAliases.contains(val)) {
+      llvm::append_range(collectedVals, blockArgAliases[val]);
     }
     return collectedVals;
   }
@@ -457,6 +462,15 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+void IRTranslator::updateBlockArgAliases(Block *block,
+                                         OperandRange destOperands) {
+  assert(block->getArguments().size() == destOperands.size());
+  for (auto [destArg, destOperand] :
+       llvm::zip(block->getArguments(), destOperands)) {
+    blockArgAliases[destArg].push_back(destOperand);
+  }
+}
+
 // Build a Scope tree (funcIr) from MLIR Region recursively.
 std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
                                                    OperationBase *parentOp,
@@ -464,13 +478,26 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
   auto scopeOp = std::make_unique<Scope>();
   scopeOp->parentOp = parentOp;
 
-  for (auto &block : region.getBlocks()) {
-    auto blockBeginPlaceHolderOp =
-        std::make_unique<PlaceHolder>(nullptr, scopeOp.get());
-    blockBeginPlaceHolderOp->scopeBegin = scopeOp.get();
-    blockBeginPlaceHolderOp->block = &block;
-    scopeOp->body.push_back(std::move(blockBeginPlaceHolderOp));
+  if (!isa_and_present<Function>(parentOp) && region.getBlocks().size() > 1) {
+    llvm_unreachable(
+        "unsupported non-function region to have multiple blocks.");
+  }
 
+  for (auto &block : region.getBlocks()) {
+
+    auto *parScope = scopeOp.get();
+    if (isa_and_present<Function>(parentOp)) {
+      auto blockOp = std::make_unique<FunctionBlock>();
+      blockOp->parentOp = scopeOp.get();
+      parScope = blockOp.get();
+      scopeOp->body.push_back(std::move(blockOp));
+    }
+
+    auto blockBeginPlaceHolderOp =
+        std::make_unique<PlaceHolder>(nullptr, parScope);
+    blockBeginPlaceHolderOp->scopeBegin = parScope;
+    blockBeginPlaceHolderOp->block = &block;
+    parScope->body.push_back(std::move(blockBeginPlaceHolderOp));
     for (auto &op : block.getOperations()) {
       if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
         auto trueScope =
@@ -481,15 +508,15 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
               funcIrBuilder(ifOp.getElseRegion(), nullptr, skipEmptyScopes);
         }
         auto conditionOp = std::make_unique<Condition>(
-            &op, scopeOp.get(), std::move(trueScope), std::move(falseScope));
+            &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
-          scopeOp->body.push_back(std::move(conditionOp));
+          parScope->body.push_back(std::move(conditionOp));
         }
         continue;
       }
       if (isa<LoopLikeOpInterface>(op)) {
-        auto loopOp = std::make_unique<Loop>(&op, scopeOp.get());
+        auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
         for (auto &region : op.getRegions()) {
           auto regionOp = funcIrBuilder(region, loopOp.get(), skipEmptyScopes);
@@ -502,48 +529,61 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
             std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
         afterPlaceHolderOp->afterOp = loopOp.get();
         if (!skipEmptyScopes || !isEmptyScope(loopOp.get())) {
-          scopeOp->body.push_back(std::move(beforePlaceHolderOp));
-          scopeOp->body.push_back(std::move(loopOp));
-          scopeOp->body.push_back(std::move(afterPlaceHolderOp));
+          parScope->body.push_back(std::move(beforePlaceHolderOp));
+          parScope->body.push_back(std::move(loopOp));
+          parScope->body.push_back(std::move(afterPlaceHolderOp));
         }
         continue;
       }
+
+      if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {
+        updateBlockArgAliases(branchOp.getDest(), branchOp.getDestOperands());
+        continue;
+      }
+      if (auto condBranchOp = dyn_cast<cf::CondBranchOp>(op)) {
+        updateBlockArgAliases(condBranchOp.getTrueDest(),
+                              condBranchOp.getTrueDestOperands());
+        updateBlockArgAliases(condBranchOp.getFalseDest(),
+                              condBranchOp.getFalseDestOperands());
+        continue;
+      }
+
       if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
-        if (auto rwOp = getPipeInterfaceOp(pipeOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getPipeInterfaceOp(pipeOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(storeOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getLoadStoreOp(storeOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(loadOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getLoadStoreOp(loadOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(storeOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getLoadStoreOp(storeOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(loadOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getLoadStoreOp(loadOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto extractOp = dyn_cast<tensor::ExtractOp>(op)) {
-        if (auto rwOp = getTensorExtractOp(extractOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getTensorExtractOp(extractOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
-        if (auto rwOp = getCallOp(callOp, scopeOp.get())) {
-          scopeOp->body.push_back(std::move(rwOp));
+        if (auto rwOp = getCallOp(callOp, parScope)) {
+          parScope->body.push_back(std::move(rwOp));
         }
       }
     }
 
     auto blockEndPlaceHolderOp =
-        std::make_unique<PlaceHolder>(nullptr, scopeOp.get());
-    blockEndPlaceHolderOp->scopeEnd = scopeOp.get();
+        std::make_unique<PlaceHolder>(nullptr, parScope);
+    blockEndPlaceHolderOp->scopeEnd = parScope;
     blockEndPlaceHolderOp->block = &block;
-    scopeOp->body.push_back(std::move(blockEndPlaceHolderOp));
+    parScope->body.push_back(std::move(blockEndPlaceHolderOp));
   }
 
   return scopeOp;

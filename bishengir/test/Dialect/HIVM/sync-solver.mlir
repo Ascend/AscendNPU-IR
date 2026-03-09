@@ -557,6 +557,44 @@ module {
 }
 
 // -----
+module {
+  func.func @test_branchop_inplace(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>, %arg3: i1) {
+    %c64_i64 = arith.constant 64 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.cond_br %arg3, ^bb1, ^bb2
+  ^bb1:  // pred: ^bb0
+    %1 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%1 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %2 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.vadd ins(%0, %1 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%2 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.br ^bb3(%2 : memref<16xf16, #hivm.address_space<ub>>)
+  ^bb2:  // pred: ^bb0
+    %3 = hivm.hir.pointer_cast(%c64_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%3 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %4 = hivm.hir.pointer_cast(%c64_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.vsub ins(%0, %3 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%4 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.br ^bb3(%4 : memref<16xf16, #hivm.address_space<ub>>)
+  ^bb3(%5: memref<16xf16, #hivm.address_space<ub>>):  // 2 preds: ^bb1, ^bb2
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %6 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.pipe_barrier[<PIPE_V>]
+    hivm.hir.vadd ins(%5, %0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%6 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    // CHECK: hivm.hir.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    hivm.hir.store ins(%6 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg2 : memref<16xf16, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
 #map = affine_map<()[s0, s1, s2] -> ((s0 - s1) floordiv s2)>
 #map1 = affine_map<()[s0, s1, s2] -> (((s0 - s1) floordiv s2) mod 2)>
 #map2 = affine_map<()[s0] -> (s0 + 32)>
