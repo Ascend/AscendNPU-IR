@@ -1,6 +1,6 @@
 # 常见问题（FAQ）
 
-本文汇总 AscendNPU IR 使用与开发中的常见问题，按类别与编号整理，便于快速查找。更多构建细节见 :doc:`安装与构建 <sources/introduction/quick_start/installing_guide>`，贡献流程见 :doc:`贡献指南 <sources/contributing_guide/contribute>`。
+本文汇总 AscendNPU IR 使用与开发中的常见问题，按类别与编号整理，便于快速查找。更多构建细节见 [安装与构建](../introduction/quick_start/installing_guide_zh.md)，贡献流程见 [贡献指南](../contributing_guide/contribute_zh.md)。
 
 ---
 
@@ -37,11 +37,11 @@ ulimit -n 65535
 - **bishengir 测试**：`ninja check-bishengir` 或 `cmake --build . --target check-bishengir`
 - **LIT 测试套**：`./bin/llvm-lit ../bishengir/test`（路径以实际仓库与构建目录为准）
 
-详见 :doc:`安装与构建 <sources/introduction/quick_start/installing_guide>` 中的「运行测试」。
+详见 [安装与构建](../introduction/quick_start/installing_guide_zh.md) 中的「运行测试」。
 
 **Q2.2** 上板运行需要什么环境？
 
-端到端在 NPU 上运行算子需要：**CANN**（安装并 source set_env.sh）、**bishengir-compile** 生成的设备端二进制（如 kernel.o）、以及使用 CANN runtime 的 Host 程序完成注册与调用。参见 :doc:`快速开始示例 <sources/introduction/quick_start/examples>` 与 :doc:`快速开始 <sources/introduction/quick_start/index>`。
+端到端在 NPU 上运行算子需要：**CANN**（安装并 source set_env.sh）、**bishengir-compile** 生成的设备端二进制（如 kernel.o）、以及使用 CANN runtime 的 Host 程序完成注册与调用。参见 [快速开始示例](../introduction/quick_start/examples_zh.md) 与 [快速开始](../introduction/quick_start/index_zh.md)。
 
 **Q2.3** 如何获取各层 MLIR 的中间编译态（如 HFusion、HIVM）？
 
@@ -52,7 +52,7 @@ ulimit -n 65535
 bishengir-compile your.mlir --bishengir-print-ir-before=hivm-inject-block-sync --bishengir-print-ir-after=hivm-inject-block-sync
 ```
 
-可替换为其他 pass 名称。更多选项见 :doc:`编译选项 <sources/user_guide/compile_option>`、:doc:`调试调测 <sources/user_guide/debug_option>`。
+可替换为其他 pass 名称。更多选项见 [编译选项](../user_guide/compile_option_zh.md)、[调试调测](../user_guide/debug_option_zh.md)。
 
 **Q2.4** 如何用 bishengir-compile 将 MLIR 编译为设备端二进制？
 
@@ -62,11 +62,11 @@ bishengir-compile your.mlir --bishengir-print-ir-before=hivm-inject-block-sync -
 bishengir-compile input.mlir -enable-hivm-compile -o kernel.o
 ```
 
-具体选项与 pipeline 见 :doc:`编译选项 <sources/user_guide/compile_option>` 与 :doc:`架构设计 <sources/introduction/architecture>`。
+具体选项与 pipeline 见 [编译选项](../user_guide/compile_option_zh.md) 与 [架构设计](../introduction/architecture_zh.md)。
 
 **Q2.5** LIT 或 check-bishengir 测试失败如何排查？
 
-根据失败用例名称定位到对应测试文件与断言，查看是 IR 变换、数值结果还是环境（CANN、路径等）问题；可结合「如何获取各层 MLIR」（Q2.3）查看中间态。调试选项见 :doc:`调试调测 <sources/user_guide/debug_option>`。
+根据失败用例名称定位到对应测试文件与断言，查看是 IR 变换、数值结果还是环境（CANN、路径等）问题；可结合「如何获取各层 MLIR」（Q2.3）查看中间态。调试选项见 [调试调测](../user_guide/debug_option_zh.md)。
 
 ---
 
@@ -162,12 +162,12 @@ with torch_npu.profiler.profile(
 
 **Q5.1** 如何参与贡献？
 
-参与前需签署 Ascend 社区贡献者许可协议（CLA），并遵循 [ascend-community](https://gitcode.com/ascend/community) 行为准则。贡献流程包括：通过 Issue 反馈或认领任务、Fork 仓库开发、自测（如 `ninja check-bishengir`）、提交 PR，以及通过门禁（编译、静态检查、CI）。合入需 2 位 Reviewer 的 `/lgtm` 与 1 位 Approver 的 `/approve`。完整说明见 :doc:`贡献指南 <sources/contributing_guide/contribute>`。
+参与前需签署 Ascend 社区贡献者许可协议（CLA），并遵循 [ascend-community](https://gitcode.com/ascend/community) 行为准则。贡献流程包括：通过 Issue 反馈或认领任务、Fork 仓库开发、自测（如 `ninja check-bishengir`）、提交 PR，以及通过门禁（编译、静态检查、CI）。合入需 2 位 Reviewer 的 `/lgtm` 与 1 位 Approver 的 `/approve`。完整说明见 [贡献指南](../contributing_guide/contribute_zh.md)。
 
 **Q5.2** PR 门禁失败（编译失败、静态检查失败、CI 未通过）如何排查？
 
-根据 CI 提示信息逐项修复：**编译失败**时检查报错与构建环境；**静态检查失败**时按提示修改代码风格或逻辑；**CI 测试未通过**时定位失败用例并修复后重新触发 CI。详见 :doc:`贡献指南 <sources/contributing_guide/contribute>` 中的「门禁异常处理」。
+根据 CI 提示信息逐项修复：**编译失败**时检查报错与构建环境；**静态检查失败**时按提示修改代码风格或逻辑；**CI 测试未通过**时定位失败用例并修复后重新触发 CI。详见 [贡献指南](../contributing_guide/contribute_zh.md) 中的「门禁异常处理」。
 
 **Q5.3** 提交 PR 前有哪些注意事项？
 
-避免在 PR 中引入与本次修改无关的变更；保持提交历史简洁（可适当 squash/rebase）；创建 PR 前将分支 rebase 到上游最新 master；若为错误修复类 PR，请在描述中关联相关 Issue 与 PR。详见 :doc:`贡献指南 <sources/contributing_guide/contribute>` 中的「注意事项」。
+避免在 PR 中引入与本次修改无关的变更；保持提交历史简洁（可适当 squash/rebase）；创建 PR 前将分支 rebase 到上游最新 master；若为错误修复类 PR，请在描述中关联相关 Issue 与 PR。详见 [贡献指南](../contributing_guide/contribute_zh.md) 中的「注意事项」。
