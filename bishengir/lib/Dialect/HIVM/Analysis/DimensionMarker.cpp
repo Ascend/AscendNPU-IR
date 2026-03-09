@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -48,11 +49,20 @@ static bool isBTransposed(Operation *op) {
 void DimensionAnalyzer::processBFS() {
   SmallVector<Value> argumentListForBFS;
   LDBG("Argument List for BFS in HIVM:");
-  op_->walk([&argumentListForBFS](hivm::LoadOp op) {
-    argumentListForBFS.push_back(op.getDst());
-  });
-  op_->walk([&argumentListForBFS](tensor::EmptyOp op) {
-    argumentListForBFS.push_back(op.getResult());
+  op_->walk([&argumentListForBFS](Operation *op) {
+    TypeSwitch<Operation *>(op)
+        .Case([&](hivm::LoadOp loadOp) {
+          argumentListForBFS.push_back(loadOp.getDst());
+        })
+        .Case([&](tensor::EmptyOp emptyOp) {
+          argumentListForBFS.push_back(emptyOp.getResult());
+        })
+        .Case([&](annotation::MarkOp markOp) {
+          if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
+            LDBG(markOp);
+            argumentListForBFS.push_back(markOp.getSrc());
+          }
+        });
   });
   std::queue<Value> bfsQueue;
   for (const auto &arg : argumentListForBFS) {
@@ -68,6 +78,22 @@ void DimensionAnalyzer::processBFS() {
 
     for (Operation *user : current.getUsers()) {
       processOperation(user, current);
+      if (isa<ShapedType>(current.getType())) {
+        createDummyRefIfNotExist({current});
+        auto curRef = argumentsRefPointer_.at(current);
+        for (auto res : user->getResults()) {
+          if (isa<ShapedType>(res.getType())) {
+            createDummyRefIfNotExist({res});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+          }
+        }
+        for (auto opr : user->getOperands()) {
+          if (isa<ShapedType>(opr.getType())) {
+            createDummyRefIfNotExist({opr});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
+          }
+        }
+      }
 
       for (Value result : user->getResults()) {
         updatePreviousType(result);
@@ -92,48 +118,87 @@ void DimensionAnalyzer::processBFS() {
 
 bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
   LDBG("Processing operation: " << *op);
-  if (auto vBrcOp = dyn_cast<hivm::VBrcOp>(op)) {
-    processVBrcOp(vBrcOp);
-  } else if (auto vReduceOp = dyn_cast<hivm::VReduceOp>(op)) {
-    processVReduceOp(vReduceOp);
-  } else if (auto vTransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
-    processVTransposeOp(vTransposeOp);
-  } else if (isa<hivm::MatmulOp, hivm::MixMatmulOp, hivm::MmadL1Op>(op)) {
-    processMatmulOp(op, isATransposed(op), isBTransposed(op));
-  } else if (auto vGatherOp = dyn_cast<hivm::VGatherOp>(op)) {
-    processVGatherOp(vGatherOp);
-  } else if (auto vConcatOp = dyn_cast<hivm::VConcatOp>(op)) {
-    processVConcatOp(vConcatOp);
-  } else if (auto vInterleaveOp = dyn_cast<hivm::VInterleaveOp>(op)) {
-    processVInterleaveOp(vInterleaveOp);
-  } else if (auto vDeinterleaveOp = dyn_cast<hivm::VDeinterleaveOp>(op)) {
-    processVDeinterleaveOp(vDeinterleaveOp);
-  } else if (auto vPadOp = dyn_cast<hivm::VPadOp>(op)) {
-    processVPadOp(vPadOp);
-  } else if (auto vCumsumOp = dyn_cast<hivm::VCumsumOp>(op)) {
-    processVCumOp(vCumsumOp);
-  } else if (auto vCumprodOp = dyn_cast<hivm::VCumprodOp>(op)) {
-    processVCumOp(vCumprodOp);
-  } else if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
-    processYieldOp(yieldOp);
-  } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-    processForOp(forOp);
-  } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
-    processReshapeOp(expandShapeOp);
-  } else if (auto collapseShapeOp = dyn_cast<tensor::CollapseShapeOp>(op)) {
-    processReshapeOp(collapseShapeOp);
-  } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-             markOp && markOp->hasAttr("tiling_dim_mapping")) {
-    auto expandShapeOp = markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
-    auto tilingDimMapping = markOp->getAttrOfType<DictionaryAttr>("tiling_dim_mapping");
-    processTilingDimMapping(expandShapeOp, tilingDimMapping);
-  } else if (isElemwiseNaryOpImpl(op) || isa_and_nonnull<CopyOpInterface>(op) ||
-             utils::isAllocLikeOp(op)) {
-    processParallelOp(op, current);
-  } else {
-    return DimensionAnalyzerBase::processOperation(op, current);
-  }
-  return true;
+  return TypeSwitch<Operation *, bool>(op)
+      .Case<hivm::VBrcOp>([this](auto op) {
+        processVBrcOp(op);
+        return true;
+      })
+      .Case<hivm::VReduceOp>([this](auto op) {
+        processVReduceOp(op);
+        return true;
+      })
+      .Case<hivm::VTransposeOp>([this](auto op) {
+        processVTransposeOp(op);
+        return true;
+      })
+      .Case<hivm::MatmulOp, hivm::MixMatmulOp, hivm::MmadL1Op>(
+          [this](Operation *op) {
+            processMatmulOp(op, isATransposed(op), isBTransposed(op));
+            return true;
+          })
+      .Case<hivm::VGatherOp>([this](auto op) {
+        processVGatherOp(op);
+        return true;
+      })
+      .Case<hivm::VConcatOp>([this](auto op) {
+        processVConcatOp(op);
+        return true;
+      })
+      .Case<hivm::VInterleaveOp>([this](auto op) {
+        processVInterleaveOp(op);
+        return true;
+      })
+      .Case<hivm::VDeinterleaveOp>([this](auto op) {
+        processVDeinterleaveOp(op);
+        return true;
+      })
+      .Case<hivm::VPadOp>([this](auto op) {
+        processVPadOp(op);
+        return true;
+      })
+      .Case<hivm::VCumsumOp>([this](auto op) {
+        processVCumOp(op);
+        return true;
+      })
+      .Case<hivm::VCumprodOp>([this](auto op) {
+        processVCumOp(op);
+        return true;
+      })
+      .Case<scf::YieldOp>([this](auto op) {
+        processYieldOp(op);
+        return true;
+      })
+      .Case<scf::ForOp>([this](auto op) {
+        processForOp(op);
+        return true;
+      })
+      .Case<tensor::ExpandShapeOp>([this](auto op) {
+        processReshapeOp(op);
+        return true;
+      })
+      .Case<tensor::CollapseShapeOp>([this](auto op) {
+        processReshapeOp(op);
+        return true;
+      })
+      .Case<annotation::MarkOp>([this](auto op) {
+        if (op->hasAttr(kTilingDimMappingAttrName)) {
+          auto expandShapeOp =
+              op.getSrc().template getDefiningOp<tensor::ExpandShapeOp>();
+          auto tilingDimMapping = op->template getAttrOfType<DictionaryAttr>(
+              kTilingDimMappingAttrName);
+          processTilingDimMapping(expandShapeOp, tilingDimMapping);
+          return true;
+        }
+        return false;
+      })
+      .Default([&](Operation *op) {
+        if (isElemwiseNaryOpImpl(op) || isa_and_nonnull<CopyOpInterface>(op) ||
+            utils::isAllocLikeOp(op)) {
+          processParallelOp(op, current);
+          return true;
+        }
+        return DimensionAnalyzerBase::processOperation(op, current);
+      });
 }
 
 SmallVector<int64_t>
@@ -389,7 +454,7 @@ void DimensionAnalyzer::processReshapeOp(T op) {
     LDBG(utils::debugger::to_string(inputIdx)
          << ' ' << utils::debugger::to_string(outputIdx));
     if (inputIdx.size() == 1 && outputIdx.size() == 1) {
-      joinShape(inputArgs[inputIndices.back()[0]], outputArgs[outputIdx[0]]);
+      joinShape(inputArgs[inputIdx[0]], outputArgs[outputIdx[0]]);
       continue;
     }
     // Consider not mutated if and only if there exists exactly 1 nonone
@@ -464,10 +529,17 @@ void DimensionAnalyzer::markDimensionKind() {
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    auto sliceRef = getArgumentRef(sliceOp.getSource());
+    SmallVector<int64_t> sliceRef;
+    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
+      sliceRef = getArgumentRef(sliceOp.getSource());
+    } else {
+      sliceRef = getArgumentRef(sliceOp.getResult());
+    }
     for (size_t i = 0; i < sliceRef.size(); ++i) {
-      tilingDimKindMap[solverCollapserElem_->find(droppedDimsMask[i])] =
-          TilingDimensionKind::RankReduced;
+      if (droppedDimsMask[i]) {
+        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
+            TilingDimensionKind::RankReduced;
+      }
     }
   };
 

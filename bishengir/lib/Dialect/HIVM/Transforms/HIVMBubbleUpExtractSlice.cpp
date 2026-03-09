@@ -46,7 +46,12 @@ public:
   using Base::Base;
 
   static bool traceAndCheckIsGM(Value value) {
-    return !traceDefOp<memref::AllocOp>(value).has_value();
+    auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
+    if (!maybeAlloc.has_value())
+      return true;
+    auto allocOp = cast<memref::AllocOp>(maybeAlloc.value());
+    return utils::getAnnotateOpWithAttr(
+        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name).has_value();
   }
 
   LogicalResult
