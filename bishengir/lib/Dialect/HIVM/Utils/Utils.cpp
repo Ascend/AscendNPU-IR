@@ -843,7 +843,7 @@ Value getLocalWorkSpaceTensor(
       loc, localWorkSpace, true, true);
 #else
   // return tensor type
-  auto tensorType = RankedTensorType::get(targetShapes, elementType);
+  auto tensorType = RankedTensorType::get(targetShape, elementType);
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, tensorType, localWorkSpace, true, true);
 #endif
