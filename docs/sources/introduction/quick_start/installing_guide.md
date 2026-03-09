@@ -1,14 +1,14 @@
-# Build and Installation
+# Build and installation
 
-This guide describes dependency setup, build methods (source/binary), and test execution for AscendNPU IR.
+This document describes dependency installation, build methods (source and binary), and running tests for AscendNPU IR.
 
-## 1 Install Dependencies
+## 1 Install dependencies
 
 ### 1.1 Build dependencies
 
 #### 1.1.1 Compiler and toolchain requirements
 
-Basic compiler and toolchain requirements:
+Minimum requirements:
 
 - CMake >= 3.28
 - Ninja >= 1.12.0
@@ -16,81 +16,80 @@ Basic compiler and toolchain requirements:
 Recommended:
 
 - Clang >= 10
-- LLD >= 10 (LLVM LLD can significantly improve build speed)
+- LLD >= 10 (LLVM LLD significantly speeds up builds)
 
 #### 1.1.2 Source preparation
 
-1. Clone the main repository (after cloning, enter the repository directory, typically named `ascendnpu-ir`):
+1. Clone the repository (then enter the repo directory, typically `ascendnpu-ir`):
 
 ```bash
 git clone https://gitcode.com/Ascend/ascendnpu-ir.git
 cd ascendnpu-ir
 ```
 
-1. Initialize and update submodules.
+2. Initialize and update submodules
 
-This project depends on third-party libraries such as LLVM and Torch-MLIR. Pull submodules and update them to the specified commit IDs:
+The project depends on LLVM, Torch-MLIR, and other third-party code; submodules must be updated to the required commits.
 
 ```bash
-# Recursively pull all submodules
+# Recursively init and update all submodules
 git submodule update --init --recursive
 ```
 
 ### 1.2 Runtime dependencies
 
-#### 1.2.1 Install CANN packages
+#### 1.2.1 CANN package installation
 
-End-to-end execution of AscendNPU IR depends on the CANN environment.
+End-to-end runs depend on the CANN environment.
 
-1. Download CANN packages: both the toolkit package and hardware-matched ops package are required. They can be obtained from [Ascend Community CANN downloads](https://www.hiascend.com/developer/download/community/result?module=cann).
+1. Download CANN: obtain the toolkit package and the ops package for your hardware from the [Ascend CANN download page](https://www.hiascend.com/developer/download/community/result?module=cann).
 
-2. Install CANN packages:
+2. Install CANN:
 
 ```bash
-# Example: x86 A3 environment with CANN 8.5.0
+# Example: x86 A3, CANN 8.5.0
 chmod +x Ascend-cann-toolkit_8.5.0_linux-x86_64.run
 chmod +x Ascend-cann-A3-ops_8.5.0_linux-x86_64.run
 ./Ascend-cann-toolkit_8.5.0_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
 ./Ascend-cann-A3-ops_8.5.0_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
 ```
 
-1. Set environment variables:
+3. Set environment variables:
 
 ```bash
 source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 ```
 
-## 2 Build Commands
+## 2 Build commands
 
-### 2.1 Source installation
+### 2.1 Source build
 
-#### 2.1.1 Use the provided build script (recommended)
+#### 2.1.1 Using the build script (recommended)
 
-We provide a convenient build script, `build.sh`, to automate configuration and building.
+A convenience script `build.sh` automates configuration and build.
 
 ```bash
-# First run in the repository root
-./build-tools/build.sh -o ./build --build-type Debug --apply-patches [optional-args]
-# Subsequent runs in the repository root
-./build-tools/build.sh -o ./build --build-type Debug [optional-args]
+# First run from repo root
+./build-tools/build.sh -o ./build --build-type Debug --apply-patches [optional args]
+# Later runs
+./build-tools/build.sh -o ./build --build-type Debug [optional args]
 ```
 
-Common script options:
+Common options:
 
-- `--apply-patches`: enables AscendNPU IR extensions for third-party repositories. Required on the first build.
-- `-o`: build output path.
-- `--build-type`: build type, such as "Release" or "Debug".
+- `--apply-patches`: Enable AscendNPU IR extensions for third-party repos; required on first build.
+- `-o`: Build output directory.
+- `--build-type`: Build type, e.g. "Release", "Debug".
 
-#### 2.1.2 Manual build (for advanced users)
+#### 2.1.2 Manual build (advanced)
 
-If you prefer to control the process manually, you can refer to the commands used in `build.sh`:
+From the repo root:
 
 ```bash
-# In the repository root
 mkdir -p build
 cd build
 
-# Configure with CMake (LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR points to project root, i.e., parent of build)
+# Configure (LLVM_EXTERNAL_BISHENGIR_SOURCE_DIR = repo root, parent of build)
 export LLVM_SOURCE_DIR=$(realpath ../third-party/llvm-project/llvm)
 cmake ${LLVM_SOURCE_DIR} -G Ninja \
     -DCMAKE_C_COMPILER=clang \
@@ -105,73 +104,65 @@ cmake ${LLVM_SOURCE_DIR} -G Ninja \
 ninja -j32
 ```
 
-Note: when using LLVM version 21 or later, add `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON`.
+For LLVM >= 21, add `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON`.
 
 ### 2.2 Binary installation
 
-#### 2.2.1 Install with CANN package
+#### 2.2.1 With CANN package
 
-AscendNPU IR binaries are installed together with the CANN toolkit package. See "1.2.1 Install CANN packages" above.
+AscendNPU IR binaries can be installed as part of the CANN toolkit; see "1.2.1 CANN package installation" above.
 
-#### 2.2.2 Standalone AscendNPU IR package installation
+#### 2.2.2 Standalone AscendNPU IR package
 
-A standalone AscendNPU IR package is also available.
+A standalone installer is also available.
 
-1. Download the AscendNPU IR installer package:
+1. Download the AscendNPU IR installer for your version.
 
-```bash
-# Download the corresponding AscendNPU IR installer package version
-```
-
-1. Install AscendNPU IR:
+2. Install:
 
 ```bash
-# Example: x86 environment with AscendNPU IR 1.0.0
+# Example: x86, AscendNPU IR 1.0.0
 chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 ./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
 ```
 
-### 2.3 Environment variable setup
+### 2.3 Environment variables
 
-To use AscendNPU IR, add the path that contains the `bishengir-compile` executable to `PATH`:
+Add the directory containing `bishengir-compile` to your PATH:
 
 ```bash
-# Add ${PATH-TO-BISHENGIR-COMPILE}, where bishengir-compile is located, into PATH
 export PATH=${PATH-TO-BISHENGIR-COMPILE}:$PATH
 ```
 
-## 3 Run Tests
+## 3 Running tests
 
-### 3.1 Build test targets
+### 3.1 Build test target
 
 ```bash
-# In the `build` directory
+# From the build directory
 cmake --build . --target "check-bishengir"
 ```
 
-### 3.2 Run test suites with LLVM-LIT
+### 3.2 Run tests with LLVM LIT
 
 ```bash
-# In the `build` directory
+# From the build directory
 ./bin/llvm-lit ../bishengir/test
 ```
 
 ## 4 FAQ
 
-Q: When building with `build-tools/build.sh`, how to fix this error: "ninja: error: loading 'build.ninja': No such file or directory"? 
-A: Add the `-r` option when invoking `build-tools/build.sh` to re-run CMake and regenerate `build.ninja`.
+**Q:** When building with `build-tools/build.sh`, I get "ninja: error: loading 'build.ninja': No such file or directory". What should I do?  
+**A:** Add the `-r` option to rerun CMake and regenerate `build.ninja`.
 
-Q: How to fix the "Too many open files" error during build? 
-A: The number of simultaneously opened files exceeds the system limit. Increase it with `ulimit -n xxx`, for example `ulimit -n 65535`.
+**Q:** Build fails with "Too many open files". What should I do?  
+**A:** Raise the per-process open-file limit, e.g. `ulimit -n 65535`.
 
-Q: How to fix this build error?
-
+**Q:** Build fails with:
 ```bash
 The CMAKE_CXX_COMPILER:
-
- clang++
-
+  clang++
 is not a full path and was not found in the PATH.
 ```
-
-A: The C++ compiler is not specified or the compiler binary is invalid. First try `--cxx-compiler=${CXX-COMPILER-PATH}` to specify the compiler. If the issue remains, reinstall or switch to another compiler version, such as the recommended `clang++-15`.
+What should I do?  
+**A:** Specify the C++ compiler with `--cxx-compiler=${CXX-COMPILER-PATH}` or reinstall/use another version (e.g. clang++-15).

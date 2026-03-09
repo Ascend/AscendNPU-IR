@@ -2,7 +2,7 @@
 
 本示例展示如何用 `bishengir-compile` 将 IR 编译为设备端二进制，并基于 CANN 提供的 runtime 接口完成注册与上板执行。
 
-**前置条件**：已完成 :doc:`安装与构建 <sources/introduction/quick_start/installing_guide>`，且 `bishengir-compile` 已加入 PATH，CANN 环境已安装并完成 `set_env.sh` 配置。
+**前置条件**：已完成 [安装与构建](installing_guide_zh.md)，且 `bishengir-compile` 已加入 PATH，CANN 环境已安装并完成 `set_env.sh` 配置。
 
 ## IR 编译
 
