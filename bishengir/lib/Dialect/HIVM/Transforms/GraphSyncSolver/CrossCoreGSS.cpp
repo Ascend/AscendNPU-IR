@@ -53,7 +53,7 @@ private:
       return hacc::utils::isKernelArg(funcOp, arg.getArgNumber(),
                                       hacc::KernelArgType::kFFTSBaseAddr);
     });
-    return it != funcArgs.end() ? (*it) : nullptr;
+    return it != funcArgs.end() ? (*it) : std::optional<Value>();
   }
 
   void insertSetFFTSBaseAddrOp(func::FuncOp funcOp, Value baseAddr) {
@@ -100,6 +100,16 @@ void CrossCoreGSSPass::runOnOperation() {
   bool isMemBasedArch = true;
   bool isRegBasedArch = false;
   assert(isMemBasedArch != isRegBasedArch);
+
+  if (this->forceIsRegBased) {
+    isMemBasedArch = false;
+    isRegBasedArch = true;
+  }
+  if (this->forceIsMemBased) {
+    isMemBasedArch = true;
+    isRegBasedArch = false;
+  }
+
   if (isMemBasedArch) {
     // get && set ffts base addr
     std::optional<Value> baseAddr = getFFTSBaseAddrFromFunc(funcOp);
