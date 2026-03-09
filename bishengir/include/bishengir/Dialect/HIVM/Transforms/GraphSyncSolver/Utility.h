@@ -122,7 +122,7 @@ struct SyncSolverOptions {
   bool considerOuterBackwardSyncPairs{true};
 
   // Try merging backward sync pairs and moving them to an outer scope.
-  bool moveOutAndMergeBackwardSyncPairs{false};
+  bool moveOutAndMergeBackwardSyncPairs{true};
 
   // Disable multi-event-id usage for barrier-all pipe pairs.
   bool disableMultiEventIdForBarrierAllPairs{true};
@@ -140,7 +140,6 @@ struct SyncSolverOptions {
     alwaysUsePipeSAsWaitingPipe =
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
-    moveOutAndMergeBackwardSyncPairs = isIntraCoreMode();
     useDifferentMultiBufferFlagIds = !isCrossCoreMode();
   }
 
@@ -287,6 +286,7 @@ struct ConflictPair {
   bool setOnLastIterOnly{false};
   bool waitOnFirstIterOnly{false};
   bool replacedWithUnitFlag{false};
+  bool movedToOuterLoop{false};
   Loop *backwardSyncLoopOp{nullptr};
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;

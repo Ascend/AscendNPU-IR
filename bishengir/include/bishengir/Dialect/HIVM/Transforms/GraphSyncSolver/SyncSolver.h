@@ -66,6 +66,8 @@ protected:
   int64_t globalSetWaitIndex{0};
   int64_t maxReuseNum{20};
   int64_t maxRunNum{99};
+  bool moveBackwardSyncPairsToOutmostLoop{false};
+  bool dontMoveBackwardSyncPairsToOutmostLoop{false};
 
   llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE>,
                  std::unique_ptr<EventIdSolver>>
@@ -401,6 +403,8 @@ protected:
 
   void mergeBackwardSyncEventIds(OperationBase *op);
 
+  void mergeBackwardSyncPairs(SyncMap &syncMapBefore, SyncMap &syncMapAfter);
+
   void insertMergedBackwardSyncPairs();
 
   llvm::LogicalResult considerOuterBackwardSyncPairs();
@@ -408,6 +412,8 @@ protected:
   llvm::LogicalResult reuseSyncPairToSaveEventIds();
 
   llvm::LogicalResult disableMultiEventIdForBarrierAllPairs();
+
+  llvm::LogicalResult tryMovingOutBackwardSyncPairsToOuterLoops();
 
   Occurrence *getBeforePlaceHolderOcc(Occurrence *occ);
   Occurrence *getAfterPlaceHolderOcc(Occurrence *occ);

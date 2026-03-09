@@ -54,6 +54,8 @@ void Solver::reset(bool resetEventIdRanOutOpts) {
     reusePairs.clear();
     disabledMultiEventIdPairs.clear();
     backwardSyncEventsAfterMerge.clear();
+    moveBackwardSyncPairsToOutmostLoop = false;
+    dontMoveBackwardSyncPairsToOutmostLoop = false;
   }
   skipOcc.clear();
   syncedPairs.clear();
@@ -1605,7 +1607,8 @@ bool Solver::checkReuseMultiBufferFlagId(ConflictPair *conflictPair) {
     return false;
   }
   if (!conflictPair->isInnerBackward ||
-      conflictPair->eventIdInfo.eventIdNum <= 1) {
+      conflictPair->eventIdInfo.eventIdNum <= 1 ||
+      conflictPair->movedToOuterLoop) {
     return false;
   }
   auto [setOcc, waitOcc] =
@@ -1663,7 +1666,14 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
 
-    parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
+    parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
+    if (moveBackwardSyncPairsToOutmostLoop) {
+      while (auto *grandParentLoopOcc =
+                 parentLCALoopOcc->getParentOfType<Loop>()) {
+        conflictPair->movedToOuterLoop = true;
+        parentLCALoopOcc = grandParentLoopOcc;
+      }
+    }
     assert(parentLCALoopOcc != nullptr);
     conflictPair->backwardSyncLoopOcc = parentLCALoopOcc;
 
@@ -2250,10 +2260,21 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
   }
 }
 
+void Solver::mergeBackwardSyncPairs(SyncMap &syncMapBefore,
+                                    SyncMap &syncMapAfter) {
+  if (!options.moveOutAndMergeBackwardSyncPairs) {
+    return;
+  }
+  if (options.isIntraCoreMode()) {
+    resetAndBuildSetWaitOpIndex(syncMapBefore, syncMapAfter);
+    auto *scopeOp = llvm::dyn_cast<Scope>(funcIr.get());
+    assert(scopeOp != nullptr && scopeOp->body.front() != nullptr);
+    mergeBackwardSyncEventIds(scopeOp->body.front().get());
+  }
+}
+
 SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
   calcAllEventIds();
-  collectBackwardSyncEventIds();
-
   SyncMap syncMapBefore, syncMapAfter;
   std::vector<ConflictPair *> conflictPairs;
   for (auto &conflictPair : chosenConflictedPairs) {
@@ -2307,12 +2328,8 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
     }
   }
 
-  if (options.moveOutAndMergeBackwardSyncPairs) {
-    resetAndBuildSetWaitOpIndex(syncMapBefore, syncMapAfter);
-    auto *scopeOp = llvm::dyn_cast<Scope>(funcIr.get());
-    assert(scopeOp != nullptr && scopeOp->body.front() != nullptr);
-    mergeBackwardSyncEventIds(scopeOp->body.front().get());
-  }
+  collectBackwardSyncEventIds();
+  mergeBackwardSyncPairs(syncMapBefore, syncMapAfter);
 
   for (auto &[op, mp] : backwardSyncEvents) {
     if (mp.empty()) {
@@ -2530,6 +2547,23 @@ llvm::LogicalResult Solver::disableMultiEventIdForBarrierAllPairs() {
   return llvm::success(newPairIsInserted);
 }
 
+llvm::LogicalResult Solver::tryMovingOutBackwardSyncPairsToOuterLoops() {
+  if (!options.moveOutAndMergeBackwardSyncPairs || !options.isCrossCoreMode() ||
+      dontMoveBackwardSyncPairsToOutmostLoop) {
+    return llvm::failure();
+  }
+  if (!moveBackwardSyncPairsToOutmostLoop) {
+    moveBackwardSyncPairsToOutmostLoop = true;
+    return llvm::success();
+  }
+  if (!barrierAllPairs.empty()) {
+    moveBackwardSyncPairsToOutmostLoop = false;
+    dontMoveBackwardSyncPairsToOutmostLoop = true;
+    return llvm::success();
+  }
+  return llvm::failure();
+}
+
 // High-level solve orchestration with multiple passes and optional merging
 // iterations.
 llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
@@ -2542,6 +2576,10 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
     reset();
     insertMergedBackwardSyncPairs();
     processOrders();
+
+    if (llvm::succeeded(tryMovingOutBackwardSyncPairsToOuterLoops())) {
+      continue;
+    }
 
     if (enableOpts1) {
       if (options.considerOuterBackwardSyncPairs) {
