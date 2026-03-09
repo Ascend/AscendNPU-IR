@@ -265,12 +265,28 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
 }
 
 std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
+checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
                            const std::function<bool(Operation *op)> &skipFn) {
+  /*
+  A static visited set is needed to solve an infinite recursion issue that could
+  happen when loadOp::inferCoreType and checkUsersAllWithCondition keep calling
+  each other.
+  TODO: rewrite loadOp::inferCoreType so we don't use a static visited set.
+   */
+  static DenseSet<Value> visited;
   if (!visited.insert(v).second)
     return std::nullopt;
+  auto returnedValue =
+      checkUsersAllWithConditionImpl(v, rootOp, condFn, skipFn);
+  visited.erase(v);
+  return returnedValue;
+}
 
+std::optional<bool> checkUsersAllWithConditionImpl(
+    Value v, Operation *rootOp,
+    const std::function<bool(Operation *op)> &condFn,
+    const std::function<bool(Operation *op)> &skipFn) {
   // Flag initialization is nullopt which means we can't infer flag now
   std::optional<bool> flag = std::nullopt;
 
@@ -293,8 +309,7 @@ checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
 
     // For all skipped ops, just continue searching its result
     for (auto opRes : op->getResults()) {
-      auto resCheck =
-          checkUsersAllWithCondition(opRes, rootOp, visited, condFn, skipFn);
+      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn);
       if (!resCheck.has_value())
         continue;
 
@@ -308,11 +323,10 @@ checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
       assert(parentOp && "parent op cannot be nullptr");
       auto aliasValues = getAliasValues(parentOp, use);
       SmallVector<std::optional<bool>> coreTypes;
-      llvm::transform(aliasValues, std::back_inserter(coreTypes),
-                      [&](Value &v) {
-                        return checkUsersAllWithCondition(v, rootOp, visited,
-                                                          condFn, skipFn);
-                      });
+      llvm::transform(
+          aliasValues, std::back_inserter(coreTypes), [&](Value &v) {
+            return checkUsersAllWithCondition(v, rootOp, condFn, skipFn);
+          });
 
       if (llvm::all_of(coreTypes, [&](std::optional<bool> &maybeCoreType) {
             return !maybeCoreType.has_value();

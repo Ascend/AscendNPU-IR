@@ -359,9 +359,14 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
 bool areShapesAligned(ArrayRef<int64_t> staticShapes, int64_t alignment);
 /// Check if op's users all satisfy the condition function.
 std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
+checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
                            const std::function<bool(Operation *op)> &skipFn);
+
+std::optional<bool> checkUsersAllWithConditionImpl(
+    Value v, Operation *rootOp,
+    const std::function<bool(Operation *op)> &condFn,
+    const std::function<bool(Operation *op)> &skipFn);
 
 int checkDefsAllWithCondition(Value v,
                               const std::function<int(Operation *op)> &condFn);
