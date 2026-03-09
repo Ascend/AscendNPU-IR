@@ -121,6 +121,10 @@ private:
     if (!llvm::all_of(op.getStaticStrides(),
                       [](int64_t stride) { return stride == 1; }))
       return false;
+    // If ranks differ (e.g. rank-reduce slice), it's not a passthrough.
+    if (resShape.size() != srcShape.size())
+      return false;
+    // Same rank: compare dimensions (skip first for stride-1 subview identity).
     for (auto [srcDim, resDim] :
          llvm::drop_begin(llvm::zip_equal(srcShape, resShape))) {
       if (srcDim != resDim)
@@ -223,16 +227,16 @@ private:
         }
       }
 
-      // [Scenario 2] Call result feeds insert_slice(dest=src) with same slice
-      // params.
+        // [Scenario 2] Call result feeds insert_slice(dest=src) with same slice
+        // params.
       if (fullTensorResultIdx == -1) {
         for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
-          if (auto insOp =
-                  tryMatchInsertSliceUser(callResult, src, extractSlice)) {
-            fullTensorResultIdx = static_cast<int64_t>(resIdx);
-            insertSlice = insOp;
-            break;
-          }
+        if (auto insOp =
+                tryMatchInsertSliceUser(callResult, src, extractSlice)) {
+          fullTensorResultIdx = static_cast<int64_t>(resIdx);
+          insertSlice = insOp;
+          break;
+        }
         }
       }
 
@@ -331,11 +335,12 @@ private:
       rewriter.eraseOp(insertOp);
     }
     // [Scenario 1] Call returns full tensor; caller needs extract_slice on
-    // result.
+    // result. Use original slice type for rank-reduce (e.g. 2D->1D).
     else if (match.fullTensorResultIdx != -1) {
       newResults[match.fullTensorResultIdx] =
           rewriter.create<tensor::ExtractSliceOp>(
-              call.getLoc(), newResults[match.fullTensorResultIdx],
+              call.getLoc(), extractSlice.getType(),
+              newResults[match.fullTensorResultIdx],
               extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
               extractSlice.getMixedStrides());
     }
@@ -345,7 +350,8 @@ private:
 };
 
 struct PullSliceIntoVectorFunction
-    : public impl::PullSliceIntoVectorFunctionBase<PullSliceIntoVectorFunction> {
+    : public impl::PullSliceIntoVectorFunctionBase<
+          PullSliceIntoVectorFunction> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<PullExtractInsertSliceIntoVectorFunction>(
