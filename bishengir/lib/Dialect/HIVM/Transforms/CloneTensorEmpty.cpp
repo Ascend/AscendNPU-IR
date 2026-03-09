@@ -60,13 +60,14 @@ struct CloneTensorEmptyHIVMStructuredOpPattern : public OpRewritePattern<OpTy> {
   }
 };
 
-struct CloneTensorEmptySCFForPattern : public OpRewritePattern<scf::ForOp> {
-  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+template <typename LoopOp>
+struct CloneTensorEmptyLoopPattern : public OpRewritePattern<LoopOp> {
+  using OpRewritePattern<LoopOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(scf::ForOp op,
+  LogicalResult matchAndRewrite(LoopOp op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<unsigned> emptyInitIndex;
-    for (auto [idx, init] : llvm::enumerate(op.getInitArgs())) {
+    for (auto [idx, init] : llvm::enumerate(op.getInits())) {
       auto initDefOp = init.getDefiningOp();
       if (initDefOp && isa<tensor::EmptyOp>(initDefOp)) {
         emptyInitIndex.push_back(idx);
@@ -77,7 +78,7 @@ struct CloneTensorEmptySCFForPattern : public OpRewritePattern<scf::ForOp> {
       return failure();
     }
 
-    auto mutableInits = op.getInitArgsMutable();
+    auto mutableInits = op.getInitsMutable();
     rewriter.setInsertionPoint(op);
     for (auto idx : emptyInitIndex) {
       auto &mtEmptyInit = mutableInits[idx];
@@ -137,8 +138,8 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns) {
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::FixpipeOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::MmadL1Op>,
-               CloneTensorInsert, CloneTensorEmptySCFForPattern>(
-      patterns.getContext());
+               CloneTensorInsert, CloneTensorEmptyLoopPattern<scf::WhileOp>,
+               CloneTensorEmptyLoopPattern<scf::ForOp>>(patterns.getContext());
   registerAll<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"

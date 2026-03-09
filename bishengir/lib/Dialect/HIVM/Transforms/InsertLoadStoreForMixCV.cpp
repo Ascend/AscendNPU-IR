@@ -383,8 +383,8 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
 // InsertLoadBeforeSCFInitArgs
 //===----------------------------------------------------------------------===//
 
-/// Pattern to insert load op before scf.for loop if its init args come from
-/// store-like operations (Store/Fixpipe).
+/// Pattern to insert load op before scf.for/while loop if its init args come
+/// from store-like operations (Store/Fixpipe).
 ///
 /// Example:
 /// ```
@@ -398,10 +398,11 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
 /// %loaded = hivm.load %1
 /// scf.for ... iter_args(%arg = %loaded)
 /// ```
-struct InsertLoadBeforeSCFInitArgs : public OpRewritePattern<scf::ForOp> {
-  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+template <typename LoopOp>
+struct InsertLoadBeforeSCFInitArgs : public OpRewritePattern<LoopOp> {
+  using OpRewritePattern<LoopOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(scf::ForOp op,
+  LogicalResult matchAndRewrite(LoopOp op,
                                 PatternRewriter &rewriter) const override {
     if (op.walk([](hivm::MmadL1Op) {
             return WalkResult::interrupt();
@@ -768,7 +769,9 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 LogicalResult applyInsertLoadBeforeSCFInitArgs(MLIRContext *context,
                                                Operation *funcOp) {
   RewritePatternSet patterns(context);
-  patterns.insert<InsertLoadBeforeSCFInitArgs>(patterns.getContext());
+  patterns.insert<InsertLoadBeforeSCFInitArgs<scf::ForOp>,
+                  InsertLoadBeforeSCFInitArgs<scf::WhileOp>>(
+      patterns.getContext());
   return applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
