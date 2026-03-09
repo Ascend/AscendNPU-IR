@@ -42,7 +42,7 @@ hfusion.print " x: " {hex = false} %0 : tensor<8xi64>
 
 将hfusion.print接口转换成hivm.hir.debug接口
 
-```
+```mlir
 // Before ConvertHFusionToHIVM
 %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
 %alloc = memref.alloc() : memref<8xi64>
@@ -62,7 +62,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 
 插入 fixpipe 以用于 hivm.print，该 hivm.print 会打印 mmad 结果，而 mmad 结果是 scf.for 中的 yield。
 
-```
+```mlir
 // Before InlineFixpipe
 %init = tensor.empty()
 %res = scf.for iter_arg(%arg = %init) {
@@ -85,7 +85,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 
 device_print仅支持ub/gm上的数据打印因此当打印L1的数据时需要将数据先从L1搬至gm，该pass的作用就是当识别到`hivm::MmadL1Op`时检查该op的输入若输入被`hivm::DebugOp`用到则需要申请一块workspace的大小然后插入NZ2ND的op确保搬至gm打印
 
-```
+```mlir
 // Before InsertNZ2NDForDebug
 %12 = bufferization.to_tensor %alloc restrict writable : memref<1x4xf32>
 %13 = arith.index_cast %arg8 : i32 to index
@@ -131,7 +131,7 @@ mix类用例 Debug op会在该pass内先进行InferCoreType推断出精确的cor
 
 若存在Debug op则将hivm.hir.init_print 调用添加到每个函数开头，将 hivm.hir.finish_print 添加到每个 hivm.hir.print 之后。hivm.hir.init_print 用于打印之前的准备工作，hivm.hir.finish_print 用于打印之后的工作，目前没有特别具体作用，为将来扩展device_print预留了接口
 
-```
+```mlir
 // Before InsertInitAndFinishForDebug
 hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%cast, %cast_1, %true, %c1, %c4, %c1 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%cast_2 : memref<?x?x?x?xf32, #hivm.address_space<cc>>) sync_related_args(%c1_i64, %c0_i64, %c-1_i64, %c-1_i64, %c-1_i64, %c-1_i64, %c-1_i64 : i64, i64, i64, i64, i64, i64, i64)
 hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
@@ -179,7 +179,7 @@ triton-ascend 产生的 host 侧 launcher调用 bisheng 编译器编好的 kerne
 
 通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能，开启后triton ascend侧会设置相关宏信息__CCE_ENABLE_PRINT__，该宏信息在毕昇编译器侧会影响是否开启打印，其次编译meta op库的时候需要开启--cce-enable-print(当前默认一直开启)已确保开启打印
 
-```
+```mlir
 // hfusion op接口
 // dtype - 待打印tensor/scalar对应的数据类型
 hfusion.print " prefix = xxx " {hex = xxx} %args : dtype
