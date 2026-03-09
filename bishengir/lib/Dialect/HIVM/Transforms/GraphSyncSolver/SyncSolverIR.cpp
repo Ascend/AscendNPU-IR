@@ -90,6 +90,24 @@ std::string Scope::str(int indent, bool recursive) const {
   return ret;
 }
 
+std::string Loop::str(int indent, bool recursive) const {
+  std::string ret =
+      std::string(indent, ' ') +
+      llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
+      std::to_string(this->id);
+  if (isParallel) {
+    ret += " parallel-loop";
+  }
+  if (recursive) {
+    ret += " {\n";
+    for (auto &op : body) {
+      ret += op->str(indent + 2, true) + "\n";
+    }
+    ret += std::string(indent, ' ') + "}";
+  }
+  return ret;
+}
+
 std::string Condition::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +

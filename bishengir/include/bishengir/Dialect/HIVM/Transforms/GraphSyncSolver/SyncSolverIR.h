@@ -201,6 +201,8 @@ public:
   static bool classof(const OperationBase *e) {
     return e->opType >= OpType::LOOP && e->opType < OpType::LOOP_END;
   }
+
+  std::string str(int indent, bool recursive) const override;
 };
 
 class MmadL1LoopOp : public Scope {

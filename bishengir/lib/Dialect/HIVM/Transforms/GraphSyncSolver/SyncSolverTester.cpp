@@ -51,6 +51,8 @@ void SyncTester::generateRandTest(Scope *scopeOp,
         isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
         isTrueWithProbability(scope_for_loop_prob_a, scope_for_loop_prob_b)) {
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
+      loopOp->isParallel =
+          isTrueWithProbability(parallel_loop_prob_a, parallel_loop_prob_b);
       auto loopBlock = std::make_unique<Scope>();
       loopBlock->parentOp = loopOp.get();
       generateRandTest(loopBlock.get(), pointerOps, pipesVec, remOpNum,
@@ -220,6 +222,9 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
 
   if (auto *loopOp = dyn_cast<const Loop>(op)) {
     int numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
+    if (loopOp->isParallel) {
+      numIter = 1;
+    }
     if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
       numIter = 0;
     }
