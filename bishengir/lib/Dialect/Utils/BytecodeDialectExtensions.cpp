@@ -29,6 +29,9 @@ using namespace mlir;
 
 namespace {
 
+// TODO: release multiple versions of ascendnpu ir, then
+// use the ascendnpu-ir-version to control the upgrade logic.
+// TritonAscend version is used temporarily.
 enum class TritonAscendVersion : uint64_t {
   V3_2_0 = 320,
   V3_3_0 = 330,
@@ -45,26 +48,8 @@ struct BufferizationBytecodeDialectInterface : public BytecodeDialectInterface {
   explicit BufferizationBytecodeDialectInterface(Dialect *dialect)
       : BytecodeDialectInterface(dialect) {}
 
-  std::unique_ptr<DialectVersion>
-  readVersion(DialectBytecodeReader &reader) const override {
-    uint64_t version;
-    if (failed(reader.readVarInt(version)))
-      return nullptr;
-    return std::make_unique<BufferizationDialectVersion>(version);
-  }
-
-  LogicalResult upgradeFromVersion(Operation *topLevelOp,
-                                   const DialectVersion &version) const override {
-    if (!topLevelOp)
-      return success();
-
-    const auto &bufferizationVersion =
-        static_cast<const BufferizationDialectVersion &>(version);
-    // ToBufferOp is not exist, no need to replace.
-    if (bufferizationVersion.version <
-        static_cast<uint64_t>(TritonAscendVersion::V3_4_0))
-      return success();
-
+private:
+  static LogicalResult downgradeToBufferOp(Operation *topLevelOp) {
     MLIRContext *ctx = topLevelOp->getContext();
     ctx->allowUnregisteredDialects();
 
@@ -86,6 +71,31 @@ struct BufferizationBytecodeDialectInterface : public BytecodeDialectInterface {
       op->replaceAllUsesWith(toMemrefOp);
       op->erase();
     }
+
+    return success();
+  }
+
+public:
+  std::unique_ptr<DialectVersion>
+  readVersion(DialectBytecodeReader &reader) const override {
+    uint64_t version;
+    if (failed(reader.readVarInt(version)))
+      return nullptr;
+    return std::make_unique<BufferizationDialectVersion>(version);
+  }
+
+  LogicalResult upgradeFromVersion(Operation *topLevelOp,
+                                   const DialectVersion &version) const override {
+    if (!topLevelOp)
+      return success();
+
+    const auto &bufferizationVersion =
+        static_cast<const BufferizationDialectVersion &>(version);
+    // TODO: Implement ascendnpu ir upgrade logic.
+    // Currently we impl downgrade logic to support TA that has higher versions.
+    if (bufferizationVersion.version >=
+        static_cast<uint64_t>(TritonAscendVersion::V3_4_0))
+      return downgradeToBufferOp(topLevelOp);
 
     return success();
   }
