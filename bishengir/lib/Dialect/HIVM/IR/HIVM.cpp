@@ -741,6 +741,31 @@ void GatherLoadOp::getEffects(
 }
 
 //===----------------------------------------------------------------------===//
+// LocalLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LocalLoadOp::verify() {
+  auto inputType = getAddr().getType();
+  auto outputType = getResult().getType();
+  if (inputType.getElementType() != outputType.getElementType()) {
+    return emitOpError("input address of hivm::LocalLoadOp must have the same "
+                       "element type as output tensor");
+  }
+  if (inputType.getShape() != outputType.getShape()) {
+    return emitOpError("input address of hivm::LocalLoadOp must have the same "
+                       "shape as output tensor");
+  }
+  return success();
+}
+
+void LocalLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getAddrMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
 // ScatterStoreOp
 //===----------------------------------------------------------------------===//
 
@@ -771,6 +796,31 @@ void ScatterStoreOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// LocalStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LocalStoreOp::verify() {
+  auto dstType = getAddr().getType();
+  auto dataType = getData().getType();
+  if (dstType.getElementType() != dataType.getElementType()) {
+    return emitOpError("dst address of hivm::LocalStoreOp must have the same "
+                       "element type as output tensor");
+  }
+  if (dstType.getShape() != dataType.getShape()) {
+    return emitOpError("dst address of hivm::LocalStoreOp must have the same "
+                       "shape as output tensor");
+  }
+  return success();
+}
+
+void LocalStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getAddrMutable(),
                        SideEffects::DefaultResource::get());
 }
 

@@ -92,6 +92,56 @@ public:
   }
 };
 
+class HIVMLoalLoadOpPattern : public OpConversionPattern<hivm::LocalLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(hivm::LocalLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto addr = op.getAddr();
+    auto ptrTy = HIVMToTritonTypeConvert(addr.getType());
+
+    auto tensorTy = op.getResult().getType();
+
+    // Generate tt.make_range operator to get continuous sequence
+    auto num = tensorTy.getNumElements();
+    auto rangeTensorTy = RankedTensorType::get({num}, rewriter.getI32Type());
+    auto mkrng = rewriter.create<triton::MakeRangeOp>(op.getLoc(),
+                                                      rangeTensorTy, 0, num);
+
+    mlir::Value offset = mkrng;
+    // Generate tt.reshape operator to get multi-dim continuous sequence tensor
+    // of target shape if needed
+    if (tensorTy.getRank() > 1) {
+      auto reshapeTensorTy = RankedTensorType::get(
+          tensorTy.getShape(), rangeTensorTy.getElementType());
+      auto reshape = rewriter.create<triton::ReshapeOp>(op.getLoc(),
+                                                        reshapeTensorTy, mkrng);
+      offset = reshape;
+    }
+
+    auto ttPtr = rewriter.create<UnrealizedConversionCastOp>(loc, ptrTy, addr);
+
+    // Generate tt.splat operator to get pointer tensor of target shape
+    auto ptrTensor = RankedTensorType::get(tensorTy.getShape(), ptrTy);
+    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensor,
+                                                  ttPtr.getResult(0));
+
+    // Generate tt.addptr operator to get pointer tensor with offset
+    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensor,
+                                                    splat, offset);
+
+    // Generate tt.load operator to get value from pointer tensor
+    auto valTensor = rewriter.create<triton::LoadOp>(
+        op.getLoc(), tensorTy, addptr, Value{}, Value{},
+        llvm::ArrayRef<int32_t>{}, triton::PaddingOptionAttr{});
+
+    rewriter.replaceOp(op, valTensor);
+    return success();
+  }
+};
+
 // Convert hivm.hir.scatter_store op into tt.store, for example:
 // Before:
 //  %1 = hivm.hir.scatter_store (%base, %indices, %data, %burst_len)
@@ -136,6 +186,55 @@ public:
         boundaryCheck, cache, evict);
     rewriter.replaceOp(op, storeOp);
  
+    return success();
+  }
+};
+
+class HIVMLoalStoreOpPattern : public OpConversionPattern<hivm::LocalStoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(hivm::LocalStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto addr = op.getAddr();
+    auto data = op.getData();
+    auto ptrTy = HIVMToTritonTypeConvert(addr.getType());
+
+    // Generate tt.make_range operator to get continuous sequence
+    auto tensorTy = data.getType();
+    auto num = tensorTy.getNumElements();
+    auto rangeTensorTy = RankedTensorType::get({num}, rewriter.getI32Type());
+    auto mkrng = rewriter.create<triton::MakeRangeOp>(op.getLoc(),
+                                                      rangeTensorTy, 0, num);
+
+    mlir::Value offset = mkrng;
+    // Generate tt.reshape operator to get multi-dim continuous sequence tensor
+    // of target shape if needed
+    if (tensorTy.getRank() > 1) {
+      auto reshapeTensorTy = RankedTensorType::get(
+          tensorTy.getShape(), rangeTensorTy.getElementType());
+      auto reshape = rewriter.create<triton::ReshapeOp>(op.getLoc(),
+                                                        reshapeTensorTy, mkrng);
+      offset = reshape;
+    }
+
+    auto ttPtr = rewriter.create<UnrealizedConversionCastOp>(loc, ptrTy, addr);
+
+    // Generate tt.splat operator to get pointer tensor of target shape
+    auto ptrTensor = RankedTensorType::get(tensorTy.getShape(), ptrTy);
+    auto splat = rewriter.create<triton::SplatOp>(op.getLoc(), ptrTensor,
+                                                  ttPtr.getResult(0));
+
+    // Generate tt.addptr operator to get pointer tensor with offset
+    auto addptr = rewriter.create<triton::AddPtrOp>(op.getLoc(), ptrTensor,
+                                                    splat, offset);
+
+    // Generate tt.store operator to set value to pointer tensor
+    auto storeOp =
+        rewriter.create<triton::StoreOp>(op.getLoc(), addptr, data, Value());
+
+    rewriter.replaceOp(op, storeOp);
     return success();
   }
 };
@@ -329,58 +428,12 @@ public:
     return success();
   }
 };
-
-class FuncOpPattern : public OpConversionPattern<func::FuncOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(func::FuncOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto oldFuncTy = op.getFunctionType();
-    // Convert function type which contains parameter types
-    // Note: The function can only be simt vf, and no return value.
-    SmallVector<Type> newInputTypes;
-    for (auto inputTy : oldFuncTy.getInputs()) {
-      newInputTypes.push_back(HIVMToTritonTypeConvert(inputTy));
-    }
-
-    auto funcType = FunctionType::get(op.getContext(), newInputTypes,
-                                      oldFuncTy.getResults());
-    auto newFunc =
-        rewriter.create<triton::FuncOp>(op.getLoc(), op.getName(), funcType);
-    auto *newEntryBlock = newFunc.addEntryBlock();
-
-    IRMapping mapping;
-
-    // Update block argument types in new tt.func and build the map from old
-    // block argument to new block argument
-    auto &oldEntryBlock = op.getBody().front();
-    for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
-      auto newArg = newEntryBlock->getArgument(idx);
-      newArg.setType(funcType.getInput(idx));
-      mapping.map(oldArg, newArg);
-    }
-
-    // Clone all of operators in entry block recursively.
-    // Note: There is only one top block named entry block in ttir
-    rewriter.setInsertionPointToStart(newEntryBlock);
-    assert(op.getBody().getBlocks().size() == 1 &&
-           "Multi blocks are not supported");
-    for (auto &oldOp : oldEntryBlock.getOperations()) {
-      // Replace the func.return with tt.return
-      if (isa<func::ReturnOp>(oldOp)) {
-        rewriter.create<triton::ReturnOp>(op.getLoc());
-        continue;
-      }
-      rewriter.clone(oldOp, mapping);
-    }
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
 } // namespace
 
 void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
-  patterns.add<GatherLoadOpPattern, ScatterStoreOpPattern, HIVMLoadOpPattern, HIVMStoreOpPattern>(context);
+  patterns
+      .add<GatherLoadOpPattern, ScatterStoreOpPattern, HIVMLoadOpPattern,
+           HIVMStoreOpPattern, HIVMLoalLoadOpPattern, HIVMLoalStoreOpPattern>(
+          context);
 }

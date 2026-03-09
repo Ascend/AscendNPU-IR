@@ -425,6 +425,33 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
   let hasVerifier = 1;
 }
 
+
+//===----------------------------------------------------------------------===//
+// LocalLoadOp
+//===----------------------------------------------------------------------===//
+
+def LocalLoadOp : HIVM_Op<"local_load", [
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = [{
+    Load a tensor from the unified buffer
+  }];
+  let description = [{
+    This operation takes a source memory buffer from UB, and produces an output
+    tensor by load data from the source.
+    This operation is used only for scenarios where data is transferred from
+    SIMD to SIMT.
+  }];
+
+  let arguments = (ins AnyMemRef:$addr);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    `ins` `(` $addr `:` type($addr) `)`
+    attr-dict
+    `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // ScatterStoreOp
 //===----------------------------------------------------------------------===//
@@ -461,6 +488,32 @@ def ScatterStoreOp : HIVM_Op<"scatter_store", [
     attr-dict
   }];
  
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// LocalStoreOp
+//===----------------------------------------------------------------------===//
+
+def LocalStoreOp : HIVM_Op<"local_store", [
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = [{
+    Store a tensor to the unified buffer
+  }];
+  let description = [{
+    This operation takes a memory buffer from UB, and store a tensor to the
+    buffer.
+    This operation is used only for scenarios where data is transferred from
+    SIMT to SIMD.
+  }];
+
+  let arguments = (ins AnyMemRef:$addr,
+                       AnyRankedTensor:$data
+  );
+  let assemblyFormat = [{
+    `ins` `(` $addr `:` type($addr) `,` $data `:` type($data) `)`
+    attr-dict
+  }];
   let hasVerifier = 1;
 }
 

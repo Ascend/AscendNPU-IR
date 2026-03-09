@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -71,13 +72,12 @@ void InsertMemSemanticForSimtVFPass::dealWithReferenceOutOfScope(
         MemRefType::get(tensorType.getShape(), tensorType.getElementType());
     auto memrefVal = builder.create<bufferization::ToMemrefOp>(
         scopeOp->getLoc(), memrefType, val);
+
+    // Transfer data from simd(UB) to simt(Register)
     builder.setInsertionPoint(op);
-    auto tensorVal = builder.create<bufferization::ToTensorOp>(
-        scopeOp->getLoc(), tensorType, memrefVal);
-    auto newTensor = builder.create<tensor::EmptyOp>(
-        op->getLoc(), tensorType.getShape(), tensorType.getElementType());
-    auto loadOp = builder.create<hivm::LoadOp>(
-        op->getLoc(), TypeRange{tensorType}, tensorVal, newTensor);
+    auto loadOp =
+        builder.create<hivm::LocalLoadOp>(op->getLoc(), tensorType, memrefVal);
+
     val.replaceUsesWithIf(loadOp->getResult(0), [&op](OpOperand &operand) {
       return operand.getOwner() == op;
     });
@@ -100,17 +100,24 @@ void InsertMemSemanticForSimtVFPass::dealWithReturnValue(
     auto val = returnOp->getOperand(i);
     auto tensorType = llvm::dyn_cast<RankedTensorType>(val.getType());
     assert(tensorType && "simt vf return value should be tensor");
-    builder.setInsertionPoint(scopeOp);
-    auto tensorOutOfScope = builder.create<tensor::EmptyOp>(
-        scopeOp->getLoc(), tensorType.getShape(), tensorType.getElementType());
-    scopeOp->getResult(i).replaceAllUsesWith(tensorOutOfScope);
+
+    // Alloc unified buffer for caching data produced from simt
     auto memrefType =
         MemRefType::get(tensorType.getShape(), tensorType.getElementType());
-    auto memrefOutOfScope = builder.create<bufferization::ToMemrefOp>(
-        scopeOp->getLoc(), memrefType, tensorOutOfScope);
+    builder.setInsertionPoint(scopeOp);
+    auto memrefOfUB =
+        builder.create<memref::AllocOp>(scopeOp->getLoc(), memrefType);
+
+    // Transfer data from simt(Register) to simd(UB)
     builder.setInsertionPoint(returnOp);
-    builder.create<hivm::StoreOp>(returnOp->getLoc(), TypeRange{}, val,
-                                  memrefOutOfScope);
+    builder.create<hivm::LocalStoreOp>(returnOp->getLoc(), memrefOfUB, val);
+
+    // Get latest data snapshot after simt vf scope
+    builder.setInsertionPointAfter(scopeOp);
+    auto tensorOfUB = builder.create<bufferization::ToTensorOp>(
+        scopeOp->getLoc(), tensorType, memrefOfUB, true);
+    scopeOp->getResult(i).replaceAllUsesWith(tensorOfUB);
+
     returnOp->eraseOperand(i);
   }
   builder.setInsertionPoint(scopeOp);
