@@ -3,6 +3,7 @@ if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 endif()
 
 add_bishengir_library(BiShengIRDialectUtils
+  BytecodeDialectExtensions.cpp
   OpInterfaceUtils.cpp
   ReachabilityAnalyzer.cpp
   UnionFind.cpp
@@ -15,6 +16,7 @@ add_bishengir_library(BiShengIRDialectUtils
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
   MLIRArithDialect
+  MLIRBufferizationDialect
   MLIRDestinationStyleOpInterface
   MLIRFuncDialect
   BiShengIRHFusionDialect
