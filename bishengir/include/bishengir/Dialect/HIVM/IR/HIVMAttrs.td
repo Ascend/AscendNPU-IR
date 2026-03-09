@@ -426,6 +426,50 @@ def HIVM_CmpModeAttr : HIVM_I32EnumAttr<"compare_mode", HIVM_CmpModeEnum> {
 }
 
 //===----------------------------------------------------------------------===//
+// Bitcode Path Attributes
+//===----------------------------------------------------------------------===//
+
+def HIVM_AIC_BITCODEAttr : HIVM_Attr<"AIC_BITCODE", "aic_bitcode"> {
+  let parameters = (ins AttrParameter<"StringAttr", "AIC bitcode path">:$path);
+  let assemblyFormat = "`<` $path `>`";
+  let description = [{
+    HIVM AIC bitcode path attribute (string).
+  }];
+}
+
+def HIVM_AIV_BITCODEAttr : HIVM_Attr<"AIV_BITCODE", "aiv_bitcode"> {
+  let parameters = (ins AttrParameter<"StringAttr", "AIV bitcode path">:$path);
+  let assemblyFormat = "`<` $path `>`";
+  let description = [{
+    HIVM AIV bitcode path attribute (string).
+  }];
+}
+
+def HIVM_MIX_AIC_BITCODEAttr : HIVM_Attr<"MIX_AIC_BITCODE", "mix_aic_bitcode"> {
+  let parameters = (ins AttrParameter<"StringAttr", "MIX AIC bitcode path">:$path);
+  let assemblyFormat = "`<` $path `>`";
+  let description = [{
+    HIVM MIX AIC bitcode path attribute (string).
+  }];
+}
+
+def HIVM_MIX_AIV_BITCODEAttr : HIVM_Attr<"MIX_AIV_BITCODE", "mix_aiv_bitcode"> {
+  let parameters = (ins AttrParameter<"StringAttr", "MIX AIV bitcode path">:$path);
+  let assemblyFormat = "`<` $path `>`";
+  let description = [{
+    HIVM MIX AIV bitcode path attribute (string).
+  }];
+}
+
+def HIVM_HOST_BITCODEAttr : HIVM_Attr<"HOST_BITCODE", "host_bitcode"> {
+  let parameters = (ins AttrParameter<"StringAttr", "HOST bitcode path">:$path);
+  let assemblyFormat = "`<` $path `>`";
+  let description = [{
+    HIVM HOST bitcode path attribute (string).
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Event ID
 //===----------------------------------------------------------------------===//
 

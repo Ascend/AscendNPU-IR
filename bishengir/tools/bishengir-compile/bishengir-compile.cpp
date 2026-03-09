@@ -79,6 +79,8 @@ int main(int argc, char **argv) {
   // Create config from command line options.
   bishengir::BiShengIRCompileMainConfig config =
       bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
+  config.setExecutablePath(bishengir::getExecutablePath(
+      argv[0], reinterpret_cast<void *>(main)));
   // Check the validity of intput/output options
   if (failed(checkInOutOptionsValidity(config))) {
     return EXIT_FAILURE;

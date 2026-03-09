@@ -547,6 +547,15 @@ def HIVMCArgs : BiShengIRCompileListOpt<
   "std::string"
 >;
 
+def LinkAicoreBitcode : BiShengIRCompileListOpt<
+  "Aicore bitcode file(s) to link. Accepts one or more absolute paths, "
+  "comma-separated. Passed to hivmc as --link-aicore-bitcode.",
+  "std::string"
+> {
+  let compileOptionCategories = ["targetCategory"];
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
 /// Note that we don't own `mlir-print-ir-after-all` and
 /// `mlir-print-ir-before-all` as they are upstream options.
 /// We add it here because we can capture their values and forward
