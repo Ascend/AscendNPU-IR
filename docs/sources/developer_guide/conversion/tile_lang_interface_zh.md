@@ -36,7 +36,6 @@ Prepare a Python environment with Python version between 3.7.*x* and 3.11.4 (inc
 
 
 
-<!-- 补充环境变量设置 -->
 Set Environment Variables
 
 ```shell
@@ -45,14 +44,12 @@ export ACL_OP_INIT_MODE=1
 
 #### Build
 
-<!-- 拉取代码 -->
 Pull the code
 
 ```shell
 git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 ```
 
-<!-- 执行安装脚本 -->
 Run the installation script
 
 ```shell
