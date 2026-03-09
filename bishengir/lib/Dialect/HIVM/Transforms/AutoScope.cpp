@@ -64,6 +64,8 @@ private:
     scopeOp->setAttr("outline", rewriter.getUnitAttr());
     scopeOp->setAttr(hivm::VectorFunctionAttr::getMnemonic(),
                      rewriter.getUnitAttr());
+    scopeOp->setAttr(TFuncCoreTypeAttr::name,
+        TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
     rewriter.createBlock(&scopeOp->getRegion(0));
     rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
     IRMapping mapping;
