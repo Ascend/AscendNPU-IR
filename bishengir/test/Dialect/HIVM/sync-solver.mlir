@@ -82,6 +82,7 @@ module {
     %c0_i64 = arith.constant 0 : i64
     %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16x16x16xf16, #hivm.address_space<ub>>
     // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    // CHECK: scf.for %arg2 = %c0 to %c1024 step %c128 {
     scf.for %arg2 = %c0 to %c1024 step %c128 {
       // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
       hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -89,7 +90,8 @@ module {
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
       hivm.hir.store ins(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>)
       // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-    } { hivm.parallel_loop}
+    // CHECK: } {hivm.parallel_loop}
+    } {hivm.parallel_loop}
     // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     return
   }
@@ -106,8 +108,10 @@ module {
     %c0_i64 = arith.constant 0 : i64
     %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16x16x16xf16, #hivm.address_space<ub>>
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    // CHECK-NEXT: scf.for %arg2 = %c0 to %c1024 step %c128 {
     scf.for %arg2 = %c0 to %c1024 step %c128 {
       // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+      // CHECK-NEXT: scf.for %arg3 = %c0 to %c1024 step %c128 {
       scf.for %arg3 = %c0 to %c1024 step %c128 {
         // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
         hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -115,8 +119,9 @@ module {
         // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
         hivm.hir.store ins(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>)
         // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
-      }
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+      // CHECK: } {hivm.parallel_loop}
+      } {hivm.parallel_loop}
+      // CHECK-NEXT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     return
