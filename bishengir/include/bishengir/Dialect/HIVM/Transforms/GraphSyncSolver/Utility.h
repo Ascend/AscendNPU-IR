@@ -130,6 +130,9 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
+  // Use different flag-ids for multibuffer backward sync pairs.
+  bool useDifferentMultiBufferFlagIds{false};
+
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
         isRegBasedArch(isRegBasedArch) {
@@ -138,6 +141,7 @@ struct SyncSolverOptions {
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
     moveOutAndMergeBackwardSyncPairs = isIntraCoreMode();
+    useDifferentMultiBufferFlagIds = !isCrossCoreMode();
   }
 
   bool isCrossCoreMode() const {
@@ -237,7 +241,7 @@ struct Occurrence {
 
   template <typename OpTy> Occurrence *getParentOfType() {
     Occurrence *cur = this->parentOcc;
-    while (cur != nullptr && !isa<OpTy>(cur->op)) {
+    while (cur != nullptr && !isa_and_present<OpTy>(cur->op)) {
       cur = cur->parentOcc;
     }
     return cur;
@@ -283,7 +287,8 @@ struct ConflictPair {
   bool setOnLastIterOnly{false};
   bool waitOnFirstIterOnly{false};
   bool replacedWithUnitFlag{false};
-  Loop *backwardSyncLoop{nullptr};
+  Loop *backwardSyncLoopOp{nullptr};
+  Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
 
@@ -327,7 +332,8 @@ struct ConflictPair {
     clonedConflictPair->setOnLastIterOnly = setOnLastIterOnly;
     clonedConflictPair->waitOnFirstIterOnly = waitOnFirstIterOnly;
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
-    clonedConflictPair->backwardSyncLoop = backwardSyncLoop;
+    clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
+    clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
     return clonedConflictPair;

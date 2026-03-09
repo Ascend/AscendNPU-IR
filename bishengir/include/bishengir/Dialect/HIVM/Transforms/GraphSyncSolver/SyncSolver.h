@@ -115,7 +115,7 @@ protected:
   // used.
   llvm::MapVector<OperationBase *,
                   llvm::DenseMap<std::tuple<CorePipeInfo, CorePipeInfo>,
-                                 llvm::DenseSet<int64_t>>>
+                                 llvm::DenseMap<int64_t, int64_t>>>
       backwardSyncEvents;
 
   llvm::MapVector<OperationBase *,
@@ -334,11 +334,13 @@ protected:
   std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
                                                       hivm::PIPE pipeDst);
 
+  bool checkReuseMultiBufferFlagId(ConflictPair *conflictPair);
+
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                       RWOperation *rwOp2, CorePipeInfo corePipeSrc,
-                      CorePipeInfo corePipeDst, bool isUseless,
-                      EventIdInfo eventIdInfo);
+                      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+                      bool isUseless);
 
   void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
@@ -346,7 +348,7 @@ protected:
 
   void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             bool isUseless, EventIdInfo eventIdInfo);
+                             EventIdInfo eventIdInfo, bool isUseless);
 
   void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                               CorePipeInfo corePipeSrc,

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{always-use-pipe-s=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-cross-core-gss{always-use-pipe-s=true use-different-multibuffer-flag-ids=true}))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 module {
   func.func @test_block_sync_normal(%arg0: memref<16xf32, #hivm.address_space<gm>>, %arg1: memref<16xf32, #hivm.address_space<gm>>, %arg2: memref<256xf32, #hivm.address_space<gm>>, %arg3: memref<256xf32, #hivm.address_space<gm>>, %arg4: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}) attributes {hacc.always_inline, hfusion.fusion_kind = #hfusion.fusion_kind<MIX_CV>, hivm.func_core_type = #hivm.func_core_type<MIX>} {

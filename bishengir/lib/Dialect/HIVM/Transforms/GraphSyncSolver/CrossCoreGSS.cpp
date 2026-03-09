@@ -117,6 +117,9 @@ void CrossCoreGSSPass::runOnOperation() {
   if (this->alwaysUsePipeSAsWaitingPipe) {
     options.alwaysUsePipeSAsWaitingPipe = true;
   }
+  if (this->useDifferentMultiBufferFlagIds) {
+    options.useDifferentMultiBufferFlagIds = true;
+  }
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 

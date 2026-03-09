@@ -37,6 +37,7 @@ using Body = std::vector<std::unique_ptr<OperationBase>>;
 
 struct EventIdInfo {
   int64_t eventIdNum{0};
+  int64_t eventIdRepeatNum{1};
   LoopLikeOpInterface multibufferLoop{nullptr};
   LoopLikeOpInterface multibufferUnrollLoop1{nullptr};
   LoopLikeOpInterface multibufferUnrollLoop2{nullptr};

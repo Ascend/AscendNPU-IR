@@ -205,6 +205,6 @@ void SolverTest::processConflict(Occurrence *occ1, Occurrence *occ2,
     auto corePipeDst = CorePipeInfo(rwOp2->coreType, waitPipe);
     auto eventIdNum = getTestEventIdNum(occ1, occ2, setPipe, waitPipe);
     handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
-                   isUseless, EventIdInfo(eventIdNum));
+                   EventIdInfo(eventIdNum), isUseless);
   }
 }

@@ -235,9 +235,13 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"disableAutoInjectBlockSync", "disable-auto-inject-block-sync",
               "bool", /*default=*/"false",
               "Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp">,
-       Option<"alwaysUsePipeSAsWaitingPipe", "always-use-pipe-s",
-              "bool", /*default=*/"false",
-              "Always use scalar pipeline as waiting pipeline for wait_flag ops.">
+       Option<
+           "alwaysUsePipeSAsWaitingPipe", "always-use-pipe-s", "bool",
+           /*default=*/"false",
+           "Always use scalar pipeline as waiting pipeline for wait_flag ops.">,
+       Option<"useDifferentMultiBufferFlagIds",
+              "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
+              "Use different flag-ids for multibuffer backward sync pairs.">,
   ];
 }
 
