@@ -135,10 +135,13 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
           ValueRange{op.getInit()}, ArrayRef{fnAttr});
       return success();
     }
-    if (funcName.starts_with("__hmf_rint")) {
+    if (funcName.starts_with("__hmf_rint") ||
+        funcName.starts_with("__hmf_roundf")) {
       auto arg = op.getInputs().front();
-      auto rounding =
-          rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
+      auto roundMode = funcName.starts_with("__hmf_rint")
+                           ? hfusion::RoundMode::RINT
+                           : hfusion::RoundMode::ROUND;
+      auto rounding = rewriter.getAttr<hfusion::RoundModeAttr>(roundMode);
       auto enableOverflow = rewriter.getBoolAttr(true);
       auto enableSaturate = rewriter.getBoolAttr(true);
 
