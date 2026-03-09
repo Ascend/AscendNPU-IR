@@ -98,81 +98,77 @@ LogicalResult InsertOpHelper<InsertMode::MoveToUb>(
 
   for (OpOperand *consumerOperand : consumerOperands) {
     Value usedVal = consumerOperand->get();
-    auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(usedVal);
-    auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(maybeFixpipe.value());
-    Operation *fixpipe = fixpipeOp.getOperation();
-    // The same FixpipeOp can feed multiple vector/vf users. Use a set
-    // to make sure we rewrite each FixpipeOp at most once.
-    if (!processed.insert(fixpipe).second)
+    auto fixpipes = traceDefOps<hivm::FixpipeOp>(usedVal);
+    if (fixpipes.empty())
       continue;
+    for (Operation *fixpipe : fixpipes) {
+      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(fixpipe);
+      // The same FixpipeOp can feed multiple vector/vf users. Use a set
+      // to make sure we rewrite each FixpipeOp at most once.
+      if (!processed.insert(fixpipe).second)
+        continue;
 
-    auto resultTensorType =
-        mlir::dyn_cast<RankedTensorType>(fixpipeOp.getResult(0).getType());
-    if (!resultTensorType)
-      continue;
+      auto resultTensorType =
+          mlir::dyn_cast<RankedTensorType>(fixpipeOp.getResult(0).getType());
+      if (!resultTensorType)
+        continue;
 
-    auto elemType = resultTensorType.getElementType();
-    auto shape = resultTensorType.getShape();
-    MLIRContext *ctx = rewriter.getContext();
-    auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-    auto ubMemrefType =
-        mlir::MemRefType::get(shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
-    auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
-    rewriter.setInsertionPoint(fixpipe);
-    Location fixLoc = fixpipeOp.getLoc();
+      auto elemType = resultTensorType.getElementType();
+      auto shape = resultTensorType.getShape();
+      MLIRContext *ctx = rewriter.getContext();
+      auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
+      auto ubMemrefType =
+          mlir::MemRefType::get(shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
+      auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
+      rewriter.setInsertionPoint(fixpipe);
+      Location fixLoc = fixpipeOp.getLoc();
+  
+      Value alloc;
+      bool hasDynamicShape = llvm::any_of(
+        shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
+      // dynamic shape
+      if (hasDynamicShape) {
+        Value sourceVal = fixpipeOp.getSrc();
+        auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
 
-    Value alloc;
-    bool hasDynamicShape = llvm::any_of(
-      shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
-    // dynamic shape
-    if (hasDynamicShape) {
-      Value sourceVal = fixpipeOp.getSrc();
-      auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
+        if (maybeMmad.has_value()) {
+          auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
+          auto mmadResult = mmadOp.getResult(0);
+          auto mmadType = cast<ShapedType>(mmadResult.getType());
+          auto mmadShape = mmadType.getShape();
+          auto mmadElemType = mmadType.getElementType();
 
-      if (maybeMmad.has_value()) {
-        auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
-        auto mmadResult = mmadOp.getResult(0);
-        auto mmadType = cast<ShapedType>(mmadResult.getType());
-        auto mmadShape = mmadType.getShape();
-        auto mmadElemType = mmadType.getElementType();
+          Value emptyTensor = fixpipeOp.getOperand(1);
+          auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
+          SmallVector<Value> dynamicDims;
 
-        Value emptyTensor = fixpipeOp.getOperand(1);
-        auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
-        SmallVector<Value> dynamicDims;
-
-        if (emptyOp) {
-          dynamicDims.append(emptyOp.getDynamicSizes().begin(),
-                             emptyOp.getDynamicSizes().end());
+          if (emptyOp) {
+            dynamicDims.append(emptyOp.getDynamicSizes().begin(),
+                              emptyOp.getDynamicSizes().end());
+          }
+          alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
+                                      dynamicDims, mmadShape, mmadElemType);
+        } else {
+          llvm_unreachable(
+            "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
         }
-        alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
-                                    dynamicDims, mmadShape, mmadElemType);
       } else {
-        llvm_unreachable(
-          "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
+        alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
       }
-    } else {
-      alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
+      Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
+          fixLoc, noUbMemrefType, alloc);
+      NamedAttrList attrs(fixpipeOp->getAttrs());
+      auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+          fixLoc, TypeRange{}, ValueRange{fixpipeOp.getSrc(), alloc},
+          attrs.getAttrs());
+      rewriter.setInsertionPointAfter(newFixpipeOp);
+      auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+          fixLoc, resultTensorType, noUb,
+          /*restrict=*/true,
+          /*writable=*/true);
+      rewriter.replaceOp(fixpipeOp, toTensor.getResult());
+      changed = true;
     }
-    Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
-        fixLoc, noUbMemrefType, alloc);
-    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-        fixLoc, Type{},
-        /*src=*/fixpipeOp.getSrc(),
-        /*dst=*/alloc,
-        /*unit_flag_cond=*/fixpipeOp.getUnitFlagCond(),
-        /*dma_mode=*/fixpipeOp.getDmaModeAttr(),
-        /*dual_dst_mode=*/fixpipeOp.getDualDstModeAttr(),
-        /*pre_quant=*/fixpipeOp.getPreQuantAttr(),
-        /*pre_relu=*/fixpipeOp.getPreReluAttr(),
-        /*channel_split=*/fixpipeOp.getChannelSplitAttr(),
-        /*unit_flag_mode=*/fixpipeOp.getUnitFlagModeAttr());
-    rewriter.setInsertionPointAfter(newFixpipeOp);
-    auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-        fixLoc, resultTensorType, noUb,
-        /*restrict=*/true,
-        /*writable=*/true);
-    rewriter.replaceOp(fixpipeOp, toTensor.getResult());
-    changed = true;
   }
   return changed ? success() : failure();
 }
@@ -201,6 +197,40 @@ static FailureOr<uint64_t> getBlockElemsFor32BAlign(Type elemType) {
   return kAlignBytes / elemBytes;
 }
 
+static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
+                                                memref::AllocOp allocOp) {
+  auto oldType = dyn_cast<MemRefType>(allocOp.getMemref().getType());
+  if (!oldType)
+    return;
+  auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(oldType);
+  if (maybeSpace.has_value())
+    return;
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
+  auto newType = mlir::MemRefType::get(oldType.getShape(),
+                                       oldType.getElementType(),
+                                       oldType.getLayout(),
+                                       ubSpaceAttr);
+
+  SmallVector<OpOperand *> originalUses;
+  for (OpOperand &use : allocOp.getMemref().getUses())
+    originalUses.push_back(&use);
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.modifyOpInPlace(allocOp,
+                           [&]() { allocOp.getMemref().setType(newType); });
+
+  rewriter.setInsertionPointAfter(allocOp);
+  Value replacement = allocOp.getMemref();
+  if (replacement.getType() != oldType) {
+    replacement = rewriter.create<memref::MemorySpaceCastOp>(
+        allocOp.getLoc(), oldType, replacement);
+  }
+  for (OpOperand *use : originalUses)
+    use->set(replacement);
+}
+
 /// pattern2
 /// %53 = hivm.hir.vcast ins(%42 : tensor<16x16xf32>) outs(%19 : ...) -> ...
 /// %54 = tensor.empty() : tensor<16x16xf32>
@@ -226,6 +256,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
   }
 
   MLIRContext *ctx = rewriter.getContext();
+  bool changed = false;
 
   for (OpOperand *consumerOperand : consumerOperands) {
     Value origTensor = consumerOperand->get();
@@ -244,7 +275,6 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     if (M != ShapedType::kDynamic && (M % 16) ) {
       int64_t newM = ((M + 15) / 16) * 16;
       auto paddedType = RankedTensorType::get({newM, N}, elemType);
-      Value emptyPadded = rewriter.create<tensor::EmptyOp>(loc, paddedType.getShape(), elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
 
       Value emptyForVbrc = rewriter.create<tensor::EmptyOp>(
@@ -307,9 +337,9 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
                                   /*src=*/src,
                                   /*dst=*/memspacecast);
     rewriter.modifyOpInPlace(consumerOp, [&]() { consumerOperand->set(dst); });
-    return success();
+    changed = true;
   }
-  return success(); // make compiler happy.
+  return changed ? success() : failure();
 }
 
 } // anonymous namespace
@@ -320,6 +350,11 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
 /// pattern1 : fixpipe op + vector/vf
 /// convert into memref.alloc + memref.memory_space_cast + fixpipe op +
 /// bufferization.to_tensor + vector/vf
+///
+/// Extra:
+/// If a vector input which match the pattern can be traced to a allocOp,
+/// and do InsertOpHelper success, the alloc will add hivm.address_space<ub>
+/// to ensure the buffer will be allocated only in UB.
 template <typename OpType>
 struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
   using OpRewritePattern<OpType>::OpRewritePattern;
@@ -331,19 +366,37 @@ struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
     if (!isStructured && !isVF) {
       return failure();
     }
-    llvm::SmallVector<OpOperand *> consumerOperands;
+
+    bool changed = false;
     for (OpOperand &operand : op->getOpOperands()) {
-      if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value()) {
-        consumerOperands.push_back(&operand);
-      }
+      if (traceDefOps<hivm::FixpipeOp>(operand.get()).empty())
+        continue;
+
+      auto allocOps = traceDefOps<memref::AllocOp>(operand.get());
+      llvm::SmallVector<OpOperand *> consumerOperands{&operand};
+      LogicalResult result = InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
+      if (failed(result))
+        continue;
+
+      for (Operation *allocOp : allocOps)
+        ensureAllocInUbAddressSpaceIfNeeded(rewriter, llvm::cast<memref::AllocOp>(allocOp));
+      changed = true;
     }
-    return InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
+    return changed ? success() : failure();
   }
 };
 
+//===----------------------------------------------------------------------===//
+// InsertMoveL1
+//===----------------------------------------------------------------------===//
 /// pattern2 : vector/vf(dst) + cube(dst)
 /// convert into vector +  memref.alloc + memory_space_cast +
 /// bufferization.to_tensor + hivm.hir.copy +cube
+///
+/// Extra:
+/// Like pattern1, if a mmadL1 input which match the pattern can be traced to
+/// a allocOp, and do InsertOpHelper success, the alloc will add
+/// hivm.address_space<ub> to ensure the buffer will be allocated only in UB.
 template <typename OpType>
 struct InsertMoveL1BetweenVectorAndCube
     : public OpRewritePattern<hivm::MmadL1Op> {
@@ -351,25 +404,57 @@ struct InsertMoveL1BetweenVectorAndCube
   virtual ~InsertMoveL1BetweenVectorAndCube() override = default;
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
-    llvm::SmallVector<OpOperand *> consumerOperands;
+    bool changed = false;
     for (OpOperand &operand : op->getOpOperands()) {
-      auto maybeProducer = traceDefOp<OpType>(operand.get());
-      if (!maybeProducer.has_value())
+      auto producerOps = traceDefOps<OpType>(operand.get());
+      if (producerOps.empty())
         continue;
-      Operation *producer = maybeProducer.value();
-      if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
-        auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
-        if (!scfForOp->hasAttr("ExtractedLoadOrStore")) {
-          continue;
+
+      bool matched = false;
+      for (Operation *producer : producerOps) {
+        if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
+          auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
+          if (!scfForOp->hasAttr("ExtractedLoadOrStore")) {
+            continue;
+          }
         }
+        if constexpr (std::is_same_v<OpType, func::CallOp>) {
+          if (!isVFCall(producer))
+            continue;
+        }
+        if constexpr (std::is_same_v<OpType, memref::AllocOp>) {
+          auto allocOp = llvm::cast<memref::AllocOp>(producer);
+          auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
+          if (!maybeSpace.has_value() || maybeSpace.value() != hivm::AddressSpace::UB)
+            continue;
+        }
+        matched = true;
+        break;
       }
-      if constexpr (std::is_same_v<OpType, func::CallOp>) {
-        if (!isVFCall(producer))
-          continue;
-      }
-      consumerOperands.push_back(&operand);
+      if (!matched)
+        continue;
+
+      Value beforeValue = operand.get();
+      auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
+      llvm::SmallVector<OpOperand *> consumerOperands{&operand};
+      LogicalResult result = InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
+      if (failed(result))
+        continue;
+
+      // Handle the case where multiple operands of `op` are the same SSA value.
+      // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are the same vector.
+      // In this case, we only want to rewrite the operand once, and make sure the other operand
+      // is updated with the new value as well.
+      Value converted = operand.get();
+      rewriter.modifyOpInPlace(op, [&]() {
+        op->replaceUsesOfWith(beforeValue, converted);
+      });
+
+      for (Operation *allocOp : allocOps)
+        ensureAllocInUbAddressSpaceIfNeeded(rewriter, llvm::cast<memref::AllocOp>(allocOp));
+      changed = true;
     }
-    return InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
+    return changed ? success() : failure();
   }
 };
 
@@ -384,6 +469,9 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   registerAllVectorOp<InsertMoveL1BetweenVectorAndCube>(patterns);
   registerOne<func::CallOp>(patterns);
   registerOne<mlir::scf::ForOp>(patterns);
+
+  // Treat UB alloc as CV connection point for MoveToL1
+  patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
 }
 
 void InsertCVTightCoupledBufferPass::runOnOperation() {

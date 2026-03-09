@@ -1198,3 +1198,32 @@ func.func @test_mmadL1_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128
   // CHECK: hivm.hir.set_atomic kind = <none>[type = i32] 
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_loop_mmadL1_for_next_loop_vector
+func.func @test_loop_mmadL1_for_next_loop_vector() -> tensor<16x16xf32> {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c8_i32 = arith.constant 8 : i32
+  %c16 = arith.constant 16 : index
+  %init = arith.constant false
+  %dst = tensor.empty() : tensor<16x16xf32>
+  %alloc = memref.alloc() : memref<16x16xf16>
+  %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+  %2, %3 = scf.for %arg1 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg2 = %1, %arg3 = %dst) -> (tensor<16x16xf16>, tensor<16x16xf32>) : i32 {
+    %empty = tensor.empty() : tensor<16x16xf16>
+    %4 = hivm.hir.vadd ins(%arg2, %arg2: tensor<16x16xf16>, tensor<16x16xf16>) outs(%empty : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %5 = hivm.hir.mmadL1 ins(%4, %4, %init, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dst : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK: tensor.empty()
+    // CHECK: hivm.hir.fixpipe
+    // CHECK: tensor.empty()
+    // CHECK: hivm.hir.vcast
+    %empty_2 = tensor.empty() : tensor<16x16xf16>
+    %6 = hivm.hir.vcast ins(%5 : tensor<16x16xf32>) outs(%empty_2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    scf.yield %6, %5 : tensor<16x16xf16>, tensor<16x16xf32>
+  }
+  // CHECK-NOT: hivm.hir.fixpipe
+  %store = memref.alloc() : memref<16x16xf32>
+  hivm.hir.store ins(%3 : tensor<16x16xf32>) outs(%store : memref<16x16xf32>)
+  return %3 : tensor<16x16xf32>
+}

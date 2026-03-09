@@ -234,6 +234,11 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
 
   auto dstAllocVal =
       dstMemRefTy ? utils::tracebackMemRef(getDst()) : getResult(0);
+  if (auto dstAllocAddrSpace =
+          getOptionalHIVMAddressSpace(dstAllocVal.getType())) {
+    return dstAllocAddrSpace.value() == hivm::AddressSpace::UB ? TCoreType::VECTOR
+                                                              : TCoreType::CUBE;
+  }
   auto userAllCube = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
