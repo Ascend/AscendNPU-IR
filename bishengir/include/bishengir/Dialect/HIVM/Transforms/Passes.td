@@ -515,6 +515,14 @@ def InsertLoadStoreForScalar
   let dependentDialects = ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
+def SplitMixedIfConditionals
+    : Pass<"hivm-split-mixed-if-conditionals", "func::FuncOp"> {
+  let summary = "split if conditionals for mix cv";
+  let constructor = "mlir::hivm::createSplitMixedIfConditionalsPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect"];
+}
+
 def InsertLoadStoreForMixCV
     : Pass<"hivm-insert-load-store-for-mix-cv", "func::FuncOp"> {
   let summary = "insert load store op for mix cv";

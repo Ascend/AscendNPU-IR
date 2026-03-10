@@ -181,6 +181,9 @@ std::unique_ptr<Pass> createLiftZeroRankPass();
 // Create a pass to insert load/store op for scalar.
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 
+// Create a pass to split if conditionals for mix cv function.
+std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
+
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass();
 
