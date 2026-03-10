@@ -1549,4 +1549,169 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool BitcastBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<hivm::BitcastOp>(sourceOp);
+}
+
+LogicalResult
+BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                 PatternRewriter &rewriter) const {
+  auto bitcastOp =
+      dyn_cast<hivm::BitcastOp>(sliceOp.getSource().getDefiningOp());
+  if (!bitcastOp)
+    return failure();
+
+  auto loc = bitcastOp.getLoc();
+
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes   = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  // 1. Slice the bitcast source
+  rewriter.setInsertionPoint(bitcastOp);
+  auto newSlicedInput = rewriter.create<tensor::ExtractSliceOp>(
+      loc, bitcastOp.getSrc(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newSlicedInput);
+
+  // 2. Create a new bitcast on sliced input
+  rewriter.setInsertionPointAfter(bitcastOp);
+  auto newBitcast = rewriter.create<hivm::BitcastOp>(
+      loc, sliceOp.getType(), newSlicedInput.getResult());
+
+  // 3. Replace the original extract_slice
+  rewriter.replaceOp(sliceOp, newBitcast.getResult());
+
+  return success();
+}
+
+bool IfBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<scf::IfOp>(sourceOp) && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                         PatternRewriter &rewriter) const {
+  auto ifOp = dyn_cast<scf::IfOp>(sliceOp.getSource().getDefiningOp());
+  if (!ifOp)
+    return rewriter.notifyMatchFailure(sliceOp, "source failed to bind to scf.if");
+
+  auto yieldIndex = cast<OpResult>(sliceOp.getSource()).getResultNumber();
+  auto oldResultType = sliceOp.getSource().getType();
+  LDBG("Processing result of " << yieldIndex << " from if op " << ifOp);
+
+  // then block
+  {
+    Block &thenBlock = ifOp.getThenRegion().front();
+    auto *yieldOp = thenBlock.getTerminator();
+    rewriter.setInsertionPoint(yieldOp);
+
+    auto thenYieldVal = yieldOp->getOperand(yieldIndex);
+    auto newThenSlice = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp.getLoc(),
+        cast<RankedTensorType>(sliceOp.getType()),
+        thenYieldVal, sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, newThenSlice);
+
+    rewriter.modifyOpInPlace(yieldOp, [&]() {
+      yieldOp->setOperand(yieldIndex, newThenSlice.getResult());
+    });
+  }
+
+  // else block (if present)
+  if (!ifOp.getElseRegion().empty()) {
+    Block &elseBlock = ifOp.getElseRegion().front();
+    auto *yieldOp = elseBlock.getTerminator();
+    rewriter.setInsertionPoint(yieldOp);
+
+    auto elseYieldVal = yieldOp->getOperand(yieldIndex);
+    auto newElseSlice = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp.getLoc(),
+        cast<RankedTensorType>(sliceOp.getType()),
+        elseYieldVal, sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, newElseSlice);
+
+    rewriter.modifyOpInPlace(yieldOp, [&]() {
+      yieldOp->setOperand(yieldIndex, newElseSlice.getResult());
+    });
+  }
+
+  // update ifOp result type
+  rewriter.modifyOpInPlace(ifOp, [&]() {
+    ifOp.getResult(yieldIndex).setType(sliceOp.getType());
+  });
+
+  rewriter.replaceAllUsesWith(sliceOp, ifOp.getResult(yieldIndex));
+
+  return success();
+}
+
+bool SelectBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<arith::SelectOp>(sourceOp) &&
+         sliceOp.getSource().getType().isa<RankedTensorType>();
+}
+
+LogicalResult
+SelectBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                PatternRewriter &rewriter) const {
+
+  auto selectOp =
+      dyn_cast<arith::SelectOp>(sliceOp.getSource().getDefiningOp());
+  if (!selectOp)
+    return failure();
+
+  // only support tensor select
+  if (!sliceOp.getSource().getType().isa<RankedTensorType>())
+    return failure();
+
+  auto loc = selectOp.getLoc();
+
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes   = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  Value cond      = selectOp.getCondition();
+  Value trueVal   = selectOp.getTrueValue();
+  Value falseVal  = selectOp.getFalseValue();
+
+  rewriter.setInsertionPoint(selectOp);
+
+  auto slicedTrue = rewriter.create<tensor::ExtractSliceOp>(
+      loc,
+      cast<RankedTensorType>(sliceOp.getType()),
+      trueVal,
+      offsets,
+      sizes,
+      strides);
+  markCreatedExtractSliceOp(rewriter, slicedTrue);
+
+  auto slicedFalse = rewriter.create<tensor::ExtractSliceOp>(
+      loc,
+      cast<RankedTensorType>(sliceOp.getType()),
+      falseVal,
+      offsets,
+      sizes,
+      strides);
+  markCreatedExtractSliceOp(rewriter, slicedFalse);
+
+  auto newSelect = rewriter.create<arith::SelectOp>(
+      loc,
+      sliceOp.getType(),
+      cond,
+      slicedTrue.getResult(),
+      slicedFalse.getResult());
+
+  rewriter.replaceOp(sliceOp, newSelect.getResult());
+
+  return success();
+}
+
 } // namespace mlir::hivm::detail

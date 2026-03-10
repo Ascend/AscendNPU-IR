@@ -227,3 +227,72 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_hivm_bitcast(
+// CHECK-SAME:                                                %[[VAL_0:.*]]: tensor<32x64xf32>) -> tensor<16x64xi32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xf32> to tensor<16x64xf32>
+// CHECK:           %[[VAL_2:.*]] = hivm.hir.bitcast %[[VAL_1]] : tensor<16x64xf32> -> tensor<16x64xi32>
+// CHECK:           return %[[VAL_2]] : tensor<16x64xi32>
+// CHECK:         }
+func.func @bubble_up_hivm_bitcast(%arg0: tensor<32x64xf32>) -> tensor<16x64xi32> {
+    %1 = hivm.hir.bitcast %arg0 : tensor<32x64xf32> -> tensor<32x64xi32>
+    %extracted_slice = tensor.extract_slice %1[1,0] [16,64] [1,1] {to_be_bubbled_slice} : tensor<32x64xi32> to tensor<16x64xi32>
+    return %extracted_slice : tensor<16x64xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_if(
+// CHECK-SAME:                            %[[VAL_0:.*]]: i1,
+// CHECK-SAME:                            %[[VAL_1:.*]]: tensor<8x8xf32>,
+// CHECK-SAME:                            %[[VAL_2:.*]]: tensor<8x8xf32>) -> tensor<4x8xf32> {
+// CHECK:           %[[VAL_3:.*]] = scf.if %[[VAL_0]] -> (tensor<4x8xf32>) {
+// CHECK:             %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_1]][0, 0] [4, 8] [1, 1] {to_be_bubbled_slice} : tensor<8x8xf32> to tensor<4x8xf32>
+// CHECK:             scf.yield %[[VAL_4]] : tensor<4x8xf32>
+// CHECK:           } else {
+// CHECK:             %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_2]][0, 0] [4, 8] [1, 1] {to_be_bubbled_slice} : tensor<8x8xf32> to tensor<4x8xf32>
+// CHECK:             scf.yield %[[VAL_5]] : tensor<4x8xf32>
+// CHECK:           }
+// CHECK:           return %[[VAL_3]] : tensor<4x8xf32>
+// CHECK:         }
+func.func @bubble_up_if(%cond: i1,
+                        %arg0: tensor<8x8xf32>,
+                        %arg1: tensor<8x8xf32>)
+    -> tensor<4x8xf32> {
+
+  %r = scf.if %cond -> tensor<8x8xf32> {
+    scf.yield %arg0 : tensor<8x8xf32>
+  } else {
+    scf.yield %arg1 : tensor<8x8xf32>
+  }
+
+  %slice = tensor.extract_slice %r[0, 0] [4, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<8x8xf32> to tensor<4x8xf32>
+
+  return %slice : tensor<4x8xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_select(
+// CHECK-SAME:                                %[[VAL_0:.*]]: i1,
+// CHECK-SAME:                                %[[VAL_1:.*]]: tensor<64x128xf32>,
+// CHECK-SAME:                                %[[VAL_2:.*]]: tensor<64x128xf32>) -> tensor<32x128xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]][0, 0] [32, 128] [1, 1] {to_be_bubbled_slice} : tensor<64x128xf32> to tensor<32x128xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_2]][0, 0] [32, 128] [1, 1] {to_be_bubbled_slice} : tensor<64x128xf32> to tensor<32x128xf32>
+// CHECK:           %[[VAL_5:.*]] = arith.select %[[VAL_0]], %[[VAL_3]], %[[VAL_4]] : tensor<32x128xf32>
+// CHECK:           return %[[VAL_5]] : tensor<32x128xf32>
+// CHECK:         }
+func.func @bubble_up_select(
+    %cond: i1,
+    %arg0: tensor<64x128xf32>,
+    %arg1: tensor<64x128xf32>)
+    -> tensor<32x128xf32> {
+
+  %sel = arith.select %cond, %arg0, %arg1
+      : tensor<64x128xf32>
+
+  %slice = tensor.extract_slice %sel[0, 0] [32, 128] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x128xf32> to tensor<32x128xf32>
+
+  return %slice : tensor<32x128xf32>
+}
