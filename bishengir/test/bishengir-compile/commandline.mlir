@@ -9,5 +9,5 @@
 // CHECK: BiShengIR HFusion Optimization Options:
 // CHECK: BiShengIR HIVM Optimization Options:
 // CHECK: BiShengIR Target Options:
-// CHECK: Options Shared with bishengir-hivm-compile:
+// CHECK: Options Shared with HIVMC:
 // CHECK-NOT: BiShengIR

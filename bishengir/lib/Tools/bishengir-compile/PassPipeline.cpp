@@ -22,7 +22,6 @@
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-#include "bishengir/Tools/bishengir-hivm-compile/BiShengIRHIVMCompile.h"
 #include "bishengir/Transforms/Passes.h"
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -46,9 +45,8 @@ void setupHFusionPipelineOptions(hfusion::HFusionPipelineOptions &options,
 
 void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
                               const BiShengIRCompileMainConfig &config) {
-// TODO: Delete bishengir/Tools/bishengir-hivm-compile
 #define GEN_HIVM_OPTION_SETUP
-#include "bishengir/Tools/bishengir-hivm-compile/HIVMConfigUtils.cpp.inc"
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
 }
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
@@ -142,30 +140,30 @@ public:
         .setCubeTilingTuning(cubeTilingTuning);
 
     SmallVector<Pass::Option<bool> *> sharedWithHIVMCompileBool = {
-      &enableAutoBindSubBlock,
-      &enableAutoBlockifyLoop,
-      &enableHIVMAutoCVBalance,
-      &enableAutoMultiBuffer,
-      &enableHIVMAutoStorageAlign,
-      &enableBinRelocation,
-      &enableCodeMotion,
+        &enableAutoBindSubBlock,
+        &enableAutoBlockifyLoop,
+        &enableHIVMAutoCVBalance,
+        &enableAutoMultiBuffer,
+        &enableHIVMAutoStorageAlign,
+        &enableBinRelocation,
+        &enableCodeMotion,
 #if (!BISHENGIR_PUBLISH)
-      &enableCpuTraceIntrinsic,
-      &enableLIRCompile,
+        &enableCpuTraceIntrinsic,
+        &enableLIRCompile,
 #endif
-      &enableDebugInfo,
-      &enableHIVMGlobalWorkspaceReuse,
-      &enableHIVMCompile,
-      &enableHIVMInjectBarrierAllSync,
-      &enableHIVMInjectBlockAllSync,
-      &enableHivmNd2nzOnVector,
-      &enableSanitizer,
-      &enableMemoryDisplay,
-      &enableStaticBarePtr,
-      &enableTritonKernelCompile,
-      &enableHIVMUnitFlagSync,
-      &enableHIVMAssumeAliveLoops,
-      &enableUbufSaving,
+        &enableDebugInfo,
+        &enableHIVMGlobalWorkspaceReuse,
+        &enableHIVMCompile,
+        &enableHIVMInjectBarrierAllSync,
+        &enableHIVMInjectBlockAllSync,
+        &enableHivmNd2nzOnVector,
+        &enableSanitizer,
+        &enableMemoryDisplay,
+        &enableStaticBarePtr,
+        &enableTritonKernelCompile,
+        &enableHIVMUnitFlagSync,
+        &enableHIVMAssumeAliveLoops,
+        &enableUbufSaving,
     };
 
     SmallVector<Pass::Option<unsigned> *> sharedWithHIVMCompileUnsigned = {

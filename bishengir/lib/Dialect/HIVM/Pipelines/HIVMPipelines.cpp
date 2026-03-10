@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -369,6 +370,10 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
   pm.addPass(createEnableHIVMCCompatiblePrintPass());
+  pm.addPass(annotation::createAnnotationLoweringPass());
+  pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
+  pm.nest<func::FuncOp>().addPass(createMarkDisableLoadPass());
+  pm.addPass(createConvertHIVMToStandardPass());
 }
 
 //===----------------------------------------------------------------------===//

@@ -24,6 +24,7 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -214,11 +215,10 @@ bishengir::parseHIVMCVersion(llvm::StringRef content) {
 
 llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
   StringRef versionLine = content.split('\n').first;
-  Regex R(
-    "^(hivmc) "                         // name
-    "([0-9]+\\.[0-9]+\\.[0-9]+) "       // version
-    "\\(([0-9a-fA-F]{6,40}) "           // commit hash
-    "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$"  // build date
+  Regex R("^(hivmc) "                        // name
+          "([0-9]+\\.[0-9]+\\.[0-9]+) "      // version
+          "\\(([0-9a-fA-F]{6,40}) "          // commit hash
+          "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$" // build date
   );
   SmallVector<StringRef, 4> M;
   if (!R.match(versionLine, &M)) {
@@ -280,6 +280,23 @@ std::string bishengir::getBiShengInstallPath() {
     llvm::report_fatal_error("Failed to get absolute path for " + path +
                              " please verify its validity");
   return path.str().str();
+}
+
+std::string bishengir::getExecutablePath(const char *argv0, void *mainAddr) {
+  std::string path = llvm::sys::fs::getMainExecutable(argv0, mainAddr);
+  if (!path.empty()) {
+    llvm::SmallString<256> realPath;
+    if (!llvm::sys::fs::real_path(path, realPath))
+      return std::string(realPath.str());
+    return path;
+  }
+  llvm::SmallString<256> absPath(argv0);
+  if (llvm::sys::fs::make_absolute(absPath))
+    return "";
+  llvm::SmallString<256> realPath;
+  if (llvm::sys::fs::real_path(absPath, realPath))
+    return std::string(absPath.str());
+  return std::string(realPath.str());
 }
 
 mlir::LogicalResult bishengir::handleDiagnostic(const mlir::Diagnostic &diag) {

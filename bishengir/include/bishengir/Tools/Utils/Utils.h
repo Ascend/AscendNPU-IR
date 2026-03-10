@@ -79,6 +79,11 @@ std::optional<llvm::VersionTuple> detectHIVMCVersion(llvm::StringRef hivmcName);
 /// Get the path set by environment variable `BISHENG_INSTALL_PATH`.
 std::string getBiShengInstallPath();
 
+/// Get the absolute path of the current executable. Resolves symlinks and
+/// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
+/// is reinterpret_cast<void*>(main). Returns empty string on failure.
+std::string getExecutablePath(const char *argv0, void *mainAddr);
+
 /// Prints a diagnostic to llvm::outs() and return a LogicalResult.
 mlir::LogicalResult handleDiagnostic(const mlir::Diagnostic &diag);
 

@@ -46,6 +46,10 @@ else()
   set(BISHENGIR_ENABLE_TORCH_CONVERSIONS 0)
 endif()
 
+# The BISHENGIR_BUILD_TEMPLATE option is used to build BiShengIR template.
+option(BISHENGIR_BUILD_TEMPLATE
+  "Build the BiShengIR template." OFF)
+
 # The BISHENGIR_BUILD_STANDALONE_IR_ONLY option is used to only build IR definitions.
 option(BISHENGIR_BUILD_STANDALONE_IR_ONLY
   "Experimental feature. If set, only build IR definitions." OFF)

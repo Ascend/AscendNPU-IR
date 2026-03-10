@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
 #include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
@@ -37,6 +38,7 @@ namespace bishengir {
 inline void registerAllExtensions(mlir::DialectRegistry &registry) {
   // Register all transform dialect extensions.
   mlir::hivm::registerTransformDialectExtension(registry);
+  bishengir::hivm::registerHIVMDialectExtension(registry);
   mlir::hacc::func_ext::registerHACCDialectExtension(registry);
   mlir::hacc::llvm_ext::registerHACCDialectExtension(registry);
   mlir::hfusion::registerTransformDialectExtension(registry);

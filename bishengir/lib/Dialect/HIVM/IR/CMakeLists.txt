@@ -5,6 +5,7 @@ file(GLOB HIVM_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/ExtraBufferOpInterface/*.cpp)
 file(GLOB HIVM_IMPL_SCALAR ${CMAKE_CURRENT_SOURCE_DIR}/ImplByScalarOpInterface/*.cpp)
 file(GLOB HIVM_INFER_CORE_TYPE ${CMAKE_CURRENT_SOURCE_DIR}/InferCoreTypeInterface/*.cpp)
 file(GLOB HIVM_LAYOUT ${CMAKE_CURRENT_SOURCE_DIR}/OpLayoutInterface/*.cpp)
+file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInterface/*.cpp)
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
 
@@ -16,10 +17,12 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_IMPL_SCALAR}
   ${HIVM_INFER_CORE_TYPE}
   ${HIVM_LAYOUT}
+  ${HIVM_LIBRARY_FUNCTION}
   ${HIVM_PIPE}
   ${HIVM_VECTOR_BASE}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
+  HIVMDialectExtension.cpp
   HIVMDMAOps.cpp
   HIVMImpl.cpp
   HIVMInterfaces.cpp
