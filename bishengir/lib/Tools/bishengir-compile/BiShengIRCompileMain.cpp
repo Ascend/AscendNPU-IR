@@ -64,7 +64,12 @@ std::string getLibDirFromExecutable(StringRef executablePath) {
 
 /// Add bitcode path attributes to ModuleOp from ../lib/*.bc files.
 /// Paths are canonical (no ".." or ".") before being stored in attributes.
-void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath) {
+void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
+                             const BiShengIRCompileMainConfig &config) {
+  auto version = bishengir::parseHIVMCVersion(config.getHIVMCVersion());
+  if (!version.has_value() || version.value().empty() ||
+      version.value().getAsString() == "0.1.0")
+    return;
   std::string libDir = getLibDirFromExecutable(executablePath);
   MLIRContext *ctx = module->getContext();
 
@@ -157,7 +162,12 @@ getCompatibleOptions(const std::vector<std::string> &arguments,
     }
     // 3. legacy hivmc has some unsupported options
     std::set<std::string> unsupported = {"enable-lir-compile",
-                                         "enable-cpu-trace-intrinsic"};
+                                         "enable-cpu-trace-intrinsic",
+                                         "link-aicore-bitcode"};
+    options = skipOptions(options, unsupported);
+  } else if (version.value().getAsString() == "0.1.0") {
+    // 0.1.0 version means we are using legacy hivmc
+    std::set<std::string> unsupported = {"link-aicore-bitcode"};
     options = skipOptions(options, unsupported);
   }
   return options;
@@ -290,7 +300,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   }
 
   // Add bitcode path attributes from ../lib/*.bc to ModuleOp before hivmc.
-  addBitcodeAttrsToModule(mod, config.getExecutablePath());
+  // Skip for legacy hivmc (version 0.1.0 or empty) which does not support it.
+  addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
 
   auto res = runExternalHIVMC(mod, config);
   if (res.failed())
