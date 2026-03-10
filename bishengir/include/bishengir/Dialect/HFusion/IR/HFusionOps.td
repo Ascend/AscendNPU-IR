@@ -26,6 +26,14 @@ include "bishengir/Dialect/HFusion/IR/HFusionAttrs.td"
 class HFusion_Op<string mnemonic, list<Trait> traits = []> :
     Op<HFusion_Dialect, mnemonic, traits>;
 
+// Shaped type whose element type is from the given `allowedTypes` list,
+// and which additionally satisfies an optional list of predicates.
+class ShapedTypeOf<list<Type> allowedTypes, list<Pred> preds = [],
+                     string summary = "ranked tensor">
+  : ShapedContainerType<
+      allowedTypes, And<!listconcat([IsShapedTypePred], preds)>,
+      summary, "::mlir::ShapedType">;
+
 //===----------------------------------------------------------------------===//
 // HFusion Types
 //===----------------------------------------------------------------------===//
@@ -655,7 +663,7 @@ def IndirectStoreOp : HFusion_Op<"indirect_store", [
   let description = [{
     This operation takes a source tensor and a tensor of offsets from UB,
     and stores elements from the source into the destination GM buffer
-    at the specified offset positions with SIMT template. The operation 
+    at the specified offset positions with SIMT template. The operation
     supports masking to conditionally control which elements are stored.
     This operation supports 1D-5D.
 
@@ -758,7 +766,7 @@ def GatherTOp : HFusion_Op<"gatherT", [
                        Variadic<AnyTypeOf<[I32, I64]>>:$offsets
   );
   let results = (outs Optional<AnyRankedTensor>:$result);
-  
+
   let assemblyFormat = [{
     `ins` `(` $src `:` type($src) `,`
     $index `:` type($index) `,`
@@ -813,9 +821,9 @@ def IndexPutOp : HFusion_Op<"index_put", [
 
     Where:
       - dst : the pointer of destination tensor on GM.
-      - index:  the index tensor tile pointer on UB specifying positions in the destination tensor. 
+      - index:  the index tensor tile pointer on UB specifying positions in the destination tensor.
                 must not be repeated.
-                must contain valid indices within the bounds of 
+                must contain valid indices within the bounds of
                 the destination tensor along the specified scatter_dim.
       - value : value tile pointer on UB.
       - scatter_dim : the gather dimension on which index is applied.
@@ -836,8 +844,8 @@ def IndexPutOp : HFusion_Op<"index_put", [
   );
 
   let assemblyFormat = [{
-    `ins` `(` $dst `:` type($dst) `,` 
-    $index `:` type($index) `,` 
+    `ins` `(` $dst `:` type($dst) `,`
+    $index `:` type($index) `,`
     $value `:` type($value) `,`
     $scatter_dim `:` type($scatter_dim) `,`
     $bound `:` type($bound) `,`
@@ -950,5 +958,65 @@ def HistogramOp : HFusion_Op<"histogram", [
     "type($input) (`,` type($mask)^)? `->` type($output)";
 }
 
+//===----------------------------------------------------------------------===//
+// MatMulMxOp
+//===----------------------------------------------------------------------===//
+def MatMulMxOp : HFusion_Op<"matmul_mx", [
+    Pure, 
+    DestinationStyleOpInterface, 
+    DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface, 
+                              ["decomposeOperation"]>
+  ]> {
+  let summary = "Performs a block-scaled matrix multiplication";
+  let description = [{
+  Performs matrix multiplication in microscaling format where the inputs are implicitly scaled using provided scale factors, which are often used in quantized data types like FP8/FP4. The operation computes C = (A * scale_a) dot (B * scale_b) directly in hardware (Tensor Cores).
+  lhs and rhs use microscaling formats described here: https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+  }];
 
+  let arguments = (ins
+    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputA,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
+    ShapedTypeOf<[UI8, I8]>:$scaleA,
+    ShapedTypeOf<[UI8, I8]>:$scaleB,
+    ShapedTypeOf<[AnyFloat]>:$acc
+  );
+
+  let results = (outs
+    ShapedTypeOf<[AnyFloat]>:$result
+  );
+
+  code hfusionMmadBaseDecls = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getAccMutable();
+    }
+  }];
+
+  let extraClassDeclaration = hfusionMmadBaseDecls;
+
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+    $inputA
+    `,` $inputB
+    `,` $scaleA
+    `,` $scaleB
+    `:`
+    type($inputA)
+    `,` type($inputB)
+    `,` type($scaleA)
+    `,` type($scaleB)
+    `)`
+    `outs` `(` $acc `:` type($acc) `)`
+    `->` type($result)
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Value":$inputA,
+                   "Value":$inputB,
+                   "Value":$scaleA,
+                   "Value":$scaleB,
+                   "Value":$acc)>
+  ];
+}
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

@@ -43,6 +43,7 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   hivmPipelineOptions.enableTritonKernelCompile = config.shouldCompileTriton();
   hivmPipelineOptions.enableLayoutOptimization =
       config.shouldEnableLayoutOptimization();
+  hivmPipelineOptions.enableDotScaledCompile = config.shouldcompileDotScaled();
   hivmPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hivmPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
   hivmPipelineOptions.enableAutoBlockifyLoop = config.shouldAutoBlockifyLoop();
@@ -120,6 +121,7 @@ public:
     enableTorchCompile = pass.enableTorchCompile;
 #endif
     enableTritonKernelCompile = pass.enableTritonKernelCompile;
+    enableDotScaledCompile = pass.enableDotScaledCompile;
     enableAutoBlockifyLoop = pass.enableAutoBlockifyLoop;
     enableHFusionCompile = pass.enableHFusionCompile;
     enableHIVMCompile = pass.enableHIVMCompile;
@@ -177,6 +179,7 @@ public:
         .compileTorch(enableTorchCompile)
 #endif
         .compileTriton(enableTritonKernelCompile)
+        .compileDotScaled(enableDotScaledCompile)
         .compileHFusion(enableHFusionCompile)
         .compileHIVM(enableHIVMCompile)
         .compileLIR(enableLIRCompile)
@@ -247,6 +250,9 @@ protected:
   Pass::Option<bool> enableTritonKernelCompile{
       *this, "enable-triton-kernel-compile",
       llvm::cl::desc("Enable Triton kernel compile"), llvm::cl::init(false)};
+  Pass::Option<bool> enableDotScaledCompile{
+      *this, "enable-dot-scaled-compile",
+      llvm::cl::desc("Enable dot scaled compile"), llvm::cl::init(false)};
   Pass::Option<bool> enableHFusionCompile{
       *this, "enable-hfusion-compile",
       llvm::cl::desc("Enable BiShengHIR HFusion compile"),
