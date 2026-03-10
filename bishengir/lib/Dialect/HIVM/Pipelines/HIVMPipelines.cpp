@@ -60,8 +60,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   // recommended to do this in canonicalization pass
 
   if (hacc::utils::isAscend950(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) && 
-      !hivmPipelineOptions.enableDotScaledCompile) {
+          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
     // New A5 convert layout pipeline
     if (hivmPipelineOptions.enableLayoutOptimization) {
       pm.nest<func::FuncOp>().addPass(createInsertCVDataMovementPass());
@@ -226,8 +225,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  if (!hacc::utils::isAscend950(hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) ||
-      hivmPipelineOptions.enableDotScaledCompile) {
+  if (!hacc::utils::isAscend950(
+          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
     pm.addPass(createInsertWorkSpaceForMixCVPass());
   }
   // keep this for the debug feature (device print, etc.)
@@ -434,10 +433,7 @@ static void hivmPostBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
-    NormalizeVectorOptions normalizeVectorOptions;
-    normalizeVectorOptions.enableDotScaledCompile = 
-        hivmPipelineOptions.enableDotScaledCompile;
-    pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass(normalizeVectorOptions));
+    pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }

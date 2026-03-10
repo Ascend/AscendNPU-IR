@@ -76,12 +76,6 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::desc("Enable Triton kernel compile (lowered from triton-adaptor)"),
         cl::location(enableTritonKernelCompileFlag), cl::init(false),
         cl::cat(featCtrlCategory));
-    
-    static cl::opt<bool, /*ExternalStorage=*/true> enableDotScaledCompile(
-        "enable-dot-scaled-compile",
-        cl::desc("Enable dot scaled compile"),
-        cl::location(enableDotScaledCompileFlag), cl::init(false),
-        cl::cat(featCtrlCategory));
 
     static cl::opt<bool, /*ExternalStorage=*/true> disableFFTS(
         "disable-ffts", cl::desc("Force disabling FFTS."),

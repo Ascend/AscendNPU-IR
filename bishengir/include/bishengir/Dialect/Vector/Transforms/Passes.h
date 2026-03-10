@@ -25,7 +25,7 @@ namespace vector {
 std::unique_ptr<Pass> createVectorTransferLoweringPass();
 
 /// Pass to normalizes vector ops to meet HIVM requirements.
-std::unique_ptr<Pass> createNormalizeVectorPass(const NormalizeVectorOptions &options = {});
+std::unique_ptr<Pass> createNormalizeVectorPass();
 
 /// Pass to peel loops which contains `vector.transfer_read` which is transpose
 /// load.

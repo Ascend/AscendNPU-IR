@@ -26,9 +26,6 @@ struct HIVMPipelineOptions
   PassOptions::Option<bool> enableTritonKernelCompile{
       *this, "enable-triton-kernel-compile",
       llvm::cl::desc("Enable triton kernel compile"), llvm::cl::init(false)};
-  PassOptions::Option<bool> enableDotScaledCompile{
-      *this, "enable-dot-scaled-compile",
-      llvm::cl::desc("Enable dot scaled compile"), llvm::cl::init(false)};
   PassOptions::Option<bool> enableMixedCV{
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
       llvm::cl::init(false)};

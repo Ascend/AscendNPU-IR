@@ -330,8 +330,7 @@ bool hfusion::isTensorManipulationOp(Operation *op) {
 
 bool hfusion::isMatmulOps(Operation *op) {
   return isa<linalg::MatmulOp>(op) || isa<linalg::MatmulTransposeAOp>(op) ||
-         isa<linalg::MatmulTransposeBOp>(op) ||
-         isa<linalg::BatchMatmulOp>(op) || isa<hfusion::MatMulMxOp>(op);
+         isa<linalg::MatmulTransposeBOp>(op) || isa<linalg::BatchMatmulOp>(op);
 }
 
 bool hfusion::isSimtOps(Operation *op) {
@@ -1447,7 +1446,7 @@ static bool canTraceBackToMatmul(Value operand) {
 
 static bool isValueReachingMatmul(Value val) {
   for (auto *user : val.getUsers()) {
-    if (isa<linalg::MatmulOp>(user) || isa<linalg::BatchMatmulOp>(user) || isa<hfusion::MatMulMxOp>(user)) {
+    if (isa<linalg::MatmulOp>(user) || isa<linalg::BatchMatmulOp>(user)) {
       continue;
     }
     /* In case the matmul has been broken into a matmul + add
@@ -1566,13 +1565,4 @@ bool hfusion::isInCubeScope(Operation *op) {
     return false;
 
   return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
-}
-
-bool hfusion::isFP8(Type type, Builder builder) {
-  return type == builder.getFloat8E5M2Type() ||
-      type == builder.getFloat8E4M3Type() ||
-      type == builder.getFloat8E4M3FNType() ||
-      type == builder.getFloat8E5M2FNUZType() ||
-      type == builder.getFloat8E4M3FNUZType() ||
-      type == builder.getFloat8E4M3B11FNUZType();
 }

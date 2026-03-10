@@ -37,10 +37,6 @@ namespace {
 struct NormalizeVectorPass
     : public impl::NormalizeVectorBase<NormalizeVectorPass> {
   using NormalizeVectorBase<NormalizeVectorPass>::NormalizeVectorBase;
-
-  explicit NormalizeVectorPass(const NormalizeVectorOptions &options)
-      : NormalizeVectorBase(options) {}
-
   void runOnOperation() override;
 };
 
@@ -1184,12 +1180,11 @@ void NormalizeVectorPass::runOnOperation() {
   patterns
       .add<OneDimAccMultiReductionToReduction,
            ShapeCastDropUnitDimsForMultiDimVectorPattern,
+           TransferReadToGatheringLoadPattern,
            UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
            ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
            ConvertCreateMaskTo1D, ConvertConstantMaskTo1D>(
           patterns.getContext());
-  if (!enableDotScaledCompile) 
-    patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());
   vector::ExtractOp::getCanonicalizationPatterns(patterns, ctx);
   vector::ShapeCastOp::getCanonicalizationPatterns(patterns, ctx);
 
@@ -1198,6 +1193,6 @@ void NormalizeVectorPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> vector::createNormalizeVectorPass(const NormalizeVectorOptions &options) {
-  return std::make_unique<NormalizeVectorPass>(options);
+std::unique_ptr<Pass> vector::createNormalizeVectorPass() {
+  return std::make_unique<NormalizeVectorPass>();
 }

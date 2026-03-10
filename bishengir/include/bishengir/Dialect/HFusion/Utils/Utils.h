@@ -326,8 +326,6 @@ bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
 // Check if operations is in cube scope
 bool isInCubeScope(Operation *op);
 
-bool isFP8(Type type, Builder builder);
-
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
