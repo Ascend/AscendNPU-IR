@@ -23,7 +23,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
@@ -200,22 +199,15 @@ protected:
                                RWOperation *rwOp1, RWOperation *rwOp2,
                                bool isUseless);
 
-  // Multi-buffer/event-related helpers that determine if double event id can be
-  // used.
   std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(const llvm::SmallVector<Value> &memValsList1,
-                                const llvm::SmallVector<Value> &memValsList2);
-
-  std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
-                                hivm::PointerCastOp pointerCastOp2);
-
-  std::optional<LoopLikeOpInterface> checkDoubleMultiBufferEventId(
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
-
-  std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(RWOperation *rwOp1, RWOperation *rwOp2);
+  getMultiBufferLoop(const llvm::SmallVector<MemInfo> &memInfoList1,
+                     const llvm::SmallVector<MemInfo> &memInfoList2);
+  std::optional<LoopLikeOpInterface> getMultiBufferLoop(RWOperation *rwOp1,
+                                                        RWOperation *rwOp2);
+  std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
+                                                       Occurrence *occ2,
+                                                       RWOperation *rwOp1,
+                                                       RWOperation *rwOp2);
 
   // Determine how many event ids are needed for a particular occurrence pair.
   EventIdInfo getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
@@ -243,16 +235,6 @@ protected:
 
   bool checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
                                               Occurrence *occ2);
-
-  bool checkRWMemoryConflicts(const llvm::SmallVector<Value> &memValsList1,
-                              const llvm::SmallVector<Value> &memValsList2);
-
-  bool checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
-                                   hivm::PointerCastOp pointerCastOp2);
-
-  bool checkAllocWorkSpaceMemConflict(
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
 
   // Feasibility checks and bookkeeping accessors used by the solver loop.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);

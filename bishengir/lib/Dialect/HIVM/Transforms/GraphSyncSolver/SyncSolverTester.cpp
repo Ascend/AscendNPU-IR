@@ -125,8 +125,8 @@ void SyncTester::generateRandTest(Scope *scopeOp,
         readValsNum = (getRand() % read_write_vals_max_num) + 1;
         writeValsNum = (getRand() % read_write_vals_max_num) + 1;
       }
-      SmallVector<SmallVector<int>> readVals(1);
-      SmallVector<SmallVector<int>> writeVals(1);
+      SmallVector<SmallVector<int64_t>> readVals(1);
+      SmallVector<SmallVector<int64_t>> writeVals(1);
       for (auto i : getNDifferentRandNums(readValsNum, pointerOps.size())) {
         readVals.back().push_back(pointerOps[i]);
       }
@@ -139,10 +139,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
             (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
       }
       auto rwOp = std::make_unique<RWOperation>(
-          nullptr, scopeOp, coreType, pipeRead, pipeWrite, SmallVector<Value>(),
-          SmallVector<Value>());
-      rwOp->testReadMemVals = readVals;
-      rwOp->testWriteMemVals = writeVals;
+          nullptr, scopeOp, coreType, pipeRead, pipeWrite, readVals, writeVals);
       assert(rwOp != nullptr);
       scopeOp->body.push_back(std::move(rwOp));
       empty = false;

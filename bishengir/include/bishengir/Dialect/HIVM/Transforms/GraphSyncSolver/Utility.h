@@ -26,8 +26,10 @@
 #include "mlir/IR/Location.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include <climits>
 #include <deque>
 #include <memory>
+#include <pthread.h>
 #include <string>
 
 #define INTRA_CORE_EVENT_ID_NUM (int64_t)8

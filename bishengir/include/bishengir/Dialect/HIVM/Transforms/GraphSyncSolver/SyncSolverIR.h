@@ -18,6 +18,7 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERIR_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
@@ -275,14 +276,16 @@ public:
   hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeRead{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeWrite{hivm::PIPE::PIPE_UNASSIGNED};
-  llvm::SmallVector<Value> readMemVals;
-  llvm::SmallVector<Value> writeMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testReadMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testWriteMemVals;
+  llvm::SmallVector<MemInfo> readMemInfo;
+  llvm::SmallVector<MemInfo> writeMemInfo;
   bool hasUnitFlagFeat{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
-private:
+  const llvm::SmallVector<Value> readMemVals;
+  const llvm::SmallVector<Value> writeMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testReadMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
+
 public:
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
@@ -291,7 +294,30 @@ public:
               OpType opType = OpType::RW_OPERATION)
       : OperationBase(opType, op, parentOp), coreType(coreType),
         pipeRead(pipeRead), pipeWrite(pipeWrite), readMemVals(readMemVals),
-        writeMemVals(writeMemVals) {};
+        writeMemVals(writeMemVals) {
+    for (auto &val : readMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : writeMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
+  RWOperation(
+      Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+      hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testReadMemVals,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testWriteMemVals,
+      OpType opType = OpType::RW_OPERATION)
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite),
+        testReadMemVals(testReadMemVals), testWriteMemVals(testWriteMemVals) {
+    for (auto &val : testReadMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : testWriteMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
 
   std::string str(int indent, bool recursive) const override;
 
