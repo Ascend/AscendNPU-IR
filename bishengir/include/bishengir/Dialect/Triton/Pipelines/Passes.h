@@ -36,7 +36,7 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<int32_t> enableBishengirSimtOptimization{
       *this, "enable-bishengir-simt-optimization",
       llvm::cl::desc("enable which bishengir simt optimization"),
-      llvm::cl::init(000)};
+      llvm::cl::init(900101)};
   PassOptions::Option<bool> disableDecomposeReduction{
       *this, "disable-decompose-reduction",
       llvm::cl::desc("disable decompose reduction"), llvm::cl::init(false)};

@@ -65,39 +65,12 @@ struct AscendSIToFPOpConversion
                                    Location loc) const {
     Type inElemTy = getElementType(op.getIn());
     Type outElemTy = getElementType(op.getOut());
-
-    if (operands.size() > 1) {
-      int numElems = operands.size();
-      Type inputVectorType = VectorType::get({numElems}, inElemTy);
-      Type outputVectorType = VectorType::get({numElems}, outElemTy);
-
-      Value inputVec = rewriter.create<LLVM::UndefOp>(loc, inputVectorType);
-      for (int i = 0; i < numElems; i++) {
-        auto idx =
-            rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), i);
-        inputVec = rewriter.create<LLVM::InsertElementOp>(
-            loc, inputVectorType, inputVec, operands[i][0], idx);
-      }
-
-      Value castResult = rewriter.create<ascend_dpx::CastOp>(
-          loc, outputVectorType, inputVec,
-          ascend_dpx::AscendDPXCastKind::SIGNED_TO_FLOAT);
-
-      SmallVector<Value> outVals;
-      for (int i = 0; i < numElems; i++) {
-        auto idx =
-            rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), i);
-        Value extracted =
-            rewriter.create<LLVM::ExtractElementOp>(loc, castResult, idx);
-        outVals.push_back(extracted);
-      }
-
-      return outVals;
-    } else {
-      return {rewriter.create<ascend_dpx::CastOp>(
-          loc, elemTy, operands[0][0],
-          ascend_dpx::AscendDPXCastKind::SIGNED_TO_FLOAT)};
+    SmallVector<Value> outVals;
+    for (size_t i = 0; i < operands.size(); i++) {
+      outVals.push_back(
+         rewriter.create<LLVM::SIToFPOp>(loc, outElemTy, operands[i][0]));
     }
+    return outVals;
   };
 };
 
