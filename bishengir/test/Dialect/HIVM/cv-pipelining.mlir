@@ -41,9 +41,15 @@ func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<wor
     // Vector ops
     %vdest1 = tensor.empty() : tensor<16x16xf16>
     %exp = hivm.hir.vexp ins(%wst : tensor<16x16xf16>) outs(%vdest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %if = scf.if %cond -> tensor<16x16xf16> {
+      %newexp = hivm.hir.vexp ins(%exp : tensor<16x16xf16>) outs(%vdest1:tensor<16x16xf16>) -> tensor<16x16xf16>
+      scf.yield %newexp : tensor<16x16xf16>
+    } else {
+      scf.yield %exp : tensor<16x16xf16>
+    }
     %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
     %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
-    hivm.hir.copy ins(%exp:tensor<16x16xf16>) outs(%ws1_cast:memref<16x16xf16>)
+    hivm.hir.copy ins(%if:tensor<16x16xf16>) outs(%ws1_cast:memref<16x16xf16>)
     %wso = bufferization.to_tensor %ws1_cast : memref<16x16xf16>
 
     // Another cube with iter arg/yield

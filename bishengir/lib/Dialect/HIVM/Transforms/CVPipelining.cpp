@@ -31,6 +31,8 @@ using namespace hivm;
 
 using hivm::detail::queryCoreTypeHelper;
 
+static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
+static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
 namespace {
 
 struct WorkspaceAllocParams {
@@ -233,9 +235,36 @@ static bool isCrossCoreCopy(Operation *copy) {
 static bool illegalRegionedOp(Operation *op) {
   if (op->getRegions().empty())
     return false;
-  // TODO: right now we don't support any nested operations
-  op->emitWarning("CV-Pipelining: Unsupported regioned op");
-  return true;
+  bool hasCube = false;
+  bool hasVector = false;
+  WalkResult result = op->walk([&hasCube, &hasVector](Operation *curOp) {
+    if (!isa_and_nonnull<HIVMDialect>(curOp->getDialect()))
+      return WalkResult::advance();
+    auto core = queryCoreTypeHelper(curOp).value_or(TCoreType::CUBE_OR_VECTOR);
+    if (core == TCoreType::CUBE_OR_VECTOR && isCrossCoreCopy(curOp))
+      core = TCoreType::VECTOR;
+    if (core == TCoreType::VECTOR) {
+      if (hasCube)
+        return WalkResult::interrupt();
+      hasVector = true;
+    } else if (core == TCoreType::CUBE) {
+      if (hasVector)
+        return WalkResult::interrupt();
+      hasCube = true;
+    }
+    return WalkResult::advance();
+  });
+  if (result.wasInterrupted()) {
+    op->emitWarning("CV-Pipelining: Unsupported regioned op");
+    return true;
+  }
+
+  auto unit = UnitAttr::get(op->getContext());
+  if (hasCube)
+    op->setAttr(CubeOnlyAttrName, unit);
+  else if (hasVector)
+    op->setAttr(VecOnlyAttrName, unit);
+  return false;
 }
 
 /// Get the highest level parent op that is not
@@ -257,10 +286,6 @@ static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
   SmallVector<OpFoldResult> offsets, sizes, strides;
   offsets.push_back(iv);
   offsets.append(originalType.getRank(), const0);
-
-  SmallVector<int64_t> tempShape = {1};
-  tempShape.append(originalType.getShape().begin(),
-                   originalType.getShape().end());
 
   // Set up the sizes
   sizes.push_back(const1);
@@ -514,6 +539,8 @@ static void traceOperands(Value operand, scf::ForOp pipelineLoop,
                           SmallVector<Operation *> &workingStack) {
   // TODO: Handle nested if/for/while ops
   Operation *defining = operand.getDefiningOp();
+  if (item->ops.contains(defining))
+    return;
   if (!defining) {
     auto iterArg = dyn_cast<BlockArgument>(operand);
     assert(iterArg && "Expecting non-op-defined value to be block argument");
@@ -530,9 +557,17 @@ static void traceOperands(Value operand, scf::ForOp pipelineLoop,
       return;
     Value yieldVal = pipelineLoop.getTiedLoopYieldedValue(iterArg)->get();
     defining = yieldVal.getDefiningOp();
-    if (!defining)
+    if (!defining || defining->getParentOp() != pipelineLoop)
       return;
   }
+  if (defining->getParentOp() != pipelineLoop)
+    return;
+  // If defining is a memref, then trace everything that also uses that memref.
+  if (isa<MemRefType>(operand.getType())) {
+    workingStack.append(defining->getUsers().begin(),
+                        defining->getUsers().end());
+  }
+
   // To tensor ops are handled as a part of the memref operand for
   // load/fixpipe/copy
   if (!isa_and_nonnull<HIVMDialect>(defining->getDialect()) &&
@@ -547,11 +582,12 @@ void CVPipelineImpl::traceDependentOps(WorkItem *item) {
 
   while (!workingStack.empty()) {
     Operation *op = workingStack.pop_back_val();
-    if (!pipelineLoop->isAncestor(op) ||
+    if (!pipelineLoop->isAncestor(op) || isa<scf::YieldOp>(op) ||
         (isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op)))
       continue;
     LLVM_DEBUG(dbgs() << "Inserting \t"; op->dump());
     mapOpToItem(op, item);
+    toBePipelined.erase(op);
     for (Operation *usr : op->getUsers())
       if (isa<annotation::MarkOp, DebugOp>(usr))
         mapOpToItem(usr, item);
@@ -565,8 +601,11 @@ void CVPipelineImpl::traceDependentOps(WorkItem *item) {
       continue;
     }
 
-    for (Value operand : op->getOperands())
-      traceOperands(operand, pipelineLoop, item, workingStack);
+    // Handle nested ops as well
+    op->walk([&](Operation *nestedOp) {
+      for (Value operand : nestedOp->getOperands())
+        traceOperands(operand, pipelineLoop, item, workingStack);
+    });
   }
 }
 
@@ -586,7 +625,6 @@ CVPipelineImpl::populateWorkItem(SmallVector<Operation *> &availableOps,
   // availableOps, no need to check here
   for (Operation *op : availableOps) {
     mapOpToItem(op, item.get());
-    toBePipelined.erase(op);
   }
   LLVM_DEBUG({
     dbgs() << "[populateWorkItem] Initial set{\n";
@@ -610,14 +648,21 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
   SetVector<Operation *> potentiallyAvailable;
 
   for (Operation &op : *pipelineLoop.getBody()) {
-    if (!isa<DestinationStyleOpInterface>(&op) ||
-        opToWorkItemMap.contains(&op) ||
-        !llvm::isa_and_nonnull<HIVMDialect>(op.getDialect()))
+    if (opToWorkItemMap.contains(&op))
       continue;
-    TCoreType maybeCore =
-        queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
-    if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
-      maybeCore = TCoreType::VECTOR;
+    TCoreType maybeCore = op.hasAttr(CubeOnlyAttrName) ? TCoreType::CUBE
+                          : op.hasAttr(VecOnlyAttrName)
+                              ? TCoreType::VECTOR
+                              : TCoreType::CUBE_OR_VECTOR;
+    if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
+      if (!isa<DestinationStyleOpInterface>(&op) ||
+          !isa_and_nonnull<HIVMDialect>(op.getDialect()) || isa<LoadOp>(&op))
+        continue;
+      maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
+      if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
+        maybeCore = TCoreType::VECTOR;
+    }
+
     assert(maybeCore == TCoreType::VECTOR || maybeCore == TCoreType::CUBE);
     // Only gather ops of the same core type
     if (((maybeCore == TCoreType::VECTOR || isCrossCoreCopy(&op)) &&
@@ -1014,10 +1059,9 @@ void CVPipelineImpl::migrateOps() {
         assert(isa<bufferization::ToTensorOp>(internalDef.getDefiningOp()));
         builder.setInsertionPointAfter(defining);
         Value internalResult = createToTensor(builder, loc, newInit);
-        internalDef.replaceUsesWithIf(
-            internalResult, [&](OpOperand &use) {
-              return item->forOp->isAncestor(use.getOwner());
-            });
+        internalDef.replaceUsesWithIf(internalResult, [&](OpOperand &use) {
+          return item->forOp->isAncestor(use.getOwner());
+        });
         builder.setInsertionPointAfter(item->forOp);
         newResult = createToTensor(builder, loc, expanded);
       } else
