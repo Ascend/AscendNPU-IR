@@ -46,9 +46,9 @@ func.func @mm_01_mix_aiv(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
   %24 = arith.minsi %23, %c16 : index
   %extracted_slice = tensor.extract_slice %19[0, 0] [%24, 16] [1, 1] : tensor<16x16xf16> to tensor<?x16xf16>
   %subview_5 = memref.subview %reinterpret_cast_2[0, 0] [%24, 16] [1, 1] : memref<16x16xf16, strided<[16, 1], offset: ?>> to memref<?x16xf16, strided<[16, 1], offset: ?>>
-  // CHECK: scf.if
+  // CHECK-NOT: scf.if
   // CHECK: hivm.hir.store
-  // CHECK: limit_sub_block_id0
+  // CHECK-NOT: limit_sub_block_id0
   hivm.hir.store ins(%extracted_slice : tensor<?x16xf16>) outs(%subview_5 : memref<?x16xf16, strided<[16, 1], offset: ?>>)
   return
 }
@@ -974,5 +974,40 @@ func.func @_hstu_attn_fwd_mix_aiv_ub2ub(%arg0: memref<?xi8> {hacc.arg_type = #ha
     }
   }
   hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE1>, <PIPE_S>] flag = 2
+  return
+}
+
+// -----
+ 
+// CHECK-LABEL: func.func @_hstu_attn_fwd_mix_aiv
+// CHECK: %[[VAL_37:.*]] = memref.alloc() : memref<72x64xf32>
+// CHECK: %[[VAL_38:.*]] = memref.subview %[[VAL_37:.*]][0, 0] [{{.*}}, 64] [1, 1] : memref<72x64xf32> to memref<?x64xf32, strided<[64, 1]>>
+// CHECK: hivm.hir.load ins({{.*}} : memref<?x64xf32, strided<[256, 1], offset: ?>>) outs(%[[VAL_38:.*]] : memref<?x64xf32, strided<[64, 1]>>)
+// CHECK: %[[VAL_39:.*]] = bufferization.to_tensor %[[VAL_37:.*]] restrict writable : memref<72x64xf32>
+// CHECK: %[[VAL_45:.*]] = tensor.empty() : tensor<72x64xf16>
+// CHECK: %[[VAL_46:.*]] = hivm.hir.vcast ins(%[[VAL_39:.*]] : tensor<72x64xf32>) outs(%[[VAL_45:.*]] : tensor<72x64xf16>) -> tensor<72x64xf16>
+// CHECK-NOT: scf.if
+// CHECK: hivm.hir.store
+// CHECK-NOT: limit_sub_block_id0
+func.func @_hstu_attn_fwd_mix_aiv(%arg0: memref<?xf32>, %arg1: memref<?xf16>, %arg2: i32, %arg3: i32, %arg4: i32) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, parallel_mode = "simd"} {
+  %c144 = arith.constant 144 : index
+  %0 = arith.muli %arg2, %arg3 : i32
+  %1 = arith.muli %0, %arg4 : i32
+  %2 = arith.index_cast %1 : i32 to index
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%2], sizes: [144, 64], strides: [256, 1] : memref<?xf32> to memref<144x64xf32, strided<[256, 1], offset: ?>>
+  %alloc = memref.alloc() : memref<144x64xf32>
+  %3 = arith.addi %2, %c144 : index
+  %4 = arith.minsi %3, %2 : index
+  %5 = arith.subi %4, %2 : index
+  %subview = memref.subview %reinterpret_cast[0, 0] [%5, 64] [1, 1] : memref<144x64xf32, strided<[256, 1], offset: ?>> to memref<?x64xf32, strided<[256, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%5, 64] [1, 1] : memref<144x64xf32> to memref<?x64xf32, strided<[64, 1]>>
+  hivm.hir.load ins(%subview : memref<?x64xf32, strided<[256, 1], offset: ?>>) outs(%subview_0 : memref<?x64xf32, strided<[64, 1]>>)
+  %6 = bufferization.to_tensor %alloc restrict writable : memref<144x64xf32>
+  %7 = tensor.empty() : tensor<144x64xf16>
+  %8 = hivm.hir.vcast ins(%6 : tensor<144x64xf32>) outs(%7 : tensor<144x64xf16>) -> tensor<144x64xf16>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [%2], sizes: [144, 64], strides: [256, 1] : memref<?xf16> to memref<144x64xf16, strided<[256, 1], offset: ?>>
+  %extracted_slice = tensor.extract_slice %8[0, 0] [%5, 64] [1, 1] : tensor<144x64xf16> to tensor<?x64xf16>
+  %subview_2 = memref.subview %reinterpret_cast_1[0, 0] [%5, 64] [1, 1] : memref<144x64xf16, strided<[256, 1], offset: ?>> to memref<?x64xf16, strided<[256, 1], offset: ?>>
+  hivm.hir.store ins(%extracted_slice : tensor<?x64xf16>) outs(%subview_2 : memref<?x64xf16, strided<[256, 1], offset: ?>>)
   return
 }

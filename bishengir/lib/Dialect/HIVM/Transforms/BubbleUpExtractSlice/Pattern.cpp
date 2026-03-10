@@ -1203,9 +1203,90 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
       }
     return success();
     }
+    // Pattern 2: This deals with the pattern: memref.alloc() ->
+    // bufferization.to_tensor, with Subview Op + Load Op
+    if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
+      if (!subViewOp->hasOneUse() || !subViewOp.hasZeroOffset() ||
+          !subViewOp.hasUnitStride())
+        continue;
+      auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
+      if (!loadOp)
+        continue;
+      auto subViewOpGM = loadOp.getSrc().getDefiningOp<memref::SubViewOp>();
+      // TODO : support compile-triton-nsa-topk-bwd-dkdv.mlir
+      if (!subViewOpGM || !subViewOpGM.hasZeroOffset() ||
+          !subViewOpGM.hasUnitStride() || !subViewOpGM->hasOneUse())
+        continue;
+      auto castOp =
+          subViewOpGM.getSource().getDefiningOp<memref::ReinterpretCastOp>();
+      if (!castOp)
+        continue;
+      auto allocOp = subViewOp.getSource().getDefiningOp<memref::AllocOp>();
+      if (!allocOp)
+        continue;
+      LDBG("Pattern 2:\n"
+           << castOp << "\n"
+           << subViewOpGM << "\n"
+           << allocOp << "\n"
+           << subViewOp);
+      rewriter.setInsertionPoint(subViewOpGM);
+
+      // Compute new size
+      auto newSizes = subViewOpGM.getMixedSizes();
+      auto extractDims = getExtractOrInsertDim(sliceOp);
+      if (extractDims.size() != 1)
+        continue;
+      auto tilingDim = *extractDims.begin();
+      auto offsetVal = getValueOrCreateConstantIndexOp(
+          rewriter, sliceOp.getLoc(), offsets[tilingDim]);
+      auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
+                                                     newSizes[tilingDim]);
+      rewriter.setInsertionPointAfterValue(sizeVal);
+      auto tilingSize = getValueOrCreateConstantIndexOp(
+          rewriter, sliceOp.getLoc(), sizes[tilingDim]);
+      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal,
+                                                  sizeVal);
+      sizeVal =
+          rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
+      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal,
+                                                tilingSize);
+      newSizes[tilingDim] = sizeVal;
+
+      // Rewrite operations
+      rewriter.setInsertionPoint(subViewOpGM);
+      auto newCastValue = rewriter.create<memref::SubViewOp>(
+          castOp.getLoc(), castOp, offsets, sizes, strides);
+      auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
+          subViewOpGM.getLoc(), newCastValue, subViewOpGM.getMixedOffsets(),
+          newSizes, subViewOpGM.getMixedStrides());
+      rewriter.setInsertionPoint(allocOp);
+      auto resultType =
+          dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
+      allocOp = rewriter.replaceOpWithNewOp<memref::AllocOp>(
+          allocOp,
+          MemRefType::get(resultType.getShape(), resultType.getElementType()));
+      rewriter.setInsertionPoint(subViewOp);
+      auto newSubViewOp = rewriter.create<memref::SubViewOp>(
+          subViewOp.getLoc(), allocOp, subViewOp.getMixedOffsets(), newSizes,
+          subViewOp.getMixedStrides());
+
+      rewriter.modifyOpInPlace(loadOp, [&]() {
+        loadOp.getSrcMutable().set(newSubViewOpGM);
+        loadOp.getDstMutable().set(newSubViewOp);
+      });
+
+      rewriter.setInsertionPoint(sliceOp);
+      rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
+          sliceOp, allocOp.getResult(), true, true);
+
+      rewriter.eraseOp(subViewOp);
+      rewriter.eraseOp(subViewOpGM);
+      rewriter.eraseOp(ToTensorOp);
+      return success();
+    }
   }
 
-  // Pattern 2: This deals with the pattern: memref.alloc() -> memref.memory_space_cast -> bufferization.to_tensor
+  // Pattern 3: This deals with the pattern: memref.alloc() -> memref.memory_space_cast -> bufferization.to_tensor
   auto sourceOp = srcMemref.getDefiningOp(); // srcMemref is the source of ToTensorOp, it is bufferization.to_tensor
   if (auto memorySpaceCastOp = dyn_cast<memref::MemorySpaceCastOp>(sourceOp)){
     if (auto UbAllocOp = dyn_cast<memref::AllocOp>(memorySpaceCastOp.getSource().getDefiningOp())){
@@ -1300,7 +1381,7 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
   }
  }
 
-  // Pattern 3: This deals with the pattern: memref.alloc() -> memref.memory_space_cast -> memref.expand_shape -> bufferization.to_tensor
+  // Pattern 4: This deals with the pattern: memref.alloc() -> memref.memory_space_cast -> memref.expand_shape -> bufferization.to_tensor
   if (auto memExpandOp = dyn_cast<memref::ExpandShapeOp>(sourceOp)){
     if (auto memorySpaceCastOp = dyn_cast<memref::MemorySpaceCastOp>(memExpandOp.getSrc().getDefiningOp())){
       if (auto UbAllocOp = dyn_cast<memref::AllocOp>(memorySpaceCastOp.getSource().getDefiningOp())){
