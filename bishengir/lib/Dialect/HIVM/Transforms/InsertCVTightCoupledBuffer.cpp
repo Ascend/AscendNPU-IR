@@ -291,7 +291,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
       tensorType = origTensor.getType().cast<RankedTensorType>();
       M = newM;
     }
-    SmallVector<ReassociationIndices> reassociation = {{0, 1}, {2, 3}};
+    SmallVector<ReassociationIndices> reassociation = {{0}, {1,2}};
     auto blkOr = getBlockElemsFor32BAlign(elemType);
     if (failed(blkOr)) {
       return consumerOp->emitOpError()
@@ -302,7 +302,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     int64_t M1 = M / 16;
     // TODO: enhance UB alignment
     int64_t N1 = N / blk;
-    auto dstTy = RankedTensorType::get({M1, 16, N1, blk}, elemType);
+    auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
     auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
@@ -310,28 +310,32 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
         NamedAttribute(rewriter.getStringAttr("0"), rewriter.getIndexAttr(0)),
         NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(2))});
     markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    auto emptyTensorType = RankedTensorType::get({N1, M1, 16, blk}, elemType);
+    auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
-    SmallVector<int64_t> premVec = {2, 0, 1, 3};
+    SmallVector<int64_t> premVec = {1, 0, 2};
     auto transposed = rewriter.create<hivm::VTransposeOp>(
         loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
         emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
+    auto nzTy = RankedTensorType::get({N1, M1, 16, blk}, elemType);
+    SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
+    auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
+        loc, nzTy, transposed->getResult(0), nzReassoc);
 
     auto l1SpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
-    auto l1MemrefType = mlir::MemRefType::get(emptyTensorType.getShape(),
-                                              emptyTensorType.getElementType(),
+    auto l1MemrefType = mlir::MemRefType::get(nzTy.getShape(),
+                                              nzTy.getElementType(),
                                               nullptr, l1SpaceAttr);
     auto plainMemrefType = mlir::MemRefType::get(
-        emptyTensorType.getShape(), emptyTensorType.getElementType());
+        nzTy.getShape(), nzTy.getElementType());
     Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
     Value memspacecast =
         rewriter.create<memref::MemorySpaceCastOp>(loc, plainMemrefType, alloc);
     auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
-        loc, transposed->getResultTypes(), memspacecast,
+        loc, nzTy, memspacecast,
         /*restrict=*/true,
         /*writable=*/true);
-    Value src = transposed.getResults().front();
+    Value src = nzOp.getResult();
     Value dst = emptyTensor.getResult();
     rewriter.create<hivm::CopyOp>(loc,
                                   /*resultType=*/TypeRange(),

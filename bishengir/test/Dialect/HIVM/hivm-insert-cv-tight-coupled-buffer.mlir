@@ -59,14 +59,15 @@ module {
 
     %vf_res = func.call @vf_mm_func(%a) {hivm.vector_function}
               : (tensor<16x16xf16>) -> tensor<16x16xf16>
-    // CHECK: %[[EXPAND:.*]] = tensor.expand_shape {{.*}} {{\[\[0, 1\], \[2, 3\]\]}} output_shape {{\[1, 16, 1, 16\]}} : tensor<16x16xf16> into tensor<1x16x1x16xf16>
-    // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<1x1x16x16xf16>
+    // CHECK: %[[EXPAND:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+    // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<1x16x16xf16>
     // CHECK: %[[TRANSPOSE:.*]] =  hivm.hir.vtranspose ins(%[[EXPAND]] : {{.*}}) outs(%[[EMPTY_TENSOR]]
+    // CHECK: %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
 
     // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
     // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : 
     // CHECK: %[[EMPTY_T:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : 
-    // CHECK: hivm.hir.copy ins(%[[TRANSPOSE]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
+    // CHECK: hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
     %mm = hivm.hir.mmadL1
             ins(%vf_res, %b, %true, %c16, %c16, %c16
                 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
@@ -106,13 +107,14 @@ module {
   // CHECK:   %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f16) outs(%[[EMPTY2]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   %[[EXTRACT:.*]] = tensor.extract_slice %[[ARG0]][0, 0] [%[[C16]], %[[C16]]] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
   // CHECK:   %[[INSERT:.*]] = tensor.insert_slice %[[EXTRACT]] into %[[VBRC]][0, 0] [%[[C16]], %[[C16]]] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
-  // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[INSERT]] {{\[\[0, 1\], \[2, 3\]\]}} output_shape {{\[1, 16, 1, 16\]}} : tensor<16x16xf16> into tensor<1x16x1x16xf16>
-  // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x1x16x16xf16>
-  // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<1x16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x1x16x16xf16>) permutation = [2, 0, 1, 3] -> tensor<1x1x16x16xf16>
+  // CHECK:   %[[EXPAND:.*]] = tensor.expand_shape %[[INSERT]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+  // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x16x16xf16>
+  // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
+  // CHECK:   %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
   // CHECK:   %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
   // CHECK:   %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
   // CHECK:   %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x16xf16>
-  // CHECK:   hivm.hir.copy ins(%[[TRANSPOSE]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
+  // CHECK:   hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
   // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[ARG0]], %[[BUF_TENSOR:.*]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%[[EMPTY1]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   return %[[MM]] : tensor<16x16xf16>
 }
@@ -156,13 +158,14 @@ module {
   // CHECK:   } {ExtractedLoadOrStore}
   // CHECK:   %[[EXTRACT:.*]] = tensor.extract_slice %[[ARG0]][0, 0] [%[[C16]], %[[C16]]] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
   // CHECK:   %[[INSERT:.*]] = tensor.insert_slice %[[EXTRACT]] into %[[FOR_RES]][0, 0] [%[[C16]], %[[C16]]] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
-  // CHECK:   %[[EXPAND:.*]] = tensor.expand_shape %[[INSERT]] {{\[\[0, 1\], \[2, 3\]\]}} output_shape {{\[1, 16, 1, 16\]}} : tensor<16x16xf16> into tensor<1x16x1x16xf16>
-  // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x1x16x16xf16>
-  // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<1x16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x1x16x16xf16>) permutation = [2, 0, 1, 3] -> tensor<1x1x16x16xf16>
+  // CHECK:   %[[EXPAND:.*]] = tensor.expand_shape %[[INSERT]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+  // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x16x16xf16>
+  // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
+  // CHECK:   %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
   // CHECK:   %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
   // CHECK:   %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
   // CHECK:   %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x16xf16>
-  // CHECK:   hivm.hir.copy ins(%[[TRANSPOSE]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
+  // CHECK:   hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
   // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[ARG0]], %[[BUF_TENSOR:.*]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%[[EMPTY0]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   return %[[MM]] : tensor<16x16xf16>
 }
@@ -171,13 +174,14 @@ module {
 module {
   // CHECK-LABEL: func.func @test_vector_mm(
   // CHECK: %[[VMUL:.*]] = hivm.hir.vmul ins({{.*}} : tensor<16x16xf32>, f32) outs({{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
-  // CHECK: %[[EXPAND:.*]] = tensor.expand_shape {{.*}} {{\[\[0, 1\], \[2, 3\]\]}} output_shape {{\[1, 16, 2, 8\]}} : tensor<16x16xf32> into tensor<1x16x2x8xf32>
-  // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<2x1x16x8xf32>
+  // CHECK: %[[EXPAND:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 2, 8\]}} : tensor<16x16xf32> into tensor<16x2x8xf32>
+  // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<2x16x8xf32>
   // CHECK: %[[TRANSPOSE:.*]] =  hivm.hir.vtranspose ins(%[[EXPAND]] : {{.*}}) outs(%[[EMPTY_TENSOR]]
+  // CHECK: %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[2, 1, 16, 8\]}} : tensor<2x16x8xf32> into tensor<2x1x16x8xf32>
   // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
   // CHECK: %[[CAST0:.*]] = memref.memory_space_cast %[[ALLOC0]] :
   // CHECK: %[[T0:.*]] = bufferization.to_tensor %[[CAST0]] restrict writable : memref<2x1x16x8xf32>
-  // CHECK: hivm.hir.copy ins(%[[TRANSPOSE]] : tensor<2x1x16x8xf32>) outs(%[[CAST0:.*]] : memref<2x1x16x8xf32>)
+  // CHECK: hivm.hir.copy ins(%[[EXPAND0]] : tensor<2x1x16x8xf32>) outs(%[[CAST0:.*]] : memref<2x1x16x8xf32>)
   func.func @test_vector_mm(%arg0 : memref<?xf32>) {
     %cst_1 = arith.constant 2.000000e+00 : f32
     %c16 = arith.constant 16 : index
