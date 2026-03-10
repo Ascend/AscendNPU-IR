@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
@@ -45,6 +46,12 @@ static bool isBF16ElemType(Operation *op) {
       return true;
   }
   return false;
+}
+
+static void setFastMathContractAtttr(Operation *castOp) {
+  auto fastMathAttr = arith::FastMathFlagsAttr::get(
+    castOp->getContext(), arith::FastMathFlags::contract);
+  castOp->setAttr(mlir::arith::FastMathFlagsAttr::name, fastMathAttr);
 }
 
 static bool shouldLegalizeBF16Op(Operation *op) {
@@ -123,6 +130,9 @@ static void createF32ElementTypeOpRegion(Op bf16Op, PatternRewriter &rewriter) {
                       ? castTo(rewriter, operand,
                                /*targetElemType=*/rewriter.getF32Type())
                       : operand;
+              if (Operation *castOp =
+                      castedOperand.getDefiningOp<hfusion::CastOp>())
+                setFastMathContractAtttr(castOp);
               // only replace operand used in this regionOp, rely on later
               // CSE and DCE to eliminate duplicate value
               rewriter.replaceUsesWithIf(operand, castedOperand,
@@ -152,6 +162,8 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
         getElementTypeOrSelf(oper.getType()).isBF16()
             ? castTo(rewriter, oper, /*targetElemType=*/f32Type)
             : oper;
+    if (Operation *castOp = castedOperand.getDefiningOp<hfusion::CastOp>())
+      setFastMathContractAtttr(castOp);
     castedOperands.push_back(castedOperand);
   }
 
@@ -165,6 +177,8 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
     Value castedResult =
         resType.isF32() ? castTo(rewriter, res, /*targetElemType=*/bf16Type)
                         : res;
+    if (Operation *castOp = castedResult.getDefiningOp<hfusion::CastOp>())
+      setFastMathContractAtttr(castOp);
     castedResults.push_back(castedResult);
   }
 
