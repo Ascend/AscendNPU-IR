@@ -2286,7 +2286,10 @@ SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
   llvm_unreachable("Not implemented");
 #else
-  SmallVector<utils::IteratorType> result(getInit().getType().getRank(),
+  mlir::Value initData = getInit()[0];
+  mlir::Type initDataType = initData.getType();
+  mlir::ShapedType initShapeType = mlir::cast<mlir::ShapedType>(initDataType);
+  SmallVector<utils::IteratorType> result(initShapeType.getRank(),
                                           utils::IteratorType::parallel);
   return result;
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -2294,7 +2297,10 @@ SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 
 ArrayAttr GatherMaskOp::getIndexingMaps() {
   MLIRContext *ctx = getContext();
-  int64_t numIters = getInit().getType().getRank();
+  mlir::Value initData = getInit()[0];
+  mlir::Type initDataType = initData.getType();
+  mlir::ShapedType initShapeType = mlir::cast<mlir::ShapedType>(initDataType);
+  int64_t numIters = initShapeType.getRank();
 
   SmallVector<AffineExpr> dims(numIters);
   auto dimsArrayRef = MutableArrayRef(dims);
@@ -2303,7 +2309,10 @@ ArrayAttr GatherMaskOp::getIndexingMaps() {
   AffineMap identityMap = AffineMap::getMultiDimIdentityMap(numIters, ctx);
   AffineMapAttr identityMapAttr = AffineMapAttr::get(identityMap);
 
-  return ArrayAttr::get(ctx, {identityMapAttr, identityMapAttr, identityMapAttr});
+  AffineMap scalarMap = AffineMap::get(1, 0, getAffineConstantExpr(0, ctx), ctx); 
+  AffineMapAttr scalarMapAttr = AffineMapAttr::get(scalarMap);
+
+  return ArrayAttr::get(ctx, {identityMapAttr, identityMapAttr, identityMapAttr, scalarMapAttr});
 }
 
 void GatherMaskOp::getEffects(
@@ -2312,9 +2321,13 @@ void GatherMaskOp::getEffects(
 }
 
 void GatherMaskOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                         Value src, Value mask, Value init) {
-  auto resultTy = dyn_cast<TensorType>(init.getType());
-  buildStructuredOp(odsBuilder, odsState, resultTy, {src, mask}, init, {},
+                         Value src, Value mask, ValueRange init) {
+  SmallVector<Type, 2> resultTys;
+  for (Value initVal : init) {
+    resultTys.push_back(initVal.getType());
+  }
+  
+  buildStructuredOp(odsBuilder, odsState, resultTys, {src, mask}, init, {},
                     getRegionBuilder());
 }
 
@@ -2326,23 +2339,31 @@ std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
 #endif
 GatherMaskOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs
-#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-            , function_ref<InFlightDiagnostic()> emitError
-#endif
-  ) {
-    assert(block.getNumArguments() == 3 &&
-           "GatherMaskOp expecting 3 block arguments: src, mask, init");
+            ArrayRef<NamedAttribute> /*attrs*/) {
     Value srcVal = block.getArgument(0);
     Value maskVal = block.getArgument(1);
-    Value initVal = block.getArgument(2);
-    Type i1Type = builder.getI1Type();
+    ValueRange initArgs = block.getArguments().drop_front(2);
 
+    Type i1Type = builder.getI1Type();
     if (maskVal.getType() != i1Type) {
       maskVal = builder.create<arith::TruncIOp>(builder.getLoc(), i1Type, maskVal);
     }
-    Value yieldVal = builder.create<arith::SelectOp>(maskVal, srcVal, initVal);
-    builder.create<linalg::YieldOp>(yieldVal);
+
+    SmallVector<Value, 2> yieldVals;
+    for (size_t i = 0; i < initArgs.size(); ++i) {
+      Value initVal = initArgs[i];
+      if (i == 0) {
+        yieldVals.push_back(builder.create<arith::SelectOp>(maskVal, srcVal, initVal));
+      } else {
+        yieldVals.push_back(builder.create<arith::ConstantOp>(
+            builder.getLoc(),
+            builder.getI32IntegerAttr(0)
+        ));
+      }
+    }
+
+
+    builder.create<linalg::YieldOp>(builder.getLoc(), yieldVals);
   };
 }
 
@@ -2384,12 +2405,12 @@ LogicalResult GatherMaskOp::verify() {
   }
 
   if (isTensorSemantic) {
-    if (getNumResults() != 1) {
-      return emitOpError("expecting exactly 1 result for tensor semantics, but got ") << getNumResults();
+    if (getNumResults() != 2) {
+      return emitOpError("expecting exactly 2 result for tensor semantics, but got ") << getNumResults();
     }
     Value resultValue = getResult()[0];
     Type resultType = resultValue.getType();
-    Type initType = getInit().getType();
+    Type initType = getInit()[0].getType();
     if (resultType != initType) {
       return emitOpError("tensor semantics: result type (")
              << resultType << ") must match init type (" << initType << ")";
@@ -2423,7 +2444,7 @@ LogicalResult GatherMaskOp::verify() {
 
   std::optional<int64_t> srcRank = getRank(getSrc());
   std::optional<int64_t> maskRank = getRank(getMask());
-  std::optional<int64_t> initRank = getRank(getInit());
+  std::optional<int64_t> initRank = getRank(getInit()[0]);
 
   // Check: ranks must match for ranked types; skip for unranked types (adapt to any shape)
   if (srcRank != -1 && maskRank != -1 && initRank != -1) {
@@ -2436,7 +2457,7 @@ LogicalResult GatherMaskOp::verify() {
   }
 
   Type srcElementType = getElementTypeOrSelf(getSrc());
-  Type initElementType = getElementTypeOrSelf(getInit());
+  Type initElementType = getElementTypeOrSelf(getInit()[0]);
   if (srcElementType != initElementType) {
     return emitOpError("src element type (") << srcElementType
            << ") must match init element type (" << initElementType << ")";

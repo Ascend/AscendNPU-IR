@@ -265,9 +265,8 @@ def GatherOp
 def GatherMaskOp
     : HFusionStructuredBase_Op<
           "gather_mask", [
-              AllRanksMatch<["src", "mask", "init"]>,    
-              AllShapesMatch<["src", "mask", "init"]>,   
-              AllElementTypesMatch<["src", "init"]>,     
+              AllRanksMatch<["src", "mask"]>,    
+              AllShapesMatch<["src", "mask"]>,        
               ResultOnlyIfTensor
           ]>
 {
@@ -279,22 +278,23 @@ def GatherMaskOp
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
     Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`), 
     and returns `init` as `result` for functional compatibility.
-    The `init`/`result` tensor has the same shape and element type as the `src` tensor.(currently only suppport 1D)
-    
+    The `init`/`result` tensor has the same shape and element type as the `src` tensor.
+    Additionally, returns `dst_size` which represents the actual length of the gathered data.
+
     Usage:
-      result = gather_mask(src, mask, init)  
+      result, dst_size = gather_mask(src, mask, init)  
   }];
 
   let arguments = (ins 
     AnyShaped:$src,
     AnyShaped:$mask,
-    AnyShaped:$init  
+    Variadic<AnyShaped>:$init  
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let regions = (region AnyRegion:$region);  
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilder<(ins "Value":$src, "Value":$mask, "Value":$init)>  
+    OpBuilder<(ins "Value":$src, "Value":$mask, "ValueRange":$init)>  
   ];
   let hasCustomAssemblyFormat = 1; 
   let hasVerifier = 1;  

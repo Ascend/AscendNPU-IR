@@ -1595,7 +1595,7 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is True.
     Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
     and returns the `dst` tensor as `result` for functional compatibility.
-    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.(currently only suppport 1D)
+    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
 
     Arguments:
       * `src`: the tensor/memref from which to gather elements
@@ -1603,15 +1603,14 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
       * `dst`: the pre-allocated tensor/memref to store the gathered elements (InPlace write)
     Results:
       * `result`: the same as `dst` (functional return for compatibility)
-    TODO: 
-      * `dst_size`: returning the size of dst as this result
-
+      * `dst_size`: the actual number of elements gathered from src
+    
     Usage:
-      result = gather_mask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst : tensor<16xf32>)
+      result_data, result_size = vgathermask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst_data, %dst_size : tensor<16xf32>, tensor<1xi64>)
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$mask,
-                       TensorOrMemref:$dst  
+                       Variadic<TensorOrMemref>:$dst  
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{

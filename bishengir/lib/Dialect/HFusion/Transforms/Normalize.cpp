@@ -6191,40 +6191,53 @@ struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
 
   LogicalResult matchAndRewrite(hfusion::GatherMaskOp op,
                                 PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
+    if (!op.hasPureTensorSemantics())
       return failure();
-    }
 
-    Location loc = op.getLoc();
+    auto srcElemTy = getElementTypeOrSelf(op.getSrc().getType());
+    auto maskElemTy = getElementTypeOrSelf(op.getMask().getType());
+
+    bool isSrcNeedCast = srcElemTy.isInteger(1) || srcElemTy.isInteger(8);
+    bool isMaskNeedCast = maskElemTy.isInteger(8);
+
+    if (!isSrcNeedCast && !isMaskNeedCast)
+      return failure();
+
+    if (!maskElemTy.isInteger(8) && !maskElemTy.isInteger(1))
+      return failure();
+
+    Location loc = op->getLoc();
     Value src = op.getSrc();
     Value mask = op.getMask();
-    Value init = op.getInit();
+    Value initData = op.getInit()[0];
+    Value initSize = op.getInit()[1];
 
-    auto maskType = mlir::dyn_cast<RankedTensorType>(mask.getType());
-    if (!maskType) return failure();
+    int srcBitWidth = srcElemTy.getIntOrFloatBitWidth();
 
-    Type elemTy = maskType.getElementType();
-
-    if (elemTy.isInteger(1)) {
-      return failure();
+    if (isSrcNeedCast) {
+      src = hfusion::castTo(rewriter, src, rewriter.getF16Type(),
+                            hfusion::RoundMode::RINT);
+      initData = hfusion::castTo(rewriter, initData, rewriter.getF16Type(),
+                                 hfusion::RoundMode::RINT);
     }
 
-    if (!elemTy.isInteger(8)) {
-      return failure();
+    if (isMaskNeedCast) {
+      mask = hfusion::castTo(rewriter, mask, rewriter.getI1Type(),
+                             hfusion::RoundMode::RINT);
     }
-
-    Value newMask = hfusion::castTo(
-        rewriter, mask,
-        rewriter.getI1Type(),
-        hfusion::RoundMode::RINT,
-        /*dst=*/std::nullopt,
-        /*enableOverflow=*/false,
-        hfusion::TypeFn::cast_signed);
 
     auto newOp = rewriter.create<hfusion::GatherMaskOp>(
-        loc, src, newMask, init);
+        loc, src, mask, ValueRange{initData, initSize});
 
-    rewriter.replaceOp(op, newOp->getResults());
+    Value finalResult = newOp->getResults()[0];
+    if (isSrcNeedCast) {
+      finalResult = hfusion::castTo(rewriter, finalResult,
+                                    rewriter.getIntegerType(srcBitWidth),
+                                    hfusion::RoundMode::RINT);
+    }
+    Value finalSize = newOp->getResults()[1];
+
+    rewriter.replaceOp(op, {finalResult, finalSize});
     return success();
   }
 };

@@ -667,12 +667,13 @@ struct HFusionToHIVMGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp
     auto resultTypeRange = op.hasPureBufferSemantics()
                                ? TypeRange()  
                                : TypeRange(op->getResultTypes());  
+    mlir::ValueRange dstOperands = op.getInit();                        
     rewriter.replaceOpWithNewOp<hivm::VGatherMaskOp>(
         op,
         resultTypeRange,
         op.getSrc(),
         op.getMask(),
-        op.getInit()
+        dstOperands
     );
 
     return success();

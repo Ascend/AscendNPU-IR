@@ -173,7 +173,8 @@ SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
 //===----------------------------------------------------------------------===//
 
 SmallVector<hivm::IteratorType> VGatherMaskOp::getIteratorTypesArray() {
-  Value dst = getDst(); 
+  OperandRange dstRange = getDst();
+  Value dst = dstRange.front();
   int64_t rank = getRankFromShapedTypeValue(dst);
   auto iteratorTypes = SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
   return iteratorTypes;
