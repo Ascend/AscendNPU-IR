@@ -101,6 +101,12 @@ public:
   }
   bool shouldCompileTriton() const { return enableTritonKernelCompileFlag; }
 
+  BiShengIRCompileMainConfig &compileDotScaled(bool compile) {
+    enableDotScaledCompileFlag = compile;
+    return *this;
+  }
+  bool shouldcompileDotScaled() const { return enableDotScaledCompileFlag; };
+
   BiShengIRCompileMainConfig &compileHFusion(bool compile) {
     enableHFusionCompileFlag = compile;
     return *this;
@@ -707,6 +713,9 @@ protected:
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   /// Enable Triton Dialect compile.
   bool enableTritonIRCompileFlag{false};
+  
+  /// Enable DotScaled compile.
+  bool enableDotScaledCompileFlag{false};
 #endif
 
   /// Enable BiShengHIR HFusion compile.

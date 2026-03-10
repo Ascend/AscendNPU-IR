@@ -218,6 +218,25 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
         << "[WARNING] No function with attribute mix_mode found in this module";
     return success();
   }
+
+  bool foundDotScaled = false;
+  module.walk([&](Operation* op) {
+    if (auto matmulMxOp = cast<hfusion::MatMulMxOp>(op)) {
+      foundDotScaled = true;
+      return WalkResult::interrupt();
+    } else if (auto funcOp = cast<func::FuncOp>(op)) {
+      if (funcOp->hasAttr("IsDotScaleKernel")) {
+        foundDotScaled = true;
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  if (foundDotScaled) {
+    config.mixedCV(false);
+    return success();
+  }
+
   auto first =
       (*funcs.begin())->getAttrOfType<StringAttr>("mix_mode").getValue();
   if (!llvm::all_of(funcs, [&](const func::FuncOp &func) {
@@ -228,3 +247,17 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
   config.mixedCV(first != StringRef{"aiv"});
   return success();
 }
+
+llvm::LogicalResult
+inferDotScale(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
+  module.walk([&](func::FuncOp funcOp) {
+    if (funcOp->hasAttr("IsDotScaleKernel")) {
+      config.mixedCV(false);
+      config.compileDotScaled(true);
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return success();
+}
+

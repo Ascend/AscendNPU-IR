@@ -108,6 +108,10 @@ int main(int argc, char **argv) {
       llvm::errs() << "[ERROR] Failed to infer mix mode\n";
       return EXIT_FAILURE;
     }
+    if (failed(inferDotScale(module, config))) {
+      llvm::errs() << "[ERROR] Failed to infer dot scale\n";
+      return EXIT_FAILURE;
+    }
   }
 
   if (failed(bishengir::runBiShengIRHIVMPipeline(module, config))) {

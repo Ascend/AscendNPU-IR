@@ -121,3 +121,69 @@ func.func @histogram_nomask(%arg0: tensor<8xi32>) -> tensor<4xi32> {
   return %res : tensor<4xi32>
 }
 
+// -----
+module {
+  func.func @dot_scale_kernel_2D(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf8E5M2>, %arg3: i32, %arg4: memref<?xi8>, %arg5: memref<?xf8E5M2>, %arg6: i32, %arg7: memref<?xi8>, %arg8: memref<?xf32>, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32) {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<64x64xf32>
+    %1 = linalg.fill ins(%cst : f32) outs(%0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [64, 64], strides: [64, 1] : memref<?xf8E5M2> to memref<64x64xf8E5M2, strided<[64, 1]>>
+    %alloc = memref.alloc() : memref<64x64xf8E5M2>
+    memref.copy %reinterpret_cast, %alloc : memref<64x64xf8E5M2, strided<[64, 1]>> to memref<64x64xf8E5M2>
+    %2 = bufferization.to_tensor %alloc restrict writable : memref<64x64xf8E5M2>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [64, 2], strides: [2, 1] : memref<?xi8> to memref<64x2xi8, strided<[2, 1]>>
+    %alloc_1 = memref.alloc() : memref<64x2xi8>
+    memref.copy %reinterpret_cast_0, %alloc_1 : memref<64x2xi8, strided<[2, 1]>> to memref<64x2xi8>
+    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<64x2xi8>
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [64, 64], strides: [64, 1] : memref<?xf8E5M2> to memref<64x64xf8E5M2, strided<[64, 1]>>
+    %alloc_3 = memref.alloc() : memref<64x64xf8E5M2>
+    memref.copy %reinterpret_cast_2, %alloc_3 : memref<64x64xf8E5M2, strided<[64, 1]>> to memref<64x64xf8E5M2>
+    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<64x64xf8E5M2>
+    %reinterpret_cast_4 = memref.reinterpret_cast %arg7 to offset: [0], sizes: [64, 2], strides: [2, 1] : memref<?xi8> to memref<64x2xi8, strided<[2, 1]>>
+    %alloc_5 = memref.alloc() : memref<64x2xi8>
+    memref.copy %reinterpret_cast_4, %alloc_5 : memref<64x2xi8, strided<[2, 1]>> to memref<64x2xi8>
+    %5 = bufferization.to_tensor %alloc_5 restrict writable : memref<64x2xi8>
+    // CHECK: %[[CST_7:.*]] = arith.constant 7 : i16
+    // CHECK: %[[EMPTY_SCALE_A_I16:.*]] = tensor.empty() : tensor<64x2xi16>
+    // CHECK: %[[SCALE_A_I16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<64x2xi8>) outs(%[[EMPTY_SCALE_A_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[EMPTY_SCALE_B_I16:.*]] = tensor.empty() : tensor<64x2xi16>
+    // CHECK: %[[SCALE_B_I16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%{{.*}}: tensor<64x2xi8>) outs(%[[EMPTY_SCALE_B_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[SEVEN_A:.*]] = linalg.fill ins(%[[CST_7]] : i16) outs(%[[EMPTY_SCALE_A_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[SCALE_A_SHL_7:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%[[SCALE_A_I16]], %[[SEVEN_A]] : tensor<64x2xi16>, tensor<64x2xi16>) outs(%[[EMPTY_SCALE_A_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[SEVEN_B:.*]] = linalg.fill ins(%[[CST_7]] : i16) outs(%[[EMPTY_SCALE_B_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[SCALE_B_SHL_7:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%[[SCALE_B_I16]], %[[SEVEN_B]] : tensor<64x2xi16>, tensor<64x2xi16>) outs(%[[EMPTY_SCALE_B_I16]] : tensor<64x2xi16>) -> tensor<64x2xi16>
+    // CHECK: %[[EMPTY_SCALE_A_BF16:.*]] = tensor.empty() : tensor<64x2xbf16>
+    // CHECK: %[[SCALE_A_BF16:.*]] = hfusion.bitcast ins(%[[SCALE_A_SHL_7]] : tensor<64x2xi16>) outs(%[[EMPTY_SCALE_A_BF16]] : tensor<64x2xbf16>) -> tensor<64x2xbf16>
+    // CHECK: %[[EMPTY_SCALE_B_BF16:.*]] = tensor.empty() : tensor<64x2xbf16>
+    // CHECK: %[[SCALE_B_BF16:.*]] = hfusion.bitcast ins(%[[SCALE_B_SHL_7]] : tensor<64x2xi16>) outs(%[[EMPTY_SCALE_B_BF16]] : tensor<64x2xbf16>) -> tensor<64x2xbf16>
+    // CHECK: %[[EMPTY_SCALE_A_F32:.*]] = tensor.empty() : tensor<64x2xf32>
+    // CHECK: %[[SCALE_A_F32:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%[[SCALE_A_BF16]] : tensor<64x2xbf16>) outs(%[[EMPTY_SCALE_A_F32]] : tensor<64x2xf32>) -> tensor<64x2xf32>
+    // CHECK: %[[EMPTY_SCALE_B_F32:.*]] = tensor.empty() : tensor<64x2xf32>
+    // CHECK: %[[SCALE_B_F32:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%[[SCALE_B_BF16]] : tensor<64x2xbf16>) outs(%[[EMPTY_SCALE_B_F32]] : tensor<64x2xf32>) -> tensor<64x2xf32>
+    // CHECK: %[[EMPTY_A_F16:.*]] = tensor.empty() : tensor<64x64xf16>
+    // CHECK: %[[A_F16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%2 : tensor<64x64xf8E5M2>) outs(%[[EMPTY_A_F16]] : tensor<64x64xf16>) -> tensor<64x64xf16>
+    // CHECK: %[[EMPTY_B_F16:.*]] = tensor.empty() : tensor<64x64xf16>
+    // CHECK: %[[B_F16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%4 : tensor<64x64xf8E5M2>) outs(%[[EMPTY_B_F16]] : tensor<64x64xf16>) -> tensor<64x64xf16>
+    // CHECK: %[[EMPTY_SCALE_A_F16:.*]] = tensor.empty() : tensor<64x2xf16>
+    // CHECK: %[[SCALE_A_F16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%[[SCALE_A_F32]] : tensor<64x2xf32>) outs(%[[EMPTY_SCALE_A_F16]] : tensor<64x2xf16>) -> tensor<64x2xf16>
+    // CHECK: %[[EMPTY_SCALE_B_F16:.*]] = tensor.empty() : tensor<64x2xf16>
+    // CHECK: %[[SCALE_B_F16:.*]] = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%[[SCALE_B_F32]] : tensor<64x2xf32>) outs(%[[EMPTY_SCALE_B_F16]] : tensor<64x2xf16>) -> tensor<64x2xf16>
+    // CHECK: %[[EMPTY_SCALE_A_BRC:.*]] = tensor.empty() : tensor<64x2x32xf16>
+    // CHECK: %[[SCALE_A_BRC:.*]] = linalg.broadcast ins(%[[SCALE_A_F16]] : tensor<64x2xf16>) outs(%[[EMPTY_SCALE_A_BRC]] : tensor<64x2x32xf16>) dimensions = [2] 
+    // CHECK: %[[SCALE_A_COLLAPSED:.*]] = tensor.collapse_shape %[[SCALE_A_BRC]] {{\[}}[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
+    // CHECK: %[[EMPTY_SCALE_B_BRC:.*]] = tensor.empty() : tensor<64x2x32xf16>
+    // CHECK: %[[SCALE_B_BRC:.*]] = linalg.broadcast ins(%[[SCALE_B_F16]] : tensor<64x2xf16>) outs(%[[EMPTY_SCALE_B_BRC]] : tensor<64x2x32xf16>) dimensions = [2] 
+    // CHECK: %[[SCALE_B_COLLAPSED:.*]] = tensor.collapse_shape %[[SCALE_B_BRC]] {{\[}}[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
+    // CHECK: %[[EMPTY_SCALE_B_TRANSPOSED:.*]] = tensor.empty() : tensor<64x64xf16>
+    // CHECK: %[[SCALE_B_TRANSPOSED:.*]] = linalg.transpose ins(%[[SCALE_B_COLLAPSED]] : tensor<64x64xf16>) outs(%[[EMPTY_SCALE_B_TRANSPOSED]] : tensor<64x64xf16>) permutation = [1, 0] 
+    // CHECK: %[[EMPTY_A_FINAL:.*]] = tensor.empty() : tensor<64x64xf16>
+    // CHECK: %[[EMPTY_B_FINAL:.*]] = tensor.empty() : tensor<64x64xf16>
+    // CHECK: %[[A_FINAL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[A_F16]], %[[SCALE_A_COLLAPSED]] : tensor<64x64xf16>, tensor<64x64xf16>) outs(%[[EMPTY_A_FINAL]] : tensor<64x64xf16>) -> tensor<64x64xf16>
+    // CHECK: %[[B_FINAL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[B_F16]], %[[SCALE_B_TRANSPOSED]] : tensor<64x64xf16>, tensor<64x64xf16>) outs(%[[EMPTY_B_FINAL]] : tensor<64x64xf16>) -> tensor<64x64xf16>
+    // CHECK: %[[RES:.*]] = linalg.matmul ins(%[[A_FINAL]], %[[B_FINAL]] : tensor<64x64xf16>, tensor<64x64xf16>) outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %6 = hfusion.matmul_mx ins(%2, %4, %3, %5 : tensor<64x64xf8E5M2>, tensor<64x64xf8E5M2>, tensor<64x2xi8>, tensor<64x2xi8>) outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %reinterpret_cast_6 = memref.reinterpret_cast %arg8 to offset: [0], sizes: [64, 64], strides: [64, 1] : memref<?xf32> to memref<64x64xf32, strided<[64, 1]>>
+    bufferization.materialize_in_destination %6 in writable %reinterpret_cast_6 : (tensor<64x64xf32>, memref<64x64xf32, strided<[64, 1]>>) -> ()
+    return
+  }
+}

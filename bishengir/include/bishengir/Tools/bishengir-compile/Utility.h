@@ -88,4 +88,7 @@ bool hasSplitModules(ModuleOp topMod);
 llvm::LogicalResult inferMixedCV(ModuleOp &module,
                                  bishengir::BiShengIRCompileMainConfig &config);
 
+llvm::LogicalResult inferDotScale(ModuleOp &module,
+                                  bishengir::BiShengIRCompileMainConfig &config);
+
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_UTILITY_H
