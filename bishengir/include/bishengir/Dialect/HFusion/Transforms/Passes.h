@@ -154,7 +154,7 @@ std::unique_ptr<Pass> createConstantizeTilingDataPass();
 
 /// Create a pass to label the triton entry kernel
 std::unique_ptr<Pass>
-createAdaptTritonKernelPass(std::string hivmcVersion = "");
+createAdaptTritonKernelPass();
 
 /// Create a pass to infer func fusion kind
 std::unique_ptr<Pass> createInferFuncFusionKind();

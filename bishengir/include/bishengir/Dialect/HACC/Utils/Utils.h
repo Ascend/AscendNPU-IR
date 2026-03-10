@@ -130,6 +130,10 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec);
 /// Get integer value from the spec entry.
 int64_t getIntegerSpecValue(DataLayoutEntryInterface entry);
 
+std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op);
+
+bool isAscend910_95(ModuleOp op);
+
 } // namespace utils
 
 /// Seperate modules containing host and device code

@@ -34,6 +34,17 @@ def ConvertToHIVMOp : Pass<"convert-to-hivm-op"> {
   ];
 }
 
+def EnableHIVMCCompatiblePrint : Pass<"enable-hivmc-compatible-print"> {
+  let summary = "Enable HIVMC version-compatible IR print";
+  let description = [{
+    Once HIVMC version-compatible IR print is enabled,
+    Operation::print(OpAsmPrinter) function will read the hivmc version attribute from moduleOp.
+    The corresponding hivmc version-compatible MLIR will be printed.
+  }];
+  let constructor = "mlir::hivm::createEnableHIVMCCompatiblePrintPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   let summary = "Normalize hivm matmul op";
   let constructor = "mlir::hivm::createNormalizeMatmulPass()";

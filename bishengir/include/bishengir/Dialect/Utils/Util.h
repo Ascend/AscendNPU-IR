@@ -571,18 +571,6 @@ getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank);
 
 } // namespace reshape_utils
 
-namespace version_utils {
-
-// Currently, we only handle compatibility between two hivmc versons
-// 1. early version: empty or fail to parse version
-// 2. new version: has meaningful version number
-//
-// TODO: support semantic version compatibility check in the future,
-// e.g. check compatibility between 1.0.0 and 2.0.0
-bool isCompatibleHIVMCVersion(StringRef versionStr);
-
-} // namespace version_utils
-
 } // namespace mlir
 
 #endif

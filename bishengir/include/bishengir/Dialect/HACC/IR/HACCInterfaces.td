@@ -156,4 +156,25 @@ def HACCTargetDeviceSpecInterface :
   ];
 }
 
+def HACCVersionInterface :
+  AttrInterface<"HACCVersionInterface"> {
+  let cppNamespace = "::mlir::hacc";
+  let description = [{
+    Version interface describing the version information.
+    The version information will be recorded as an HACC attribute in moduleOp.
+
+    Example:
+    ```
+    {hacc.hivmc_version: "1.0.0"}
+    ```
+  }];
+  let methods = [
+    InterfaceMethod<
+      /*description=*/"Returns the version information from the attribute.",
+      /*retTy=*/"std::optional<llvm::VersionTuple>",
+      /*methodName=*/"getParsedVersion"
+    >
+  ];
+}
+
 #endif // BISHENGIR_DIALECT_HACC_IR_HACCINTERFACES_TD

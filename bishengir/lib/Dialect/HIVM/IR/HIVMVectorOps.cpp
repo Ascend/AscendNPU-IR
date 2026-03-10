@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
@@ -135,6 +136,14 @@ void VBrcOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 LogicalResult VBrcOp::verify() {
   // tmpBuf can be null
   auto tmpBuf = getTempBuffer();
+  Type srcElemType = getElementTypeOrSelf(getSrc().getType());
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
+      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+    return emitOpError("Current hardware doesn't support fp8 type");
+
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
     return emitOpError() << "temp_buffer'rank should be one";
   }
@@ -698,6 +707,13 @@ bool VTransposeOp::isLastTwoAxesTranspose() {
 LogicalResult VTransposeOp::verify() {
   ArrayRef<int64_t> permutation = this->getPermutation();
   size_t permSize = permutation.size();
+  Type srcElemType = getElementTypeOrSelf(getSrc().getType());
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
+      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+    return emitOpError("Current hardware doesn't support fp8 type");
   if (permutation.empty()) {
     return emitOpError() << "Permutation array should not be empty.";
   }

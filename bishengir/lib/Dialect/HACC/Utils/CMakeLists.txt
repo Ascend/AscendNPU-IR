@@ -6,5 +6,6 @@ add_bishengir_dialect_library(BiShengIRHACCUtils
 
   LINK_LIBS PUBLIC
   BiShengIRHACCDialect
+  BiShengIRHACCTransforms
   MLIRLLVMCommonConversion
 )

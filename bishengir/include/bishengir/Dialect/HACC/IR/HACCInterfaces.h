@@ -26,6 +26,8 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 
+#include "llvm/Support/VersionTuple.h"
+
 /// Forward declarations. This is because the interface depends on HACC
 /// attributes.
 namespace mlir {

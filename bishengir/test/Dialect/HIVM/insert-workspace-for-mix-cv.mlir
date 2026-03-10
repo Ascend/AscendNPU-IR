@@ -12,7 +12,7 @@ func.func @insert_workspace_for_cc(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ff
     %2 = tensor.empty() : tensor<16x16xf16>
     // CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace() : memref<16x16xf16>
     // CHECK: %[[WORKSPACE_TENSOR:.*]] = bufferization.to_tensor %[[WORKSPACE]] restrict writable : memref<16x16xf16>
-    %3 = hivm.hir.fixpipe {enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NO_RELU>} ins(%0 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NO_RELU>} ins(%0 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %4 = tensor.empty() : tensor<16x16xf16>
     %5 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%4 : tensor<16x16xf16>) -> tensor<16x16xf16>
     %7 = tensor.empty() : tensor<16x16xf32>
@@ -33,7 +33,7 @@ func.func @insert_workspace_for_cv(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ff
     // CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace() : memref<16x16xf32>
     // CHECK: %[[OUTPUT_TENSOR:.*]] = bufferization.to_tensor %[[WORKSPACE]] restrict writable : memref<16x16xf32>
     %1 = tensor.empty() : tensor<16x16xf32>
-    %2 = hivm.hir.fixpipe {channel_split = false, enable_nz2nd, pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>, pre_relu = #hivm.fixpipe_pre_relu_mode<NO_RELU>} ins(%0 : tensor<16x16xf32>) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %2 = hivm.hir.fixpipe {channel_split = false, dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<NO_QUANT>, pre_relu = #hivm.fixpipe_pre_relu_mode<NO_RELU>} ins(%0 : tensor<16x16xf32>) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %3 = tensor.empty() : tensor<16x16xf32>
     %4 = hivm.hir.load ins(%2 : tensor<16x16xf32>) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %5 = tensor.empty() : tensor<16x16xf32>
@@ -93,7 +93,7 @@ module {
       %9 = tensor.empty() : tensor<32x16xf32>
       %10 = hivm.hir.mmadL1 ins(%extracted_slice, %extracted_slice_5, %true, %c32, %c64, %c16 : tensor<32x64xf16>, tensor<64x16xf16>, i1, index, index, index) outs(%9 : tensor<32x16xf32>) -> tensor<32x16xf32>
       %extracted_slice_6 = tensor.extract_slice %3[%arg9, 0, 0] [1, 32, 16] [1, 1, 1] : tensor<2x32x16xf32> to tensor<32x16xf32>
-      %11 = hivm.hir.fixpipe {enable_nz2nd} ins(%10 : tensor<32x16xf32>) outs(%extracted_slice_6 : tensor<32x16xf32>) -> tensor<32x16xf32>
+      %11 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%10 : tensor<32x16xf32>) outs(%extracted_slice_6 : tensor<32x16xf32>) -> tensor<32x16xf32>
       %inserted_slice = tensor.insert_slice %11 into %3[%arg9, 0, 0] [1, 32, 16] [1, 1, 1] : tensor<32x16xf32> into tensor<2x32x16xf32>
       scf.yield %inserted_slice : tensor<2x32x16xf32>
     }
@@ -112,9 +112,9 @@ module {
   func.func @insert_workspace_for_fixpipe_with_debug(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg1: tensor<16x16xf32>) {
     // CHECK: %[[WORKSPACE:.*]] = memref_ext.alloc_workspace() : memref<16x16xf32>
     // CHECK: %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[WORKSPACE]] restrict writable : memref<16x16xf32>
-    // CHECK: {{.*}} = hivm.hir.fixpipe {enable_nz2nd} ins({{.*}}: tensor<16x16xf32>) outs(%[[TO_TENSOR]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK: {{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins({{.*}}: tensor<16x16xf32>) outs(%[[TO_TENSOR]] : tensor<16x16xf32>) -> tensor<16x16xf32>
     %0 = tensor.empty() : tensor<16x16xf32>
-    %1 = hivm.hir.fixpipe {enable_nz2nd} ins(%arg1 : tensor<16x16xf32>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg1 : tensor<16x16xf32>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
     hivm.hir.debug {debugtype = "print", hex = false, prefix = " fixpipe_out ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %1 : tensor<16x16xf32>
     return
   }
