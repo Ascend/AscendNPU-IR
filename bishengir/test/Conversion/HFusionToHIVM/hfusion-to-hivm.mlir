@@ -944,3 +944,20 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @test_isinf_decompose
+module {
+  func.func @test_isinf_decompose(%arg0: tensor<4xf32>) -> tensor<4xi1> {
+    // CHECK-DAG: %[[POS_INF:.*]] = arith.constant 0x7F800000 : f32
+    // CHECK-DAG: %[[NEG_INF:.*]] = arith.constant 0xFF800000 : f32
+    // CHECK: linalg.generic
+    // CHECK: ^bb0(%[[IN:.*]]: f32, %[[OUT:.*]]: i1):
+    // CHECK:   %[[IS_POS:.*]] = arith.cmpf oeq, %[[IN]], %[[POS_INF]] : f32
+    // CHECK:   %[[IS_NEG:.*]] = arith.cmpf oeq, %[[IN]], %[[NEG_INF]] : f32
+    // CHECK:   %[[RES:.*]] = arith.ori %[[IS_POS]], %[[IS_NEG]] : i1
+    // CHECK:   linalg.yield %[[RES]] : i1
+    %0 = "hfusion.isinf"(%arg0) : (tensor<4xf32>) -> tensor<4xi1>
+    return %0 : tensor<4xi1>
+  }
+}

@@ -1,19 +1,21 @@
 // RUN: bishengir-opt --hfusion-decompose="hfusion-decompose-phase=after-hfusion-flatten" %s -split-input-file -verify-diagnostics | FileCheck %s
 
+
+
+
 // CHECK-LABEL: func.func @test_isfinite
 func.func @test_isfinite() -> tensor<8192xi1> {
   // CHECK: %[[ZERO:.*]] = tensor.empty() : tensor<8192xf32>
   %0 = tensor.empty() : tensor<8192xf32>
-  // CHECK: %[[ISINF:.*]] = hfusion.isinf %[[ZERO:.*]] : tensor<8192xf32> -> tensor<8192xi1>
-  // CHECK: %[[ISNAN:.*]] = hfusion.isnan %[[ZERO:.*]] : tensor<8192xf32> -> tensor<8192xi1>
-  // CHECK: %[[VOROUTPUT:.*]] = tensor.empty() : tensor<8192xi1>
-  // CHECK: %[[VOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[ISINF:.*]], %[[ISNAN:.*]] : tensor<8192xi1>, tensor<8192xi1>) outs(%[[VOROUTPUT:.*]] : tensor<8192xi1>) -> tensor<8192xi1>
-  // CHECK: %[[VNOTOUTPUT:.*]] = tensor.empty() : tensor<8192xi1>
-  // CHECK: %[[VNOT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[VOR:.*]] : tensor<8192xi1>) outs(%[[VNOTOUTPUT:.*]] : tensor<8192xi1>) -> tensor<8192xi1>
-  // CHECK: return %[[VNOT:.*]] : tensor<8192xi1>
+  // CHECK: %[[ISINF:.*]] = linalg.generic
+  // CHECK: %[[ISNAN:.*]] = hfusion.isnan %[[ZERO]]
+  // CHECK: %[[VOR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[ISINF]], %[[ISNAN]]
+  // CHECK: %[[VNOT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[VOR]]
+  // CHECK: return %[[VNOT]]
   %2 = hfusion.isfinite %0 : tensor<8192xf32> -> tensor<8192xi1>
   return %2 : tensor<8192xi1>
 }
+
 
 // -----
 
@@ -134,3 +136,18 @@ func.func @histogram_mask(%arg0: tensor<8xi32>, %mask: tensor<8xi1>)
          : tensor<8xi32>, tensor<8xi1> -> tensor<4xi32>
   return %res : tensor<4xi32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_isinf_decompose
+module {
+  func.func @test_isinf_decompose(%arg0: tensor<4xf32>) -> tensor<4xi1> {
+    // CHECK-DAG: %[[POS_INF:.*]] = arith.constant 0x7F800000 : f32
+    // CHECK-DAG: %[[NEG_INF:.*]] = arith.constant 0xFF800000 : f32
+    // CHECK: linalg.generic
+    // CHECK: ^bb0(%[[IN:.*]]: f32, %[[OUT:.*]]: i1):
+    // CHECK:   %[[IS_POS:.*]] = arith.cmpf oeq, %[[IN]], %[[POS_INF]] : f32
+    // CHECK:   %[[IS_NEG:.*]] = arith.cmpf oeq, %[[IN]], %[[NEG_INF]] : f32
+    // CHECK:   %[[RES:.*]] = arith.ori %[[IS_POS]], %[[IS_NEG]] : i1
+    // CHECK:   linalg.yield %[[RES]] : i1
+    %0 = "hfusion.isinf"(%arg0) : (tensor<4xf32>) -> tensor<4xi1>
+    return %0 : tensor<4xi1>
