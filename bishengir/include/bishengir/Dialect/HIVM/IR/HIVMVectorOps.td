@@ -509,7 +509,7 @@ class HIVM_ElementwiseBinaryOp<string mnemonic, list<Trait> traits = []> :
 
 def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-     OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
+     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
@@ -596,7 +596,7 @@ def VMulExtOp : HIVM_ElementwiseBinaryOp<"vmulext",
 def VSubOp
     : HIVM_ElementwiseBinaryOp<
           "vsub", [SameOperandsElementType, StaticMaxRankTrait<3>,
-                   OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
+                   OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
                    DeclareOpInterfaceMethods<ExtraBufferOpInterface,
                      ["getExtraBufferSize"]>,
                    DeclareOpInterfaceMethods<ImplByScalarOpInterface>,

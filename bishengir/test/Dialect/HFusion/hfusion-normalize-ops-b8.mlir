@@ -19,6 +19,22 @@ func.func @test_normalize_i8_elemwise_binary(%arg0: tensor<16xi8>, %arg1: tensor
 
 // -----
 
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+// CHECK-LABEL: @test_normalize_i8_elemwise_binary
+// CHECK-SAME: %[[arg0:.*]]: tensor<16xi8>, %[[arg1:.*]]: tensor<16xi8>
+// CHECK: %[[arg2:.*]] = tensor.empty()
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[arg0]], %[[arg1]] : tensor<16xi8>, tensor<16xi8>) outs(%[[arg2]] : tensor<16xi8>)
+  func.func @test_normalize_i8_elemwise_binary(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+    %dst = tensor.empty() : tensor<16xi8>
+    %res = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+          ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+    return %res : tensor<16xi8>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_normalize_triton_maximum
 // CHECK-DAG: %[[cast0:.*]] = hfusion.cast {{.*}}
 // CHECK-DAG: %[[cast1:.*]] = hfusion.cast {{.*}}

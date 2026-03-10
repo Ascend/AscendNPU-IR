@@ -4729,6 +4729,7 @@ private:
     if constexpr (std::is_same_v<OpType, linalg::ElemwiseUnaryOp> ||
                   std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
       // The following ops support i8 type in c310
+      // Could compute on i8 directly and no need cast to f16 nor f32
       if (archisAscend950) {
         if constexpr (std::is_same_v<OpType, linalg::AddOp> ||
                       std::is_same_v<OpType, linalg::SubOp> ||
@@ -4738,7 +4739,10 @@ private:
           return true;
         }
         if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>)
-          if (op.getFun() == linalg::BinaryFn::max_signed ||
+          if (
+              op.getFun() == linalg::BinaryFn::add ||
+              op.getFun() == linalg::BinaryFn::sub ||
+              op.getFun() == linalg::BinaryFn::max_signed ||
               op.getFun() == linalg::BinaryFn::min_signed ||
               op.getFun() == linalg::BinaryFn::max_unsigned ||
               op.getFun() == linalg::BinaryFn::min_unsigned)
@@ -4800,8 +4804,12 @@ private:
       }
       // should compute on f32 for high precision
       static DenseSet<linalg::BinaryFn> binarySet = {
-          linalg::BinaryFn::mul, linalg::BinaryFn::div_unsigned,
-          linalg::BinaryFn::div, linalg::BinaryFn::add, linalg::BinaryFn::sub};
+          linalg::BinaryFn::mul,
+          linalg::BinaryFn::div_unsigned,
+          linalg::BinaryFn::div,
+          linalg::BinaryFn::add,
+          linalg::BinaryFn::sub,
+      };
       return !binarySet.contains(func);
     }
     return true;
@@ -4816,8 +4824,12 @@ private:
     } else if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
       auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
       linalg::BinaryFn func = binOp.getFun();
+      // 910B: should compute on f32
       static DenseSet<linalg::BinaryFn> binarySet = {
-          linalg::BinaryFn::mul, linalg::BinaryFn::add, linalg::BinaryFn::sub};
+          linalg::BinaryFn::mul,
+          linalg::BinaryFn::add,
+          linalg::BinaryFn::sub,
+      };
       return binarySet.contains(func);
     }
     return false;
