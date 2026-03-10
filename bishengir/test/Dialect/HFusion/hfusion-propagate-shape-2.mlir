@@ -415,14 +415,14 @@ module {
 
 // -----
 // CHECK-LABEL:   func.func @extract_expand(
-// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0:.*]] {{\[\[}}0], [1, 2]] output_shape [2, 1, 2560] : tensor<2x2560xbf16> into tensor<2x1x2560xbf16>
-// CHECK: %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_1]][1, 0, 0] [1, 1, 2560] [1, 1, 1] : tensor<2x1x2560xbf16> to tensor<1x1x2560xbf16>
+// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0:.*]] {{\[\[}}0], [1, 2]] output_shape [2, 2, 1280] : tensor<2x2560xbf16> into tensor<2x2x1280xbf16>
+// CHECK: %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_1]][1, 0, 0] [1, 2, 1280] [1, 1, 1] : tensor<2x2x1280xbf16> to tensor<1x2x1280xbf16>
 module {
-  func.func @extract_expand(%arg0: tensor<2x2560xbf16>) -> (tensor<1x1x2560xbf16>) {
+  func.func @extract_expand(%arg0: tensor<2x2560xbf16>) -> (tensor<1x2x1280xbf16>) {
     %extracted_slice = tensor.extract_slice %arg0[1, 0] [1, 2560] [1, 1] : tensor<2x2560xbf16> to tensor<1x2560xbf16>
-    %0 = tensor.empty() : tensor<1x1x2560xbf16>
-    %expanded = tensor.expand_shape %extracted_slice [[0], [1, 2]] output_shape [1, 1, 2560] : tensor<1x2560xbf16> into tensor<1x1x2560xbf16>
-    %1 = hfusion.load ins(%expanded : tensor<1x1x2560xbf16>) outs(%0 : tensor<1x1x2560xbf16>) -> tensor<1x1x2560xbf16>
-    return %1 : tensor<1x1x2560xbf16>
+    %0 = tensor.empty() : tensor<1x2x1280xbf16>
+    %expanded = tensor.expand_shape %extracted_slice [[0], [1, 2]] output_shape [1, 2, 1280] : tensor<1x2560xbf16> into tensor<1x2x1280xbf16>
+    %1 = hfusion.load ins(%expanded : tensor<1x2x1280xbf16>) outs(%0 : tensor<1x2x1280xbf16>) -> tensor<1x2x1280xbf16>
+    return %1 : tensor<1x2x1280xbf16>
   }
 }

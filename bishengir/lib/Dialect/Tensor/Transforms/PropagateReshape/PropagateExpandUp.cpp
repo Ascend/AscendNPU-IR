@@ -1108,6 +1108,10 @@ LogicalResult handleExtractSliceOp(tensor::ExpandShapeOp expandOp,
   auto dropDims = extractSliceOp.getDroppedDims();
   auto expandedShape =
       getMixedSizesOrOutputShape(rewriter, expandOp.getResult());
+  if (isUnitDimReshape(convertToConstantValues(expandedShape), reassociation)) {
+    // skip collapseShape that only add unit dims
+    return failure();
+  }
   expandedShape = getUndroppedExpandedSubviewShape(rewriter, expandedShape,
                                                    reassociation, dropDims);
   auto res = getExtractSliceModifyingOp(

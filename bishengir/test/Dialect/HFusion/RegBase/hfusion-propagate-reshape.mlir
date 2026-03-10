@@ -532,6 +532,7 @@ func.func @test_subview_expand_stride_not_unit(){
 }
 
 // -----
+// CHECK-LABEL: func.func @avoid_infinite_loop(
 // CHECK: return %expanded : tensor<20x1x2x1x21xf32>
 func.func @avoid_infinite_loop(%arg0: tensor<20x2x21xf32>, %arg1: tensor<20x21xf32>, %arg2: tensor<20x1x2x1x21xf32>, %arg3: f32, %arg4: tensor<20x1x2x1x21xf32>) -> tensor<20x1x2x1x21xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
   %collapsed = tensor.collapse_shape %arg4 [[0, 1], [2, 3], [4]] : tensor<20x1x2x1x21xf32> into tensor<20x2x21xf32>
@@ -550,6 +551,7 @@ func.func @avoid_infinite_loop(%arg0: tensor<20x2x21xf32>, %arg1: tensor<20x21xf
 }
 
 // -----
+// CHECK-LABEL: func.func @avoid_infinite_loop2(
 // CHECK: tensor.insert_slice %[[VAL_1:.*]] into %[[VAL_2:.*]][0, 4] [3, 1] [1, 1] : tensor<3xi64> into tensor<3x10xi64>
 func.func @avoid_infinite_loop2(%arg0: tensor<3xi64>, %arg1: tensor<3xi64>, %arg2: tensor<3xi64>, %arg3: tensor<3xi64>, %arg4: tensor<3xi64>, %arg5: tensor<3xi64>, %arg6: i64, %arg7: tensor<3x10xi64>) -> tensor<3x10xi64> {
   %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [3, 1] : tensor<3xi64> into tensor<3x1xi64>
@@ -576,4 +578,25 @@ func.func @avoid_infinite_loop2(%arg0: tensor<3xi64>, %arg1: tensor<3xi64>, %arg
   %7 = hfusion.select ins(%6, %arg6, %arg4 : tensor<3xi1>, i64, tensor<3xi64>) outs(%1 : tensor<3xi64>) -> tensor<3xi64>
   %inserted_slice_9 = tensor.insert_slice %7 into %concat_8[0, 4] [3, 1] [1, 1] : tensor<3xi64> into tensor<3x10xi64>
   return %inserted_slice_9 : tensor<3x10xi64>
+}
+
+// -----
+// CHECK-LABEL: func.func @avoid_infinite_loop3(
+// CHECK: tensor.extract_slice %[[VAL_1:.*]][0, 26] [2, 1] [1, 1] : tensor<2x27xf32> to tensor<2xf32>
+func.func @avoid_infinite_loop3(%arg0: tensor<2x24xf32>, %arg1: tensor<2xf32>, %arg2: tensor<2xf32>, %arg3: tensor<2xf32>) -> tensor<2x27xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = tensor.empty() : tensor<2x27xf32>
+  %1 = linalg.fill ins(%cst : f32) outs(%0 : tensor<2x27xf32>) -> tensor<2x27xf32>
+  %inserted_slice = tensor.insert_slice %arg0 into %1[0, 0] [2, 24] [1, 1] : tensor<2x24xf32> into tensor<2x27xf32>
+  %expanded = tensor.expand_shape %arg1 [[0, 1]] output_shape [2, 1] : tensor<2xf32> into tensor<2x1xf32>
+  %inserted_slice_0 = tensor.insert_slice %expanded into %inserted_slice[0, 24] [2, 1] [1, 1] : tensor<2x1xf32> into tensor<2x27xf32>
+  %extracted_slice = tensor.extract_slice %inserted_slice_0[0, 0] [2, 25] [1, 1] : tensor<2x27xf32> to tensor<2x25xf32>
+  %extracted_slice_1 = tensor.extract_slice %inserted_slice_0[0, 26] [2, 1] [1, 1] : tensor<2x27xf32> to tensor<2xf32>
+  %expanded_2 = tensor.expand_shape %extracted_slice_1 [[0, 1]] output_shape [2, 1] : tensor<2xf32> into tensor<2x1xf32>
+  %expanded_3 = tensor.expand_shape %arg2 [[0, 1]] output_shape [2, 1] : tensor<2xf32> into tensor<2x1xf32>
+  %concat = tensor.concat dim(1) %extracted_slice, %expanded_3, %expanded_2 : (tensor<2x25xf32>, tensor<2x1xf32>, tensor<2x1xf32>) -> tensor<2x27xf32>
+  %expanded_4 = tensor.expand_shape %arg3 [[0, 1]] output_shape [2, 1] : tensor<2xf32> into tensor<2x1xf32>
+  %extracted_slice_5 = tensor.extract_slice %concat[0, 0] [2, 26] [1, 1] : tensor<2x27xf32> to tensor<2x26xf32>
+  %concat_6 = tensor.concat dim(1) %extracted_slice_5, %expanded_4 : (tensor<2x26xf32>, tensor<2x1xf32>) -> tensor<2x27xf32>
+  return %concat_6 : tensor<2x27xf32>
 }
