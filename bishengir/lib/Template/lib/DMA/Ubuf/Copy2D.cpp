@@ -197,11 +197,17 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
   }
 
   // the starting address of src is not 32byte aligned
+  const int64_t stride0_ub = src->strides[0];
+  const int64_t stride1_ub = src->strides[1];
   auto src_ptr = src->aligned + src->offset;
   if (!isAddress32ByteAligned(src_ptr)) {
     if (atomic_kind != AtomicKind::None) {
       cce::printf("Atomic operations are not supported when the ub address is "
                   "not block‑aligned");
+      return;
+    }
+    if (stride1_ub != 1) {
+      store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
       return;
     }
     auto size_backup = src->sizes[1];
@@ -223,8 +229,6 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
 
   const int64_t stride0_gm = dst->strides[0];
   const int64_t stride1_gm = dst->strides[1];
-  const int64_t stride0_ub = src->strides[0];
-  const int64_t stride1_ub = src->strides[1];
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
     store_ubuf_to_gm_2d_core_with_contiguous_last_dim<T>(src, dst);
