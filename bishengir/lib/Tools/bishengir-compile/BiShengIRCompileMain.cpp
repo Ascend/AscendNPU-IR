@@ -197,7 +197,7 @@ LogicalResult runExternalHIVMC(ModuleOp module,
   // user upgrade the hivmc version.
   // TODO: Once version 0.1.0 is not supported, the following regex should be
   // removed.
-  std::regex re("hacc\\.(hivmc_compatible_print|hivmc_version).*,");
+  std::regex re("hacc\\.(hivmc_compatible_print|hivmc_version)[^,]*,");
   std::string modified = std::regex_replace(content, re, "");
 
   inputFileHandler->os() << modified;
