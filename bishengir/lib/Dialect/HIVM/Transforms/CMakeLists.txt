@@ -82,6 +82,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp
+  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   ReduceRankSubview.cpp

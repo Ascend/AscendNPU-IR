@@ -21,6 +21,7 @@
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Pass/Pass.h"
@@ -66,11 +67,8 @@ std::optional<Value> getPadValue(PatternRewriter &rewriter,
   return std::optional<Value>(padValue);
 }
 
-std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
-                                   std::optional<memref::AllocOp> maybeAlloc) {
-  if (!maybeAlloc.has_value())
-    return std::nullopt;
-
+Value buildLeftPadNumForSubview(PatternRewriter &rewriter,
+                                memref::SubViewOp subviewOp) {
   auto normalizeOffset = [](OpBuilder &builder, Location loc,
                             int64_t offsetRawInt,
                             int64_t numElemPerBlock) -> Value {
@@ -82,44 +80,63 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
     return builder.create<arith::ConstantIndexOp>(loc, offsetInt);
   };
 
-  for (auto *user : maybeAlloc.value()->getUsers()) {
-    if (auto subviewOp = llvm::dyn_cast<memref::SubViewOp>(user)) {
-      auto loc = subviewOp->getLoc();
-      auto numElemPerBlock = mlir::utils::getNumPerBlock(subviewOp.getType());
-      auto offsets = subviewOp.getMixedOffsets();
-      auto offset = offsets.back();
-      LDBG("offset = " << offset << "\n");
-      auto offsetValue = dyn_cast<Value>(offset);
-      if (offsetValue) {
-        // The maximum padding size is 32B. So we need to process the raw
-        // left_pad.
-        APSInt intVal;
-        if (matchPattern(offsetValue, m_ConstantInt(&intVal))) {
-          offsetValue = normalizeOffset(rewriter, loc, intVal.getSExtValue(),
-                                        numElemPerBlock);
-          return offsetValue;
-        }
-        // offset is Value but not arith.constant
-        auto offsetTy = offsetValue.getType();
-        if (!offsetTy.isIndex()) {
-          llvm::report_fatal_error("offset must be index type");
-        }
-        auto numElemPerBlockVal =
-            rewriter.create<arith::ConstantIndexOp>(loc, numElemPerBlock);
-        auto leftPadValue = rewriter.create<arith::RemUIOp>(loc, offsetValue,
-                                                            numElemPerBlockVal);
-        LDBG("leftPadValue = " << leftPadValue << "\n");
-        return leftPadValue;
-      }
-      // handle the case where offset is IntegerAttr
-      auto maybeConstantInt = getConstantIntValue(offset);
-      if (!maybeConstantInt.has_value())
-        llvm::report_fatal_error("offset as integer attr is not obtained");
-      offsetValue = normalizeOffset(rewriter, loc, maybeConstantInt.value(),
+  auto loc = subviewOp.getLoc();
+  auto numElemPerBlock = mlir::utils::getNumPerBlock(subviewOp.getType());
+  auto offsets = subviewOp.getMixedOffsets();
+  auto offset = offsets.back();
+  LDBG("offset = " << offset << "\n");
+  auto offsetValue = dyn_cast<Value>(offset);
+  if (offsetValue) {
+    // The maximum padding size is 32B. So we need to process the raw
+    // left_pad.
+    APSInt intVal;
+    if (matchPattern(offsetValue, m_ConstantInt(&intVal))) {
+      offsetValue = normalizeOffset(rewriter, loc, intVal.getSExtValue(),
                                     numElemPerBlock);
       return offsetValue;
     }
+    // offset is Value but not arith.constant
+    auto offsetTy = offsetValue.getType();
+    if (!offsetTy.isIndex()) {
+      llvm::report_fatal_error("offset must be index type");
+    }
+    auto numElemPerBlockVal =
+        rewriter.create<arith::ConstantIndexOp>(loc, numElemPerBlock);
+    auto leftPadValue =
+        rewriter.create<arith::RemUIOp>(loc, offsetValue, numElemPerBlockVal);
+    LDBG("leftPadValue = " << leftPadValue << "\n");
+    return leftPadValue;
   }
+  // handle the case where offset is IntegerAttr
+  auto maybeConstantInt = getConstantIntValue(offset);
+  if (!maybeConstantInt.has_value())
+    llvm::report_fatal_error("offset as integer attr is not obtained");
+  offsetValue = normalizeOffset(rewriter, loc, maybeConstantInt.value(),
+                                numElemPerBlock);
+  return offsetValue;
+}
+
+std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
+                                   std::optional<memref::AllocOp> maybeAlloc,
+                                   Value dst, Operation *anchorOp) {
+  if (auto subviewOp = dst.getDefiningOp<memref::SubViewOp>()) {
+    return buildLeftPadNumForSubview(rewriter, subviewOp);
+  }
+  if (!maybeAlloc.has_value())
+    return std::nullopt;
+
+  DominanceInfo dom(anchorOp->getParentOfType<func::FuncOp>());
+  for (auto *user : maybeAlloc.value()->getUsers()) {
+    auto subviewOp = dyn_cast<memref::SubViewOp>(user);
+    if (!subviewOp)
+      continue;
+    if (subviewOp.getSource() != dst)
+      continue;
+    if (!dom.properlyDominates(subviewOp.getOperation(), anchorOp))
+      continue;
+    return buildLeftPadNumForSubview(rewriter, subviewOp);
+  }
+
   return std::nullopt;
 }
 
@@ -193,7 +210,7 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   Value dst = copyOp.getTarget();
   auto maybeAlloc = utils::tracebackMemRefToAlloc(dst);
   auto maybePadValue = getPadValue(rewriter, maybeAlloc);
-  auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc);
+  auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc, dst, copyOp);
   auto maybeEvictionPolicy = getEvictionPolicy(rewriter, maybeAlloc);
   LDBG(*copyOp << "\n");
   rewriter.setInsertionPoint(copyOp);

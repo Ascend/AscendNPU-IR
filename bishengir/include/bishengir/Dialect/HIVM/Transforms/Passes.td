@@ -310,6 +310,12 @@ def OutlineAllocInVF : Pass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
+def OutlineCopyInVF : Pass<"hivm-outline-copy-in-VF", "ModuleOp"> {
+  let summary = "rewrite hivm.load to hivm.copy in VF when operands are VF args";
+  let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def ConstantizeBufferSize
     : Pass<"hivm-constantize-buffer-size", "func::FuncOp"> {
   let summary = "Try to constantize dynamic shape buffers.";

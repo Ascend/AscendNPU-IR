@@ -233,3 +233,23 @@ func.func @memref_copy_dyn_offset_non_const(%arg2: memref<?xf32>, %offset0: inde
   memref.copy %subview_5, %subview_6 : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   return
 }
+
+// -----
+// CHECK-LABEL: @do_not_capture_loop_subview_offset
+// CHECK: %[[ALLOC:.*]] = memref.alloc
+// CHECK: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%[[ALLOC]] : memref<16xf32>) eviction_policy = <EvictFirst>
+// CHECK-NOT: left_padding_num
+func.func @do_not_capture_loop_subview_offset(%arg0: memref<16xf32>) attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.0 : f32
+  %c16 = arith.constant 16 : index
+  %c1 = arith.constant 1 : index
+  %alloc = memref.alloc() : memref<16xf32>
+  memref.copy %arg0, %alloc : memref<16xf32> to memref<16xf32>
+  scf.for %iv = %c0 to %c16 step %c1 {
+    %subview = memref.subview %alloc[%iv] [1] [1] : memref<16xf32> to memref<1xf32, strided<[1], offset: ?>>
+    %val = vector.transfer_read %subview[%c0], %cst {in_bounds = [true]} : memref<1xf32, strided<[1], offset: ?>>, vector<1xf32>
+    vector.transfer_write %val, %subview[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
+  }
+  return
+}
