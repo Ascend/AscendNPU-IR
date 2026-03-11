@@ -156,36 +156,35 @@ void setBufferSizeInLoopOp(RewriterBase &rewriter, Location loc,
   }
 }
 
-template<typename OpType>
+template <typename OpType>
 static void modifyOpToSliced(RewriterBase &rewriter, OpType Op,
-                                SmallVector<OpFoldResult, 4> mixedOffsets,
-                                SmallVector<OpFoldResult, 4> mixedSize,
-                                SmallVector<OpFoldResult, 4> mixedStrides,
-                                SmallVector<int64_t, 4> newShape) {
+                             SmallVector<OpFoldResult, 4> mixedOffsets,
+                             SmallVector<OpFoldResult, 4> mixedSize,
+                             SmallVector<OpFoldResult, 4> mixedStrides,
+                             SmallVector<int64_t, 4> newShape) {
   auto rankType = cast<RankedTensorType>(Op.getSrc().getType());
   auto loc = Op->getLoc();
 
   auto newType =
       mlir::RankedTensorType::get(newShape, rankType.getElementType());
   auto slicedStore = rewriter.create<tensor::ExtractSliceOp>(
-      loc, newType, Op->getOperand(0), mixedOffsets, mixedSize,
-      mixedStrides);
+      loc, newType, Op->getOperand(0), mixedOffsets, mixedSize, mixedStrides);
   markCreatedExtractSliceOp(rewriter, slicedStore);
 
   auto initsType = Op.getDpsInitOperand(0)->get().getType();
   if (isa<mlir::RankedTensorType>(initsType)) {
     auto slicedInit = rewriter.create<tensor::ExtractSliceOp>(
-        loc, newType, Op.getDpsInitOperand(0)->get(), mixedOffsets,
-        mixedSize, mixedStrides);
-    rewriter.modifyOpInPlace(
-        Op, [&]() { Op.setDpsInitOperand(0, slicedInit); });
+        loc, newType, Op.getDpsInitOperand(0)->get(), mixedOffsets, mixedSize,
+        mixedStrides);
+    rewriter.modifyOpInPlace(Op,
+                             [&]() { Op.setDpsInitOperand(0, slicedInit); });
     markCreatedExtractSliceOp(rewriter, slicedInit);
   } else if (isa<mlir::MemRefType>(initsType)) {
     auto subviewedInits = rewriter.create<memref::SubViewOp>(
         loc, Op.getDpsInitOperand(0)->get(), mixedOffsets, mixedSize,
         mixedStrides);
     markCreatedExtractSliceOp(rewriter, subviewedInits);
-    
+
     rewriter.modifyOpInPlace(
         Op, [&]() { Op.setDpsInitOperand(0, subviewedInits); });
   }
@@ -200,7 +199,7 @@ static void modifyOpToSliced(RewriterBase &rewriter, OpType Op,
 namespace {
 
 /// try to tile storeOp and copyOp and bind sub block mapping
-template<typename OpType>
+template <typename OpType>
 class TileAndSliceStoreCopyOp : public OpRewritePattern<OpType> {
 public:
   hivm::detail::DimensionAnalyzer &analyzer;
@@ -227,9 +226,8 @@ public:
   }
 
   explicit TileAndSliceStoreCopyOp(MLIRContext *context,
-                             hivm::detail::DimensionAnalyzer &analyzer)
-      : OpRewritePattern<OpType>(context, /*benefit=*/1),
-        analyzer(analyzer) {}
+                                   hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<OpType>(context, /*benefit=*/1), analyzer(analyzer) {}
   LogicalResult matchAndRewrite(OpType Op,
                                 PatternRewriter &rewriter) const override {
     if (Op->template hasAttrOfType<UnitAttr>(tiledOp) ||
@@ -240,27 +238,27 @@ public:
     /// analyzer.getTilingDim(storeOp.getSrc()), will be enhanced in
     /// generalization version
     int64_t tilingDim = -1;
-    if (std::is_same_v<hivm::CopyOp, OpType>){
+    if (std::is_same_v<hivm::CopyOp, OpType>) {
       tilingDim = 1;
-      if (!Op.getResults().empty()){  // If copy Op with results
+      if (!Op.getResults().empty()) { // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
-            return isa<annotation::MarkOp>(user);
-          })) {
-        return failure(); // If the user of CopyOp is not MarkOp, it cannot be a
-                          // tiling start point.
+              return isa<annotation::MarkOp>(user);
+            })) {
+          return failure(); // If the user of CopyOp is not MarkOp, it cannot be
+                            // a tiling start point.
         }
       }
-      LLVM_DEBUG(DBGS() << "The copy op tiling dim is: "<<tilingDim<<"\n");
+      LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
-      tilingDim = 0; 
-      LLVM_DEBUG(DBGS() << "The store op tiling dim is: "<<tilingDim<<"\n");
+      tilingDim = 0;
+      LLVM_DEBUG(DBGS() << "The store op tiling dim is: " << tilingDim << "\n");
     }
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
-    if (tilingDim == -1 || failed(maybeContainingLoop)){
+    if (tilingDim == -1 || failed(maybeContainingLoop)) {
       Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
-      
+
     auto containingLoop = maybeContainingLoop.value();
 
     if (std::is_same_v<hivm::StoreOp, OpType>) {
@@ -275,13 +273,13 @@ public:
     }
 
     auto loc = Op.getLoc();
-    auto maybeSingleTileSize = getSingleTileSize(
-        rewriter, loc, Op.getSrc(), tilingDim, containingLoop);
-    if (failed(maybeSingleTileSize)){
+    auto maybeSingleTileSize = getSingleTileSize(rewriter, loc, Op.getSrc(),
+                                                 tilingDim, containingLoop);
+    if (failed(maybeSingleTileSize)) {
       Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
-      
+
     rewriter.setInsertionPointToStart(containingLoop.getBody());
     auto offsetAtTileDim = calculateOffsetAtTilingDim(
         rewriter, loc, containingLoop, maybeSingleTileSize.value());
@@ -300,8 +298,8 @@ public:
             newShape)))
       return failure();
 
-    modifyOpToSliced(rewriter, Op, mixedOffsets, mixedSize,
-                        mixedStrides, newShape);
+    modifyOpToSliced(rewriter, Op, mixedOffsets, mixedSize, mixedStrides,
+                     newShape);
 
     // Maybe we need to maintain this map when doing bubble up.
     DenseMap<Operation *, Operation *> map;
@@ -527,12 +525,9 @@ public:
     if (failed(maybeContainingLoop))
       return failure();
     for (auto res : op->getResults()) {
-      int64_t tilingDim = 2;
-      if (!llvm::any_of(res.getUsers(), [](Operation *user) {
-            return isa<annotation::MarkOp>(user);
-          })) {
-        continue; // If the user of scf.for result is not MarkOp, it cannot be a
-                  // tiling start point
+      int64_t tilingDim = 0;
+      if (!res.use_empty()){
+        continue;
       }
       auto containingLoop = maybeContainingLoop.value();
       auto loc = res.getLoc();
@@ -562,15 +557,77 @@ public:
 
       markCreatedExtractSliceOp(rewriter, slicedValue);
 
-      for (Operation *userOp : res.getUsers()) {
-        if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
-          rewriter.modifyOpInPlace(
-              mark, [&]() { mark->setOperand(0, slicedValue.getResult()); });
-          mark->setAttr(tileAndBindLeaf, rewriter.getUnitAttr());
-        }
-      }
+      auto mark = rewriter.create<annotation::MarkOp>(loc, slicedValue);
+ 	    mark->setAttr(tileAndBindLeaf, rewriter.getUnitAttr());
     }
     return result;
+  }
+};
+
+// If there are memref-to-memref copy op before the 1:2 split, convert
+// them into equivalent tensor-to-tensor copy op.
+// oldcopy: hivm.hir.copy ins(%1 : memref<..., ub>) outs(%alloc : memref<...,
+// cbuf>) newcopy: %2 = hivm.hir.copy ins(%1 : tensor<...>) outs(%alloc :
+// tensor<...>)
+class ConvertMemRefUBToL1TensorCopyPattern
+    : public OpRewritePattern<hivm::CopyOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::CopyOp copyOp,
+                                PatternRewriter &rewriter) const override {
+    // get src and dst, hivm.copy %src, %dst
+    Value srcMemRef = copyOp->getOperand(0);
+    Value dstMemRef = copyOp->getOperand(1);
+    // check if memref type
+    auto srcType = srcMemRef.getType().dyn_cast<MemRefType>();
+    auto dstType = dstMemRef.getType().dyn_cast<MemRefType>();
+    if (!srcType || !dstType)
+      return failure();
+    // check if hivm address space
+    auto srcAS = srcType.getMemorySpace().dyn_cast<hivm::AddressSpaceAttr>();
+    auto dstAS = dstType.getMemorySpace().dyn_cast<hivm::AddressSpaceAttr>();
+    if (!srcAS || !dstAS)
+      return failure();
+    // check if ub to l1
+    if (srcAS.getAddressSpace() != hivm::AddressSpace::UB ||
+        dstAS.getAddressSpace() != hivm::AddressSpace::L1)
+      return failure();
+
+    auto toMemRefOp = srcMemRef.getDefiningOp<bufferization::ToMemrefOp>();
+    if (!toMemRefOp)
+      return failure();
+    // get origin tensor
+    Value srcTensor = toMemRefOp.getTensor();
+    // support vtranspose -> tensor -> to_memref -> copy to rewrite
+    if (!srcTensor.getDefiningOp<hivm::VTransposeOp>())
+      return failure();
+
+    rewriter.setInsertionPoint(copyOp);
+    // memref<..., L1> to memref<...>
+    auto castedMemRefType =
+        MemRefType::get(dstType.getShape(), dstType.getElementType());
+    auto memSpaceCast = rewriter.create<memref::MemorySpaceCastOp>(
+        copyOp.getLoc(), castedMemRefType, dstMemRef);
+
+    // bufferization.to_tensor
+    auto dstTensor = rewriter.create<bufferization::ToTensorOp>(
+        copyOp.getLoc(), memSpaceCast.getResult(),
+        /*restrict=*/true,
+        /*writable=*/true);
+
+    auto newCopy = rewriter.create<hivm::CopyOp>(
+        copyOp.getLoc(), srcTensor.getType(), srcTensor, dstTensor.getResult());
+
+    rewriter.setInsertionPointAfter(newCopy);
+    rewriter.create<annotation::MarkOp>(newCopy.getLoc(), newCopy.getResult(0));
+
+    rewriter.eraseOp(copyOp);
+
+    if (toMemRefOp->use_empty())
+      rewriter.eraseOp(toMemRefOp);
+
+    return success();
   }
 };
 
@@ -588,7 +645,7 @@ public:
 ///     yield %res
 ///   else
 ///     yield store/copy's outs
-template<typename OpType>
+template <typename OpType>
 struct LimitUniqueSubBlockIdToStoreCopy : public OpRewritePattern<OpType> {
 public:
   using OpRewritePattern<OpType>::OpRewritePattern;
@@ -664,8 +721,10 @@ public:
 
 static LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
-  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StoreOp>>(funcOp.getContext());
-  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CopyOp>>(funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StoreOp>>(
+      funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CopyOp>>(
+      funcOp.getContext());
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   return applyPatternsGreedily(funcOp, std::move(patterns), config);
@@ -722,11 +781,13 @@ static LogicalResult tileAndSliceOp(func::FuncOp func) {
   });
 
   RewritePatternSet patterns(func->getContext());
+  patterns.add<ConvertMemRefUBToL1TensorCopyPattern>(func->getContext());
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>>(func->getContext(),
                                                        analyzer);
   patterns.add<TileAndSliceStoreCopyOp<hivm::CopyOp>>(func->getContext(),
                                                       analyzer);
   patterns.add<TileAndSliceLeaf<scf::ForOp>>(func->getContext(), analyzer);
+  patterns.add<TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   auto ret = applyPatternsGreedily(func, std::move(patterns), config);
@@ -813,12 +874,12 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
       op->erase();
       return WalkResult::advance();
     }
-    if (!isa<hivm::StoreOp, hivm::CopyOp>(op)){
+    if (!isa<hivm::StoreOp, hivm::CopyOp>(op)) {
       return WalkResult::advance();
     }
-    if (op->hasAttr(tileAndSliceFailure)){
+    if (op->hasAttr(tileAndSliceFailure)) {
       op->removeAttr(tileAndSliceFailure);
-      if (op->hasAttr(hivm::AtomicKindAttr::name)){
+      if (op->hasAttr(hivm::AtomicKindAttr::name)) {
         isFailed = true;
         return WalkResult::interrupt();
       }
@@ -837,7 +898,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   for (auto *op : toBeRemoved)
     op->erase();
 
-  if (isFailed){
+  if (isFailed) {
     failAndRevert(newFunc);
     return failure();
   }
@@ -874,17 +935,20 @@ public:
     if (op.getDualDstModeAttr()) {
       return failure();
     }
-    // Determine the address space of the destination operand of the fixpipe instruction.
+    // Determine the address space of the destination operand of the fixpipe
+    // instruction.
     auto dstMemrefType = dyn_cast<MemRefType>(dst.getType());
-    if(!dstMemrefType) return failure();
+    if (!dstMemrefType)
+      return failure();
     auto dstMemorySpace = dstMemrefType.getMemorySpace();
-    if (!dstMemorySpace) return failure();
+    if (!dstMemorySpace)
+      return failure();
     auto toAddrSpace =
         cast<hivm::AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
-    if((!dstMemorySpace) || (toAddrSpace != hivm::AddressSpace::UB)) {
+    if ((!dstMemorySpace) || (toAddrSpace != hivm::AddressSpace::UB)) {
       return success();
     }
-    
+
     // Determine whether to enable the CV pipeline.
     bool cvpipeFlag = true;
     auto subviewOp = dst.getDefiningOp<memref::SubViewOp>();
@@ -914,17 +978,17 @@ public:
 
     if (!cvpipeFlag) {
       switch (splitMode) {
-        case hivm::FixpipeDualDstMode::ROW_SPLIT:
-          shape[0] = shape[0] / 2;
-          break;
-        case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-          shape[1] = shape[1] / 2;
-          break;
-        default:
-          break;
+      case hivm::FixpipeDualDstMode::ROW_SPLIT:
+        shape[0] = shape[0] / 2;
+        break;
+      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
+        shape[1] = shape[1] / 2;
+        break;
+      default:
+        break;
       }
       auto newTy = MemRefType::get(shape, oldTy.getElementType(),
-                                  oldTy.getLayout(), oldTy.getMemorySpace());
+                                   oldTy.getLayout(), oldTy.getMemorySpace());
       // new alloc + new mark + new fixpipe
       rewriter.setInsertionPoint(allocOp);
       auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
@@ -933,34 +997,34 @@ public:
       auto newMark =
           rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
       rewriter.modifyOpInPlace(newMark,
-                              [&] { newMark->setAttrs(markOp->getAttrs()); });
+                               [&] { newMark->setAttrs(markOp->getAttrs()); });
       auto dualAttr =
           hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
       rewriter.setInsertionPoint(op);
       NamedAttrList attrs(op->getAttrs());
       attrs.set(op.getDualDstModeAttrName(), dualAttr);
       auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-        op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newAlloc}, attrs.getAttrs()
-      );
+          op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newAlloc},
+          attrs.getAttrs());
 
       rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
       rewriter.replaceOp(op, newFixpipeOp->getResults());
       rewriter.eraseOp(markOp);
       rewriter.eraseOp(allocOp);
       return success();
-    }
-    else {
+    } else {
       switch (splitMode) {
-        case hivm::FixpipeDualDstMode::ROW_SPLIT:
-          shape[1] = shape[1] / 2;
-          break;
-        case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-          shape[2] = shape[2] / 2;
-          break;
-        default:
-          break;
+      case hivm::FixpipeDualDstMode::ROW_SPLIT:
+        shape[1] = shape[1] / 2;
+        break;
+      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
+        shape[2] = shape[2] / 2;
+        break;
+      default:
+        break;
       }
-      auto newTy = MemRefType::get(shape, oldTy.getElementType(), oldTy.getLayout(), oldTy.getMemorySpace());
+      auto newTy = MemRefType::get(shape, oldTy.getElementType(),
+                                   oldTy.getLayout(), oldTy.getMemorySpace());
 
       rewriter.setInsertionPoint(allocOp);
       auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
@@ -969,53 +1033,61 @@ public:
       auto newMark =
           rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
       rewriter.modifyOpInPlace(newMark,
-                              [&] { newMark->setAttrs(markOp->getAttrs()); });
+                               [&] { newMark->setAttrs(markOp->getAttrs()); });
       rewriter.setInsertionPoint(subviewOp);
       SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
       switch (splitMode) {
-          case hivm::FixpipeDualDstMode::ROW_SPLIT:
-            if (sizes[1].is<Attribute>()) {
-              int64_t oldSize = cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
-              sizes[1] = rewriter.getIndexAttr(oldSize / 2);
-            }
-            break;
-          case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-            if (sizes[2].is<Attribute>()) {
-              int64_t oldSize = cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
-              sizes[2] = rewriter.getIndexAttr(oldSize / 2);
-            }
-            break;
-          default:
-            break;
+      case hivm::FixpipeDualDstMode::ROW_SPLIT:
+        if (sizes[1].is<Attribute>()) {
+          int64_t oldSize =
+              cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
+          sizes[1] = rewriter.getIndexAttr(oldSize / 2);
+        }
+        break;
+      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
+        if (sizes[2].is<Attribute>()) {
+          int64_t oldSize =
+              cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
+          sizes[2] = rewriter.getIndexAttr(oldSize / 2);
+        }
+        break;
+      default:
+        break;
       }
 
-      int64_t dim1 = sizes[1].is<Attribute>() ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt() : ShapedType::kDynamic;
-      int64_t dim2 = sizes[2].is<Attribute>() ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt() : ShapedType::kDynamic;
+      int64_t dim1 = sizes[1].is<Attribute>()
+                         ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt()
+                         : ShapedType::kDynamic;
+      int64_t dim2 = sizes[2].is<Attribute>()
+                         ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt()
+                         : ShapedType::kDynamic;
       SmallVector<int64_t> new2DShape = {dim1, dim2};
 
       auto srcType = cast<MemRefType>(newAlloc.getType());
       Type elementType = srcType.getElementType();
       Attribute memorySpace = srcType.getMemorySpace();
-      auto layout = StridedLayoutAttr::get(rewriter.getContext(), 
-                                     ShapedType::kDynamic, {dim2, 1});
-      auto result2DType = MemRefType::get(new2DShape, elementType, layout, memorySpace);
+      auto layout = StridedLayoutAttr::get(rewriter.getContext(),
+                                           ShapedType::kDynamic, {dim2, 1});
+      auto result2DType =
+          MemRefType::get(new2DShape, elementType, layout, memorySpace);
 
       auto newSubview = rewriter.create<memref::SubViewOp>(
-      subviewOp.getLoc(), result2DType, newAlloc, 
-      subviewOp.getMixedOffsets(), sizes, subviewOp.getMixedStrides());
+          subviewOp.getLoc(), result2DType, newAlloc,
+          subviewOp.getMixedOffsets(), sizes, subviewOp.getMixedStrides());
 
       auto dualAttr =
           hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
       rewriter.setInsertionPoint(op);
       NamedAttrList attrs(op->getAttrs());
       attrs.set(op.getDualDstModeAttrName(), dualAttr);
-      
+
       auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-        op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview}, attrs.getAttrs()
-      );
+          op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
+          attrs.getAttrs());
 
       rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
-      rewriter.replaceAllUsesWith(subviewOp.getResult(), newSubview.getResult());
+      rewriter.replaceAllUsesWith(subviewOp.getResult(),
+                                  newSubview.getResult());
       rewriter.replaceOp(op, newFixpipeOp->getResults());
 
       rewriter.eraseOp(subviewOp);
