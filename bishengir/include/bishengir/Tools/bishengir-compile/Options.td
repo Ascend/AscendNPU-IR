@@ -584,4 +584,12 @@ def MlirPrintIrBeforeAll : BiShengIRCompileOpt<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def AppendBishengOptions : BiShengIRCompileOpt<
+  "Append options when calling bisheng.",
+  "std::string",
+  "\"\""
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD
