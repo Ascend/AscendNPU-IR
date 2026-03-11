@@ -187,3 +187,186 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: scope_vector_result_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.hir.vadd
+// CHECK: hivm.hir.matmul
+// CHECK-LABEL: scope_vector_result_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// CHECK: scope.scope
+// CHECK: hivm.hir.vadd
+// CHECK-NOT: hivm.hir.matmul
+
+module {
+  func.func @scope_vector_result(
+      %arg0: tensor<64x64xf16>,
+      %arg1: tensor<64x64xf16>,
+      %arg2: tensor<64x64xf16>,
+      %arg3: tensor<64x64xf16>,
+      %arg4: tensor<64x64xf16>) -> tensor<64x64xf16>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    // VECTOR-type ScopeOp with one tensor result.
+    // The scope result is consumed by the CUBE matmul below.
+    %0 = scope.scope : () -> tensor<64x64xf16> {
+      %vadd = hivm.hir.vadd
+          ins(%arg0, %arg1 : tensor<64x64xf16>, tensor<64x64xf16>)
+          outs(%arg2 : tensor<64x64xf16>) -> tensor<64x64xf16>
+      scope.return %vadd : tensor<64x64xf16>
+    } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+    %1 = hivm.hir.matmul
+        ins(%0, %arg3 : tensor<64x64xf16>, tensor<64x64xf16>)
+        outs(%arg4 : tensor<64x64xf16>) -> tensor<64x64xf16>
+    return %1 : tensor<64x64xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: scope_cube_internal_outs_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// CHECK: scope.scope
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: hivm.hir.vadd
+// CHECK-LABEL: scope_cube_internal_outs_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// CHECK: tensor.empty() : tensor<64x64xf16>
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.hir.matmul
+// CHECK: hivm.hir.vadd
+
+module {
+func.func @scope_cube_internal_outs(
+    %arg0: tensor<64x64xf16>,
+    %arg1: tensor<64x64xf16>,
+    %arg2: tensor<64x64xf16>,
+    %arg3: tensor<64x64xf16>) -> tensor<64x64xf16>
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  // CUBE-type ScopeOp with result.
+  // The outs operand of matmul is tensor.empty() created *inside* the scope,
+  // so isDefinedOutside will return false → stub is created.
+  %0 = scope.scope : () -> tensor<64x64xf16> {
+    %empty = tensor.empty() : tensor<64x64xf16>
+    %mm = hivm.hir.matmul
+        ins(%arg0, %arg1 : tensor<64x64xf16>, tensor<64x64xf16>)
+        outs(%empty : tensor<64x64xf16>) -> tensor<64x64xf16>
+    scope.return %mm : tensor<64x64xf16>
+  } {hivm.tcore_type = #hivm.tcore_type<CUBE>}
+  %1 = hivm.hir.vadd
+      ins(%0, %arg2 : tensor<64x64xf16>, tensor<64x64xf16>)
+      outs(%arg3 : tensor<64x64xf16>) -> tensor<64x64xf16>
+  return %1 : tensor<64x64xf16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: scope_cube_external_outs_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// CHECK: scope.scope
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: hivm.hir.vadd
+// CHECK-LABEL: scope_cube_external_outs_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.hir.matmul
+// CHECK: hivm.hir.vadd
+
+module {
+func.func @scope_cube_external_outs(
+    %arg0: tensor<64x64xf16>,
+    %arg1: tensor<64x64xf16>,
+    %arg2: tensor<64x64xf16>,
+    %arg3: tensor<64x64xf16>,
+    %arg4: tensor<64x64xf16>) -> tensor<64x64xf16>
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  // CUBE-type ScopeOp with result.
+  // The outs operand of matmul is %arg2, a function argument defined
+  // *outside* the scope, so isDefinedOutside returns true and the scope
+  // result is replaced directly by %arg2 without creating a stub.
+  %0 = scope.scope : () -> tensor<64x64xf16> {
+    %mm = hivm.hir.matmul
+        ins(%arg0, %arg1 : tensor<64x64xf16>, tensor<64x64xf16>)
+        outs(%arg2 : tensor<64x64xf16>) -> tensor<64x64xf16>
+    scope.return %mm : tensor<64x64xf16>
+  } {hivm.tcore_type = #hivm.tcore_type<CUBE>}
+  %1 = hivm.hir.vadd
+      ins(%0, %arg3 : tensor<64x64xf16>, tensor<64x64xf16>)
+      outs(%arg4 : tensor<64x64xf16>) -> tensor<64x64xf16>
+  return %1 : tensor<64x64xf16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: scope_loop_core_type_override_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// scope is CUBE (via loop_core_type), so it is RETAINED in the AIC kernel.
+// The VECTOR vadd is erased; its result is replaced by its outs (%arg4).
+// CHECK: scope.scope
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: hivm.hir.vadd
+// CHECK: return %arg4 : tensor<64x64xf16>
+// CHECK-LABEL: scope_loop_core_type_override_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// scope is CUBE (via loop_core_type), so it is ERASED from the AIV kernel.
+// The scope result is replaced by its matmul's outs (%arg2).
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.hir.matmul
+// CHECK: hivm.hir.vadd
+// CHECK: ins(%arg2, %arg3 : tensor<64x64xf16>, tensor<64x64xf16>)
+
+module {
+func.func @scope_loop_core_type_override(
+    %arg0: tensor<64x64xf16>,
+    %arg1: tensor<64x64xf16>,
+    %arg2: tensor<64x64xf16>,
+    %arg3: tensor<64x64xf16>,
+    %arg4: tensor<64x64xf16>) -> tensor<64x64xf16>
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  // ScopeOp has no hivm.tcore_type. loop_core_type should drive decision.
+  // This exercises SplitMixKernel.cpp:482-486 where loop_core_type
+  // overrides the scope op core type decision.
+  %0 = scope.scope : () -> tensor<64x64xf16> {
+    %mm = hivm.hir.matmul
+        ins(%arg0, %arg1 : tensor<64x64xf16>, tensor<64x64xf16>)
+        outs(%arg2 : tensor<64x64xf16>) -> tensor<64x64xf16>
+    scope.return %mm : tensor<64x64xf16>
+  } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+
+  %1 = hivm.hir.vadd
+      ins(%0, %arg3 : tensor<64x64xf16>, tensor<64x64xf16>)
+      outs(%arg4 : tensor<64x64xf16>) -> tensor<64x64xf16>
+  return %1 : tensor<64x64xf16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: scope_loop_core_type_vector_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// CHECK-NOT: scope.scope
+// CHECK-NOT: hivm.hir.vadd
+// CHECK: hivm.hir.matmul
+// CHECK-LABEL: scope_loop_core_type_vector_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// CHECK: scope.scope
+// CHECK: hivm.hir.vadd
+// CHECK-NOT: hivm.hir.matmul
+
+module {
+func.func @scope_loop_core_type_vector(
+    %arg0: tensor<64x64xf16>,
+    %arg1: tensor<64x64xf16>,
+    %arg2: tensor<64x64xf16>,
+    %arg3: tensor<64x64xf16>,
+    %arg4: tensor<64x64xf16>) -> tensor<64x64xf16>
+    attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  // VECTOR ScopeOp with result, identified via hivm.loop_core_type (no tcore_type).
+  // This exercises the kPipelinedLoopCoreTypeAttrName override path for VECTOR.
+  %0 = scope.scope : () -> tensor<64x64xf16> {
+    %add = hivm.hir.vadd
+        ins(%arg0, %arg1 : tensor<64x64xf16>, tensor<64x64xf16>)
+        outs(%arg2 : tensor<64x64xf16>) -> tensor<64x64xf16>
+    scope.return %add : tensor<64x64xf16>
+  } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  %1 = hivm.hir.matmul
+      ins(%0, %arg3 : tensor<64x64xf16>, tensor<64x64xf16>)
+      outs(%arg4 : tensor<64x64xf16>) -> tensor<64x64xf16>
+  return %1 : tensor<64x64xf16>
+}
+}
+

@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -256,6 +257,11 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
+    }
+  } else if (isa<scope::ScopeOp>(op)) {
+    // For scope ops, loop_core_type overrides the tcore_type attribute.
+    if (Attribute attr = op->getAttr(kPipelinedLoopCoreTypeAttrName)) {
+      return cast<TCoreTypeAttr>(attr).getTcoretype();
     }
   }
   return TCoreType::CUBE_OR_VECTOR;
