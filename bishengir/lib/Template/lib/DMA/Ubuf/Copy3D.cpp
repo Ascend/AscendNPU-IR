@@ -174,11 +174,18 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   }
 
   // the starting address of src is not 32byte aligned
+  int64_t stride0_ub = src->strides[0];
+  int64_t stride1_ub = src->strides[1];
+  int64_t stride2_ub = src->strides[2];
   auto src_ptr = src->aligned + src->offset;
   if (!isAddress32ByteAligned(src_ptr)) {
     if (atomic_kind != AtomicKind::None) {
       cce::printf("Atomic operations are not supported when the ub address is "
                   "not block‑aligned");
+      return;
+    }
+    if (stride2_ub != 1) {
+      store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
       return;
     }
     auto size_backup = src->sizes[2];
@@ -213,9 +220,6 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   int64_t size0 = src->sizes[0];
   int64_t size1 = src->sizes[1];
   int64_t size2 = src->sizes[2];
-  int64_t stride0_ub = src->strides[0];
-  int64_t stride1_ub = src->strides[1];
-  int64_t stride2_ub = src->strides[2];
   int64_t stride0_gm = dst->strides[0];
   int64_t stride1_gm = dst->strides[1];
   int64_t stride2_gm = dst->strides[2];
