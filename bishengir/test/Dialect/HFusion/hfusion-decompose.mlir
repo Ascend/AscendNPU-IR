@@ -189,3 +189,18 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: test_linalg_decompose_transpose
+func.func @test_linalg_decompose_transpose(%arg0: tensor<32x64xf16>) -> (tensor<4x2x16x16xf16>, tensor<16x2x16x4xf16>) {
+  %expanded = tensor.expand_shape %arg0 [[0, 1], [2, 3]] output_shape [2, 16, 4, 16] : tensor<32x64xf16> into tensor<2x16x4x16xf16>
+  %0 = tensor.empty() : tensor<4x2x16x16xf16>
+  // CHECK: linalg.transpose ins({{.*}} : tensor<2x16x4x16xf16>) outs({{.*}} : tensor<4x2x16x16xf16>) permutation = [2, 0, 1, 3]
+  %transposed = linalg.transpose ins(%expanded : tensor<2x16x4x16xf16>) outs(%0 : tensor<4x2x16x16xf16>) permutation = [2, 0, 1, 3]
+  %1 = tensor.empty() : tensor<16x2x16x4xf16>
+  // CHECK: linalg.transpose ins({{.*}} : tensor<2x16x4x16xf16>) outs({{.*}} : tensor<16x2x4x16xf16>) permutation = [1, 0, 2, 3]
+  // CHECK: linalg.transpose ins({{.*}} : tensor<16x2x4x16xf16>) outs({{.*}} : tensor<4x2x16x16xf16>) permutation = [2, 1, 0, 3]
+  // CHECK: linalg.transpose ins({{.*}} : tensor<4x2x16x16xf16>) outs({{.*}} : tensor<16x2x16x4xf16>) permutation = [3, 1, 2, 0]
+  %transposed_0 = linalg.transpose ins(%expanded : tensor<2x16x4x16xf16>) outs(%1 : tensor<16x2x16x4xf16>) permutation = [3, 0, 1, 2]
+  return %transposed, %transposed_0 : tensor<4x2x16x16xf16>, tensor<16x2x16x4xf16>
+}

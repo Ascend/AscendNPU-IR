@@ -28,11 +28,28 @@ struct TransposeDecomposeInterface
           TransposeDecomposeInterface, linalg::TransposeOp> {
   bool needDecompose(ArrayRef<int64_t> arr) const {
     int mismatch = 0;
-    for (int i = 0; i < static_cast<int>(arr.size()); ++i) {
+    const int supportedTransposeAxisNum = 2;
+    auto permSize = static_cast<int>(arr.size());
+    for (int i = 0; i < permSize; ++i) {
       if (arr[i] != i)
         mismatch++;
     }
-    return (mismatch > 2);
+    if (mismatch != supportedTransposeAxisNum && permSize == 4) {
+      std::vector<int> moved;
+      if (arr[0] == 2 && arr[1] == 3 && arr[2] == 0 && arr[3] == 1)
+        return false;
+      for (int i = 0; i < permSize; ++i) {
+        if (arr[i] != i) {
+          moved.push_back(i);
+        }
+      }
+
+      std::set<int> s(moved.begin(), moved.end());
+      if (s == std::set<int>{0, 1, 2} || s == std::set<int>{1, 2, 3})
+        return false;
+      return true;
+    }
+    return (mismatch > supportedTransposeAxisNum);
   }
 
   void calculateMinSwaps(ArrayRef<int64_t> perm,
