@@ -364,6 +364,19 @@ void ReorderInstructionsImpl::commonInstructionReorder(ModuleOp m,
   %1 = tt.load ... use 1 register
   tt.store %1 ... use 0 register
   */
+  bool hasMultiBasicBlock = false;
+  m->walk([&hasMultiBasicBlock](Operation *op) {
+    for (auto &region : op->getRegions()) {
+      if (!region.hasOneBlock() && !region.empty()) {
+        hasMultiBasicBlock = true;
+        break;
+      }
+    }
+  });
+  if (hasMultiBasicBlock) {
+    // not support multiple basic block
+    return;
+  }
   OpBuilder builder(ctx);
   llvm::SmallVector<Operation *> workQueue;
   m->walk<WalkOrder::PostOrder>([this, m, &workQueue](Operation *op) {
