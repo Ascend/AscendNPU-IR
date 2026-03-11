@@ -150,8 +150,8 @@ static bool isSafeToReplaceEncoding(ModuleOp module, Attribute oldEnc,
             for (Operation *user : result.getUsers()) {
               if (isa<triton::ExpandDimsOp>(user)) {
                 LLVM_DEBUG(llvm::dbgs()
-                 << "isSafeToReplaceEncoding: found expand_dims "
-                 << "consuming value with SliceEncoding -> UNSAFE\n");
+                           << "isSafeToReplaceEncoding: found expand_dims "
+                           << "consuming value with SliceEncoding -> UNSAFE\n");
                 foundExpandDimsUser = true;
                 return WalkResult::interrupt();
               }
@@ -454,6 +454,55 @@ static void replaceEncodingInModuleDownProp(Operation *topLevel,
   });
 }
 
+/// Check whether applying newEnc to values used by op is compatible
+static bool isLayoutCompatibleToOp(Operation *op, Attribute newEnc) {
+  if (!op || !newEnc)
+    return false;
+  // disallow propagation through split and join because these ops change how
+  // multiple inputs/outputs mao to logical axes and are generally
+  // layout-sensitive
+  if (isa<triton::SplitOp, triton::JoinOp, triton::TransOp>(op)) {
+    LLVM_DEBUG(llvm::dbgs() << "Split/Join/TransOp are layout-sensitive");
+    return false;
+  }
+  return true;
+}
+
+// recursively check whether we can propagate the target encoding upwards from
+// start
+static bool canPropagateUpFrom(Value start, Attribute targetEnc,
+                               const llvm::DenseSet<Value> &srcChainValues) {
+  // DFS over producer values
+  SmallPtrSet<Value, 32> visited;
+  SmallVector<Value, 32> stack;
+  stack.push_back(start);
+
+  while (!stack.empty()) {
+    Value cur = stack.pop_back_val();
+    if (!visited.insert(cur).second)
+      continue;
+
+    // if we reach the chain root it is fine to stop
+    if (srcChainValues.count(cur))
+      continue;
+
+    Operation *def = cur.getDefiningOp();
+
+    if (!def)
+      return false;
+
+    // The producer itself must be compatible with the new encoding
+    if (!isLayoutCompatibleToOp(def, targetEnc))
+      return false;
+
+    for (Value opd : def->getOperands())
+      if (!visited.count(opd))
+        stack.push_back(opd);
+  }
+
+  return true;
+}
+
 /*
 This pattern remove convert layout by propagate down layout
 */
@@ -523,6 +572,13 @@ struct RemoveConvertLayoutByPropagatingDownPattern
     if (!dstEnc)
       return failure();
 
+    // TODO: Slice to slice layout is not supported. To support we must
+    // propagate slice to slice but also the parent block to parent block. Take
+    // expandDimOp for example
+    if (isa<SliceEncodingAttr>(srcEnc) && isa<SliceEncodingAttr>(dstEnc)) {
+      return failure();
+    }
+
     // collect all user ops from dstVal
     SetVector<Operation *> affectedOps;
     SmallVector<Value> worklist;
@@ -569,6 +625,11 @@ struct RemoveConvertLayoutByPropagatingDownPattern
         Operation *def = cur.getDefiningOp();
         if (!def)
           continue;
+
+        // stop if we hit a layout sensitve op
+        if (!isLayoutCompatibleToOp(def, targetEnc))
+          continue;
+
         if (def == srcOp)
           return true;
 
@@ -602,6 +663,12 @@ struct RemoveConvertLayoutByPropagatingDownPattern
           Attribute opEnc = opRT.getEncoding();
           if (!opEnc)
             continue;
+
+          // ensure the producers we would have to change are compatible
+          if (!canPropagateUpFrom(operand, targetEnc, srcChainValues)) {
+            return failure();
+          }
+
           if (opEnc != targetEnc) {
             needsGlobalReplace = true;
             break;
@@ -619,6 +686,12 @@ struct RemoveConvertLayoutByPropagatingDownPattern
     if (!isSafeToReplaceEncoding(module, dstEnc, targetEnc))
       return failure();
 
+    // check layout compatibility against affect users
+    for (Operation *op : orderedOps) {
+      if (!isLayoutCompatibleToOp(op, targetEnc)) {
+        return failure();
+      }
+    }
     // Propgate downwards text-style replacement starting at this convert op.
     // This updates the reachable chain's result types and constants and will
     // update function result types/block args if we reached the end.
@@ -680,6 +753,13 @@ struct RemoveConvertLayoutByPropagatingUpPattern
     if (!srcEnc || !dstEnc)
       return failure();
 
+    // TODO: Slice to slice layout is not supported. To support we must
+    // propagate slice to slice but also the parent block to parent block. Take
+    // expandDimOp for example
+    if (isa<SliceEncodingAttr>(srcEnc) && isa<SliceEncodingAttr>(dstEnc)) {
+      return failure();
+    }
+
     // if we propagate up and hit a convert layout we stop
     // TODO: make it propagate up partial ops between the convert layout
     // (including stopping at reshape as reshape just like convert layout can
@@ -698,6 +778,12 @@ struct RemoveConvertLayoutByPropagatingUpPattern
       if (dyn_cast<ConvertLayoutOp>(defOp)) {
         return failure();
       }
+
+      // compatibility check
+      if (!isLayoutCompatibleToOp(defOp, dstEnc)) {
+        return failure();
+      }
+
       for (Value operand : defOp->getOperands()) {
         if (visited.insert(operand).second) {
           worklist.push_back(operand);
@@ -750,11 +836,8 @@ public:
           return signalPassFailure();
       }
 
-      LLVM_DEBUG(
-        llvm::dbgs() << "Function after phase 1: \n";
-        module.dump();
-        llvm::dbgs() << "\n";
-      );
+      LLVM_DEBUG(llvm::dbgs() << "Function after phase 1: \n"; module.dump();
+                 llvm::dbgs() << "\n";);
 
       {
         analysis.refineAfterPropDown();
