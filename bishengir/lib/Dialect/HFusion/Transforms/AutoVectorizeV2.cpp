@@ -323,8 +323,16 @@ static void findUpstreamFusableOpOf(Operation *op, Block *block,
       findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
     }
   } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+    // Traverse the then block.
     for (auto &childOp : ifOp.getBody()->getOperations()) {
       findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
+    }
+    // Also traverse the else block so that fusable ops referenced there
+    // are correctly identified as upstream of this scf.if.
+    if (Block *elseBlock = ifOp.elseBlock()) {
+      for (auto &childOp : elseBlock->getOperations()) {
+        findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
+      }
     }
   }
 }
