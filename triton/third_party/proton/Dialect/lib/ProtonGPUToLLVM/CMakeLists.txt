@@ -13,5 +13,7 @@ add_triton_library(ProtonGPUToLLVM
     ProtonAnalysis
 )
 
+if(NOT LLVM_BSPRIV_DAVINCI_BISHENGIR)
 add_subdirectory(ProtonNvidiaGPUToLLVM)
 add_subdirectory(ProtonAMDGPUToLLVM)
+endif()

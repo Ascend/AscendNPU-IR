@@ -20,6 +20,8 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+
 using namespace llvm;
 using namespace mlir;
 
@@ -437,6 +439,14 @@ public:
     return simtStackLimitFlag;
   }
 
+  BiShengIRCompileMainConfig &tritonMetadataOutput(std::string Path) {
+    tritonMetadataOutputPath = Path;
+    return *this;
+  }
+  std::string getTritonMetadataOutput() const {
+    return tritonMetadataOutputPath;
+  }
+
   // -------------------------------------------------------------------------//
   //                  HFusion optimization control options                    //
   // -------------------------------------------------------------------------//
@@ -584,6 +594,13 @@ public:
     return *this;
   }
   int getMaxReductionSplitNum() const { return maxReductionSplitNumFlag; }
+
+  // -------------------------------------------------------------------------//
+  //                            proton options                                //
+  // -------------------------------------------------------------------------//
+
+  mlir::triton::proton::ConvertProtonToProtonGPUOptions
+  getProtonGPUCompileConfig() const { return protonGPUCompileConfig; }
 
   // -------------------------------------------------------------------------//
   //                            Target options                                //
@@ -934,6 +951,8 @@ protected:
 
   std::optional<int32_t> simtStackLimitFlag = std::nullopt;
 
+  std::string tritonMetadataOutputPath{""};
+
   bool useDPXFlag{false};
 
   /// Disable decompose reduction
@@ -941,6 +960,12 @@ protected:
 
   /// Disable reorder instruction
   bool disableReorderInstructionFlag{false};
+
+  // -------------------------------------------------------------------------//
+  //                            proton options                                //
+  // -------------------------------------------------------------------------//
+
+  mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 
   // -------------------------------------------------------------------------//
   //                            Target options                                //

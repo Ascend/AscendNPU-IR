@@ -18,6 +18,8 @@
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
+#include "Conversion/ProtonGPUToLLVM/Passes.h"
+#include "Conversion/ProtonToProtonGPU/Passes.h"
 #endif
 
 #include "bishengir/Conversion/Passes.h"
@@ -121,13 +123,31 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
   pm.addPass(createConvertIndexToLLVMPass());
+  pm.addPass(mlir::triton::proton::createConvertProtonToProtonGPUPass(
+    options.protonGPUCompileConfig.metricType,
+    options.protonGPUCompileConfig.samplingStrategy,
+    options.protonGPUCompileConfig.samplingOptions,
+    options.protonGPUCompileConfig.granularity,
+    options.protonGPUCompileConfig.bufferStrategy,
+    options.protonGPUCompileConfig.bufferType,
+    options.protonGPUCompileConfig.bufferSize,
+    options.protonGPUCompileConfig.maxSharedMemSize,
+    options.protonGPUCompileConfig.profileScratchSize,
+    options.protonGPUCompileConfig.profileScratchAlignment,
+    options.protonGPUCompileConfig.clockExtension
+  ));
+  pm.addPass(createCSEPass());
+  pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
   pm.addPass(createCSEPass());
+  pm.addPass(mlir::triton::proton::gpu::createAllocateProtonGlobalScratchBufferPass());
+  pm.addPass(mlir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass());
   std::unique_ptr<OperationPass<ModuleOp>> convertTritonGPUToLLVMPass =
       mlir::triton::createConvertTritonGPUToLLVMPass(70, 73);
   pm.addPass(std::unique_ptr<mlir::Pass>(
       dyn_cast<mlir::Pass>(convertTritonGPUToLLVMPass.release())));
   pm.addPass(mlir::triton::createConvertNVGPUToLLVM());
+  pm.addPass(createGetTritonMetadataPass({options.tritonMetadataOutput}));
   pm.addPass(createArithToLLVMConversionPass());
 }
 #endif

@@ -89,6 +89,22 @@ def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
                              "mlir::tensor::TensorDialect",
                              "mlir::triton::TritonDialect"];
 }
+
+def GetTritonMetadata :
+    Pass<"get-triton-metadata", "mlir::ModuleOp"> {
+  let summary = "Get triton metadata";
+
+  let description = [{
+    Get triton metadata, e.g, ttg.total-num-warps, ttg.shared.
+    Print to either stdout or file.
+  }];
+
+  let constructor = "bishengir::triton::createGetTritonMetadataPass()";
+
+  let options = [Option<"tritonMetadataOutput",
+                        "triton-metadata-output", "std::string", "",
+                        "File to dump triton metadata. -- means stdout">];
+}
 #endif
 
 #endif // BISHENGIR_DIALECT_TRITON_TRANSFORMS_PASSES_TD

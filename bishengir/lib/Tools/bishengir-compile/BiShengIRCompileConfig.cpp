@@ -18,6 +18,7 @@
 
 using namespace bishengir;
 using namespace llvm;
+using namespace mlir::triton;
 
 namespace {
 static cl::OptionCategory featCtrlCategory("BiShengIR Feature Control Options");
@@ -28,6 +29,7 @@ static cl::OptionCategory
     hfusionOptCategory("BiShengIR HFusion Optimization Options");
 static cl::OptionCategory
     hivmOptCategory("BiShengIR HIVM Optimization Options");
+static cl::OptionCategory protonCategory("BiShengIR Proton Options");
 static cl::OptionCategory targetCategory("BiShengIR Target Options");
 static cl::OptionCategory
     simtOptCategory("BiShengIR SIMT Optimization Options");
@@ -298,6 +300,11 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
           this->simtStackLimitFlag = v;
         }));
 
+    static cl::opt<std::string, /*ExternalStorage=*/true> tritonMetadataOutput(
+        "triton-metadata-output",
+        cl::desc("File to dump triton metadata. -- means stdout"),
+        cl::location(tritonMetadataOutputPath), cl::init(""));
+
     static cl::opt<bool, /*ExternalStorage=*/true> disableDecomposeReduction(
         "disable-decompose-reduction",
         cl::desc("Disable SIMT decompose reduction pass"),
@@ -492,6 +499,109 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         "max-reduction-split", cl::desc("Max split times for reductionLoop."),
         cl::location(maxReductionSplitNumFlag), cl::init(1),
         cl::cat(hivmOptCategory));
+
+    // -------------------------------------------------------------------------//
+    //                            proton options
+    // -------------------------------------------------------------------------//
+
+    static cl::opt<proton::MetricType, /*ExternalStorage=*/true> clMetricType(
+        "proton-metric-type",
+        cl::desc("The performance counter metric type we are profiling"),
+        cl::location(protonGPUCompileConfig.metricType),
+        cl::values(
+            clEnumValN(proton::MetricType::CYCLE, "cycle", "Cycle")),
+        cl::init(proton::MetricType::CYCLE),
+        cl::cat(protonCategory));
+
+    static cl::opt<proton::SamplingStrategy, /*ExternalStorage=*/true> clSamplingStrategy(
+        "proton-sampling-strategy",
+        cl::desc("Profiling sampling strategy"),
+        cl::location(protonGPUCompileConfig.samplingStrategy),
+        cl::values(
+            clEnumValN(proton::SamplingStrategy::NONE, "none", "No Sampling"),
+            clEnumValN(proton::SamplingStrategy::SELECTIVE, "selective", "Selective Sampling")),
+        cl::init(proton::SamplingStrategy::NONE),
+        cl::cat(protonCategory));
+
+    static cl::opt<std::string, /*ExternalStorage=*/true> clSamplingOptions(
+        "proton-sampling-options",
+        cl::desc("Profiling sampling options"),
+        cl::location(protonGPUCompileConfig.samplingOptions),
+        cl::init(""),
+        cl::cat(protonCategory));
+
+    static cl::opt<proton::gpu::Granularity, /*ExternalStorage=*/true> clGranularity(
+        "proton-granularity",
+        cl::desc("Profiling granularity: warp, warp_group, or cta"),
+        cl::location(protonGPUCompileConfig.granularity),
+        cl::values(
+            clEnumValN(proton::gpu::Granularity::THREAD, "thread", "Thread"),
+            clEnumValN(proton::gpu::Granularity::WARP, "warp", "Warp"),
+            clEnumValN(proton::gpu::Granularity::WARP_2, "warp-2", "2 Warps"),
+            clEnumValN(proton::gpu::Granularity::WARP_4, "warp-4", "4 Warps"),
+            clEnumValN(proton::gpu::Granularity::WARP_8, "warp-8", "8 Warps"),
+            clEnumValN(proton::gpu::Granularity::CTA, "cta", "CTA"),
+            clEnumValN(proton::gpu::Granularity::WARP_GROUP, "warp-group", "Warp Group"),
+            clEnumValN(proton::gpu::Granularity::WARP_GROUP_2, "warp-group-2", "2 Warp Groups"),
+            clEnumValN(proton::gpu::Granularity::WARP_GROUP_4, "warp-group-4", "4 Warp Groups"),
+            clEnumValN(proton::gpu::Granularity::WARP_GROUP_8, "warp-group-8", "8 Warp Groups")),
+        cl::init(proton::gpu::Granularity::WARP),
+        cl::cat(protonCategory));
+
+    static cl::opt<proton::gpu::BufferStrategy, /*ExternalStorage=*/true> clBufferStrategy(
+        "proton-buffer-strategy",
+        cl::desc("Profiler buffer recording strategy (circular or flush)"),
+        cl::location(protonGPUCompileConfig.bufferStrategy),
+        cl::values(
+            clEnumValN(proton::gpu::BufferStrategy::CIRCULAR, "circular", "Circular Buffer"),
+            clEnumValN(proton::gpu::BufferStrategy::FLUSH, "flush", "Flush Buffer")),
+        cl::init(proton::gpu::BufferStrategy::CIRCULAR),
+        cl::cat(protonCategory));
+
+    static cl::opt<proton::gpu::BufferType, /*ExternalStorage=*/true> clBufferType(
+        "proton-buffer-type",
+        cl::desc("Internal buffer type (SHARED, GLOBAL) that stores the profiling data"),
+        cl::location(protonGPUCompileConfig.bufferType),
+        cl::values(
+            clEnumValN(proton::gpu::BufferType::SHARED, "shared", "Shared Memory"),
+            clEnumValN(proton::gpu::BufferType::GLOBAL, "global", "Global Memory")),
+        cl::init(proton::gpu::BufferType::SHARED),
+        cl::cat(protonCategory));
+
+    static cl::opt<int32_t, /*ExternalStorage=*/true> clBufferSize(
+        "proton-buffer-size",
+        cl::desc("Internal buffer byte size that stores the profiling data. 0 means auto-size based on the device's `maxSharedMemSize`"),
+        cl::location(protonGPUCompileConfig.bufferSize),
+        cl::init(0),
+        cl::cat(protonCategory));
+
+    static cl::opt<int32_t, /*ExternalStorage=*/true> clMaxSharedMemSize(
+        "proton-max-shared-mem",
+        cl::desc("Maximum available shared memory size per CTA"),
+        cl::location(protonGPUCompileConfig.maxSharedMemSize),
+        cl::init(32768),
+        cl::cat(protonCategory));
+
+    static cl::opt<int64_t, /*ExternalStorage=*/true> clProfileScratchSize(
+        "proton-profile-scratch-size",
+        cl::desc("Profiler global scratch memory size per CTA"),
+        cl::location(protonGPUCompileConfig.profileScratchSize),
+        cl::init(32768),
+        cl::cat(protonCategory));
+
+    static cl::opt<int32_t, /*ExternalStorage=*/true> clProfileScratchAlignment(
+        "proton-profile-scratch-alignment",
+        cl::desc("Profiler global scratch memory alignment"),
+        cl::location(protonGPUCompileConfig.profileScratchAlignment),
+        cl::init(128),
+        cl::cat(protonCategory));
+
+    static cl::opt<bool, /*ExternalStorage=*/true> clclockExtension(
+        "proton-clk-ext",
+        cl::desc("Use long clock if true, otherwise use 32-bit clock"),
+        cl::location(protonGPUCompileConfig.clockExtension),
+        cl::init(false),
+        cl::cat(protonCategory));
 
     // -------------------------------------------------------------------------//
     //                            Target options

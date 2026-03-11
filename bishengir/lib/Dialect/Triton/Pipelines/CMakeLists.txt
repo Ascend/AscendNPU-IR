@@ -4,7 +4,11 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     TritonToTritonGPU
     TritonGPUTransforms
     TritonNVIDIAGPUToLLVM
+    TritonAscendGPUToLLVM
     NVGPUToLLVM
+    ProtonToProtonGPU
+    ProtonGPUToLLVM
+    ProtonAscendGPUToLLVM
   )
 endif()
 

@@ -20,8 +20,8 @@ include "bishengir/Dialect/AscendDPX/IR/AscendDPXAttrs.td"
 //===----------------------------------------------------------------------===//
 // Program Info Ops
 //===----------------------------------------------------------------------===//
-class AscendDPX_InfoOp<string mnemonic>
-    : AscendDPX_Op<mnemonic, [Pure]> {
+class AscendDPX_InfoOp<string mnemonic, list<Trait> traits = [Pure]>
+    : AscendDPX_Op<mnemonic, traits> {
   let results = (outs I32:$res);
   let assemblyFormat = "attr-dict";
 }
@@ -33,6 +33,7 @@ def ThreadIdZOp : AscendDPX_InfoOp<"thread_id_z">;
 def BlockIdxXOp : AscendDPX_InfoOp<"block_idx_x">;
 def BlockIdxYOp : AscendDPX_InfoOp<"block_idx_y">;
 def BlockIdxZOp : AscendDPX_InfoOp<"block_idx_z">;
+def BlockIdxOp : AscendDPX_InfoOp<"block_idx">;
 
 def BlockDimXOp : AscendDPX_InfoOp<"block_dim_x">;
 def BlockDimYOp : AscendDPX_InfoOp<"block_dim_y">;
@@ -42,8 +43,8 @@ def GridDimXOp : AscendDPX_InfoOp<"grid_dim_x">;
 def GridDimYOp : AscendDPX_InfoOp<"grid_dim_y">;
 def GridDimZOp : AscendDPX_InfoOp<"grid_dim_z">;
 
-def Clock32Op : AscendDPX_InfoOp<"clock32">;
-def Clock64Op : AscendDPX_InfoOp<"clock64"> {
+def Clock32Op : AscendDPX_InfoOp<"clock32", []>;
+def Clock64Op : AscendDPX_InfoOp<"clock64", []> {
   let results = (outs I64:$res);
 }
 

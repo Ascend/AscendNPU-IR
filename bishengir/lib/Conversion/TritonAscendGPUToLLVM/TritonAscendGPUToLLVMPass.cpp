@@ -140,6 +140,8 @@ struct ConvertTritonAscendGPUToLLVMPass
     mlir::arith::populateCeilFloorDivExpandOpsPatterns(patterns);
     mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
     mlir::populateMathToLLVMConversionPatterns(typeConverter, patterns);
+    triton::populateMemoryOpToLLVMPatterns(
+        typeConverter, targetInfo, patterns, kDefaultPatternBenefit);
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns)))) {
       return signalPassFailure();
     }

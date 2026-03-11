@@ -460,6 +460,7 @@ cmake_generate() {
 
 cmake_build() {
 #  local targets="check-mlir;check-bishengir"
+  cd ${BUILD_DIR}
   local targets="check-bishengir"
   if [[ -v BUILD_TEST ]]; then
     cmake --build . -j "${THREADS}" --target "${targets}" || exit 1

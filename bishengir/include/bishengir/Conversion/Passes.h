@@ -21,6 +21,7 @@
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
 #include "bishengir/Conversion/LowerMesh/LowerMesh.h"
 #include "bishengir/Conversion/MathToHFusion/MathToHFusion.h"
+#include "bishengir/Conversion/ProtonAscendGPUToLLVM/ProtonAscendGPUToLLVM.h"
 #include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/TritonAscendGPUToLLVM.h"

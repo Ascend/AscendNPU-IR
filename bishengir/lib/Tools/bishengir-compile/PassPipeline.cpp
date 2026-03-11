@@ -108,6 +108,7 @@ void setupLowerTritonPipelineOptions(
   options.threadsPerWarp = config.getThreadsPerWarp();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
+  options.tritonMetadataOutput = config.getTritonMetadataOutput();
 #if BSPRIV_DAVINCI_BISHENGIR
   if (config.getSharedDynamicSize() < 122880 ||
       config.getSharedDynamicSize() > 221184)
@@ -119,6 +120,7 @@ void setupLowerTritonPipelineOptions(
   options.enableBishengirSimtOptimization =
       config.getEnableBishengirSimtOptimize();
 #endif
+  options.protonGPUCompileConfig = config.getProtonGPUCompileConfig();
 }
 
 void buildBiShengTTIRPipeline(OpPassManager &pm,

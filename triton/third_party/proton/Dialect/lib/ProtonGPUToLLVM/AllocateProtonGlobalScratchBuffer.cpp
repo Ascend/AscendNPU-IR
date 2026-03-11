@@ -30,6 +30,19 @@ struct AllocateProtonGlobalScratchBufferPass
       }
     });
 
+#if BSPRIV_DAVINCI_BISHENGIR
+    // if triton-gpu-to-llvm is not turned on in bishengir,
+    // tt.func has not been converted to llvm.func and somehow isn't picked up
+    // by the FunctionOpInterface above
+    // TODO: remove this when triton-gpu-to-llvm is turned on
+    if (numFuncOps == 0) {
+      mod.walk([&](triton::FuncOp op) {
+        numFuncOps += 1;
+        func = op;
+      });
+    }
+#endif
+
     assert(numFuncOps == 1);
 
     int32_t cumulativeMemorySize = 0; // bytes

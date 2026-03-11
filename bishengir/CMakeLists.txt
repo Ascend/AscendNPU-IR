@@ -136,6 +136,8 @@ if(BISHENGIR_ENABLE_TORCH_CONVERSIONS)
 endif()
 
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
+  cmake_path(ABSOLUTE_PATH LLVM_EXTERNAL_TRITON_SOURCE_DIR
+             BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set(TRITON_MAIN_SRC_DIR ${LLVM_EXTERNAL_TRITON_SOURCE_DIR})
   set(TRITON_MLIR_INCLUDE_DIRS ${LLVM_EXTERNAL_TRITON_SOURCE_DIR}/include)
   set(TRITON_TABLEGEN_OUTPUT_DIR ${LLVM_BINARY_DIR}/tools/triton/include)
@@ -146,6 +148,8 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
   include_directories(${TRITON_MAIN_SRC_DIR}/third_party)
   include_directories(${TRITON_MAIN_SRC_DIR}/third_party/nvidia/include)
   include_directories(${LLVM_BINARY_DIR}/tools/triton/third_party)
+  # for proton
+  include_directories(${TRITON_MAIN_SRC_DIR}/third_party/proton/Dialect/include)
   # for RegisterTritonDialects.h
   include_directories(${TRITON_MAIN_SRC_DIR}/bin)
 endif()

@@ -50,7 +50,10 @@ runExternalHIVMPipeline(ModuleOp &module,
   arguments.push_back(inputFile);
 
   auto clArgs = config.getClArgs();
-  arguments.insert(arguments.end(), clArgs.begin(), clArgs.end());
+  llvm::copy_if(clArgs, std::back_inserter(arguments),
+                [](const std::string &arg) {
+                  return !llvm::StringRef(arg).starts_with("--proton-");
+                });
 
   arguments.push_back("-o");
   arguments.push_back(config.outputFile());

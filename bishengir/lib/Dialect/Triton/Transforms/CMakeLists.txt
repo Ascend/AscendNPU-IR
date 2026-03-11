@@ -4,6 +4,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     AdaptTritonIRKernel.cpp
     DecomposeReduction.cpp
     FixFusedCatPass.cpp
+    GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp

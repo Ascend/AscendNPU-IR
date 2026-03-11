@@ -16,6 +16,12 @@ namespace {
 
 Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
+#if BSPRIV_DAVINCI_BISHENGIR
+    Value linearId = rewriter.create<arith::IndexCastOp>(
+      loc, i32_ty,
+      rewriter.create<mlir::gpu::LinearBlockIdOp>(loc));
+    return linearId;
+#else
   // Note:
   // 1. We compute use i64 data type to compute and then truncate to i32
   // to support various backend intrinsics (e.g. amd).
@@ -41,6 +47,7 @@ Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
       b.trunc(i32_ty, b.add(b.add(pidX, b.mul(pidY, gridDimX)),
                             b.mul(pidZ, b.mul(gridDimX, gridDimY))));
   return linearId;
+#endif
 }
 
 struct ReadCounterOpConversion

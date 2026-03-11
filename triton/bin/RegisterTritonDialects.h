@@ -9,15 +9,15 @@
 #include "nvidia/include/Dialect/NVGPU/IR/Dialect.h"
 #include "nvidia/include/Dialect/NVWS/IR/Dialect.h"
 
-#if !BSPRIV_DAVINCI_BISHENGIR
 #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/Passes.h"
+#if !BSPRIV_DAVINCI_BISHENGIR
 #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/Passes.h"
 #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/ProtonNvidiaGPUToLLVM/Passes.h"
+#endif
 #include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
 #include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
 #include "proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h"
 #include "proton/Dialect/include/Dialect/ProtonGPU/Transforms/Passes.h"
-#endif
 
 #include "triton/Dialect/Gluon/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -133,15 +133,18 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
   // NVGPU transform passes
   mlir::registerNVHopperTransformsPasses();
 
-#if !BSPRIV_DAVINCI_BISHENGIR
-  // Currently, we don't build Proton backed.
   // Proton passes
+#if !BSPRIV_DAVINCI_BISHENGIR
   mlir::test::proton::registerTestScopeIdAllocationPass();
+#endif
   mlir::triton::proton::registerConvertProtonToProtonGPU();
+#if !BSPRIV_DAVINCI_BISHENGIR
   mlir::triton::proton::gpu::registerConvertProtonNvidiaGPUToLLVM();
   mlir::triton::proton::gpu::registerConvertProtonAMDGPUToLLVM();
+#endif
   mlir::triton::proton::gpu::registerAllocateProtonSharedMemoryPass();
   mlir::triton::proton::gpu::registerAllocateProtonGlobalScratchBufferPass();
+#if !BSPRIV_DAVINCI_BISHENGIR
   mlir::triton::proton::gpu::registerScheduleBufferStorePass();
   mlir::triton::proton::gpu::registerAddSchedBarriersPass();
 #endif
@@ -156,8 +159,8 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
       mlir::triton::nvgpu::NVGPUDialect, mlir::triton::nvws::NVWSDialect,
 #if !BSPRIV_DAVINCI_BISHENGIR
       mlir::triton::amdgpu::TritonAMDGPUDialect,
+#endif
       mlir::triton::proton::ProtonDialect,
       mlir::triton::proton::gpu::ProtonGPUDialect,
-#endif
       mlir::ROCDL::ROCDLDialect, mlir::triton::gluon::GluonDialect>();
 }

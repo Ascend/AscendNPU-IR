@@ -47,6 +47,8 @@ std::unique_ptr<mlir::Pass> createOptimizeLoadsPass();
 /// Create a pass to split loops up and tailor arange ranges
 std::unique_ptr<mlir::Pass> createLoopRestructureArangeOptimizationPass();
 
+std::unique_ptr<mlir::Pass> createGetTritonMetadataPass(const GetTritonMetadataOptions &options = {});
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
 

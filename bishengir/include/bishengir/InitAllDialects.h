@@ -35,7 +35,9 @@
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
 #include "bishengir/Dialect/Tensor/Transforms/MeshShardingInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
+#include "bishengir/Conversion/Passes.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
@@ -76,6 +78,9 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   registerTritonDialects(registry);
+  registerConvertTritonAscendGPUToLLVMPass();
+  registerConvertProtonAscendGPUToLLVMPass();
+  triton::registerGetTritonMetadataPass();
 #endif
 
   // Register all external models.

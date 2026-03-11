@@ -1,0 +1,40 @@
+diff --git a/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td b/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
+index c57d291552..7ef9388060 100644
+--- a/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
++++ b/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
+@@ -241,6 +241,22 @@ def GPU_ThreadIdOp : GPU_IndexOp<"thread_id"> {
+   }];
+ }
+ 
++#ifdef BSPRIV_DAVINCI_BISHENGIR
++def GPU_LinearBlockIdOp : GPU_Op<"linear_block_id", [Pure]> {
++  let description = [{
++    Returns the linear block id within the grid.
++
++    Example:
++    ```mlir
++    %linear_block_id = gpu.linear_block_id
++    ```
++  }];
++  let arguments = (ins);
++  let results = (outs Index:$result);
++  let assemblyFormat = "attr-dict";
++}
++#endif
++
+ def GPU_LaneIdOp : GPU_Op<"lane_id", [
+       Pure, DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>]> {
+   let description = [{
+diff --git a/llvm/include/llvm/IR/IntrinsicsHiTPE.td b/llvm/include/llvm/IR/IntrinsicsHiTPE.td
+index 246c4bcd09..f315adeaed 100644
+--- a/llvm/include/llvm/IR/IntrinsicsHiTPE.td
++++ b/llvm/include/llvm/IR/IntrinsicsHiTPE.td
+@@ -145,6 +145,8 @@ def int_hivm_tpe_get_BLOCK_NUM : ClangBuiltin<"__cce_simt_get_BLOCKDIM">,
+                 Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
+ def int_hivm_tpe_get_BLOCK_IDX : ClangBuiltin<"__cce_simt_get_BLOCKID">,
+                 Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
++def int_hivm_tpe_get_COREID : ClangBuiltin<"__cce_simt_get_COREID">,
++                Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;
+ 
+ def int_hivm_get_TID_X : ClangBuiltin<"__cce_simt_get_TID_X">,
+                 Intrinsic<[llvm_i32_ty], [], [IntrNoMem]>;

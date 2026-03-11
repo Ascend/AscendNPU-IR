@@ -219,6 +219,28 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
   ];
 }
 
+def ConvertProtonAscendGPUToLLVM :
+    Pass<"convert-proton-ascend-gpu-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Convert ProtonGPU to LLVM";
+  let description = [{
+    Convert ProtonGPU to LLVM using Ascend-specific lowering patterns.
+  }];
+  let constructor = "mlir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass()";
+
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::math::MathDialect",
+    "mlir::gpu::GPUDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::ascend_dpx::AscendDPXDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::proton::ProtonDialect",
+    "mlir::triton::proton::gpu::ProtonGPUDialect"
+  ];
+}
+
 
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 //===----------------------------------------------------------------------===//

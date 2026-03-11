@@ -17,6 +17,8 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
 
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+
 namespace bishengir {
 namespace triton {
 
@@ -41,6 +43,11 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<bool> disableReorderInstruction{
       *this, "disable-reorder-instruction",
       llvm::cl::desc("disable reorder instruction"), llvm::cl::init(false)};
+  PassOptions::Option<std::string> tritonMetadataOutput{
+      *this, "triton-metadata-output",
+      llvm::cl::desc("File to dump triton metadata. -- means stdout"),
+      llvm::cl::init("")};
+  mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 };
 
 //===----------------------------------------------------------------------===//
