@@ -55,9 +55,9 @@ struct HFusionPipelineOptions
       *this, "enable-auto-vectorize-v2",
       llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
 
-  PassOptions::Option<bool> enableVFFusion{
-      *this, "enable-vf-fusion",
-      llvm::cl::desc("Enable vf fusion"), llvm::cl::init(false)};
+  PassOptions::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
+                                           llvm::cl::desc("Enable vf fusion"),
+                                           llvm::cl::init(false)};
 
   PassOptions::Option<bool> enableTreeReduce{
       *this, "enable-tree-reduce", llvm::cl::desc("Enable tree reduce"),
@@ -96,6 +96,10 @@ struct HFusionPipelineOptions
   PassOptions::Option<bool> enableDropUnitDims{
       *this, "enable-drop-unit-dims",
       llvm::cl::desc("enable drop-unit-dims pass"), llvm::cl::init(true)};
+
+  PassOptions::Option<bool> enableFlatten{*this, "enable-flatten",
+                                          llvm::cl::desc("enable flatten pass"),
+                                          llvm::cl::init(true)};
 
   PassOptions::Option<bool> enableAutoBindSubBlock{
       *this, "enable-auto-bind-sub-block",

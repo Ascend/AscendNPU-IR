@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateCollapseDown.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateExpandUp.h"
@@ -49,6 +50,14 @@ void PropagateReshapePass::runOnOperation() {
   PropagateReshapeOptions opts;
   opts.forHIVM = forHIVM;
   opts.forRegbased = forRegbased;
+
+  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
+      mlir::hivm::queryFuncCoreType(f);
+  if (funcCoreType.has_value()) {
+    if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIC) {
+      return;
+    }
+  }
 
   // Experimental propagate reshape, can remove this if
   if (opts.forRegbased && util::hasUnpropagateableCase(f, this->skipScope)) {

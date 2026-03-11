@@ -523,6 +523,12 @@ public:
   }
   bool shouldEnableDropUnitDims() const { return enableDropUnitDimsFlag; }
 
+  BiShengIRCompileMainConfig &enableFlatten(bool enable) {
+    enableFlattenFlag = enable;
+    return *this;
+  }
+  bool shouldEnableFlatten() const { return enableFlattenFlag; }
+
   BiShengIRCompileMainConfig &setWorkspaceMultiBufferNum(unsigned number) {
     workspaceMultiBufferNumFlag = number;
     return *this;
@@ -821,6 +827,9 @@ protected:
 
   /// Disable drop-unit-dims pass.
   bool enableDropUnitDimsFlag{true};
+
+  /// Enable flatten pass.
+  bool enableFlattenFlag{true};
 
   /// Number of multibuffers for workspace.
   unsigned workspaceMultiBufferNumFlag{2};

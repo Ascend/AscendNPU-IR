@@ -171,8 +171,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::cat(featCtrlCategory));
 
     static cl::opt<bool, /*ExternalStorage=*/true> enableVFFusion(
-        "enable-vf-fusion",
-        cl::desc("Enable vf fusion"),
+        "enable-vf-fusion", cl::desc("Enable vf fusion"),
         cl::location(enableVFFusionFlag), cl::init(false),
         cl::cat(featCtrlCategory));
 
@@ -277,6 +276,11 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableDropUnitDimsFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableFlatten(
+        "enable-flatten", cl::desc("Enable flatten pass"),
+        cl::location(enableFlattenFlag), cl::init(true),
+        cl::cat(generalOptCategory));
+
     static cl::opt<int, /*ExternalStorage=*/true>
         enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
@@ -344,8 +348,8 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
 
     static cl::opt<unsigned, /*ExternalStorage=*/true> workspaceMultiBufferNum(
         "set-workspace-multibuffer",
-        cl::desc(
-            "Override number of multibuffers for workspace, defaults to 1 (off)"),
+        cl::desc("Override number of multibuffers for workspace, defaults to 1 "
+                 "(off)"),
         cl::location(workspaceMultiBufferNumFlag), cl::init(1),
         cl::cat(generalOptCategory));
 

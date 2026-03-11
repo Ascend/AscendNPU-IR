@@ -75,6 +75,7 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.maxHorizontalFusionSize =
       config.maxHorizontalFusionSize();
   hfusionPipelineOptions.enableDropUnitDims = config.shouldEnableDropUnitDims();
+  hfusionPipelineOptions.enableFlatten = config.shouldEnableFlatten();
   hfusionPipelineOptions.enableAutoMultiBuffer =
       config.shouldEnableAutoMultiBuffer();
   hfusionPipelineOptions.enableDeterministicComputing =
@@ -184,13 +185,12 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
-      
+
       // TODO: converter HIVM (tensor) -> TTIR
- 
- 
+
       // split modules
       pm.addPass(hivm::createSplitSimtModulePass());
-        
+
       // right now only simd module is visible (i.e. registered in passManager)
       hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
     }
@@ -217,6 +217,7 @@ public:
     disableFFTS = pass.disableFFTS;
     disableHFusionVectorize = pass.disableHFusionVectorize;
     enableDropUnitDims = pass.enableDropUnitDims;
+    enableFlatten = pass.enableFlatten;
     enableHFusionCompile = pass.enableHFusionCompile;
     enableHIVMCompile = pass.enableHIVMCompile;
     enableLIRCompile = pass.enableLIRCompile;
@@ -326,7 +327,8 @@ public:
         .reorderOps(enableOpsReorder)
         .tuningMode(enableTuningMode)
         .setBlockDim(blockDim)
-        .enableDropUnitDims(enableDropUnitDims);
+        .enableDropUnitDims(enableDropUnitDims)
+        .enableFlatten(enableFlatten);
 
     // HFusion optimization control options
     config.setMaxHorizontalFusionSize(maxHorizontalFusionSize)
@@ -422,8 +424,8 @@ protected:
       *this, "enable-auto-vectorize-v2",
       llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
   Pass::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
-                                   llvm::cl::desc("Enable vf fusion"),
-                                   llvm::cl::init(false)};
+                                    llvm::cl::desc("Enable vf fusion"),
+                                    llvm::cl::init(false)};
   Pass::Option<bool> enableHighPrecision{
       *this, "enable-high-precision",
       llvm::cl::desc(
@@ -449,6 +451,9 @@ protected:
   Pass::Option<bool> enableDropUnitDims{
       *this, "enable-drop-unit-dims",
       llvm::cl::desc("Enable drop-unit-dims pass"), llvm::cl::init(true)};
+  Pass::Option<bool> enableFlatten{*this, "enable-flatten",
+                                   llvm::cl::desc("Enable flatten pass"),
+                                   llvm::cl::init(true)};
   // -------------------------------------------------------------------------//
   //                           DFX control options
   // -------------------------------------------------------------------------//
@@ -604,8 +609,7 @@ protected:
       llvm::cl::init(false)};
   Pass::Option<bool> enablefusedMultiplyAdd{
       *this, "enable-fused-multiply-add",
-      llvm::cl::desc("Enable fused multiply add"),
-      llvm::cl::init(false)};
+      llvm::cl::desc("Enable fused multiply add"), llvm::cl::init(false)};
   Pass::Option<bool> enableAutoBlockifyLoop{
       *this, "enable-auto-blockify-loop",
       llvm::cl::desc(

@@ -1,4 +1,4 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-drop-unit-dims=false %s | FileCheck %s
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-flatten=false %s | FileCheck %s
 
 // CHECK: LLVMDialectModule
 module {

@@ -123,8 +123,9 @@ static void preProcess(OpPassManager &pm,
     // FIX: To handle inputs that contain direct HFusion ops, better to use a
     // pass that selectively generalizes HFusion ops (using
     // mlir::linalg::LinalgGeneralizationPattern)
-    convertAllToHFusion(pm, options, false);
-    if (options.enableDropUnitDims) {
+    // delete enableDropUnitDims in future
+    if (options.enableFlatten && options.enableDropUnitDims) {
+      convertAllToHFusion(pm, options, false);
       pm.nest<func::FuncOp>().addPass(createHFusionGeneralizePass());
       pm.nest<func::FuncOp>().addPass(createHFusionFoldUnitDimsPass());
       // NOTE: Re-converting to HFusion is necessary after applying the
@@ -397,7 +398,7 @@ void buildHFusionPipelines(OpPassManager &pm,
     // step 4: CanonicalizeTensorReshape
     // FIXME: because of VF fusion, for triton compile, we need flatten pass or
     // other passes we didn't notice. Maybe these passes will be called later.
-    if (runRegBasePasses) {
+    if (runRegBasePasses && options.enableFlatten) {
       PropagateReshapeOptions opts;
       opts.forRegbased = true;
       opts.forHIVM = false;
@@ -440,22 +441,25 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
                                  const HFusionPipelineOptions &options) {
   // TODO: Commonize this with the non-mixed-cv pipeline to prevent potential
   // out-of-sync pass orders
-  PropagateReshapeOptions opts;
-  opts.forRegbased = true;
-  opts.forHIVM = false;
-  pm.nest<func::FuncOp>().addPass(tensor::createPropagateReshapePass(opts));
-  pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
-  pm.nest<func::FuncOp>().addPass(
-      tensor::createCanonicalizeTensorReshapePass());
-  canonicalizationPipeline(pm, options);
+  if (options.enableFlatten) {
+    PropagateReshapeOptions opts;
+    opts.forRegbased = true;
+    opts.forHIVM = false;
+    pm.nest<func::FuncOp>().addPass(tensor::createPropagateReshapePass(opts));
+    pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createCanonicalizeTensorReshapePass());
+    canonicalizationPipeline(pm, options);
 
-  FlattenOpsOptions flattenOpsOpt;
-  flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
-  flattenOpsOpt.skipHost = options.enableMultiKernel;
-  flattenOpsOpt.multiDynamicShape = false;
-  flattenOpsOpt.registerBased = true;
-  pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
-  canonicalizationPipeline(pm, options, AfterAutoSchedule);
+    FlattenOpsOptions flattenOpsOpt;
+    flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
+    flattenOpsOpt.skipHost = options.enableMultiKernel;
+    flattenOpsOpt.multiDynamicShape = false;
+    flattenOpsOpt.registerBased = true;
+    pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
+    canonicalizationPipeline(pm, options, AfterAutoSchedule);
+  }
+
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
