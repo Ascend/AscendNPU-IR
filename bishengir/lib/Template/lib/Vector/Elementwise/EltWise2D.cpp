@@ -238,7 +238,7 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
       } else {
         src1_oprand = scalar;
       }
-      *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
+      *(dst_ptr + index0 * dst->strides[0] + index1 * dst->strides[1]) =
         handle_vector_operation<OP, T>(src0_oprand, src1_oprand, mode);
     }
   }
