@@ -146,6 +146,29 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
         return attr.getValue();
       return std::nullopt;
     }
+
+    /// True if layout is one of the *_ND layouts.
+    bool isNDLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::DOTA_ND:
+        case hivm::DataLayout::DOTB_ND:
+        case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    using FractalSize = std::pair<int32_t, int32_t>;
+
+    /// Extract exactly 2 fractal block sizes.
+    FailureOr<FractalSize> getFractalBlockSizes() const {
+      auto sizes = getFractalSizesArray();
+      if (!sizes || sizes->size() != 2)
+        return failure();
+      return FractalSize((*sizes)[0], (*sizes)[1]);
+    }
   }];
   let genVerifyDecl = 1;
   let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";

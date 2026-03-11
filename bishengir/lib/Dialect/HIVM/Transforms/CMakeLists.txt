@@ -26,8 +26,12 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConstantizeBufferSize.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
-  EnableHIVMCCompatiblePrint.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
+  ConvertLayout/ConvertLayoutUtils.cpp
   CVPipelining.cpp
+  EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp

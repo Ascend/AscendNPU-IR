@@ -239,8 +239,6 @@ std::vector<scf::ForOp> createNestedLoops(
 FailureOr<SmallVector<Operation *>> traceForPotentialMatrixC(Value v,
                                                              Block *storeBlock);
 
-bool isMarkedAsHIVMElementwiseOp(Operation *op);
-
 bool isMixModule(ModuleOp mod);
 
 bool isAICModule(ModuleOp mod);
