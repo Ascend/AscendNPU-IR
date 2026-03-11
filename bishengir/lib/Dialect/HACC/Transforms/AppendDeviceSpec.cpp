@@ -104,7 +104,7 @@ void AppendDeviceSpec::runOnOperation() {
   utils::setNPUTargetSpec(moduleOp, targetSpec);
 
   llvm::VersionTuple hivmcVersion;
-  if (!hivmcVersion.tryParse(HIVMCVersion))
+  if (hivmcVersion.tryParse(HIVMCVersion))
     hivmcVersion = llvm::VersionTuple(0, 0, 0);
   moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
                     hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
