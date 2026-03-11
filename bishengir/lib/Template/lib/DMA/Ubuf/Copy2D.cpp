@@ -19,11 +19,9 @@
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
-inputs_of_load_gm_to_ubuf_2d_core_align(memref_t<__gm__ T, 2> *src,
-                                        memref_t<__ubuf__ T, 2> *dst,
-                                        int64_t left_padding_num) {
-  auto stride0_ub = dst->strides[0];
-  auto stride1_ub = dst->strides[1];
+check_2d_ubuf_stride_align(memref_t<__ubuf__ T, 2> *ub) {
+  auto stride0_ub = ub->strides[0];
+  auto stride1_ub = ub->strides[1];
   return (((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
            (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1)));
 }
@@ -88,7 +86,7 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
     pad_value = 0;
   }
 
-  if (inputs_of_load_gm_to_ubuf_2d_core_align(src, dst, left_padding_num)) {
+  if (!check_2d_ubuf_stride_align(dst)) {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
@@ -175,12 +173,8 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
     return;
   }
 
-  const int64_t stride0_gm = dst->strides[0];
-  const int64_t stride1_gm = dst->strides[1];
-  const int64_t stride0_ub = src->strides[0];
-  const int64_t stride1_ub = src->strides[1];
-  if ((!isSizeAlignedToBlock<T>(stride0_ub) && stride0_ub != 1) ||
-      (!isSizeAlignedToBlock<T>(stride1_ub) && stride1_ub != 1)) {
+
+  if (!check_2d_ubuf_stride_align(src)) {
     if (atomic_kind != AtomicKind::None) {
       cce::printf("Atomic operations are not supported when the stride is not "
                   "block‑aligned");
@@ -227,6 +221,10 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
     return;
   }
 
+  const int64_t stride0_gm = dst->strides[0];
+  const int64_t stride1_gm = dst->strides[1];
+  const int64_t stride0_ub = src->strides[0];
+  const int64_t stride1_ub = src->strides[1];
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
     store_ubuf_to_gm_2d_core_with_contiguous_last_dim<T>(src, dst);
