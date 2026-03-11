@@ -8,6 +8,7 @@ file(GLOB HIVM_LAYOUT ${CMAKE_CURRENT_SOURCE_DIR}/OpLayoutInterface/*.cpp)
 file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInterface/*.cpp)
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
+file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -20,6 +21,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_LIBRARY_FUNCTION}
   ${HIVM_PIPE}
   ${HIVM_VECTOR_BASE}
+  ${HIVM_CANONICALIZATIONS}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp
