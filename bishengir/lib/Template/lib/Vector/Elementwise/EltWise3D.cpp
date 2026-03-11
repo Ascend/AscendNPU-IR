@@ -304,7 +304,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_vv_3d(
   memref_t<__ubuf__ T, 3> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 3> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[2]) {
+    if (scalar_num >= dst->sizes[2]) {
       scalar_eltwise_3d<OP, T>(src0, src1, dst, dst->sizes[0], dst->sizes[1], dst->sizes[2], mode, {0});
       return;
     }
@@ -327,7 +327,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_vs_3d(
   memref_t<__ubuf__ T, 3> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 3> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[2]) {
+    if (scalar_num >= dst->sizes[2]) {
       scalar_eltwise_3d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1], dst->sizes[2], mode, scalar);
       return;
     }
@@ -349,7 +349,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_sv_3d(
   memref_t<__ubuf__ T, 3> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 3> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[2]) {
+    if (scalar_num >= dst->sizes[2]) {
       scalar_eltwise_3d<OP, T>(nullptr, src1, dst, dst->sizes[0], dst->sizes[1], dst->sizes[2], mode, scalar);
       return;
     }
@@ -371,7 +371,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_v_3d(
   memref_t<__ubuf__ T, 3> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 3> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[2]) {
+    if (scalar_num >= dst->sizes[2]) {
       scalar_eltwise_3d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1], dst->sizes[2], mode, {0});
       return;
     }

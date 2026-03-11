@@ -248,7 +248,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_vv_1d(
   memref_t<__ubuf__ T, 1> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[0]) {
+    if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, src1, dst, dst->sizes[0], mode, {0});
       return;
     }
@@ -271,7 +271,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_vs_1d(
   memref_t<__ubuf__ T, 1> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[0]) {
+    if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, nullptr, dst, dst->sizes[0], mode, scalar);
       return;
     }
@@ -293,7 +293,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_sv_1d(
   memref_t<__ubuf__ T, 1> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[0]) {
+    if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(nullptr, src1, dst, dst->sizes[0], mode, scalar);
       return;
     }
@@ -315,7 +315,7 @@ __aiv__ __attribute__((always_inline)) void eltwise_v_1d(
   memref_t<__ubuf__ T, 1> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 1> aligned_dst = *dst;
   if (scalar_num != 0)[[unlikely]] {
-    if (scalar_num > dst->sizes[0]) {
+    if (scalar_num >= dst->sizes[0]) {
       scalar_eltwise_1d<OP, T>(src0, nullptr, dst, dst->sizes[0], mode, {0});
       return;
     }
