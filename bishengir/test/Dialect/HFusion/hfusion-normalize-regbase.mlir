@@ -130,9 +130,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     // CHECK:           %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
     // CHECK:           hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
     // CHECK:           memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xf8E4M3FN, strided<[1], offset: ?>> to memref<256xf8E4M3FN>
-    // CHECK:           %[[VAL_11:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<256xf8E4M3FN>) outs(%{{.*}} : tensor<256xf32>) -> tensor<256xf32>
+    // CHECK:           %[[VAL_11:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%{{.*}} : tensor<256xf8E4M3FN>) outs(%{{.*}} : tensor<256xf32>) -> tensor<256xf32>
     // CHECK:           %[[VAL_12:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_11]], %{{.*}} : tensor<256xf32>, tensor<256xf32>) outs(%{{.*}} : tensor<256xf32>) -> tensor<256xf32>
-    // CHECK:           %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_12]] : tensor<256xf32>) outs(%{{.*}} : tensor<256xf8E4M3FN>) -> tensor<256xf8E4M3FN>
+    // CHECK:           %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[VAL_12]] : tensor<256xf32>) outs(%{{.*}} : tensor<256xf8E4M3FN>) -> tensor<256xf8E4M3FN>
     // CHECK:           bufferization.materialize_in_destination %[[VAL_13]] in writable %[[VAL_4]] : (tensor<256xf8E4M3FN>, memref<256xf8E4M3FN, strided<[1], offset: ?>>) -> ()
     // CHECK:           hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
     
@@ -147,8 +147,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     hfusion.atomic_cas ins(%arg3, %arg4 : memref<1xf8E4M3FN>, memref<1xf8E4M3FN>) outs(%arg2 : memref<1xf8E4M3FN>)
     // CHECK:           %[[VAL_10:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
     // CHECK:           hivm.hir.sync_block_lock lock_var(%[[VAL_10]] : memref<1xi64>)
-    // CHECK-DAG:       %[[VAL_12:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%[[VAL_11:.*]] : tensor<1xf8E4M3FN>) outs(%{{.*}} : tensor<1xf32>) -> tensor<1xf32>
-    // CHECK-DAG:       %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%{{.*}} : tensor<1xf8E4M3FN>) outs(%{{.*}} : tensor<1xf32>) -> tensor<1xf32>
+    // CHECK-DAG:       %[[VAL_12:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[VAL_11:.*]] : tensor<1xf8E4M3FN>) outs(%{{.*}} : tensor<1xf32>) -> tensor<1xf32>
+    // CHECK-DAG:       %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%{{.*}} : tensor<1xf8E4M3FN>) outs(%{{.*}} : tensor<1xf32>) -> tensor<1xf32>
     // CHECK:           %[[VAL_14:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[VAL_12]], %[[VAL_13]] : tensor<1xf32>, tensor<1xf32>) outs(%{{.*}} : tensor<1xi1>) -> tensor<1xi1>
     // CHECK:           %[[VAL_15:.*]] = hfusion.select ins(%[[VAL_14]], %{{.*}}, %[[VAL_11]] : tensor<1xi1>, tensor<1xf8E4M3FN>, tensor<1xf8E4M3FN>) outs(%[[VAL_11]] : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
     // CHECK:           bufferization.materialize_in_destination %[[VAL_15]] in writable %{{.*}} : (tensor<1xf8E4M3FN>, memref<1xf8E4M3FN>) -> ()

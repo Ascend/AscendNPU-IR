@@ -157,7 +157,7 @@ func.func @test_linalg_floor_to_hfusion_cast(%src: tensor<1024xf16>) -> tensor<1
 // CHECK-LABEL: func.func @test_hfusion_mod_f32
 // CHECK-SAME: (%[[x:.*]]: tensor<2048xf32>, %[[y:.*]]: tensor<2048xf32>)
 // CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x]], %[[y]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
-// CHECK: %[[div_trunc:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<trunc>} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
 // CHECK: %[[mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
 // CHECK: %[[rem:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x]], %[[mul]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
 // CHECK: %[[output:.*]] = hfusion.select ins({{.*}}, {{.*}}, %[[rem]] : tensor<2048xi1>, f32, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
@@ -827,7 +827,7 @@ func.func @test_xori(%arg0: tensor<512xi16>, %arg1: tensor<512xi16>) -> tensor<5
 // CHECK: %[[E_I32_35:.*]] = tensor.empty() : tensor<5xi32>
 // CHECK: %[[ABS_BITS:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[S4]], %[[C2147483647_I32]] : tensor<5xi32>, i32) outs(%[[E_I32_35]] : tensor<5xi32>) -> tensor<5xi32>
 // CHECK: %[[E_F32_0:.*]] = tensor.empty() : tensor<5xf32>
-// CHECK: %[[ABS_F:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%[[ABS_BITS]] : tensor<5xi32>) outs(%[[E_F32_0]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[ABS_F:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[ABS_BITS]] : tensor<5xi32>) outs(%[[E_F32_0]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_F32_1:.*]] = tensor.empty() : tensor<5xf32>
 // CHECK: %[[X:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[ABS_F]], %[[CST_5]] : tensor<5xf32>, f32) outs(%[[E_F32_1]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_I32_36:.*]] = tensor.empty() : tensor<5xi32>
@@ -901,7 +901,7 @@ func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
 // CHECK: %[[QNAN:.*]] = arith.constant 0x7FC00000 : f32
 // CHECK: %[[C1_I32:.*]] = arith.constant 1 : i32
 // CHECK: %[[E_F32_IN:.*]] = tensor.empty() : tensor<5x1xf32>
-// CHECK: %[[IN_F32:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<round>} ins(%[[ARG0]] : tensor<5x1xf16>) outs(%[[E_F32_IN]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[IN_F32:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<round>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[ARG0]] : tensor<5x1xf16>) outs(%[[E_F32_IN]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[TBL0:.*]] = memref.get_global @tbl : memref<320xi32, #hivm.address_space<gm>>
 // CHECK: %[[TBL_RC:.*]] = memref.reinterpret_cast %[[TBL0]] to offset: [0], sizes: [320], strides: [1] : memref<320xi32, #hivm.address_space<gm>> to memref<320xi32, strided<[1]>, #hivm.address_space<gm>>
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<320xi32>
@@ -979,7 +979,7 @@ func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
 // CHECK: %[[E_I32_33:.*]] = tensor.empty() : tensor<5xi32>
 // CHECK: %[[ABS_BITS:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[S4]], %[[C2147483647_I32]] : tensor<5xi32>, i32) outs(%[[E_I32_33]] : tensor<5xi32>) -> tensor<5xi32>
 // CHECK: %[[E_F32_0:.*]] = tensor.empty() : tensor<5xf32>
-// CHECK: %[[ABS_F:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%[[ABS_BITS]] : tensor<5xi32>) outs(%[[E_F32_0]] : tensor<5xf32>) -> tensor<5xf32>
+// CHECK: %[[ABS_F:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[ABS_BITS]] : tensor<5xi32>) outs(%[[E_F32_0]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_F32_1:.*]] = tensor.empty() : tensor<5xf32>
 // CHECK: %[[X:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[ABS_F]], %[[CST_5]] : tensor<5xf32>, f32) outs(%[[E_F32_1]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[E_I32_34:.*]] = tensor.empty() : tensor<5xi32>
@@ -1011,7 +1011,7 @@ func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
 // CHECK: %[[OUT_F32:.*]] = hfusion.select ins(%[[IS_NAN_INF]], %[[QNAN]], %[[SIGNED]] : tensor<5xi1>, f32, tensor<5xf32>) outs(%[[E_F32_8]] : tensor<5xf32>) -> tensor<5xf32>
 // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[OUT_F32]] {{\[}}[0, 1]{{\]}} output_shape {{\[}}5, 1{{\]}} : tensor<5xf32> into tensor<5x1xf32>
 // CHECK: %[[E_F16:.*]] = tensor.empty() : tensor<5x1xf16>
-// CHECK: %[[OUT_F16:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<round>} ins(%[[EXPAND]] : tensor<5x1xf32>) outs(%[[E_F16]] : tensor<5x1xf16>) -> tensor<5x1xf16>
+// CHECK: %[[OUT_F16:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<round>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[EXPAND]] : tensor<5x1xf32>) outs(%[[E_F16]] : tensor<5x1xf16>) -> tensor<5x1xf16>
 // CHECK: return %[[OUT_F16]] : tensor<5x1xf16>
 // CHECK: }
 func.func @test_hfusion_cos_ops(%arg0 : tensor<5x1xf16>) ->  tensor<5x1xf16> {
@@ -2566,7 +2566,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // CHECK-LABEL: @test_arith_extf_scalar_bf16_to_f32
 // CHECK: %[[ZERO:.*]] = tensor.from_elements %arg0 : tensor<1xbf16>
 // CHECK: %[[ONE:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK: %[[TWO:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%from_elements : tensor<1xbf16>) outs(%0 : tensor<1xf32>) -> tensor<1xf32>
+// CHECK: %[[TWO:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%from_elements : tensor<1xbf16>) outs(%0 : tensor<1xf32>) -> tensor<1xf32>
 func.func @test_arith_extf_scalar_bf16_to_f32(%arg0: bf16) -> f32 {
     %0 = arith.extf %arg0 : bf16 to f32
     return %0 : f32
@@ -2608,7 +2608,7 @@ func.func @test_sort_when_input_is_bf16(%arg0: tensor<7x4xbf16>) -> tensor<7x4xb
 
 // -----
 // CHECK-LABEL: func.func @triton_cast_u32_to_bf16
-// CHECK: %[[CAST1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>} ins(%0 : tensor<13xi32>) outs({{.*}} : tensor<13xi64>) -> tensor<13xi64>
+// CHECK: %[[CAST1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%0 : tensor<13xi32>) outs({{.*}} : tensor<13xi64>) -> tensor<13xi64>
 // CHECK: %[[CAST2:.*]] = hfusion.cast {{.*}} ins(%[[CAST1]] : tensor<13xi64>) outs({{.*}} : tensor<13xf32>) -> tensor<13xf32>
 // CHECK: %[[CAST3:.*]] = hfusion.cast {{.*}} ins(%[[CAST2]] : tensor<13xf32>) outs({{.*}} : tensor<13xbf16>) -> tensor<13xbf16>
 func.func @triton_cast_u32_to_bf16(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -2675,5 +2675,23 @@ func.func @test_cast_i32_to_i16(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_t
   %2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<truncwithoverflow>} ins(%0 : tensor<23xi32>) outs(%1 : tensor<23xi16>) -> tensor<23xi16>
   %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [23], strides: [1] : memref<?xi16> to memref<23xi16, strided<[1]>>
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast_0 : (tensor<23xi16>, memref<23xi16, strided<[1]>>) -> ()
+  return
+}
+
+// -----
+// CHECK-LABEL: @test_cast_i64_to_u32_sat
+func.func @test_cast_i64_to_u32_sat(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [25, 5], strides: [5, 1] : memref<?xi64> to memref<25x5xi64, strided<[5, 1]>>
+  %alloc = memref.alloc() : memref<25x5xi64>
+  memref.copy %reinterpret_cast, %alloc : memref<25x5xi64, strided<[5, 1]>> to memref<25x5xi64>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<25x5xi64>
+  %1 = tensor.empty() : tensor<25x5xi32>
+  // CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<25x5xi64>) outs({{.*}} : tensor<25x5xi32>) -> tensor<25x5xi32>
+  %2 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%0 : tensor<25x5xi64>) outs(%1 : tensor<25x5xi32>) -> tensor<25x5xi32>
+  annotation.mark %2 {saturate_src_unsigned} : tensor<25x5xi32>
+  annotation.mark %2 {saturate_dst_unsigned = true} : tensor<25x5xi32>
+  annotation.mark %2 {overflow_mode = "saturate"} : tensor<25x5xi32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [25, 5], strides: [5, 1] : memref<?xi32> to memref<25x5xi32, strided<[5, 1]>>
+  bufferization.materialize_in_destination %2 in writable %reinterpret_cast_0 : (tensor<25x5xi32>, memref<25x5xi32, strided<[5, 1]>>) -> ()
   return
 }

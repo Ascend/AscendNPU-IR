@@ -59,7 +59,8 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
                       hfusion::RoundMode roundMode,
                       std::optional<Value> dst,
                       bool enableOverflow, bool enableSaturate,
-		      hfusion::TypeFn castIntegerType) {
+                      hfusion::TypeFn castIntegerType,
+                      hfusion::UnsignedMode unsignedMode) {
   Location loc = src.getLoc();
   if (!isa<TensorType>(src.getType())) {
     assert(src.getType().isIntOrIndexOrFloat());
@@ -77,12 +78,14 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
   }
 
   auto roundingAttr = builder.getAttr<hfusion::RoundModeAttr>(roundMode);
+  auto unsignedAttr = builder.getAttr<hfusion::UnsignedModeAttr>(unsignedMode);
   auto enableOverflowVal = builder.getBoolAttr(enableOverflow);
   auto enableSaturateVal = builder.getBoolAttr(enableSaturate);
   auto castAttr = builder.getAttr<hfusion::TypeFnAttr>(castIntegerType);
   auto vcastOp = builder.create<hfusion::CastOp>(
       loc, SmallVector<Type>{targetTensor.getType()}, src, targetTensor,
-      roundingAttr, enableOverflowVal, enableSaturateVal, castAttr);
+      roundingAttr, enableOverflowVal, enableSaturateVal, castAttr,
+      unsignedAttr);
   return vcastOp->getResult(0);
 }
 
@@ -92,6 +95,8 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
   hfusion::RoundMode rounding =
       mlir::utils::selectRoundMode<hfusion::RoundMode>(srcElemType,
                                                        targetElemType);
+  hfusion::UnsignedMode unsignedMode = hfusion::UnsignedMode::SI2SI;
   return hfusion::castTo(builder, src, targetElemType, rounding, std::nullopt,
-                         /*enableOverflow=*/true, false, castIntegerType);
+                         /*enableOverflow=*/true, false, castIntegerType,
+                        unsignedMode);
 }

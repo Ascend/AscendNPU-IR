@@ -64,6 +64,8 @@ Value createCollapseShapeOp(PatternRewriter &rewriter, Location loc,
 
 hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode);
 
+hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode);
+
 } // namespace hfusion_conversion_utils
 } // namespace mlir
 

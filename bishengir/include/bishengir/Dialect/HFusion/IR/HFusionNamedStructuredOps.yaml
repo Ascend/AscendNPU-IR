@@ -323,6 +323,10 @@ structured_op: !HFusionStructuredOpConfig
     name: cast
     kind: type_fn_attr
     default_fn: cast_signed
+  - !HFusionOperandDefConfig
+    name: unsigned_mode
+    kind: unsigned_mode_attr
+    default_fn: SI2SI
   indexing_maps: !HFusionIndexingMapsConfig
     static_indexing_maps:
     - affine_map<() -> ()>
@@ -337,6 +341,7 @@ structured_op: !HFusionStructuredOpConfig
         attr_names:
           - cast
           - round_mode
+          - unsigned_mode
         type_var: U
         operands:
         - !ScalarExpression

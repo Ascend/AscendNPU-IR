@@ -142,6 +142,8 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
                            ? hfusion::RoundMode::RINT
                            : hfusion::RoundMode::ROUND;
       auto rounding = rewriter.getAttr<hfusion::RoundModeAttr>(roundMode);
+      auto unsignedAttr = rewriter.getAttr<hfusion::UnsignedModeAttr>(
+          hfusion::UnsignedMode::SI2SI);
       auto enableOverflow = rewriter.getBoolAttr(true);
       auto enableSaturate = rewriter.getBoolAttr(true);
 
@@ -149,7 +151,7 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
       auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(castIntegerType);
       rewriter.replaceOpWithNewOp<hfusion::CastOp>(
           op, TypeRange{arg.getType()}, ValueRange{arg}, ValueRange{arg},
-          rounding, enableOverflow, enableSaturate, castAttr);
+          rounding, enableOverflow, enableSaturate, castAttr, unsignedAttr);
       return success();
     }
     if (funcName.starts_with("__hmf_tanf") ||

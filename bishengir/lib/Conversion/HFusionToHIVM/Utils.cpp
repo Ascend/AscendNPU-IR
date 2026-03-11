@@ -93,5 +93,19 @@ hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
   llvm_unreachable("unsupported hfusion::RoundMode");
 }
 
+hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode) {
+  switch (hsUniMode) {
+  case (hfusion::UnsignedMode::SI2SI):
+    return hivm::UnsignedMode::SI2SI;
+  case (hfusion::UnsignedMode::SI2UI):
+    return hivm::UnsignedMode::SI2UI;
+  case (hfusion::UnsignedMode::UI2SI):
+    return hivm::UnsignedMode::UI2SI;
+  case (hfusion::UnsignedMode::UI2UI):
+    return hivm::UnsignedMode::UI2UI;
+  }
+  llvm_unreachable("unsupported hfusion::UnsignedMode");
+}
+
 } // namespace hfusion_conversion_utils
 } // namespace mlir

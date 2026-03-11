@@ -2773,6 +2773,22 @@ std::optional<StringRef> getAnnotateOverflowMode(OpType op) {
       overflowMode.value()->getAttrOfType<StringAttr>("overflow_mode");
   return overflowAttrVal.getValue();
 }
+
+template <typename OpType>
+std::optional<bool> getAnnotateAttrBool(OpType op, StringRef attr) {
+  std::optional<Operation *> attrOp =
+    utils::getAnnotateOpWithAttr(op.getResult(0), attr);
+  if (!attrOp.has_value())
+    return std::nullopt;
+
+  if (auto boolAttr =
+      attrOp.value()->getAttrOfType<BoolAttr>(attr)) {
+    return boolAttr.getValue();
+  }
+
+  return std::nullopt;
+}
+
 } // namespace
 
 /// normalize cast from large bit width to small bit width, and dst's data type
@@ -2964,6 +2980,40 @@ LogicalResult handleOverflowModeForSaturate(hfusion::CastOp op,
   const bool isI32ToI16 = inType.isInteger(32) && outType.isInteger(16);
   const bool isI16ToI8 = inType.isInteger(16) && outType.isInteger(8);
   hfusion::TypeFn castIntegerType = op.getCast();
+  hfusion::UnsignedMode unsignedMode = hfusion::UnsignedMode::SI2SI;
+
+  auto srcUnsigned = getAnnotateAttrBool(op, util::saturateSrcUnsigned);
+  const bool srcIsUnsigned = srcUnsigned.value_or(false);
+  auto dstUnsigned = getAnnotateAttrBool(op, util::saturateDstUnsigned);
+  const bool dstIsUnsigned = dstUnsigned.value_or(false);
+
+  auto srcAttr =
+      utils::getAnnotateOpWithAttr(op->getResult(0), util::saturateSrcUnsigned);
+  if (srcAttr.has_value()) {
+    annotation::MarkOp srcMarkOp =
+      dyn_cast<annotation::MarkOp>(srcAttr.value());
+    rewriter.eraseOp(srcMarkOp);
+  }
+  auto dstAttr =
+      utils::getAnnotateOpWithAttr(op->getResult(0), util::saturateDstUnsigned);
+  if (dstAttr.has_value()) {
+    annotation::MarkOp dstMarkOp =
+      dyn_cast<annotation::MarkOp>(dstAttr.value());
+    rewriter.eraseOp(dstMarkOp);
+  }
+
+  const bool isSIToSI = !srcIsUnsigned && !dstIsUnsigned;
+  const bool isSIToUI = !srcIsUnsigned && dstIsUnsigned;
+  const bool isUIToSI = srcIsUnsigned && !dstIsUnsigned;
+  const bool isUIToUI = srcIsUnsigned && dstIsUnsigned;
+
+  if (isSIToUI) {
+    unsignedMode = hfusion::UnsignedMode::SI2UI;
+  } else if (isUIToSI) {
+    unsignedMode = hfusion::UnsignedMode::UI2SI;
+  } else if (isUIToUI) {
+    unsignedMode = hfusion::UnsignedMode::UI2UI;
+  }
 
   Value castValue = op.getInputs()[0];
   if (isF32ToI16) {
@@ -2971,81 +3021,177 @@ LogicalResult handleOverflowModeForSaturate(hfusion::CastOp op,
         hfusion::castTo(rewriter, castValue, rewriter.getI32Type(),
                         hfusion::RoundMode::TRUNCWITHOVERFLOW, std::nullopt,
                         /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isF32ToI8) {
     castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
                                 hfusion::RoundMode::TRUNC, std::nullopt,
                                 /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isF16ToI8) {
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType);
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI64ToI32) {
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    castValue =
+        hfusion::castTo(rewriter, castValue, outType,
+                        hfusion::RoundMode::TRUNC, std::nullopt,
+                        /*enableOverflow*/ false, enableSaturate,
+                        castIntegerType, unsignedMode);
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI64ToI16) {
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    if (isSIToSI) {
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue = hfusion::castTo(rewriter, castValue, outType,
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  castIntegerType);
+    } else {
+      castValue = hfusion::castTo(rewriter, castValue, outType,
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  castIntegerType, unsignedMode);
+    }
+
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI64ToI8) {
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    if (isSIToSI) {
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue = hfusion::castTo(rewriter, castValue, outType,
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  castIntegerType);
+    } else {
+      castValue = hfusion::castTo(rewriter, castValue, outType,
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  castIntegerType, unsignedMode);
+    }
+
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI32ToI16) {
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    if (isSIToSI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    } else if (isSIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    } else if (isUIToSI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    } else if (isUIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    }
+
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI32ToI8) {
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    if (isSIToSI) {
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF32Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue =
+          hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                          std::nullopt, /*enableOverflow*/ false,
+                          enableSaturate, castIntegerType);
+    } else if (isSIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    } else if (isUIToSI) { // u32-s16-f16-s8
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getI16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  castIntegerType, hfusion::UnsignedMode::UI2SI);
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue =
+          hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                          std::nullopt, /*enableOverflow*/ false,
+                          enableSaturate, castIntegerType);
+    } else if (isUIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    }
+
     rewriter.replaceOp(op, castValue);
     return success();
   } else if (isI16ToI8) {
-    castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
-                                hfusion::RoundMode::TRUNC, std::nullopt,
-                                /*enableOverflow*/ false, enableSaturate);
-    castValue = hfusion::castTo(
-        rewriter, castValue, outType, hfusion::RoundMode::TRUNC, std::nullopt,
-        /*enableOverflow*/ false, enableSaturate, castIntegerType);
+    if (isSIToSI) {
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate);
+      castValue =
+          hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                          std::nullopt, /*enableOverflow*/ false,
+                          enableSaturate, castIntegerType, unsignedMode);
+    } else if (isSIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    } else if (isUIToSI) {
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getI8Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  hfusion::TypeFn::cast_unsigned,
+                                  hfusion::UnsignedMode::UI2UI);
+      castValue = hfusion::castTo(rewriter, castValue, rewriter.getF16Type(),
+                                  hfusion::RoundMode::TRUNC, std::nullopt,
+                                  /*enableOverflow*/ false, enableSaturate,
+                                  hfusion::TypeFn::cast_unsigned);
+      castValue =
+          hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                          std::nullopt, /*enableOverflow*/ false,
+                          enableSaturate, castIntegerType);
+    } else if (isUIToUI) {
+      castValue =
+        hfusion::castTo(rewriter, castValue, outType, hfusion::RoundMode::TRUNC,
+                        std::nullopt, /*enableOverflow*/ false,
+                        enableSaturate, castIntegerType, unsignedMode);
+    }
+
     rewriter.replaceOp(op, castValue);
     return success();
   }

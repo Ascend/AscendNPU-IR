@@ -381,6 +381,26 @@ def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {
     - ODD: round to odd (Von Neumann rounding)
   }];
 }
+
+def HIVM_SI2SI : I32EnumAttrCase<"SI2SI", 0, "si2si">;
+def HIVM_SI2UI : I32EnumAttrCase<"SI2UI", 1, "si2ui">;
+def HIVM_UI2SI : I32EnumAttrCase<"UI2SI", 2, "ui2si">;
+def HIVM_UI2UI : I32EnumAttrCase<"UI2UI", 3, "ui2ui">;
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Cast for VCastOp
 //===----------------------------------------------------------------------===//

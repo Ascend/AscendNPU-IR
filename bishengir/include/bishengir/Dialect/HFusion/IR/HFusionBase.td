@@ -55,6 +55,9 @@ def TypeFnAttr : EnumAttr<HFusion_Dialect, TypeFn, "type_fn"> {
 def RoundModeAttr : EnumAttr<HFusion_Dialect, RoundMode, "round_mode"> {
   let assemblyFormat = "`<` $value `>`";
 }
+def UnsignedModeAttr : EnumAttr<HFusion_Dialect, UnsignedMode, "unsigned_mode"> {
+  let assemblyFormat = "`<` $value `>`";
+}
 def AtomicKindAttr : EnumAttr<HFusion_Dialect, AtomicKind, "atomic_kind"> {
   let assemblyFormat = "`<` $value `>`";
 }

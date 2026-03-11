@@ -74,6 +74,7 @@ enum class HFusionOperandDefKind {
   TernaryFnAttr,
   TypeFnAttr,
   RoundModeAttr,
+  UnsignedModeAttr,
   AtomicKindAttr,
   EnableOverflowAttr,
   EnableSaturateAttr,
@@ -107,6 +108,7 @@ enum class ScalarFnKind {
   Ternary,
   Type,
   RoundMode,
+  UnsignedMode,
   AtomicKind
 };
 
@@ -228,6 +230,8 @@ template <> struct ScalarEnumerationTraits<HFusionOperandDefKind> {
     io.enumCase(value, "ternary_fn_attr", HFusionOperandDefKind::TernaryFnAttr);
     io.enumCase(value, "type_fn_attr", HFusionOperandDefKind::TypeFnAttr);
     io.enumCase(value, "round_mode_attr", HFusionOperandDefKind::RoundModeAttr);
+    io.enumCase(value, "unsigned_mode_attr",
+                HFusionOperandDefKind::UnsignedModeAttr);
     io.enumCase(value, "atomic_kind_attr",
                 HFusionOperandDefKind::AtomicKindAttr);
     io.enumCase(value, "enable_overflow_attr",
@@ -302,6 +306,7 @@ template <> struct ScalarEnumerationTraits<ScalarFnKind> {
     io.enumCase(value, "type", ScalarFnKind::Type);
     io.enumCase(value, "round", ScalarFnKind::RoundMode);
     io.enumCase(value, "atomic_kind", ScalarFnKind::AtomicKind);
+    io.enumCase(value, "si2si", ScalarFnKind::UnsignedMode);
   }
 };
 
@@ -461,6 +466,7 @@ static bool isFunctionAttribute(HFusionOperandDefKind kind) {
          kind == HFusionOperandDefKind::TernaryFnAttr ||
          kind == HFusionOperandDefKind::TypeFnAttr ||
          kind == HFusionOperandDefKind::RoundModeAttr ||
+         kind == HFusionOperandDefKind::UnsignedModeAttr ||
          kind == HFusionOperandDefKind::AtomicKindAttr;
 }
 
@@ -490,6 +496,8 @@ std::string convertOperandKindToEnumName(HFusionOperandDefKind kind) {
     return std::string("TypeFn");
   case HFusionOperandDefKind::RoundModeAttr:
     return std::string("RoundMode");
+  case HFusionOperandDefKind::UnsignedModeAttr:
+    return std::string("UnsignedMode");
   case HFusionOperandDefKind::AtomicKindAttr:
     return std::string("AtomicKind");
   default:
@@ -513,6 +521,8 @@ std::string convertFunctionKindToEnumName(ScalarFnKind kind) {
     return std::string("TypeFn");
   case ScalarFnKind::RoundMode:
     return std::string("RoundMode");
+  case ScalarFnKind::UnsignedMode:
+    return std::string("UnsignedMode");
   case ScalarFnKind::AtomicKind:
     return std::string("AtomicKind");
   }
@@ -1185,6 +1195,7 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
           SmallVector<std::string> operandCppValues;
           if (expression.scalarFn->kind == ScalarFnKind::Type ||
               expression.scalarFn->kind == ScalarFnKind::RoundMode ||
+              expression.scalarFn->kind == ScalarFnKind::UnsignedMode ||
               expression.scalarFn->kind == ScalarFnKind::AtomicKind) {
             assert(expression.scalarFn->typeVar.has_value());
             std::optional<std::string> typeCppValue =

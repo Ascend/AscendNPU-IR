@@ -298,7 +298,8 @@ Value castTo(OpBuilder &builder, Value src, Type targetElemType,
              hfusion::RoundMode roundMode,
              std::optional<Value> dst = std::nullopt,
              bool enableOverflow = true, bool enableSaturate = false,
-             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed,
+             hfusion::UnsignedMode unsignedMode = hfusion::UnsignedMode::SI2SI);
 
 /// Cast `src` value to the specified element type.
 /// Select rounding mode inside.
@@ -331,6 +332,9 @@ bool isFP8(Type type, Builder builder);
 bool shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *Op);
 
 namespace util {
+const static std::string saturateSrcUnsigned = "saturate_src_unsigned";
+const static std::string saturateDstUnsigned = "saturate_dst_unsigned";
+
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
 const static int vectorBlockSizeBit = 256;

@@ -119,6 +119,19 @@ def RoundMode : I32EnumAttr<"RoundMode", "", [
   }];
 }
 
+def UnsignedMode : I32EnumAttr<"UnsignedMode", "", [
+  I32EnumAttrCase<"SI2SI", 0, "si2si">,
+  I32EnumAttrCase<"SI2UI", 1, "si2ui">,
+  I32EnumAttrCase<"UI2SI", 2, "ui2si">,
+  I32EnumAttrCase<"UI2UI", 3, "ui2ui">
+]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::hfusion";
+  let description = [{
+    represent info for casting (u)int -> (u)int
+  }];
+}
+
 def CastMode : I32EnumAttr<"CastMode", "", [
   I32EnumAttrCase<"F32TOI8", 0, "F32TOI8">,
   I32EnumAttrCase<"F32TOI16", 1, "F32TOI16">,

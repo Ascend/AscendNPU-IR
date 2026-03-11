@@ -638,8 +638,8 @@ public:
   }
 
   // Build the type functions defined by OpDSL.
-  Value buildRoundMode(TypeFn cast, RoundMode round, Type toType,
-                       Value operand) {
+  Value buildRoundMode(TypeFn cast, RoundMode round, UnsignedMode unsignedMode,
+                       Type toType, Value operand) {
     bool isUnsignedCast = false;
     if (operand.getType().isInteger(1) && toType.getIntOrFloatBitWidth() > 1) {
       // TODO: general support for unsigned cast
@@ -658,12 +658,17 @@ public:
       return castedOp;
     }
     auto roundingAttr = builder.getAttr<hfusion::RoundModeAttr>(round);
+    auto unsignedAttr = builder.getAttr<hfusion::UnsignedModeAttr>(unsignedMode);
 
     if (!roundingAttr) {
       llvm_unreachable("Round type not supported");
     }
+    if (!unsignedAttr) {
+      llvm_unreachable("Unsigned mode not supported");
+    }
 
     defOp->setAttr("round_mode", roundingAttr);
+    defOp->setAttr("unsigned_mode", unsignedAttr);
     return castedOp;
   }
 
