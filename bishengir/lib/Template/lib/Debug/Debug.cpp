@@ -888,7 +888,7 @@ npuir_cce_assert(bool cond, const T *msg, const int64_t len) {
     print_assert_msg(msg, len);
 #endif
 #endif
-    asm("END");
+    trap();
   }
 }
 
