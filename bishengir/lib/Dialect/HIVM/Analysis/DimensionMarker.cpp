@@ -249,6 +249,23 @@ void DimensionAnalyzer::processVGatherOp(hivm::VGatherOp op) {
               /*mergeMutation=*/false);
 }
 
+void DimensionAnalyzer::processVGatherMaskOp(hivm::VGatherMaskOp op) {
+  LDBG("Processing VGatherMaskOp " << op);
+  auto input = op.getSrc();
+  auto mask = op.getMask();
+  OperandRange dstRange = op.getDst();
+ 	Value output = dstRange.front();
+  SmallVector<Value> outputs(op.getResult());
+ 
+  assert(outputs.size() <= 1 &&
+         "result size must be 1 if tensor type and 0 if memref type");
+ 
+  outputs.push_back(mask);
+  outputs.push_back(output);
+  mergeValues({input}, outputs, getMutatedDims(op),
+              /*mergeMutation=*/false);
+}
+
 void DimensionAnalyzer::processVConcatOp(hivm::VConcatOp op) {
   LDBG("Processing VConcatOp " << op);
   SmallVector<Value> inputs(op.getSrc());
