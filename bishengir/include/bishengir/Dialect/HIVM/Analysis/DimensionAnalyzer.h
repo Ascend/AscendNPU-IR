@@ -106,6 +106,7 @@ protected:
   void processVReduceOp(hivm::VReduceOp op);
   void processVTransposeOp(hivm::VTransposeOp op);
   void processVGatherOp(hivm::VGatherOp op);
+  void processVGatherMaskOp(hivm::VGatherMaskOp op);
   void processVConcatOp(hivm::VConcatOp op);
   void processVInterleaveOp(hivm::VInterleaveOp op);
   void processVDeinterleaveOp(hivm::VDeinterleaveOp op);
