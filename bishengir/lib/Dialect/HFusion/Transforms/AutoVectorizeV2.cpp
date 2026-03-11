@@ -594,37 +594,6 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   return bestFusedNode;
 }
 
-/// Tile_reduction_using_for will fail or cause bugs in some context, see issue:
-/// https://codehub-y.huawei.com/CompilerKernel/BiShengCompiler/AscendNPU-IR/issues/307
-/// So we still use tile_using_for instead for these context.
-static bool shouldUseTileReductionUsingFor(OpBuilder &builder, Operation *op,
-                                           SmallVector<int64_t> tileSize) {
-  if (!isa<linalg::LinalgOp>(op))
-    return false;
-  auto linalgOp = cast<linalg::LinalgOp>(op);
-  /// TODO: here we only handle those have parallel axis and tail-axis
-  /// reduction.
-  if (linalgOp.getNumParallelLoops() == 0)
-    return false;
-  if (linalgOp.getNumReductionLoops() != 1)
-    return false;
-  // if there is more than one outputs and they are dependent with each other
-  // tile-reduction-using-for will cause coredump.
-  if (linalgOp.getRegionOutputArgs().size() > 1)
-    return false;
-
-  SmallVector<unsigned> reductionDims;
-  linalgOp.getReductionDims(reductionDims);
-  auto tilingInterface = cast<TilingInterface>(op);
-  SmallVector<Range> iterationDomain =
-      tilingInterface.getIterationDomain(builder);
-  for (auto i : reductionDims) {
-    if (i < linalgOp.getNumLoops() - 1)
-      return false;
-  }
-  return true;
-}
-
 /// For reduction op, tile_reduction_using_for has better performance than
 /// tile_using_for. Firstly we should tile parallel axis by tile_using_for,
 /// then tile reduction axis by tile_reduction_using_for.
@@ -984,8 +953,7 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
       FusableOpInfo &leafNodeInfo = fusableOpInfoMap[leafNode];
       Value leafNodeHandle =
           getOpTransformHandle(leafNodeInfo.label, builder, seqOp);
-      if (shouldUseTileReductionUsingFor(builder, leafNode,
-                                         leafNodeInfo.tileSize)) {
+      if (hfusion::shouldUseTileReductionUsingForV2(builder, leafNode)) {
         tiledLoopHandles.push_back(tileReductionOp(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
@@ -1051,8 +1019,7 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
       fusedNode->loopHandle = fuseIntoOp.getNewContainingOp();
       fusedOp = fuseIntoOp.getFusedOp();
     }
-    if (shouldUseTileReductionUsingFor(builder, producer,
-                                       producerInfo.tileSize)) {
+    if (hfusion::shouldUseTileReductionUsingForV2(builder, producer)) {
       tileReductionOp(builder, seqOp, producer, fusedOp, producerInfo.tileSize,
                       producerInfo.label, otherVectorizableOps);
     } else if (producerInfo.numLoops > fusedNode->numLoops ||

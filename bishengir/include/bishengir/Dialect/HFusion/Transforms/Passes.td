@@ -578,6 +578,9 @@ def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::Fun
   let summary = "Perform elemwise op fusion and generalization before vectorization";
   let constructor = "::mlir::hfusion::createPreVectorizationFusionPass()";
   let dependentDialects = ["linalg::LinalgDialect", "annotation::AnnotationDialect"];
+  let options = [Option<"enableTritonCompile", "enable-triton-compile",
+                        "bool", "false", "Enable Triton compile.">
+  ];
 }
 
 def VectorizeOps : Pass<"hfusion-vectorize-ops", "ModuleOp"> {

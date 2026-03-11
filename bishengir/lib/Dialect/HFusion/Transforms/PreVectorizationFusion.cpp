@@ -121,6 +121,9 @@ namespace {
 struct PreVectorizationFusionPass
     : public impl::PreVectorizationFusionBase<PreVectorizationFusionPass> {
 public:
+  PreVectorizationFusionPass(const mlir::PreVectorizationFusionOptions &options)
+      : impl::PreVectorizationFusionBase<PreVectorizationFusionPass>(options) {}
+
   void runOnOperation() override;
 };
 
@@ -562,6 +565,37 @@ void InsertPadConstMark(Operation *moduleOp) {
   });
 }
 
+// Replace linalg.fill with empty tensor when its user is linalg.reduce which
+// statisfies shouldUseTileReductionUsingForV2 pattern.
+// before:
+// %2 = linalg.fill ins(%cst : f32) outs(%6 : tensor<64xf32>) -> 
+//      tensor<64xf32> 
+// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>) 
+//      outs(%2 : tensor<64xf32>) dimensions = [1]
+// after:
+// %2 = tensor.empty() : tensor<64xf32>
+// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>) 
+//      outs(%2 : tensor<64xf32>) dimensions = [1]
+void EmptifyReduceInit(Operation *op, IRRewriter &rewriter) {
+  op->walk([&](linalg::ReduceOp reduceOp) {
+    if (!(hfusion::shouldUseTileReductionUsingForV2(rewriter, reduceOp)))
+      return;
+    Value initValue = reduceOp.getInits()[0];
+    auto initOp = initValue.getDefiningOp();
+    if (!initOp || !mlir::hfusion::isFillOp(initOp))
+      return;
+    RankedTensorType outType = initValue.getType().cast<RankedTensorType>();
+    rewriter.setInsertionPoint(reduceOp);
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+        reduceOp.getLoc(), outType.getShape(), outType.getElementType());
+    rewriter.modifyOpInPlace(reduceOp, [&]() {
+      reduceOp.getInitsMutable()[0].assign(emptyOp.getResult());
+    });
+    if (initOp->use_empty())
+      rewriter.eraseOp(initOp);
+  });
+}
+
 void PreVectorizationFusionPass::runOnOperation() {
   Operation *op = getOperation();
   archisAscend950 =
@@ -598,6 +632,11 @@ void PreVectorizationFusionPass::runOnOperation() {
     }
   }
 
+  if (archisAscend950 && this->enableTritonCompile) {
+    IRRewriter rewriter(&getContext());
+    EmptifyReduceInit(op, rewriter);
+  }
+
   populatePreVectorizationFusionPatterns(patterns);
   // Use TopDownTraversal for compile time reasons
   GreedyRewriteConfig grc;
@@ -607,6 +646,7 @@ void PreVectorizationFusionPass::runOnOperation() {
 
 } // anonymous namespace
 
-std::unique_ptr<Pass> mlir::hfusion::createPreVectorizationFusionPass() {
-  return std::make_unique<PreVectorizationFusionPass>();
+std::unique_ptr<Pass> mlir::hfusion::createPreVectorizationFusionPass(
+    const PreVectorizationFusionOptions &options) {
+  return std::make_unique<PreVectorizationFusionPass>(options);
 }

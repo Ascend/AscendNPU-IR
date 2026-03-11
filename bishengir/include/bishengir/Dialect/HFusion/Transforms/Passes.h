@@ -237,7 +237,8 @@ std::unique_ptr<Pass> createSimplifyVFArgsPass();
 std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
 
 // Create a pass to perform elemwise op fusion before vectorization
-std::unique_ptr<Pass> createPreVectorizationFusionPass();
+std::unique_ptr<Pass> createPreVectorizationFusionPass(
+  const PreVectorizationFusionOptions &options = {});
 
 // Create a pass to vectorize hfusion ops.
 std::unique_ptr<Pass>

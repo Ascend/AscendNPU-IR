@@ -328,6 +328,8 @@ bool isInCubeScope(Operation *op);
 
 bool isFP8(Type type, Builder builder);
 
+bool shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *Op);
+
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;

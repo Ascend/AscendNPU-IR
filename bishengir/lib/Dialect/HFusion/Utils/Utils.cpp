@@ -1576,3 +1576,33 @@ bool hfusion::isFP8(Type type, Builder builder) {
       type == builder.getFloat8E4M3FNUZType() ||
       type == builder.getFloat8E4M3B11FNUZType();
 }
+
+/// Tile_reduction_using_for will fail or cause bugs in some context, 
+/// see issue: AscendNPU-IR/issues/307
+/// So we still use tile_using_for instead for these context.
+bool hfusion::shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *op) {
+  if (!isa<linalg::LinalgOp>(op))
+    return false;
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  /// TODO: here we only handle those have parallel axis and tail-axis
+  /// reduction.
+  if (linalgOp.getNumParallelLoops() == 0)
+    return false;
+  if (linalgOp.getNumReductionLoops() != 1)
+    return false;
+  // if there is more than one outputs and they are dependent with each other
+  // tile-reduction-using-for will cause coredump.
+  if (linalgOp.getRegionOutputArgs().size() > 1)
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  auto tilingInterface = cast<TilingInterface>(op);
+  SmallVector<Range> iterationDomain =
+      tilingInterface.getIterationDomain(builder);
+  for (auto i : reductionDims) {
+    if (i < linalgOp.getNumLoops() - 1)
+      return false;
+  }
+  return true;
+}

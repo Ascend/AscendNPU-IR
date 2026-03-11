@@ -342,7 +342,10 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
-  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass());
+  PreVectorizationFusionOptions options;
+  options.enableTritonCompile =
+        hfusionOptions.enableTritonKernelCompile;
+  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(options));
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
