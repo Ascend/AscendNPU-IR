@@ -59,31 +59,24 @@ is_supported_stride(const memref_t<__ubuf__ T, 2> *src0,
                     const memref_t<__ubuf__ int32_t, 2> *dst_index) {
   const int64_t size1 = src0->sizes[1];
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-
-  if (size1 > num_per_repeat) {
-    bool is_src_aligned = is32ByteAligned<T>(src0->strides[0]) && (src0->strides[1] == 1);
-    bool is_dst_value_aligned = (dst_value->strides[1] == 1) &&
-                        ((dst_value->strides[0] == 1) || is32ByteAligned<T>(dst_value->strides[0]));
-    bool is_dst_index_aligned = (dst_index->strides[1] == 1) &&
-                        ((dst_index->strides[0] == 1) || is32ByteAligned<T>(dst_index->strides[0]));
-    if (is_src_aligned && is_dst_value_aligned && is_dst_index_aligned) {
-      return true;
-    }
-  }
-
   const int64_t src_stride0 = src0->strides[0];
   const int64_t dst_value_stride0 = dst_value->strides[0];
   const int64_t dst_value_stride1 = dst_value->strides[1];
   const int64_t dst_index_stride0 = dst_index->strides[0];
   const int64_t dst_index_stride1 = dst_index->strides[1];
+
+  if (size1 > num_per_repeat) {
+    bool is_src_aligned = is32ByteAligned<T>(src0->strides[0]) && (src0->strides[1] == 1);
+    if (is_src_aligned) {
+      return true;
+    }
+  }
+
   if (size1 == 1 && src_stride0 == 1 && dst_value_stride0 == 1 && dst_index_stride0 == 1) {
     return true;
   }
 
-  if (is32ByteAligned<T>(src_stride0) &&
-      (src0->strides[1] == 1) &&
-      (dst_value_stride0 == 1) && (dst_value_stride1 == 1) &&
-      (dst_index_stride0 == 1) && (dst_index_stride1 == 1)) {
+  if (is32ByteAligned<T>(src_stride0) && (src0->strides[1] == 1)) {
     return true;
   }
   return false;
@@ -112,15 +105,14 @@ reduce_ar_with_index_special_scene(memref_t<__ubuf__ T, 2> *src0,
   brc_scalar_core_1d<int32_t>(0, dst_index_ptr, src0->sizes[0]);
 }
 
-// namespace {
 template <ReduceOpTy OP, ReduceWithIndexOpTy WITH_INDEX_TYPE, typename T>
 __aiv__ void reduce_with_index_scalar_iml(memref_t<__ubuf__ T, 2> *src,
                                           memref_t<__ubuf__ T, 2> *dst_value,
                                           memref_t<__ubuf__ int32_t, 2> *dst_index,
                                           int64_t size0, int64_t size1,
                                           T initvalue,
-                                          bool USE_DST_FOR_INIT = false) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+                                          bool need_merge = false) {
+  cce::printf("Warning: [ReduceAR_With_Index]This implementation uses scalar instructions, which may result in suboptimal performance\n");
   int64_t num_rows = size0;
   int64_t num_cols = size1;
 
@@ -134,34 +126,52 @@ __aiv__ void reduce_with_index_scalar_iml(memref_t<__ubuf__ T, 2> *src,
 
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-
   for (int64_t i = 0; i < num_rows; ++i) {
     __ubuf__ T* dst_val_ptr = dst_value_ptr + i * dst_value_stride0;
     __ubuf__ int32_t* dst_idx_ptr = dst_index_ptr + i * dst_index_stride0;
     
-    *dst_val_ptr = USE_DST_FOR_INIT ? *(dst_value_ptr + i * dst_value_stride0) : *(src_ptr + i * src_stride0);
-    *dst_idx_ptr = USE_DST_FOR_INIT ? *(dst_index_ptr + i * dst_index_stride0) : 0;
+    T tmp_extreme = *(src_ptr + i * src_stride0);
+    int32_t tmp_idx = 0;
 
     for (int64_t j = 0; j < num_cols; ++j) {
       __ubuf__ T* val_ptr = src_ptr + i * src_stride0 + j * src->strides[1];
-      if (isnan_value(*dst_val_ptr)) {
+      if (isnan_value(tmp_extreme)) {
         break;
       }
       if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
-        if (static_cast<float>(*val_ptr) > static_cast<float>(*dst_val_ptr) ||
+        if ((static_cast<float>(*val_ptr) > static_cast<float>(tmp_extreme)) ||
           isnan_value(*val_ptr)) {
-          *dst_val_ptr = *val_ptr;
-          *dst_idx_ptr = static_cast<int32_t>(j);
+          tmp_extreme = *val_ptr;
+          tmp_idx = static_cast<int32_t>(j);
         }
       } else { //OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX
-        if (static_cast<float>(*val_ptr) < static_cast<float>(*dst_val_ptr) ||
+        if (static_cast<float>(*val_ptr) < static_cast<float>(tmp_extreme) ||
           isnan_value(*val_ptr)) {
-          *dst_val_ptr = *val_ptr;
-          *dst_idx_ptr = static_cast<int32_t>(j);
+          tmp_extreme = *val_ptr;
+          tmp_idx = static_cast<int32_t>(j);
         }
       }
     }
+    if (need_merge && !isnan_value(tmp_extreme)) {
+      T vec_extreme = *(dst_value_ptr + i * dst_value_stride0);
+      int32_t vec_idx = *(dst_index_ptr + i * dst_index_stride0);
+      if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
+        if (static_cast<float>(vec_extreme) > (static_cast<float>(tmp_extreme)) ||
+          isnan_value(vec_extreme)) {
+          tmp_extreme = vec_extreme;
+          tmp_idx = vec_idx;
+        }
+      } else { //OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX
+        if (static_cast<float>(vec_extreme) < (static_cast<float>(tmp_extreme)) ||
+          isnan_value(vec_extreme)) {
+          tmp_extreme = vec_extreme;
+          tmp_idx = vec_idx;
+        }
+      }
     }
+    *dst_val_ptr = tmp_extreme;
+    *dst_idx_ptr = tmp_idx;
+  }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
@@ -281,18 +291,7 @@ reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
     return;
   }
 
-  //if stride is aligned, offset of dst is alined, offset of src is not alined, use scalar and vec instructions
-  bool is_dst_value_aligned = isAddress32ByteAligned(dst_value_ptr);
-  bool is_dst_index_aligned = isAddress32ByteAligned(dst_index_ptr);
-
-  if (!is_dst_index_aligned ||
-      !is_dst_value_aligned) [[unlikely]] {
-    reduce_with_index_scalar_iml<OP, WITH_INDEX_TYPE, T>(
-      src0, dst_value, dst_index, src0->sizes[0], src0->sizes[1], initvalue);
-    return;
-  }
-
-  //if stride is aligned, offset of dst is alined, offset of src is not alined, use scalar and vec instructions
+  // if stride is aligned, offset of dst is alined, offset of src is not alined, use scalar and vec instructions
   if (!isAddress32ByteAligned<T>(src_ptr)) [[unlikely]] { 
     auto address = reinterpret_cast<uintptr_t>(src_ptr);
     auto align_diff = (UB_ALIGN_BYTES - (address & 0x1F)) & 0x1F;
@@ -321,9 +320,9 @@ reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
     }
 
     // calculate the result of scalar part, and gather the result of two part
-    bool USE_DST_FOR_INIT = (vectorNum > 0);
+    bool need_merge = (vectorNum > 0);
     reduce_with_index_scalar_iml<OP, WITH_INDEX_TYPE, T>(
-      src0, dst_value, dst_index, src0->sizes[0], scalarNum, initvalue, USE_DST_FOR_INIT);
+      src0, dst_value, dst_index, src0->sizes[0], scalarNum, initvalue, need_merge);
     return;
   }
 

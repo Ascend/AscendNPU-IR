@@ -43,13 +43,40 @@ get_scalar_operation_init_value(__ubuf__ T *src0_ptr,
   }
 }
 
+/// Scalar implementation used for unaligned cases.
+///
+/// Operands:
+///   src : memref<A x B x T, strided<[M, N], offset: K>>
+///   dst : memref<C x 1 x T, strided<[U, 1], offset: V>>
+///
+/// The operation is considered "aligned" if any of the following conditions hold:
+///
+/// 1. Reduction `op` is "sum", and:
+///    - N < NUM_PER_BLOCK,
+///    - B == M,
+///    - U == 1,
+///    - N is a power of two (i.e., (N & (N - 1)) == 0),
+///    - Both K and V are 32-byte aligned.
+///
+/// 2. Reduction `op` is "or" or "and", and:
+///    - Element type T is i8 or ui8,
+///    - N <= 2.
+///
+/// 3. Reduction `op` is "xor", and:
+///    - Element type T is i8,
+///    - N <= 2.
+///
+/// 4. For all other cases, alignment requires:
+///    - A and K are both 32-byte aligned.
+///
+/// If none of the above aligned conditions are met, this scalar fallback is used.
 template <ReduceOpTy OP, typename T>
 __aiv__ void reduce_scalar_iml(memref_t<__ubuf__ T, 2> *src,
                                memref_t<__ubuf__ T, 2> *dst_value,
                                int64_t size0, int64_t size1,
                                T /*initvalue*/,
-                               bool USE_DST_FOR_INIT = false) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+                               bool need_merge = false) {
+  cce::printf("Warning: [ReduceAR]This implementation uses scalar instructions, which may result in suboptimal performance\n");
   if (size1 <= 0) return;
 
   __ubuf__ T* src_ptr       = src->aligned + src->offset;
@@ -62,7 +89,7 @@ __aiv__ void reduce_scalar_iml(memref_t<__ubuf__ T, 2> *src,
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   for (int64_t i = 0; i < size0; ++i) {
-    T acc = USE_DST_FOR_INIT ? *(dst_value_ptr + i * dst_stride0) :
+    T acc = need_merge ? *(dst_value_ptr + i * dst_stride0) :
             get_scalar_operation_init_value<OP, T>(src_ptr, i * src_stride0);
     for (int64_t j = 0; j < size1; ++j) {
       T val = *(src_ptr + i * src_stride0 + j * src_stride1);
@@ -72,6 +99,33 @@ __aiv__ void reduce_scalar_iml(memref_t<__ubuf__ T, 2> *src,
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_reduce(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
+          memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
+  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t size1 = src0->sizes[1];
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  const int64_t src_stride0 = src0->strides[0];
+  const int64_t dst_stride0 = dst->strides[0];
+  const int64_t dst_stride1 = dst->strides[1];
+
+  bool is_special_scene_use_vcgadd_vcpadd = (size1 <= num_per_block && src_stride0 == size1 &&
+                                            dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM);
+  bool is_stride_aligned = is32ByteAligned<T>(src_stride0) || 
+                           (is_special_scene_use_vcgadd_vcpadd && (size1 & (size1 - 1)) == 0) ||
+                           ((((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
+                           OP == ReduceOpTy::REDUCE_AND) && std::is_same<T, int8_t>::value) ||
+                           (OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND) &&
+                           std::is_same<T, uint8_t>::value) && size1 < 2);
+  bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) &&
+                           ((is_special_scene_use_vcgadd_vcpadd && isAddress32ByteAligned<T>(dst_ptr)) ||
+                           !is_special_scene_use_vcgadd_vcpadd);
+  return !is_stride_aligned || !is_offset_aligned ||
+  (is_special_scene_use_vcgadd_vcpadd && !((size1 & (size1 - 1)) == 0));
 }
 
 template <typename T>
@@ -164,6 +218,7 @@ reduce_ar_vcg(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   const int64_t size0 = src0->sizes[0];
   const int64_t size1 = src0->sizes[1];
   const int64_t src_stride0 = src0->strides[0];
+  const int64_t src_stride1 = src0->strides[1];
   const int64_t dst_stride0 = dst->strides[0];
  
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
@@ -172,7 +227,13 @@ reduce_ar_vcg(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
  
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
- 
+
+  bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
+  if (is_unalign) {
+    reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
+    return;
+  }
+  // stride and offset are all aligned
   if (num_per_repeat < size1) {
     if (size1 != src_stride0) {
       // Reduce each row seperately. lower performance
@@ -789,91 +850,16 @@ vec_reduce_ar(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   }
 }
 
-
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 reduce_ar(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
           memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
-  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
-  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
-  const int64_t size1 = src0->sizes[1];
-  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  const int64_t src_stride0 = src0->strides[0];
-  const int64_t dst_stride0 = dst->strides[0];
 
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-  // if stride is not aligned, fallback to scalar implemention
-  if constexpr ((OP == ReduceOpTy::REDUCE_MAX || OP == ReduceOpTy::REDUCE_MIN ||
-                 OP == ReduceOpTy::REDUCE_SUM) &&
-                (std::is_same<T, half>::value ||
-                 std::is_same<T, float>::value)){
-                bool is_src_aligned = is32ByteAligned<T>(src0->strides[0]) && (src0->strides[1] == 1);
-                bool is_dst_aligned = (dst->strides[1] == 1) && ((dst->strides[0] == 1) ||
-                is32ByteAligned<T>(dst->strides[0]));
-    bool is_special_aligned_case_use_vcgadd_vcpadd = size1 <= num_per_repeat && src_stride0 == size1 &&
-    dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM;
-
-    if(!(is_src_aligned && is_dst_aligned || is_special_aligned_case_use_vcgadd_vcpadd)) [[unlikely]] {
-      reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
-      return;
-    }
-  } else if constexpr ((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
-                        OP == ReduceOpTy::REDUCE_AND) &&
-                        std::is_same<T, int8_t>::value ||
-                        (OP == ReduceOpTy::REDUCE_OR ||
-                        OP == ReduceOpTy::REDUCE_AND) &&
-                        std::is_same<T, uint8_t>::value){
-      bool is_special_aligned_case_for_uint8 = src0->sizes[0] <= 2 || is32ByteAligned<T>(src0->strides[0]) &&
-      src0->strides[1] == 1;
-      if(!is_special_aligned_case_for_uint8) [[unlikely]] {
-        reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
-        return;
-      }
-  } else { // uint/int (8||16||32||64) ||(or||and||xor||prod) || xor&&(int32|| int64)
-    bool is_src_aligned = is32ByteAligned<T>(src0->strides[0]) && (src0->strides[1] == 1);
-    bool is_dst_aligned = (dst->strides[1] == 1);
-
-    if(!is_src_aligned && is_dst_aligned) [[unlikely]] {
-      reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
-      return;
-    }
-  }
-
-  //if stride is aligned, offset of dst is not alined, implement the reduction operation using scalar instructions
-  if (!isAddress32ByteAligned<T>(dst_ptr)) [[unlikely]] {
+  bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
+  if (is_unalign) {
     reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
-    return;
-  }
-
-  //if stride is aligned, offset of dst is alined, offset of src is not alined, use scalar and vec instructions
-  if (!isAddress32ByteAligned<T>(src_ptr)) [[unlikely]] {
-    auto address = reinterpret_cast<uintptr_t>(src_ptr);
-    auto align_diff = (32 - (address & 0x1F)) & 0x1F;
-    int64_t scalarNum = static_cast<int64_t>(align_diff / sizeof(T));
-    int64_t offset = src0->offset;
-    int64_t vectorNum = size1  - scalarNum; 
-
-    // calculate the result of vec part
-    if (vectorNum > 0){
-      memref_t<__ubuf__ T, 2> subview_src{
-        src0->allocated,
-        src0->aligned,
-        src0->offset + scalarNum,
-        {src0->sizes[0], vectorNum},
-        {src0->strides[0], src0->strides[1]}
-      };
-
-      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
-      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
-      vec_reduce_ar<OP, T>(&subview_src, dst, tmp_buf, initvalue);
-    }
-    INTRINSIC(set_flag, PIPE_V,PIPE_S,  LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_V,PIPE_S, LIB_EVENT_ID0);
-
-    // calculate the result of scalar part, and gather the result of two part
-    bool USE_DST_FOR_INIT = (vectorNum > 0);
-    reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], scalarNum, initvalue, USE_DST_FOR_INIT);
     return;
   }
 
