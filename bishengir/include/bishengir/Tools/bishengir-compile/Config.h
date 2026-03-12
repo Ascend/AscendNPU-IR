@@ -464,6 +464,11 @@ public:
   int32_t maxHorizontalFusionSize() const {
     return maxHorizontalFusionSizeFlag;
   }
+  BiShengIRCompileMainConfig &setMaxFusedElementwiseOps(int32_t count) {
+    maxFusedElementwiseOpsFlag = count;
+    return *this;
+  }
+  int32_t maxFusedElementwiseOps() const { return maxFusedElementwiseOpsFlag; }
 
   /// Update max buffer count tuning delta.
   BiShengIRCompileMainConfig &setMaxBufferCountTuning(int64_t maxBufferCount) {
@@ -606,7 +611,9 @@ public:
   // -------------------------------------------------------------------------//
 
   mlir::triton::proton::ConvertProtonToProtonGPUOptions
-  getProtonGPUCompileConfig() const { return protonGPUCompileConfig; }
+  getProtonGPUCompileConfig() const {
+    return protonGPUCompileConfig;
+  }
 
   // -------------------------------------------------------------------------//
   //                            Target options                                //
@@ -742,7 +749,7 @@ protected:
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   /// Enable Triton Dialect compile.
   bool enableTritonIRCompileFlag{false};
-  
+
   /// Enable DotScaled compile.
   bool enableDotScaledCompileFlag{false};
 #endif
@@ -910,6 +917,8 @@ protected:
 
   /// Number of horizontal fusion attempt.
   int32_t maxHorizontalFusionSizeFlag{-1};
+  /// Maximum number of elementwise ops to fuse in PreVectorizationFusion.
+  int32_t maxFusedElementwiseOpsFlag{-1};
 
   /// Max buffer count tuning in HFusion auto schedule.
   int64_t maxBufferCntTuningFlag{0};

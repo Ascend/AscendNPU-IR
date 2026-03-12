@@ -121,6 +121,11 @@ struct HFusionPipelineOptions
       *this, "max-horizontal-fusion-size",
       llvm::cl::desc("Maximum horizontal fusion size (-1 for unlimited)"),
       llvm::cl::init(-1)};
+  PassOptions::Option<int32_t> maxFusedElementwiseOps{
+      *this, "max-fused-elementwise-ops",
+      llvm::cl::desc("Maximum number of elementwise ops to fuse in "
+                     "PreVectorizationFusion (-1 for unlimited)"),
+      llvm::cl::init(-1)};
 
   PassOptions::Option<int64_t> maxBufferCntTuning{
       *this, "max-buffer-count-tuning",

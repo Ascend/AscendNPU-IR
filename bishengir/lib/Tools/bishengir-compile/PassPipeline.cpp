@@ -75,6 +75,8 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.blockDim = config.blockDim();
   hfusionPipelineOptions.maxHorizontalFusionSize =
       config.maxHorizontalFusionSize();
+  hfusionPipelineOptions.maxFusedElementwiseOps =
+      config.maxFusedElementwiseOps();
   hfusionPipelineOptions.enableDropUnitDims = config.shouldEnableDropUnitDims();
   hfusionPipelineOptions.enableFlatten = config.shouldEnableFlatten();
   hfusionPipelineOptions.enableAutoMultiBuffer =
@@ -325,6 +327,7 @@ public:
     enableTuningMode = pass.enableTuningMode;
     blockDim = pass.blockDim;
     maxHorizontalFusionSize = pass.maxHorizontalFusionSize;
+    maxFusedElementwiseOps = pass.maxFusedElementwiseOps;
     enableMultiKernel = pass.enableMultiKernel;
     enableCountBufferDmaOpt = pass.enableCountBufferDmaOpt;
     maxBufferCntTuning = pass.maxBufferCntTuning;
@@ -407,6 +410,7 @@ public:
 
     // HFusion optimization control options
     config.setMaxHorizontalFusionSize(maxHorizontalFusionSize)
+        .setMaxFusedElementwiseOps(maxFusedElementwiseOps)
         .setMaxBufferCountTuning(maxBufferCntTuning)
         .optimizeCountBufferForDma(enableCountBufferDmaOpt)
         .setCubeTilingTuningParams(cubeTilingTuning);
@@ -632,6 +636,11 @@ protected:
       *this, "hfusion-max-horizontal-fusion-size",
       llvm::cl::desc(
           "Number of horizontal fusion attempt (Default: unlimited)"),
+      llvm::cl::init(-1)};
+  Pass::Option<int> maxFusedElementwiseOps{
+      *this, "hfusion-max-fused-elementwise-ops",
+      llvm::cl::desc("Maximum number of elementwise ops to fuse in "
+                     "PreVectorizationFusion (Default: unlimited)"),
       llvm::cl::init(-1)};
   Pass::Option<bool> enableCountBufferDmaOpt{
       *this, "enable-hfusion-count-buffer-dma-opt",
