@@ -777,7 +777,7 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
 SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src) {
   SmallVector<Value> dynamicSizes;
-  if (auto reifiableOp = cast<tensor::EmptyOp>(src.getDefiningOp())) {
+  if (auto reifiableOp = dyn_cast<tensor::EmptyOp>(src.getDefiningOp())) {
     ReifiedRankedShapedTypeDims outputShapes;
     if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
       dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
