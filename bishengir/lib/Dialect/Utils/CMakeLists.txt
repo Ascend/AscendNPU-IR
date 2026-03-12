@@ -1,4 +1,5 @@
 add_bishengir_library(BiShengIRDialectUtils
+  BytecodeDialectExtensions.cpp
   OpInterfaceUtils.cpp
   ReachabilityAnalyzer.cpp
   UnionFind.cpp
@@ -14,6 +15,7 @@ add_bishengir_library(BiShengIRDialectUtils
   LINK_LIBS PUBLIC
   MLIRAnnotationDialect
   MLIRArithDialect
+  MLIRBufferizationDialect
   MLIRDestinationStyleOpInterface
   MLIRFuncDialect
   MLIRHFusionDialect

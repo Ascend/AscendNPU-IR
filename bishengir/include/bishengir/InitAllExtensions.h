@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
+#include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 #include "mlir/IR/DialectRegistry.h"
 
@@ -30,6 +31,7 @@ inline void registerAllExtensions(mlir::DialectRegistry &registry) {
   mlir::hacc::llvm_ext::registerHACCDialectExtension(registry);
   mlir::hfusion::registerTransformDialectExtension(registry);
   bishengir::scf::registerTransformDialectExtension(registry);
+  bishengir::registerBytecodeDialectExtensions(registry);
   mlir::registerOpInterfaceExtensions(registry);
 }
 

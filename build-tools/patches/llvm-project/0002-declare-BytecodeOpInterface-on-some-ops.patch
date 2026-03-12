@@ -1,0 +1,186 @@
+diff --git a/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td b/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
+index 477478a4651c..303a05c9d366 100644
+--- a/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
++++ b/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
+@@ -19,6 +19,7 @@ include "mlir/Interfaces/VectorInterfaces.td"
+ include "mlir/IR/BuiltinAttributeInterfaces.td"
+ include "mlir/IR/OpAsmInterface.td"
+ include "mlir/IR/EnumAttr.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ // Base class for Arith dialect ops. Ops in this dialect have no memory
+ // effects and can be applied element-wise to vectors and tensors.
+@@ -1225,7 +1226,7 @@ def Arith_ExtFOp : Arith_FToFCastOp<"extf", [DeclareOpInterfaceMethods<ArithFast
+ // TruncIOp
+ //===----------------------------------------------------------------------===//
+ 
+-def Arith_TruncIOp : Arith_IToICastOp<"trunci"> {
++def Arith_TruncIOp : Arith_IToICastOp<"trunci", [DeclareOpInterfaceMethods<BytecodeOpInterface>]> {
+   let summary = "integer truncation operation";
+   let description = [{
+     The integer truncation operation takes an integer input of
+diff --git a/mlir/include/mlir/Dialect/Func/IR/FuncOps.td b/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
+index f4b43a590470..be2b776e8709 100644
+--- a/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
++++ b/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
+@@ -103,6 +103,7 @@ def CallOp : Func_Op<"call",
+   let assemblyFormat = [{
+     $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
+   }];
++  let useCustomPropertiesEncoding = 1;
+ }
+ 
+ //===----------------------------------------------------------------------===//
+@@ -332,6 +333,7 @@ def FuncOp : Func_Op<"func", [
+     bool isDeclaration() { return isExternal(); }
+   }];
+   let hasCustomAssemblyFormat = 1;
++  let useCustomPropertiesEncoding = 1;
+ }
+ 
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+index 2e1635e590ca..ed56715aaf67 100644
+--- a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+@@ -7,6 +7,7 @@ include "mlir/Dialect/LLVMIR/LLVMEnums.td"
+ include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
+ include "mlir/Interfaces/InferTypeOpInterface.td"
+ include "mlir/Interfaces/MemorySlotInterfaces.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ // Operations that correspond to LLVM intrinsics. With MLIR operation set being
+ // extendable, there is no reason to introduce a hard boundary between "core"
+@@ -426,7 +427,7 @@ def LLVM_USHLSat : LLVM_BinarySameArgsIntrOpI<"ushl.sat">;
+ //
+ 
+ def LLVM_AssumeOp
+-  : LLVM_ZeroResultIntrOp<"assume", []>, Arguments<(ins I1:$cond)>;
++  : LLVM_ZeroResultIntrOp<"assume", [], [DeclareOpInterfaceMethods<BytecodeOpInterface>]>, Arguments<(ins I1:$cond)>;
+ 
+ def LLVM_SSACopyOp : LLVM_OneResultIntrOp<"ssa.copy", [], [0],
+                                             [Pure, SameOperandsAndResultType]> {
+diff --git a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
+index acbcbae105db..f500ebffaaa4 100644
+--- a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
++++ b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
+@@ -291,6 +291,7 @@ def ForOp : SCF_Op<"for",
+   let hasCustomAssemblyFormat = 1;
+   let hasVerifier = 1;
+   let hasRegionVerifier = 1;
++  let useCustomPropertiesEncoding = 1;
+ }
+ 
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp b/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
+index aa5eb95a3d22..c4aa03dfe602 100644
+--- a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
++++ b/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
+@@ -1482,6 +1482,12 @@ LogicalResult arith::TruncIOp::verify() {
+   return verifyTruncateOp<IntegerType>(*this);
+ }
+ 
++LogicalResult arith::TruncIOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void arith::TruncIOp::writeProperties(DialectBytecodeWriter &writer) {}
++
+ //===----------------------------------------------------------------------===//
+ // TruncFOp
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Dialect/Func/IR/FuncOps.cpp b/mlir/lib/Dialect/Func/IR/FuncOps.cpp
+index c719981769b9..f86aab374de6 100644
+--- a/mlir/lib/Dialect/Func/IR/FuncOps.cpp
++++ b/mlir/lib/Dialect/Func/IR/FuncOps.cpp
+@@ -153,6 +153,21 @@ bool ConstantOp::isBuildableWith(Attribute value, Type type) {
+   return llvm::isa<FlatSymbolRefAttr>(value) && llvm::isa<FunctionType>(type);
+ }
+ 
++::llvm::LogicalResult CallOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
++
++  if (failed(reader.readAttribute(prop.callee)))
++    return failure();
++  
++  return success();
++}
++
++void CallOp::writeProperties(DialectBytecodeWriter &writer) {
++  auto &prop = getProperties(); (void)prop;
++
++  writer.writeAttribute(prop.callee);
++}
++
+ //===----------------------------------------------------------------------===//
+ // FuncOp
+ //===----------------------------------------------------------------------===//
+@@ -280,6 +295,37 @@ FuncOp FuncOp::clone() {
+   return clone(mapper);
+ }
+ 
++::llvm::LogicalResult FuncOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
++  if (failed(reader.readOptionalAttribute(prop.arg_attrs)))
++    return failure();
++
++  if (failed(reader.readAttribute(prop.function_type)))
++    return failure();
++
++  if (failed(reader.readOptionalAttribute(prop.res_attrs)))
++    return failure();
++
++  if (failed(reader.readAttribute(prop.sym_name)))
++    return failure();
++
++  if (failed(reader.readOptionalAttribute(prop.sym_visibility)))
++    return failure();
++  return success();
++}
++
++void FuncOp::writeProperties(DialectBytecodeWriter &writer) {
++  auto &prop = getProperties(); (void)prop;
++
++  writer.writeOptionalAttribute(prop.arg_attrs);
++  writer.writeAttribute(prop.function_type);
++
++  writer.writeOptionalAttribute(prop.res_attrs);
++  writer.writeAttribute(prop.sym_name);
++
++  writer.writeOptionalAttribute(prop.sym_visibility);
++}
++
+ //===----------------------------------------------------------------------===//
+ // ReturnOp
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp b/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
+index b572b79d089a..4cda98d6eaf6 100644
+--- a/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
++++ b/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
+@@ -3442,3 +3442,9 @@ bool mlir::LLVM::satisfiesLLVMModule(Operation *op) {
+   return op->hasTrait<OpTrait::SymbolTable>() &&
+          op->hasTrait<OpTrait::IsIsolatedFromAbove>();
+ }
++
++LogicalResult AssumeOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void AssumeOp::writeProperties(DialectBytecodeWriter &writer) {}
+diff --git a/mlir/lib/Dialect/SCF/IR/SCF.cpp b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+index 4de8dacc0edb..0a4e85112ce6 100644
+--- a/mlir/lib/Dialect/SCF/IR/SCF.cpp
++++ b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+@@ -1130,6 +1130,12 @@ Speculation::Speculatability ForOp::getSpeculatability() {
+   return Speculation::NotSpeculatable;
+ }
+ 
++::llvm::LogicalResult ForOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void ForOp::writeProperties(DialectBytecodeWriter &writer) {}
++
+ //===----------------------------------------------------------------------===//
+ // ForallOp
+ //===----------------------------------------------------------------------===//
