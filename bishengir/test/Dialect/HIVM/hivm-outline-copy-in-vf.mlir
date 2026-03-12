@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-outline-copy-in-VF -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-outline-copy-in-VF -split-input-file -allow-unregistered-dialect | FileCheck %s
 
 // -----
 
@@ -47,5 +47,109 @@ func.func @guarded_caller() {
   %src = memref.alloc() : memref<16xf32>
   %dst = memref.alloc() : memref<16xf32>
   func.call @guarded_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @unknown_write_vf
+// CHECK: "test.unknown_write"(%arg1) : (memref<16xf32>) -> ()
+// CHECK-NEXT: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+func.func @unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_write"(%arg1) : (memref<16xf32>) -> ()
+  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  return
+}
+
+// CHECK-LABEL: func.func @unknown_write_caller
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<16xf32>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
+// CHECK-NOT: hivm.hir.copy ins(%[[SRC]] : memref<16xf32>) outs(%[[DST]] : memref<16xf32>)
+// CHECK: call @unknown_write_vf(%[[SRC]], %[[DST]]) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+func.func @unknown_write_caller() {
+  %src = memref.alloc() : memref<16xf32>
+  %dst = memref.alloc() : memref<16xf32>
+  func.call @unknown_write_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @recursive_unknown_write_vf
+// CHECK: scf.if %{{.*}} {
+// CHECK:   "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
+// CHECK: }
+// CHECK: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+func.func @recursive_unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>, %flag: i1) attributes {hivm.vector_function, no_inline} {
+  scf.if %flag {
+    "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
+  }
+  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  return
+}
+
+// CHECK-LABEL: func.func @recursive_unknown_write_caller
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<16xf32>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
+// CHECK-NOT: hivm.hir.copy ins(%[[SRC]] : memref<16xf32>) outs(%[[DST]] : memref<16xf32>)
+// CHECK: call @recursive_unknown_write_vf(%[[SRC]], %[[DST]], %{{.*}}) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>, i1) -> ()
+func.func @recursive_unknown_write_caller(%flag: i1) {
+  %src = memref.alloc() : memref<16xf32>
+  %dst = memref.alloc() : memref<16xf32>
+  func.call @recursive_unknown_write_vf(%src, %dst, %flag) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>, i1) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @unknown_region_capture_dst_vf
+// CHECK: "test.unknown_region"() ({
+// CHECK:   "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
+// CHECK: }) : () -> ()
+// CHECK: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+func.func @unknown_region_capture_dst_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_region"() ({
+    "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
+  }) : () -> ()
+  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  return
+}
+
+// CHECK-LABEL: func.func @unknown_region_capture_dst_caller
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<16xf32>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
+// CHECK-NOT: hivm.hir.copy ins(%[[SRC]] : memref<16xf32>) outs(%[[DST]] : memref<16xf32>)
+// CHECK: call @unknown_region_capture_dst_vf(%[[SRC]], %[[DST]]) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+func.func @unknown_region_capture_dst_caller() {
+  %src = memref.alloc() : memref<16xf32>
+  %dst = memref.alloc() : memref<16xf32>
+  func.call @unknown_region_capture_dst_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @unknown_region_capture_src_vf
+// CHECK: "test.unknown_region"() ({
+// CHECK:   "test.unknown_nested_write"(%arg0) : (memref<16xf32>) -> ()
+// CHECK: }) : () -> ()
+// CHECK: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+func.func @unknown_region_capture_src_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
+  "test.unknown_region"() ({
+    "test.unknown_nested_write"(%arg0) : (memref<16xf32>) -> ()
+  }) : () -> ()
+  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  return
+}
+
+// CHECK-LABEL: func.func @unknown_region_capture_src_caller
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<16xf32>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<16xf32>
+// CHECK-NOT: hivm.hir.copy ins(%[[SRC]] : memref<16xf32>) outs(%[[DST]] : memref<16xf32>)
+// CHECK: call @unknown_region_capture_src_vf(%[[SRC]], %[[DST]]) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+func.func @unknown_region_capture_src_caller() {
+  %src = memref.alloc() : memref<16xf32>
+  %dst = memref.alloc() : memref<16xf32>
+  func.call @unknown_region_capture_src_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
   return
 }

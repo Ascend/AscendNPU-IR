@@ -46,24 +46,30 @@ static std::optional<unsigned> getFuncArgNumber(Value value, func::FuncOp funcOp
 }
 
 static bool aliasesFuncArg(Value value, Value funcArg) {
+  if (!value)
+    return false;
   if (!isa<BaseMemRefType>(value.getType()))
     return false;
   return utils::tracebackMemRef(value) == funcArg;
 }
 
 static bool mayWriteFuncArgOrAlias(Operation *op, Value funcArg) {
-  if (auto memEffects = dyn_cast<MemoryEffectOpInterface>(op)) {
-    SmallVector<MemoryEffects::EffectInstance> effects;
-    memEffects.getEffects(effects);
-    for (const MemoryEffects::EffectInstance &effect : effects) {
-      if (!isa<MemoryEffects::Write>(effect.getEffect()))
-        continue;
-      if (aliasesFuncArg(effect.getValue(), funcArg))
-        return true;
-    }
-    return false;
+  auto effects = getEffectsRecursively(op);
+  if (!effects.has_value()) {
+    // Unknown-effect ops are not safe to move across. Even if the top-level op
+    // has no aliasing operands, a nested region may capture funcArg from above
+    // and write through that capture.
+    return true;
   }
 
+  for (const MemoryEffects::EffectInstance &effect : *effects) {
+    if (!isa<MemoryEffects::Write>(effect.getEffect()))
+      continue;
+    if (!effect.getValue())
+      return true;
+    if (aliasesFuncArg(effect.getValue(), funcArg))
+      return true;
+  }
   return false;
 }
 
