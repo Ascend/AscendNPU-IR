@@ -75,13 +75,13 @@ Triton是目前最主流的高性能算子开发编程语言，可以通过[Trit
 
 ```python
 @triton.jit
-def add_kernel(x_ptr,  # *Pointer* to first input vector.
-               y_ptr,  # *Pointer* to second input vector.
-               output_ptr,  # *Pointer* to output vector.
-               n_elements,  # Size of the vector.
-               BLOCK_SIZE: tl.constexpr,  # Number of elements each program should process.
+def add_kernel(x_ptr,  # 指向第一个输入向量的指针
+               y_ptr,  # 指向第二个输入向量的指针
+               output_ptr,  # 指向输出向量的指针
+               n_elements,  # 向量的大小
+               BLOCK_SIZE: tl.constexpr,  # 每个程序应处理的元素数量
                ):
-    pid = tl.program_id(axis=0)  # We use a 1D launch grid so axis is 0.
+    pid = tl.program_id(axis=0)  # 使用一维启动网格，因此 axis 为 0
     block_start = pid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
