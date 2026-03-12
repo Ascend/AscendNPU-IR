@@ -271,6 +271,20 @@ func.func @reinterpret_cast_with_stride(%arg0: memref<?xi8> {hacc.arg_type = #ha
 
 // -----
 
+// CHECK-LABEL: @reinterpret_cast_with_dynamic_stride
+// CHECK:       %[[C1024:.*]] = arith.constant 1024 : index
+// CHECK:       %[[NEW_STRIDE:.*]] = arith.muli %arg2, %[[C1024]] : index
+// CHECK:       %[[NEW_REINTERPRET:.*]] = memref.reinterpret_cast %arg0
+// CHECK-SAME:    to offset: [%arg1], sizes: [1, 1024], strides: [%[[NEW_STRIDE]], %arg2]
+
+func.func @reinterpret_cast_with_dynamic_stride(%arg0: memref<?xf16>, %arg1: index, %arg2: index) -> memref<1x1024xf16, strided<[?, ?], offset: ?>> {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [1024], strides: [%arg2] : memref<?xf16> to memref<1024xf16, strided<[?], offset: ?>>
+  %expand_shape = memref.expand_shape %reinterpret_cast [[0, 1]] output_shape [1, 1024] : memref<1024xf16, strided<[?], offset: ?>> into memref<1x1024xf16, strided<[?, ?], offset: ?>>
+  return %expand_shape : memref<1x1024xf16, strided<[?, ?], offset: ?>>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @if_fill_kernel
 // CHECK: scf.if
 // CHECK: linalg.fill ins(%{{.*}} : f32) outs(%{{.*}} : memref<2x1x14x1x4xf32>)
