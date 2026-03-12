@@ -146,7 +146,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       empty = false;
       remOpNum--;
     }
-    if (!empty && (scopeOp->parentOp != nullptr) &&
+    if (!empty && (scopeOp->getDepth() > 3) &&
         isTrueWithProbability(scope_out_prob_a, scope_out_prob_b)) {
       break;
     }
