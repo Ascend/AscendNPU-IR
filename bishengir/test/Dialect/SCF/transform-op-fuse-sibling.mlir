@@ -304,3 +304,64 @@ module attributes {transform.with_named_sequence} {
     transform.yield
   }
 }
+
+// -----
+// CHECK-LABEL: fuse_sibling_for_inner_sibling_loops_with_proportional_scaling_configuration(
+// CHECK:     %2:2 = scf.for %arg2 = %c0 to %c64 step %c1 iter_args(%arg3 = %0, %arg4 = %1) -> (tensor<64xf32>, tensor<8x64x16xf16>) {
+// CHECK-NEXT:  %3:2 = scf.for %arg5 = %c0 to %c8 step %c4 iter_args(%arg6 = %arg3, %arg7 = %arg4) -> (tensor<64xf32>, tensor<8x64x16xf16>) {
+// CHECK-NEXT:    %4 = affine.apply #map(%arg5)
+// CHECK-NEXT:    %extracted_slice = tensor.extract_slice %arg0[%arg2, %4] [1, 64] [1, 1] : tensor<64x128xf32> to tensor<1x64xf32>
+// CHECK-NEXT:    %extracted_slice_0 = tensor.extract_slice %arg6[%arg2] [1] [1] : tensor<64xf32> to tensor<1xf32>
+// CHECK-NEXT:    %5 = linalg.generic {indexing_maps = [#map1, #map2], iterator_types = ["parallel", "reduction"]} ins(%extracted_slice : tensor<1x64xf32>) outs(%extracted_slice_0 : tensor<1xf32>) attrs =  {__a__} {
+// CHECK-NEXT:    ^bb0(%in: f32, %out: f32):
+// CHECK-NEXT:      %7 = arith.addf %in, %out : f32
+// CHECK-NEXT:      linalg.yield %7 : f32
+// CHECK-NEXT:    } -> tensor<1xf32>
+// CHECK-NEXT:    %inserted_slice = tensor.insert_slice %5 into %arg6[%arg2] [1] [1] : tensor<1xf32> into tensor<64xf32>
+// CHECK-NEXT:    %6 = scf.for %arg8 = %c0 to %c16 step %c16 iter_args(%arg9 = %arg7) -> (tensor<8x64x16xf16>) {
+// CHECK-NEXT:      %extracted_slice_1 = tensor.extract_slice %arg1[%arg2, %arg5, %arg8] [1, 4, 16] [1, 1, 1] : tensor<64x8x16xf16> to tensor<1x4x16xf16>
+// CHECK-NEXT:      %extracted_slice_2 = tensor.extract_slice %arg9[%arg5, %arg2, %arg8] [4, 1, 16] [1, 1, 1] : tensor<8x64x16xf16> to tensor<4x1x16xf16>
+// CHECK-NEXT:      %transposed = linalg.transpose ins(%extracted_slice_1 : tensor<1x4x16xf16>) outs(%extracted_slice_2 : tensor<4x1x16xf16>) permutation = [1, 0, 2]  {__b__}
+// CHECK-NEXT:      %inserted_slice_3 = tensor.insert_slice %transposed into %arg9[%arg5, %arg2, %arg8] [4, 1, 16] [1, 1, 1] : tensor<4x1x16xf16> into tensor<8x64x16xf16>
+// CHECK-NEXT:      scf.yield %inserted_slice_3 : tensor<8x64x16xf16>
+// CHECK-NEXT:    }
+// CHECK-NEXT:    scf.yield %inserted_slice, %6 : tensor<64xf32>, tensor<8x64x16xf16>
+// CHECK-NEXT:  }
+// CHECK-NEXT:  scf.yield %3#0, %3#1 : tensor<64xf32>, tensor<8x64x16xf16>
+// CHECK-NEXT:}
+func.func @fuse_sibling_for_inner_sibling_loops_with_proportional_scaling_configuration(
+    %arg0 : tensor<64x128xf32>, %arg1 : tensor<64x8x16xf16>) -> (tensor<64xf32>, tensor<8x64x16xf16>) {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0)>],
+                       iterator_types = ["parallel", "reduction"]}
+                      ins(%arg0 : tensor<64x128xf32>) outs(%0 : tensor<64xf32>) attrs =  {"__a__"} {
+  ^bb0(%in: f32, %out: f32):
+    %51 = arith.addf %in, %out : f32
+    linalg.yield %51 : f32
+  } -> tensor<64xf32>
+  %2 = tensor.empty() : tensor<8x64x16xf16>
+  %transposed = linalg.transpose ins(%arg1 : tensor<64x8x16xf16>)
+                                 outs(%2 : tensor<8x64x16xf16>) permutation = [1, 0, 2]  {"__b__"}
+  return %1, %transposed : tensor<64xf32>, tensor<8x64x16xf16>
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg0: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match attributes {__a__} in %arg0 : (!transform.any_op) -> !transform.any_op
+    %tiled_linalg_op, %loops:2 = transform.structured.tile_using_for %0 tile_sizes [1, 64] interchange = [] : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+
+    %1 = transform.structured.match attributes {__b__} in %arg0 : (!transform.any_op) -> !transform.any_op
+    %tiled_linalg_op_1, %loops_1:3 = transform.structured.tile_using_for %1 tile_sizes [4, 1, 16] interchange = [1, 0, 2] : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
+
+    %2 = transform.structured.match interface{LoopLikeInterface} in %arg0 : (!transform.any_op) -> !transform.any_op
+    transform.apply_licm to %2 : !transform.any_op
+    %3 = transform.structured.match ops{["func.func"]} in %arg0 : (!transform.any_op) -> !transform.any_op
+    transform.apply_patterns to %3 {
+      transform.apply_patterns.canonicalization
+      transform.apply_patterns.tensor.merge_consecutive_insert_extract_slice
+    } {apply_cse, disable_patterns = ["SimplifyTrivialLoops"]} : !transform.any_op
+
+    %loops_2 = transform.loop.fuse_sibling %loops#0 into %loops_1#0 {fuse_inner_sibling_loops = true} : (!transform.any_op, !transform.any_op) -> !transform.any_op
+    transform.yield
+  }
+}

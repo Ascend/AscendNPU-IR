@@ -199,6 +199,55 @@ struct ConvertCastBoolToOtherTypeBySelect : public OpRewritePattern<CastOp> {
   }
 };
 
+// This pattern is driven by the following test cases:
+//
+// 1) vector<i32> -> vector<index> index_cast feeding ONLY vector.gather
+//    should be eliminated:
+//
+//    %idx_i = arith.index_cast %idx : vector<64xi32> to vector<64xindex>
+//    %v = vector.gather %tbl[%c0] [%idx_i] ...
+//
+//    After rewrite, vector.gather directly consumes vector<64xi32> indices
+//    and the index_cast must disappear.
+template <typename CastOp>
+struct ElimVectorIndexCastPattern : public OpRewritePattern<CastOp> {
+  using OpRewritePattern<CastOp>::OpRewritePattern;
+
+  static bool isVecIntToVecIndex(Type srcTy, Type dstTy) {
+    auto srcV = dyn_cast<VectorType>(srcTy);
+    auto dstV = dyn_cast<VectorType>(dstTy);
+    if (!srcV || !dstV)
+      return false;
+    if (srcV.getShape() != dstV.getShape())
+      return false;
+    auto srcElem = dyn_cast<IntegerType>(srcV.getElementType());
+    if (!srcElem)
+      return false;
+    if (!isa<IndexType>(dstV.getElementType()))
+      return false;
+    return true;
+  }
+
+  LogicalResult matchAndRewrite(CastOp op,
+                                PatternRewriter &rewriter) const override {
+    Value src = op.getIn();
+    Value dst = op.getOut();
+    if (!isVecIntToVecIndex(src.getType(), dst.getType()))
+      return failure();
+
+    const bool allUsersAreGather =
+        llvm::all_of(op->getUsers(), [](const auto &user) {
+          return isa<vector::GatherOp>(user);
+        });
+
+    if (!allUsersAreGather)
+      return failure();
+
+    rewriter.replaceOp(op, src);
+    return success();
+  }
+};
+
 } // namespace
 
 void NormalizeArithPass::runOnOperation() {
@@ -211,6 +260,8 @@ void NormalizeArithPass::runOnOperation() {
                ConvertCastBoolToOtherTypeBySelect<arith::ExtUIOp>,
                ConvertCastBoolToOtherTypeBySelect<arith::SIToFPOp>,
                ConvertCastBoolToOtherTypeBySelect<arith::UIToFPOp>,
+               ElimVectorIndexCastPattern<arith::IndexCastOp>,
+               ElimVectorIndexCastPattern<arith::IndexCastUIOp>,
                NormalizeArithMathScalarBinary<arith::AddFOp>,
                NormalizeArithMathScalarBinary<arith::DivFOp>,
                NormalizeArithMathScalarUnary<math::SqrtOp>>(&getContext());

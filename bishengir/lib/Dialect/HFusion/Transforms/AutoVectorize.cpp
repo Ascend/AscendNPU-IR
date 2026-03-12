@@ -8,7 +8,6 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoVectorizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
@@ -1137,15 +1136,6 @@ void AutoVectorize::runOnOperation() {
     // apply the transforms in one shot
     if (failed(buildAndApplyVectorizationSchedule(builder, func, vecScopes)))
       func->emitError("Failed to vectorize the function.");
-  }
-
-  LLVM_DEBUG(llvm::dbgs() << "Before post-process\n" << *op << "\n");
-
-  // run post process to handle extract_slice input
-  RewritePatternSet patterns(context);
-  mlir::hfusion::populateAutoVectorizeCleanUpPatterns(patterns);
-  if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
-    signalPassFailure();
   }
 }
 

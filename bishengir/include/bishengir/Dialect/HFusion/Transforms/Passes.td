@@ -112,7 +112,7 @@ def PullSliceIntoVectorFunction : Pass<"hfusion-pull-slice-into-vector-function"
 }
 
 def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
-  let summary = "Tile, fuse and vectorize all linalg named ops, and outline loops as VF";
+  let summary = "Tile, fuse and vectorize all linalg named ops";
   let constructor = "mlir::hfusion::createHFusionAutoVectorizeV2Pass()";
   let dependentDialects = ["linalg::LinalgDialect",
                            "transform::TransformDialect",
@@ -121,6 +121,13 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
   let options = [
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
   ];
+}
+
+def OutlineVectorFunction : Pass<"outline-vector-function", "ModuleOp"> {
+  let summary = "Outline vector function.";
+  let constructor = "mlir::hfusion::createOutlineVectorFunctionPass()";
+  let dependentDialects = ["scf::SCFDialect", "mlir::func::FuncDialect",
+                           "transform::TransformDialect"];
 }
 
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {

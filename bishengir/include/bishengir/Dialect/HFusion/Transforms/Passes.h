@@ -116,6 +116,9 @@ std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
 std::unique_ptr<Pass>
 createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
 
+/// Create an outline vector function pass.
+std::unique_ptr<Pass> createOutlineVectorFunctionPass();
+
 /// Create a pass to execute auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>
 createAutoScheduleInterpreterPass(const std::string &kernelName,

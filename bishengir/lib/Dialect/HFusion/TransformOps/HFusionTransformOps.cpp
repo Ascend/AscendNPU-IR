@@ -861,32 +861,52 @@ inline void getResultsUsedBelow(const SmallVector<Operation *> &ops,
                                 Operation *below, SmallVector<Value> &results) {
   DominanceInfo domInfo;
   for (Operation *op : ops) {
-    for (OpOperand &use : op->getUses()) {
-      if (domInfo.properlyDominates(below, use.getOwner(), false)) {
-        results.push_back(use.get());
-        break;
+    for (Value res : op->getResults()) {
+      for (OpOperand &use : res.getUses()) {
+        if (domInfo.properlyDominates(below, use.getOwner(), false)) {
+          results.push_back(res);
+          break;
+        }
       }
     }
   }
 }
 
-inline void duplicateReUsedIterArgs(const SmallVector<scf::ForOp> &loops,
-                                    transform::TransformRewriter &rewriter) {
+static Operation *buildCopyOpForValue(Location loc, Value from,
+                                      transform::TransformRewriter &rewriter) {
+  auto ty = dyn_cast<RankedTensorType>(from.getType());
+  if (!ty || !ty.hasStaticShape())
+    return nullptr;
+  Value empty = rewriter.create<tensor::EmptyOp>(loc, ty.getShape(),
+                                                 ty.getElementType());
+  return rewriter.create<linalg::CopyOp>(loc, from, empty);
+}
+
+static void duplicateReusedValuesForSCFForOp(
+    SmallVector<scf::ForOp> loops, transform::TransformRewriter &rewriter) {
   DenseSet<Value> set;
-  OpBuilder::InsertionGuard g(rewriter);
-  for (Operation *loop : loops) {
+  for (auto loop : loops) {
+    OpBuilder::InsertionGuard g(rewriter);
     rewriter.setInsertionPoint(loop);
-    for (OpOperand &iterArg : dyn_cast<scf::ForOp>(loop).getInitArgsMutable()) {
+    auto loc = loop.getLoc();
+    for (OpOperand &iterArg : loop.getInitArgsMutable()) {
       auto value = iterArg.get();
-      Operation *defOp = value.getDefiningOp();
       if (!set.contains(value)) {
         set.insert(value);
       } else {
-        assert(defOp != nullptr);
-        Operation *newOp = rewriter.clone(*defOp);
-        iterArg.assign(newOp->getResult(0));
+        if (Operation *newOp = buildCopyOpForValue(loc, value, rewriter))
+          iterArg.assign(newOp->getResult(0));
       }
     }
+    loop.getBody()->walk([&](Operation *op) {
+      for (unsigned i = 0; i < op->getOperands().size(); i++) {
+        Value value = op->getOperand(i);
+        if (set.contains(value)) {
+          if (Operation *newOp = buildCopyOpForValue(loc, value, rewriter))
+            op->setOperand(i, newOp->getResult(0));
+        }
+      }
+    });
   }
 }
 
@@ -1073,7 +1093,11 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
   SmallVector<Value> targets = getTargets();
   SmallVector<scf::ForOp> loops = collectLoops(targets, state);
 
-  duplicateReUsedIterArgs(loops, rewriter);
+  // When outline loop as VF, some reused values inside this loop will cause
+  // memref.alloc and memref.copy which is illegal inside VF after bufferization.
+  // Here we duplicate these reused values to avoid this. See issue:
+  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3395
+  duplicateReusedValuesForSCFForOp(loops, rewriter);
 
   SmallVector<Operation *> ops;
   SmallVector<Operation *> opsToAdjustPositon;

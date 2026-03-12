@@ -1580,7 +1580,7 @@ bool hfusion::isFP8(Type type, Builder builder) {
 /// Tile_reduction_using_for will fail or cause bugs in some context, 
 /// see issue: AscendNPU-IR/issues/307
 /// So we still use tile_using_for instead for these context.
-bool hfusion::shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *op) {
+bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;
   auto linalgOp = cast<linalg::LinalgOp>(op);
@@ -1597,9 +1597,6 @@ bool hfusion::shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *op
 
   SmallVector<unsigned> reductionDims;
   linalgOp.getReductionDims(reductionDims);
-  auto tilingInterface = cast<TilingInterface>(op);
-  SmallVector<Range> iterationDomain =
-      tilingInterface.getIterationDomain(builder);
   for (auto i : reductionDims) {
     if (i < linalgOp.getNumLoops() - 1)
       return false;

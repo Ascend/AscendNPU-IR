@@ -351,6 +351,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
+    pm.addPass(createOutlineVectorFunctionPass());
   } else {
     AutoVectorizeOptions vecOptions;
     // Set maxVectorizeAxes to be 1 for compatiblity.
@@ -366,6 +367,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
       createRemoveMaskFromUnalignedReductionLoopPass());
   pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
   pm.addPass(createSimplifyVFArgsPass());
+  pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);
   pm.addPass(createSCFForLoopCanonicalizationPass());
   canonicalizationPipeline(pm, hfusionOptions);

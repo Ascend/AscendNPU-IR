@@ -26,7 +26,6 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   AddFFTSAddr.cpp
   AutoVectorize.cpp
   AutoVectorizeV2.cpp
-  AutoVectorizePatterns.cpp
   BufferizableOpInterfaceImpl.cpp
   CacheIO.cpp
   CacheIOForReturnArg.cpp
@@ -52,6 +51,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   NormalizeSliceOps.cpp
   OpFusion.cpp
   OutlineSingleOp.cpp
+  OutlineVectorFunction.cpp
   PackTilingData.cpp
   PreVectorizationFusion.cpp
   PullSliceIntoVectorFunction.cpp

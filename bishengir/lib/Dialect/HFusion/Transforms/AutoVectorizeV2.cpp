@@ -11,7 +11,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoVectorizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
@@ -47,17 +46,9 @@ using namespace mlir;
 namespace {
 
 struct FusedNode {
-  Value loopHandle = nullptr;
-  unsigned numLoops = 0;
+  std::string loopLabel;
   DenseSet<Operation *> fusedOps;
   DenseSet<Operation *> fusedLeafNodes;
-  // When decide which FusedNode the producer should fuse into, we need to know
-  // the location of FusedNode containing its user. Because the position of the
-  // FusedNode depends on the position of the last leafNode, we record it to get
-  // the location of this FusedNode. For example, if a FusedNode has three
-  // leafNode A, B and C, and C is the last leafNode in IR, here we record C.
-  Operation *lastLeafNode;
-  bool loopIsOutlined = false;
 };
 
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
@@ -72,7 +63,6 @@ struct FusableOpInfo {
   unsigned maxElemBitWidth = 1;
   DenseSet<Operation *> conflictList;
   std::shared_ptr<FusedNode> fusedNode = nullptr;
-  bool hasMultipleUsersInFuseNode = false;
 };
 
 static inline bool isOpInBlock(Operation *op, Block *block) {
@@ -92,6 +82,74 @@ static bool isCubeScopeOp(Operation *op) {
   return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
 }
 
+static bool isVsstbPatternTransposeOp(Operation *op) {
+  auto transpose = dyn_cast<linalg::TransposeOp>(op);
+  if (!transpose) {
+    return false;
+  }
+
+  auto inputType = dyn_cast<ShapedType>(transpose.getInput().getType());
+  if (!inputType || !inputType.hasStaticShape()) {
+    return false;
+  }
+
+  auto elemType = inputType.getElementType();
+  if (!(elemType.isBF16() || elemType.isF16() || elemType.isF32() ||
+        elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2())){
+    return false;
+  }
+
+  auto perm = transpose.getPermutation();
+  int64_t rank = perm.size();
+  // Rule 0: Should be 3-dim transpose
+  if (rank != 3)
+    return false;
+
+  // Rule 1: Should not be inner axis transpose
+  if (perm[rank - 1] != rank - 1)
+    return false;
+
+  // Rule 2: Last axis should fit in exactly 32 bytes
+  ArrayRef<int64_t> shape = inputType.getShape();
+  // Calculate element width in bytes
+  uint64_t elemByteWidth = llvm::divideCeil(
+      inputType.getElementType().getIntOrFloatBitWidth(), utils::INTR_BITS_PER_BYTE);
+  int64_t lastDim = shape[rank - 1];
+  return lastDim * elemByteWidth == 32;
+}
+
+static bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
+  if (llvm::any_of(op->getUsers(), [](Operation *user) {
+        return isVsstbPatternTransposeOp(user);
+      })) {
+    return true;
+  }
+  for (Operation *user : op->getUsers()) {
+    if (!isa<linalg::GenericOp>(user))
+      continue;
+    if (userCanFuseIntoVsstbPatternTransposeOp(user))
+      return true;
+  }
+  return false;
+}
+
+static bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
+  auto expandShape = dyn_cast<tensor::ExpandShapeOp>(op);
+  if (!expandShape) {
+    return false;
+  }
+  // FIXME: expand_shape with one-dim src will cause error when tile after fusing
+  // into vsstb pattern transpose, see issue:
+  // https://codehub-y.huawei.com/CompilerKernel/BiShengCompiler/AscendNPU-IR/issues/1100
+  auto srcType = dyn_cast<TensorType>(expandShape.getSrc().getType());
+  auto resType = dyn_cast<TensorType>(expandShape.getResult().getType());
+  if (srcType.getShape().size() != 2 || resType.getShape().size() != 3) {
+    return false;
+  }
+
+  return userCanFuseIntoVsstbPatternTransposeOp(op);
+}
+
 static bool isNonVectorizableOp(Operation *op) {
   if (hivm::util::isSIMTVF(op))
     return true;
@@ -99,6 +157,8 @@ static bool isNonVectorizableOp(Operation *op) {
     if (hfusion::isSingleElementLinalgOp(linalgOp) &&
         !isa<linalg::GenericOp>(linalgOp))
       return true;
+  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
+    return false;
   return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
              hfusion::GatherOp, hfusion::MulExtOp, hfusion::CumsumOp,
              hfusion::CumprodOp, hfusion::PrintOp, hfusion::SortOp,
@@ -127,6 +187,8 @@ static bool isMemrefLinalgOp(Operation *op) {
 static bool isFusableOp(Operation *op) {
   if (!op)
     return false;
+  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
+    return true;
   return !isNonVectorizableOp(op) &&
          isa<linalg::LinalgOp, hfusion::InterleaveOp, hfusion::DeinterleaveOp>(
              op);
@@ -134,8 +196,14 @@ static bool isFusableOp(Operation *op) {
 
 static void computeNumLoopsAndShapeAndMaxElemBitWidth(Operation *op,
                                                       FusableOpInfo &opInfo) {
-  SmallVector<Type> allTypes(op->getOperandTypes());
-  allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
+  SmallVector<Type> allTypes;
+  if (isa<linalg::TransposeOp>(op) && !isVsstbPatternTransposeOp(op)) {
+    allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
+    allTypes.append(op->getOperandTypes().begin(), op->getOperandTypes().end());
+  } else {
+    allTypes.append(op->getOperandTypes().begin(), op->getOperandTypes().end());
+    allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
+  }
 
   if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
     opInfo.numReductionLoops = linalgOp.getNumReductionLoops();
@@ -186,43 +254,6 @@ static void computeNumLoopsAndShapeAndMaxElemBitWidth(Operation *op,
   opInfo.maxElemBitWidth = maxElemBitWidth;
 }
 
-static bool isVsstbPatternTransposeOp(Operation *op) {
-  auto transpose = dyn_cast<linalg::TransposeOp>(op);
-  if (!transpose) {
-    return false;
-  }
-
-  auto inputType = dyn_cast<ShapedType>(transpose.getInput().getType());
-  if (!inputType || !inputType.hasStaticShape()) {
-    return false;
-  }
-
-  auto elemType = inputType.getElementType();
-  if (!(elemType.isBF16() || elemType.isF16() || elemType.isF32() ||
-        elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2())) {
-    return false;
-  }
-
-  auto perm = transpose.getPermutation();
-  int64_t rank = perm.size();
-  // Rule 0: Should be 3-dim transpose
-  if (rank != 3)
-    return false;
-  // Rule 1: Should not be inner axis transpose
-  if (perm[rank - 1] != rank - 1)
-    return false;
-
-  ArrayRef<int64_t> shape = inputType.getShape();
-  // Calculate element width in bytes
-  uint64_t elemByteWidth =
-      llvm::divideCeil(inputType.getElementType().getIntOrFloatBitWidth(),
-                       utils::INTR_BITS_PER_BYTE);
-
-  // Rule 2: Last axis should fit in exactly 32 bytes
-  int64_t lastDim = shape[rank - 1];
-  return lastDim * elemByteWidth == 32;
-}
-
 static void
 computeTileSize(llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
                 SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
@@ -244,7 +275,7 @@ computeTileSize(llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
     for (Operation *fusedOp : fusedNode->fusedOps) {
       FusableOpInfo &opInfo = fusableOpInfoMap[fusedOp];
       SmallVector<int64_t> tileSize(opInfo.numLoops, 1);
-      if (shouldMultiAxisVectorize && opInfo.numLoops > 1) {
+      if (shouldMultiAxisVectorize && opInfo.numLoops > 2) {
         int64_t maxElemByteWidthInFusedNode =
             maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE;
         int64_t remainBytes = vectorLength;
@@ -339,17 +370,6 @@ static void findUpstreamFusableOpOf(Operation *op, Block *block,
 }
 
 static void
-findDominatedFusableOpOf(Operation *nonVectorizableOp, Block *block,
-                         SmallVector<Operation *> &dominatedFusableOps) {
-  block->walk([&](Operation *op) {
-    if (isOpInBlock(op, block) && nonVectorizableOp->isBeforeInBlock(op) &&
-        isFusableOp(op)) {
-      dominatedFusableOps.push_back(op);
-    }
-  });
-}
-
-static void
 findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
                                     DenseSet<Operation *> &previousOps,
                                     DenseSet<Operation *> &followingOps) {
@@ -367,23 +387,13 @@ findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
 /// If two fusable ops are conflict with each other, they cannot be fused into
 /// the same VF:
 /// 1. The producer(upstream op) and consumer(downstream op) of
-/// NonVectorizableOp
-///    are confilict with each other. For example:
+///    NonVectorizableOp are confilict with each other. For example:
 ///       A(FusableOp)
 ///       B(NonVectorizableOp, use A)
 ///       C(FusableOp, use B)
 ///    Then A and C are confilict with each other
-/// 2. If A fusable op has NonVectorizableOp users and FusableOp at the same
-/// time,
-///    this fusable op is conflicts with its FusableOp users located behind(i.e.
-///    dominated by) its NonVectorizableOp users. For example:
-///       A(FusableOp)
-///       B(NonVectorizableOp, use A)
-///       C(FusableOp, use A)
-///    Then A and C are confilict with each other
-/// 3. The previous and following of
-/// hivm.hir.sync_block_wait/hivm.hir.sync_block_set/
-///    scf.ForOp are confilict with each other. For example:
+/// 2. The previous and following of scf.for/hivm.hir.sync_block_wait/
+///    hivm.hir.sync_block_set are confilict with each other. For example:
 ///       A(FusableOp)
 ///       hivm.hir.sync_block_wait
 ///       B(FusableOp)
@@ -402,21 +412,10 @@ static void computeConflictLists(
           DenseSet<Operation *> visitedDownstreamOps;
           findDownstreamFusableOpOf(op, block, downstreamOps,
                                     visitedDownstreamOps);
-          SmallVector<Operation *> dominatedOps;
-          findDominatedFusableOpOf(op, block, dominatedOps);
           for (auto upstreamOp : upstreamOps) {
             for (auto downstreamOp : downstreamOps) {
               fusableOpInfoMap[upstreamOp].conflictList.insert(downstreamOp);
               fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
-            }
-          }
-          for (auto dominatedOp : dominatedOps) {
-            for (Value operand : dominatedOp->getOperands()) {
-              Operation *operandOp = operand.getDefiningOp();
-              if (operandOp && upstreamOps.contains(operandOp)) {
-                fusableOpInfoMap[dominatedOp].conflictList.insert(operandOp);
-                fusableOpInfoMap[operandOp].conflictList.insert(dominatedOp);
-              }
             }
           }
           if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp, scf::WhileOp>(
@@ -470,15 +469,114 @@ static void interchangeForLeafNodes(
   }
 }
 
+static bool hasCommonAxis(
+    Operation *op1, Operation *op2,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
+  assert(fusableOpInfoMap.contains(op1) && fusableOpInfoMap.contains(op2));
+  auto shape1 = fusableOpInfoMap[op1].shape;
+  auto shape2 = fusableOpInfoMap[op2].shape;
+  if (shape1 == shape2)
+    return true;
+  if (shape1.size() > 1 && shape2.size() > 1 && shape1[0] == shape2[0])
+    return true;
+  return false;
+}
+
+static bool isProducerConsumedImpl(Operation *target, Operation *source,
+                                   DenseSet<Value> &visited) {
+  if (!target || !source) {
+    return false;
+  }
+  for (Value targetResult : target->getResults()) {
+    if (visited.contains(targetResult)) {
+      continue;
+    }
+    visited.insert(targetResult);
+    // dfs check if any of the target result users is consumed by source op
+    bool consumed =
+        llvm::any_of(targetResult.getUsers(), [&](Operation *resultUser) {
+          return source->isAncestor(resultUser) ||
+                 isProducerConsumedImpl(resultUser, source, visited);
+        });
+    if (consumed) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool isProducerConsumed(Operation *target, Operation *source) {
+  DenseSet<Value> visited;
+  if (target->isBeforeInBlock(source)) {
+    return isProducerConsumedImpl(target, source, visited);
+  } else {
+    return isProducerConsumedImpl(source, target, visited);
+  }
+}
+
+static void visitUsersOfLeafNodeRecursively(
+    Operation *op, Operation *lastLeafNode, Block *block,
+    DenseSet<Operation *> &usersToBeMovedSet) {
+  DominanceInfo domInfo;
+  for (Operation *user : op->getUsers()) {
+    if (!user || user->hasTrait<OpTrait::IsTerminator>() ||
+        domInfo.properlyDominates(lastLeafNode, user)) {
+      continue;
+    }
+    while (!isOpInBlock(user, block)) {
+      user = user->getParentOp();
+    }
+    if (usersToBeMovedSet.contains(user)) {
+      continue;
+    }
+    usersToBeMovedSet.insert(user);
+    visitUsersOfLeafNodeRecursively(user, lastLeafNode, block, usersToBeMovedSet);
+  }
+}
+
+// fuse sibling will clone all users of those front siblings behind fused loop which will
+// cause existing handle lost or IR order changed. So we move those front siblings and their
+// users to their new positions after fuse.
+// For example: we have 4 nodes in order A B C(use A) D, and A and D should fuse sibling,
+// then we move A before D and move C hehind D, after moving the order will be B A D C(use A).
+static void moveLeafNodesAndTheirUsers(SmallVector<Operation *> &leafNodeGroup,
+                                       Block *block) {
+  if (leafNodeGroup.size() == 1)
+    return;
+
+  llvm::sort(leafNodeGroup, [](Operation *a, Operation *b) {
+    return a->isBeforeInBlock(b);
+  });
+  Operation *lastLeafNode = leafNodeGroup.back();
+  DenseSet<Operation *> usersToBeMovedSet;
+  for (Operation *leafNode : llvm::drop_end(leafNodeGroup)) {
+    visitUsersOfLeafNodeRecursively(leafNode, lastLeafNode, block, usersToBeMovedSet);
+  }
+  SmallVector<Operation *> usersToBeMoved(usersToBeMovedSet.begin(),
+                                          usersToBeMovedSet.end());
+  llvm::sort(usersToBeMoved, [](Operation *a, Operation *b) {
+    return a->isBeforeInBlock(b);
+  });
+
+  Operation *prevMovedLeafNode = lastLeafNode;
+  for (Operation *leafNodeToBeMoved : llvm::drop_end(leafNodeGroup)) {
+    leafNodeToBeMoved->moveBefore(prevMovedLeafNode);
+    prevMovedLeafNode = leafNodeToBeMoved;
+  }
+  Operation *prevMovedUser = lastLeafNode;
+  for (Operation *userToBeMoved : usersToBeMoved) {
+    userToBeMoved->moveAfter(prevMovedUser);
+    prevMovedUser = userToBeMoved;
+  }
+}
+
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
-// 1. the producer is fill op(may support in the future)
+// 1. the producer is fill op or vsstb pattern transpose op
 // 2. there is fusedOps within the closest fusedNode conflict with the producer
-// 3. there is transpose user within the closest fusedNode(may support in the
-// future)
-// 4. there are several users and at least one reduction user within the closest
-//    fusedNode(may support in the future)
+// 3. there is normal(not vsstb pattern) transpose user within the closest
+//    fusedNode
 static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     Block *block, Operation *producer,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
@@ -487,53 +585,6 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (mlir::hfusion::isFillOp(producer))
     return nullptr;
 
-  if (isVsstbPatternTransposeOp(producer))
-    return nullptr;
-
-  FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
-  // Find the fuseNode closest to the producer.
-  std::shared_ptr<FusedNode> bestFusedNode = nullptr;
-  for (auto user : producer->getUsers()) {
-    if (isOpInBlock(user, block) && isFusableOp(user)) {
-      auto candidateFusedNode = fusableOpInfoMap[user].fusedNode;
-      if (!bestFusedNode || candidateFusedNode->lastLeafNode->isBeforeInBlock(
-                                bestFusedNode->lastLeafNode))
-        bestFusedNode = candidateFusedNode;
-    }
-  }
-  assert(bestFusedNode);
-  if (bestFusedNode->fusedOps.size() > 15)
-    return nullptr;
-  // If the closest fuseNode is conflict with the producer, give up fusing.
-  if (llvm::any_of(bestFusedNode->fusedOps, [&](Operation *fusedOp) {
-        return producerInfo.conflictList.contains(fusedOp);
-      }))
-    return nullptr;
-
-  bool userIsReduce = false;
-  bool userIsNormalTranspose = false;
-  int numUsersInBestFusedNode = 0;
-  for (auto user : DenseSet<Operation *>(producer->getUsers().begin(),
-                                         producer->getUsers().end())) {
-    if (bestFusedNode->fusedOps.contains(user)) {
-      numUsersInBestFusedNode++;
-      if (isa<linalg::TransposeOp>(user) && !isVsstbPatternTransposeOp(user))
-        userIsNormalTranspose = true;
-      if (fusableOpInfoMap[user].numReductionLoops)
-        userIsReduce = true;
-    }
-  }
-
-  bool hasVsstbTransposeInFusedNode = false;
-  for (auto fusedLeafNode : bestFusedNode->fusedLeafNodes) {
-    if (isVsstbPatternTransposeOp(fusedLeafNode)) {
-      hasVsstbTransposeInFusedNode = true;
-      break;
-    }
-  }
-  // FIXME: extended_fuse_into_containing_op does not sopport all fusion
-  // scenarios and should give up fusing, see issue:
-  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3553
   // Since the producers and consumers of a transpose op have opposite axes, we
   // cannot fuse them into the same fusedNode. For vsstb pattern transpose, we
   // fuse the producers into this transpose op; for other pattern transpose, we
@@ -541,10 +592,42 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   // chain: op1 -> vsstb transpose -> op2, we will fuse op1 into transpose op;
   // if we have user chain: op1 -> normal transpose -> op2, we will fuse
   // transpose op into op2
-  if ((numUsersInBestFusedNode > 1 && userIsReduce &&
-       !hasVsstbTransposeInFusedNode) ||
-      userIsNormalTranspose)
+  if (isVsstbPatternTransposeOp(producer))
     return nullptr;
+
+  Operation *closestUser = nullptr;
+  for (auto user : producer->getUsers()) {
+    if (isOpInBlock(user, block)) {
+      if (!closestUser || user->isBeforeInBlock(closestUser))
+        closestUser = user;
+    }
+  }
+  if (!closestUser || !isFusableOp(closestUser))
+    return nullptr;
+
+  auto bestFusedNode = fusableOpInfoMap[closestUser].fusedNode;
+  assert(bestFusedNode);
+  if (bestFusedNode->fusedOps.size() > 15)
+    return nullptr;
+  FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
+  // If the closest fuseNode is conflict with the producer, give up fusing.
+  if (llvm::any_of(bestFusedNode->fusedOps, [&](Operation *fusedOp) {
+        return producerInfo.conflictList.contains(fusedOp);
+      }))
+    return nullptr;
+
+  int numUsersInBestFusedNode = 0;
+  for (auto user : DenseSet<Operation *>(producer->getUsers().begin(),
+                                         producer->getUsers().end())) {
+    if (bestFusedNode->fusedOps.contains(user)) {
+      numUsersInBestFusedNode++;
+      if (isa<linalg::TransposeOp>(user) && !isVsstbPatternTransposeOp(user))
+        return nullptr;
+      if (!hasCommonAxis(producer, user, fusableOpInfoMap))
+        return nullptr;
+    }
+  }
+
   if (numUsersInBestFusedNode > 1) {
     AffineMap map;
     for (OpOperand &use : producer->getUses()) {
@@ -594,13 +677,27 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     }
   }
 
-  // If there are several users in bestFusedNode, using fuse_into_containing_op
-  // will result in multiple calculations, so we use
-  // extended_fuse_into_containing_op instead.
-  if (numUsersInBestFusedNode > 1)
-    producerInfo.hasMultipleUsersInFuseNode = true;
-
   return bestFusedNode;
+}
+
+static void updateConflictLists(
+    SmallVector<Operation *> &leafNodeGroup, Block *block,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
+  DenseSet<Operation *> upstreamOps;
+  DenseSet<Operation *> visitedUpstreamOps;
+  DenseSet<Operation *> downstreamOps;
+  DenseSet<Operation *> visitedDownstreamOps;
+  for (Operation *leafNode : leafNodeGroup) {
+    findUpstreamFusableOpOf(leafNode, block, upstreamOps, visitedUpstreamOps);
+    findDownstreamFusableOpOf(leafNode, block, downstreamOps,
+                              visitedDownstreamOps);
+  }
+  for (auto upstreamOp : upstreamOps) {
+    for (auto downstreamOp : downstreamOps) {
+      fusableOpInfoMap[upstreamOp].conflictList.insert(downstreamOp);
+      fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
+    }
+  }
 }
 
 /// For reduction op, tile_reduction_using_for has better performance than
@@ -701,6 +798,7 @@ public:
   void runOnOperation() override;
 
 private:
+  unsigned loopCount = 0;
   void initFusableOpInfo(
       func::FuncOp func, int64_t vectorLength,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap);
@@ -709,8 +807,8 @@ private:
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
-  void buildVectorizeAndOutlineTransformSequence(
-      OpBuilder &builder, func::FuncOp func, transform::SequenceOp seqOp,
+  void buildVectorizeTransformSequence(
+      OpBuilder &builder, transform::SequenceOp seqOp,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
@@ -815,7 +913,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
       auto leafNodeInfo = fusableOpInfoMap[leafNode];
-      if (leafNodeInfo.shape == fusableOpInfoMap[leafNodeGroup[0]].shape &&
+      if (hasCommonAxis(leafNode, leafNodeGroup[0], fusableOpInfoMap) &&
           llvm::all_of(leafNodeGroup, [&](Operation *otherLeafNode) {
             return !leafNodeInfo.conflictList.contains(otherLeafNode);
           })) {
@@ -829,17 +927,16 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       leafNodeGroups.push_back(SmallVector<Operation *>{leafNode});
   }
   // Every leafNodeGroup will form a fusedNode.
-  for (auto leafNodeGroup : leafNodeGroups) {
+  for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
     std::shared_ptr<FusedNode> fusedNode = std::make_shared<FusedNode>();
     fusedNodes.push_back(fusedNode);
-    fusedNode->numLoops =
-        static_cast<unsigned>(fusableOpInfoMap[leafNodeGroup[0]].numLoops);
-    fusedNode->lastLeafNode = leafNodeGroup.back();
+    fusedNode->loopLabel = "outlined-loop-target-" + std::to_string(++loopCount);
     for (Operation *leafNode : leafNodeGroup) {
       fusedNode->fusedOps.insert(leafNode);
       fusedNode->fusedLeafNodes.insert(leafNode);
       fusableOpInfoMap[leafNode].fusedNode = fusedNode;
     }
+    moveLeafNodesAndTheirUsers(leafNodeGroup, block);
   }
 }
 
@@ -922,14 +1019,37 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
       }
     }
   } else {
-    leafNodeGroups.push_back(SmallVector<Operation *>{producer});
-    std::shared_ptr<FusedNode> fusedNode = std::make_shared<FusedNode>();
-    fusedNodes.push_back(fusedNode);
-    fusedNode->numLoops = static_cast<unsigned>(producerInfo.numLoops);
-    fusedNode->lastLeafNode = producer;
-    fusedNode->fusedOps.insert(producer);
-    fusedNode->fusedLeafNodes.insert(producer);
-    producerInfo.fusedNode = fusedNode;
+    bool isInserted = false;
+    for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
+      if (leafNodeGroup.size() > 15)
+        continue;
+      // All leafNodes within a group have the common axis and do not conflict
+      // with each other.
+      if (hasCommonAxis(producer, leafNodeGroup[0], fusableOpInfoMap) &&
+          llvm::all_of(leafNodeGroup, [&](Operation *otherLeafNode) {
+            return !producerInfo.conflictList.contains(otherLeafNode) &&
+                   !isProducerConsumed(producer, otherLeafNode);
+          })) {
+        std::shared_ptr<FusedNode> fusedNode = fusableOpInfoMap[leafNodeGroup[0]].fusedNode;
+        fusedNode->fusedOps.insert(producer);
+        fusedNode->fusedLeafNodes.insert(producer);
+        producerInfo.fusedNode = fusedNode;
+        leafNodeGroup.push_back(producer);
+        isInserted = true;
+        moveLeafNodesAndTheirUsers(leafNodeGroup, block);
+        updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
+        break;
+      };
+    }
+    if (!isInserted) {
+      leafNodeGroups.push_back(SmallVector<Operation *>{producer});
+      std::shared_ptr<FusedNode> fusedNode = std::make_shared<FusedNode>();
+      fusedNodes.push_back(fusedNode);
+      fusedNode->loopLabel = "outlined-loop-target-" + std::to_string(++loopCount);
+      fusedNode->fusedOps.insert(producer);
+      fusedNode->fusedLeafNodes.insert(producer);
+      producerInfo.fusedNode = fusedNode;
+    }
   }
 }
 
@@ -958,11 +1078,14 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
   auto loc = seqOp->getLoc();
   for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
     SmallVector<Value> tiledLoopHandles;
+    bool hasFillOp = false;
     for (Operation *leafNode : leafNodeGroup) {
+      if (mlir::hfusion::isFillOp(leafNode))
+        hasFillOp = true;
       FusableOpInfo &leafNodeInfo = fusableOpInfoMap[leafNode];
       Value leafNodeHandle =
           getOpTransformHandle(leafNodeInfo.label, builder, seqOp);
-      if (hfusion::shouldUseTileReductionUsingForV2(builder, leafNode)) {
+      if (hfusion::shouldUseTileReductionUsingForV2(leafNode)) {
         tiledLoopHandles.push_back(tileReductionOp(
             builder, seqOp, leafNode, leafNodeHandle, leafNodeInfo.tileSize,
             leafNodeInfo.label, otherVectorizableOps));
@@ -991,7 +1114,12 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
                   /*target=*/fusedLoopHandle, /*source=*/nextLoopHandle, true)
               .getFusedLoop();
     }
-    fusableOpInfoMap[leafNodeGroup[0]].fusedNode->loopHandle = fusedLoopHandle;
+    if (hasFillOp)
+      builder.create<transform::AnnotateOp>(loc, fusedLoopHandle,
+                                            "outlinedLoopWithFill", nullptr);
+    builder.create<transform::AnnotateOp>(
+        loc, fusedLoopHandle, fusableOpInfoMap[leafNodeGroup[0]].fusedNode->loopLabel,
+        nullptr);
     if (tiledLoopHandles.size() > 1)
       applyCleanUp(builder, seqOp);
   }
@@ -1009,33 +1137,34 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
     Value producerHandle =
         getOpTransformHandle(producerInfo.label, builder, seqOp);
     std::shared_ptr<FusedNode> fusedNode = producerInfo.fusedNode;
-    Value containingLoopHandle = fusedNode->loopHandle;
-    Value fusedOp;
-    if (producerInfo.hasMultipleUsersInFuseNode) {
-      transform::ExtendedFuseIntoContainingOp fuseIntoOp =
-          builder.create<transform::ExtendedFuseIntoContainingOp>(
-              seqOp.getLoc(),
-              std::vector<Type>(1, builder.getType<transform::AnyOpType>()),
-              std::vector<Type>(1, builder.getType<transform::AnyOpType>()),
-              producerHandle, containingLoopHandle,
-              BoolAttr::get(builder.getContext(), false));
-      fusedNode->loopHandle = fuseIntoOp.getNewContainingOp().front();
-      fusedOp = fuseIntoOp.getFusedOp().front();
-    } else {
-      transform::FuseIntoContainingOp fuseIntoOp =
-          builder.create<transform::FuseIntoContainingOp>(loc, producerHandle,
-                                                          containingLoopHandle);
-      fusedNode->loopHandle = fuseIntoOp.getNewContainingOp();
-      fusedOp = fuseIntoOp.getFusedOp();
-    }
-    if (hfusion::shouldUseTileReductionUsingForV2(builder, producer)) {
+    Value containingLoopHandle =
+        getOpTransformHandle(fusedNode->loopLabel, builder, seqOp);
+    builder.create<transform::ApplyPatternsOp>(
+        loc, containingLoopHandle, [](OpBuilder &innerBuilder, Location loc) {
+          innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+        });
+    transform::FuseIntoContainingOp fuseIntoOp =
+        builder.create<transform::FuseIntoContainingOp>(
+            loc, builder.getType<transform::AnyOpType>(),
+            builder.getType<transform::AnyOpType>(), producerHandle,
+            containingLoopHandle, /*merge_multiple_extract_uses*/true);
+    Value fusedOp = fuseIntoOp.getFusedOp();
+    Value newContainingLoopHandle = fuseIntoOp.getNewContainingOp();
+    builder.create<transform::ApplyPatternsOp>(
+        loc, newContainingLoopHandle, [](OpBuilder &innerBuilder, Location loc) {
+          innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+        });
+    if (hfusion::shouldUseTileReductionUsingForV2(producer)) {
       tileReductionOp(builder, seqOp, producer, fusedOp, producerInfo.tileSize,
                       producerInfo.label, otherVectorizableOps);
-    } else if (producerInfo.numLoops > fusedNode->numLoops ||
-               producerInfo.numReductionLoops) {
+    } else if (!isa<tensor::ExpandShapeOp>(producer)) {
       builder.create<transform::TileUsingForOp>(loc, fusedOp,
                                                 producerInfo.tileSize);
     }
+    builder.create<transform::ApplyPatternsOp>(
+        loc, newContainingLoopHandle, [](OpBuilder &innerBuilder, Location loc) {
+          innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
+        });
     applyCleanUp(builder, seqOp);
   }
 }
@@ -1060,6 +1189,14 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
     for (auto op : leafNodeGroup) {
       LLVM_DEBUG(llvm::dbgs() << *op);
       LLVM_DEBUG(llvm::dbgs() << "\n");
+      LLVM_DEBUG(llvm::dbgs() << "----shape:[");
+      for (auto i : fusableOpInfoMap[op].shape)
+        LLVM_DEBUG(llvm::dbgs() << i << ",");
+      LLVM_DEBUG(llvm::dbgs() << "]----\n");
+      LLVM_DEBUG(llvm::dbgs() << "----tilesize:[");
+      for (auto i : fusableOpInfoMap[op].tileSize)
+        LLVM_DEBUG(llvm::dbgs() << i << ",");
+      LLVM_DEBUG(llvm::dbgs() << "]----\n");
     }
     LLVM_DEBUG(llvm::dbgs() << "\n");
   }
@@ -1067,6 +1204,14 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
   for (auto op : producersToBeFusedInto) {
     LLVM_DEBUG(llvm::dbgs() << *op);
     LLVM_DEBUG(llvm::dbgs() << "\n");
+    LLVM_DEBUG(llvm::dbgs() << "----shape:[");
+    for (auto i : fusableOpInfoMap[op].shape)
+      LLVM_DEBUG(llvm::dbgs() << i << ",");
+    LLVM_DEBUG(llvm::dbgs() << "]----\n");
+    LLVM_DEBUG(llvm::dbgs() << "----tilesize:[");
+    for (auto i : fusableOpInfoMap[op].tileSize)
+      LLVM_DEBUG(llvm::dbgs() << i << ",");
+    LLVM_DEBUG(llvm::dbgs() << "]----\n");
   }
 #endif
   tileAndFuseSiblingForLeafNodes(builder, seqOp, leafNodeGroups,
@@ -1075,8 +1220,8 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
                              fusableOpInfoMap, otherVectorizableOps);
 }
 
-void AutoVectorizeV2::buildVectorizeAndOutlineTransformSequence(
-    OpBuilder &builder, func::FuncOp func, transform::SequenceOp seqOp,
+void AutoVectorizeV2::buildVectorizeTransformSequence(
+    OpBuilder &builder, transform::SequenceOp seqOp,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
     SmallVector<std::pair<std::string, SmallVector<int64_t>>>
         &otherVectorizableOps) {
@@ -1097,30 +1242,6 @@ void AutoVectorizeV2::buildVectorizeAndOutlineTransformSequence(
         loc, getOpTransformHandle(vectorizableOp.first, builder, seqOp),
         SmallVector<Value>(), vectorizableOp.second, nullptr,
         SmallVector<bool>(vectorizableOp.second.size(), false));
-  }
-  int idx = 0;
-  std::string vfNamePrefix = func.getSymName().str() + "_outlined_vf_";
-  for (auto info : fusableOpInfoMap) {
-    FusableOpInfo &opInfo = info.second;
-    assert(opInfo.fusedNode && "fusedNode should not be NULL");
-    if (!opInfo.fusedNode->loopIsOutlined) {
-      opInfo.fusedNode->loopIsOutlined = true;
-      auto outlineOp = builder.create<transform::LoopOutlineOp>(
-          loc,
-          SmallVector<Type>{builder.getType<transform::AnyOpType>(),
-                            builder.getType<transform::AnyOpType>()},
-          opInfo.fusedNode->loopHandle, vfNamePrefix + std::to_string(idx++));
-      builder.create<transform::AnnotateOp>(
-          loc, outlineOp.getFunction(), mlir::hivm::VectorFunctionAttr::name,
-          nullptr);
-      builder.create<transform::AnnotateOp>(
-          loc, outlineOp.getCall(), mlir::hivm::VectorFunctionAttr::name,
-          nullptr);
-      builder.create<transform::AnnotateOp>(loc, outlineOp.getFunction(),
-                                            "no_inline", nullptr);
-      builder.create<transform::AnnotateOp>(loc, outlineOp.getCall(),
-                                            "no_inline", nullptr);
-    }
   }
 }
 
@@ -1190,8 +1311,8 @@ void AutoVectorizeV2::runOnOperation() {
         buildTileAndFuseTransformSequenceForBlock(
             builder, seqOp, block, fusableOpInfoMap, otherVectorizableOps);
     });
-    buildVectorizeAndOutlineTransformSequence(
-        builder, func, seqOp, fusableOpInfoMap, otherVectorizableOps);
+    buildVectorizeTransformSequence(builder, seqOp, fusableOpInfoMap,
+                                    otherVectorizableOps);
     // Apply transform
     transform::TransformOptions options;
     options.enableExpensiveChecks(false);
@@ -1216,12 +1337,6 @@ void AutoVectorizeV2::runOnOperation() {
         if (isa<func::FuncOp, scf::ForOp, scf::IfOp>(block->getParentOp()))
           sortTopologically(block);
       });
-
-      RewritePatternSet patterns(context);
-      mlir::hfusion::populateAutoVectorizeCleanUpPatterns(patterns);
-      if (failed(applyPatternsGreedily(op, std::move(patterns)))) {
-        signalPassFailure();
-      }
     }
   }
 }

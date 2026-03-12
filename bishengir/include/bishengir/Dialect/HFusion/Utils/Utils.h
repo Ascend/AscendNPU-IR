@@ -329,7 +329,7 @@ bool isInCubeScope(Operation *op);
 
 bool isFP8(Type type, Builder builder);
 
-bool shouldUseTileReductionUsingForV2(OpBuilder &builder, Operation *Op);
+bool shouldUseTileReductionUsingForV2(Operation *Op);
 
 namespace util {
 const static std::string saturateSrcUnsigned = "saturate_src_unsigned";

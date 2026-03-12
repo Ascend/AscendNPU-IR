@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -split-input-file 2>&1 | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -outline-vector-function -split-input-file 2>&1 | FileCheck %s
 //
 //==============================================================================
 // TEST SPECIFICATION: AutoVectorizeV2 Generalization Tests

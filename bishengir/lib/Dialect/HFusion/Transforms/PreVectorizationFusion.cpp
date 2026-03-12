@@ -445,6 +445,66 @@ struct ExtractInlinePattern : public OpRewritePattern<linalg::GenericOp> {
   }
 };
 
+struct ExpandShapeToImplicitBrcInGenericPattern
+    : public OpRewritePattern<linalg::GenericOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::GenericOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> newInputs;
+    SmallVector<AffineMap> newMaps;
+    bool changed = false;
+
+    unsigned numLoops = op.getNumLoops();
+    auto oldMaps = op.getIndexingMapsArray();
+    auto ctx = rewriter.getContext();
+
+    for (auto it : llvm::enumerate(op.getDpsInputs())) {
+      Value input = it.value();
+      AffineMap oldMap = oldMaps[it.index()];
+      // input from tensor.expand_shape
+
+      auto expandShapeOp = input.getDefiningOp<tensor::ExpandShapeOp>();
+      if (!expandShapeOp ||
+          isa<tensor::CollapseShapeOp>(expandShapeOp.getSrc().getDefiningOp())) {
+        newInputs.push_back(input);
+        newMaps.push_back(oldMap);
+        continue;
+      }
+      bool hasInlineBrcAxes = false;
+      SmallVector<AffineExpr> newMapResults;
+      for (auto [i, result] : llvm::enumerate(oldMap.getResults())) {
+        auto constExpr = dyn_cast<AffineConstantExpr>(result);
+        if (!constExpr || constExpr.getValue() != 0) {
+          newMapResults.push_back(result);
+          continue;
+        }
+        hasInlineBrcAxes = true;
+      }
+      if (hasInlineBrcAxes) {
+        newInputs.push_back(expandShapeOp.getSrc());
+        newMaps.push_back(AffineMap::get(numLoops, 0, newMapResults, ctx));
+        changed = true;
+        continue;
+      }
+    }
+
+    if (!changed)
+      return failure();
+
+    for (auto it : llvm::enumerate(op.getDpsInits())) {
+      newMaps.push_back(oldMaps[op.getDpsInputs().size() + it.index()]);
+    }
+    auto newOp = rewriter.create<linalg::GenericOp>(
+        op.getLoc(), op.getResultTypes(), newInputs, op.getDpsInits(),
+        newMaps, op.getIteratorTypesArray());
+    rewriter.inlineRegionBefore(op.getRegion(), newOp.getRegion(),
+                                newOp.getRegion().begin());
+    rewriter.replaceOp(op, newOp.getResults());
+    return success();
+  }
+};
+
 static void populateMatmulPatterns(RewritePatternSet &patterns) {
   patterns.add<HFusionMatmulDecomposePatterns<linalg::MatmulOp>>(
       patterns.getContext());
@@ -521,6 +581,7 @@ static void
 populatePreVectorizationFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<HFusionGeneralizationPatterns>(patterns.getContext());
   patterns.add<ExtractInlinePattern>(patterns.getContext());
+  patterns.add<ExpandShapeToImplicitBrcInGenericPattern>(patterns.getContext());
   patterns.add<ZeroDimToOneDimGenericPattern>(patterns.getContext());
   populateMatmulPatterns(patterns);
   populateFusionPatterns(patterns);
@@ -579,7 +640,7 @@ void InsertPadConstMark(Operation *moduleOp) {
 //      outs(%2 : tensor<64xf32>) dimensions = [1]
 void EmptifyReduceInit(Operation *op, IRRewriter &rewriter) {
   op->walk([&](linalg::ReduceOp reduceOp) {
-    if (!(hfusion::shouldUseTileReductionUsingForV2(rewriter, reduceOp)))
+    if (!(hfusion::shouldUseTileReductionUsingForV2(reduceOp)))
       return;
     Value initValue = reduceOp.getInits()[0];
     auto initOp = initValue.getDefiningOp();

@@ -135,19 +135,11 @@ bufferizationPipeline(OpPassManager &pm,
     VfMergeOpsOpt.mergeLevel = 1;
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
+  pm.addPass(hfusion::createSimplifyVFArgsPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
-
-  // FIXME: This is to avoid screwing up 910B pipeline
-  if (hivmPipelineOptions.enableMixedCV &&
-      hivmPipelineOptions.workspaceMultiBufferNum > 1)
-    oneShotOptions.setFunctionBoundaryTypeConversion(
-        // This will avoid generating memref.cast that drops offsets from
-        // subviews.
-        bufferization::LayoutMapOption::InferLayoutMap);
-  else
-    oneShotOptions.setFunctionBoundaryTypeConversion(
-        bufferization::LayoutMapOption::IdentityLayoutMap);
+  oneShotOptions.setFunctionBoundaryTypeConversion(
+      bufferization::LayoutMapOption::IdentityLayoutMap);
   oneShotOptions.allowReturnAllocsFromLoops = true;
   oneShotOptions.allowUnknownOps = true;
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));

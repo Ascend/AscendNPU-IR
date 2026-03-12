@@ -1,0 +1,357 @@
+diff --git a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+index 386e147556fe..5f9e3fe3abcb 100644
+--- a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
++++ b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+@@ -347,7 +347,13 @@ def FuseIntoContainingOp :
+   }];
+ 
+   let arguments = (ins TransformHandleTypeInterface:$producer_op,
++#ifdef BSPRIV_DAVINCI_BISHENGIR
++                       TransformHandleTypeInterface:$containing_op,
++                       DefaultValuedAttr<BoolAttr, "false">:
++                           $merge_multiple_extract_uses);
++#else
+                        TransformHandleTypeInterface:$containing_op);
++#endif
+   let results = (outs TransformHandleTypeInterface:$fused_op,
+                       TransformHandleTypeInterface:$new_containing_op);
+   let assemblyFormat = "$producer_op `into` $containing_op attr-dict "
+diff --git a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+index c1f4ffa0304f..69dff777e4a6 100644
+--- a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
++++ b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+@@ -1131,6 +1131,185 @@ bool transform::FuseIntoContainingOp::allowsRepeatedHandleOperands() {
+   return true;
+ }
+ 
++#if BSPRIV_DAVINCI_BISHENGIR
++static bool isValidSliceOpInContainingOp(tensor::ExtractSliceOp sliceOp,
++                                         Operation *containingOp) {
++  if (!sliceOp || !containingOp->isProperAncestor(sliceOp)) {
++    return false;
++  }
++
++  auto staticStrides = sliceOp.getStaticStrides();
++  if (llvm::count_if(staticStrides, [](int64_t s) { return s != 1; }) > 0) {
++    // only handle extract slice with stride 1
++    return false;
++  }
++
++  return true;
++}
++
++static void findCommonAncesterForOps(
++    SmallVector<tensor::ExtractSliceOp> &extractUserOps,
++    SmallVector<scf::ForOp> &commonAncesterForOps, scf::ForOp containingForOp) {
++  assert(extractUserOps.size() > 1);
++  scf::ForOp ancestorForOp = extractUserOps[0]->getParentOfType<scf::ForOp>();
++  while (containingForOp->isAncestor(ancestorForOp)) {
++    bool isAncestorOfAll = true;
++    for (size_t i = 1; i < extractUserOps.size(); ++i) {
++      if (!ancestorForOp->isAncestor(extractUserOps[i])) {
++        isAncestorOfAll = false;
++        break;
++      }
++    }
++    if (isAncestorOfAll)
++      break;
++    ancestorForOp = ancestorForOp->getParentOfType<scf::ForOp>();
++  }
++  while (ancestorForOp && containingForOp->isAncestor(ancestorForOp)) {
++    commonAncesterForOps.push_back(ancestorForOp);
++    ancestorForOp = ancestorForOp->getParentOfType<scf::ForOp>();
++  }
++}
++
++// If there are multiple consumers of producer in containing op, only fuse producer
++// once into the first extractSliceOp of producer. For example:
++//   %1 = linalg.generic    // producer op
++//   scf.for                // containing op
++//     %2 = tensor.extract_slice %1
++//     %3 = linalg.generic ins(%2)
++//     %4 = tensor.extract_slice %1
++//     %5 = linalg.generic ins(%4)
++// after merge these two extract uses,there is only one consumer of producer:
++//   %1 = linalg.generic    // producer op
++//   scf.for                // containing op
++//     %2 = tensor.extract_slice %1
++//     %3 = tensor.extract_slice %2
++//     %4 = linalg.generic ins(%3)
++//     %5 = tensor.extract_slice %2
++//     %6 = linalg.generic ins(%5)
++// another example of there are nested scf.for:
++//   %1 = linalg.generic    // producer op
++//   scf.for                // containing op
++//     scf.for
++//       %2 = tensor.extract_slice %1
++//       %3 = linalg.generic ins(%2)
++//     scf.for
++//       %4 = tensor.extract_slice %1
++//       %5 = linalg.generic ins(%4)
++// after merge these two extract uses:
++//   %1 = linalg.generic    // producer op
++//   scf.for                // containing op
++//     %2 = tensor.extract_slice %1
++//     scf.for
++//       %3 = tensor.extract_slice %2
++//       %4 = linalg.generic ins(%3)
++//     scf.for
++//       %5 = tensor.extract_slice %2
++//       %6 = linalg.generic ins(%5)
++static void findAndMergeMultipleExtractUses(transform::TransformRewriter &rewriter,
++                                            Operation *producerOp,
++                                            Operation *containingOp) {
++  if (producerOp->getNumResults() != 1)
++    return;
++  auto containingForOp = dyn_cast<scf::ForOp>(containingOp);
++  if (!containingForOp)
++    return;
++
++  for (Value res : producerOp->getResults()) {
++    SmallVector<tensor::ExtractSliceOp> extractUserOps;
++    for (auto user : res.getUsers()) {
++      auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user);
++      if (isValidSliceOpInContainingOp(extractSliceOp, containingOp))
++        extractUserOps.push_back(extractSliceOp);
++    }
++    if (extractUserOps.size() <= 1)
++      continue;
++
++    SmallVector<scf::ForOp> commonAncesterForOps;
++    findCommonAncesterForOps(extractUserOps, commonAncesterForOps, containingForOp);
++    assert(commonAncesterForOps.size() >= 1);
++    DenseSet<Value> inductionVarsOfCommonAncesterForOps;
++    for (scf::ForOp commonAncesterForOp : commonAncesterForOps) {
++      inductionVarsOfCommonAncesterForOps.insert(commonAncesterForOp.getInductionVar());
++    }
++
++    scf::ForOp innermostCommonAncesterForOp = commonAncesterForOps[0];
++    llvm::sort(extractUserOps, [&](Operation *op1, Operation *op2) {
++      Operation *current1 = op1;
++      while (auto anscestorForOp = current1->getParentOfType<scf::ForOp>()) {
++        if (anscestorForOp == innermostCommonAncesterForOp)
++          break;
++        current1 = anscestorForOp.getOperation();
++      }
++      Operation *current2 = op2;
++      while (auto anscestorForOp = current2->getParentOfType<scf::ForOp>()) {
++        if (anscestorForOp == innermostCommonAncesterForOp)
++          break;
++        current2 = anscestorForOp.getOperation();
++      }
++      return current1->isBeforeInBlock(current2);
++    });
++
++    // Build new extract slice op inside innermost commonAncesterForOp, which will be used
++    // by all inner extract slice ops.
++    tensor::ExtractSliceOp firstExtractUserOp = extractUserOps[0];
++    SmallVector<OpFoldResult> offsets = firstExtractUserOp.getMixedOffsets();
++    SmallVector<OpFoldResult> sizes = firstExtractUserOp.getMixedSizes();
++    SmallVector<OpFoldResult> strides = firstExtractUserOp.getMixedStrides();
++    SmallVector<OpFoldResult> newOuterOffsets;
++    SmallVector<OpFoldResult> newOuterSizes;
++    IntegerAttr zeroAttr = rewriter.getIntegerAttr(rewriter.getIntegerType(32), 0);
++    for (unsigned i = 0; i < offsets.size(); i++) {
++      if (inductionVarsOfCommonAncesterForOps.contains(
++              llvm::dyn_cast_if_present<Value>(offsets[i]))) {
++        newOuterOffsets.push_back(offsets[i]);
++        newOuterSizes.push_back(sizes[i]);
++        continue;
++      }
++      newOuterOffsets.push_back(zeroAttr);
++      int64_t inputShape = (dyn_cast<ShapedType>(res.getType())).getShape()[i];
++      newOuterSizes.push_back(
++          rewriter.getIntegerAttr(rewriter.getIntegerType(32), inputShape));
++    }
++
++    Operation *insertionPoint = firstExtractUserOp;
++    while (auto anscestorForOp = insertionPoint->getParentOfType<scf::ForOp>()) {
++      if (anscestorForOp == innermostCommonAncesterForOp)
++        break;
++      insertionPoint = anscestorForOp.getOperation();
++    }
++    rewriter.setInsertionPoint(insertionPoint);
++    tensor::ExtractSliceOp newOuterExtractSliceOp =
++        rewriter.create<tensor::ExtractSliceOp>(firstExtractUserOp.getLoc(), res,
++                                                newOuterOffsets, newOuterSizes, strides);
++
++    // Build new inner extract slice op for every extractUserOp
++    for (tensor::ExtractSliceOp extractUserOp : extractUserOps) {
++      SmallVector<OpFoldResult> offsets = extractUserOp.getMixedOffsets();
++      SmallVector<OpFoldResult> sizes = extractUserOp.getMixedSizes();
++      SmallVector<OpFoldResult> strides = extractUserOp.getMixedStrides();
++      SmallVector<OpFoldResult> newInnerOffsets;
++      SmallVector<OpFoldResult> newInnerSizes;
++
++      for (unsigned i = 0; i < offsets.size(); i++) {
++        if (inductionVarsOfCommonAncesterForOps.contains(
++                llvm::dyn_cast_if_present<Value>(offsets[i]))) {
++          newInnerOffsets.push_back(zeroAttr);
++          newInnerSizes.push_back(sizes[i]);
++          continue;
++        }
++        newInnerOffsets.push_back(offsets[i]);
++        newInnerSizes.push_back(sizes[i]);
++      }
++      rewriter.setInsertionPoint(extractUserOp);
++      auto newInnerExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
++          extractUserOp.getLoc(), newOuterExtractSliceOp.getResult(), newInnerOffsets,
++          newInnerSizes, strides);
++      rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
++    }
++  }
++}
++#endif
++
+ DiagnosedSilenceableFailure
+ transform::FuseIntoContainingOp::apply(transform::TransformRewriter &rewriter,
+                                        transform::TransformResults &results,
+@@ -1151,6 +1330,14 @@ transform::FuseIntoContainingOp::apply(transform::TransformRewriter &rewriter,
+     results.set(cast<OpResult>(getNewContainingOp()), {containingOp});
+     return DiagnosedSilenceableFailure::success();
+   }
++#if BSPRIV_DAVINCI_BISHENGIR
++  if (getMergeMultipleExtractUses()) {
++    for (Operation *producerOp : producerOps) {
++      // merge all extract uses to make sure producer op is fused only once.
++      findAndMergeMultipleExtractUses(rewriter, producerOp, containingOp);
++    }
++  }
++#endif
+ 
+   // Helper function to find the next producer that should be fused. Take any
+   // producer that has a use inside the containing op.
+diff --git a/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp b/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
+index 46566c216033..d0dac9c91113 100644
+--- a/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
++++ b/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
+@@ -658,6 +658,81 @@ static bool isForWithIdenticalConfiguration(Operation *target,
+ }
+ 
+ #if BSPRIV_DAVINCI_BISHENGIR
++/// If two inner loop have proportional-scaling lower bound, upper bound and step,
++/// use the one with the smaller value as their same lb/ub and step.
++/// for example:
++//   scf.for
++//     scf.for %arg0 = %0 to %8 step %4
++//       op1(%arg0)
++//     scf.for %arg0 = %0 to %128 step %64
++//       op2(%arg0)
++// after merge proportional scaling configuration:
++//   scf.for
++//     scf.for %arg0 = %0 to %8 step %4
++//       op1(%arg0)
++//     scf.for %arg0 = %0 to %8 step %4
++//       %apply = affine.apply affine_map<(d0) -> (d0 * 16)>(%arg0)
++//       op2(%apply)
++static void mergeProportionalScalingConfiguration(RewriterBase &rewriter,
++                                                  Operation *target,
++                                                  Operation *source) {
++  auto targetOp = dyn_cast<scf::ForOp>(target);
++  auto sourceOp = dyn_cast<scf::ForOp>(source);
++  if (!targetOp || !sourceOp)
++    return;
++
++  auto targetLb = getConstantIntValue(targetOp.getLowerBound());
++  auto sourceLb = getConstantIntValue(sourceOp.getLowerBound());
++  auto targetUb = getConstantIntValue(targetOp.getUpperBound());
++  auto sourceUb = getConstantIntValue(sourceOp.getUpperBound());
++  auto targetStep = getConstantIntValue(targetOp.getStep());
++  auto sourceStep = getConstantIntValue(sourceOp.getStep());
++  if (!targetLb || !sourceLb || !targetUb || !sourceUb || !targetStep || !sourceStep)
++    return;
++
++  if (*targetLb != 0 || *sourceLb != 0)
++    return;
++
++  auto targetUbInt = *targetUb;
++  auto sourceUbInt = *sourceUb;
++  auto targetStepInt = *targetStep;
++  auto sourceStepInt = *sourceStep;
++
++  int factor;
++  scf::ForOp forOpToBeUpdated;
++  scf::ForOp forOpNotToBeUpdated;
++  if (targetUbInt > sourceUbInt && targetStepInt > sourceStepInt &&
++      targetUbInt % sourceUbInt == 0 && targetStepInt % sourceStepInt == 0 &&
++      targetUbInt / sourceUbInt == targetStepInt / sourceStepInt) {
++    factor = targetUbInt / sourceUbInt;
++    forOpToBeUpdated = targetOp;
++    forOpNotToBeUpdated = sourceOp;
++  } else if (sourceUbInt > targetUbInt && sourceStepInt > targetStepInt &&
++             sourceUbInt % targetUbInt == 0 && sourceStepInt % targetStepInt == 0 &&
++             sourceUbInt / targetUbInt == sourceStepInt / targetStepInt) {
++    factor = sourceUbInt / targetUbInt;
++    forOpToBeUpdated = sourceOp;
++    forOpNotToBeUpdated = targetOp;
++  } else {
++    return;
++  }
++
++  forOpToBeUpdated.setUpperBound(forOpNotToBeUpdated.getUpperBound());
++  forOpToBeUpdated.setStep(forOpNotToBeUpdated.getStep());
++
++  rewriter.setInsertionPointToStart(forOpToBeUpdated.getBody());
++  AffineMap map =
++      AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
++                     {rewriter.getAffineDimExpr(0) * rewriter.getAffineConstantExpr(factor)},
++                     rewriter.getContext());
++  Value inductionVar = forOpToBeUpdated.getInductionVar();
++  auto affineApplyOp = rewriter.create<affine::AffineApplyOp>(
++      forOpToBeUpdated.getLoc(), map, inductionVar);
++  inductionVar.replaceUsesWithIf(affineApplyOp, [&](OpOperand &operand) {
++        return operand.getOwner() != affineApplyOp;
++      });
++}
++
+ static void fuseInnerSiblingLoops(Operation *fusedOp, RewriterBase &rewriter) {
+   if (!isa<scf::ForOp>(fusedOp))
+     return;
+@@ -675,6 +750,8 @@ static void fuseInnerSiblingLoops(Operation *fusedOp, RewriterBase &rewriter) {
+   if (!diag.succeeded())
+     return;
+ 
++  mergeProportionalScalingConfiguration(rewriter, innerForOps[0], innerForOps[1]);
++
+   if (!isForWithIdenticalConfiguration(innerForOps[0], innerForOps[1]))
+     return;
+ 
+diff --git a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+index 2ebaa4b86e15..af9930f576dc 100644
+--- a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
++++ b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+@@ -4618,14 +4618,27 @@ struct TransferReadAfterWriteAndReshapeToShapecast
+     }
+ 
+     auto defWrite = dyn_cast_or_null<vector::TransferWriteOp>(readSrcOp);
+-    if (!defWrite)
+-      return failure();
+-
+-    if (defWrite.getMask() || readOp.getMask())
+-      return failure();
++    if (!defWrite) {
++      if (auto defExtractSlice = dyn_cast_or_null<tensor::ExtractSliceOp>(readSrcOp)) {
++        Location loc = defExtractSlice.getLoc();
++        auto tensorType = dyn_cast<TensorType>(defExtractSlice.getResult().getType());
++	auto elemType = tensorType.getElementType();
++	auto rank = tensorType.getRank();
++	SmallVector<int64_t> vectorShape(rank - 1, 1);
++	vectorShape.push_back(2048 / elemType.getIntOrFloatBitWidth());
++	auto vectorType = VectorType::get(vectorShape, elemType);
++	Value cst0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
++	SmallVector<Value> indices(rank, cst0);
++	auto newReadOp = rewriter.create<vector::TransferReadOp>(loc, vectorType,
++			                                         defExtractSlice.getResult(),
++                                                                 indices);
++	defWrite = rewriter.create<vector::TransferWriteOp>(loc, newReadOp.getResult(),
++			                                   defExtractSlice.getResult(),
++			                                   indices);
++      }
++    }
+ 
+-    if (defWrite.getVectorType().getNumElements() !=
+-        readOp.getVectorType().getNumElements())
++    if (!defWrite)
+       return failure();
+ 
+     // create ShapeCastOp to replace readOp

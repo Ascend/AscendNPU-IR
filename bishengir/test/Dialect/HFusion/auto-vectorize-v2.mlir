@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 --outline-vector-function | FileCheck %s
 
 // CHECK-LABEL: func @test_hfusion_indirect_load(
 func.func @test_hfusion_indirect_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32>) attributes {DirectlyUsedGMArgIdxList = [3], SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "mix_simd_simt"} {
