@@ -546,7 +546,9 @@ LogicalResult VCastOp::verify() {
       "int16_t_to_int8_t_truncwithoverflowmode",
       "int32_t_to_int16_t_truncwithoverflowmode",
       "int64_t_to_int32_t_truncwithoverflowmode",
-      "float_to_float8_e4m3_t_rintmode"};
+      "float_to_float8_e4m3_t_rintmode",
+      "uint8_t_to_uint32_t_rintmode",
+      "uint32_t_to_uint64_t_rintmode"};
 
   std::string castNameWithMode = getCastName(true);
   // check whether supports the cast operation.

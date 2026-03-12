@@ -312,8 +312,6 @@ func.func @test_binary_vector_op_only_vs(
   // expected-error@+1 {{failed to verify that operand at index 1 is scalar-only}}
   hivm.hir.vshl ins(%src1, %src2 : memref<?x?xi16>, memref<?x?xi16>)
                 outs(%dst : memref<?x?xi16>)
-  hivm.hir.vshr ins(%src1, %src2 : memref<?x?xi16>, memref<?x?xi16>)
-                outs(%dst : memref<?x?xi16>)
   return
 }
 
@@ -1358,4 +1356,14 @@ func.func @test_cumprod_tensor(%src : tensor<2x?x?xf32>, %dst : tensor<2x?x?xf32
   %res5 = hivm.hir.vcumprod ins(%f32 : tensor<2x16xf32>) outs(%f32 : tensor<2x16xf32>) cum_dims = [1] reverse = true -> tensor<2x16xf32>
   %res6 = hivm.hir.vcumprod ins(%src : tensor<2x?x?xf32>) outs(%dst : tensor<2x?x?xf32>) cum_dims = [2] reverse = true -> tensor<2x?x?xf32>
   return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_binary_vector_op_vv
+// CHECK: hivm.hir.vshr
+func.func @test_binary_vector_op_vv(
+  %src1 : tensor<64x64xi32>, %src2 : tensor<64x64xi32>, %dst : tensor<64x64xi32>) -> tensor<64x64xi32>{
+  %vshr = hivm.hir.vshr ins(%src1, %src2 : tensor<64x64xi32>, tensor<64x64xi32>) outs(%dst : tensor<64x64xi32>) -> tensor<64x64xi32>
+  return %vshr : tensor<64x64xi32>
 }
