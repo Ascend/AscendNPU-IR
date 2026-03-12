@@ -47,6 +47,9 @@ std::unique_ptr<mlir::Pass> createDeadFunctionEliminationPass(
 void eliminateDeadFunctions(mlir::ModuleOp module,
                             const DeadFunctionEliminationOptions &options);
 
+/// Create InjectIR pass (load IR from file and replace matching functions).
+std::unique_ptr<mlir::Pass> createInjectIRPass(llvm::StringRef filePath = "");
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
