@@ -1,0 +1,90 @@
+diff --git a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+index 2ebaa4b86e15..b707a2f594c9 100644
+--- a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
++++ b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+@@ -4522,6 +4522,37 @@ struct TransferReadAfterWriteToExtractAndBroadcast
+     : public OpRewritePattern<TransferReadOp> {
+   using OpRewritePattern::OpRewritePattern;
+ 
++  bool isDefiningMaskOne(TypedValue<VectorType> writeMask) const {
++    Operation* defining = writeMask.getDefiningOp();
++    if (!defining)
++      return false;
++
++    return TypeSwitch<Operation *, bool>(defining)
++      .Case<vector::ConstantMaskOp>([](auto constMaskOp) {
++        auto maskDimSizes = constMaskOp.getMaskDimSizes();
++        return maskDimSizes.size() == 1 &&
++                mlir::dyn_cast<IntegerAttr>(maskDimSizes[0]).getValue() == 1;
++      })
++      .Case<vector::CreateMaskOp>([](auto createMaskOp) {
++        OperandRange maskDim = createMaskOp.getOperands();
++        if (maskDim.size() != 1)
++          return false;
++
++        Value firstDim = maskDim.front();
++        auto cst = firstDim.getDefiningOp<arith::ConstantOp>();
++
++        // null op check through getOperation()
++        return cst.getOperation() &&
++                mlir::dyn_cast<IntegerAttr>(cst.getValue()).getValue() == 1;
++      })
++      .Default([](auto op) {
++        op->emitError() << "unexpected mask op: " << op->getName() << '\n'
++                        << "expeceted: " << vector::ConstantMaskOp::getOperationName()
++                        << " or " << vector::CreateMaskOp::getOperationName() << '\n';
++        return false;
++      });
++  }
++
+   LogicalResult matchAndRewrite(TransferReadOp readOp,
+                                 PatternRewriter &rewriter) const override {
+     if (readOp.hasOutOfBoundsDim() ||
+@@ -4536,33 +4567,23 @@ struct TransferReadAfterWriteToExtractAndBroadcast
+     if (defWrite.getVectorType().getNumElements() !=
+         readOp.getVectorType().getNumElements())
+       return failure();
+-    // check if the write mask is 1
+-    if (auto writeMask = defWrite.getMask()) {
+-      if (auto constantMask =
+-              writeMask.getDefiningOp<vector::ConstantMaskOp>()) {
+-        auto maskDimSizes = constantMask.getMaskDimSizes();
+-        if (maskDimSizes.size() != 1 ||
+-            mlir::dyn_cast<IntegerAttr>(maskDimSizes[0]).getValue() != 1)
+-          return failure();
+-      } else {
+-        return failure();
++    auto writeMask = defWrite.getMask();
++    if (isDefiningMaskOne(writeMask)) {
++      // do not create ExtractOp + BroadcastOp when type is i1
++      if (defWrite.getVectorType().getElementTypeBitWidth() == 1) {
++        rewriter.replaceOp(readOp, defWrite.getVector());
++        return success();
+       }
+-    } else {
+-      return failure();
+-    }
+-    // do not create ExtractOp + BroadcastOp when type is i1
+-    if (defWrite.getVectorType().getElementTypeBitWidth() == 1) {
+-      rewriter.replaceOp(readOp, defWrite.getVector());
++      // create ExtractOp + BroadcastOp to replace readOp
++      Location loc = readOp.getLoc();
++      Value extract =
++          rewriter.create<vector::ExtractOp>(loc, defWrite.getVector(), 0);
++      Value broadcast = rewriter.create<vector::BroadcastOp>(
++          loc, readOp.getVectorType(), extract);
++      rewriter.replaceOp(readOp, broadcast);
+       return success();
+     }
+-    // create ExtractOp + BroadcastOp to replace readOp
+-    Location loc = readOp.getLoc();
+-    Value extract =
+-        rewriter.create<vector::ExtractOp>(loc, defWrite.getVector(), 0);
+-    Value broadcast = rewriter.create<vector::BroadcastOp>(
+-        loc, readOp.getVectorType(), extract);
+-    rewriter.replaceOp(readOp, broadcast);
+-    return success();
++    return failure();
+   }
+ };
+ } // namespace
