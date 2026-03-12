@@ -2,12 +2,12 @@
 
 // CHECK: module
 // CHECK:   module
-// CHECK:       func.func private @simple_indirect_load_kernel_scope_0
+// CHECK:       func.func private @simple_indirect_load_kernel_scope_0(memref<?xi64>, memref<8xi64>, memref<?xf32>, i32, memref<8xf32>, i32, i32, i32)
 // CHECK:       func.func @simple_indirect_load_kernel
 // CHECK:   module
-// CHECK:       func.func @simple_indirect_load_kernel_scope_0
+// CHECK:       func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>)
 module {
-  func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
+  func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
@@ -36,12 +36,12 @@ module {
 
 // CHECK: module
 // CHECK:   module
-// CHECK:       func.func private @simple_indirect_store_kernel_scope_0
+// CHECK:       func.func private @simple_indirect_store_kernel_scope_0(memref<?xi64>, memref<8xi64>, memref<8xf32>, memref<?xf32>, i32, i32, i32, i32)
 // CHECK:       func.func @simple_indirect_store_kernel
 // CHECK:   module
-// CHECK:       func.func @simple_indirect_store_kernel_scope_0
+// CHECK:       func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<8xf32>, %arg3: memref<?xf32>, %arg4: i32)
 module {
-  func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<8xf32>, %arg3: memref<?xf32>, %arg4: i32) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
+  func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<8xf32>, %arg3: memref<?xf32>, %arg4: i32) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>

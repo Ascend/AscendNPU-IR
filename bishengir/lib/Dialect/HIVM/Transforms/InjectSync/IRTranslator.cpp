@@ -484,7 +484,8 @@ void IRTranslator::UpdateOpDefUseVec(func::CallOp callOp,
   ModuleOp module = func_->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto funcOp = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+  if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name) &&
+      !util::isSIMTVF(funcOp)) {
     return;
   }
 
@@ -512,7 +513,7 @@ void IRTranslator::UpdateOpDefUseVec(func::CallOp callOp,
   // input arguments
   for (unsigned i = 0; i < funcOp.getNumArguments(); ++i) {
     // get the attribute by name for i-th argument
-    auto memEffectAttr = funcOp.getArgAttr(i,hivm::MemoryEffectAttr::getMnemonic());
+    auto memEffectAttr = funcOp.getArgAttr(i, hivm::MemoryEffectAttr::name);
     if (!memEffectAttr) {
       continue;
     }
@@ -527,7 +528,7 @@ void IRTranslator::UpdateOpDefUseVec(func::CallOp callOp,
       useOperands.push_back(callArg);
       defOperands.push_back(callArg);
     }
-    funcOp.removeArgAttr(i,hivm::MemoryEffectAttr::getMnemonic());
+    funcOp.removeArgAttr(i, hivm::MemoryEffectAttr::name);
   }
 
   funcOp.walk<WalkOrder::PreOrder>([&](Operation *op) {

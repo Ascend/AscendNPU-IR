@@ -1353,6 +1353,14 @@ bool isGMPointerCastOp(Operation *op) {
   return memSpaceAttr.getAddressSpace() == hivm::AddressSpace::GM;
 }
 
+bool isSIMTVF(Operation *op) {
+  std::optional<VFMode> vfMode = std::nullopt;
+  if (const auto vfModeAttr = op->getAttrOfType<VFModeAttr>(VFModeAttr::name)) {
+    vfMode = vfModeAttr.getValue();
+  }
+  return vfMode == hivm::VFMode::SIMT;
+}
+
 } // namespace util
 } // namespace hivm
 } // namespace mlir

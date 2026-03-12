@@ -21,6 +21,6 @@ func.func @main(%arg2: memref<?xf32, #hivm.address_space<gm>>, %arg3: memref<?xf
   return
 }
  
-func.func @simt_func(%arg0: memref<1024xf32, #hivm.address_space<gm>> {memory.effect = #hivm.memory.effect<read>}, %arg1: memref<1024xf32, #hivm.address_space<gm>> {memory.effect = #hivm.memory.effect<read>}, %arg2: memref<1024xf32, #hivm.address_space<ub>> {memory.effect = #hivm.memory.effect<write>}) attributes { hivm.vector_function, simt_wrapper}{
+func.func @simt_func(%arg0: memref<1024xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>}, %arg1: memref<1024xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>}, %arg2: memref<1024xf32, #hivm.address_space<ub>> {hivm.memory_effect = #hivm.memory_effect<write>}) attributes { hivm.vector_function, simt_wrapper}{
   return
 }

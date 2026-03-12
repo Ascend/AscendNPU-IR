@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
@@ -92,7 +93,7 @@ static bool isCubeScopeOp(Operation *op) {
 }
 
 static bool isNonVectorizableOp(Operation *op) {
-  if (op->hasAttr(utils::simtLabel))
+  if (hivm::util::isSIMTVF(op))
     return true;
   if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op))
     if (hfusion::isSingleElementLinalgOp(linalgOp) &&

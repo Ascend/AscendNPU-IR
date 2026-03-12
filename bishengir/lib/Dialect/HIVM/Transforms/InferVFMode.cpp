@@ -75,11 +75,7 @@ static inline bool isSIMD(Operation *op) {
 }
 
 static inline bool isSIMT(Operation *op) {
-  // TODO: Unify how to present SIMT attributes?
-  if (const auto vfMode = getVFMode(op))
-    return vfMode == VFMode::SIMT;
-
-  return op->hasAttr(utils::simtLabel);
+  return getVFMode(op) == VFMode::SIMT;
 }
 
 static std::optional<VFMode> inferVFMode(Operation *rootOp);

@@ -152,7 +152,7 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           // for the results.
           func::FuncOp funcOp = llvm::dyn_cast<func::FuncOp>(
               SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr()));
-          if (!funcOp || !funcOp->hasAttr(hivm::SIMTWrapperAttr::getMnemonic()))
+          if (!funcOp || !util::isSIMTVF(funcOp))
             return success();
           
           auto argTypes = funcOp.getArgumentTypes().vec();

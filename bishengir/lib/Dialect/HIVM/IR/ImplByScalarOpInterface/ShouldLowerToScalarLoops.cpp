@@ -59,7 +59,7 @@ bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
       return false;                                                            \
     }                                                                          \
     auto elemType = getElementTypeOrSelf(getOperandTypes()[0]);                \
-    return getOperation()->hasAttr(utils::simtLabel) ||                        \
+    return util::isSIMTVF(getOperation()) ||                        \
            elemType.isInteger(64);                                             \
   }
 

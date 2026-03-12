@@ -976,10 +976,6 @@ def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
 }
 
-def HIVM_SIMTWrapperAttr : HIVM_Attr<"SIMTWrapper", "simt_wrapper"> {
-  let description = [{HIVM simt wrapper attribute}];
-}
-
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
   let description = [{HIVM has alias scopes attribute}];
 }
@@ -1025,7 +1021,7 @@ def HIVM_MemoryEffectEnum : HIVM_I32Enum<
     HIVM_READ_WRITE
   ]>;
 
-def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory.effect"> {
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
   let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
   let assemblyFormat = "`<` $effect `>`";
   let description = [{

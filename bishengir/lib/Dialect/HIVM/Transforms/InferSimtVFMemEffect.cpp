@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
@@ -47,19 +48,17 @@ void InferSimtVFMemEffectPass::setFuncArgMemEffect(
   }
   auto idx = std::distance(argList.begin(), actualArg);
   if (auto existMemEffectAttr = funcOp.getArgAttrOfType<hivm::MemoryEffectAttr>(
-          idx, hivm::MemoryEffectAttr::getMnemonic())) {
+          idx, hivm::MemoryEffectAttr::name)) {
     if (existMemEffectAttr.getEffect() == memEffect) {
       return;
     }
     auto memEffectAttr = hivm::MemoryEffectAttr::get(
         funcOp->getContext(), hivm::MemoryEffect::READ_WRITE);
-    funcOp.setArgAttr(idx, hivm::MemoryEffectAttr::getMnemonic(),
-                      memEffectAttr);
+    funcOp.setArgAttr(idx, hivm::MemoryEffectAttr::name, memEffectAttr);
   } else {
     auto memEffectAttr =
         hivm::MemoryEffectAttr::get(funcOp->getContext(), memEffect);
-    funcOp.setArgAttr(idx, hivm::MemoryEffectAttr::getMnemonic(),
-                      memEffectAttr);
+    funcOp.setArgAttr(idx, hivm::MemoryEffectAttr::name, memEffectAttr);
   }
 }
 
@@ -120,13 +119,7 @@ void InferSimtVFMemEffectPass::inferFuncArgMemEffect(func::FuncOp funcOp) {
 void InferSimtVFMemEffectPass::runOnOperation() {
   auto mod = getOperation();
   mod->walk([this](func::FuncOp funcOp) {
-    if (!funcOp->hasAttr(hivm::VFModeAttr::getMnemonic())) {
-      return;
-    }
-    auto vfmode = llvm::dyn_cast<hivm::VFModeAttr>(
-                      funcOp->getAttr(hivm::VFModeAttr::getMnemonic()))
-                      .getValue();
-    if (vfmode != hivm::VFMode::SIMT) {
+    if (!util::isSIMTVF(funcOp)) {
       return;
     }
     inferFuncArgMemEffect(funcOp);

@@ -26,7 +26,7 @@ module {
       %3 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
       %4 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %3 : tensor<8xi64>, %c1_i32 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
       scope.return %4 : tensor<8xf32>
-    } {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>}
+    } {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>}
     %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
     hivm.hir.store ins(%2 : tensor<8xf32>) outs(%reinterpret_cast : memref<8xf32, strided<[1]>>)
     return
@@ -62,7 +62,7 @@ module {
       %3 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
       hivm.hir.scatter_store ins(%arg2 : memref<?xf32>, %3 : tensor<8xi64>, %2 : tensor<8xf32>, %c1_i32 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
       scope.return
-    } {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>}
+    } {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>}
     return
   }
 }

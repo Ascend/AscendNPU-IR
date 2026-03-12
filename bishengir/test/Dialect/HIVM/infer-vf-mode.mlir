@@ -20,7 +20,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 
 // SIMT
 
-func.func private @bar() attributes { simt_parallel_loop }
+func.func private @bar() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
 
 // CHECK-LABEL: @foo()
 // CHECK: hivm.vf_mode<SIMT>
@@ -34,7 +34,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 // MIX
 
 func.func private @bar() attributes { hivm.vector_function }
-func.func private @xyz() attributes { simt_parallel_loop }
+func.func private @xyz() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
 
 // CHECK-LABEL: @foo()
 // CHECK: hivm.vf_mode<MIX>
@@ -49,7 +49,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 // MIX
 
 func.func private @bar() attributes { hivm.vector_function }
-func.func private @xyz() attributes { simt_parallel_loop }
+func.func private @xyz() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
 
 func.func private @foo2() {
   call @bar() : () -> ()
@@ -69,7 +69,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 // MIX
 
 func.func private @bar() attributes { hivm.vector_function }
-func.func private @xyz() attributes { simt_parallel_loop }
+func.func private @xyz() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
 
 func.func private @foo2() {
   call @bar() : () -> ()
@@ -104,6 +104,6 @@ func.func @foo(%a: tensor<1x?x10xf32>, %c: tensor<5x?x10xf32>) attributes { hacc
 func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
   %c0_i64 = arith.constant 0: i64
   %a = hivm.hir.pointer_cast(%c0_i64) { hivm.vector_function }              : memref<1xf32>
-  %b = hivm.hir.pointer_cast(%c0_i64) { simt_parallel_loop } : memref<1xf32>
+  %b = hivm.hir.pointer_cast(%c0_i64) { hivm.vf_mode = #hivm.vf_mode<SIMT> } : memref<1xf32>
   return
 }

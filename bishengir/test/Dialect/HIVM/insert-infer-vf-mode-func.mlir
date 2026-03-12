@@ -18,7 +18,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
  
 // CHECK-LABEL: @foo_infer_vf_mode_function() -> index
 // CHECK: arith.constant 1
-func.func private @bar() attributes { simt_parallel_loop }
+func.func private @bar() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
  
 func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
   call @bar() : () -> ()
@@ -32,7 +32,7 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 // CHECK-LABEL: @foo_infer_vf_mode_function() -> index
 // CHECK: arith.constant 2
 func.func private @bar() attributes { hivm.vector_function }
-func.func private @xyz() attributes { simt_parallel_loop }
+func.func private @xyz() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
 
 func.func private @foo2() {
   call @bar() : () -> ()

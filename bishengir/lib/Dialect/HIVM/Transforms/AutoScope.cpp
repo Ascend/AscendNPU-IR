@@ -58,14 +58,13 @@ private:
                              PatternRewriter &rewriter, Location &loc) const {
     auto scopeOp = rewriter.create<scope::ScopeOp>(
         loc, simtVFOps[0]->getResultTypes(), true);
-    scopeOp->setAttr(
-        hivm::VFModeAttr::getMnemonic(),
-        hivm::VFModeAttr::get(rewriter.getContext(), hivm::VFMode::SIMT));
     scopeOp->setAttr("outline", rewriter.getUnitAttr());
-    scopeOp->setAttr(hivm::VectorFunctionAttr::getMnemonic(),
-                     rewriter.getUnitAttr());
-    scopeOp->setAttr(TFuncCoreTypeAttr::name,
+    scopeOp->setAttr(
+        TFuncCoreTypeAttr::name,
         TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
+    auto vfMode =
+        hivm::VFModeAttr::get(scopeOp->getContext(), hivm::VFMode::SIMT);
+    scopeOp->setAttr(hivm::VFModeAttr::name, vfMode);
     rewriter.createBlock(&scopeOp->getRegion(0));
     rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
     IRMapping mapping;

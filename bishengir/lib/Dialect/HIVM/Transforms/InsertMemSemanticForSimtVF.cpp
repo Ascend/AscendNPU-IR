@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -138,12 +139,7 @@ void InsertMemSemanticForSimtVFPass::runOnOperation() {
   auto ctx = &getContext();
   OpBuilder builder(ctx);
   mod->walk([this, &builder](scope::ScopeOp scopeOp) {
-    auto vfmodeAttr = scopeOp->getAttr(hivm::VFModeAttr::getMnemonic());
-    if (!vfmodeAttr) {
-      return;
-    }
-    auto vfmode = llvm::cast<hivm::VFModeAttr>(vfmodeAttr).getValue();
-    if (vfmode != hivm::VFMode::SIMT) {
+    if (!util::isSIMTVF(scopeOp)) {
       return;
     }
     dealWithReferenceOutOfScope(scopeOp, builder);

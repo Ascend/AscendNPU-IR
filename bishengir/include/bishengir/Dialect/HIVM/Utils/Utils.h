@@ -437,6 +437,8 @@ bool isBefore(Operation *before, Operation *after);
 /// Used to check if it is lowered from triton::IntToPtrOp
 bool isGMPointerCastOp(Operation *op);
 
+bool isSIMTVF(Operation *op);
+
 BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
 
 bool isArgminOrArgmax(ReduceOperation op);

@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -140,7 +141,7 @@ struct HFusionGeneralizationPatterns
     // Load/Store ops will be converted to DMAs
     // Cast ops stays as it is to prevent fusion
     if (isa<hfusion::LoadOp, hfusion::StoreOp>(op) ||
-        op->hasAttr(utils::simtLabel) ||
+        hivm::util::isSIMTVF(op) ||
         // TODO: Handle single element fillop
         hfusion::isMatmulOps(op) || isa<hfusion::ReduceWithIndexOp>(op) ||
         hfusion::opCanFuseIntoMatmul(op) || isa<linalg::TransposeOp>(op))

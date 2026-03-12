@@ -35,7 +35,7 @@ public:
 void SimplifyVFArgsPass::runOnOperation() {
   auto mod = getOperation();
   mod->walk([&](func::FuncOp funcOp) {
-    if (hivm::isVF(funcOp) && !funcOp->hasAttr(hivm::SIMTWrapperAttr::getMnemonic())) {
+    if (hivm::isVF(funcOp)) {
       SmallVector<int> unusedArgumentInd;
       auto funcType = funcOp.getFunctionType();
       Block &entryBlock = funcOp.getBody().front();

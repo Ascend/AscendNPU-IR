@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -202,7 +203,7 @@ void computeInitialVecScopeRanges(
       insideForAll = isInsideForAll(lOp);
 
     // If op has the simt label attribute (same as original), break scope
-    if (insideForAll || op->hasAttr(utils::simtLabel)) {
+    if (insideForAll || hivm::util::isSIMTVF(op)) {
       prev = nullptr;
       return;
     }

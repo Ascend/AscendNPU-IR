@@ -155,7 +155,7 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
   std::vector<scf::ForOp> loops =
       createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
 
-  if (op.getOperation()->hasAttr(utils::simtLabel))
+  if (util::isSIMTVF(op.getOperation()))
     for (scf::ForOp loop : loops)
       loop->setAttr(utils::kMapForToForallAttrName, rewriter.getUnitAttr());
 }

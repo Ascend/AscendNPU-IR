@@ -58,7 +58,6 @@ static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static constexpr llvm::StringLiteral elementAlignmentBitWidth =
     "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
-static const llvm::StringLiteral simtLabel = "simt_parallel_loop";
 const llvm::StringLiteral padConst = "pad_const";
 
 int64_t getNumPerBlock(Type t);
