@@ -1213,6 +1213,12 @@ class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
         assert(elemType.getIntOrFloatBitWidth() == 8);
         return decomposeEltwiseAtomic(op, rewriter, loc, /*isUnsigned=*/true);
       }
+      if ((*atomicKind == hivm::AtomicKind::ADD ||
+           *atomicKind == hivm::AtomicKind::MAX ||
+           *atomicKind == hivm::AtomicKind::MIN) &&
+           isAtomicOpHaveReturnedValue(op)) {
+        return addSyncForReturnedValue(op, rewriter, loc);
+      }
     }
     if (!op.isSWAtomic()) {
       return failure();
@@ -1228,6 +1234,59 @@ class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
   }
 
 private:
+  /// Find the load operation used to save the returned value before atomic operation being calculated
+  /// e.g. hivm.hir.load ins(%reinterpret_cast) outs(%alloc)
+  /// hivm.hir.store ins(%cast) outs(%reinterpret_cast)
+  ///
+  /// The load operation whose outs operand is same as store's ins operand is required
+  Operation* findReturnedValueLoadOp(hivm::StoreOp storeOp, Value targetValue) const {
+    if (!targetValue) return nullptr;
+
+    Operation* op = storeOp->getPrevNode();
+    while (op) {
+      if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
+        if (loadOp->getOperand(0) == targetValue) {
+          return loadOp;
+        }
+      }
+      op = op->getPrevNode();
+    }
+
+    return nullptr;
+  }
+
+  bool isAtomicOpHaveReturnedValue(hivm::StoreOp storeOp) const {
+    Operation* returnedValueLoadOp = findReturnedValueLoadOp(storeOp, storeOp.getDst());
+    if (auto LoadOp = dyn_cast_or_null<hivm::LoadOp>(returnedValueLoadOp)) {
+      auto dst = LoadOp.getDst();
+      // If the dst of loadOp just be used for this loadop, the returned value dead code. 
+      size_t usersCnt = 0;
+      for (auto *user : dst.getUsers()) {
+        ++usersCnt;
+      }
+      return usersCnt > 1;
+    }
+    return false;
+  }
+
+  LogicalResult addSyncForReturnedValue(hivm::StoreOp op, 
+                                        PatternRewriter &rewriter, Location loc) const {
+    static constexpr llvm::StringLiteral kAlreadySync =
+        "already_sync";
+    if (op->hasAttr(kAlreadySync)) {
+      return failure();
+    }
+    Operation* returnedValueLoadOp = findReturnedValueLoadOp(op, op.getDst());
+    PatternRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(returnedValueLoadOp);
+    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+    rewriter.setInsertionPointAfter(op);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+    op->setAttr(kAlreadySync, UnitAttr::get(op->getContext()));
+    return success();
+  }
+  
   /// implement atomic by software way
   /// e.g.store ins(% res_ub) outs(% res_gm) with atomic XOR is converted to
   /// % lock_var = create_sync_lock()
