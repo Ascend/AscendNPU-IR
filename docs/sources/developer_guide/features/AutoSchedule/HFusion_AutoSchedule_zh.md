@@ -24,59 +24,63 @@ AutoSchedule 相关代码主要位于：
 
 #### 2.1 核心组成模块
 
-- **调度基类与策略实现**
-  - **`SchedulerBase`**：所有具体调度器的抽象基类（`AutoScheduleBase.h`），封装统一的调度主流程。
-  - **具体策略调度器**：
-    - `PureElemwiseScheduler`：纯元素级算子融合策略（`PureElemwiseSchedule.h/cpp`）。
-    - `AnyPBRScheduler`：面向 AnyPBR: Pointwise/Broadcast/Reduce 等op的通用策略（`AnyPBRSchedule.h/cpp`）。
+##### 调度基类与策略实现
 
-- **内核与 Tiling 抽象**
-  - **`KernelInfo`**：融合内核的统一描述（`KernelInfo.h`），记录 IO、维度、对齐需求、多核能力等。
-  - **Tiling 抽象与工具**（`TilingUtils.h/cpp`）：
-    - `TilingInfo`、`TilingStruct`、`TilingData`：描述单个或多种候选 Tiling 方案。
-    - `Expr` / `StmtExprBuilder`：构建依赖静态 / 动态 shape 的 Tiling 表达式。
+- **SchedulerBase**：所有具体调度器的抽象基类（`AutoScheduleBase.h`），封装统一的调度主流程。
+- **具体策略调度器**：
+  - **PureElemwiseScheduler**：纯元素级算子融合策略（`PureElemwiseSchedule.h/cpp`）。
+  - **AnyPBRScheduler**：面向 AnyPBR: Pointwise/Broadcast/Reduce 等 op 的通用策略（`AnyPBRSchedule.h/cpp`）。
 
-- **调度操作实现**
-  - **`ScheduleOperations.cpp`**：封装一组可复用的基础调度原语，包括：
+##### 内核与 Tiling 抽象
+
+- **KernelInfo**：融合内核的统一描述（`KernelInfo.h`），记录 IO、维度、对齐需求、多核能力等。
+- **Tiling 抽象与工具**（`TilingUtils.h/cpp`）：
+  - **TilingInfo**、**TilingStruct**、**TilingData**：描述单个或多种候选 Tiling 方案。
+  - **Expr** / **StmtExprBuilder**：构建依赖静态 / 动态 shape 的 Tiling 表达式。
+
+##### 调度操作实现
+
+- **ScheduleOperations.cpp**：封装一组可复用的基础调度原语，包括：
     - IO 缓存：`cacheRead` / `cacheWrite`
     - Tiling：`tileUsingFor` / `tileUsingForAll` / `tileReductionUsingFor`
     - 循环变换：`fuseLoops` / `fuseIntoContaining` / `coalesceLoops`
     - 资源约束：`setBufferSize` 等。
 
-- **调度解释执行**
-  - **`AutoScheduleInterpreter.cpp`**：将高层调度器构造的调度描述转换为 Transform Dialect 操作并应用到目标 IR 上，实现 schedule 的实际生效。
+##### 调度解释执行
+
+- **AutoScheduleInterpreter.cpp**：将高层调度器构造的调度描述转换为 Transform Dialect 操作并应用到目标 IR 上，实现 schedule 的实际生效。
 
 #### 2.2 策略选择与调用链
 
 AutoSchedule 的整体调用链可以概括为：
 
-1. **Pass 入口**
-   - AutoSchedule Pass 在 HFusion pipeline 中被触发，得到待处理的 `func::FuncOp` 与其融合信息。
+- **Pass 入口**
+  - AutoSchedule Pass 在 HFusion pipeline 中被触发，得到待处理的 `func::FuncOp` 与其融合信息。
 
-2. **策略选择与调度器构造**
-   - 在 `AutoScheduleBase.cpp::applySchedule()` 中，根据融合类型 `FusionKind` 选择对应调度器：
-     - `FusionKind::PureElemwise` → `PureElemwiseScheduler`
-     - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
-   - 通过 `std::make_unique<...>(funcOp)` 构造实际调度器实例。
+- **策略选择与调度器构造**
+  - 在 `AutoScheduleBase.cpp::applySchedule()` 中，根据融合类型 `FusionKind` 选择对应调度器：
+    - `FusionKind::PureElemwise` → `PureElemwiseScheduler`
+    - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
+  - 通过 `std::make_unique<...>(funcOp)` 构造实际调度器实例。
 
-3. **调度主流程（`SchedulerBase::runOnOperation()`）**
-   - **前处理阶段（`runPreScheduleProcedure()`）**：
-     - IO cache 插入、融合图结构与合法性分析。
-     - 调用虚函数 `analyzeAndVerifyKernelImpl()` 由具体策略进行内核分析与限制检查。
-   - **调度生成阶段（`runScheduleProcedure()`）**：
-     - 调用虚函数 `calculateTilingImpl()`，生成 `TilingComputeFn`，计算候选 Tiling 方案。
-     - 选择合适的 `TilingKey`（例如基于代价、对齐等因素）。
-     - 调用虚函数 `createScheduleImpl()` 生成针对该 TilingKey 的调度描述。
-     - 通过 `applyScheduleImpl()` 将调度描述交给 Transform 解释器执行。
-   - **后处理阶段（`runPostScheduleProcedure()`）**：
-     - 视策略需求进行结构优化后处理、统计信息收集等。
+- **调度主流程（`SchedulerBase::runOnOperation()`）**
+  - **前处理阶段（`runPreScheduleProcedure()`）**：
+    - IO cache 插入、融合图结构与合法性分析。
+    - 调用虚函数 `analyzeAndVerifyKernelImpl()` 由具体策略进行内核分析与限制检查。
+  - **调度生成阶段（`runScheduleProcedure()`）**：
+    - 调用虚函数 `calculateTilingImpl()`，生成 `TilingComputeFn`，计算候选 Tiling 方案。
+    - 选择合适的 `TilingKey`（例如基于代价、对齐等因素）。
+    - 调用虚函数 `createScheduleImpl()` 生成针对该 TilingKey 的调度描述。
+    - 通过 `applyScheduleImpl()` 将调度描述交给 Transform 解释器执行。
+  - **后处理阶段（`runPostScheduleProcedure()`）**：
+    - 视策略需求进行结构优化后处理、统计信息收集等。
 
-4. **Transform Dialect 应用**
-   - `AutoScheduleInterpreter` 解析调度描述，将其翻译为 Transform Dialect 操作序列，并对原始 HFusion IR 进行变换。
+- **Transform Dialect 应用**
+  - `AutoScheduleInterpreter` 解析调度描述，将其翻译为 Transform Dialect 操作序列，并对原始 HFusion IR 进行变换。
 
 #### 2.3 关键数据结构
 
-- **`KernelInfo`（内核信息描述）**
+##### KernelInfo（内核信息描述）
   - 用于抽象单个融合内核的结构与约束，典型信息包括：
     - 输入 / 输出张量及其 shape / layout。
     - 各算子在融合图中的拓扑关系。
@@ -84,15 +88,16 @@ AutoSchedule 的整体调用链可以概括为：
     - 是否支持多核 reduce 以及可并行的维度信息。
   - 针对特定融合模式，可扩展派生类（如 `AnyPBRKernelInfo`）以添加模式特有的分析结果。
 
-- **Tiling 描述（`TilingUtils.h`）**
-  - **`TilingData`**：表示单个维度的 Tiling 参数，可为常量或表达式。
-  - **`TilingStruct` / `TilingCases`**：描述一组完整 Tiling 方案，以及多候选方案集合。
-  - **`Expr` / `StmtExprBuilder`**：
+##### Tiling 描述（`TilingUtils.h`）
+
+- **TilingData**：表示单个维度的 Tiling 参数，可为常量或表达式。
+- **TilingStruct** / **TilingCases**：描述一组完整 Tiling 方案，以及多候选方案集合。
+- **Expr** / **StmtExprBuilder**：
     - `DimSymbol`：对动态维度的符号抽象。
     - `Expr`：可进行加减乘除等运算，表达“维度 / 因子”、“对齐到某个粒度”等逻辑。
     - `StmtExprBuilder`：负责从 IR 中的 shape 信息、常量等构建 `Expr`，生成 host 侧可执行的 Tiling 函数。
 
-- **`ValueHandle` 系列**
+##### ValueHandle 系列
   - 对 MLIR 中的 `Value`、函数参数、命名值等进行统一封装，提供统一接口访问与处理。
   - 常见类型包括 `NamedValueHandle`、`FuncArgHandle` 等。
 
@@ -158,13 +163,13 @@ AutoSchedule 的整体调用链可以概括为：
   - 在实际业务场景中，部分维度（如 batch size、高宽等）在编译期并非常量；
   - AutoSchedule 需要支持在 **运行时** 根据实际输入 shape 计算合适的 Tiling 参数。
 - **表达式系统设计**：
-  - `TilingUtils.h` 中的 `Expr` / `DimSymbol` / `StmtExprBuilder` 构成一套轻量表达式框架：
-    - **`DimSymbol`**：
+  - `TilingUtils.h` 中的 **Expr** / **DimSymbol** / **StmtExprBuilder** 构成一套轻量表达式框架：
+    - **DimSymbol**：
       - 表示某一维度的符号，例如 `N`、`H`、`W` 等；
       - 可由 `StmtExprBuilder::createDimSymbolExpr()` 等接口创建。
-    - **`Expr`**：
+    - **Expr**：
       - 支持基本算术运算，可以表示诸如 `N / 4`、`min(N, 64)`、`(H * W) / factor` 等表达式。
-    - **`StmtExprBuilder`**：
+    - **StmtExprBuilder**：
       - 负责从 IR 中的 shape 信息、常量等构建 `Expr`；
       - 在 host 侧生成具体的 Tiling 计算语句。
 - **Host Tiling 函数生成与执行**：
@@ -182,13 +187,12 @@ AutoSchedule 的整体调用链可以概括为：
 
 #### 5.1 定义新的 FusionKind
 
-1. 在 HFusion 的枚举定义（如 `HFusionEnums.td`）中，新增一个融合类型枚举，例如：
-   - `FusionKind::MyKind`。
-2. 在融合分析与 pattern 匹配阶段，确保能识别并产出对应 `FusionKind::MyKind` 的融合单元，以便后续 AutoSchedule 正确选择调度器。
+- 在 HFusion 的枚举定义（如 `HFusionEnums.td`）中，新增一个融合类型枚举，例如：`FusionKind::MyKind`。
+- 在融合分析与 pattern 匹配阶段，确保能识别并产出对应 `FusionKind::MyKind` 的融合单元，以便后续 AutoSchedule 正确选择调度器。
 
 #### 5.2 继承 `SchedulerBase` 实现自定义调度器
 
-1. 在 `bishengir/include/bishengir/Dialect/HFusion/Transforms/AutoSchedule/` 下新增头文件（如 `MySchedule.h`），定义调度器类：
+- 在 `bishengir/include/bishengir/Dialect/HFusion/Transforms/AutoSchedule/` 下新增头文件（如 `MySchedule.h`），定义调度器类：
 
 ```cpp
 class MyScheduler : public SchedulerBase {
@@ -212,26 +216,26 @@ public:
 };
 ```
 
-2. 在 `bishengir/lib/Dialect/HFusion/Transforms/AutoSchedule/` 下新增实现文件（如 `MySchedule.cpp`），完成各虚函数实现：
+- 在 `bishengir/lib/Dialect/HFusion/Transforms/AutoSchedule/` 下新增实现文件（如 `MySchedule.cpp`），完成各虚函数实现：
 
-- **`analyzeAndVerifyKernelImpl()`**
+- **analyzeAndVerifyKernelImpl()**
   - 结合 `KernelInfoCollector` 收集内核信息（可选择复用现有 `KernelInfo` 或新增自定义子类）。
   - 检查融合图是否符合该策略假设（如算子类型、形状关系等）。
 
-- **`calculateTilingImpl()`**
+- **calculateTilingImpl()**
   - 构造并返回 `TilingComputeFn`：
     - 使用 `StmtExprBuilder` 构造静态 / 动态维度表达式；
     - 引入 stride-align、tile-align 等约束；
     - 为不同场景（小规模 / 大规模 / 高维 / 低维等）生成多套 `TilingCases` 以供选择。
 
-- **`createScheduleImpl(TilingKey key, OpBuilder &opBuilder)`**
+- **createScheduleImpl(TilingKey key, OpBuilder &opBuilder)**
   - 根据选定的 `TilingKey`，依次调用调度原语：
     - IO 缓存：`cacheRead` / `cacheWrite`；
     - Tiling：`tileUsingFor` / `tileUsingForAll` / `tileReductionUsingFor`；
     - 融合与循环优化：`fuseLoops`、`fuseIntoContaining`、`coalesceLoops`；
   - 保证生成的 Transform 序列语义正确且与 `KernelInfo` 中的分析结果一致。
 
-- **`runPreScheduleProcedure()` / `runPostScheduleProcedure()`（可选）**
+- **runPreScheduleProcedure()** / **runPostScheduleProcedure()**（可选）
   - 在通用流程基础上添加策略特有的前后处理逻辑，例如：
     - 特殊的 pattern 归一化；
     - 调度结果校验与统计输出。
