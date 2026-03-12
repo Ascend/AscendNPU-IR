@@ -28,25 +28,7 @@
 
 上述多级接口支持自定义DSL和生态框架灵活对接。Triton和PyTorch等框架通过IR转换接入上述流程，实现自定义算子在昇腾NPU上的高性能运行。
 
-## 公共编译选项与函数属性
-
-### 函数属性
-
-以下属性用于标注kernel入口函数，各接入路径通用：
-
-| 属性 | 说明 |
-|------|------|
-| `hacc.entry` | 标记当前函数为kernel入口 |
-| `hacc.function_kind = #hacc.function_kind<DEVICE>` | 表示函数运行在DEVICE设备侧 |
-| `hacc.function_kind = #hacc.function_kind<HOST>` | 表示函数运行在HOST侧，HFusion会自动outline出设备kernel |
-
-示例：
-
-```
-func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  ...
-}
-```
+## 编译选项与函数属性
 
 ### 编译选项
 
@@ -66,6 +48,24 @@ func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.functi
 - Ascend910B系列：`Ascend910B1`、`Ascend910B2`、`Ascend910B3`、`Ascend910B4`等
 - Ascend910_93系列：`Ascend910_9362`、`Ascend910_9372`、`Ascend910_9381`等
 - Ascend910_95系列：`Ascend910_950z`、`Ascend910_9579`、`Ascend910_9589`等
+
+### 函数属性
+
+以下属性用于标注kernel入口函数，各接入路径通用：
+
+| 属性 | 说明 |
+|------|------|
+| `hacc.entry` | 标记当前函数为kernel入口 |
+| `hacc.function_kind = #hacc.function_kind<DEVICE>` | 表示函数运行在DEVICE设备侧 |
+| `hacc.function_kind = #hacc.function_kind<HOST>` | 表示函数运行在HOST侧，HFusion会自动outline出设备kernel |
+
+示例：
+
+```
+func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  ...
+}
+```
 
 ## Triton 接入
 
@@ -154,155 +154,7 @@ TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 ti
 
 ## 框架接入
 
-AscendNPU IR支持框架（PyTorch/TensorFlow/MindSpore）直接通过IR接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。框架可以通过以下两种方式接入：
-
-- **Torch IR接入**：直接使用Torch dialect的ATen算子，通过`convert-torch-to-hfusion`等Pass自动转换为Linalg/HFusion Named Op，再进入自动融合和调度流程
-- **Linalg IR接入**：使用Linalg/Tensor等标准MLIR dialect表达算子语义，直接进入自动融合和调度流程
-
-### Torch IR 接入
-
-#### Torch2AscendNPU IR 转换流程
-
-Torch IR通过`torch-backend-to-named-op-backend-pipeline`转换流水线接入AscendNPU IR。BishengIR自定义的`convert-torch-to-hfusion` Pass优先将Torch ATen算子转换为Linalg/HFusion Named Op，未覆盖的算子回退到上游torch-mlir的标准lowering通路。主要转换阶段如下：
-
-1. `convert-torch-to-hfusion`：BishengIR自定义转换，覆盖55+个ATen算子到Linalg/HFusion Named Op
-2. `convert-torch-to-linalg`：上游torch-mlir转换，处理剩余算子
-3. `convert-torch-to-scf / arith / tensor`：上游torch-mlir完成控制流、算术、tensor等转换
-4. `func-backend-type-conversion`：将Torch类型（`!torch.vtensor`）转换为标准builtin类型（`tensor`）
-
-#### 用例
-
-```
-func.func @torch.aten.mul_tensor(
-    %arg0: !torch.vtensor<[4096],f16>,
-    %arg1: !torch.vtensor<[1,56,4096],f16>
-) -> !torch.vtensor<[1,56,4096],f16>
-attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %0 = torch.aten.mul.Tensor %arg0, %arg1
-      : !torch.vtensor<[4096],f16>, !torch.vtensor<[1,56,4096],f16>
-      -> !torch.vtensor<[1,56,4096],f16>
-  return %0 : !torch.vtensor<[1,56,4096],f16>
-}
-```
-
-#### 调用方式
-
-```
-bishengir-compile -enable-hfusion-compile=true -enable-torch-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
-```
-
-#### 支持的Torch算子
-
-##### Elementwise Binary
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.add.Tensor` / `aten.add.Scalar` | `linalg.binary_fn<add>` |
-| `aten.sub.Tensor` / `aten.sub.Scalar` | `linalg.binary_fn<sub>` |
-| `aten.mul.Tensor` / `aten.mul.Scalar` | `linalg.binary_fn<mul>` |
-| `aten.div.Tensor` / `aten.div.Scalar` | `linalg.binary_fn<div>` |
-| `aten.maximum` | `linalg.binary_fn<max_signed>` |
-| `aten.minimum` | `linalg.binary_fn<min_signed>` |
-| `aten.clamp_min` / `aten.clamp_min.Tensor` | `linalg.binary_fn<max_signed>` |
-| `aten.clamp_max` / `aten.clamp_max.Tensor` | `linalg.binary_fn<min_signed>` |
-| `aten.clamp` | `max_signed` + `min_signed` 组合 |
-| `aten.pow.Tensor_Tensor` / `aten.pow.Tensor_Scalar` / `aten.pow.Scalar` | `hfusion.binary_fn<powf>` |
-| `aten.logical_and` | `hfusion.binary_fn<vand>` |
-| `aten.logical_or` | `hfusion.binary_fn<vor>` |
-
-##### Elementwise Unary
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.abs` | `linalg.unary_fn<abs>` |
-| `aten.ceil` | `linalg.unary_fn<ceil>` |
-| `aten.floor` | `linalg.unary_fn<floor>` |
-| `aten.neg` | `linalg.unary_fn<negf>` |
-| `aten.log` | `linalg.unary_fn<log>` |
-| `aten.exp` | `linalg.unary_fn<exp>` |
-| `aten.reciprocal` | `hfusion.unary_fn<rec>` |
-| `aten.relu` | `hfusion.unary_fn<relu>` |
-| `aten.rsqrt` | `hfusion.unary_fn<rsqrt>` |
-| `aten.sqrt` | `hfusion.unary_fn<sqrt>` |
-| `aten.erf` | `hfusion.unary_fn<erf>` |
-| `aten.tanh` | `hfusion.unary_fn<tanh>` |
-| `aten.sin` | `hfusion.unary_fn<sin>` |
-| `aten.cos` | `hfusion.unary_fn<cos>` |
-| `aten.bitwise_not` | `hfusion.unary_fn<vnot>` |
-| `aten.sigmoid` | 分解为 negf -> exp -> add -> div |
-| `aten.gelu` | 分解为 tanh 近似实现 |
-
-##### Compare
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.gt.Scalar` / `aten.gt.Tensor` | `hfusion.compare_fn<vgt>` |
-| `aten.lt.Scalar` / `aten.lt.Tensor` | `hfusion.compare_fn<vlt>` |
-| `aten.ge.Scalar` / `aten.ge.Tensor` | `hfusion.compare_fn<vge>` |
-| `aten.le.Scalar` / `aten.le.Tensor` | `hfusion.compare_fn<vle>` |
-| `aten.eq.Scalar` / `aten.eq.Tensor` | `hfusion.compare_fn<veq>` |
-| `aten.ne.Scalar` / `aten.ne.Tensor` | `hfusion.compare_fn<vne>` |
-
-##### Reduction
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.sum` / `aten.sum.dim_IntList` | `linalg.reduce` + `arith.addf/addi` |
-| `aten.prod` / `aten.prod.dim_int` | `linalg.reduce` + `arith.mulf/muli` |
-| `aten.max` | `linalg.reduce` + `arith.maximumf/maxsi` |
-| `aten.min` | `linalg.reduce` + `arith.minimumf/minsi` |
-| `aten.max.dim` | `hfusion.reduce_with_index` (MAX) |
-| `aten.min.dim` | `hfusion.reduce_with_index` (MIN) |
-| `aten.any` / `aten.any.dim` / `aten.any.dims` | `linalg.reduce` + `arith.ori` |
-| `aten.all` / `aten.all.dim` | `linalg.reduce` + `arith.andi` |
-
-##### Data Movement
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.permute` | `linalg.transpose` |
-| `aten.broadcast_to` | `linalg.broadcast` |
-
-##### 其他
-
-| Torch Op | 转换目标 |
-|----------|----------|
-| `aten.to.dtype` | `hfusion.cast` |
-| `aten.where.self` | `hfusion.select` |
-| `aten.arange.start_step` | `hfusion.arange` |
-
-### Linalg IR 接入
-
-#### 用例
-
-```
-func.func @test_reduce(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
-attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %1 = tensor.empty() : tensor<40960x1024xf32>
-  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg1, %arg2 : tensor<40960x1024xf32>, tensor<40960x1024xf32>) outs(%arg3: tensor<40960x1024xf32>) -> tensor<40960x1024xf32>
-  %4 = tensor.empty() : tensor<40960xf32>
-  %sum = linalg.reduce {arith.addf} ins(%3 : tensor<40960x1024xf32>) 
-                                    outs(%4 : tensor<40960xf32>) dimensions = [1]
-  %5 = tensor.empty() : tensor<40960xf32>
-  %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %sum : tensor<40960xf32>, tensor<40960xf32>) 
-                                                                  outs(%5: tensor<40960xf32>) -> tensor<40960xf32>
-  return %6 : tensor<40960xf32>
-}
-```
-
-#### 自动融合支持的Op范围
-
-- Elemwise
-- Broadcast
-- Reduce
-- Transpose
-- Concat
-
-#### 调用方式
-
-```
-bishengir-compile -enable-hfusion-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
-```
+AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：(1) DSL 接入方式，如 Triton、TileLang；(2) IR 接入方式，如 Torch IR、Linalg IR。详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
 
 ## HIVM 指令级接入
 
