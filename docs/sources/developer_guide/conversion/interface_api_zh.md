@@ -154,45 +154,6 @@ TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 ti
 
 ## 框架接入
 
-AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：(1) DSL 接入方式，如 Triton、TileLang；(2) IR 接入方式，如 Torch IR、Linalg IR。详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
-
-## HIVM 指令级接入
-
-对于需要精细控制硬件行为的场景，可以直接使用HIVM dialect编写kernel，显式管理存储层级和计算流水线。
-
-### 用例
-
-```
-module {
-  func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueB: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueC: memref<16xf16, #hivm.address_space<gm>>)
-      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
-    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
-    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
-                                   memref<16xf16, #hivm.address_space<ub>>)
-                  outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
-    return
-  }
-}
-```
-
-HIVM层使用`#hivm.address_space`标注存储层级：`gm`（全局内存）、`ub`（Unified Buffer）、`l1`（L1 Buffer）、`l0a`/`l0b`/`l0c`（L0 Buffer）。通过`hivm.hir.load`/`hivm.hir.store`进行显式DMA搬运，通过`hivm.hir.vadd`等指令在片上完成计算。
-
-### 调用方式
-
-HIVM层无需使能HFusion编译流程，默认的HIVM编译流程会完成同步插入、内存规划等优化：
-
-```
-bishengir-compile -target=Ascend910B1 test.mlir
-```
+AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：(1) DSL 接入方式，如 Triton、TileLang；(2) IR 接入方式，如 Torch IR、Linalg/HFusion IR、HIVM IR。详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
 
 ---

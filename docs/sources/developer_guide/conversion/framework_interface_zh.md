@@ -3,7 +3,7 @@
 AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：
 
 1. **DSL 接入方式**：通过 Triton、TileLang 等领域特定语言接入，将算子编译为 AscendNPU IR。
-2. **IR 接入方式**：通过 IR 表示接入，包括 Torch IR 和 Linalg IR，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
+2. **IR 接入方式**：通过 IR 表示接入，支持 Torch IR、Linalg/HFusion IR、HIVM IR 多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
 
 ## 1. DSL 接入方式
 
@@ -15,6 +15,12 @@ AscendNPU IR 向上支持与 Triton、TileLang 等语言或框架的对接，使
 | **TileLang** | 使用 TileLang Ascend（基于 tile-lang/TVM 的 DSL）开发面向昇腾 NPU 的内核（如 GEMM、向量运算、attention）。含环境、构建与快速开始。 | [TileLang 接入](tile_lang_interface_zh.md) |
 
 ## 2. IR 接入方式
+
+AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒度上有所差异（详见 [IR 接入简介 - 多级 IR 抽象架构](interface_api_zh.md#多级ir抽象架构)）：
+
+- **Torch IR**：框架层 ATen 算子，经 Pass 转换为 Linalg/HFusion。
+- **Linalg/HFusion IR**：通用张量代数层与硬件感知融合层，标准 MLIR dialect 表达算子语义，HFusion 自动完成融合、切分和调度。
+- **HIVM IR**：NPU 指令层，直接映射硬件指令，显式控制存储层级（GM/UB/L1/L0）和计算流水线（Vector/Cube/MTE），支持精细粒度调优。
 
 ### 2.1 Torch IR 接入
 
@@ -165,4 +171,43 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 bishengir-compile -enable-hfusion-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
 ```
 
-关于 IR 层概念、公共编译选项及其他接入路径（如 Triton、TileLang、HIVM），请参阅 [IR 接入简介](interface_api_zh.md)。
+### 2.3 HIVM IR 接入
+
+对于需要精细控制硬件行为的场景，可以直接使用 HIVM dialect 编写 kernel，显式管理存储层级和计算流水线。
+
+#### 用例
+
+```
+module {
+  func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
+                         %valueB: memref<16xf16, #hivm.address_space<gm>>,
+                         %valueC: memref<16xf16, #hivm.address_space<gm>>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
+                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
+    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
+                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
+    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
+                                   memref<16xf16, #hivm.address_space<ub>>)
+                  outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
+    return
+  }
+}
+```
+
+HIVM 层使用 `#hivm.address_space` 标注存储层级：`gm`（全局内存）、`ub`（Unified Buffer）、`l1`（L1 Buffer）、`l0a`/`l0b`/`l0c`（L0 Buffer）。通过 `hivm.hir.load`/`hivm.hir.store` 进行显式 DMA 搬运，通过 `hivm.hir.vadd` 等指令在片上完成计算。
+
+#### 调用方式
+
+HIVM 层无需使能 HFusion 编译流程，默认的 HIVM 编译流程会完成同步插入、内存规划等优化：
+
+```
+bishengir-compile -target=Ascend910B1 test.mlir
+```
+
+关于 IR 层概念、公共编译选项及其他接入路径（如 Triton、TileLang），请参阅 [IR 接入简介](interface_api_zh.md)。

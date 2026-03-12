@@ -3,7 +3,7 @@
 AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in two ways:
 
 1. **DSL integration**: Integrate via domain-specific languages such as Triton and TileLang, which compile to AscendNPU IR.
-2. **IR integration**: Integrate via IR representation, including Torch IR and Linalg IR, with automatic fusion and tiling for Ascend-friendly kernels.
+2. **IR integration**: Integrate via IR representation, supporting multi-level IR (Torch IR, Linalg/HFusion IR, HIVM IR), with automatic fusion and tiling for Ascend-friendly kernels.
 
 ## 1. DSL integration
 
@@ -15,6 +15,12 @@ AscendNPU IR supports upstream integration with languages and frameworks such as
 | **TileLang** | Use TileLang Ascend (tile-lang/TVM-based DSL) to develop kernels for Ascend NPU (e.g., GEMM, vector ops, attention). Covers environment, build, and quick start. | [TileLang interface](tile_lang_interface.md) |
 
 ## 2. IR integration
+
+AscendNPU IR supports multi-level IR integration; each level differs in abstraction and control granularity (see [Interface API - Multi-level IR Abstraction](interface_api.md#multi-level-ir-abstraction)):
+
+- **Torch IR**: Framework-level ATen ops, lowered to Linalg/HFusion via Passes.
+- **Linalg/HFusion IR**: General tensor algebra and hardware-aware fusion layer; standard MLIR dialects for operator semantics, HFusion performs fusion, tiling, and scheduling automatically.
+- **HIVM IR**: NPU instruction layer; direct mapping to hardware instructions, explicit control of memory hierarchy (GM/UB/L1/L0) and compute pipelines (Vector/Cube/MTE) for fine-grained tuning.
 
 ### 2.1 Torch IR integration
 
@@ -165,4 +171,43 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 bishengir-compile -enable-hfusion-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
 ```
 
-For IR-level concepts, common compile options, and other paths (e.g., Triton, TileLang, HIVM), see [Interface API](interface_api.md).
+### 2.3 HIVM IR integration
+
+For fine-grained hardware control, you can write kernels directly in the HIVM dialect, managing memory hierarchy and compute pipelines explicitly.
+
+#### Example
+
+```
+module {
+  func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
+                         %valueB: memref<16xf16, #hivm.address_space<gm>>,
+                         %valueC: memref<16xf16, #hivm.address_space<gm>>)
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
+                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
+    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
+                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
+    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
+                                   memref<16xf16, #hivm.address_space<ub>>)
+                  outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
+    return
+  }
+}
+```
+
+HIVM uses `#hivm.address_space` for memory: `gm` (global), `ub` (Unified Buffer), `l1`, `l0a`/`l0b`/`l0c`. Use `hivm.hir.load`/`hivm.hir.store` for DMA and `hivm.hir.vadd` and similar for on-chip compute.
+
+#### Invocation
+
+HIVM does not require the HFusion pipeline. The default HIVM pipeline handles sync insertion, memory planning, etc.:
+
+```
+bishengir-compile -target=Ascend910B1 test.mlir
+```
+
+For IR-level concepts, common compile options, and other paths (e.g., Triton, TileLang), see [Interface API](interface_api.md).
