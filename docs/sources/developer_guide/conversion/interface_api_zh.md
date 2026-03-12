@@ -148,6 +148,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 bishengir-compile -enable-hfusion-compile=true -enable-triton-kernel-compile=true ttadapter.mlir
 ```
 
+## TileLang 接入
+
+TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 tile-lang 的 Python 语法和 [TVM](https://tvm.apache.org/) 构建，支持 GEMM、向量运算和注意力机制等算子，可将算子编译为 AscendNPU IR（HIVM）在昇腾 NPU 上运行。详细的 TileLang 接入说明请参考 [TileLang 接入](tile_lang_interface_zh.md)。
+
 ## 框架接入
 
 AscendNPU IR支持框架（PyTorch/TensorFlow/MindSpore）直接通过IR接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。框架可以通过以下两种方式接入：

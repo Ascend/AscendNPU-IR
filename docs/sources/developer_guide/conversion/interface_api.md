@@ -148,6 +148,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 bishengir-compile -enable-hfusion-compile=true -enable-triton-kernel-compile=true ttadapter.mlir
 ```
 
+## TileLang integration
+
+TileLang (tilelang-ascend) is a domain-specific language for Ascend NPU kernel development, built on tile-lang's Pythonic syntax and [TVM](https://tvm.apache.org/). It supports GEMM, vector operations, and attention mechanisms, compiling kernels to AscendNPU IR (HIVM) for execution on Ascend NPU. See [TileLang interface](tile_lang_interface.md) for installation and usage details.
+
 ## Framework integration
 
 AscendNPU IR supports frameworks (PyTorch/TensorFlow/MindSpore) via direct IR integration, with automatic fusion and tiling for Ascend-friendly kernels. Two options:
