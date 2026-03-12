@@ -193,7 +193,9 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       })
       .Default([&](Operation *op) {
         if (isElemwiseNaryOpImpl(op) || isa_and_nonnull<CopyOpInterface>(op) ||
-            utils::isAllocLikeOp(op)) {
+            utils::isAllocLikeOp(op) ||
+            isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+                bufferization::ToMemrefOp>(op)) {
           processParallelOp(op, current);
           return true;
         }
@@ -549,6 +551,12 @@ void DimensionAnalyzer::markDimensionKind() {
         processSlice(insertOp);
       } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
         processSlice(extractOp);
+      }
+    } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
+      auto srcRef = getArgumentRef(vtransposeOp.getSrc());
+      for (auto idx : llvm::drop_begin(srcRef)) {
+        tilingDimKindMap[solverCollapserElem_->find(idx)] =
+          TilingDimensionKind::Transposed;
       }
     }
   });

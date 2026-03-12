@@ -84,9 +84,13 @@ namespace {
 
 struct TileAndBindSubBlockPass
     : public impl::TileAndBindSubBlockBase<TileAndBindSubBlockPass> {
+public:
   using Base::Base;
   FailureOr<func::FuncOp> attemptBindSubBlock(func::FuncOp func);
   void runOnOperation() override;
+
+private:
+  DenseMap<int32_t, int64_t> tightlyCoupledBufferToTilingDim;
 };
 } // namespace
 
@@ -237,10 +241,9 @@ public:
     /// TO DO: The below is a temporary settting to replace
     /// analyzer.getTilingDim(storeOp.getSrc()), will be enhanced in
     /// generalization version
-    int64_t tilingDim = -1;
-    if (std::is_same_v<hivm::CopyOp, OpType>) {
-      tilingDim = 1;
-      if (!Op.getResults().empty()) { // If copy Op with results
+    int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
+    if (std::is_same_v<hivm::CopyOp, OpType>){
+      if (!Op.getResults().empty()){  // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
             })) {
@@ -250,8 +253,7 @@ public:
       }
       LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
-      tilingDim = 0;
-      LLVM_DEBUG(DBGS() << "The store op tiling dim is: " << tilingDim << "\n");
+      LLVM_DEBUG(DBGS() << "The store op tiling dim is: "<<tilingDim<<"\n");
     }
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
     if (tilingDim == -1 || failed(maybeContainingLoop)) {
@@ -766,12 +768,30 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm) {
   pm.addPass(createCSEPass());
 }
 
-static LogicalResult tileAndSliceOp(func::FuncOp func) {
+static LogicalResult
+tileAndSliceOp(func::FuncOp func,
+               DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   hivm::detail::DimensionAnalyzer analyzer(func);
   if (failed(analyzer.initialize()))
     return failure();
 
   analyzer.computeTilingDim();
+
+  func->walk([&](annotation::MarkOp markOp) {
+    if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+            hivm::HIVMTightlyCoupledBufferAttr::name)) {
+      auto tilingDim = analyzer.getTilingDim(markOp.getSrc());
+      markOp->setAttr(
+          "hivm.tiling_dim",
+          IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
+      auto maybeId = attr.getId();
+      if (!maybeId) {
+        markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
+        return;
+      }
+      tightlyCoupledBufferToTilingDim[maybeId.value()] = tilingDim;
+    }
+  });
 
   // Check there is no dynamic shape store, if there is, we cannot tile it to 2
   // for now.
@@ -860,7 +880,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
-  if (failed(tileAndSliceOp(newFunc))) {
+  if (failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim))) {
     failAndRevert(newFunc);
     return failure();
   }
@@ -971,8 +991,12 @@ public:
     if (!attr || !attr.getId().has_value())
       return failure();
 
-    // TODO: Determine splitMode automaticly
-    auto splitMode = hivm::FixpipeDualDstMode::ROW_SPLIT;
+    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
+    if (!tilingDimAttr)
+      return failure();
+    int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+    if(tilingDim == -1 || (tilingDim != 0 && tilingDim != 1)) return failure();
+    auto splitMode = tilingDim == 0? hivm::FixpipeDualDstMode::ROW_SPLIT : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
 
@@ -1185,6 +1209,23 @@ void TileAndBindSubBlockPass::runOnOperation() {
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
   if (aivSuccessFlag && archIs950) {
     for (func::FuncOp originalFunc : aicFunctions) {
+      originalFunc->walk([&](annotation::MarkOp markOp) {
+        if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+                hivm::HIVMTightlyCoupledBufferAttr::name)) {
+          auto maybeId = attr.getId();
+          if (!maybeId) {
+            markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
+            return;
+          }
+          auto id = maybeId.value();
+          auto tilingDim = -1;
+          if (tightlyCoupledBufferToTilingDim.contains(id))
+            tilingDim = tightlyCoupledBufferToTilingDim.at(id);
+          markOp->setAttr(
+              "hivm.tiling_dim",
+              IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
+        }
+      });
       if (failed(tileAndSliceOpAIC(originalFunc)))
         signalPassFailure();
     }
