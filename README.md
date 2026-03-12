@@ -46,8 +46,8 @@ AscendNPU IR uses a Sphinx-based documentation project under `docs/`, with **dua
 To build the documentation from the repository root:
 
 ```bash
-make -C docs html      # English only → docs/_build/html
-make -C docs html-zh   # Chinese only → docs/_build/html_zh
+make -C docs html      # English only → docs/_build/en
+make -C docs html-zh   # Chinese only → docs/_build/zh_cn
 make -C docs html-all  # Both languages
 ```
 

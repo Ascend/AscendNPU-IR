@@ -46,8 +46,8 @@ AscendNPU IR仓关键目录如下所示：
 在仓库根目录下构建文档：
 
 ```bash
-make -C docs html      # 仅英文 → docs/_build/html
-make -C docs html-zh   # 仅中文 → docs/_build/html_zh
+make -C docs html      # 仅英文 → docs/_build/en
+make -C docs html-zh   # 仅中文 → docs/_build/zh_cn
 make -C docs html-all  # 中英文均构建
 ```
 
