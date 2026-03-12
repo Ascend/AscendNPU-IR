@@ -490,3 +490,57 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @test_insert_store_scf_if
+module {
+  func.func @test_insert_store_scf_if(%arg0: tensor<32x32xf32>, %arg1: i1) -> tensor<32x32xf32> {
+    %r = scf.if %arg1 -> (tensor<32x32xf32>) {
+      %0 = tensor.empty() : tensor<32x32xf32>
+      %1 = hivm.hir.fixpipe {enable_nz2nd} ins(%0 : tensor<32x32xf32>) outs(%arg0 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      scf.yield %1 : tensor<32x32xf32>
+    } else {
+      %2 = tensor.empty() : tensor<32x32xf32>
+      %3 = tensor.empty() : tensor<32x32xf32>
+      %4 = hivm.hir.vadd ins(%2, %2 : tensor<32x32xf32>, tensor<32x32xf32>) outs(%3 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      // CHECK: hivm.hir.store
+      scf.yield %4 : tensor<32x32xf32>
+    }
+    // CHECK: hivm.hir.load
+    // CHECK: hivm.hir.load
+    %5 = tensor.empty() : tensor<32x32xf32>
+    %6 = hivm.hir.vadd ins(%r, %r : tensor<32x32xf32>, tensor<32x32xf32>) outs(%5 : tensor<32x32xf32>) -> tensor<32x32xf32>
+    return %6 : tensor<32x32xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_insert_load_scf_for_yield
+module {
+  func.func @test_insert_load_scf_for_yield(%arg0: tensor<32x32xf32>, %arg1: i1) -> tensor<32x32xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %true = arith.constant true
+    %0 = tensor.empty() : tensor<32x32xf32>
+    %1 = tensor.empty() : tensor<32x32xf32>
+    %2 = hivm.hir.vadd ins(%0, %0 : tensor<32x32xf32>, tensor<32x32xf32>) outs(%1 : tensor<32x32xf32>) -> tensor<32x32xf32>
+    %r = scf.for %i = %c0 to %c32 step %c1 iter_args(%iter_arg = %2) -> (tensor<32x32xf32>) {
+      %3 = tensor.empty() : tensor<32x32xf32>
+      // CHECK: hivm.hir.store
+      // CHECK: hivm.hir.load
+      // CHECK: hivm.hir.store
+      // CHECK: hivm.hir.load
+      %4 = hivm.hir.mmadL1 ins(%iter_arg, %iter_arg, %true, %c32, %c32, %c32 : tensor<32x32xf32>, tensor<32x32xf32>, i1, index, index, index)
+                           outs(%3 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      %5 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<32x32xf32>) outs(%arg0 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      %6 = tensor.empty() : tensor<32x32xf32>
+      %7 = tensor.empty() : tensor<32x32xf32>
+      %8 = hivm.hir.vadd ins(%6, %6 : tensor<32x32xf32>, tensor<32x32xf32>) outs(%7 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      %9 = hivm.hir.store ins(%8 : tensor<32x32xf32>) outs(%5 : tensor<32x32xf32>) -> tensor<32x32xf32>
+      // CHECK: hivm.hir.load
+      scf.yield %9 : tensor<32x32xf32>
+    }
+    return %r : tensor<32x32xf32>
+  }
+}

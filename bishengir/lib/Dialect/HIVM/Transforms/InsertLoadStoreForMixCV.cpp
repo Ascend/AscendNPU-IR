@@ -58,6 +58,44 @@ struct InsertLoadStoreForMixCVPass
   void runOnOperation() override;
 };
 
+namespace {
+
+// TODO: change certain places to trace
+// e.g. InsertStoreForSCFYield loadOp.getSrc()
+
+bool isGM(Value v) {
+  // TODO: include func's args
+  // TODO: use interface and use this function for storelike throughout this file
+  return traceDefOp<hivm::FixpipeOp>(v).has_value() ||
+         traceDefOp<hivm::StoreOp>(v).has_value();
+}
+
+bool isCube(Value v) {
+  // TODO: use interface (including ConvOp)
+  return traceDefOp<hivm::MmadL1Op>(v).has_value();
+}
+
+template <typename... OpType>
+bool canTraceTo(Value v) {
+  return (false || ... || traceDefOp<OpType>(v).has_value());
+}
+
+bool isVec(Value v) {
+  // TODO: use interface or else, including tensor.insert_slice, etc.
+  return canTraceTo<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
+  >(v);
+}
+
+void markToAvoidDCE(PatternRewriter &rewriter, Location location, Value value) {
+  rewriter.setInsertionPointAfterValue(value);
+  auto markOp = rewriter.create<annotation::MarkOp>(location, value);
+  markOp->setAttr("InsertLoadStoreForMixCV::markToAvoidDCE", rewriter.getI32IntegerAttr(1));
+}
+
+} // namespace
+
 enum class InsertMode { LoadOnly = 0, StoreOnly, LoadAndStore };
 
 Value insertLoadOperation(PatternRewriter &rewriter, Location loc,
@@ -728,6 +766,64 @@ struct DuplicateTensorExtractForCube
   }
 };
 
+struct InsertStoreForSCFIF
+    : public OpRewritePattern<scf::IfOp> {
+  using OpRewritePattern<scf::IfOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::IfOp ifOp,
+                                PatternRewriter &rewriter) const override {
+    if (!ifOp.elseBlock()) {
+      return failure();
+    }
+    auto thenYield = ifOp.thenYield();
+    auto elseYield = ifOp.elseYield();
+    for (const auto &[thenOpr, elseOpr] :
+         llvm::zip(thenYield->getOpOperands(), elseYield->getOpOperands())) {
+      if (isGM(thenOpr.get()) ^ isGM(elseOpr.get())) {
+        // TODO: replace storelike's workspace dst with memref to avoid DEC
+        markToAvoidDCE(rewriter, ifOp.getLoc(), ifOp.getResults()[0]);
+        if (!isGM(thenOpr.get())) {
+          return insertLoadStoreOp(rewriter, thenYield.getLoc(),
+                                   llvm::SmallVector<OpOperand *>{&thenOpr},
+                                   InsertMode::StoreOnly);
+        } else {
+          return insertLoadStoreOp(rewriter, elseYield.getLoc(),
+                                   llvm::SmallVector<OpOperand *>{&elseOpr},
+                                   InsertMode::StoreOnly);
+        }
+      }
+    }
+    return failure();
+  }
+};
+
+template <>
+struct InsertLoadOpBetweenStoreLikeAndVectorOrCube<scf::YieldOp>
+    : public OpRewritePattern<scf::YieldOp> {
+  using OpRewritePattern<scf::YieldOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::YieldOp yieldOp,
+                                PatternRewriter &rewriter) const override {
+    auto scfForOp = dyn_cast_if_present<scf::ForOp>(yieldOp->getParentOp());
+    if (!scfForOp) {
+      return failure();
+    }
+    for (const auto &[yieldOpr, initVal] :
+         llvm::zip(yieldOp->getOpOperands(), scfForOp.getInitArgs())) {
+      if (isGM(yieldOpr.get())) {
+        if (isVec(initVal) || traceDefOp<hivm::LoadOp>(initVal).has_value()) {
+          return insertLoadStoreOp(rewriter, yieldOp->getLoc(),
+                                   llvm::SmallVector<OpOperand *>{&yieldOpr},
+                                   InsertMode::LoadOnly);
+        }
+      }
+    }
+    return failure();
+  }
+};
+
+// TODO: while loop (consider before and after regions)
+
 template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<
@@ -775,14 +871,26 @@ LogicalResult applyInsertLoadBeforeSCFInitArgs(MLIRContext *context,
   return applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
+LogicalResult preProcessComplexControlFlow(MLIRContext *context, Operation *funcOp) {
+  RewritePatternSet patterns(context);
+  patterns.insert<InsertStoreForSCFIF>(patterns.getContext());
+  patterns.insert<InsertLoadOpBetweenStoreLikeAndVectorOrCube<scf::YieldOp>>(
+    patterns.getContext()
+  );
+  return applyPatternsGreedily(funcOp, std::move(patterns));
+}
+
 void InsertLoadStoreForMixCVPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto *context = &getContext();
   auto funcOp = getOperation();
-  RewritePatternSet patterns(context);
+  if (failed(preProcessComplexControlFlow(context, funcOp))) {
+    signalPassFailure();
+  }
   if (failed(applyInsertLoadBeforeSCFInitArgs(context, funcOp))) {
     signalPassFailure();
   }
+  RewritePatternSet patterns(context);
   populateInsertLoadStorePattern(patterns);
   patterns.insert<InsertStoreForSCFYield>(patterns.getContext());
   // TODO: move InferFuncCoreType to previous places; then this pass may return

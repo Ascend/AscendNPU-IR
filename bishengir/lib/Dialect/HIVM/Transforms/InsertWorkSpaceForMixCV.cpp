@@ -31,6 +31,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -105,41 +106,47 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
   using OpRewritePattern<OpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
-    Value src;
+    llvm::SmallVector<Value> srcList;
     if constexpr (std::is_same_v<OpType, hivm::LoadOp>) {
-      src = op.getSrc();
+      srcList.push_back(op.getSrc());
     } else if constexpr (std::is_same_v<OpType, hivm::DebugOp>) {
-      src = op.getArg();
+      srcList.push_back(op.getArg());
+    } else if constexpr (std::is_same_v<OpType, scf::YieldOp>) {
+      for (Value val : op.getOperands()) {
+        srcList.push_back(val);
+      }
     } else {
-      llvm_unreachable("Unsupported op type to insert workspace");
+      llvm::report_fatal_error("Unsupported op type to insert workspace");
     }
-    auto maybeStoreDefOp = traceDefOp<hivm::StoreOp>(src);
-    auto maybeSrcDefiningOp = maybeStoreDefOp.has_value()
-                                  ? maybeStoreDefOp
-                                  : traceDefOp<hivm::FixpipeOp>(src);
-    if (!maybeSrcDefiningOp.has_value()) {
-      return failure();
+    for (Value src : srcList) {
+      auto maybeStoreDefOp = traceDefOp<hivm::StoreOp>(src);
+      auto maybeSrcDefiningOp = maybeStoreDefOp.has_value()
+                                    ? maybeStoreDefOp
+                                    : traceDefOp<hivm::FixpipeOp>(src);
+      if (!maybeSrcDefiningOp.has_value()) {
+        return failure();
+      }
+
+      auto srcDefiningOp = maybeSrcDefiningOp.value();
+      auto gmStoreOp = cast<DestinationStyleOpInterface>(srcDefiningOp);
+      auto emptyDefOp = traceDefOp<tensor::EmptyOp>(gmStoreOp.getDpsInits()[0]);
+      if (!emptyDefOp.has_value()) {
+        return failure();
+      }
+
+      auto emptyOp = emptyDefOp.value();
+      auto dstType = cast<ShapedType>(emptyOp->getResultTypes()[0]);
+      auto dstShape = dstType.getShape();
+      auto staticAllocShape = traceStaticAllocShape(dstType, gmStoreOp);
+
+      rewriter.setInsertionPoint(emptyOp);
+      auto dstTensor = getLocalWorkSpaceTensor(
+          rewriter, emptyOp->getLoc(), dstShape,
+          hivm::getTensorDynamicValues(rewriter, emptyOp->getLoc(),
+                                      emptyOp->getResults()[0]),
+          getElementTypeOrSelf(dstType), staticAllocShape);
+      rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
     }
-
-    auto srcDefiningOp = maybeSrcDefiningOp.value();
-    auto gmStoreOp = cast<DestinationStyleOpInterface>(srcDefiningOp);
-    auto emptyDefOp = traceDefOp<tensor::EmptyOp>(gmStoreOp.getDpsInits()[0]);
-    if (!emptyDefOp.has_value()) {
-      return failure();
-    }
-
-    auto emptyOp = emptyDefOp.value();
-    auto dstType = cast<ShapedType>(emptyOp->getResultTypes()[0]);
-    auto dstShape = dstType.getShape();
-    auto staticAllocShape = traceStaticAllocShape(dstType, gmStoreOp);
-
-    rewriter.setInsertionPoint(emptyOp);
-    auto dstTensor = getLocalWorkSpaceTensor(
-        rewriter, emptyOp->getLoc(), dstShape,
-        hivm::getTensorDynamicValues(rewriter, emptyOp->getLoc(),
-                                     emptyOp->getResults()[0]),
-        getElementTypeOrSelf(dstType), staticAllocShape);
-    rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
     return success();
   }
 };
@@ -147,6 +154,7 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
 void InsertWorkSpaceForMixCVPattern(RewritePatternSet &patterns) {
   patterns.add<InsertWorkSpace<hivm::LoadOp>>(patterns.getContext());
   patterns.add<InsertWorkSpace<hivm::DebugOp>>(patterns.getContext());
+  patterns.add<InsertWorkSpace<scf::YieldOp>>(patterns.getContext());
 }
 
 void InsertWorkSpaceForMixCVPass::runOnOperation() {

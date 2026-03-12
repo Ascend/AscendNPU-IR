@@ -101,6 +101,26 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+bool isAccumulation(Operation *op) {
+  // TODO: make this check more accurate
+  auto mmadL1Op = dyn_cast_if_present<hivm::MmadL1Op>(op);
+  if (!mmadL1Op) {
+    return false;
+  }
+  auto scfForOp = dyn_cast_if_present<scf::ForOp>(mmadL1Op->getParentOp());
+  if (!scfForOp) {
+    return false;
+  }
+  Value c = mmadL1Op.getC();
+  Value r = mmadL1Op.getResultTensors()[0];
+  if (isa<BlockArgument>(c)) {
+    return traceSingleChainUser(r, [](Operation *op, Value val) {
+             return isa<scf::YieldOp>(op);
+           });
+  }
+  return false;
+}
+
 /// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
 template <typename OpType>
 struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
@@ -132,7 +152,13 @@ public:
       return failure();
 
     int resultIndx = 0;
-    auto insertAfterOp = getInsertPoint(op, resultIndx);
+    Operation *insertAfterOp = nullptr;
+    if (isAccumulation(op)) {
+      // only insert fixpipe outside of the for loop when it is an accumulation loop
+      insertAfterOp = getInsertPoint(op, resultIndx);
+    } else {
+      insertAfterOp = op;
+    }
     rewriter.setInsertionPointAfter(insertAfterOp);
 
     Value fixpipeInit =
