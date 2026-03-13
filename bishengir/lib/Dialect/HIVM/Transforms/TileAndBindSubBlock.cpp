@@ -773,12 +773,15 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
 
 static LogicalResult
 tileAndSliceOp(func::FuncOp func,
-               DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+               DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+               bool &isBroadcastAxisCase) {
   hivm::detail::DimensionAnalyzer analyzer(func);
   if (failed(analyzer.initialize()))
     return failure();
 
-  analyzer.computeTilingDim();
+  if (analyzer.computeTilingDim()) {
+    isBroadcastAxisCase = true;
+  }
 
   func->walk([&](annotation::MarkOp markOp) {
     if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
@@ -883,9 +886,15 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
-  if (failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim))) {
+  bool isBroadcastAxisCase = false;
+
+  if (failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim, isBroadcastAxisCase))) {
     failAndRevert(newFunc);
     return failure();
+  }
+
+  if (isBroadcastAxisCase) {
+    strictMode = false;
   }
 
   // If all the pattern fails due to the tilingDim=-1
@@ -923,7 +932,6 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   }
 
   PassManager pm(newFunc->getContext());
-  bool strictMode = false;
   populateBindSubBlockBubbleUpPassManager(pm, strictMode);
 
   LogicalResult bubbleUpResult = pm.run(newFunc);
