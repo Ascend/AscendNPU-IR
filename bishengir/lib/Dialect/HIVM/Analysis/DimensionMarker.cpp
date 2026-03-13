@@ -276,8 +276,8 @@ void DimensionAnalyzer::processVReduceOp(hivm::VReduceOp op) {
   Value input = op.getSrc();
   SmallVector<Value> outputs(op.getResult());
 
-  assert(outputs.size() <= 1 &&
-         "Result size must be 1 if tensor type and 0 if memref type");
+  assert(outputs.size() <= 2 &&
+         "Result size must be 1 or 2 if tensor type and 0 if memref type");
 
   outputs.append(op.getDst().begin(), op.getDst().end());
   mergeValues({input}, outputs, getMutatedDims(op));
