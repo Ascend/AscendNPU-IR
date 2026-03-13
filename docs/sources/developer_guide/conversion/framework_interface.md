@@ -24,36 +24,47 @@ AscendNPU IR supports multi-level IR integration; each level differs in abstract
 
 ### 2.1 Torch IR integration
 
-Use Torch dialect ATen ops; Passes such as `convert-torch-to-hfusion` lower to Linalg/HFusion named ops, then fusion and scheduling.
+Use Torch dialect ATen ops; Passes such as `convert-torch-to-hfusion` lower to Linalg/HFusion named ops, then enter the fusion and scheduling flow.
 
 #### Torch → AscendNPU IR pipeline
 
-Torch IR is integrated via the `torch-backend-to-named-op-backend-pipeline`. The custom `convert-torch-to-hfusion` Pass lowers Torch ATen ops to Linalg/HFusion named ops first; uncovered ops fall back to upstream torch-mlir. Stages:
+Torch IR is integrated via the `torch-backend-to-named-op-backend-pipeline` conversion pipeline. The custom `convert-torch-to-hfusion` Pass lowers Torch ATen ops to Linalg/HFusion named ops first; uncovered ops fall back to the standard lowering path of upstream torch-mlir. Main conversion stages:
 
 1. `convert-torch-to-hfusion`: BishengIR custom lowering for 55+ ATen ops to Linalg/HFusion named ops.
 2. `convert-torch-to-linalg`: Upstream torch-mlir for remaining ops.
-3. `convert-torch-to-scf / arith / tensor`: Upstream control flow, arithmetic, tensor.
-4. `func-backend-type-conversion`: Torch types (`!torch.vtensor`) to builtin types (`tensor`).
+3. `convert-torch-to-scf / arith / tensor`: Upstream torch-mlir for control flow, arithmetic, and tensor conversion.
+4. `func-backend-type-conversion`: Converts Torch types (`!torch.vtensor`) to builtin types (`tensor`).
 
 #### Example
 
 ```
-func.func @torch.aten.mul_tensor(
-    %arg0: !torch.vtensor<[4096],f16>,
-    %arg1: !torch.vtensor<[1,56,4096],f16>
-) -> !torch.vtensor<[1,56,4096],f16>
+func.func @torch.aten.mul_tensor(%arg0: !torch.vtensor<[4096],f16>, %arg1: !torch.vtensor<[1,56,4096],f16>) -> !torch.vtensor<[1,56,4096],f16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %0 = torch.aten.mul.Tensor %arg0, %arg1
-      : !torch.vtensor<[4096],f16>, !torch.vtensor<[1,56,4096],f16>
-      -> !torch.vtensor<[1,56,4096],f16>
+  %0 = torch.aten.mul.Tensor %arg0, %arg1 : !torch.vtensor<[4096],f16>, !torch.vtensor<[1,56,4096],f16> -> !torch.vtensor<[1,56,4096],f16>
   return %0 : !torch.vtensor<[1,56,4096],f16>
 }
 ```
 
 #### Invocation
 
+There are two invocation methods; both share the same compile pipeline:
+
+1. **Stepwise conversion**: Use `bishengir-opt -torch-backend-to-named-op-backend-pipeline` to convert Torch IR to Linalg/HFusion IR first, then compile via the [Linalg/HFusion IR integration](#22-linalghfusion-ir-integration) flow; suitable for caching intermediate IR.
+2. **End-to-end compilation**: Use `bishengir-compile` to compile Torch IR to binary directly.
+
 ```
-bishengir-compile -enable-hfusion-compile=true -enable-torch-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
+# Stepwise conversion; expected output is Linalg/HFusion IR
+bishengir-opt -torch-backend-to-named-op-backend-pipeline test.mlir -o hfusion.mlir
+# Expected result
+func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %0 = tensor.empty() : tensor<1x56x4096xf16>
+  %broadcasted = linalg.broadcast ins(%arg0 : tensor<4096xf16>) outs(%0 : tensor<1x56x4096xf16>) dimensions = [0, 1] 
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %arg1 : tensor<1x56x4096xf16>, tensor<1x56x4096xf16>) outs(%0 : tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16>
+  return %1 : tensor<1x56x4096xf16>
+}
+
+# End-to-end compilation; runs through Torch/HFusion/HIVM IR pipeline and produces binary directly
+bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
 ```
 
 #### Supported Torch ops
@@ -136,9 +147,9 @@ bishengir-compile -enable-hfusion-compile=true -enable-torch-compile=true -block
 | `aten.where.self` | `hfusion.select` |
 | `aten.arange.start_step` | `hfusion.arange` |
 
-### 2.2 Linalg IR integration
+### 2.2 Linalg/HFusion IR integration
 
-Use Linalg/Tensor and other standard MLIR dialects; input goes directly into fusion and scheduling.
+Use Linalg/Tensor, HFusion, and other standard MLIR dialects for operator semantics; input goes directly into the Linalg/HFusion IR layer's fusion and scheduling flow.
 
 #### Example
 
@@ -168,7 +179,8 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 #### Invocation
 
 ```
-bishengir-compile -enable-hfusion-compile=true -block-dim=20 -target=Ascend910B1 test.mlir
+# End-to-end compilation; runs through HFusion/HIVM IR pipeline and produces binary directly
+bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
 ```
 
 ### 2.3 HIVM IR integration
@@ -200,14 +212,15 @@ module {
 }
 ```
 
-HIVM uses `#hivm.address_space` for memory: `gm` (global), `ub` (Unified Buffer), `l1`, `l0a`/`l0b`/`l0c`. Use `hivm.hir.load`/`hivm.hir.store` for DMA and `hivm.hir.vadd` and similar for on-chip compute.
+HIVM uses `#hivm.address_space` to annotate memory hierarchy: `gm` (global memory), `ub` (Unified Buffer), `l1` (L1 Buffer), `l0a`/`l0b`/`l0c` (L0 Buffer). Use `hivm.hir.load`/`hivm.hir.store` for explicit DMA transfers and `hivm.hir.vadd` and similar ops for on-chip compute.
 
 #### Invocation
 
-HIVM does not require the HFusion pipeline. The default HIVM pipeline handles sync insertion, memory planning, etc.:
+HIVM does not require the HFusion compile pipeline. The default HIVM compile pipeline performs sync insertion, memory planning, and other optimizations:
 
 ```
-bishengir-compile -target=Ascend910B1 test.mlir
+# End-to-end compilation; runs through HIVM IR pipeline and produces binary directly
+bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 test.mlir
 ```
 
-For IR-level concepts, common compile options, and other paths (e.g., Triton, TileLang), see [Interface API](interface_api.md).
+For IR-level concepts, common compile options, and other integration paths (e.g., Triton, TileLang), see [Interface API](interface_api.md).
