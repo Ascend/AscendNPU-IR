@@ -28,8 +28,8 @@
 在**仓库根目录**下执行：
 
 ```bash
-make -C docs html      # 仅英文 → docs/_build/html
-make -C docs html-zh   # 仅中文 → docs/_build/html_zh
+make -C docs html      # 仅英文 → docs/_build/en
+make -C docs html-zh   # 仅中文 → docs/_build/zh_cn
 make -C docs html-all  # 中英文均构建
 ```
 
@@ -47,14 +47,14 @@ make html-all
 
 ```bash
 # 英文
-open docs/_build/html/index.html
+open docs/_build/en/index.html
 
 # 中文
-open docs/_build/html_zh/index_zh.html
+open docs/_build/zh_cn/index_zh.html
 
 # 或用 HTTP 服务（例如英文 8080 端口，中文 8081 端口）
-cd docs/_build/html && python3 -m http.server 8080
-cd docs/_build/html_zh && python3 -m http.server 8081
+cd docs/_build/en && python3 -m http.server 8080
+cd docs/_build/zh_cn && python3 -m http.server 8081
 ```
 
 ---

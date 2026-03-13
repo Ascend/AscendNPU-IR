@@ -28,8 +28,8 @@ Directory names and document file names under `docs/` (including `sources/`) sho
 From the **repository root**:
 
 ```bash
-make -C docs html      # English only → docs/_build/html
-make -C docs html-zh   # Chinese only → docs/_build/html_zh
+make -C docs html      # English only → docs/_build/en
+make -C docs html-zh   # Chinese only → docs/_build/zh_cn
 make -C docs html-all  # Both
 ```
 
@@ -47,14 +47,14 @@ make html-all
 
 ```bash
 # English
-open docs/_build/html/index.html
+open docs/_build/en/index.html
 
 # Chinese
-open docs/_build/html_zh/index_zh.html
+open docs/_build/zh_cn/index_zh.html
 
 # Or serve with HTTP (e.g. port 8080 for English, 8081 for Chinese)
-cd docs/_build/html && python3 -m http.server 8080
-cd docs/_build/html_zh && python3 -m http.server 8081
+cd docs/_build/en && python3 -m http.server 8080
+cd docs/_build/zh_cn && python3 -m http.server 8081
 ```
 
 ---

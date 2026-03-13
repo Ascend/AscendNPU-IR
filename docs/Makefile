@@ -23,7 +23,7 @@ help:
 # Build English docs (conf.py reads READTHEDOCS_LANGUAGE for exclude_patterns)
 html:
 	@LANGUAGE=en $(SPHINXBUILD) -b html -D language=en -D root_doc=index "$(SOURCEDIR)" "$(BUILDDIR)/en" $(SPHINXOPTS) $(O)
-	@echo "English HTML built in $(BUILDDIR)/html"
+	@echo "English HTML built in $(BUILDDIR)/en"
 	@printf '%s\n' '<!DOCTYPE html>' \
 		'<html>' \
 		'<head>' \
@@ -42,7 +42,7 @@ html-zh:
 	@LANGUAGE=zh_CN $(SPHINXBUILD) -b html -D language=zh_CN -D root_doc=index_zh "$(SOURCEDIR)" "$(BUILDDIR)/zh_cn" $(SPHINXOPTS) $(O)
 	@echo "Chinese HTML built in $(BUILDDIR)/zh_cn"
 
-# Build both: English in _build/html, Chinese in _build/html_zh (for local preview)
+# Build both: English in _build/en, Chinese in _build/zh_cn (for local preview)
 html-all: clean html html-zh
 	@echo "Both languages built. Serve e.g. _build/en and _build/zh_cn."
 

@@ -2,14 +2,14 @@
 
 本示例展示如何用 `bishengir-compile` 将 IR 编译为设备端二进制，并基于 CANN 提供的 runtime 接口完成注册与上板执行。
 
-**前置条件**：已完成 [安装与构建](installing_guide_zh.md)，且 `bishengir-compile` 已加入 PATH，CANN 环境已安装并完成 `set_env.sh` 配置。
+**前置条件**：已完成 [构建安装](installing_guide_zh.md)，且 `bishengir-compile` 已加入 PATH，CANN 环境已安装并完成 `set_env.sh` 配置。
 
 ## IR 编译
 
 准备一段 VecAdd 的 MLIR（可从其他 IR 转换得到）：
 
 ```mlir
-; add.mlir
+// add.mlir
 module {
   func.func @add(%arg0: memref<16xi16, #hivm.address_space<gm>>, %arg1: memref<16xi16, #hivm.address_space<gm>>, %arg2: memref<16xi16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %alloc = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
@@ -27,6 +27,7 @@ module {
 使用 `bishengir-compile` 生成设备端二进制：
 
 ```bash
+# 编译命令
 bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 ```
 
@@ -41,7 +42,7 @@ bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 
 #include "acl/acl.h"
 #include "acl/error_codes/rt_error_codes.h"
-#include "experiment/runtime/runtime/rt.h"
+#include "runtime/runtime/rt.h"
 
 #include <cstdio>
 #include <fstream>
@@ -202,10 +203,15 @@ int main() {
 编译可执行文件（`main.cpp` 会读取当前目录下的 `kernel.o` 并完成注册与调用）：
 
 ```bash
-# 先加载 CANN 环境（若已写入 shell 配置可省略）；路径以实际安装为准，参见《安装与构建》
+# 先加载 CANN 环境（若已写入 shell 配置可省略）；路径以实际安装为准，参见《构建安装》
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-# 若 CANN 安装在自定义路径，请将 ASCEND_HOME_PATH 替换为实际路径，或使用 set_env.sh 所设置的环境变量名
-g++ main.cpp -I ${ASCEND_HOME_PATH}/include -I${ASCEND_HOME_PATH}/include/experiment/msprof -L ${ASCEND_HOME_PATH}/lib64 -l runtime -l ascendcl -o vec-add
+# 配置相应的头文件路径与链接路径, 若 CANN 安装在自定义路径，请将 ASCEND_HOME_PATH 替换为实际路径，或使用 set_env.sh 所设置的环境变量名
+RT_INC=${ASCEND_HOME_PATH}/include
+PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
+PKG_INC=${ASCEND_HOME_PATH}/pkg_inc
+RT_LIB=${ASCEND_HOME_PATH}/lib64
+
+g++ main.cpp -I${RT_INC}  -I${PROF_INC}/ ${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
 ```
 
 运行示例：
@@ -221,4 +227,5 @@ g++ main.cpp -I ${ASCEND_HOME_PATH}/include -I${ASCEND_HOME_PATH}/include/experi
     i1       Expect: 2                         Result: 2
     i2       Expect: 3                         Result: 3
     i3       Expect: 4                         Result: 4
+    ...
 ```
