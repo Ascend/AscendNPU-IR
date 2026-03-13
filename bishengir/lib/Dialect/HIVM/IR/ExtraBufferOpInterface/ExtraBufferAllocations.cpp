@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -266,9 +267,24 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
     // requires additional tmp_buf to store the transposed result.
     ShapedType srcVecType = cast<ShapedType>(this->getSrc()[0].getType());
     auto eleType = srcVecType.getElementType();
-    int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
-    // Reserve 3 times the "aligned src size" for subsequent template conversion.
-    SmallVector<int64_t> extraBufSizes{alignedSrcSize * 3};
+
+    bool useExtraScheme = false;
+    if (auto func = getOperation()->getParentOfType<func::FuncOp>()) {
+      if (func->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        useExtraScheme = true;
+      }
+    }
+
+    SmallVector<int64_t> extraBufSizes;
+    if (!useExtraScheme) {
+      std::optional<int64_t> srcAllocTotalSize =
+          utils::traceToAllocMaxSize(this->getSrc()[0]);
+      extraBufSizes = {srcAllocTotalSize.value() * 2};
+    } else {
+      int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
+      // Reserve 3 times the "aligned src size" for subsequent template conversion.
+      extraBufSizes = {alignedSrcSize * 3};
+    }
     extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes, eleType);
   } else if (isI32ToI16 || isI64ToI32) {
     if (this->getRoundMode() != hivm::RoundMode::TRUNCWITHOVERFLOW) {

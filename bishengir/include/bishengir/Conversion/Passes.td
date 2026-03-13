@@ -88,7 +88,10 @@ def ConvertHFusionToHIVM : Pass<"convert-hfusion-to-hivm"> {
                    "covnert to local buffer based matmul")
     )}]>,
       Option<"isEnableUbufSaving", "is-enable-ubuf-saving", "bool", /*default*/"false",
-             "enable low ubuf usage mode ">
+             "enable low ubuf usage mode ">,
+      Option<"isDisableSizeAlignForCast", "is-disable-size-align-for-cast",
+             "bool", /*default*/"false",
+             "disable VCast alloc size alignment and use new temp buffer scheme (s32/s16->s8)">
   ];
 }
 

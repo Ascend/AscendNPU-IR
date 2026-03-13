@@ -33,6 +33,8 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
                                   ? hfusion::MmMapMode::MacroInstr
                                   : hfusion::MmMapMode::CoreOp;
   hfs2hivmOptions.isEnableUbufSaving = options.enableUbufSaving;
+  hfs2hivmOptions.isDisableSizeAlignForCast =
+      options.disableSizeAlignForCast;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
   if (options.enableTritonKernelCompile) {
     pm.addPass(createTritonGlobalKernelArgsToHIVMOpPass());

@@ -220,7 +220,7 @@ vector_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
   }
 }
 
-template <typename SRC_T, typename DST_T>
+template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                              memref_t<__ubuf__ DST_T, 2> *dst,
@@ -254,11 +254,12 @@ vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                                          dst->offset + i * dst->strides[0],
                                          {dst->sizes[1]},
                                          {1}};
-      vector_cast_1d_with_overflow(&src_1d, &dst_1d, tmp);
+      vector_cast_1d_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(
+          &src_1d, &dst_1d, tmp);
     }
     return;
   }
-  vector_cast_with_overflow(src, dst, tmp);
+  vector_cast_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(src, dst, tmp);
 }
 
 template <typename SRC_T, typename DST_T>

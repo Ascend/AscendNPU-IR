@@ -960,6 +960,16 @@ def HIVM_EnableSavingUb : HIVM_Attr<"EnableSavingUb", "enable_saving_ub"> {
   }];
 }
 
+def DisableSizeAlignForCast
+    : HIVM_Attr<"DisableSizeAlignForCast", "disable_size_align_for_cast"> {
+  let description = [{
+    If a function is tagged with this attribute, VCast alloc size alignment is
+    disabled and the new temp buffer scheme (aligned-src-size based) is used.
+    When this attribute is absent, the original scheme (size align + src-alloc
+    based temp buffer) is used.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//
