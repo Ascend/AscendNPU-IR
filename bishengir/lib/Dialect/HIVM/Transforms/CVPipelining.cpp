@@ -92,9 +92,9 @@ private:
   LogicalResult populateWorkItem(SmallVector<Operation *> &availableOps,
                                  TCoreType core);
 
-  void traceDependentOps(WorkItem *item);
+  LogicalResult traceDependentOps(WorkItem *item);
 
-  void traceMemrefSubnet(WorkItem *item, Operation *start,
+  void traceMemrefSubnet(Operation *start,
                          SmallVector<Operation *> &workingStack);
 
   void markOutputs();
@@ -230,6 +230,14 @@ static bool isCrossCoreCopy(Operation *copy) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
+/// Check to see if op is what we consider a "core op" that is only available on
+/// either a cube or vector core
+static bool isCoreOp(Operation *op) {
+  return op->hasAttr(CubeOnlyAttrName) || op->hasAttr(VecOnlyAttrName) ||
+         (isa_and_nonnull<HIVMDialect>(op->getDialect()) &&
+          isa<DestinationStyleOpInterface>(op));
+}
+
 /// Validate if we can pipeline ops with respect to its regions.
 /// Returns false if we can operate on it, otherwise true
 static bool illegalRegionedOp(Operation *op) {
@@ -267,14 +275,21 @@ static bool illegalRegionedOp(Operation *op) {
   return false;
 }
 
-/// Get the highest level parent op that is not
+/// Get the highest level parent op that is not the containing op
 static Operation *getContainedParent(Operation *containing, Operation *inner) {
   Operation *parent = inner->getParentOp();
-  while (parent != containing) {
+  while (parent != containing && containing->isAncestor(inner)) {
     inner = parent;
     parent = inner->getParentOp();
   }
   return inner;
+}
+
+static Operation *getContainedParent(Operation *containing, Value inner) {
+  Operation *defining = inner.getDefiningOp();
+  if (defining)
+    return getContainedParent(containing, defining);
+  return nullptr;
 }
 
 static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
@@ -467,7 +482,7 @@ void CVPipelineImpl::populateLoopCarriedDependencies() {
 
 /// Helper to trace the alloc (if within pipelineLoop), toTensor, and
 /// potentially various casts along the way
-void CVPipelineImpl::traceMemrefSubnet(WorkItem *item, Operation *start,
+void CVPipelineImpl::traceMemrefSubnet(Operation *start,
                                        SmallVector<Operation *> &workingStack) {
   // When we get here, `start` should be one of three ops:
   // 1. Fixpipe
@@ -500,7 +515,6 @@ void CVPipelineImpl::traceMemrefSubnet(WorkItem *item, Operation *start,
 
   while (!userTraceStack.empty()) {
     Operation *def = userTraceStack.pop_back_val();
-    mapOpToItem(def, item);
     workingStack.push_back(def);
     for (Operation *usr : def->getUsers()) {
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(usr)) {
@@ -511,17 +525,12 @@ void CVPipelineImpl::traceMemrefSubnet(WorkItem *item, Operation *start,
       if (auto tt = dyn_cast<bufferization::ToTensorOp>(usr)) {
         assert(!toTensor && "Expecting only one toTensor for a defined memref");
         toTensor = tt;
-        mapOpToItem(usr, item);
-        continue;
-      }
-      if (isa<DebugOp>(usr)) {
-        mapOpToItem(usr, item);
+        workingStack.push_back(usr);
         continue;
       }
       if (isa<memref::CastOp, memref::ReinterpretCastOp,
               memref::MemorySpaceCastOp, memref::CollapseShapeOp,
               memref::ExpandShapeOp, memref::SubViewOp, memref::ViewOp>(usr)) {
-        mapOpToItem(usr, item);
         userTraceStack.push_back(usr);
       }
     }
@@ -534,18 +543,42 @@ void CVPipelineImpl::traceMemrefSubnet(WorkItem *item, Operation *start,
     outputMemrefMap[toTensor] = writer;
 }
 
+// Given memref value, populate users with all operations that uses any aliasing
+// memrefs as `memrefVal`
+static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
+  SmallVector<Operation *> traceStack;
+  DenseSet<Operation *> visited;
+  Value rootVal = traceValueDef(memrefVal);
+  traceStack.append(rootVal.user_begin(), rootVal.user_end());
+  while (!traceStack.empty()) {
+    Operation *op = traceStack.pop_back_val();
+    if (visited.contains(op))
+      continue;
+    visited.insert(op);
+    users.push_back(op);
+
+    // If not memref result, dont need to trace any more
+    if (op->getNumResults() == 1 &&
+        !isa<MemRefType>(op->getResult(0).getType()))
+      continue;
+    traceStack.append(op->user_begin(), op->user_end());
+  }
+}
+
 static void traceOperands(Value operand, scf::ForOp pipelineLoop,
                           WorkItem *item,
                           SmallVector<Operation *> &workingStack) {
-  // TODO: Handle nested if/for/while ops
-  Operation *defining = operand.getDefiningOp();
+  if (!operand)
+    return;
+  Operation *defining = getContainedParent(pipelineLoop, operand);
   if (item->ops.contains(defining))
     return;
   if (!defining) {
     auto iterArg = dyn_cast<BlockArgument>(operand);
     assert(iterArg && "Expecting non-op-defined value to be block argument");
     for (Operation *usr : iterArg.getUsers()) {
-      if (isa<DebugOp>(usr) && !item->ops.contains(usr))
+      if (isa<DebugOp>(usr) && !item->ops.contains(usr) &&
+          usr->getParentOp() == pipelineLoop)
         workingStack.push_back(usr);
     }
     if (iterArg.getOwner()->getParentOp() != pipelineLoop ||
@@ -563,26 +596,38 @@ static void traceOperands(Value operand, scf::ForOp pipelineLoop,
   if (defining->getParentOp() != pipelineLoop)
     return;
   // If defining is a memref, then trace everything that also uses that memref.
-  if (isa<MemRefType>(operand.getType())) {
-    workingStack.append(defining->getUsers().begin(),
-                        defining->getUsers().end());
-  }
-
+  if (isa<MemRefType>(operand.getType()))
+    memrefDFS(operand, workingStack);
   // To tensor ops are handled as a part of the memref operand for
   // load/fixpipe/copy
-  if (!isa_and_nonnull<HIVMDialect>(defining->getDialect()) &&
-      !item->ops.contains(defining))
+  if (!item->ops.contains(defining))
     workingStack.push_back(defining);
 }
 
 /// Trace each op in the initial set of ops in each WorkItem, get non-HIVM ops
 /// that are operands for each op
-void CVPipelineImpl::traceDependentOps(WorkItem *item) {
+LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
   SmallVector<Operation *> workingStack(item->ops.begin(), item->ops.end());
 
   while (!workingStack.empty()) {
     Operation *op = workingStack.pop_back_val();
-    if (!pipelineLoop->isAncestor(op) || isa<scf::YieldOp>(op) ||
+    if (isCoreOp(op)) {
+      if (opToWorkItemMap.contains(op)) {
+        // If Core Op is already inserted into a different work item, then we
+        // don't include it here
+        if (!item->ops.contains(op))
+          continue;
+      } else if (!isa<LoadOp>(op))
+        // Load ops are pulled into their consuming work items, apart from that,
+        // if we get here that means we depend on an op that have not satisfied
+        // their dependency
+        return op->emitWarning("Cannot pipeline op due to dependency");
+    }
+    // Other than core ops, we can skip them if we already inserted them into
+    // this work item
+    else if (item->ops.contains(op))
+      continue;
+    if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
         (isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op)))
       continue;
     LLVM_DEBUG(dbgs() << "Inserting \t"; op->dump());
@@ -594,10 +639,18 @@ void CVPipelineImpl::traceDependentOps(WorkItem *item) {
 
     // Handle load/fixpipe/copy dealing with memref memref
     if (isa<LoadOp, FixpipeOp>(op) || isCrossCoreCopy(op)) {
-      LLVM_DEBUG(dbgs() << "Tracing memref: "; op->dump());
-      traceMemrefSubnet(item, op, workingStack);
+      traceMemrefSubnet(op, workingStack);
       // Deal with the ins operand
       traceOperands(op->getOperand(0), pipelineLoop, item, workingStack);
+      if (auto load = dyn_cast<LoadOp>(op)) {
+        traceOperands(load.getInitCondition(), pipelineLoop, item,
+                      workingStack);
+        traceOperands(load.getLeftPaddingNum(), pipelineLoop, item,
+                      workingStack);
+        traceOperands(load.getRightPaddingNum(), pipelineLoop, item,
+                      workingStack);
+        traceOperands(load.getPadValue(), pipelineLoop, item, workingStack);
+      }
       continue;
     }
 
@@ -607,6 +660,7 @@ void CVPipelineImpl::traceDependentOps(WorkItem *item) {
         traceOperands(operand, pipelineLoop, item, workingStack);
     });
   }
+  return success();
 }
 
 /// Fill each WorkItem with ops that will eventually go into their own jam loops
@@ -635,7 +689,8 @@ CVPipelineImpl::populateWorkItem(SmallVector<Operation *> &availableOps,
     dbgs() << "[populateWorkItem] } // Initial set\n";
   });
 
-  traceDependentOps(item.get());
+  if (traceDependentOps(item.get()).failed())
+    return failure();
   worklist.push_back(item);
   return success();
 }
@@ -655,8 +710,7 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
                               ? TCoreType::VECTOR
                               : TCoreType::CUBE_OR_VECTOR;
     if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
-      if (!isa<DestinationStyleOpInterface>(&op) ||
-          !isa_and_nonnull<HIVMDialect>(op.getDialect()) || isa<LoadOp>(&op))
+      if (!isCoreOp(&op) || isa<LoadOp>(&op))
         continue;
       maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
       if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
@@ -710,8 +764,7 @@ LogicalResult CVPipelineImpl::createWorkItems() {
   int multibuffer = numMultibuffer > 1 ? numMultibuffer : 2;
   Block *blk = pipelineLoop.getBody();
   for (Operation &op : blk->getOperations()) {
-    if (llvm::isa_and_nonnull<HIVMDialect>(op.getDialect()) &&
-        isa<DestinationStyleOpInterface>(&op))
+    if (isCoreOp(&op))
       toBePipelined.insert(&op);
     if (isa<FixpipeOp, StoreOp>(&op) || isCrossCoreCopy(&op))
       separators.push_back(&op);
@@ -728,8 +781,8 @@ LogicalResult CVPipelineImpl::createWorkItems() {
         // Conflict in multibuffer count, use smallest one
         multibuffer = std::min(multibuffer, markMultibuffer);
       }
-    } else if (illegalRegionedOp(&op)) {
-      // Illegal op with regions, do nothing and return
+    } else if (illegalRegionedOp(&op) || isa<SetAtomicOp>(&op)) {
+      // Illegal op, do nothing and return
       return failure();
     }
   } // end for op
@@ -989,6 +1042,39 @@ void CVPipelineImpl::createNewLoops() {
   }
 }
 
+static Value updateMaskingSubview(OpBuilder &builder, Location loc,
+                                  Value expanded, OpOperand *initOperand,
+                                  Value iv) {
+  if (auto subview =
+          dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp())) {
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+    Attribute cst1Attr = builder.getI64IntegerAttr(1);
+    offsets.push_back(iv);
+    offsets.append(subview.getMixedOffsets());
+    sizes.push_back(cst1Attr);
+    sizes.append(subview.getMixedSizes());
+    strides.push_back(cst1Attr);
+    strides.append(subview.getMixedStrides());
+    // Set up dynamic stride
+    int64_t offset;
+    auto targetTy = cast<MemRefType>(initOperand->get().getType());
+    SmallVector<int64_t> layoutStrides;
+    if (getStridesAndOffset(targetTy, layoutStrides, offset).failed())
+      llvm_unreachable("Unexpected memref layout");
+    auto layout = StridedLayoutAttr::get(builder.getContext(),
+                                         ShapedType::kDynamic, layoutStrides);
+    auto finalTy = MemRefType::Builder(targetTy).setLayout(layout);
+    auto newSubView = builder.create<memref::SubViewOp>(
+        loc, finalTy, expanded, offsets, sizes, strides);
+    subview->replaceAllUsesWith(newSubView);
+    return newSubView;
+  }
+  Value newInit =
+      createSubview(builder, loc, expanded, initOperand->get().getType(), iv);
+  initOperand->set(newInit);
+  return newInit;
+}
+
 /// Actually migrate/clone each op for each work item
 void CVPipelineImpl::migrateOps() {
   for (Operation &op : pipelineLoop.getBody()->getOperations()) {
@@ -1052,8 +1138,8 @@ void CVPipelineImpl::migrateOps() {
         yieldVals.push_back(yieldVal);
       } else if (auto targetTy =
                      dyn_cast<MemRefType>(initOperand->get().getType())) {
-        Value newInit = createSubview(builder, loc, expanded, targetTy, iv);
-        initOperand->set(newInit);
+        Value newInit =
+            updateMaskingSubview(builder, loc, expanded, initOperand, iv);
         // Also update internal users
         Value internalDef = item->irMap.lookup(orig);
         assert(isa<bufferization::ToTensorOp>(internalDef.getDefiningOp()));
