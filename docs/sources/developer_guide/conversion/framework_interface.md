@@ -2,8 +2,8 @@
 
 AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in two ways:
 
-1. **DSL integration**: Integrate via domain-specific languages such as Triton and TileLang, which compile to AscendNPU IR.
-2. **IR integration**: Integrate via IR representation, supporting multi-level IR (Torch IR, Linalg/HFusion IR, HIVM IR), with automatic fusion and tiling for Ascend-friendly kernels.
+- **DSL integration**: Integrate via domain-specific languages such as Triton and TileLang, which compile to AscendNPU IR.
+- **IR integration**: Integrate via IR representation, supporting multi-level IR (Torch IR, Linalg/HFusion IR, HIVM IR), with automatic fusion and tiling for Ascend-friendly kernels.
 
 ## 1. DSL integration
 
@@ -30,10 +30,10 @@ Use Torch dialect ATen ops; Passes such as `convert-torch-to-hfusion` lower to L
 
 Torch IR is integrated via the `torch-backend-to-named-op-backend-pipeline` conversion pipeline. The custom `convert-torch-to-hfusion` Pass lowers Torch ATen ops to Linalg/HFusion named ops first; uncovered ops fall back to the standard lowering path of upstream torch-mlir. Main conversion stages:
 
-1. `convert-torch-to-hfusion`: BishengIR custom lowering for 55+ ATen ops to Linalg/HFusion named ops.
-2. `convert-torch-to-linalg`: Upstream torch-mlir for remaining ops.
-3. `convert-torch-to-scf / arith / tensor`: Upstream torch-mlir for control flow, arithmetic, and tensor conversion.
-4. `func-backend-type-conversion`: Converts Torch types (`!torch.vtensor`) to builtin types (`tensor`).
+- `convert-torch-to-hfusion`: BishengIR custom lowering for 55+ ATen ops to Linalg/HFusion named ops.
+- `convert-torch-to-linalg`: Upstream torch-mlir for remaining ops.
+- `convert-torch-to-scf / arith / tensor`: Upstream torch-mlir for control flow, arithmetic, and tensor conversion.
+- `func-backend-type-conversion`: Converts Torch types (`!torch.vtensor`) to builtin types (`tensor`).
 
 #### Example
 
@@ -49,8 +49,8 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 There are two invocation methods; both share the same compile pipeline:
 
-1. **Stepwise conversion**: Use `bishengir-opt -torch-backend-to-named-op-backend-pipeline` to convert Torch IR to Linalg/HFusion IR first, then compile via the [Linalg/HFusion IR integration](#22-linalghfusion-ir-integration) flow; suitable for caching intermediate IR.
-2. **End-to-end compilation**: Use `bishengir-compile` to compile Torch IR to binary directly.
+- **Stepwise conversion**: Use `bishengir-opt -torch-backend-to-named-op-backend-pipeline` to convert Torch IR to Linalg/HFusion IR first, then compile via the [Linalg/HFusion IR integration](#22-linalghfusion-ir-integration) flow; suitable for caching intermediate IR.
+- **End-to-end compilation**: Use `bishengir-compile` to compile Torch IR to binary directly.
 
 ```
 # Stepwise conversion; expected output is Linalg/HFusion IR

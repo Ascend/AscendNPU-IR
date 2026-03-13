@@ -77,6 +77,11 @@ TileLang (tilelang-ascend) is a domain-specific language for Ascend NPU kernel d
 
 ## Framework integration
 
-AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in two ways: (1) DSL integration, e.g., Triton and TileLang; (2) IR integration, e.g., Torch IR, Linalg/HFusion IR, and HIVM IR. See [Framework interface](framework_interface.md) for details.
+AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in two ways:
+
+- **DSL integration**: e.g., Triton and TileLang
+- **IR integration**: e.g., Torch IR, Linalg/HFusion IR, and HIVM IR
+
+See [Framework interface](framework_interface.md) for details.
 
 ---

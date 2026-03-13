@@ -77,6 +77,11 @@ TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 ti
 
 ## 框架接入
 
-AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：(1) DSL 接入方式，如 Triton、TileLang；(2) IR 接入方式，如 Torch IR、Linalg/HFusion IR、HIVM IR。详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
+AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：
+
+- **DSL 接入方式**：如 Triton、TileLang
+- **IR 接入方式**：如 Torch IR、Linalg/HFusion IR、HIVM IR
+
+详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
 
 ---

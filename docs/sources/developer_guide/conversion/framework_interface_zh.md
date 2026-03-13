@@ -2,8 +2,8 @@
 
 AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：
 
-1. **DSL 接入方式**：通过 Triton、TileLang 等领域特定语言接入，将算子编译为 AscendNPU IR。
-2. **IR 接入方式**：通过 IR 表示接入，支持 Torch IR、Linalg/HFusion IR、HIVM IR 多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
+- **DSL 接入方式**：通过 Triton、TileLang 等领域特定语言接入，将算子编译为 AscendNPU IR。
+- **IR 接入方式**：通过 IR 表示接入，支持 Torch IR、Linalg/HFusion IR、HIVM IR 多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
 
 ## 1. DSL 接入方式
 
@@ -30,10 +30,10 @@ AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒
 
 Torch IR 通过 `torch-backend-to-named-op-backend-pipeline` 转换流水线接入 AscendNPU IR。BishengIR 自定义的 `convert-torch-to-hfusion` Pass 优先将 Torch ATen 算子转换为 Linalg/HFusion Named Op，未覆盖的算子回退到上游 torch-mlir 的标准 lowering 通路。主要转换阶段如下：
 
-1. `convert-torch-to-hfusion`：BishengIR 自定义转换，覆盖 55+ 个 ATen 算子到 Linalg/HFusion Named Op。
-2. `convert-torch-to-linalg`：上游 torch-mlir 转换，处理剩余算子。
-3. `convert-torch-to-scf / arith / tensor`：上游 torch-mlir 完成控制流、算术、tensor 等转换。
-4. `func-backend-type-conversion`：将 Torch 类型（`!torch.vtensor`）转换为标准 builtin 类型（`tensor`）。
+- `convert-torch-to-hfusion`：BishengIR 自定义转换，覆盖 55+ 个 ATen 算子到 Linalg/HFusion Named Op。
+- `convert-torch-to-linalg`：上游 torch-mlir 转换，处理剩余算子。
+- `convert-torch-to-scf / arith / tensor`：上游 torch-mlir 完成控制流、算术、tensor 等转换。
+- `func-backend-type-conversion`：将 Torch 类型（`!torch.vtensor`）转换为标准 builtin 类型（`tensor`）。
 
 #### 用例
 
@@ -49,8 +49,8 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 有两种调用方式，二者共享同一套编译 pipeline：
 
-1. **分步转换**：先用 `bishengir-opt -torch-backend-to-named-op-backend-pipeline` 将 Torch IR 转换为 Linalg/HFusion IR，再按 [Linalg/HFusion IR 接入](#22-linalghfusion-ir-接入) 流程编译；适用于需要缓存中间 IR 的场景。
-2. **端到端编译**：使用 `bishengir-compile` 直接编译 Torch IR 到二进制。
+- **分步转换**：先用 `bishengir-opt -torch-backend-to-named-op-backend-pipeline` 将 Torch IR 转换为 Linalg/HFusion IR，再按 [Linalg/HFusion IR 接入](#22-linalghfusion-ir-接入) 流程编译；适用于需要缓存中间 IR 的场景。
+- **端到端编译**：使用 `bishengir-compile` 直接编译 Torch IR 到二进制。
 
 ```
 # 分步转换，预期生成 Linalg/HFusion IR
