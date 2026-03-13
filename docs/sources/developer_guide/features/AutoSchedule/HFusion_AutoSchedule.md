@@ -1,73 +1,156 @@
 # AutoSchedule
 
-## HFusion AutoSchedule: design for automatic fusion and scheduling
+## HFusion AutoSchedule: Design for Automatic Fusion and Scheduling
 
-### 1. Background and goals
+HFusion is a high-level framework on Bisheng IR for operator fusion and automatic scheduling. The **AutoSchedule** module generates efficient schedules for Ascend NPU once fusion units are fixed. Design goals include:
 
-HFusion is a high-level framework on Bisheng IR for operator fusion and automatic scheduling. The **AutoSchedule** module generates efficient schedules for Ascend NPU once fusion units are fixed. Its design goals include:
-
-- **Automation**: Choose scheduling and tiling strategies from fusion patterns and operator traits.
+- **Automation**: Choose scheduling and Tiling strategies from fusion patterns and operator traits.
 - **Extensibility**: Common scheduler base and kernel abstractions for new strategies.
-- **Performance**: Dynamic shape, multi-core reduce, and other optimizations.
+- **Performance**: Dynamic shape, multi-core reduce, and related optimizations.
 - **Engineering**: Schedules expressed as reusable, interpretable Transform Dialect sequences.
 
-AutoSchedule code lives in:
+---
+
+### 1. Hardware Background
+
+The Ascend NPU uses a multi-level memory hierarchy: global memory (GM) has large capacity but high access latency, while on-chip memory (e.g., L1, UB) has lower latency but limited capacity. To leverage on-chip memory bandwidth and reduce global memory traffic:
+
+- **Maximize on-chip memory utilization**: Through large-scale operator fusion, multiple ops are merged into the same kernel, so intermediate results are reused in on-chip buffers and GM read/write counts are reduced.
+- **Satisfy hardware access constraints**: On-chip memory (e.g., UB) access must meet hardware requirements; for example, **UB access requires 32-byte alignment** (stride-align). Otherwise, misaligned access can cause runtime errors or performance degradation.
+- **Fit Tiling and loop structure**: When generating Tiling and loop nests, stride/size/tile alignment constraints must be respected so that the resulting kernel complies with hardware specifications.
+
+AutoSchedule is designed around these hardware characteristics: it uses automated scheduling and Tiling strategies to maximize on-chip memory utilization while preserving legality.
+
+---
+
+### 2. Algorithm Principle
+
+The core algorithm centers on **large-scale operator fusion + dimension-mapping-driven loop generation + Transform Dialect fusion execution**:
+
+1. **Dimension Analyzer axis mapping**
+   - `DimensionAnalyzer` analyzes the axis mapping of each op in the kernel relative to the anchor (`getCommonAxis`, `getNormalizedInterchange`, etc.).
+   - It establishes the correspondence between tensor dimensions and anchor dimensions, supporting broadcast, reduce, transpose, and other patterns.
+   - This provides dimension-level information for subsequent Tiling and loop construction.
+
+2. **Loop generation and op fusion**
+   - Based on the axis mapping, a unified loop structure is generated for the fusion graph, and ops are fused into the same loop via MLIR Transform Dialect primitives such as `fuseIntoContaining`, `fuseLoops`, and `coalesceLoops`.
+   - During fusion, hardware constraints are explicitly enforced: stride-align (32-byte alignment), size-align, tile-align, etc., so the generated IR meets Ascend NPU memory access rules.
+
+3. **Tiling computation and selection**
+   - Using `StmtExprBuilder` and the `Expr` system, together with static or dynamic shape, multiple candidate Tiling schemes (`TilingCases`) are generated.
+   - `getStrideAlignments()` and `getTileAlignments()` are applied during Tiling; dimensions are adjusted with `alignTo(alignment)` to produce valid Tiling that satisfies stride-align and related constraints.
+   - A best `TilingKey` is chosen (e.g., by cost or alignment), and the schedule description is built accordingly.
+
+4. **Transform Dialect interpretation**
+   - The scheduler does not modify IR directly; it builds a Transform Dialect program. `AutoScheduleInterpreter` translates it into concrete Transform operations and applies them to the target IR so the schedule takes effect.
+
+---
+
+### 3. Interface Description
+
+#### 3.1 Code location
 
 - **Headers (APIs and abstractions)**: `bishengir/include/bishengir/Dialect/HFusion/Transforms/AutoSchedule/`
 - **Implementation**: `bishengir/lib/Dialect/HFusion/Transforms/AutoSchedule/`
 
+#### 3.2 Core interfaces and abstractions
+
+| Type       | Name                   | Description                                                                 |
+| ---------- | ---------------------- | --------------------------------------------------------------------------- |
+| Base class | `SchedulerBase`        | Abstract base for all schedulers, encapsulating the common scheduling flow  |
+| Scheduler  | `PureElemwiseScheduler`| Pure elementwise fusion strategy                                            |
+| Scheduler  | `AnyPBRScheduler`      | Generic strategy for Pointwise/Broadcast/Reduce and similar fusion patterns  |
+| Kernel     | `KernelInfo`           | Unified description of fused kernel IO, dimensions, alignment, multi-core   |
+| Alignment  | `getStrideAlignments()`| Returns stride alignment constraints (dim index, unit), e.g. 32-byte align   |
+| Alignment  | `getSizeAlignments()`  | Returns size dimension alignment constraints                                 |
+| Alignment  | `getTileAlignments()`  | Returns tile dimension alignment constraints                                 |
+| Analysis   | `DimensionAnalyzer`    | `getCommonAxis`, `getInterchange`, `getNormalizedInterchange`, etc.          |
+| Primitive  | `cacheRead` / `cacheWrite` | IO cache                                                                |
+| Primitive  | `tileUsingFor` / `tileUsingForAll` / `tileReductionUsingFor` | Tiling      |
+| Primitive  | `fuseLoops` / `fuseIntoContaining` / `coalesceLoops` | Loop fusion and coalesce         |
+| Primitive  | `setBufferSize`        | Resource constraints                                                        |
+
+#### 3.3 Strategy selection and call chain
+
+- **Pass entry**: The AutoSchedule pass is invoked in the HFusion pipeline and receives the `func::FuncOp` and fusion information.
+- **Strategy selection**: In `AutoScheduleBase.cpp::applySchedule()`, the scheduler is chosen by `FusionKind`:
+  - `FusionKind::PureElemwise` → `PureElemwiseScheduler`
+  - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
+- **Main flow**: `runPreScheduleProcedure()` → `runScheduleProcedure()` (including `calculateTilingImpl()`, `createScheduleImpl()`) → `runPostScheduleProcedure()` → Transform Dialect application.
+
 ---
 
-### 2. Architecture overview
+### 4. Constraints and Capabilities
 
-#### 2.1 Core components
+AutoSchedule explicitly handles the following constraints during scheduling and Tiling:
 
-- **Scheduler base and strategies**
-  - **`SchedulerBase`**: Abstract base for all schedulers (`AutoScheduleBase.h`), encapsulating the common scheduling flow.
-  - **Concrete strategy schedulers**:
-    - `PureElemwiseScheduler`: Pure elementwise fusion (`PureElemwiseSchedule.h/cpp`).
-    - `AnyPBRScheduler`: Generic strategy for AnyPBR (Pointwise/Broadcast/Reduce) and similar ops (`AnyPBRSchedule.h/cpp`).
+| Constraint       | Description                                                                  | API / Implementation |
+| ---------------- | ---------------------------------------------------------------------------- | -------------------- |
+| **Stride align** | UB and other on-chip memory access must be 32-byte aligned                   | `getStrideAlignments()`, `alignTo()` in `calculateTilingImpl()` |
+| **Size align**   | Some ops (e.g., transpose, concat, cast) require tile/size alignment         | `getSizeAlignments()` |
+| **Tile align**   | Combination of stride and size constraints, applied to Tiling schemes        | `getTileAlignments()` |
+| **Reduce axis**  | Reduce, broadcast, extract_slice, transpose, etc. impose lowest-dim alignment| `KernelInfo` per-op stride-align logic |
+| **On-chip buffer** | Buffer allocation limited by L1/UB capacity and `maxBufferCnt`           | `setBufferSize`, `maxBufferCnt` |
+| **Multi-core reduce** | Multi-core parallel reduce only when specific conditions hold         | `analyzeMultiCoreReduceInfo()` |
 
-- **Kernel and tiling abstraction**
-  - **`KernelInfo`**: Unified description of a fused kernel (`KernelInfo.h`), including IO, dimensions, alignment, and multi-core capability.
-  - **Tiling abstraction and utilities** (`TilingUtils.h/cpp`):
-    - `TilingInfo`, `TilingStruct`, `TilingData`: Describe a single or multiple candidate tiling schemes.
-    - `Expr` / `StmtExprBuilder`: Build tiling expressions that depend on static or dynamic shape.
+These constraints are applied uniformly in `KernelInfo::getStrideAlignments()` and scheduler-specific `calculateTilingImpl()` to ensure the generated schedule is valid and hardware-compatible.
 
-- **Schedule operations**
-  - **`ScheduleOperations.cpp`**: Implements reusable schedule primitives, including:
+---
+
+### 5. Architecture overview
+
+#### 5.1 Core components
+
+##### Scheduler base and strategies
+
+- **SchedulerBase**: Abstract base for all schedulers (`AutoScheduleBase.h`), encapsulating the common scheduling flow.
+- **Concrete strategy schedulers**:
+  - **PureElemwiseScheduler**: Pure elementwise fusion (`PureElemwiseSchedule.h/cpp`).
+  - **AnyPBRScheduler**: Generic strategy for AnyPBR (Pointwise/Broadcast/Reduce) and similar ops (`AnyPBRSchedule.h/cpp`).
+
+##### Kernel and tiling abstraction
+
+- **KernelInfo**: Unified description of a fused kernel (`KernelInfo.h`), including IO, dimensions, alignment, and multi-core capability.
+- **Tiling abstraction and utilities** (`TilingUtils.h/cpp`):
+  - **TilingInfo**, **TilingStruct**, **TilingData**: Describe a single or multiple candidate tiling schemes.
+  - **Expr** / **StmtExprBuilder**: Build tiling expressions that depend on static or dynamic shape.
+
+##### Schedule operations
+
+- **ScheduleOperations.cpp**: Implements reusable schedule primitives, including:
     - IO cache: `cacheRead` / `cacheWrite`
     - Tiling: `tileUsingFor` / `tileUsingForAll` / `tileReductionUsingFor`
     - Loop transforms: `fuseLoops` / `fuseIntoContaining` / `coalesceLoops`
     - Resource constraints: `setBufferSize`, etc.
 
-- **Schedule interpretation**
-  - **`AutoScheduleInterpreter.cpp`**: Converts the high-level schedule description produced by the scheduler into Transform Dialect operations and applies them to the target IR so the schedule takes effect.
+##### Schedule interpretation
 
-#### 2.2 Strategy selection and call chain
+- **AutoScheduleInterpreter.cpp**: Converts the high-level schedule description produced by the scheduler into Transform Dialect operations and applies them to the target IR so the schedule takes effect.
+
+#### 5.2 Strategy selection and call chain
 
 The overall call chain is:
 
-1. **Pass entry**
-   - The AutoSchedule pass is invoked in the HFusion pipeline and receives the `func::FuncOp` and fusion information to process.
+- **Pass entry**
+  - The AutoSchedule pass is invoked in the HFusion pipeline and receives the `func::FuncOp` and fusion information to process.
 
-2. **Strategy selection and scheduler construction**
-   - In `AutoScheduleBase.cpp::applySchedule()`, the scheduler is chosen by fusion kind `FusionKind`:
-     - `FusionKind::PureElemwise` → `PureElemwiseScheduler`
-     - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
-   - The scheduler instance is created with `std::make_unique<...>(funcOp)`.
+- **Strategy selection and scheduler construction**
+  - In `AutoScheduleBase.cpp::applySchedule()`, the scheduler is chosen by fusion kind `FusionKind`:
+    - `FusionKind::PureElemwise` → `PureElemwiseScheduler`
+    - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
+  - The scheduler instance is created with `std::make_unique<...>(funcOp)`.
 
-3. **Main scheduling flow (`SchedulerBase::runOnOperation()`)**:
-   - **Pre** (`runPreScheduleProcedure()`): Insert IO cache, analyze fusion graph and legality; call `analyzeAndVerifyKernelImpl()` for strategy-specific kernel analysis and checks.
-   - **Schedule** (`runScheduleProcedure()`): Call `calculateTilingImpl()` to get `TilingComputeFn` and candidate tiling; choose a `TilingKey` (e.g. by cost or alignment); call `createScheduleImpl()` to build the schedule for that key; pass the schedule to the Transform interpreter via `applyScheduleImpl()`.
-   - **Post** (`runPostScheduleProcedure()`): Optional structure cleanup and statistics.
+- **Main scheduling flow (`SchedulerBase::runOnOperation()`)**
+  - **Pre** (`runPreScheduleProcedure()`): Insert IO cache, analyze fusion graph and legality; call `analyzeAndVerifyKernelImpl()` for strategy-specific kernel analysis and checks.
+  - **Schedule** (`runScheduleProcedure()`): Call `calculateTilingImpl()` to get `TilingComputeFn` and candidate tiling; choose a `TilingKey` (e.g. by cost or alignment); call `createScheduleImpl()` to build the schedule for that key; pass the schedule to the Transform interpreter via `applyScheduleImpl()`.
+  - **Post** (`runPostScheduleProcedure()`): Optional structure cleanup and statistics.
 
-4. **Transform Dialect application**
-   - `AutoScheduleInterpreter` parses the schedule description, translates it into a sequence of Transform Dialect operations, and applies them to the HFusion IR.
+- **Transform Dialect application**
+  - `AutoScheduleInterpreter` parses the schedule description, translates it into a sequence of Transform Dialect operations, and applies them to the HFusion IR.
 
-#### 2.3 Key data structures
+#### 5.3 Key data structures
 
-- **`KernelInfo`** (kernel description)
+##### KernelInfo (kernel description)
   - Abstracts the structure and constraints of a single fused kernel. Typical information includes:
     - Input/output tensors and their shape/layout.
     - Topology of ops in the fusion graph.
@@ -75,72 +158,98 @@ The overall call chain is:
     - Whether multi-core reduce is supported and which dimensions can be parallelized.
   - For specific fusion patterns, derived classes (e.g. `AnyPBRKernelInfo`) can add pattern-specific analysis.
 
-- **Tiling** (`TilingUtils.h`)
-  - **`TilingData`**: Tiling parameters for a single dimension (constant or expression).
-  - **`TilingStruct`** / **`TilingCases`**: A full tiling scheme and sets of candidate schemes.
-  - **`Expr`** / **`StmtExprBuilder`**:
+##### Tiling (`TilingUtils.h`)
+
+- **TilingData**: Tiling parameters for a single dimension (constant or expression).
+- **TilingStruct** / **TilingCases**: A full tiling scheme and sets of candidate schemes.
+- **Expr** / **StmtExprBuilder**:
     - `DimSymbol`: Symbol for a dynamic dimension.
     - `Expr`: Arithmetic (e.g. dimension/factor, align-to granularity).
     - `StmtExprBuilder`: Builds `Expr` from IR shape and constants and generates the host-side tiling function.
 
-- **`ValueHandle`**
+##### ValueHandle
   - Uniform wrapper for MLIR `Value`, function arguments, and named values for consistent access and manipulation.
+  - Common types include `NamedValueHandle`, `FuncArgHandle`, etc.
 
 ---
 
-### 3. Scheduling strategies
+### 6. Scheduling strategies
 
-#### 3.1 PureElemwise
+#### 6.1 PureElemwise scheduling strategy
 
 - **Use case**: Graphs that are mostly elementwise ops, without complex broadcast/reduce.
-- **Location**: `PureElemwiseSchedule.h/cpp`.
-- **Strategy**: Aims at regular loop structure with simple, regular tiling; emphasizes contiguous access and multi-level cache friendliness after fusion; `calculateTilingImpl()` and `createScheduleImpl()` perform tiling and schedule construction.
+- **Implementation location**: `PureElemwiseSchedule.h/cpp`.
+- **Strategy characteristics**:
+  - Aims at regular loop structure with simple, regular tiling.
+  - Emphasizes contiguous access and multi-level cache friendliness after fusion.
+  - `calculateTilingImpl()` and `createScheduleImpl()` perform tiling and schedule primitive chaining.
 
-#### 3.2 AnyPBR (AnyPBRScheduler)
+#### 6.2 AnyPBR scheduling strategy (AnyPBRScheduler)
 
 - **Use case**: Fused subgraphs containing broadcast, reduce, and similar patterns.
-- **Location**: `AnyPBRSchedule.h/cpp`.
+- **Implementation location**: `AnyPBRSchedule.h/cpp`.
 - **Capabilities**:
-  - **Tiling**: In `calculateTilingImpl()`, considers stride alignment, dynamic shape symbols, reduce/broadcast axes, etc.; uses `StmtExprBuilder` to build expressions and produce multiple `TilingCases`.
-  - **Multi-core reduce**: `analyzeMultiCoreReduceInfo()` determines whether multi-core reduce conditions are met (see §4.3).
-  - **Schedule construction**: In `createScheduleImpl()`, for the chosen `TilingKey`, applies buffer sizes, axis-specific tiling, loop fuse/coalesce, and multi-core binding.
+  - **Tiling**:
+    - In `calculateTilingImpl()`, considers stride alignment, dynamic shape symbols, reduce/broadcast axes, etc.; uses `StmtExprBuilder` to build expressions and produce multiple `TilingCases`.
+  - **Multi-core reduce analysis and utilization**:
+    - `analyzeMultiCoreReduceInfo()` determines whether multi-core reduce conditions are met (see §7.3).
+  - **Schedule construction**:
+    - In `createScheduleImpl()`, for the chosen `TilingKey`, enables concrete scheduling strategies, considering on-chip buffer allocation, axis-specific tiling, loop fuse/coalesce, and multi-core binding.
 
 ---
 
-### 4. Main optimizations
+### 7. Main optimizations
 
 This section summarizes **stride-align**, **dynamic shape**, and **multi-core reduce** and their role in AutoSchedule.
 
-#### 4.1 Stride-align
+#### 7.1 Stride-align memory alignment optimization
 
 - **Goal**: Avoid unaligned UB access.
-- **APIs**: `KernelInfo::getStrideAlignments()` returns (dimension index, alignment) pairs; `getSizeAlignments()`, `getTileAlignments()` give size and tile alignment constraints.
-- **Usage**: In `AnyPBRSchedule.cpp::calculateTilingImpl()`, initial tiling is generated from problem size; then dimensions from `getStrideAlignments()` and `getTileAlignments()` are adjusted with `alignTo(alignment)`; the result is stride-aligned `TilingCases`.
+- **APIs and data source**:
+  - `KernelInfo::getStrideAlignments()` (`KernelInfo.h`): Returns (dimension index, alignment) pairs describing the minimum stride alignment for certain dimensions during memory access.
+  - Related APIs: `getSizeAlignments()` for size alignment; `getTileAlignments()` for tile alignment.
+- **Usage in scheduling strategy (AnyPBR example)**:
+  - In `AnyPBRSchedule.cpp::calculateTilingImpl()`:
+    - Generate initial tiling from problem size.
+    - Iterate over `getStrideAlignments()` and `getTileAlignments()`, and adjust relevant dimension tiling sizes with `alignTo(alignment)`.
+    - Output stride-aligned `TilingCases`.
 - **When**: Stride-align is applied during **tiling**, i.e. when `calculateTilingImpl()` is called inside `runScheduleProcedure()`.
 
-#### 4.2 Dynamic shape
+#### 7.2 Dynamic shape support
 
-- **Need**: Dimensions such as batch size or spatial size may be unknown at compile time; tiling must be computed at runtime from actual input shapes.
-- **Expr system** (`TilingUtils.h`): `DimSymbol` for a dimension (e.g. N, H, W); `Expr` for arithmetic like `N/4`, `min(N,64)`; `StmtExprBuilder` builds `Expr` from IR shapes and constants and generates the host tiling code.
-- **Execution**: `TilingComputeFn` from `calculateTilingImpl()` is run on the host with concrete shapes so `DimSymbol`s are bound to values and tiling is computed; fully static shapes fold to constants at compile time.
-- **Options**: e.g. `AutoScheduleOptions::enableSymbolAnalysis` to enable symbolic analysis for dynamic tiling.
+- **Problem and requirements**:
+  - Some dimensions (e.g., batch size, spatial size) may not be constant at compile time.
+  - AutoSchedule must support computing suitable tiling parameters at **runtime** from actual input shapes.
+- **Expr system design**:
+  - **Expr** / **DimSymbol** / **StmtExprBuilder** in `TilingUtils.h` form a lightweight expression framework:
+    - **DimSymbol**: Symbol for a dimension (e.g., N, H, W); can be created via `StmtExprBuilder::createDimSymbolExpr()`.
+    - **Expr**: Supports basic arithmetic, e.g., `N/4`, `min(N,64)`, `(H*W)/factor`.
+    - **StmtExprBuilder**: Builds `Expr` from IR shape and constants; generates host-side tiling computation statements.
+- **Host tiling function generation and execution**:
+  - `TilingComputeFn` from `calculateTilingImpl()` is typically a lambda or callable.
+  - When executed on the host with concrete shapes, `DimSymbol`s are bound to values and tiling is computed.
+  - For fully static shapes, expressions fold to constants at compile time.
+- **Configuration and extension**:
+  - Options such as `AutoScheduleOptions::enableSymbolAnalysis` enable symbolic equivalence analysis for dynamic shape tiling optimization.
 
-#### 4.3 Multi-core reduce
+#### 7.3 Multi-core reduce
 
 - Multi-core reduce is analyzed (e.g. via `analyzeMultiCoreReduceInfo()`) and applied when the kernel and pattern satisfy the required conditions (see dedicated documentation).
 
 ---
 
-### 5. Extending AutoSchedule: custom strategy
+### 8. Extending AutoSchedule: custom strategy
 
-#### 5.1 Define a new FusionKind
+This section describes how to **add a new fusion pattern and its scheduling strategy** in the HFusion AutoSchedule framework, including scheduler implementation, kernel info extension, and registration.
 
-1. In the HFusion enum definition (e.g. `HFusionEnums.td`), add a new fusion kind, e.g. `FusionKind::MyKind`.
-2. In fusion analysis and pattern matching, ensure that fusion units with this kind are produced so that AutoSchedule can select the corresponding scheduler.
+#### 8.1 Define a new FusionKind
 
-#### 5.2 Custom scheduler (inherit SchedulerBase)
+- In the HFusion enum definition (e.g. `HFusionEnums.td`), add a new fusion kind, e.g. `FusionKind::MyKind`.
+- In fusion analysis and pattern matching, ensure that fusion units with this kind are produced so that AutoSchedule can select the corresponding scheduler.
 
-1. Add a header (e.g. `MySchedule.h`) under `AutoSchedule/` and define the scheduler class:
+#### 8.2 Custom scheduler (inherit SchedulerBase)
+
+- Add a header (e.g. `MySchedule.h`) under `AutoSchedule/` and define the scheduler class:
 
 ```cpp
 class MyScheduler : public SchedulerBase {
@@ -164,22 +273,22 @@ public:
 };
 ```
 
-2. Add implementation (e.g. `MySchedule.cpp`) and implement the overrides:
+- Add implementation (e.g. `MySchedule.cpp`) and implement the overrides:
 
-- **`analyzeAndVerifyKernelImpl()`**
+- **analyzeAndVerifyKernelImpl()**
   - Use `KernelInfoCollector` to gather kernel info (reuse an existing `KernelInfo` or add a custom subclass).
   - Check that the fusion graph matches the strategy (op types, shape relations, etc.).
 
-- **`calculateTilingImpl()`**
+- **calculateTilingImpl()**
   - Build and return `TilingComputeFn`: use `StmtExprBuilder` for static/dynamic dimension expressions; apply stride-align and tile-align; generate multiple `TilingCases` for different scenarios (e.g. small/large, different ranks) for selection.
 
-- **`createScheduleImpl(TilingKey key, OpBuilder &opBuilder)`**
+- **createScheduleImpl(TilingKey key, OpBuilder &opBuilder)**
   - For the chosen `TilingKey`, call schedule primitives in order: IO cache (`cacheRead`/`cacheWrite`), tiling (`tileUsingFor`/`tileUsingForAll`/`tileReductionUsingFor`), loop transforms (`fuseLoops`, `fuseIntoContaining`, `coalesceLoops`). Ensure the generated Transform sequence is correct and consistent with `KernelInfo`.
 
-- **`runPreScheduleProcedure()`** / **`runPostScheduleProcedure()`** (optional)
+- **runPreScheduleProcedure()** / **runPostScheduleProcedure()** (optional)
   - Add strategy-specific pre/post logic, e.g. pattern normalization, schedule validation, or statistics.
 
-#### 5.3 Extend KernelInfo (optional)
+#### 8.3 Extend KernelInfo (optional)
 
 If the new strategy needs extra structured information, extend `KernelInfo` by subclassing:
 
@@ -199,7 +308,7 @@ public:
 
 In `KernelInfoCollector`, add handling for `FusionKind::MyKind` to construct and fill `MyKernelInfo` so the scheduler can use it in `analyzeAndVerifyKernelImpl()` and `calculateTilingImpl()`.
 
-#### 5.4 Register the strategy
+#### 8.4 Register the strategy
 
 In `AutoScheduleBase.cpp::applySchedule()`, add a branch:
 
@@ -211,38 +320,52 @@ case FusionKind::MyKind:
 
 Ensure `MySchedule.cpp` is in the build and linked into the HFusion Transform module; the new strategy is then available in the pipeline.
 
-#### 5.5 Schedule primitives (Schedule API) quick reference
+#### 8.5 Schedule primitives (Schedule API) quick reference
 
-Inside `createScheduleImpl()` you can use the schedule APIs in `ScheduleOperations.cpp`:
+Inside `createScheduleImpl()`, you can reuse the schedule APIs in `ScheduleOperations.cpp`:
 
-- **IO cache and buffer**
-  - `cacheRead`, `cacheWrite`, `setBufferSize`
-- **Tiling and loop structure**
-  - `tileUsingFor`, `tileUsingForAll`, `tileReductionUsingFor`
+- **IO cache and buffer management**
+  - `cacheRead`
+  - `cacheWrite`
+  - `setBufferSize`
+- **Tiling and loop structure control**
+  - `tileUsingFor`
+  - `tileUsingForAll`
+  - `tileReductionUsingFor`
 - **Loop fuse and coalesce**
-  - `fuseLoops`, `fuseIntoContaining`, `coalesceLoops`
-- **Multi-core**
-  - `bindLoopToMulticore`; see AnyPBR for `getMultiCoreNum` and similar for core count configuration.
+  - `fuseLoops`
+  - `fuseIntoContaining`
+  - `coalesceLoops`
+- **Multi-core binding**
+  - `bindLoopToMulticore`
+  - See AnyPBR for `getMultiCoreNum` and similar to determine core count configuration.
 
 By combining these primitives, you can implement flexible and efficient schedule strategies for new fusion patterns within the same framework.
 
 ---
 
-### 6. Internal mechanisms (brief)
+### 9. Internal mechanisms (brief)
 
-#### 6.1 ValueHandle
+#### 9.1 ValueHandle abstraction
 
-- The `ValueHandle` family provides a uniform abstraction over MLIR values, function arguments, and named values.
-- They offer a single interface for access and manipulation so scheduler code does not depend on low-level IR details and stays maintainable in both schedule construction and Transform interpretation.
+- The `ValueHandle` family provides a uniform abstraction over MLIR values, function arguments, and named values from different sources.
+- They offer a single interface for access and manipulation so scheduler code does not depend on low-level IR details.
+- This helps keep the code concise and maintainable in both schedule construction and Transform interpretation.
 
-#### 6.2 Transform Dialect integration and interpretation
+#### 9.2 Transform Dialect integration and interpretation
 
 - AutoSchedule does not modify operator IR directly inside the scheduler; it builds a **Transform Dialect program**.
-- `AutoScheduleInterpreter.cpp` receives the schedule description from the scheduler, translates it into a sequence of Transform Dialect operations, and applies them to the target `func::FuncOp` to perform the actual IR transformation.
-- This keeps schedule logic decoupled from IR details and makes the schedule traceable (e.g. by printing the Transform program), debuggable, and reusable.
+- `AutoScheduleInterpreter.cpp` is responsible for:
+  - Receiving the schedule description produced by the scheduler;
+  - Translating it into a sequence of Transform Dialect operations;
+  - Applying these operations to the target `func::FuncOp` to perform the actual IR transformation.
+- This design keeps schedule logic decoupled from IR details and makes the schedule traceable (e.g., by printing the Transform program), debuggable, and reusable.
 
-#### 6.3 Tiling framework
+#### 9.3 Tiling computation framework
 
 - The `TilingInfo` and `Expr` system unify **dimension size**, **alignment rules**, and **dynamic shape** as expressions.
-- For static shape, expressions can be evaluated at compile time and folded into constant tiling parameters.
-- For dynamic shape, they are evaluated in the host tiling function with concrete input shapes; the same expressions support both static and dynamic cases and reduce code duplication.
+- For static shape:
+  - Expressions can be evaluated at compile time and folded into constant tiling parameters.
+- For dynamic shape:
+  - They are evaluated in the host tiling function with concrete input shapes;
+  - The same expressions serve both static and dynamic cases, reducing code duplication.
