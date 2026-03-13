@@ -296,7 +296,7 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
 std::vector<std::pair<Value, Value>> getSCFOperationAliasInfo(Operation *op);
 
 /// Get buffer static size.
-std::optional<uint32_t> GetBufferSize(Value buffer);
+std::optional<int64_t> GetBufferBitSize(Value buffer);
 
 // get is operation aligned according to the broadcast/reduce dim and rank
 AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank);

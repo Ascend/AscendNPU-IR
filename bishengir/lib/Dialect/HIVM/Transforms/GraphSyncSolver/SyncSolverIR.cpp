@@ -17,8 +17,10 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include "llvm/ADT/StringExtras.h"
+#include <string>
 
 using namespace mlir;
 using namespace hivm::syncsolver;
@@ -34,6 +36,7 @@ std::string getOpTypeStr(OpType opType) {
       {OpType::PLACE_HOLDER, "PlaceHolder"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
+      {OpType::FUNCTION_BLOCK, "FunctionBlock"},
       {OpType::LOOP, "Loop"},
       {OpType::MMAD_SCOPE, "MmadLoop"},
       {OpType::CONDITION, "Condition"},
@@ -63,6 +66,46 @@ struct Comma {
   }
 };
 
+std::string PointerLikeInfo::str() const {
+  std::string ret = "PointerLikeInfo(";
+  Comma comma;
+  if (addressSpace.has_value()) {
+    ret += comma.get();
+    ret += stringifyEnum(addressSpace.value());
+  }
+  ret += comma.get();
+  {
+    Comma comma;
+    ret += "[";
+    for (auto addr : addresses) {
+      ret += comma.get();
+      ret += std::to_string(addr);
+    }
+    ret += "]";
+  }
+  if (allocateSize.has_value()) {
+    ret += comma.get();
+    ret += std::to_string(allocateSize.value());
+  }
+  ret += ")";
+  return ret;
+}
+
+std::string MemInfo::str() const {
+  std::string ret = "MemInfo(";
+  Comma comma;
+  if (this->value) {
+    ret += comma.get();
+    ret += op2str(value);
+  }
+  if (this->pointerLikeInfo) {
+    ret += comma.get();
+    ret += this->pointerLikeInfo->str();
+  }
+  ret += ")";
+  return ret;
+}
+
 // Provide readable string representations for IR nodes used in logs and dumps.
 // Each specialized .str implementation documents what it prints.
 std::string PlaceHolder::str(int indent, bool recursive) const {
@@ -89,11 +132,14 @@ std::string Scope::str(int indent, bool recursive) const {
   return ret;
 }
 
-std::string Function::str(int indent, bool recursive) const {
+std::string Loop::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
+  if (isParallel) {
+    ret += " parallel-loop";
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -168,27 +214,11 @@ std::string RWOperation::str(int indent, bool recursive) const {
   ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
          " " + unitFlag + "\n";
   if (indent) {
-    for (auto val : this->readMemVals) {
-      ret += std::string(indent + 2, ' ') + "read: " + op2str(val) + "\n";
+    for (auto memInfo : this->readMemInfo) {
+      ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
     }
-    for (auto val : this->writeMemVals) {
-      ret += std::string(indent + 2, ' ') + "write: " + op2str(val) + "\n";
-    }
-    for (auto &ptr : this->testReadMemVals) {
-      ret += std::string(indent + 2, ' ') + "read: ptr(";
-      Comma comma;
-      for (auto val : ptr) {
-        ret += comma.get() + std::to_string(val);
-      }
-      ret += ") \n";
-    }
-    for (auto &ptr : this->testWriteMemVals) {
-      ret += std::string(indent + 2, ' ') + "write: ptr(";
-      Comma comma;
-      for (auto val : ptr) {
-        ret += comma.get() + std::to_string(val);
-      }
-      ret += ") \n";
+    for (auto memInfo : this->writeMemInfo) {
+      ret += std::string(indent + 2, ' ') + "write: " + memInfo.str() + "\n";
     }
   }
   ret.pop_back();

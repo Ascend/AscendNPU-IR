@@ -21,16 +21,16 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
-
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
+#include <climits>
 #include <deque>
 #include <memory>
+#include <pthread.h>
 #include <string>
 
 #define INTRA_CORE_EVENT_ID_NUM (int64_t)8
@@ -108,10 +108,10 @@ struct SyncSolverOptions {
   const SyncMode syncMode;
 
   // Architecture is memory based (A2/A3).
-  bool isMemBasedArch{false};
+  const bool isMemBasedArch;
 
   // Architecture is register based (A5).
-  bool isRegBasedArch{false};
+  const bool isRegBasedArch;
 
   // Decompose MMAD L1 ops into simpler ops for better sync handling.
   bool decomposeMmadl1Op{false};
@@ -126,7 +126,7 @@ struct SyncSolverOptions {
   bool considerOuterBackwardSyncPairs{true};
 
   // Try merging backward sync pairs and moving them to an outer scope.
-  bool moveOutAndMergeBackwardSyncPairs{false};
+  bool moveOutAndMergeBackwardSyncPairs{true};
 
   // Disable multi-event-id usage for barrier-all pipe pairs.
   bool disableMultiEventIdForBarrierAllPairs{true};
@@ -134,12 +134,17 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
-  SyncSolverOptions(SyncMode syncMode) : syncMode(syncMode) {
+  // Use different flag-ids for multibuffer backward sync pairs.
+  bool useDifferentMultiBufferFlagIds{false};
+
+  SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
+      : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
+        isRegBasedArch(isRegBasedArch) {
     decomposeMmadl1Op = isIntraCoreMode();
     alwaysUsePipeSAsWaitingPipe =
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
-    moveOutAndMergeBackwardSyncPairs = isIntraCoreMode();
+    useDifferentMultiBufferFlagIds = !isCrossCoreMode();
   }
 
   bool isCrossCoreMode() const {
@@ -237,6 +242,14 @@ struct Occurrence {
   static std::pair<Occurrence *, Occurrence *> getLCAPair(Occurrence *occ1,
                                                           Occurrence *occ2);
 
+  template <typename OpTy> Occurrence *getParentOfType() {
+    Occurrence *cur = this->parentOcc;
+    while (cur != nullptr && !isa_and_present<OpTy>(cur->op)) {
+      cur = cur->parentOcc;
+    }
+    return cur;
+  }
+
   // Find and return the nearest parent occurrence that is a loop.
   static Occurrence *getParentloop(Occurrence *occ);
 
@@ -274,11 +287,13 @@ struct ConflictPair {
   bool dontReuse{false};
   bool dontCheckForConflict{false};
   bool couldNotRun{false};
-  LoopLikeOpInterface multibufferLoopPar{nullptr};
   bool setOnLastIterOnly{false};
   bool waitOnFirstIterOnly{false};
   bool replacedWithUnitFlag{false};
-  Loop *backwardSyncLoop{nullptr};
+  bool movedToOuterLoop{false};
+  Loop *backwardSyncLoopOp{nullptr};
+  Occurrence *backwardSyncLoopOcc{nullptr};
+  EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
@@ -318,11 +333,12 @@ struct ConflictPair {
     clonedConflictPair->isUseless = isUseless;
     clonedConflictPair->dontReuse = dontReuse;
     clonedConflictPair->couldNotRun = couldNotRun;
-    clonedConflictPair->multibufferLoopPar = multibufferLoopPar;
     clonedConflictPair->setOnLastIterOnly = setOnLastIterOnly;
     clonedConflictPair->waitOnFirstIterOnly = waitOnFirstIterOnly;
     clonedConflictPair->replacedWithUnitFlag = replacedWithUnitFlag;
-    clonedConflictPair->backwardSyncLoop = backwardSyncLoop;
+    clonedConflictPair->backwardSyncLoopOp = backwardSyncLoopOp;
+    clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
+    clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
     return clonedConflictPair;
   }
@@ -461,9 +477,6 @@ bool checkAllParentLoopsAreForLoops(Operation *op);
 Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val);
 
 hivm::TCoreType getOppositeCoreType(hivm::TCoreType coreType);
-
-std::pair<Occurrence *, Occurrence *> getLCAPairOcc(Occurrence *occ1,
-                                                    Occurrence *occ2);
 
 template <typename OpTy>
 llvm::FailureOr<std::pair<OpTy, OpTy>> getFirstLastOp(Operation *parentOp) {

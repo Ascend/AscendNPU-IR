@@ -303,7 +303,7 @@ std::optional<hivm::PIPE> SyncBlockIRTranslator::getInferredPipe(
   }
   std::optional<hivm::PIPE> pipe;
   for (auto &memInfo : defVec) {
-    auto addressSpace = memInfo->scope;
+    auto addressSpace = memInfo->addressSpace;
     std::optional<hivm::PIPE> curPipe;
     if (isa<hivm::CopyOp>(op) && addressSpace == AddressSpace::L1 &&
         coreType == TCoreType::VECTOR) {
@@ -422,8 +422,8 @@ void SyncBlockIRTranslator::UpdateAllocOpMeminfo(memref::AllocOp allocOp) {
   if (auto spaceAttr = GetBufferSpaceAttr(allocOpResult)) {
     auto space = spaceAttr.value().getAddressSpace();
     auto newMemInfo = std::make_unique<BaseMemInfo>(
-        allocOpResult, allocOpResult, space, SmallVector<uint64_t>(1, 0), 0,
-        std::nullopt);
+        allocOpResult, allocOpResult, space, SmallVector<int64_t>(1, 0), 0,
+        false, std::nullopt);
     buffer2MemInfoMap[allocOpResult].emplace_back(std::move(newMemInfo));
   }
 }

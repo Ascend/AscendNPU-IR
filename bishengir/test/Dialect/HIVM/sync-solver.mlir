@@ -73,6 +73,63 @@ module {
 
 // -----
 module {
+  func.func @test_parallel_loop(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
+    %c16384_i64 = arith.constant 16384 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c0 = arith.constant 0 : index
+    %c1024 = arith.constant 1024 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    // CHECK: scf.for %arg2 = %c0 to %c1024 step %c128 {
+    scf.for %arg2 = %c0 to %c1024 step %c128 {
+      // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+      hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+      hivm.hir.store ins(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+      // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    // CHECK: } {hivm.parallel_loop}
+    } {hivm.parallel_loop}
+    // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    return
+  }
+}
+
+// -----
+module {
+  func.func @test_parallel_nested_loop(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>) {
+    %c16384_i64 = arith.constant 16384 : i64
+    %c8192_i64 = arith.constant 8192 : i64
+    %c0 = arith.constant 0 : index
+    %c1024 = arith.constant 1024 : index
+    %c128 = arith.constant 128 : index
+    %c0_i64 = arith.constant 0 : i64
+    %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    // CHECK-NEXT: scf.for %arg2 = %c0 to %c1024 step %c128 {
+    scf.for %arg2 = %c0 to %c1024 step %c128 {
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+      // CHECK-NEXT: scf.for %arg3 = %c0 to %c1024 step %c128 {
+      scf.for %arg3 = %c0 to %c1024 step %c128 {
+        // CHECK-NOT: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+        hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+        // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+        // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>, <EVENT_ID0>]
+        hivm.hir.store ins(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+        // CHECK-NOT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+      // CHECK: } {hivm.parallel_loop}
+      } {hivm.parallel_loop}
+      // CHECK-NEXT: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    }
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+    return
+  }
+}
+
+// -----
+module {
   func.func @test_sync_solver_if_else(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg3: memref<16x16x16xf16, #hivm.address_space<gm>>, %arg4: i1) {
     %c16384_i64 = arith.constant 16384 : i64
     %c8192_i64 = arith.constant 8192 : i64
@@ -540,6 +597,44 @@ module {
     // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
     // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
     hivm.hir.fixpipe {enable_nz2nd} ins(%2 : memref<256xf32, #hivm.address_space<cc>>) outs(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+module {
+  func.func @test_branchop_inplace(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>, %arg3: i1) {
+    %c64_i64 = arith.constant 64 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %0 = hivm.hir.pointer_cast(%c0_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.cond_br %arg3, ^bb1, ^bb2
+  ^bb1:  // pred: ^bb0
+    %1 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%1 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %2 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.vadd ins(%0, %1 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%2 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.br ^bb3(%2 : memref<16xf16, #hivm.address_space<ub>>)
+  ^bb2:  // pred: ^bb0
+    %3 = hivm.hir.pointer_cast(%c64_i64) : memref<16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%3 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %4 = hivm.hir.pointer_cast(%c64_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.vsub ins(%0, %3 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%4 : memref<16xf16, #hivm.address_space<ub>>)
+    cf.br ^bb3(%4 : memref<16xf16, #hivm.address_space<ub>>)
+  ^bb3(%5: memref<16xf16, #hivm.address_space<ub>>):  // 2 preds: ^bb1, ^bb2
+    // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    %6 = hivm.hir.pointer_cast(%c32_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    hivm.hir.pipe_barrier[<PIPE_V>]
+    hivm.hir.vadd ins(%5, %0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%6 : memref<16xf16, #hivm.address_space<ub>>)
+    // CHECK: hivm.hir.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    // CHECK: hivm.hir.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    hivm.hir.store ins(%6 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg2 : memref<16xf16, #hivm.address_space<gm>>)
     return
   }
 }

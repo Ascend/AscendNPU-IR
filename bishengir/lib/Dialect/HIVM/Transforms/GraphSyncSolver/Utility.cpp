@@ -19,8 +19,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "mlir/IR/Value.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/Sequence.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
 #include <numeric>
@@ -35,8 +33,8 @@ int ConflictPair::globalIdCounter = 0;
 int EventIdNode::globalIdCounter = 0;
 
 bool Occurrence::sameScope(Occurrence *occ1, Occurrence *occ2) {
-  assert(occ1->parentOcc != nullptr);
-  assert(occ2->parentOcc != nullptr);
+  assert(occ1 != nullptr && occ1->parentOcc != nullptr);
+  assert(occ2 != nullptr && occ2->parentOcc != nullptr);
   return occ1->parentOcc == occ2->parentOcc;
 }
 
@@ -131,6 +129,7 @@ Occurrence *Occurrence::getUnlikelyParentCondition(Occurrence *occ) {
 }
 
 bool Occurrence::isProperAncestor(Occurrence *occ) {
+  assert(occ != nullptr);
   int depth1 = getDepth(this);
   int depth2 = getDepth(occ);
   if (depth1 >= depth2) {
@@ -165,8 +164,9 @@ bool OperationBase::sameScope(OperationBase *op1, OperationBase *op2) {
   return op1->parentOp == op2->parentOp;
 }
 
-int OperationBase::getDepth(OperationBase *op) {
+int OperationBase::getDepth() const {
   int ret = 0;
+  const OperationBase *op = this;
   while (op != nullptr) {
     op = op->parentOp;
     ret++;
@@ -186,8 +186,8 @@ OperationBase *OperationBase::getNthParent(int dist) {
 std::pair<OperationBase *, OperationBase *>
 OperationBase::getLCAPair(OperationBase *op1, OperationBase *op2) {
   assert(op1 != nullptr && op2 != nullptr);
-  int depth1 = getDepth(op1);
-  int depth2 = getDepth(op2);
+  int depth1 = op1->getDepth();
+  int depth2 = op2->getDepth();
   if (depth1 < depth2) {
     op2 = op2->getNthParent(depth2 - depth1);
   } else if (depth1 > depth2) {
@@ -197,6 +197,8 @@ OperationBase::getLCAPair(OperationBase *op1, OperationBase *op2) {
     op1 = op1->parentOp;
     op2 = op2->parentOp;
   }
+  assert(op1 != nullptr && op2 != nullptr);
+  assert(op1->parentOp == op2->parentOp);
   return std::make_pair(op1, op2);
 }
 
@@ -219,8 +221,9 @@ OperationBase *OperationBase::getParentCondition(OperationBase *op) {
 }
 
 bool OperationBase::isProperAncestor(OperationBase *op) {
-  int depth1 = getDepth(this);
-  int depth2 = getDepth(op);
+  assert(op != nullptr);
+  int depth1 = this->getDepth();
+  int depth2 = op->getDepth();
   if (depth1 >= depth2) {
     return false;
   }
@@ -228,6 +231,7 @@ bool OperationBase::isProperAncestor(OperationBase *op) {
 }
 
 OperationBase *OperationBase::getUnlikelyParentCondition(OperationBase *op) {
+  assert(op != nullptr);
   auto *cur = OperationBase::getParentCondition(op);
   while (cur != nullptr) {
     auto *conditionOp = dyn_cast<Condition>(cur);
@@ -420,24 +424,6 @@ hivm::TCoreType getOppositeCoreType(hivm::TCoreType coreType) {
   case hivm::TCoreType::CUBE_AND_VECTOR:
     return hivm::TCoreType::CUBE_AND_VECTOR;
   }
-}
-
-std::pair<Occurrence *, Occurrence *> getLCAPairOcc(Occurrence *occ1,
-                                                    Occurrence *occ2) {
-  assert(occ1 != nullptr && occ2 != nullptr);
-  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
-  assert(parOp1 != nullptr && parOp2 != nullptr);
-  assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
-  assert(parOp1->parentOp == parOp2->parentOp);
-  auto *parOcc1 = occ1->getParentWithOp(parOp1->parentOp);
-  auto *parOcc2 = occ2->getParentWithOp(parOp2->parentOp);
-  assert(parOcc1 != nullptr && parOcc2 != nullptr);
-  assert(parOcc1 != occ1 && parOcc2 != occ2);
-  auto *setOcc = occ1->getNthParent(occ1->depth - parOcc1->depth - 1);
-  auto *waitOcc = occ2->getNthParent(occ2->depth - parOcc2->depth - 1);
-  assert(setOcc != nullptr && waitOcc != nullptr &&
-         setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
-  return std::make_pair(setOcc, waitOcc);
 }
 
 bool isEmptyScope(Scope *scope) {

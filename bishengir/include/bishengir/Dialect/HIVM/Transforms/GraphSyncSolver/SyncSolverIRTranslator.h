@@ -28,6 +28,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace mlir::hivm::syncsolver {
@@ -58,6 +59,10 @@ public:
   // Processing order list created from syncIr that drives pairwise conflict
   // checks.
   std::vector<ProcessingOrder> processingOrders;
+
+  // Aliases for block arguments collected from cf::CondBranchOp and
+  // cf::BranchOp operations.
+  llvm::DenseMap<Value, llvm::SmallVector<Value>> blockArgAliases;
 
 public:
   IRTranslator(func::FuncOp func, SyncSolverOptions options)
@@ -137,7 +142,13 @@ private:
   getInferredPipe(Operation *op, TCoreType coreType,
                   const llvm::SmallVector<Value> &writeMemInfo);
 
+  void updateBlockArgAliases(Block *block, OperandRange destOperands);
+
   bool isUnlikelyCondition(Condition *condOp);
+
+  bool isParallelLoop(Loop *loopOp);
+  
+  std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
 };
 
 } // namespace mlir::hivm::syncsolver

@@ -23,7 +23,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
@@ -66,6 +65,8 @@ protected:
   int64_t globalSetWaitIndex{0};
   int64_t maxReuseNum{20};
   int64_t maxRunNum{99};
+  bool moveBackwardSyncPairsToOutmostLoop{false};
+  bool dontMoveBackwardSyncPairsToOutmostLoop{false};
 
   llvm::DenseMap<std::tuple<hivm::PIPE, hivm::PIPE>,
                  std::unique_ptr<EventIdSolver>>
@@ -115,7 +116,7 @@ protected:
   // used.
   llvm::MapVector<OperationBase *,
                   llvm::DenseMap<std::tuple<CorePipeInfo, CorePipeInfo>,
-                                 llvm::DenseSet<int64_t>>>
+                                 llvm::DenseMap<int64_t, int64_t>>>
       backwardSyncEvents;
 
   llvm::MapVector<OperationBase *,
@@ -198,35 +199,33 @@ protected:
                                RWOperation *rwOp1, RWOperation *rwOp2,
                                bool isUseless);
 
-  // Multi-buffer/event-related helpers that determine if double event id can be
-  // used.
   std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(const llvm::SmallVector<Value> &memValsList1,
-                                const llvm::SmallVector<Value> &memValsList2);
-
-  std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
-                                hivm::PointerCastOp pointerCastOp2);
-
-  std::optional<LoopLikeOpInterface> checkDoubleMultiBufferEventId(
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
-
-  std::optional<LoopLikeOpInterface>
-  checkDoubleMultiBufferEventId(RWOperation *rwOp1, RWOperation *rwOp2);
+  getMultiBufferLoop(const llvm::SmallVector<MemInfo> &memInfoList1,
+                     const llvm::SmallVector<MemInfo> &memInfoList2);
+  std::optional<LoopLikeOpInterface> getMultiBufferLoop(RWOperation *rwOp1,
+                                                        RWOperation *rwOp2);
+  std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
+                                                       Occurrence *occ2,
+                                                       RWOperation *rwOp1,
+                                                       RWOperation *rwOp2);
 
   // Determine how many event ids are needed for a particular occurrence pair.
-  std::pair<int64_t, LoopLikeOpInterface>
-  getEventIdNum(Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-                CorePipeInfo corePipeDst);
+  EventIdInfo getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
+                             RWOperation *rwOp1, RWOperation *rwOp2,
+                             CorePipeInfo corePipeSrc,
+                             CorePipeInfo corePipeDst);
 
-  std::optional<int64_t> checkCVMultiBufferEventId(RWOperation *rwOp1,
-                                                   RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkCVMultiBufferEventIdInfo(RWOperation *rwOp1,
+                                                           RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,
+                                                         Occurrence *occ2,
+                                                         RWOperation *rwOp1,
+                                                         RWOperation *rwOp2);
 
   // Graph-based conflict checking and memory conflict detection helpers.
   bool checkGraphConflict(
       Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
-      CorePipeInfo corePipeDst, int64_t eventIdNum,
+      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
       std::optional<int> startIndex = {}, std::optional<int> endIndex = {},
       const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
       const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
@@ -237,20 +236,12 @@ protected:
   bool checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
                                               Occurrence *occ2);
 
-  bool checkRWMemoryConflicts(const llvm::SmallVector<Value> &memValsList1,
-                              const llvm::SmallVector<Value> &memValsList2);
-
-  bool checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
-                                   hivm::PointerCastOp pointerCastOp2);
-
-  bool checkAllocWorkSpaceMemConflict(
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp1,
-      bishengir::memref_ext::AllocWorkspaceOp allocWorkSpaceOp2);
-
   // Feasibility checks and bookkeeping accessors used by the solver loop.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
 
   bool checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2);
+
+  bool checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2);
 
   bool checkAlreadySynced(Occurrence *occ1, Occurrence *occ2);
 
@@ -259,16 +250,15 @@ protected:
   bool skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2);
 
   bool checkSyncOpsConflicts(ConflictPair *conflictPair1,
-                             ConflictPair *conflictPair2, int64_t eventIdNum);
+                             ConflictPair *conflictPair2);
 
   // Check whether two ConflictPair ranges/event mapping intersect (same
   // pipes/events).
-  bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2,
-                      int64_t eventIdNum = 0);
+  bool checkIntersect(ConflictPair *conflictPair1, ConflictPair *conflictPair2);
 
   // Event-id allocation and reuse helpers.
   std::vector<ConflictPair *>
-  getIntersectingConflictPairs(ConflictPair *conflictPair, int64_t eventIdNum);
+  getIntersectingConflictPairs(ConflictPair *conflictPair);
 
   // Visit tracking helpers for occurrence pairs.
   bool checkVisited(Occurrence *occ1, Occurrence *occ2);
@@ -290,12 +280,17 @@ protected:
   void forgetSyncedPair(ConflictPair *conflictPair);
 
   // Utilities to map an occurrence pair to their set/wait occurrences.
+  std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
+                                                             Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *> getSetWaitOcc(Occurrence *occ1,
                                                       Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *> getFixedSetWaitOcc(Occurrence *occ1,
                                                            Occurrence *occ2);
 
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
+
+  std::optional<std::pair<Occurrence *, Occurrence *>>
+  getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
 
   std::optional<std::pair<Occurrence *, Occurrence *>>
   getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2);
@@ -323,12 +318,13 @@ protected:
   std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
                                                       hivm::PIPE pipeDst);
 
+  bool checkReuseMultiBufferFlagId(ConflictPair *conflictPair);
+
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
                       RWOperation *rwOp2, CorePipeInfo corePipeSrc,
-                      CorePipeInfo corePipeDst, bool isUseless,
-                      int64_t eventIdNum,
-                      LoopLikeOpInterface multibufferLoopPar);
+                      CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+                      bool isUseless);
 
   void handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
@@ -336,14 +332,12 @@ protected:
 
   void handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
                              CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
-                             bool isUseless, int64_t eventIdNum,
-                             LoopLikeOpInterface multibufferLoopPar);
+                             EventIdInfo eventIdInfo, bool isUseless);
 
   void handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
                               CorePipeInfo corePipeSrc,
                               CorePipeInfo corePipeDst,
-                              UnitFlagInfo unitFlagInfo, bool isUseless,
-                              LoopLikeOpInterface multibufferLoopPar);
+                              UnitFlagInfo unitFlagInfo, bool isUseless);
 
   Occurrence *getFirstIterOcc(Occurrence *occ, Occurrence *parOcc);
 
@@ -391,6 +385,8 @@ protected:
 
   void mergeBackwardSyncEventIds(OperationBase *op);
 
+  void mergeBackwardSyncPairs(SyncMap &syncMapBefore, SyncMap &syncMapAfter);
+
   void insertMergedBackwardSyncPairs();
 
   llvm::LogicalResult considerOuterBackwardSyncPairs();
@@ -398,6 +394,8 @@ protected:
   llvm::LogicalResult reuseSyncPairToSaveEventIds();
 
   llvm::LogicalResult disableMultiEventIdForBarrierAllPairs();
+
+  llvm::LogicalResult tryMovingOutBackwardSyncPairsToOuterLoops();
 
   Occurrence *getBeforePlaceHolderOcc(Occurrence *occ);
   Occurrence *getAfterPlaceHolderOcc(Occurrence *occ);

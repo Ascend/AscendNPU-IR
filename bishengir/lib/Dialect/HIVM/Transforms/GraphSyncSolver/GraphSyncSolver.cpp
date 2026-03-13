@@ -71,9 +71,8 @@ void GraphSyncSolverPass::runOnOperation() {
   bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   assert(isMemBasedArch != isRegBasedArch);
 
-  SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC);
-  options.isMemBasedArch = isMemBasedArch;
-  options.isRegBasedArch = isRegBasedArch;
+  SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
+                            isRegBasedArch);
   options.enableUnitFlagFeature = this->enableUnitFlag;
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);

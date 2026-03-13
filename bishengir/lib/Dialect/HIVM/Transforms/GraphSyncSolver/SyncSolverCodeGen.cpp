@@ -25,6 +25,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -164,11 +165,11 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
   auto *ctx = funcOp->getContext();
   Location loc = getProperLoc(opBase);
+  assert(!setFlagOp->checkFirstIter);
   if (setFlagOp->checkLastIter) {
-    assert(setFlagOp->op != nullptr);
-    auto forOp = setFlagOp->op->getParentOfType<scf::ForOp>();
+    auto *parentLoop = OperationBase::getParentloop(setFlagOp);
+    auto forOp = dyn_cast<scf::ForOp>(parentLoop->op);
     assert(forOp != nullptr);
-    assert(setFlagOp->op->getParentOp() == forOp);
     Value cond = getIsLastIterationValue(forOp, loc, rewriter);
     auto ifOp = rewriter.create<scf::IfOp>(loc, cond);
     rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -176,7 +177,6 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
   auto setPipe = PipeAttr::get(ctx, setFlagOp->pipeSrc);
   auto waitPipe = PipeAttr::get(ctx, setFlagOp->pipeDst);
   if (!setFlagOp->allAtOnce && setFlagOp->eventIds.size() > 1) {
-    assert(setFlagOp->multibufferLoopPar != nullptr);
     auto selectedBuffer = getMultiBufferSelectOp(rewriter, setFlagOp);
     rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, EventAttr{},
                                      selectedBuffer);
@@ -205,11 +205,11 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
   auto *ctx = funcOp->getContext();
   Location loc = getProperLoc(opBase);
+  assert(!waitFlagOp->checkLastIter);
   if (waitFlagOp->checkFirstIter) {
-    assert(waitFlagOp->op != nullptr);
-    auto forOp = waitFlagOp->op->getParentOfType<scf::ForOp>();
+    auto *parentLoop = OperationBase::getParentloop(waitFlagOp);
+    auto forOp = dyn_cast<scf::ForOp>(parentLoop->op);
     assert(forOp != nullptr);
-    assert(waitFlagOp->op->getParentOp() == forOp);
     Value cond = getIsFirstIterationValue(forOp, loc, rewriter);
     auto ifOp = rewriter.create<scf::IfOp>(loc, cond);
     rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -217,7 +217,6 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
   auto setPipe = PipeAttr::get(ctx, waitFlagOp->pipeSrc);
   auto waitPipe = PipeAttr::get(ctx, waitFlagOp->pipeDst);
   if (!waitFlagOp->allAtOnce && waitFlagOp->eventIds.size() > 1) {
-    assert(waitFlagOp->multibufferLoopPar != nullptr);
     auto selectedBuffer = getMultiBufferSelectOp(rewriter, waitFlagOp);
     rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, EventAttr{},
                                       selectedBuffer);
@@ -289,83 +288,150 @@ void CodeGenerator::insertWaitBlockFlagOp(IRRewriter &rewriter,
 
 // Build/select a runtime i64 value that picks which buffer/event to use for
 // multi-buffer sync.
+Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
+                                           SetWaitOp *syncOp) {
+  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
+  assert(multibufferLoop != nullptr);
+
+  int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
+  auto key = std::make_pair(multibufferLoop, eventIdNum);
+  auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+  if (!isInserted) {
+    return it->second;
+  }
+
+  PatternRewriter::InsertionGuard guard(rewriter);
+  Value modularIndex =
+      createNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
+  return it->second = modularIndex;
+}
+
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                             SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  assert(syncOp->eventIds.size() == 2);
-  assert(syncOp->multibufferLoopPar != nullptr);
+  if (!syncOp->eventIdInfo.multibufferLoop) {
+    return nullptr;
+  }
 
-  assert(llvm::dyn_cast_if_present<scf::ForOp>(
-             syncOp->multibufferLoopPar.getOperation()) != nullptr);
-  auto eventsPair = std::make_pair(syncOp->eventIds[0], syncOp->eventIds[1]);
-  if (bufferSelectedMem[syncOp->multibufferLoopPar].contains(eventsPair)) {
-    return bufferSelectedMem[syncOp->multibufferLoopPar][eventsPair];
+  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
+  assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
+  auto [it, isInserted] =
+      bufferSelectedMem[multibufferLoop].insert({syncOp->eventIds, Value{}});
+  if (!isInserted) {
+    return it->second;
   }
-  Value counter;
-  PatternRewriter::InsertionGuard guard(rewriter);
-  if (nestedIndexModularMem.contains(syncOp->multibufferLoopPar)) {
-    counter = nestedIndexModularMem[syncOp->multibufferLoopPar];
-  } else {
-    counter = createNestedIndexModular(rewriter, syncOp->multibufferLoopPar);
-    nestedIndexModularMem[syncOp->multibufferLoopPar] = counter;
-  }
+
+  Value counter = getNestedIndexModular(rewriter, syncOp);
   assert(counter.getDefiningOp() != nullptr);
+
+  PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
   Location loc = counter.getDefiningOp()->getLoc();
-  Value firstID = rewriter.create<arith::ConstantIntOp>(
-      loc, rewriter.getI64Type(), syncOp->eventIds[0]);
-  Value secondID = rewriter.create<arith::ConstantIntOp>(
-      loc, rewriter.getI64Type(), syncOp->eventIds[1]);
-  Value bufferSelected = rewriter.create<arith::SelectOp>(
-      loc, rewriter.getI64Type(), counter, firstID, secondID);
-  bufferSelectedMem[syncOp->multibufferLoopPar][eventsPair] = bufferSelected;
-  return bufferSelected;
+
+  Value bufferSelected;
+  if (syncOp->eventIds.size() == 2) {
+    Value firstID = rewriter.create<arith::ConstantIntOp>(
+        loc, rewriter.getI64Type(), syncOp->eventIds[0]);
+    Value secondID = rewriter.create<arith::ConstantIntOp>(
+        loc, rewriter.getI64Type(), syncOp->eventIds[1]);
+    bufferSelected = rewriter.create<arith::SelectOp>(
+        loc, rewriter.getI64Type(), counter, firstID, secondID);
+  } else {
+    Value selectedValue{nullptr};
+    for (auto [i, eventId] : llvm::enumerate(syncOp->eventIds)) {
+      auto eventIdAttr =
+          rewriter.getIntegerAttr(rewriter.getI64Type(), syncOp->eventIds[i]);
+      Value eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
+      if (!selectedValue) {
+        selectedValue = eventIdValue;
+        continue;
+      }
+      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value cmpEqOp = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, counter, iVal);
+      selectedValue = rewriter.create<arith::SelectOp>(
+          loc, rewriter.getI64Type(), cmpEqOp, eventIdValue, selectedValue);
+    }
+    bufferSelected = selectedValue;
+  }
+
+  return it->second = bufferSelected;
+}
+
+Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                                         SetWaitOp *syncOp) {
+  assert(syncOp != nullptr);
+  auto multibufferLoop = isa<SetFlagOp>(syncOp)
+                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoop) {
+    return nullptr;
+  }
+  for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
+    if (syncOp->eventIds[i - 1] + 1 != syncOp->eventIds[i]) {
+      return nullptr;
+    }
+  }
+  auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
+  assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
+  assert(scf::utils::isNormalized(forOp));
+  auto loc = forOp->getLoc();
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(forOp.getBody());
+  Value loopIndVar = forOp.getInductionVar();
+  auto eventIdAttr =
+      rewriter.getIntegerAttr(rewriter.getIndexType(), syncOp->eventIds[0]);
+  auto eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
+  Value eventId = rewriter.create<arith::AddIOp>(loc, rewriter.getIndexType(),
+                                                 loopIndVar, eventIdValue);
+  return getValueOrCreateCastToI64(rewriter, loc, eventId);
 }
 
 Value CodeGenerator::getCVMultiBufferSelectOp(IRRewriter &rewriter,
                                               SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  assert(syncOp->op != nullptr);
-  for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
-    assert(syncOp->eventIds[i - 1] + 1 == syncOp->eventIds[i]);
-  }
-  auto forOp = syncOp->op->getParentOfType<scf::ForOp>();
-  if (forOp == nullptr || !forOp->hasAttr(kMultibufferUnrollAttrName)) {
+  auto multibufferLoop = isa<SetFlagOp>(syncOp)
+                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoop) {
     return nullptr;
   }
-  if (!scf::utils::isNormalized(forOp)) {
-    // TODO: call normalize loop pass before plan memory, currently CVPipelining
-    // ensure the loop is normalized
-    forOp->emitOpError("parent loop is not normalized");
-    return nullptr;
-  }
+  auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
+  assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
+  assert(scf::utils::isNormalized(forOp));
   auto loc = forOp->getLoc();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(forOp.getBody());
-  auto mayLoopIndVars = forOp.getLoopInductionVars();
-  assert(mayLoopIndVars.has_value() && !mayLoopIndVars.value().empty());
-  Value loopIndVar = mayLoopIndVars.value()[0];
-  auto eventIdAttr =
-      rewriter.getIntegerAttr(loopIndVar.getType(), syncOp->eventIds[0]);
-  auto eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
-  Value eventId = rewriter.create<arith::AddIOp>(loc, loopIndVar.getType(),
-                                                 loopIndVar, eventIdValue);
-  return getValueOrCreateCastToI64(rewriter, loc, eventId);
+  Value loopIndVar = forOp.getInductionVar();
+  Value selectedValue{nullptr};
+  for (auto [i, eventId] : llvm::enumerate(syncOp->eventIds)) {
+    auto eventIdAttr =
+        rewriter.getIntegerAttr(rewriter.getI64Type(), syncOp->eventIds[i]);
+    Value eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
+    if (!selectedValue) {
+      selectedValue = eventIdValue;
+      continue;
+    }
+    Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
+    Value cmpEqOp = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, loopIndVar, iVal);
+    selectedValue = rewriter.create<arith::SelectOp>(
+        loc, rewriter.getI64Type(), cmpEqOp, eventIdValue, selectedValue);
+  }
+  return selectedValue;
 }
 
 Value CodeGenerator::getMultiBufferBlockSelectOp(IRRewriter &rewriter,
                                                  SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  assert(syncOp->op != nullptr);
-  if (syncOp->multibufferLoopPar != nullptr) {
-    return getMultiBufferSelectOp(rewriter, syncOp);
+  if (auto selectOp = getMultiBufferSelectOp(rewriter, syncOp)) {
+    return selectOp;
   }
-  if (syncOp->eventIds.size() <= 2) {
-    syncOp->multibufferLoopPar = syncOp->op->getParentOfType<scf::ForOp>();
-    return getMultiBufferSelectOp(rewriter, syncOp);
+  if (auto selectOp = getCVMultiBufferSelectOpConsecutive(rewriter, syncOp)) {
+    return selectOp;
   }
-  if (auto cvMultiBufferSelector = getCVMultiBufferSelectOp(rewriter, syncOp)) {
-    return cvMultiBufferSelector;
+  if (auto selectOp = getCVMultiBufferSelectOp(rewriter, syncOp)) {
+    return selectOp;
   }
   llvm_unreachable("unhandled cross-core sync case with multibuffer enabled.");
 }
