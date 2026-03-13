@@ -634,7 +634,7 @@ def VSubOp
 
 def VDivOp : HIVM_ElementwiseBinaryOp<
                  "vdiv", [SameOperandsElementType, StaticMaxRankTrait<3>,
-                          OperElemTypeConstraints<[0, 1], [F16, F32, I16, I32]>,
+                          OperElemTypeConstraints<[0, 1], [F16, F32, I16, I32, I64]>,
                           DeclareOpInterfaceMethods<ExtraBufferOpInterface,
                             ["getExtraBufferSize"]>,
                           DeclareOpInterfaceMethods<VectorizableOpInterface>,
