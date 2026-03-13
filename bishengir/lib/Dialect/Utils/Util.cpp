@@ -8,14 +8,14 @@
 
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -296,6 +296,9 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
     if (isa<scf::YieldOp>(op)) {
       assert(op->getParentOp());
       auto resNum = use.getOperandNumber();
+      if (resNum >= op->getParentOp()->getNumResults()) {
+        continue;
+      }
       auto resCheck = checkUsersAllWithCondition(
           op->getParentOp()->getResult(resNum), rootOp, condFn, skipFn);
       if (!resCheck.has_value())
@@ -342,8 +345,7 @@ int checkDefsAllWithCondition(Value v,
 bool checkUsersAnyWithCondition(
     Value v, Operation *rootOp,
     const std::function<bool(Operation *op)> &condFn,
-    const std::function<bool(Operation *op)> &skipFn,
-    DenseSet<Value> &flag) {
+    const std::function<bool(Operation *op)> &skipFn, DenseSet<Value> &flag) {
   if (flag.contains(v))
     return false;
   flag.insert(v);
@@ -358,7 +360,7 @@ bool checkUsersAnyWithCondition(
     // When meet satisfied op, return true
     if (condFn(op))
       return true;
-    
+
     // If op can't satisfy condition and can't be skipped, return false directly
     if (!skipFn(op))
       return false;
@@ -373,8 +375,8 @@ bool checkUsersAnyWithCondition(
         for (unsigned i = 0; i < op->getNumOperands(); ++i) {
           if (op->getOperand(i) != v || i >= parentOp->getNumResults())
             continue;
-          if (checkUsersAnyWithCondition(parentOp->getResult(i), rootOp,
-                                         condFn, skipFn, flag))
+          if (checkUsersAnyWithCondition(parentOp->getResult(i), rootOp, condFn,
+                                         skipFn, flag))
             return true;
         }
       }
@@ -657,8 +659,9 @@ void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
 ModuleOp getTopLevelModuleOp(Operation *op) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   while (moduleOp && moduleOp->getParentOp()) {
-    auto spec = moduleOp->getAttrOfType<TargetSystemSpecAttr>("dlti.target_system_spec");
-    if (spec){
+    auto spec = moduleOp->getAttrOfType<TargetSystemSpecAttr>(
+        "dlti.target_system_spec");
+    if (spec) {
       return moduleOp;
     }
     moduleOp = moduleOp->getParentOfType<ModuleOp>();
@@ -736,8 +739,7 @@ static VectorType getLegalizedVectorType(VectorType source) {
     return hivm::util::trimNonScalableUnitDims(source);
   } else {
     return VectorType::get(
-        SmallVector<int64_t>{
-            utils::getVectorSizeByElementType(elemTy)},
+        SmallVector<int64_t>{utils::getVectorSizeByElementType(elemTy)},
         elemTy);
   }
 }
@@ -1141,20 +1143,18 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
 
   // support I8, I16, I32, BF16, F16, F32, F8E4M3FN, F8E5M2
   auto elementType = memrefTy.getElementType();
-  bool isSupportedFloat = elementType.isFloat8E4M3FN() || 
-                          elementType.isFloat8E5M2() ||
-                          elementType.isBF16() || 
-                          elementType.isF16() || 
-                          elementType.isF32();
-  bool isSupportedInt = elementType.isInteger(32) || 
-                        elementType.isInteger(16) || 
-                        elementType.isInteger(8);
+  bool isSupportedFloat = elementType.isFloat8E4M3FN() ||
+                          elementType.isFloat8E5M2() || elementType.isBF16() ||
+                          elementType.isF16() || elementType.isF32();
+  bool isSupportedInt = elementType.isInteger(32) ||
+                        elementType.isInteger(16) || elementType.isInteger(8);
   if (!isSupportedFloat && !isSupportedInt) {
-      return false;
+    return false;
   }
 
   // check if last dim size matches one block which is 256bit.
-  auto expectedDim = hivm::util::vectorBlockSizeBit / elementType.getIntOrFloatBitWidth();
+  auto expectedDim =
+      hivm::util::vectorBlockSizeBit / elementType.getIntOrFloatBitWidth();
   if (expectedDim != last_dim) {
     LLVM_DEBUG(DBGS() << "last dim not support\n");
     return false;
@@ -1633,7 +1633,7 @@ int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
   } else {
     module = opCtx->getParentOfType<ModuleOp>();
   }
- 
+
   if (!module) {
     if (auto maybeModule = llvm::dyn_cast_or_null<ModuleOp>(opCtx))
       module = maybeModule;

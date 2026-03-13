@@ -288,8 +288,20 @@ void DimensionAnalyzer::processDeinterleaveOp(
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
   LDBG("Processing YieldOp " << op);
   assert(op->getParentOp() != nullptr);
+  Operation *parentOp = op->getParentOp();
+  if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
+    for (auto [beforeArg, yieldOpResult] :
+         llvm::zip_equal(whileOp.getBeforeArguments(), op.getOperands())) {
+
+      createDummyRefIfNotExist({beforeArg, yieldOpResult});
+      if (isa<ShapedType>(beforeArg.getType()))
+        processValue(beforeArg, yieldOpResult);
+    }
+    return;
+  }
+
   for (auto [parentOpResult, yieldOpResult] :
-       llvm::zip_equal(op->getParentOp()->getResults(), op.getOperands())) {
+       llvm::zip_equal(parentOp->getResults(), op.getOperands())) {
     createDummyRefIfNotExist({parentOpResult, yieldOpResult});
     if (isa<ShapedType>(parentOpResult.getType()))
       processValue(parentOpResult, yieldOpResult);

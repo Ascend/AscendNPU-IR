@@ -1256,3 +1256,33 @@ func.func @indirect_store(%arg0: memref<?xi32>){
   hfusion.indirect_store ins(%ins : tensor<24x32xi32>, %offset : tensor<24x32xi64>, %mask : tensor<24x32xi8>) outs(%arg0 : memref<?xi32>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: while_loop_yield_mismatch
+// CHECK: scf.yield %arg2, %5 : tensor<128xi1>, i1
+func.func @while_loop_yield_mismatch(%arg0: tensor<128xi1>, %arg1: i1) -> tensor<128xi1> {
+  %true = arith.constant true
+  %c128_i32 = arith.constant 128 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %0 = tensor.empty() : tensor<128xi32>
+  %res = scf.while (%arg2 = %arg0, %arg3 = %arg1) : (tensor<128xi1>, i1) -> tensor<128xi1> {
+    %condition = arith.xori %arg3, %true : i1
+    scf.condition(%condition) %arg2 : tensor<128xi1>
+  } do {
+  ^bb0(%arg2_do: tensor<128xi1>):
+    %cst_true = arith.constant true
+    %57 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%arg2_do : tensor<128xi1>) outs(%0 : tensor<128xi32>) -> tensor<128xi32>
+    %58 = bufferization.alloc_tensor() : tensor<i32>
+    %59 = linalg.fill ins(%c0_i32 : i32) outs(%58 : tensor<i32>) -> tensor<i32>
+    %reduced = linalg.reduce ins(%57 : tensor<128xi32>) outs(%59 : tensor<i32>) dimensions = [0]
+      (%in: i32, %init: i32) {
+        %61 = arith.addi %in, %init : i32
+        linalg.yield %61 : i32
+      }
+    %extracted = tensor.extract %reduced[] : tensor<i32>
+    %60 = arith.cmpi eq, %extracted, %c128_i32 : i32
+    scf.yield %arg2_do, %60 : tensor<128xi1>, i1
+  }
+  return %res : tensor<128xi1>
+}
