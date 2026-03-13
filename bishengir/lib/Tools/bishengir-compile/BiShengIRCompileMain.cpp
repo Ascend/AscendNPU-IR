@@ -104,49 +104,41 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     collectedDiagnostics.emplace_back(std::move(diag));
   });
 
-  bool hirCompileSuccess = false;
+  bool hlResult = false;
+  bool compileSuccess = false;
   int tryTimes = config.isTuning() ? 1 : 5;
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.maxBufferCountTuning());
     ModuleOp hirCompileMode = mod.clone();
-    // simt-simd mixed pipeline
     if (config.shouldEnableSimdSimtMixCompile()) {
-      bool mixedSuccess = true;
-      // TODO: remove the check below here once the split kernel work is done.
-      if (!hasSplitModules(hirCompileMode)) {
-        mixedSuccess &= succeeded(runPipeline(
-            hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
-      }
+      // simt-simd mixed pipeline
+      hlResult = succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
 
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
       for (auto simtMod : simtMods) {
-        mixedSuccess &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
+        hlResult &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
                                               config, "BiShengTTIR"));
       }
 
       // Pass top module to HIVMpipeline and hivmc
-      mixedSuccess &=
-          succeeded(runExternalHIVMPipeline(hirCompileMode, config));
-
-      if (mixedSuccess) {
-        hirCompileSuccess = true;
-        mod = hirCompileMode.clone();
-        break;
-      }
+    } else if (config.shouldCompileTritonDialect()) {
+      // simt-only pipeline(The input is ttir).
+      hlResult = succeeded(runPipeline(
+          hirCompileMode, buildBiShengTTIRPipeline, config, "BiShengTTIR"));
     } else {
-      bool step1 = succeeded(runPipeline(
+      hlResult = succeeded(runPipeline(
           hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+    }
 
-      bool step2 =
-          step1 && succeeded(runExternalHIVMPipeline(hirCompileMode, config));
-      if (step1 && step2) {
-        hirCompileSuccess = true;
-        mod = hirCompileMode.clone();
-        break;
-      }
+    compileSuccess =
+        hlResult && succeeded(runExternalHIVMPipeline(hirCompileMode, config));
+    if (compileSuccess) {
+      mod = hirCompileMode.clone();
+      break;
     }
 
     // increase max buffers by 2 in HFusion auto schedule
@@ -156,7 +148,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);
 
-  if (!hirCompileSuccess) {
+  if (!compileSuccess) {
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(diag));
     }

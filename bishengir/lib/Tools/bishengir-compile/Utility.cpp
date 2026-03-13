@@ -197,10 +197,6 @@ MixedModules getMixedModules(ModuleOp topMod) {
  
   return res;
 }
- 
-bool hasSplitModules(ModuleOp topMod) {
-  return !topMod.getOps<ModuleOp>().empty();
-}
 
 llvm::LogicalResult
 inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {

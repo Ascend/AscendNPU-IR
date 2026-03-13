@@ -82,8 +82,6 @@ getTempFile(const std::string &outputFile, TempDirectoriesStore &tempDirsStore);
 
 MixedModules getMixedModules(ModuleOp topMod);
 
-bool hasSplitModules(ModuleOp topMod);
-
 // FIXME: This will be refactored after vectorize is moved to HIVM.
 llvm::LogicalResult inferMixedCV(ModuleOp &module,
                                  bishengir::BiShengIRCompileMainConfig &config);

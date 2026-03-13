@@ -125,11 +125,18 @@ void setupLowerTritonPipelineOptions(
 
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
-  if (config.shouldCompileTritonDialect()) {
-    triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
-    setupLowerTritonPipelineOptions(lowerTritonPipelineOptions, config);
-    bishengir::triton::buildLowerTritonPipeline(pm, lowerTritonPipelineOptions);
+  if (config.shouldEnableSimdSimtMixCompile()) {
+    pm.addPass(createHIVMToTritonGPUConversionPass());
   }
+
+  if (!config.shouldCompileHost()) {
+    pm.addPass(hacc::createAppendDeviceSpecPass(
+        hacc::AppendTargetDeviceSpecOptions{config.getTargetBackend()}));
+  }
+  pm.addPass(createCanonicalizeModulePass());
+  triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
+  setupLowerTritonPipelineOptions(lowerTritonPipelineOptions, config);
+  bishengir::triton::buildLowerTritonPipeline(pm, lowerTritonPipelineOptions);
 }
 #endif
 
@@ -148,10 +155,6 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
         config.shouldEnforceNoImplicitBroadcast();
     createTorchBackendToNamedOpBackendPipeline(pm, torchToNamedOpOptions);
   }
-#endif
-
-#if BISHENGIR_ENABLE_TRITON_COMPILE
-  buildBiShengTTIRPipeline(pm, config);
 #endif
 
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
@@ -187,14 +190,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
-
-      // TODO: converter HIVM (tensor) -> TTIR
-
-      // split modules
+      pm.addPass(hivm::createInferHIVMMemScopePass());
       pm.addPass(hivm::createSplitSimtModulePass());
-
-      // right now only simd module is visible (i.e. registered in passManager)
-      hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
     }
   }
 }
