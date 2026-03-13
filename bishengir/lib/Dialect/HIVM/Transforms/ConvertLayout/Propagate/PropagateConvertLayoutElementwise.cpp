@@ -9,14 +9,10 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "hivm-propagate-convert-layout"
 
@@ -27,6 +23,14 @@ namespace {
 //===----------------------------------------------------------------------===//
 // Propagate UP through Elementwise Operations
 //===----------------------------------------------------------------------===//
+
+bool checkIsAgnostic(Operation *op,
+                     const PropagateConvertLayoutInternalOptions &options) {
+  if (!op) return false;
+  if (options.allowAgnosticOps)
+    return isLayoutAgnosticOp(op);
+  return isa<hivm::VCastOp>(op);
+}
 
 /// Pattern: Push convert_layout UP through elementwise operations
 /// Before:
@@ -39,6 +43,12 @@ struct PropagateConvertLayoutUpThroughElementwise
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
 
+  PropagateConvertLayoutInternalOptions options;
+  PropagateConvertLayoutUpThroughElementwise(MLIRContext *context,
+                       const PropagateConvertLayoutInternalOptions &options = {},
+                       PatternBenefit benefit = 1)
+      : OpRewritePattern<ConvertLayoutOp>(context, benefit),
+        options(std::move(options)) {}
   LogicalResult matchAndRewrite(ConvertLayoutOp convertOp,
                                 PatternRewriter &rewriter) const override {
     if (!isPropagatingUp(convertOp))
@@ -47,7 +57,7 @@ struct PropagateConvertLayoutUpThroughElementwise
     Value sourceOperand = convertOp.getSource();
     Operation *definingOp = sourceOperand.getDefiningOp();
 
-    if (!isLayoutAgnosticOp(definingOp))
+    if (!checkIsAgnostic(definingOp, options))
       return rewriter.notifyMatchFailure(
           convertOp, "defining op is not layout-agnostic");
 
@@ -102,6 +112,12 @@ struct PropagateConvertLayoutUpThroughElementwise
 struct PropagateConvertLayoutDownThroughElementwise
     : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
+  PropagateConvertLayoutInternalOptions options;
+  PropagateConvertLayoutDownThroughElementwise(MLIRContext *context,
+                       const PropagateConvertLayoutInternalOptions &options = {},
+                       PatternBenefit benefit = 1)
+      : OpRewritePattern<ConvertLayoutOp>(context, benefit),
+        options(std::move(options)) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp convertOp,
                                 PatternRewriter &rewriter) const override {
@@ -112,8 +128,8 @@ struct PropagateConvertLayoutDownThroughElementwise
       return rewriter.notifyMatchFailure(
           convertOp, "convert has no use");
 
-    auto findIt = llvm::find_if(convertOp->getUsers(), [](Operation *user) {
-      return isLayoutAgnosticOp(user);
+    auto findIt = llvm::find_if(convertOp->getUsers(), [this](Operation *user) {
+      return checkIsAgnostic(user, options);
     });
 
     if (findIt == convertOp->getUsers().end())
@@ -153,9 +169,12 @@ struct PropagateConvertLayoutDownThroughElementwise
 } // namespace
 
 void mlir::hivm::populateConvertLayoutElementwise(RewritePatternSet &patterns,
-                                      MLIRContext *context) {
+                                                  MLIRContext *context,
+                                                  const
+                                                  PropagateConvertLayoutInternalOptions
+                                                  &options) {
   patterns.add<
-    // PropagateConvertLayoutUpThroughElementwise,
+    PropagateConvertLayoutUpThroughElementwise,
     PropagateConvertLayoutDownThroughElementwise
-  >(context);
+  >(context, options);
 }

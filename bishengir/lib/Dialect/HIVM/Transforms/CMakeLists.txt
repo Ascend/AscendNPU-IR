@@ -32,11 +32,14 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
   ConvertLayout/ConvertLayoutUtils.cpp
+  ConvertLayout/HoistConvertLayout.cpp
   ConvertLayout/InsertConvertLayout.cpp
-  ConvertLayout/PropagateConvertLayout.cpp
-  ConvertLayout/PropagateConvertLayoutElementwise.cpp
-  ConvertLayout/PropagateConvertLayoutScfFor.cpp
-  ConvertLayout/PropagateConvertLayoutExtractSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayout.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutElementwise.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfFor.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
   CVPipelining.cpp
   EnableMultiBuffer.cpp
   Fixpipe/FixpipeExtractSlice.cpp
