@@ -62,8 +62,17 @@ static void insertSelectBeforeReductionOp(IRRewriter& rewriter, Operation *reduc
     }
   }
   if (selectMask && isLhsSelected.has_value()) {
-    Value initArg = *reductionLoop.getInitArgs().begin();
-    if (auto writeOp = dyn_cast<vector::TransferWriteOp>(initArg.getDefiningOp())) {
+    vector::TransferWriteOp writeOp;
+    for (Value initArg : reductionLoop.getInitArgs()) {
+      if (!initArg.getDefiningOp())
+        continue;
+      auto *defOp = initArg.getDefiningOp();
+      if (isa<vector::TransferWriteOp>(defOp)) {
+        writeOp = dyn_cast<vector::TransferWriteOp>(defOp);
+        break;
+      }
+    }
+    if (writeOp) {
       rewriter.setInsertionPoint(reductionOp);
       Value select = rewriter.create<arith::SelectOp>(
           reductionOp->getLoc(), selectMask, *isLhsSelected ? lhs : rhs, writeOp.getVector());

@@ -418,8 +418,8 @@ static void computeConflictLists(
               fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
             }
           }
-          if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp, scf::WhileOp>(
-                  op)) {
+          if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp,
+                  scf::WhileOp, scf::IfOp>(op)) {
             DenseSet<Operation *> previousOps;
             DenseSet<Operation *> followingOps;
             findPreviousAndFollowingFusableOpOf(op, block, previousOps,
