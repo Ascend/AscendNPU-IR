@@ -168,7 +168,18 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 }
 ```
 
-#### 自动融合支持的 Op 范围
+#### 调用方式
+
+```
+# 端到端编译，经过 HFusion/HIVM IR 编译 pipeline，直接生成二进制
+bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
+```
+
+#### 自动融合
+
+Linalg/HFusion IR 接入后，HFusion 编译流程会对符合融合条件的算子执行**自动融合与调度**：将多个算子合并进同一 kernel 执行，使中间结果在片上内存中复用，减少全局内存读写；并根据融合模式与算子特征，自动选择 Tiling 方案和调度策略，生成面向 Ascend NPU 的高效执行 schedule。融合后的 IR 经 Tiling、循环生成、Transform Dialect 应用等步骤，最终下推至 HIVM 并生成可执行二进制。
+
+支持的 Op 类型包括：
 
 - Elemwise
 - Broadcast
@@ -176,12 +187,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 - Transpose
 - Concat
 
-#### 调用方式
-
-```
-# 端到端编译，经过 HFusion/HIVM IR 编译 pipeline，直接生成二进制
-bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
-```
+关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅 [HFusion AutoSchedule 自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule_zh.md)。
 
 ### 2.3 HIVM IR 接入
 
@@ -190,25 +196,23 @@ bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target
 #### 用例
 
 ```
-module {
-  func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueB: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueC: memref<16xf16, #hivm.address_space<gm>>)
-      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
-    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
-    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
-                                   memref<16xf16, #hivm.address_space<ub>>)
-                  outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
-    return
-  }
+func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
+                       %valueB: memref<16xf16, #hivm.address_space<gm>>,
+                       %valueC: memref<16xf16, #hivm.address_space<gm>>)
+    attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
+                outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
+  %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
+                outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
+  %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
+                                 memref<16xf16, #hivm.address_space<ub>>)
+                outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+                 outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
+  return
 }
 ```
 

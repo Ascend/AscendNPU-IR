@@ -168,7 +168,18 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 }
 ```
 
-#### Ops supported for automatic fusion
+#### Invocation
+
+```
+# End-to-end compilation; runs through HFusion/HIVM IR pipeline and produces binary directly
+bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
+```
+
+#### Automatic fusion
+
+Once Linalg/HFusion IR is ingested, the HFusion compile flow performs **automatic fusion and scheduling** on eligible ops: multiple ops are merged into the same kernel so intermediate results are reused in on-chip memory and global memory traffic is reduced; scheduling and Tiling strategies are selected automatically based on fusion patterns and operator traits, producing efficient schedules for Ascend NPU. After fusion, the IR passes through Tiling, loop generation, Transform Dialect application, and similar steps before being lowered to HIVM and emitting an executable binary.
+
+Supported op types:
 
 - Elemwise
 - Broadcast
@@ -176,12 +187,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 - Transpose
 - Concat
 
-#### Invocation
-
-```
-# End-to-end compilation; runs through HFusion/HIVM IR pipeline and produces binary directly
-bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
-```
+For algorithm details, constraints, architecture, and related topics, see [HFusion AutoSchedule: Automatic Fusion and Scheduling](../features/AutoSchedule/HFusion_AutoSchedule.md).
 
 ### 2.3 HIVM IR integration
 
@@ -190,25 +196,23 @@ For fine-grained hardware control, you can write kernels directly in the HIVM di
 #### Example
 
 ```
-module {
-  func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueB: memref<16xf16, #hivm.address_space<gm>>,
-                         %valueC: memref<16xf16, #hivm.address_space<gm>>)
-      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
-    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
-                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
-    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
-                                   memref<16xf16, #hivm.address_space<ub>>)
-                  outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
-                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
-    return
-  }
+func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
+                       %valueB: memref<16xf16, #hivm.address_space<gm>>,
+                       %valueC: memref<16xf16, #hivm.address_space<gm>>)
+    attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>)
+                outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
+  %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>)
+                outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
+  %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+  hivm.hir.vadd ins(%ubA, %ubB : memref<16xf16, #hivm.address_space<ub>>,
+                                 memref<16xf16, #hivm.address_space<ub>>)
+                outs(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>)
+                 outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
+  return
 }
 ```
 
