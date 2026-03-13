@@ -234,7 +234,8 @@ std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 std::unique_ptr<Pass> createTileAndBindSubBlockPass();
 
 /// Create a pass to bubble up extract slice for hivm ops.
-std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass();
+std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
+    const HIVMBubbleUpExtractSliceOptions &options = {});
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();

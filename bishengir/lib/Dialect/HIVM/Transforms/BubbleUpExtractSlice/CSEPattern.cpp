@@ -30,7 +30,8 @@ static bool isEqual(const Operation *lhsC, const Operation *rhsC) {
       lhs, rhs, OperationEquivalence::IgnoreLocations);
 }
 
-struct CSEExtractSlicePattern : public OpRewritePattern<tensor::ExtractSliceOp> {
+struct CSEExtractSlicePattern
+    : public OpRewritePattern<tensor::ExtractSliceOp> {
   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp pivotSliceOp,
@@ -51,23 +52,31 @@ struct CSEExtractSlicePattern : public OpRewritePattern<tensor::ExtractSliceOp> 
       }
     }
 
-    DominanceInfo domInfo(pivotSliceOp->getParentOfType<func::FuncOp>());
-
     if (siblingSlices.size() == 1)
       return rewriter.notifyMatchFailure(
           pivotSliceOp, "Slice doesn't have any sibling duplicate");
 
-    // Move the pivot to the front most
-    for (int i = 1; i < static_cast<int64_t>(siblingSlices.size()); ++i) {
-      if (domInfo.dominates(siblingSlices[i].getOperation(),
-                            siblingSlices[0].getOperation())) {
-        std::swap(siblingSlices[i], siblingSlices[0]);
+    DominanceInfo domInfo(pivotSliceOp->getParentOfType<func::FuncOp>());
+    auto pivot = source;
+
+    for (auto opr : pivotSliceOp->getOperands()) {
+      if (pivot == opr)
+        continue;
+      auto pivotDefOp = pivot.getDefiningOp();
+      auto oprDefOp = opr.getDefiningOp();
+      if (pivotDefOp && oprDefOp) {
+        if (domInfo.properlyDominates(pivotDefOp, oprDefOp))
+          pivot = opr;
+      } else if (pivot.getParentRegion()->isProperAncestor(opr.getParentRegion()) ||
+                 (pivot.getParentRegion() == opr.getParentRegion() && oprDefOp)) {
+        pivot = opr;
       }
     }
 
-    for (int i = 1; i < static_cast<int64_t>(siblingSlices.size()); ++i) {
-      rewriter.replaceAllUsesWith(siblingSlices[i], siblingSlices[0]);
-    }
+    rewriter.setInsertionPointAfterValue(pivot);
+    auto newOp = rewriter.clone(*pivotSliceOp.getOperation());
+    for (auto siblingSlice : siblingSlices)
+      rewriter.replaceOp(siblingSlice, newOp);
     return success();
   }
 };

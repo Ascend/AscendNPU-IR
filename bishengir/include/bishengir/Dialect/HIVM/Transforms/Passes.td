@@ -650,6 +650,10 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let dependentDialects = [
     "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
+  let options = [Option<
+    "strictMode", "strict-mode", "bool",
+    /*default=*/"true",
+    "Run on strict mode when bubble up extract slice">];
 }
 
 def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {
@@ -658,6 +662,10 @@ def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncO
   let dependentDialects = [
     "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
+  let options = [Option<
+    "strictMode", "strict-mode", "bool",
+    /*default=*/"true",
+    "Run on strict mode when bubble up extract slice">];
 }
 
 def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {
