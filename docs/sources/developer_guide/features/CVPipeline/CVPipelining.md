@@ -4,19 +4,13 @@ This document describes the **CV Pipelining** pass in HIVM. It optimizes CV-styl
 
 ---
 
-## Overview
+## Hardware Context
 
-It optimizes loops in Mix kernels where multiple Cube and Vector instructions depend on each other (e.g. FlashAttention). By running Vector and Cube in parallel, it improves hardware utilization (ILP) and performance.
+Each Ascend Core contains Cube and Vector units, performing matrix-multiplication and other vectorized compuations respectively. These cores are capable of running in parallel to each other asynchronously whenever there are no data dependencies. In order to achieve better performance, it is essential to leverage this capability for better hardware utilization.
+
+CV-Pipelining optimizes loops in Mix kernels where multiple Cube and Vector instructions depend on each other (e.g. FlashAttention). By running Vector and Cube in parallel, it improves hardware utilization (ILP) and performance.
 
 The pass uses multi-buffering, which can increase UB usage; tune the number of pipeline stages for your workload.
-
-## Interface
-
-### Compile options
-
-| Option | Default | Description |
-|--------|--------|-------------|
-| `set-workspace-multibuffer` | 2 | Number of software pipeline stages and multi-buffering count |
 
 ---
 
@@ -60,6 +54,16 @@ scf.for 0 to N step 3*S {
     } {vector_loop}
 }
 ```
+
+---
+
+## Interface
+
+### Compile options
+
+| Option | Default | Description |
+|--------|--------|-------------|
+| `set-workspace-multibuffer` | 2 | Number of software pipeline stages and multi-buffering count |
 
 ---
 
