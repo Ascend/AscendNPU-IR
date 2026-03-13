@@ -38,7 +38,9 @@ public:
   /// @param isVectorOp boolean value that check whether input operation is
   /// vectorOp or cubeOp.
   /// For all storeOp, get parallel and common dimension if exists.
-  void computeTilingDim(bool isVectorOp = true);
+  /// @return bool True if tiled dimension can be broadcast two different
+  /// axis case; otherwise, -1
+  bool computeTilingDim(bool isVectorOp = true);
 
   /// @description: Identifies the parallel dimension based on the given parent
   /// index related to tiling.
@@ -125,7 +127,7 @@ protected:
   void markDimensionKind();
 
   template <typename StoreOpTy>
-  void computeTilingDimImpl(
+  bool computeTilingDimImpl(
       DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMaps,
       DenseMap<int64_t, int> &numStoreOps);
 
