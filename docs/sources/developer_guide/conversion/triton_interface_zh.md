@@ -287,20 +287,63 @@ git clone https://gitcode.com/Ascend/triton-ascend.git && cd triton-ascend/pytho
 
 ### 调用Triton Kernel
 
-在成功安装Triton-Ascend后，你可以尝试调用相关的Triton Kernel，参考以下源码，你可以通过执行`pytest -sv <file>.py`验证安装后的功能正确性。
+在成功安装Triton-Ascend后，你可以尝试调用相关的Triton Kernel，参考以下源码，你可以通过执行`pytest -sv <file>.py`验证安装后的功能正确性。若功能正确，终端会显示`PASS`。
 
 ```python
+from typing import Optional
 import pytest
 import triton
 import triton.language as tl
 import torch
 import torch_npu
-import test_common
 
+def generate_tensor(shape, dtype):
+    if dtype == 'float32' or dtype == 'float16' or dtype == 'bfloat16':
+        return torch.randn(size=shape, dtype=eval('torch.' + dtype))
+    elif dtype == 'int32' or dtype == 'int64' or dtype == 'int16':
+        return torch.randint(low=0, high=2000, size=shape, dtype=eval('torch.' + dtype))
+    elif dtype == 'int8':
+        return torch.randint(low=0, high=127, size=shape, dtype=eval('torch.' + dtype))
+    elif dtype == 'bool':
+        return torch.randint(low=0, high=2, size=shape).bool()
+    elif dtype == 'uint8':
+        return torch.randint(low=0, high=255, size=shape, dtype=torch.uint8)
+    else:
+        raise ValueError('Invalid parameter \"dtype\" is found : {}'.format(dtype))
+
+def validate_cmp(dtype, y_cal, y_ref, overflow_mode: Optional[str] = None):
+    y_cal=y_cal.npu()
+    y_ref=y_ref.npu()
+    if overflow_mode == "saturate":
+        if dtype in ['float32', 'float16']:
+            min_value = -torch.finfo(dtype).min
+            max_value = torch.finfo(dtype).max
+        elif dtype in ['int32', 'int16', 'int8']:
+            min_value = torch.iinfo(dtype).min
+            max_value = torch.iinfo(dtype).max
+        elif dtype == 'bool':
+            min_value = 0
+            max_value = 1
+        else:
+            raise ValueError('Invalid parameter "dtype" is found : {}'.format(dtype))
+        y_ref = torch.clamp(y_ref, min=min_value, max=max_value)
+    if dtype == 'float16':
+        torch.testing.assert_close(y_ref, y_cal,  rtol=1e-03, atol=1e-03, equal_nan=True)
+    elif dtype == 'bfloat16':
+        torch.testing.assert_close(y_ref.to(torch.float32), y_cal.to(torch.float32),  rtol=1e-03, atol=1e-03, equal_nan=True)
+    elif dtype == 'float32':
+        torch.testing.assert_close(y_ref, y_cal,  rtol=1e-04, atol=1e-04, equal_nan=True)
+    elif dtype == 'int32' or dtype == 'int64' or dtype == 'int16' or dtype == 'int8':
+        assert torch.equal(y_cal, y_ref)
+    elif dtype == 'uint8' or dtype == 'uint16' or dtype == 'uint32' or dtype == 'uint64':
+        assert torch.equal(y_cal, y_ref)
+    elif dtype == 'bool':
+        assert torch.equal(y_cal, y_ref)
+    else:
+        raise ValueError('Invalid parameter \"dtype\" is found : {}'.format(dtype))
 
 def torch_lt(x0, x1):
     return x0 < x1
-
 
 @triton.jit
 def triton_lt(in_ptr0, in_ptr1, out_ptr0, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
@@ -314,7 +357,6 @@ def triton_lt(in_ptr0, in_ptr1, out_ptr0, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.c
         tmp2 = tmp0 < tmp1
         tl.store(out_ptr0 + x_index, tmp2, None)
 
-
 @pytest.mark.parametrize('param_list',
                          [
                              ['float32', (32,), 1, 32, 32],
@@ -322,16 +364,15 @@ def triton_lt(in_ptr0, in_ptr1, out_ptr0, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.c
 def test_lt(param_list):
     # 生成数据
     dtype, shape, ncore, xblock, xblock_sub = param_list
-    x0 = test_common.generate_tensor(shape, dtype).npu()
-    x1 = test_common.generate_tensor(shape, dtype).npu()
+    x0 = generate_tensor(shape, dtype).npu()
+    x1 = generate_tensor(shape, dtype).npu()
     # torch结果
     torch_res = torch_lt(x0, x1).to(eval('torch.' + dtype))
     # triton结果
     triton_res = torch.zeros(shape, dtype=eval('torch.' + dtype)).npu()
     triton_lt[ncore, 1, 1](x0, x1, triton_res, xblock, xblock_sub)
     # 比较结果
-    test_common.validate_cmp(dtype, triton_res, torch_res)
-
+    validate_cmp(dtype, triton_res, torch_res)
 ```
 
 **动态tiling支持：** 通过[]内的grid参数配置并行粒度，通过XBLOCK和XBLOCK_SUB参数控制tiling大小，用户可按需调整。
