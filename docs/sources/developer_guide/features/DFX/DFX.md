@@ -4,7 +4,27 @@
 
 ### Hardware context
 
-Supports the [triton.language.device_print](https://triton-lang.org/main/python-api/generated/triton.language.device_print.html#triton.language.device_print) feature from the Triton language specification.
+`device_print` is a device-side debugging tool provided by the Triton framework on the Ascend NPU, allowing developers to directly print scalar/vector information during the execution of operator kernels. The core process is as follows:
+
+```mermaid
+flowchart LR
+    subgraph Host[Host-side process]
+        A[Host Launcher] -->|1. Pass the print buffer| B[Kernel execution]
+        B -->|2. Kernel return| C[Read the buffer]
+        C -->|3. Parse and print| D[Host print]
+    end
+
+    subgraph Code[Code Implementation]
+        E[BiSheng Header file<br/>Built-in printing logic] -->|Automatically extract| F[triton-ascend<br/>Integrate]
+        F -->|Call| A
+    end
+```
+
+Key Hardware Resource Constraints:
+
+- **UB Print Buffer**: Each aicore is fixed with **16KB** of space for temporary data storage, and all print operations within the same aicore share this 16KB buffer. When the buffer is full, a warning is issued indicating that the data size exceeds the maximum buffer capacity, and new data will be discarded.
+
+- **Multi-Core Concurrency**: Each aicore executes kernel code independently, and the final print results from each core are presented on the host side.
 
 ### Algorithm overview
 
@@ -182,7 +202,7 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 
 ### Constraints
 
-1. Only tensor and scalar printing is supported.
-2. The device_print buffer size is currently fixed at 16K.
-3. Triton sanitizer and device_print cannot be enabled at the same time.
-4. Supported data types for printing: bool, int8, uint8, int16, uint16, int32, uint32, int64, bfloat16, half, float32.
+- Only tensor and scalar printing is supported.
+- The device_print buffer size is currently fixed at 16K.
+- Triton sanitizer and device_print cannot be enabled at the same time.
+- Supported data types for printing: bool, int8, uint8, int16, uint16, int32, uint32, int64, bfloat16, half, float32.

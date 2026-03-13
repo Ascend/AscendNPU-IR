@@ -94,19 +94,35 @@ triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
 **Example**
-
+You can verify the correctness of the functionality by running `python3 <file>.py`
 ```python
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(
-    input_tensor,
-    output_tensor,
-    BLOCK_SIZE: tl.constexpr
-):
-    tl.static_assert(BLOCK_SIZE > 0, "BLOCK_SIZE must be positive")
+def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    tl.static_assert(BLOCK < 0, "BLOCK must > 0")
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def vector(x, y):
+    n = x.numel()
+    grid = (triton.cdiv(n, 32),)
+    kernel_name[grid](x, y, n, 32)
+
+if __name__ == "__main__":
+    x = torch.ones(8, device="npu")
+    y = torch.empty_like(x)
+    vector(x, y)
 ```
+
+**Assertion effect**
+
+![](figs/P1.png)
 
 #### static_print
 
@@ -118,19 +134,35 @@ triton.language.static_print(message: str) -> None
 ```
 
 **Example**
-
+You can verify the correctness of the functionality by running `python3 <file>.py`
 ```python
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(
-    input_tensor,
-    output_tensor,
-    BLOCK_SIZE: tl.constexpr
-):
-    tl.static_print(f"  BLOCK_SIZE = {BLOCK_SIZE}")
+def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    tl.static_print(f" BLOCK = {BLOCK} ")
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def vector(x, y):
+    n = x.numel()
+    grid = (triton.cdiv(n, 32),)
+    kernel_name[grid](x, y, n, 32)
+
+if __name__ == "__main__":
+    x = torch.ones(8, device="npu")
+    y = torch.empty_like(x)
+    vector(x, y)
 ```
+
+**Print effect**
+
+![](figs/P2.png)
 
 #### device_assert
 
@@ -145,21 +177,38 @@ triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
 **Example**
-
+You can verify the correctness of the functionality by running `python3 <file>.py`
 ```python
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(x_ptr, y):
-    x_ptrs = x_ptr + tl.arange(0, 8)
-    x = tl.load(x_ptrs)
-    tl.device_assert(x > 0, "x must be positive")
+def assert_kernel(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.device_assert(x > 0, "Input values must be positive!")
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def test_assert():
+    x_valid = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    y = torch.empty_like(x_valid)
+
+    grid = (triton.cdiv(x_valid.numel(), 4),)
+    assert_kernel[grid](x_valid, y, x_valid.numel(), 4)
+
+    x_invalid = torch.tensor([1.0, -2.0, 3.0, 4.0], device="npu")
+    assert_kernel[grid](x_invalid, y, x_invalid.numel(), 4)
+
+if __name__ == "__main__":
+    test_assert()
 ```
 
-**Assertion effect:**
+**Assertion effect**
 
-![](figs/P1.png)
+![](figs/P3.png)
 
 #### device_print
 
@@ -175,22 +224,35 @@ triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
 **Example**
-
+You can verify the correctness of the functionality by running `python3 <file>.py`
 ```python
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(x_ptr, y):
-    x_ptrs = x_ptr + tl.arange(0, 8)
-    x = tl.load(x_ptrs)
-    tl.device_print("x", x)
-    tl.device_print("y and 16", y, 16, hex=True)
+def print_kernel(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.device_print("x = ", x)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def test_print():
+    x_valid = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    y = torch.empty_like(x_valid)
+
+    grid = (triton.cdiv(x_valid.numel(), 4),)
+    print_kernel[grid](x_valid, y, x_valid.numel(), 4)
+
+if __name__ == "__main__":
+    test_print()
 ```
 
-**Print effect:**
+**Print effect**
 
-![](figs/P2.png)
+![](figs/P4.png)
 
 ## Debug: tools
 
@@ -244,15 +306,16 @@ def add(x, y):
 
     return output
 
-size = 1024
-x = torch.rand(size, device='npu:0')
-y = torch.rand(size, device='npu:0')
-output_triton = add(x, y)
+if __name__ == "__main__":
+    size = 1024
+    x = torch.rand(size, device='npu:0')
+    y = torch.rand(size, device='npu:0')
+    output_triton = add(x, y)
 ```
 
 Running `mssanitizer python3 test_add.py` produces console output where mssanitizer reports a GM out-of-bounds read at the `tl.load` node (e.g. 40 bytes for 10 * float32).
 
-![](figs/P3.png)
+![](figs/P5.png)
 
 For more on mssanitizer, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html).
 
@@ -281,15 +344,13 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 
 **Common performance analysis outputs**
 
-Pipeline data is available in:
+- 1. **trace.json**: Open in chrome://tracing/ for instruction pipeline view.
 
-- **trace.json**: Open in chrome://tracing/ for instruction pipeline view.
+![](figs/P6.png)
 
-![](figs/P4.png)
+- 2. **visualize_data.bin**: Open in Mind Studio Insight to visualize instruction execution on the Ascend AI processor.
 
-- **visualize_data.bin**: Open in Mind Studio Insight to visualize instruction execution on the Ascend AI processor.
-
-![](figs/P5.png)
+![](figs/P7.png)
 
 For more analysis options, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html).
 
@@ -298,6 +359,10 @@ For more analysis options, see [MindStudio operator development tools](https://w
 Using the following add kernel as an example to collect pipeline data:
 
 ```python
+import torch
+import triton
+import triton.language as tl
+
 @triton.jit
 def add_kernel(
     x_ptr,
@@ -314,6 +379,25 @@ def add_kernel(
     y = tl.load(y_ptr + offsets, mask=mask)
     output = x + y
     tl.store(output_ptr + offsets, output, mask=mask)
+
+def add(x, y):
+    output = torch.empty_like(x)
+    n_elements = output.numel()
+    BLOCK_SIZE = 1024
+    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
+    add_kernel[grid](
+        x, y, output,
+        n_elements,
+        BLOCK_SIZE=BLOCK_SIZE
+    )
+
+    return output
+
+if __name__ == "__main__":
+    size = 1024
+    x = torch.rand(size, device='npu:0')
+    y = torch.rand(size, device='npu:0')
+    output_triton = add(x, y)
 ```
 
 Run:
@@ -322,10 +406,10 @@ Run:
 msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py
 ```
 
-This creates an OPPROF directory in the current path.
+This creates an OPPROF with a timestamp directory in the current path.
 
-![](figs/P6.png)
+![](figs/P8.png)
 
-Open the `simulator/visualize_data.bin` file in Mind Studio Insight to view the pipeline for the selected core (e.g. core 0).
+Open the `simulator/visualize_data.bin` file in Mind Studio Insight to view the pipeline for the selected core (e.g. core 0), the two types of commonly used performance pipeline diagrams (trace.json/visualize_data.bin) described earlier can both be found in the `./OPPROF_<Timestamp>/simulator` directory.
 
-![](figs/P7.png)
+![](figs/P9.png)
