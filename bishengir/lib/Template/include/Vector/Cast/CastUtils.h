@@ -62,10 +62,23 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   static_assert(sizeof(SRC_T) > sizeof(DST_T) &&
                 "sizeof src dtype must large than dst dtype");
   constexpr int num_per_block_dst = INTR_BYTES_PER_BLOCK / sizeof(DST_T);
-
-  // step1: Transpose src to tmp.
+  constexpr int num_per_block_src = INTR_BYTES_PER_BLOCK / sizeof(SRC_T);
+  auto bits_factor = bitwidthOf<SRC_T>() / bitwidthOf<DST_T>();
+  // step0: copy src to tmp.
+  auto src_size0 = src->sizes[0];
+  auto src_size1 = src->sizes[1];
+  memref_t<__ubuf__ SRC_T, 2> tmp_2d_src_t{
+    tmp->aligned,
+    tmp->allocated,
+    tmp->offset,
+    {src_size0, src_size1},
+    {CEIL_FACTOR(src_size1, num_per_block_src), 1}};
+  
+  copy_ubuf_to_ubuf_2d_core(src, &tmp_2d_src_t);
+  INTRINSIC(pipe_barrier, PIPE_V);
+  // step1: Transpose to tmp.
   memref_t<__ubuf__ DST_T, 2> src_as_dst_t;
-  view_as<SRC_T, DST_T, 2>(src, &src_as_dst_t);
+  view_as<SRC_T, DST_T, 2>(&tmp_2d_src_t, &src_as_dst_t);
   auto src_as_dst_t_size0 = src_as_dst_t.sizes[0];
   auto src_as_dst_t_size1 = src_as_dst_t.sizes[1];
 
@@ -74,7 +87,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   memref_t<__ubuf__ DST_T, 2> tmp_2d_as_dst_t{
       tmp_as_dst_t.aligned,
       tmp_as_dst_t.allocated,
-      tmp_as_dst_t.offset,
+      tmp_as_dst_t.offset + tmp->sizes[0] * bits_factor / 3,
       {src_as_dst_t_size1, src_as_dst_t_size0},
       {CEIL_FACTOR(src_as_dst_t_size0, num_per_block_dst), 1}};
   vnchwconv_2d(&src_as_dst_t, &tmp_2d_as_dst_t);
@@ -82,7 +95,6 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
   // step2: Take out the low-order results through copy_ubuf_to_ubuf.
   __ubuf__ DST_T *tmp_2d_as_dst_t_ptr =
       tmp_2d_as_dst_t.aligned + tmp_2d_as_dst_t.offset;
-  auto bits_factor = bitwidthOf<SRC_T>() / bitwidthOf<DST_T>();
   auto lenBurst = CEIL_DIV(src_as_dst_t_size0, num_per_block_dst);
   INTRINSIC(pipe_barrier, PIPE_V);
   INTRINSIC(copy_ubuf_to_ubuf,
@@ -101,7 +113,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
     memref_t<__ubuf__ DST_T, 2> tmp_for_transpose{
         tmp_as_dst_t.aligned,
         tmp_as_dst_t.allocated,
-        tmp_as_dst_t.offset + tmp->sizes[0] * bits_factor / 2,
+        tmp_as_dst_t.offset + tmp->sizes[0] * bits_factor * 2/ 3,
         {dst->sizes[0], dst->sizes[1]},
         {CEIL_FACTOR(dst->sizes[1], num_per_block_dst), 1}};
     INTRINSIC(pipe_barrier, PIPE_V);

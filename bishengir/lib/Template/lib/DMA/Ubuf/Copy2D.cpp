@@ -432,4 +432,18 @@ REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, uint64_t)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, half)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, float)
 REGISTE_DMA_UB_COPY(ubuf, ubuf, 2, bfloat16_t)
-}
+
+//===-------------------------------------------------------------------===//
+// ub to ub 2d func
+//===-------------------------------------------------------------------===//
+REGISTE_COPY_UB_TO_UB_2D_FUNC(int8_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(uint8_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(int16_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(uint16_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(int32_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(uint32_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(int64_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(uint64_t);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(half);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(float);
+REGISTE_COPY_UB_TO_UB_2D_FUNC(bfloat16_t);

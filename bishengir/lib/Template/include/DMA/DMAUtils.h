@@ -295,7 +295,15 @@ copy_ubuf_to_ubuf_1d_core(memref_t<__ubuf__ T, 1> *src,
   template __aiv__ __attribute__((always_inline)) void                         \
   copy_ubuf_to_ubuf_1d_core<type>(memref_t<__ubuf__ type, 1> * src,            \
                                   memref_t<__ubuf__ type, 1> * dst)
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ T, 2> *src,
+                          memref_t<__ubuf__ T, 2> *dst);
 
+#define REGISTE_COPY_UB_TO_UB_2D_FUNC(type)                                    \
+  template __aiv__ __attribute__((always_inline)) void                         \
+  copy_ubuf_to_ubuf_2d_core<type>(memref_t<__ubuf__ type, 2> * src,            \
+                                  memref_t<__ubuf__ type, 2> * dst)
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
