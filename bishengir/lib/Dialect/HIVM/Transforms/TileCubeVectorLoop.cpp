@@ -402,7 +402,7 @@ struct TilingParams {
 /// Structure for holding information on an op to-be-tiled.
 struct OpToTile {
   /// Order by the ops appearance in the IR.
-  bool operator<(const OpToTile &other) {
+  bool operator<(const OpToTile &other) const {
     assert(this->op);
     assert(other.op);
     assert(this->op->getBlock() == other.op->getBlock() &&
