@@ -245,11 +245,29 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   loadOp.setEvictionPolicyAttr(evictionPolicyAttr);
   LDBG(*(copyOp->getParentOp()) << "\n");
   rewriter.replaceOp(copyOp, loadOp);
-  if (maybeLeftPadNum.has_value()) {
-    auto *leftPadNumOp = maybeLeftPadNum.value().getDefiningOp();
-    if (loadOp->isBeforeInBlock(leftPadNumOp)) {
-      rewriter.moveOpAfter(loadOp, leftPadNumOp);
+
+  // ensure pad value and left pad num are defined before load op
+  // to avoid the violation of SSA dominance
+  Operation *latestDef = nullptr;
+  auto updateLatestDef = [&loadOp, &latestDef](Value v) {
+    if (v) {
+      if (Operation *defOp = v.getDefiningOp()) {
+        if (defOp->getBlock() == loadOp->getBlock()) {
+          if (!latestDef || latestDef->isBeforeInBlock(defOp)) {
+            latestDef = defOp;
+          }
+        }
+      }
     }
+  };
+
+  if (maybePadValue.has_value())
+    updateLatestDef(maybePadValue.value());
+  if (maybeLeftPadNum.has_value())
+    updateLatestDef(maybeLeftPadNum.value());
+
+  if (latestDef && loadOp->isBeforeInBlock(latestDef)) {
+    rewriter.moveOpAfter(loadOp, latestDef);
   }
   return success();
 }
