@@ -63,10 +63,14 @@ public:
     // %2 = vcmp ins(%1, %zero: tensor<Nxf16>, tensor<Nxf16>) -> tensor<Nxi1>
     // %3 = vnot ins(%2: tensor<Nxi1>) -> tensor<Nxi1>
     // %4 = vsel ins(%3, %true, %false)
-    // annotation.mark %4 {bitwise_mask}
+    // %5 = vcast ins(%4) /* Optional */
+    // annotation.mark %5 or %4 {bitwise_mask}
     if (!op->getAttrDictionary().contains("bitwise_mask"))
       return failure();
-    auto selOp = dyn_cast_or_null<hivm::VSelOp>(op.getSrc().getDefiningOp());
+    Operation *backtraceOp = op.getSrc().getDefiningOp();
+    if (auto castOp = dyn_cast_or_null<hivm::VCastOp>(backtraceOp))
+      backtraceOp = castOp.getSrc()[0].getDefiningOp();
+    auto selOp = dyn_cast_or_null<hivm::VSelOp>(backtraceOp);
     if (!selOp)
       return failure();
     auto notOp =
@@ -88,9 +92,13 @@ public:
     auto maskType = dyn_cast<ShapedType>(initMask.getType());
     if (!maskType || !maskType.getElementType().isInteger(8))
       return failure();
+    auto valueType = dyn_cast<ShapedType>(selOp.getSrc()[1].getType());
+    if (valueType.getElementType().isInteger(64))
+      return op->emitError("i64 bitmask is not supported");
     // Generate pattern:
     // %0 = ...
     // vsel ins(%0, %true, %false)
+    rewriter.setInsertionPoint(selOp);
     auto newSelOp = rewriter.create<hivm::VSelOp>(
         op.getLoc(), TypeRange({selOp.getDst()[0].getType()}),
         ValueRange({initMask, selOp.getSrc()[1], selOp.getSrc()[2]}),
