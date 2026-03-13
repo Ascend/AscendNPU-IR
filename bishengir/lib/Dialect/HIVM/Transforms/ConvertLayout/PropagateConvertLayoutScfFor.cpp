@@ -192,7 +192,7 @@ struct PropagateConvertLayoutScfForIterArgs
 
     // At the start of new body, add collapse for the modified iter_arg
     rewriter.setInsertionPointToStart(newForOp.getBody());
-    Value collapsedIterArg = createConvertLayoutOpposite(
+    Value collapsedIterArg = createInverseConvertLayout(
         rewriter, convertOp, newForOp.getRegionIterArg(iterArgIdx));
 
     // Old iter_arg maps to collapsed value (for users expecting original layout)
@@ -214,7 +214,7 @@ struct PropagateConvertLayoutScfForIterArgs
 
     // After the loop, add collapse for the result
     rewriter.setInsertionPointAfter(newForOp);
-    Value collapsedResult = createConvertLayoutOpposite(
+    Value collapsedResult = createInverseConvertLayout(
         rewriter, convertOp, newForOp.getResult(iterArgIdx));
 
     // Replace old forOp results
@@ -298,7 +298,7 @@ struct PropagateConvertLayoutScfForYield
 
     // At the start, add inverse conversion for the modified iter_arg
     rewriter.setInsertionPointToStart(newForOp.getBody());
-    Value inverseIterArg = createConvertLayoutOpposite(
+    Value inverseIterArg = createInverseConvertLayout(
         rewriter, convertOp, newForOp.getRegionIterArg(yieldOperandIdx));
 
     // Old iter_arg maps to inverse-converted value (original layout)
@@ -315,7 +315,7 @@ struct PropagateConvertLayoutScfForYield
 
     // After loop, add inverse conversion for the result
     rewriter.setInsertionPointAfter(newForOp);
-    Value inverseResult = createConvertLayoutOpposite(
+    Value inverseResult = createInverseConvertLayout(
         rewriter, convertOp, newForOp.getResult(yieldOperandIdx));
 
     // Replace old forOp results

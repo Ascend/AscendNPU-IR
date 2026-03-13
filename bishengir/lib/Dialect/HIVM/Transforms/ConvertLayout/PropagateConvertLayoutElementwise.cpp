@@ -79,7 +79,7 @@ struct PropagateConvertLayoutUpThroughElementwise
     rewriter.setInsertionPointAfter(newOp);
     // Replace convert_layout with new op's result
     rewriter.replaceAllUsesWith(convertOp.getResult(), newOp->getResult(0));
-    auto convertBackOp = createConvertLayoutOpposite(
+    auto convertBackOp = createInverseConvertLayout(
           rewriter, convertOp, newOp->getResult(0));
     rewriter.eraseOp(convertOp);
     rewriter.replaceOp(definingOp, convertBackOp.getDefiningOp());
@@ -132,7 +132,7 @@ struct PropagateConvertLayoutDownThroughElementwise
         continue;
       if (oprType.getShape() != targetShape)
         continue;
-      auto convertedOpr = createConvertLayoutOpposite(
+      auto convertedOpr = createInverseConvertLayout(
           rewriter, convertOp, opr.get());
       opr.assign(convertedOpr);
     }

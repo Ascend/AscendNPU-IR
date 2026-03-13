@@ -27,7 +27,10 @@ def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
     /*desc=*/"Returns the target data layouts for memref-typed operands.",
     /*retTy=*/"llvm::SmallDenseMap<mlir::Value, mlir::hivm::DataLayoutAttr>",
     /*methodName=*/"getOperandsTargetFractalLayout",
-    /*args=*/(ins)
+    /*args=*/(ins),
+    /*defaultImplementation=*/[{
+      llvm_unreachable("getOperandsTargetFractalLayout is not implemented.");
+    }]
     >,
     InterfaceMethod<
     /*desc=*/"Returns the target data layouts for memref-typed operands.",

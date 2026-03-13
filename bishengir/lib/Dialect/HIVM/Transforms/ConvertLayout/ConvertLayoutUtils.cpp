@@ -24,47 +24,10 @@ namespace mlir::hivm {
 // Common Helpers
 //===----------------------------------------------------------------------===//
 
-/// Extract block sizes from layout based on fractal layout type
-FailureOr<FractalSize> extractBlockSizes(
-    DataLayoutAttr layout) {
-
-  auto fractalSizes = layout.getFractalSizesArray();
-  if (!fractalSizes.has_value()) {
-    LDBG("ERROR: Layout has no fractal sizes");
-    return failure();
-  }
-
-  SmallVector<int64_t> blockSizes(fractalSizes->begin(), fractalSizes->end());
-
-  LLVM_DEBUG({
-      DBGS() << "Fractal block sizes: [";
-      llvm::interleaveComma(blockSizes, llvm::dbgs());
-      llvm::dbgs() << "]\n";
-      });
-
-  if (blockSizes.size() != 2) {
-    LDBG("ERROR: wrong block sizes (need to be 2, got "
-        << blockSizes.size() << ")");
-    return failure();
-  }
-
-  return FractalSize((*fractalSizes)[0], (*fractalSizes)[1]);
-}
-
 /// Compute batch index bias from rank
 int computeBatchIndexBias(size_t rank) {
   return (rank == 3) ? 1 : 0;
 }
-
-bool isNDLayout(hivm::DataLayoutAttr layoutAttr) {
-  return llvm::is_contained(
-      {hivm::DataLayout::DOTA_ND,
-       hivm::DataLayout::DOTB_ND,
-       hivm::DataLayout::DOTC_ND,
-       hivm::DataLayout::ND},
-      layoutAttr.getDataLayout());
-}
-
 //===----------------------------------------------------------------------===//
 // Public API - Unified Target Shape Computation
 //===----------------------------------------------------------------------===//
@@ -78,8 +41,8 @@ FailureOr<SmallVector<OpFoldResult>> computeMixedTargetLayoutShape(
 
   LDBG("=== computeMixedTargetLayoutShape ===");
 
-  bool srcIsND = isNDLayout(srcLayout);
-  bool dstIsND = isNDLayout(dstLayout);
+  bool srcIsND = srcLayout.isNDLayout();
+  bool dstIsND = dstLayout.isNDLayout();
 
   // ND -> Fractal conversion
   if (srcIsND && !dstIsND) {
@@ -136,9 +99,9 @@ Value createConvertLayoutLike(PatternRewriter &rewriter,
   return converted.getResult();
 }
 
-Value createConvertLayoutOpposite(PatternRewriter &rewriter,
-                                  ConvertLayoutOp templateOp,
-                                  Value input) {
+Value createInverseConvertLayout(PatternRewriter &rewriter,
+                                 ConvertLayoutOp templateOp,
+                                 Value input) {
   PatternRewriter::InsertionGuard insertionGuard(rewriter);
   auto newReplacedElementType = cast<ShapedType>(
       templateOp.getSource().getType()).clone(getElementTypeOrSelf(input));

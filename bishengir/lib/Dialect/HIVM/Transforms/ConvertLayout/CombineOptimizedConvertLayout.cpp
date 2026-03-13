@@ -300,7 +300,7 @@ struct FoldToTensorConvertLayoutSubviewPattern
       return rewriter.notifyMatchFailure(
           op, "source layout is not ND");
 
-    auto blockSizesOrFailure = extractBlockSizes(dstLayout);
+    auto blockSizesOrFailure = dstLayout.getFractalBlockSizes();
     if (failed(blockSizesOrFailure))
       return rewriter.notifyMatchFailure(
           op, "failed to extract block sizes from destination layout");
@@ -424,7 +424,7 @@ struct FoldFixpipeConvertLayoutPattern
     auto srcLayout = op.getSrcLayout();
 
     // Src should be the fractal
-    assert(isNDLayout(dstLayout));
+    assert(dstLayout.isNDLayout());
     auto mixedFractalShape = op.getMixedOutputShape();
 
     // Create an empty tensor for the new fixpipe output (ND shape)

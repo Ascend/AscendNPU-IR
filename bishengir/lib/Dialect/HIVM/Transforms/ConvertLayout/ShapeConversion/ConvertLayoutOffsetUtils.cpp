@@ -24,22 +24,45 @@ namespace mlir::hivm {
 // Offset Computation (Value-based, for index transformations)
 //===----------------------------------------------------------------------===//
 
-/// Helper struct for offset conversion parameters
+
+/// Helper struct bundling all operands required to transform an ND index tuple
+/// into a fractal index tuple.
+///
+/// All fields are populated by `extractOffsetConversionParams` and consumed
+/// by `computeFractalIndices` and `computeNDToFractalOffsetImpl`. Grouping
+/// them in a single struct avoids threading many individual arguments through
+/// the call chain.
 struct OffsetConversionParams {
-  OpFoldResult a; // dimension a value (i index)
-  OpFoldResult b; // dimension b value (j index)
+  /// Row index of the source ND coordinate, expressed as a mixed
+  /// static/dynamic `OpFoldResult`.
+  OpFoldResult a;
+
+  /// Column index of the source ND coordinate, expressed as a mixed
+  /// static/dynamic `OpFoldResult`.
+  OpFoldResult b;
+
+  /// The two fractal tile dimensions $(f_0, f_1)$ extracted from the
+  /// destination layout attribute. Both dimensions are always static.
   FractalSize fractalSize{};
+
+  /// Index offset applied when the source offset is rank-3 (batched).
+  /// Set to 1 for rank-3 offsets and 0 for rank-2 offsets by
+  /// `computeBatchIndexBias`.
   int batchIndexBias{};
+
+  /// Leading batch index of a rank-3 source offset, expressed as a mixed
+  /// static/dynamic `OpFoldResult`. Only valid when `batchIndexBias == 1`.
   OpFoldResult batch;
 };
 
-/// Extract parameters for offset conversion
+/// Extract and validate all parameters needed for the ND→fractal offset
+/// computation from the given index tuple and layout attributes.
 static FailureOr<OffsetConversionParams> extractOffsetConversionParams(
     ArrayRef<OpFoldResult> currentOffset,
     DataLayoutAttr srcLayout,
     DataLayoutAttr dstLayout) {
 
-  auto blockSizesResult = extractBlockSizes(dstLayout);
+  auto blockSizesResult = dstLayout.getFractalBlockSizes();
   if (failed(blockSizesResult))
     return failure();
 
@@ -55,7 +78,21 @@ static FailureOr<OffsetConversionParams> extractOffsetConversionParams(
   return params;
 }
 
-/// Compute fractal indices from ND coordinates
+
+/// Decompose a pair of ND spatial indices into four fractal indices.
+///
+/// Given the row index $a$ and the column index $b$ from `params`, together
+/// with the static tile sizes $(f_0, f_1)$ from `params.fractalSize`.
+///
+/// @param params  Conversion parameters providing the spatial indices and
+///                the static fractal tile sizes.
+/// @param builder `OpBuilder` used to emit `affine.apply` ops for any
+///                dynamic operands.
+/// @param loc     Location attached to any newly created operations.
+/// @param a1Idx   Output: tile-row index $\lfloor a / f_0 \rfloor$.
+/// @param b1Idx   Output: tile-column index $\lfloor b / f_1 \rfloor$.
+/// @param a0Idx   Output: intra-tile row index $a \bmod f_0$.
+/// @param b0Idx   Output: intra-tile column index $b \bmod f_1$.
 static void computeFractalIndices(
     const OffsetConversionParams &params,
     OpBuilder &builder,
@@ -86,7 +123,12 @@ static void computeFractalIndices(
   LDBG("Computed fractal indices");
 }
 
-/// Common implementation for ND to fractal offset conversion
+/// Core implementation that converts an ND offset to a fractal offset.
+///
+/// Given a source offset of rank 2 $(a, b)$ or rank 3 $(batch, a, b)$ and a
+/// destination fractal layout with tile sizes $(f_0, f_1)$.
+///
+/// where $a_1$, $b_1$, $a_0$, $b_0$ are computed by `computeFractalIndices`.
 static FailureOr<SmallVector<OpFoldResult>> computeNDToFractalOffsetImpl(
     ArrayRef<OpFoldResult> currentOffset,
     DataLayoutAttr srcLayout,

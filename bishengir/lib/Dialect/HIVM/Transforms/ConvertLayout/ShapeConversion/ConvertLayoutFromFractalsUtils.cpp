@@ -24,19 +24,35 @@ namespace mlir::hivm {
 // Shape Computation - Fractal to ND
 //===----------------------------------------------------------------------===//
 
-/// Helper struct for fractal to ND shape conversion parameters.
+/// Aggregates the operands required to compute the ND shape that results from
+/// converting a fractal-tiled tensor back to a plain ND layout.
+///
+/// All fields are populated by `extractFractalToNDConversionParams` and
+/// consumed by `assembleNDShape` and `computeMixedFractalToNDShape`. Grouping
+/// them in a single struct avoids threading many individual arguments through
+/// the call chain.
 struct FractalToNDConversionParams {
-  // Fractal = [a, b, f[0], f[1]]
-  // zN shape: (b' ceildiv f[0], a' ceildiv f[1], f[0], f[1]) (no transpose case)
-  // nZ shape: (a' ceildiv f[0], b' ceildiv f[1], f[0], f[1])
-  // nD shape: (a', b') (no transpose)
-  // nD shape: (a * f[0], b * f[1])  (no transpose)
-  OpFoldResult aTiles;       // tiled A value
-  OpFoldResult bTiles;       // tiled B value
+  /// Number of tiles along the A (row) dimension of the fractal tensor,
+  /// expressed as a mixed static/dynamic `OpFoldResult`.
+  OpFoldResult aTiles;
+
+  /// Number of tiles along the B (column) dimension of the fractal tensor,
+  /// expressed as a mixed static/dynamic `OpFoldResult`.
+  OpFoldResult bTiles;
+
+  /// The two fractal tile dimensions $(f_0, f_1)$ extracted from the source
+  /// layout attribute. Both dimensions are always static.
   FractalSize fractalSize{};
+
+  /// Index offset applied when the source tensor is rank-5 (batched).
+  /// Set to 1 for rank-5 tensors and 0 for rank-4 tensors.
   int batchIndexBias{};
+
+  /// Leading batch dimension of a rank-5 source tensor, expressed as a mixed
+  /// static/dynamic `OpFoldResult`. Only valid when `batchIndexBias == 1`.
   OpFoldResult batchDim;
 };
+
 
 //===----------------------------------------------------------------------===//
 // Helper Functions
@@ -56,7 +72,8 @@ AffineMap getMulConstMap(int64_t factor, MLIRContext *ctx) {
 // Core Implementation
 //===----------------------------------------------------------------------===//
 
-/// Extract parameters for fractal to ND shape conversion.
+/// Extract and validate all parameters needed for the fractal→ND shape
+/// computation from the given shapes and layout attributes.
 static FailureOr<FractalToNDConversionParams>
 extractFractalToNDConversionParams(ArrayRef<OpFoldResult> currentShape,
                                    DataLayoutAttr srcLayout,
@@ -64,19 +81,19 @@ extractFractalToNDConversionParams(ArrayRef<OpFoldResult> currentShape,
                                    MLIRContext *ctx) {
   LDBG("=== extractFractalToNDConversionParams ===");
 
-  if (currentShape.size() < 4) {
+  if (currentShape.size() < kFractalDims) {
     LDBG("ERROR: Insufficient dimensions for fractal shape (need at least 4, got "
          << currentShape.size() << ")");
     return failure();
   }
   LDBG(srcLayout);
-  auto blockSizesResult = extractBlockSizes(srcLayout);
+  auto blockSizesResult = srcLayout.getFractalBlockSizes();
   if (failed(blockSizesResult))
     return failure();
 
   FractalToNDConversionParams params;
   params.fractalSize = *blockSizesResult;
-  params.batchIndexBias = (currentShape.size() == 5) ? 1 : 0;
+  params.batchIndexBias = currentShape.size() % 2;
   LDBG("Batch index bias: " << params.batchIndexBias);
   if (params.batchIndexBias)
     params.batchDim = currentShape[0];
@@ -87,8 +104,8 @@ extractFractalToNDConversionParams(ArrayRef<OpFoldResult> currentShape,
   return params;
 }
 
-/// Assemble ND shape from fractal parameters.
-/// Block sizes (a0, b0) are always static, so no builder is needed here.
+/// Assemble the ND output shape from the recovered spatial extents and the
+/// batch dimension stored in `params`.
 static SmallVector<OpFoldResult>
 assembleNDShape(OpFoldResult a, OpFoldResult b,
                 const FractalToNDConversionParams &params,
@@ -107,6 +124,37 @@ assembleNDShape(OpFoldResult a, OpFoldResult b,
 // Public API - Mixed Shape Computation
 //===----------------------------------------------------------------------===//
 
+/// Compute the mixed static/dynamic result shape for a fractal → ND layout
+/// conversion.
+///
+/// This helper takes a source fractal tensor shape (`currentShape`) encoded as
+/// `OpFoldResult`s and reconstructs the corresponding plain ND shape, folding
+/// affine arithmetic whenever possible.
+///
+/// Supported source ranks:
+/// - Rank-4: `[aTiles, bTiles, f0, f1]`
+/// - Rank-5 (batched): `[batch, aTiles, bTiles, f0, f1]`
+///
+/// Let `(f0, f1)` be the fractal tile sizes from `srcLayout`. The recovered ND
+/// extents are computed as:
+/// - `ndA = bTiles * f0`
+/// - `ndB = aTiles * f1`
+///
+/// Therefore, the output shape is:
+/// - Rank-4 input: `[ndA, ndB]`
+/// - Rank-5 input: `[batch, ndA, ndB]`
+///
+/// Implementation notes:
+/// - Parameters (tile counts, tile sizes, optional batch dim) are extracted by
+///   `extractFractalToNDConversionParams`.
+/// - `affine::makeComposedFoldedAffineApply` is used for multiplication so
+///   static values are folded to attributes and dynamic values emit
+///   `affine.apply` only when needed.
+///
+/// Returns:
+/// - `failure()` if the input shape is not a valid fractal rank or if fractal
+///   block sizes cannot be extracted from `srcLayout`.
+/// - Otherwise, the assembled ND shape as `SmallVector<OpFoldResult>`.
 FailureOr<SmallVector<OpFoldResult>>
 computeMixedFractalToNDShape(ArrayRef<OpFoldResult> currentShape,
                              DataLayoutAttr srcLayout,
