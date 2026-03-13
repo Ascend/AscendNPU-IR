@@ -137,6 +137,26 @@ func.func @test_strided_memref_copy_and_elemwise(%arg0: memref<1x8x2x8x2x1x1x1x8
 }
 
 // -----
+
+// CHECK-LABEL: @flatten_layout_cast_fallback(
+// CHECK: %[[ALLOC_COLLAPSED:.*]] = memref.collapse_shape %{{.*}} {{\[\[}}0, 1]] : memref<4x256xf16> into memref<1024xf16>
+// CHECK: %[[EXPANDED:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [1, 1] : memref<1xf16, strided<[256]>> into memref<1x1xf16, strided<[256, 256]>>
+// CHECK: %[[REINTERPRETED:.*]] = memref.reinterpret_cast %[[EXPANDED]] to offset: [0], sizes: [1, 1], strides: [256, 1] : memref<1x1xf16, strided<[256, 256]>> to memref<1x1xf16, strided<[256, 1]>>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<1xf16> to memref<1xf16, strided<[256]>>
+func.func @flatten_layout_cast_fallback(%arg0: memref<4x256xf16, strided<[1, 1]>>) {
+  %alloc = memref.alloc() : memref<4x256xf16>
+  %subview = memref.subview %arg0[0, 0] [1, 1] [1, 1] : memref<4x256xf16, strided<[1, 1]>> to memref<1x1xf16, strided<[1, 1]>>
+  %subview_0 = memref.subview %alloc[0, 0] [1, 1] [1, 1] : memref<4x256xf16> to memref<1x1xf16, strided<[256, 1]>>
+  %collapse_shape = memref.collapse_shape %subview [[0, 1]] : memref<1x1xf16, strided<[1, 1]>> into memref<1xf16, strided<[1]>>
+  %expand_shape = memref.expand_shape %collapse_shape [[0, 1]] output_shape [1, 1] : memref<1xf16, strided<[1]>> into memref<1x1xf16>
+  %collapse_shape_0 = memref.collapse_shape %subview_0 [[0, 1]] : memref<1x1xf16, strided<[256, 1]>> into memref<1xf16, strided<[256]>>
+  %expand_shape_0 = memref.expand_shape %collapse_shape_0 [[0, 1]] output_shape [1, 1] : memref<1xf16, strided<[256]>> into memref<1x1xf16, strided<[256, 256]>>
+  memref.copy %expand_shape, %expand_shape_0 : memref<1x1xf16> to memref<1x1xf16, strided<[256, 256]>>
+  memref.dealloc %alloc : memref<4x256xf16>
+  return
+}
+
+// -----
 // CHECK-LABEL: test_subview_reshape(
 
 // CHECK: %[[VAL_12:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [64, 1] : memref<?xi64, strided<[1]>> into memref<?x1xi64>

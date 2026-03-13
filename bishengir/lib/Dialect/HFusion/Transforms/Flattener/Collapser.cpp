@@ -1384,8 +1384,29 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     LDBG(
         "[ExpansionForTail] expected type is different with the expanded type: "
         << expandedMemrefType.value() << " " << expandedType);
-    auto reinterpreted = builder.create<memref::CastOp>(
-        tensorOutOp.getLoc(), expandedType, expandOp.getResult());
+    if (memref::CastOp::areCastCompatible(expandedMemrefType.value(),
+                                          cast<MemRefType>(expandedType))) {
+      auto castOp = builder.create<memref::CastOp>(
+          tensorOutOp.getLoc(), expandedType, expandOp.getResult());
+      return castOp.getOperation();
+    }
+    SmallVector<int64_t> targetStrides;
+    int64_t targetOffset;
+    if (failed(getStridesAndOffset(cast<MemRefType>(expandedType),
+                                   targetStrides, targetOffset))) {
+      return failure();
+    }
+    SmallVector<OpFoldResult> targetSizes(mixedSize.begin(), mixedSize.end());
+    SmallVector<OpFoldResult> targetMixedStrides;
+    for (int64_t stride : targetStrides) {
+      if (ShapedType::isDynamic(stride))
+        return failure();
+      targetMixedStrides.push_back(builder.getIndexAttr(stride));
+    }
+    auto reinterpreted = builder.create<memref::ReinterpretCastOp>(
+        tensorOutOp.getLoc(), cast<MemRefType>(expandedType),
+        expandOp.getResult(), builder.getIndexAttr(targetOffset), targetSizes,
+        targetMixedStrides);
     return reinterpreted.getOperation();
   }
   return expandOp.getOperation();
