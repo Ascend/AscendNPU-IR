@@ -40,12 +40,7 @@ void VTransposeOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
                                           const FlattenResult &result) {
   auto &adjustedDims = result.adjustedTargetDims;
   LDBG(to_string(adjustedDims));
-  assert(adjustedDims.size() == 2);
-  auto rank = getShapeRank(getSrc());
-  SmallVector<int64_t> permutation(rank.value_or(0));
-  std::iota(permutation.begin(), permutation.end(), 0);
-  std::swap(permutation[adjustedDims[0]], permutation[adjustedDims[1]]);
-  setPermutation(permutation);
+  setPermutation(adjustedDims);
 }
 
 void VCumsumOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,

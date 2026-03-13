@@ -48,6 +48,9 @@ FlattenResult computeAnnotationMarkedOp(FlattenResult payload) {
 
 FailureOr<FlattenResult> getFlattenedImpl(Operation *op,
                                           FlattenOptions &options) {
+  if (isa<hivm::VTransposeOp>(op)) {
+    return getFlattenedTransposableOTF(cast<HIVMStructuredOp>(op), options);
+  }                                          
   bool isUniformReassociation =
       op->hasTrait<OpTrait::UniformReassociationFlattenTrait>();
   if (isUniformReassociation) {

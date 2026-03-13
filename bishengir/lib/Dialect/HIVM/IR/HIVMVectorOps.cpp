@@ -918,7 +918,7 @@ LogicalResult VTransposeOp::verify() {
         swaps += (int)len - 1;
       }
     }
-    if (rank != 4 || swaps != supportedSwapNum) {
+    if (rank == 4 && swaps != supportedSwapNum) {
       return emitOpError()
              << "Vtranspose supports only swapping two axes; for rank-4, "
                 "also allows permutations equivalent to two swaps (got moved="

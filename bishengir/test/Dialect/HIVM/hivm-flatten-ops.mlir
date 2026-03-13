@@ -205,9 +205,17 @@ func.func @hivm_cast(%arg0: memref<32x7xf16>, %arg1: memref<32x7xf32>, %arg2: me
 
 // CHECK-LABEL: func.func @hivm_transpose
 // CHECK: memref.collapse_shape
+// CHECK-SAME: memref<1x16x8xf32> into memref<128xf32>
+// CHECK: memref.collapse_shape
+// CHECK-SAME: memref<16x1x8xf32> into memref<128xf32>
+// CHECK: memref.collapse_shape
 // CHECK-SAME: memref<16x1x8xf32> into memref<16x8xf32>
 // CHECK: memref.collapse_shape
 // CHECK-SAME: memref<8x1x16xf32> into memref<8x16xf32>
+// CHECK: memref.collapse_shape
+// CHECK-SAME: memref<8x1x16xf32> into memref<128xf32>
+// CHECK: memref.collapse_shape
+// CHECK-SAME: memref<1x8x16xf32> into memref<128xf32>
 // CHECK: memref.collapse_shape
 // CHECK-SAME: memref<1x8x16xf32> into memref<8x16xf32>
 // CHECK: memref.collapse_shape
@@ -485,9 +493,9 @@ func.func @vtranspose_flatten_combine_reassociations(%src1: memref<1x2x1x8x4x2xi
                                                      %src2: memref<4x?x8x1x8x4xi32>, 
                                                      %dst2: memref<?x2x8x1x4x8xi32>) {
 
-  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0], [1, 2], [3, 4, 5]]
-  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0], [1, 2], [3, 4, 5]]
-  // CHECK: hivm.hir.vtranspose ins({{.*}} memref<1x2x64xi32>) outs({{.*}} memref<2x1x64xi32>) permutation = [1, 0, 2]
+  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3, 4, 5]]
+  // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3, 4, 5]]
+  // CHECK: hivm.hir.vtranspose ins({{.*}} memref<128xi32>) outs({{.*}} memref<128xi32>) permutation = [0]
   hivm.hir.vtranspose ins(%src1 : memref<1x2x1x8x4x2xi32>) outs(%dst1 : memref<2x1x1x8x4x2xi32>) permutation = [1, 0, 2, 3, 4, 5]
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3], [4], [5]]
   // CHECK: memref.collapse_shape {{.*}} {{\[}}[0, 1, 2, 3], [4], [5]]  
@@ -863,8 +871,8 @@ func.func @triton_argmax_3d(%arg0: memref<7x17x15x1xf16, strided<[272, 16, 1, 1]
 
 // CHECK-LABEL: transpose_with_unit(
 // CHECK: vtranspose
-// CHECK-SAME: memref<27x22xf16
-// CHECK-SAME: memref<22x27xf16
+// CHECK-SAME: memref<27x22x1xf16
+// CHECK-SAME: memref<22x27x1xf16
 func.func @transpose_with_unit(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.shape_0 = 0 : i32, tt.shape_1 = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, false, false, false]> : vector<7xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
   hivm.hir.set_mask_norm
   %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [27, 22, 1], strides: [22, 1, 1] : memref<?xf16, #hivm.address_space<gm>> to memref<27x22x1xf16, strided<[22, 1, 1]>, #hivm.address_space<gm>>
@@ -1072,3 +1080,16 @@ func.func @test_broadcastable_otf_different_operand(
   return
 }
 
+// -----
+func.func @hivm_transpose_last_0(%arg0: memref<15x1x17xf32>, %arg1: memref<16x15x17x1xf16>) -> memref<17x16x15x1xf16> {
+  %0 = memref.alloc() : memref<1x15x17xf32>
+  %1 = memref.alloc() : memref<17x1x15xf32>
+  // hivm.hir.vtranspose ins({{.*}} : memref<255xf32>) outs({{.*}} : memref<255xf32>) permutation = [0]
+  hivm.hir.vtranspose ins(%arg0 : memref<15x1x17xf32>) outs(%0 : memref<1x15x17xf32>) permutation = [1, 0, 2]
+  // hivm.hir.vtranspose ins({{.*}} : memref<15x17xf32>) outs({{.*}} : memref<17x15xf32>) permutation = [1, 0]
+  hivm.hir.vtranspose ins(%arg0 : memref<15x1x17xf32>) outs(%1 : memref<17x1x15xf32>) permutation = [2, 1, 0]
+  %3 = memref.alloc() : memref<17x16x15x1xf16>
+  // hivm.hir.vtranspose ins({{.*}} : memref<240x17x1xf16>) outs({{.*}} : memref<17x240x1xf16>) permutation = [1, 0, 2]
+  hivm.hir.vtranspose ins(%arg1 : memref<16x15x17x1xf16>) outs(%3 : memref<17x16x15x1xf16>) permutation = [2, 0, 1, 3]
+  return %3 : memref<17x16x15x1xf16>
+}
