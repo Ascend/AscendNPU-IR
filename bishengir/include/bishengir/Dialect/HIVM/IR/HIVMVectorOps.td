@@ -1020,7 +1020,7 @@ class HIVM_ElementwiseTernaryOp<string mnemonic, list<Trait> traits = []> :
 def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
     [StaticMaxRankTrait<1>,
      OperElemTypeConstraints<[/*condition=*/0], [I1,I8]>,
-     OperElemTypeConstraints<[/*src0=*/1, /*src0=*/2], [AnyI8, AnyI16, F16, AnyI32, F32, I64]>,
+     OperElemTypeConstraints<[/*src0=*/1, /*src0=*/2], [I1, AnyI8, AnyI16, F16, BF16, AnyI32, F32, I64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>,
      BroadcastableOTF]> {
     // add traits for type constraint
