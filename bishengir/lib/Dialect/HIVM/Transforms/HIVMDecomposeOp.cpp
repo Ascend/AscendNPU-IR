@@ -1359,7 +1359,7 @@ struct HIVMDecomposeOpPass
 
 void HIVMDecomposeOpPass::runOnOperation() {
   auto funcOp = getOperation();
-  if (hacc::utils::isHost(funcOp))
+  if (hacc::utils::isHost(funcOp) || funcOp->hasAttr(hivm::VectorFunctionAttr::name))
     return;
 
   RewritePatternSet patterns(&getContext());

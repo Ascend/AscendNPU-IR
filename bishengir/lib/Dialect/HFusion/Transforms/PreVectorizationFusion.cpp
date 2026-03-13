@@ -384,7 +384,12 @@ struct ExtractInlinePattern : public OpRewritePattern<linalg::GenericOp> {
     unsigned numLoops = op.getNumLoops();
     auto oldMaps = op.getIndexingMapsArray();
     auto ctx = rewriter.getContext();
-
+    for (auto userIt : llvm::enumerate(op.getOperands())) {
+      Value userIn = userIt.value();
+      if (isa<MemRefType>(userIn.getType())) {
+        return failure();
+      }
+    }
     for (auto it : llvm::enumerate(op.getDpsInputs())) {
       Value input = it.value();
       AffineMap oldMap = oldMaps[it.index()];

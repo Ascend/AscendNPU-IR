@@ -1158,6 +1158,39 @@ class TransferReadToGatheringLoadPattern
   }
 };
 
+struct TruncfScalarToVector : public OpRewritePattern<arith::TruncFOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(arith::TruncFOp op,
+                                PatternRewriter &rewriter) const final {
+    Value truncResult = op.getResult();
+    if (!truncResult.hasOneUse())
+      return failure();
+    auto *user = *truncResult.user_begin();
+    auto broadcastOp = dyn_cast<vector::BroadcastOp>(user);
+    if(!broadcastOp)
+      return failure();
+    Value truncInput = op.getOperand();
+    Type truncInputType = truncInput.getType();
+    if (isa<ShapedType>(truncInputType))
+      return failure();
+    VectorType broadcastResultType = broadcastOp.getResultVectorType();
+    if(!broadcastResultType.getElementType().isBF16())
+      return failure();
+    Location loc = op.getLoc();
+    VectorType intermediateType = VectorType::get(
+      broadcastResultType.getShape(),truncInputType);
+    Value broadcastScalar = rewriter.create<vector::BroadcastOp>(
+      loc, intermediateType, truncInput);
+    Value newTrunc = rewriter.create<arith::TruncFOp>(
+      loc, broadcastResultType, broadcastScalar);
+    rewriter.replaceOp(broadcastOp, newTrunc);
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+    }
+    return success();
+  }
+};
+
 } // namespace
 
 /// This pass normalizes vector ops to meet HIVM requirements:
@@ -1186,7 +1219,7 @@ void NormalizeVectorPass::runOnOperation() {
            ShapeCastDropUnitDimsForMultiDimVectorPattern,
            UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
            ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
-           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D>(
+           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D, TruncfScalarToVector>(
           patterns.getContext());
   if (!enableDotScaledCompile) 
     patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());

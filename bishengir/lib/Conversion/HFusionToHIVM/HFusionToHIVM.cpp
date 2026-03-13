@@ -348,10 +348,26 @@ void convertInvalidScalarOperandByBrc(
     Operation *op, SmallVector<size_t> &invalidscalarOperands) {
   OpBuilder b(op);
   Value dstVal = op->getOperand(op->getNumOperands() - 1);
+  Type dstType = dstVal.getType();
+  auto dstShapedType = mlir::dyn_cast<ShapedType>(dstType);
   for (size_t invalidIdx : invalidscalarOperands) {
     auto operand = op->getOperand(invalidIdx);
-    Value empty = utils::createEmptyOp(b, op->getLoc(), dstVal);
-    Value newOperand = brcOperand(b, op->getLoc(), operand, empty);
+    Type srcType = operand.getType();
+    auto dstElementType = dstShapedType.getElementType();
+    Value brcResult;
+    // Distinguishing Scalars and Vectors
+    if (auto srcShapedType = mlir::dyn_cast<ShapedType>(srcType)) {
+      auto srcElementType = srcShapedType.getElementType();
+      srcType = srcElementType;
+    }
+    if (dstElementType == srcType) {
+      brcResult = utils::createEmptyOp(b, op->getLoc(), dstVal);
+    } else {
+      brcResult = utils::createEmptyOpWithTargetElemType(
+        b, op->getLoc(), dstVal, srcType
+      );
+    }
+    Value newOperand = brcOperand(b, op->getLoc(), operand, brcResult);
     op->setOperand(invalidIdx, newOperand);
   }
 }
