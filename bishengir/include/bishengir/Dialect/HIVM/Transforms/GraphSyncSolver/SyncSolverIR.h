@@ -18,9 +18,11 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERIR_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include <memory>
 #include <utility>
 
@@ -33,6 +35,16 @@ class Condition;
 class RWOperation;
 class MmadL0Operation;
 using Body = std::vector<std::unique_ptr<OperationBase>>;
+
+struct EventIdInfo {
+  int64_t eventIdNum{0};
+  int64_t eventIdRepeatNum{1};
+  LoopLikeOpInterface multibufferLoop{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop1{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop2{nullptr};
+  EventIdInfo() {};
+  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum) {};
+};
 
 enum struct OpType {
   OPERATION,
@@ -97,6 +109,14 @@ public:
   // LCA.
   static std::pair<OperationBase *, OperationBase *>
   getLCAPair(OperationBase *op1, OperationBase *op2);
+
+  template <typename TyOp> TyOp *getParentOfType() {
+    OperationBase *cur = this->parentOp;
+    while (cur != nullptr && !isa<TyOp>(cur)) {
+      cur = cur->parentOp;
+    }
+    return llvm::dyn_cast_if_present<TyOp>(cur);
+  }
 
   // Find nearest parent operation that is a loop-like construct, or nullptr.
   static OperationBase *getParentloop(OperationBase *op);
@@ -175,12 +195,15 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
 
   static bool classof(const OperationBase *e) {
     return e->opType >= OpType::LOOP && e->opType < OpType::LOOP_END;
   }
+
+  std::string str(int indent, bool recursive) const override;
 };
 
 class MmadL1LoopOp : public Scope {
@@ -253,14 +276,16 @@ public:
   hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeRead{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeWrite{hivm::PIPE::PIPE_UNASSIGNED};
-  llvm::SmallVector<Value> readMemVals;
-  llvm::SmallVector<Value> writeMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testReadMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testWriteMemVals;
+  llvm::SmallVector<MemInfo> readMemInfo;
+  llvm::SmallVector<MemInfo> writeMemInfo;
   bool hasUnitFlagFeat{false};
   UnitFlagInfoBase mergedUnitFlagInfo;
 
-private:
+  const llvm::SmallVector<Value> readMemVals;
+  const llvm::SmallVector<Value> writeMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testReadMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
+
 public:
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
@@ -269,7 +294,30 @@ public:
               OpType opType = OpType::RW_OPERATION)
       : OperationBase(opType, op, parentOp), coreType(coreType),
         pipeRead(pipeRead), pipeWrite(pipeWrite), readMemVals(readMemVals),
-        writeMemVals(writeMemVals) {};
+        writeMemVals(writeMemVals) {
+    for (auto &val : readMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : writeMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
+  RWOperation(
+      Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+      hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testReadMemVals,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testWriteMemVals,
+      OpType opType = OpType::RW_OPERATION)
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite),
+        testReadMemVals(testReadMemVals), testWriteMemVals(testWriteMemVals) {
+    for (auto &val : testReadMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : testWriteMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
 
   std::string str(int indent, bool recursive) const override;
 
@@ -357,7 +405,7 @@ public:
   hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeSrc{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeDst{hivm::PIPE::PIPE_UNASSIGNED};
-  LoopLikeOpInterface multibufferLoopPar{nullptr};
+  EventIdInfo eventIdInfo;
   bool allAtOnce{false};
   bool checkFirstIter{false};
   bool checkLastIter{false};

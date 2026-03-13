@@ -19,8 +19,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "mlir/IR/Value.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/Sequence.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
 #include <numeric>
@@ -199,6 +197,8 @@ OperationBase::getLCAPair(OperationBase *op1, OperationBase *op2) {
     op1 = op1->parentOp;
     op2 = op2->parentOp;
   }
+  assert(op1 != nullptr && op2 != nullptr);
+  assert(op1->parentOp == op2->parentOp);
   return std::make_pair(op1, op2);
 }
 

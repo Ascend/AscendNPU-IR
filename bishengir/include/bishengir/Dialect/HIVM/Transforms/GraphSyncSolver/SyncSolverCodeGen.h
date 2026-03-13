@@ -28,6 +28,7 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include <memory>
 #include <utility>
 
@@ -54,12 +55,13 @@ private:
 
   // Per-multibuffer loop cached helper: nested index modular counters created
   // during codegen and reused to select between multi-buffer event ids.
-  llvm::DenseMap<LoopLikeOpInterface, Value> nestedIndexModularMem;
+  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>, Value>
+      nestedIndexModularMem;
 
   // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
   // that chooses which buffer/event id to use at runtime.
   llvm::DenseMap<LoopLikeOpInterface,
-                 llvm::DenseMap<std::pair<int64_t, int64_t>, Value>>
+                 std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
@@ -121,11 +123,13 @@ private:
                                           OperationBase *opBase,
                                           SyncOp *syncOp);
 
+  Value getNestedIndexModular(IRRewriter &rewriter, SetWaitOp *syncOp);
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
   Value getCVMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
-  
-  Value getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter, SetWaitOp *syncOp);
+
+  Value getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                            SetWaitOp *syncOp);
 
   Value getMultiBufferBlockSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 

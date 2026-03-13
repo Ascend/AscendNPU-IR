@@ -24,6 +24,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -121,6 +123,14 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
     auto yieldedValueAfter = whileOp.getYieldedValues()[resultNum];
     collectedVals.push_back(yieldedValueBefore);
     collectedVals.push_back(yieldedValueAfter);
+  } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(defOp)) {
+    Region &scopeRegion = scopeOp.getRegion();
+    Block &scopeBlock = scopeRegion.front();
+    auto returnOp = dyn_cast<scope::ReturnOp>(scopeBlock.getTerminator());
+    assert(returnOp != nullptr);
+    assert(returnOp->getOperands().size() > resultNum);
+    auto returnedValue = returnOp->getOperand(resultNum);
+    collectedVals.push_back(returnedValue);
   }
 
   if (auto aliasInfoVec = getOperationAliasInfo(defOp); !aliasInfoVec.empty()) {
@@ -462,6 +472,25 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  auto forOp = dyn_cast<scf::ForOp>(loopOp->op);
+  if (!forOp) {
+    return {};
+  }
+  if (auto intAttr =
+          forOp->getAttrOfType<IntegerAttr>(kMultibufferUnrollAttrName)) {
+    if (!scf::utils::isNormalized(forOp)) {
+      // TODO: call normalize loop pass before plan memory, currently
+      // CVPipelining ensure the loop is normalized
+      forOp->emitOpError("multibuffer-enabled loop expected to be normalized");
+      return {};
+    }
+    return intAttr.getInt();
+  }
+  return {};
+}
+
 void IRTranslator::updateBlockArgAliases(Block *block,
                                          OperandRange destOperands) {
   assert(block->getArguments().size() == destOperands.size());
@@ -518,6 +547,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (isa<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->multibufferUnrollNum =
+            getLoopMultibufferUnrollNum(loopOp.get());
         for (auto &region : op.getRegions()) {
           auto regionOp = funcIrBuilder(region, loopOp.get(), skipEmptyScopes);
           loopOp->body.push_back(std::move(regionOp));
@@ -535,7 +566,16 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         }
         continue;
       }
-
+      if (auto scopeScopeOp = dyn_cast<scope::ScopeOp>(op)) {
+        auto curScopeOp =
+            std::make_unique<Scope>(OpType::SCOPE, scopeScopeOp, scopeOp.get());
+        for (auto &region : scopeScopeOp->getRegions()) {
+          auto regionOp = funcIrBuilder(region, curScopeOp.get());
+          curScopeOp->body.push_back(std::move(regionOp));
+        }
+        scopeOp->body.push_back(std::move(curScopeOp));
+        continue;
+      }
       if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {
         updateBlockArgAliases(branchOp.getDest(), branchOp.getDestOperands());
         continue;

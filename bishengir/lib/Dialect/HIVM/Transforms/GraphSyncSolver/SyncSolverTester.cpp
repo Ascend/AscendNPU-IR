@@ -51,6 +51,8 @@ void SyncTester::generateRandTest(Scope *scopeOp,
         isTrueWithProbability(scope_in_prob_a, scope_in_prob_b) &&
         isTrueWithProbability(scope_for_loop_prob_a, scope_for_loop_prob_b)) {
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
+      loopOp->isParallel =
+          isTrueWithProbability(parallel_loop_prob_a, parallel_loop_prob_b);
       auto loopBlock = std::make_unique<Scope>();
       loopBlock->parentOp = loopOp.get();
       generateRandTest(loopBlock.get(), pointerOps, pipesVec, remOpNum,
@@ -123,8 +125,8 @@ void SyncTester::generateRandTest(Scope *scopeOp,
         readValsNum = (getRand() % read_write_vals_max_num) + 1;
         writeValsNum = (getRand() % read_write_vals_max_num) + 1;
       }
-      SmallVector<SmallVector<int>> readVals(1);
-      SmallVector<SmallVector<int>> writeVals(1);
+      SmallVector<SmallVector<int64_t>> readVals(1);
+      SmallVector<SmallVector<int64_t>> writeVals(1);
       for (auto i : getNDifferentRandNums(readValsNum, pointerOps.size())) {
         readVals.back().push_back(pointerOps[i]);
       }
@@ -137,16 +139,13 @@ void SyncTester::generateRandTest(Scope *scopeOp,
             (getRand() % 2) ? hivm::TCoreType::CUBE : hivm::TCoreType::VECTOR;
       }
       auto rwOp = std::make_unique<RWOperation>(
-          nullptr, scopeOp, coreType, pipeRead, pipeWrite, SmallVector<Value>(),
-          SmallVector<Value>());
-      rwOp->testReadMemVals = readVals;
-      rwOp->testWriteMemVals = writeVals;
+          nullptr, scopeOp, coreType, pipeRead, pipeWrite, readVals, writeVals);
       assert(rwOp != nullptr);
       scopeOp->body.push_back(std::move(rwOp));
       empty = false;
       remOpNum--;
     }
-    if (!empty && (scopeOp->parentOp != nullptr) &&
+    if (!empty && (scopeOp->getDepth() > 3) &&
         isTrueWithProbability(scope_out_prob_a, scope_out_prob_b)) {
       break;
     }
@@ -220,6 +219,9 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
 
   if (auto *loopOp = dyn_cast<const Loop>(op)) {
     int numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
+    if (loopOp->isParallel) {
+      numIter = 1;
+    }
     if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
       numIter = 0;
     }
@@ -649,7 +651,8 @@ llvm::LogicalResult SyncTester::test() {
   auto funcIr = getGeneratedRandomTest();
   LLVM_DEBUG(llvm::dbgs() << "before:\n" << funcIr->str(0, true) << '\n';);
 
-  SyncSolverOptions options(syncMode);
+  SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
+                            /*isRegBasedArch=*/false);
   auto irTranslator =
       std::make_unique<IRTranslator>(std::move(funcIr), options);
 
