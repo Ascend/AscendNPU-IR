@@ -97,7 +97,8 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
 
 template <typename StoreOpTy>
 void DimensionAnalyzer::computeTilingDimImpl(
-    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMap,
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
     auto src = op.getSrc();
@@ -112,6 +113,10 @@ void DimensionAnalyzer::computeTilingDimImpl(
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
           parallelDimMap[srcRef][parentIndex].push_back(dim);
+        } else {
+          op->emitWarning() << "Detected dimensions are in the same group in one "
+                               "storeOp. It is recommended to try with "
+                               "strict-mode=false if TileAndBindSubBlock fails";
         }
       }
     }
