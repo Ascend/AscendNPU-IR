@@ -169,25 +169,32 @@ The overall call chain is:
 
 ##### ValueHandle
   - Uniform wrapper for MLIR `Value`, function arguments, and named values for consistent access and manipulation.
+  - Common types include `NamedValueHandle`, `FuncArgHandle`, etc.
 
 ---
 
 ### 6. Scheduling strategies
 
-#### 6.1 PureElemwise
+#### 6.1 PureElemwise scheduling strategy
 
 - **Use case**: Graphs that are mostly elementwise ops, without complex broadcast/reduce.
-- **Location**: `PureElemwiseSchedule.h/cpp`.
-- **Strategy**: Aims at regular loop structure with simple, regular tiling; emphasizes contiguous access and multi-level cache friendliness after fusion; `calculateTilingImpl()` and `createScheduleImpl()` perform tiling and schedule construction.
+- **Implementation location**: `PureElemwiseSchedule.h/cpp`.
+- **Strategy characteristics**:
+  - Aims at regular loop structure with simple, regular tiling.
+  - Emphasizes contiguous access and multi-level cache friendliness after fusion.
+  - `calculateTilingImpl()` and `createScheduleImpl()` perform tiling and schedule primitive chaining.
 
-#### 6.2 AnyPBR (AnyPBRScheduler)
+#### 6.2 AnyPBR scheduling strategy (AnyPBRScheduler)
 
 - **Use case**: Fused subgraphs containing broadcast, reduce, and similar patterns.
-- **Location**: `AnyPBRSchedule.h/cpp`.
+- **Implementation location**: `AnyPBRSchedule.h/cpp`.
 - **Capabilities**:
-  - **Tiling**: In `calculateTilingImpl()`, considers stride alignment, dynamic shape symbols, reduce/broadcast axes, etc.; uses `StmtExprBuilder` to build expressions and produce multiple `TilingCases`.
-  - **Multi-core reduce**: `analyzeMultiCoreReduceInfo()` determines whether multi-core reduce conditions are met (see §7.3).
-  - **Schedule construction**: In `createScheduleImpl()`, for the chosen `TilingKey`, applies buffer sizes, axis-specific tiling, loop fuse/coalesce, and multi-core binding.
+  - **Tiling**:
+    - In `calculateTilingImpl()`, considers stride alignment, dynamic shape symbols, reduce/broadcast axes, etc.; uses `StmtExprBuilder` to build expressions and produce multiple `TilingCases`.
+  - **Multi-core reduce analysis and utilization**:
+    - `analyzeMultiCoreReduceInfo()` determines whether multi-core reduce conditions are met (see §7.3).
+  - **Schedule construction**:
+    - In `createScheduleImpl()`, for the chosen `TilingKey`, enables concrete scheduling strategies, considering on-chip buffer allocation, axis-specific tiling, loop fuse/coalesce, and multi-core binding.
 
 ---
 
@@ -195,19 +202,35 @@ The overall call chain is:
 
 This section summarizes **stride-align**, **dynamic shape**, and **multi-core reduce** and their role in AutoSchedule.
 
-#### 7.1 Stride-align
+#### 7.1 Stride-align memory alignment optimization
 
 - **Goal**: Avoid unaligned UB access.
-- **APIs**: `KernelInfo::getStrideAlignments()` returns (dimension index, alignment) pairs; `getSizeAlignments()`, `getTileAlignments()` give size and tile alignment constraints.
-- **Usage**: In `AnyPBRSchedule.cpp::calculateTilingImpl()`, initial tiling is generated from problem size; then dimensions from `getStrideAlignments()` and `getTileAlignments()` are adjusted with `alignTo(alignment)`; the result is stride-aligned `TilingCases`.
+- **APIs and data source**:
+  - `KernelInfo::getStrideAlignments()` (`KernelInfo.h`): Returns (dimension index, alignment) pairs describing the minimum stride alignment for certain dimensions during memory access.
+  - Related APIs: `getSizeAlignments()` for size alignment; `getTileAlignments()` for tile alignment.
+- **Usage in scheduling strategy (AnyPBR example)**:
+  - In `AnyPBRSchedule.cpp::calculateTilingImpl()`:
+    - Generate initial tiling from problem size.
+    - Iterate over `getStrideAlignments()` and `getTileAlignments()`, and adjust relevant dimension tiling sizes with `alignTo(alignment)`.
+    - Output stride-aligned `TilingCases`.
 - **When**: Stride-align is applied during **tiling**, i.e. when `calculateTilingImpl()` is called inside `runScheduleProcedure()`.
 
-#### 7.2 Dynamic shape
+#### 7.2 Dynamic shape support
 
-- **Need**: Dimensions such as batch size or spatial size may be unknown at compile time; tiling must be computed at runtime from actual input shapes.
-- **Expr system** (`TilingUtils.h`): `DimSymbol` for a dimension (e.g. N, H, W); `Expr` for arithmetic like `N/4`, `min(N,64)`; `StmtExprBuilder` builds `Expr` from IR shapes and constants and generates the host tiling code.
-- **Execution**: `TilingComputeFn` from `calculateTilingImpl()` is run on the host with concrete shapes so `DimSymbol`s are bound to values and tiling is computed; fully static shapes fold to constants at compile time.
-- **Options**: e.g. `AutoScheduleOptions::enableSymbolAnalysis` to enable symbolic analysis for dynamic tiling.
+- **Problem and requirements**:
+  - Some dimensions (e.g., batch size, spatial size) may not be constant at compile time.
+  - AutoSchedule must support computing suitable tiling parameters at **runtime** from actual input shapes.
+- **Expr system design**:
+  - **Expr** / **DimSymbol** / **StmtExprBuilder** in `TilingUtils.h` form a lightweight expression framework:
+    - **DimSymbol**: Symbol for a dimension (e.g., N, H, W); can be created via `StmtExprBuilder::createDimSymbolExpr()`.
+    - **Expr**: Supports basic arithmetic, e.g., `N/4`, `min(N,64)`, `(H*W)/factor`.
+    - **StmtExprBuilder**: Builds `Expr` from IR shape and constants; generates host-side tiling computation statements.
+- **Host tiling function generation and execution**:
+  - `TilingComputeFn` from `calculateTilingImpl()` is typically a lambda or callable.
+  - When executed on the host with concrete shapes, `DimSymbol`s are bound to values and tiling is computed.
+  - For fully static shapes, expressions fold to constants at compile time.
+- **Configuration and extension**:
+  - Options such as `AutoScheduleOptions::enableSymbolAnalysis` enable symbolic equivalence analysis for dynamic shape tiling optimization.
 
 #### 7.3 Multi-core reduce
 
@@ -299,16 +322,23 @@ Ensure `MySchedule.cpp` is in the build and linked into the HFusion Transform mo
 
 #### 8.5 Schedule primitives (Schedule API) quick reference
 
-Inside `createScheduleImpl()` you can use the schedule APIs in `ScheduleOperations.cpp`:
+Inside `createScheduleImpl()`, you can reuse the schedule APIs in `ScheduleOperations.cpp`:
 
-- **IO cache and buffer**
-  - `cacheRead`, `cacheWrite`, `setBufferSize`
-- **Tiling and loop structure**
-  - `tileUsingFor`, `tileUsingForAll`, `tileReductionUsingFor`
+- **IO cache and buffer management**
+  - `cacheRead`
+  - `cacheWrite`
+  - `setBufferSize`
+- **Tiling and loop structure control**
+  - `tileUsingFor`
+  - `tileUsingForAll`
+  - `tileReductionUsingFor`
 - **Loop fuse and coalesce**
-  - `fuseLoops`, `fuseIntoContaining`, `coalesceLoops`
-- **Multi-core**
-  - `bindLoopToMulticore`; see AnyPBR for `getMultiCoreNum` and similar for core count configuration.
+  - `fuseLoops`
+  - `fuseIntoContaining`
+  - `coalesceLoops`
+- **Multi-core binding**
+  - `bindLoopToMulticore`
+  - See AnyPBR for `getMultiCoreNum` and similar to determine core count configuration.
 
 By combining these primitives, you can implement flexible and efficient schedule strategies for new fusion patterns within the same framework.
 
@@ -316,19 +346,26 @@ By combining these primitives, you can implement flexible and efficient schedule
 
 ### 9. Internal mechanisms (brief)
 
-#### 9.1 ValueHandle
+#### 9.1 ValueHandle abstraction
 
-- The `ValueHandle` family provides a uniform abstraction over MLIR values, function arguments, and named values.
-- They offer a single interface for access and manipulation so scheduler code does not depend on low-level IR details and stays maintainable in both schedule construction and Transform interpretation.
+- The `ValueHandle` family provides a uniform abstraction over MLIR values, function arguments, and named values from different sources.
+- They offer a single interface for access and manipulation so scheduler code does not depend on low-level IR details.
+- This helps keep the code concise and maintainable in both schedule construction and Transform interpretation.
 
 #### 9.2 Transform Dialect integration and interpretation
 
 - AutoSchedule does not modify operator IR directly inside the scheduler; it builds a **Transform Dialect program**.
-- `AutoScheduleInterpreter.cpp` receives the schedule description from the scheduler, translates it into a sequence of Transform Dialect operations, and applies them to the target `func::FuncOp` to perform the actual IR transformation.
-- This keeps schedule logic decoupled from IR details and makes the schedule traceable (e.g. by printing the Transform program), debuggable, and reusable.
+- `AutoScheduleInterpreter.cpp` is responsible for:
+  - Receiving the schedule description produced by the scheduler;
+  - Translating it into a sequence of Transform Dialect operations;
+  - Applying these operations to the target `func::FuncOp` to perform the actual IR transformation.
+- This design keeps schedule logic decoupled from IR details and makes the schedule traceable (e.g., by printing the Transform program), debuggable, and reusable.
 
-#### 9.3 Tiling framework
+#### 9.3 Tiling computation framework
 
 - The `TilingInfo` and `Expr` system unify **dimension size**, **alignment rules**, and **dynamic shape** as expressions.
-- For static shape, expressions can be evaluated at compile time and folded into constant tiling parameters.
-- For dynamic shape, they are evaluated in the host tiling function with concrete input shapes; the same expressions support both static and dynamic cases and reduce code duplication.
+- For static shape:
+  - Expressions can be evaluated at compile time and folded into constant tiling parameters.
+- For dynamic shape:
+  - They are evaluated in the host tiling function with concrete input shapes;
+  - The same expressions serve both static and dynamic cases, reducing code duplication.

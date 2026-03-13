@@ -232,7 +232,7 @@ AutoSchedule 的整体调用链可以概括为：
     - 遍历 `KernelInfo::getStrideAlignments()` 和 `getTileAlignments()` 中的信息，将相关维度 Tiling 大小通过 `alignTo(alignment)` 向上对齐；
     - 最终输出已满足 stride-align 约束的 `TilingCases`。
 - **位置与时机**：
-  - stride-align 处理发生在 **Tiling 计算阶段**，即 `SchedulerBase::runScheduleProcedure()` 中调用 `calculateTilingImpl()` 时；
+  - stride-align 处理发生在 **Tiling 计算阶段**，即 `SchedulerBase::runScheduleProcedure()` 中调用 `calculateTilingImpl()` 时。
 
 #### 7.2 动态 Shape 支持
 
@@ -254,7 +254,7 @@ AutoSchedule 的整体调用链可以概括为：
   - 在 host 上执行该函数时，已知实际输入 shape，即可将 `DimSymbol` 映射为具体数值，求值出最终 Tiling；
   - 对于完全静态 shape，表达式可以在编译期直接折叠为常量。
 - **配置与扩展**：
-  - AutoSchedule 通过如 `AutoScheduleOptions::enableSymbolAnalysis` 等选项使能符号等价性分析，用于优化动态 Tiling 的编译
+  - AutoSchedule 通过如 `AutoScheduleOptions::enableSymbolAnalysis` 等选项使能符号等价性分析，用于动态 shape 下的 Tiling 优化。
 
 #### 7.3 多核 Reduce
 
