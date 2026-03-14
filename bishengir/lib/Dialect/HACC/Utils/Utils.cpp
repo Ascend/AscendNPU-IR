@@ -555,7 +555,7 @@ bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op) {
   if (!reduceOp) {
     return false;
   }
-  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp, arith::MulFOp,
+  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp,
              arith::MaximumFOp, arith::MaxNumFOp, arith::MinimumFOp,
              arith::MinNumFOp, arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp,
              arith::MaxUIOp, arith::XOrIOp>(
