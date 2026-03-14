@@ -2,13 +2,33 @@
 
 ## device_print
 
-### 硬件背景：
+### 硬件背景
 
-支持 Triton 语言规范中的 [triton.language.device_print](https://triton-lang.org/main/python-api/generated/triton.language.device_print.html#triton.language.device_print) 特性
+`device_print`是Triton框架在昇腾NPU上提供的一个设备端调试工具，允许开发者在算子内核执行过程中直接打印标量/矢量信息，核心流程如下：
 
-### 算法原理：
+```mermaid
+flowchart LR
+    subgraph Host[Host 侧流程]
+        A[Host Launcher] -->|1. 传递打印缓冲区| B[Kernel 执行]
+        B -->|2. Kernel 返回| C[读取缓冲区]
+        C -->|3. 解析并打印| D[终端输出]
+    end
 
-实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合实现该部分主要以AscendNPU IR为重点展开说明
+    subgraph Code[代码实现]
+        E[BiSheng 头文件<br/>内置打印逻辑] -->|自动抽取| F[triton-ascend<br/>集成]
+        F -->|调用| A
+    end
+```
+
+关键硬件资源约束：
+
+- **UB打印缓冲区**： 每个aicore 固定分配**16KB**空间用于数据暂存，且同一个aicore内的所有打印操作共享这16KB缓冲区，写满后新数据提示warning大小超过缓冲区最大值后丢弃。
+
+- **多核并发**：每个aicore独立执行内核代码，最终host侧呈现每个核的打印结果。
+
+### 算法原理
+
+实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合, 实现该部分主要以AscendNPU IR为重点展开说明
 
 #### Triton Ascend
 
@@ -175,7 +195,7 @@ op库当前实现是通过scalar打印去实现的，通过for循环外抛的方
 
 triton-ascend 产生的 host 侧 launcher调用 bisheng 编译器编好的 kernel 并将打印缓冲区传给 kernel，待 kernel 返回后在 host launcher 侧读取缓冲区并进行真正的打印。此部分代码在 bisheng 编译器自带的头文件中实现，并由 triton-ascend 自动从 bisheng 编译器的路径中抽取。
 
-### 接口说明：
+### 接口说明
 
 通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能，开启后triton ascend侧会设置相关宏信息__CCE_ENABLE_PRINT__，该宏信息在毕昇编译器侧会影响是否开启打印，其次编译meta op库的时候需要开启--cce-enable-print(当前默认一直开启)已确保开启打印
 
@@ -189,9 +209,9 @@ hfusion.print " prefix = xxx " {hex = xxx} %args : dtype
 hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %args : dtype
 ```
 
-### 约束能力：
+### 约束能力
 
-1. 仅支持tensor和scalar的打印
-2. 当前device_print打印的大小固定为16k
-3. 目前triton侧sanitizer和device_print不支持同时开启
-4. 打印支持如下数据类型:bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
+- 仅支持tensor和scalar的打印
+- 当前device_print打印的大小固定为16k
+- 目前triton侧sanitizer和device_print不支持同时开启
+- 打印支持如下数据类型:bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32

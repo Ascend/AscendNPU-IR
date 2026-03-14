@@ -97,19 +97,35 @@ triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
 ##### 使用示例
-
+可以通过执行`python3 <file>.py`验证功能正确性
 ```
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(
-    input_tensor,
-    output_tensor,
-    BLOCK_SIZE: tl.constexpr
-):
-    tl.static_assert(BLOCK_SIZE > 0, "BLOCK_SIZE must be positive")
+def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    tl.static_assert(BLOCK < 0, "BLOCK must > 0")
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def vector(x, y):
+    n = x.numel()
+    grid = (triton.cdiv(n, 32),)
+    kernel_name[grid](x, y, n, 32)
+
+if __name__ == "__main__":
+    x = torch.ones(8, device="npu")
+    y = torch.empty_like(x)
+    vector(x, y)
 ```
+
+##### 断言效果
+
+![](figs/P1.png)
 
 #### static_print
 
@@ -121,19 +137,35 @@ triton.language.static_print(message: str) -> None
 ```
 
 ##### 使用示例
-
+可以通过执行`python3 <file>.py`验证功能正确性
 ```
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(
-    input_tensor,
-    output_tensor,
-    BLOCK_SIZE: tl.constexpr
-):
-    tl.static_print(f"  BLOCK_SIZE = {BLOCK_SIZE}")
+def kernel_name(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    tl.static_print(f" BLOCK = {BLOCK} ")
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def vector(x, y):
+    n = x.numel()
+    grid = (triton.cdiv(n, 32),)
+    kernel_name[grid](x, y, n, 32)
+
+if __name__ == "__main__":
+    x = torch.ones(8, device="npu")
+    y = torch.empty_like(x)
+    vector(x, y)
 ```
+
+#### 打印效果
+
+![](figs/P2.png)
 
 #### device_assert
 
@@ -150,21 +182,38 @@ triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
 ##### 使用示例
-
+可以通过执行`python3 <file>.py`验证功能正确性
 ```
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(x_ptr, y):
-    x_ptrs = x_ptr + tl.arange(0, 8)
-    x = tl.load(x_ptrs)
-    tl.device_assert(x > 0, "x must be positive")
+def assert_kernel(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.device_assert(x > 0, "Input values must be positive!")
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def test_assert():
+    x_valid = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    y = torch.empty_like(x_valid)
+
+    grid = (triton.cdiv(x_valid.numel(), 4),)
+    assert_kernel[grid](x_valid, y, x_valid.numel(), 4)
+
+    x_invalid = torch.tensor([1.0, -2.0, 3.0, 4.0], device="npu")
+    assert_kernel[grid](x_invalid, y, x_invalid.numel(), 4)
+
+if __name__ == "__main__":
+    test_assert()
 ```
 
-##### 断言效果：
+##### 断言效果
 
-![](figs/P1.png)
+![](figs/P3.png)
 
 #### device_print
 
@@ -182,22 +231,35 @@ triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
 ##### 使用示例
-
+可以通过执行`python3 <file>.py`验证功能正确性
 ```
 import triton
+import torch
 import triton.language as tl
 
 @triton.jit
-def kernel_name(x_ptr, y):
-    x_ptrs = x_ptr + tl.arange(0, 8)
-    x = tl.load(x_ptrs)
-    tl.device_print("x", x)
-    tl.device_print("y and 16", y, 16, hex=True)
+def print_kernel(x_ptr, y_ptr, n_elements, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask)
+    tl.device_print("x = ", x)
+    tl.store(y_ptr + offsets, x, mask=mask)
+
+def test_print():
+    x_valid = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    y = torch.empty_like(x_valid)
+
+    grid = (triton.cdiv(x_valid.numel(), 4),)
+    print_kernel[grid](x_valid, y, x_valid.numel(), 4)
+
+if __name__ == "__main__":
+    test_print()
 ```
 
-##### 打印效果：
+##### 打印效果
 
-![](figs/P2.png)
+![](figs/P4.png)
 
 ## 调试：工具类
 
@@ -251,15 +313,16 @@ def add(x, y):
 
     return output
 
-size = 1024
-x = torch.rand(size, device='npu:0')
-y = torch.rand(size, device='npu:0')
-output_triton = add(x, y)
+if __name__ == "__main__":
+    size = 1024
+    x = torch.rand(size, device='npu:0')
+    y = torch.rand(size, device='npu:0')
+    output_triton = add(x, y)
 ```
 
 执行mssanitizer python3 test_add.py产生如下打屏信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
 
-![](figs/P3.png)
+![](figs/P5.png)
 
 注: 想了解更多mssanitizer的检测情况可以参考[详见MindStdudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
@@ -292,13 +355,11 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 
 #### 常用性能分析图
 
-性能流水图数据可在以下文件中获取
+1. trace.json：支持在chrome://tracing/上生成指令流水图
+![](figs/P6.png)
 
-trace.json：支持在chrome://tracing/上生成指令流水图
-![](figs/P4.png)
-
-visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
-![](figs/P5.png)
+2. visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
+![](figs/P7.png)
 
 #### 其他性能分析图
 
@@ -309,6 +370,10 @@ visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾A
 以如下add kernel为例，希望跑出对应的流水情况：
 
 ```
+import torch
+import triton
+import triton.language as tl
+
 @triton.jit
 def add_kernel(
     x_ptr,
@@ -325,10 +390,29 @@ def add_kernel(
     y = tl.load(y_ptr + offsets, mask=mask)
     output = x + y
     tl.store(output_ptr + offsets, output, mask=mask)
+
+def add(x, y):
+    output = torch.empty_like(x)
+    n_elements = output.numel()
+    BLOCK_SIZE = 1024
+    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
+    add_kernel[grid](
+        x, y, output,
+        n_elements,
+        BLOCK_SIZE=BLOCK_SIZE
+    )
+
+    return output
+
+if __name__ == "__main__":
+    size = 1024
+    x = torch.rand(size, device='npu:0')
+    y = torch.rand(size, device='npu:0')
+    output_triton = add(x, y)
 ```
 
-执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成OPPROF文件夹
-![](figs/P6.png)
+执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成带着时间戳的OPPROF文件夹
+![](figs/P8.png)
 
-取出simulator底下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图
-![](figs/P7.png)
+取出simulator底下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图(trace.json/visualize_data.bin)都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
+![](figs/P9.png)
