@@ -2,11 +2,11 @@
 
 本文说明 AscendNPU IR 的依赖安装、构建方式（源码/二进制）及运行测试步骤。
 
-## 1 安装依赖
+## 安装依赖
 
-### 1.1 构建依赖
+### 构建依赖
 
-#### 1.1.1 编译器与工具链要求
+#### 编译器与工具链要求
 
 以下为基础的编译器与工具链要求：
 
@@ -18,7 +18,7 @@
 - Clang >= 10
 - LLD >= 10 （使用LLVM LLD将显著提升构建速度）
 
-#### 1.1.2 源码准备
+#### 源码准备
 
 1. 克隆主仓库（克隆后进入仓库目录，目录名通常为 `ascendnpu-ir`）：
 
@@ -36,9 +36,9 @@ cd ascendnpu-ir
 git submodule update --init --recursive
 ```
 
-### 1.2 运行依赖
+### 运行依赖
 
-#### 1.2.1 CANN包安装
+#### CANN包安装
 
 AscendNPU-IR端到端运行依赖CANN环境。
 
@@ -60,11 +60,11 @@ chmod +x Ascend-cann-A3-ops_8.5.0_linux-x86_64.run
 source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 ```
 
-## 2 构建指令
+## 构建指令
 
-### 2.1 源码安装
+### 源码安装
 
-#### 2.1.1 使用提供的构建脚本（推荐）
+#### 使用提供的构建脚本（推荐）
 
 我们提供了一个便捷的构建脚本 `build.sh` 来自动化配置和构建过程。
 
@@ -81,7 +81,7 @@ source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 - `-o`：编译产物输出路径
 - `--build-type`：构建类型，如"Release"、"Debug"。
 
-#### 2.1.2 手动构建（供高级用户参考）
+#### 手动构建（供高级用户参考）
 
 如果您希望手动控制过程，可以参考`build.sh`脚本内部的命令：
 
@@ -107,13 +107,13 @@ ninja -j32
 
 注：LLVM 版本大于等于 21 时添加 `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON` 选项。
 
-### 2.2 二进制安装
+### 二进制安装
 
-#### 2.2.1 随 CANN 包安装
+#### 随 CANN 包安装
 
 AscendNPU-IR二进制会随CANN toolkit包一起安装，参见上文「1.2.1 CANN 包安装」。
 
-#### 2.2.2 AscendNPU-IR 包单独安装
+#### AscendNPU-IR 包单独安装
 
 AscendNPU-IR有独立安装包以供使用。
 
@@ -131,7 +131,7 @@ chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 ./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
 ```
 
-### 2.3 环境变量设置
+### 环境变量设置
 
 要使用AscendNPU-IR，需要将bishengir-compile可执行文件所在的路径加入到PATH环境变量中。
 
@@ -140,23 +140,23 @@ chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 export PATH=${PATH-TO-BISHENGIR-COMPILE}:$PATH
 ```
 
-## 3 运行测试
+## 运行测试
 
-### 3.1 编译测试Target
+### 编译测试Target
 
 ```bash
 # 在 `build` 目录下
 cmake --build . --target "check-bishengir"
 ```
 
-### 3.2 使用LLVM-LIT执行测试套
+### 使用LLVM-LIT执行测试套
 
 ```bash
 # 在 `build` 目录下
 ./bin/llvm-lit ../bishengir/test
 ```
 
-## 4 FAQ
+## FAQ
 
 Q：调用build-tools/build.sh脚本构建时，遇到报错"ninja: error: loading 'build.ninja': No such file or directory"应该如何处理？  
 A：在调用build-tools/build.sh脚本时添加"-r"选项，重新执行CMake并生成新的build.ninja文件。

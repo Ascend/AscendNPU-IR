@@ -1,10 +1,10 @@
 # Cube–Vector optimization overview
 
-## 1. Overview
+## Overview
 
 This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Ascend 910B: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
 
-### 1.1 Terms and background (read first)
+### Terms and background (read first)
 
 The following terms appear throughout the CV documentation. It helps to understand them before reading individual pass details.
 
@@ -24,7 +24,7 @@ The following terms appear throughout the CV documentation. It helps to understa
 **Pre- vs post-bufferization:**  
 Most CV passes run in the **pre-bufferization** phase (`hivmPreBufferizationOptimizationPipeline`), when IR is still tensor-centric with `scf.for` and similar control flow. Bufferization turns tensors into memrefs and fixes layout; after that, **post-bufferization** optimizations (e.g. another PlanMemory pass on `memref.alloc`) run. Understanding “CV structure first, then memory materialization” helps with pass ordering.
 
-### 1.2 Hardware background
+### Hardware background
 
 Ascend 910B NPU uses a heterogeneous architecture with:
 
@@ -41,7 +41,7 @@ Ascend 910B NPU uses a heterogeneous architecture with:
 
 ![V220 architecture](./cvarch.png)
 
-### 1.3 Mix kernel and CV optimization goals
+### Mix kernel and CV optimization goals
 
 A **Mix kernel** (`mix_mode = "mix"`) contains both Cube and Vector ops in one function, connected by fixpipe, load/store, etc. CV optimization aims to:
 
@@ -53,7 +53,7 @@ A **Mix kernel** (`mix_mode = "mix"`) contains both Cube and Vector ops in one f
 
 ---
 
-## 2. Interface
+## Interface
 
 Testing individual passes:
 
@@ -69,9 +69,9 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 
 ---
 
-## 3. Pass descriptions
+## Pass descriptions
 
-### 3.1 createNormalizeMatmulPass
+### createNormalizeMatmulPass
 
 - **Role**: Normalize M/K/N dimensions, init conditions, and per-channel add form for `hivm.hir.mmadL1` and `hivm.hir.batchMmadL1`.
 - **Goal**: Unify matmul IR so that later fixpipe insertion, tiling, etc. can match and transform consistently.
@@ -96,7 +96,7 @@ After:
 %5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 : tensor<16x32xf32>)
 ```
 
-### 3.2 createInlineFixpipePass
+### createInlineFixpipePass
 
 - **Role**: Insert `hivm.hir.fixpipe` between mmadL1/batchMmadL1 and store; merge store+vcast etc. into fixpipe’s quant/activation options.
 - **Goal**: Make Cube-to-Vector data movement explicit so that workspace allocation and load/store insertion have clear insertion points.
@@ -117,7 +117,7 @@ mmadL1 -> fixpipe
 
 InlineFixpipe inserts fixpipe and then tries to inline ops such as hivm.vcast, hivm.vrelu, hivm.store onto the new fixpipe.
 
-### 3.3 createTileBatchMMIntoLoopPass
+### createTileBatchMMIntoLoopPass
 
 - **Role**: Expand `hivm.hir.batchMmadL1` along the batch dimension into an `scf.for` loop; each iteration runs a single `mmadL1` and fixpipe.
 - **Goal**: Turn the batch dimension into a loop so that load/fixpipe/store can be indexed by batch for workspace and pipelining.
@@ -138,7 +138,7 @@ for batch_idx in range(batch):
   fixpipe(extract_slice(workspace))
 ```
 
-### 3.4 createInsertLoadStoreForMixCVPass
+### createInsertLoadStoreForMixCVPass
 
 - **Role**: Insert load/store at Cube–Vector boundaries so that data flows correctly between tensor and global workspace.
 - **Goal**: Ensure correct data transfer between Cube and Vector.
@@ -162,7 +162,7 @@ load
 vadd
 ```
 
-### 3.5 createInsertWorkSpaceForMixCVPass
+### createInsertWorkSpaceForMixCVPass
 
 - **Role**: At Cube–Vector boundaries (CC/CV/VC/VV), replace `tensor.empty` with `memref_ext.alloc_workspace`.
 - **Goal**: Allocate fixpipe output, store output, and other intermediates from global workspace for cross-iteration and cross-core sharing.
@@ -190,7 +190,7 @@ After:
 vadd (%5)
 ```
 
-### 3.6 createBindWorkSpaceArgPass
+### createBindWorkSpaceArgPass
 
 - **Role**: Bind in-function `memref_ext.alloc_workspace` to the function’s workspace argument (`hacc.arg_type = #hacc.arg_type<workspace>`).
 - **Goal**: Single source of workspace so that the runtime passes the workspace pointer as an argument and multiple kernels can share one workspace.
@@ -219,7 +219,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-### 3.7 createPlanMemoryPass
+### createPlanMemoryPass
 
 - **Role**: In `GLOBAL_WORKSPACE_PLAN` mode, plan memory for `memref_ext.alloc_workspace`, replacing alloc with `hivm.hir.pointer_cast` + offset.
 - **Goal**: On a given workspace base, assign offsets by liveness and inplace rules to maximize reuse and minimize total workspace size.
@@ -243,7 +243,7 @@ func.func @bind_workspace_arg(..., %arg1: memref<?xi8> {hacc.arg_type = #hacc.ar
 }
 ```
 
-### 3.8 createSplitMixKernelPass
+### createSplitMixKernelPass
 
 - **Role**: Split the Mix kernel into AIC (Cube) and AIV (Vector) sub-functions and generate the mix entry.
 - **Goal**: The backend can schedule AIC/AIV to Cube/Vector cores separately for pipelining and sync.
@@ -277,9 +277,9 @@ func.func @bind_workspace_arg_aiv(..., hivm.func_core_type = #hivm.func_core_typ
 
 ---
 
-## 4. Quick start and troubleshooting
+## Quick start and troubleshooting
 
-### 4.1 Test paths
+### Test paths
 
 - `bishengir/test/Dialect/HIVM/normalize-matmul.mlir`
 - `bishengir/test/Dialect/HIVM/inline-fixpipe.mlir`
@@ -289,9 +289,9 @@ func.func @bind_workspace_arg_aiv(..., hivm.func_core_type = #hivm.func_core_typ
 - `bishengir/test/Dialect/HIVM/plan-memory.mlir`
 - `bishengir/test/Dialect/HIVM/split-mix-kernel.mlir`
 
-### 4.2 Common issues
+### Common issues
 
-#### 4.2.1 copy op errors
+#### copy op errors
 
 Example:
 
@@ -307,7 +307,7 @@ Common causes:
 - SplitMixKernel:
   - Ensure no redundant copy is wrongly placed in AIC.
 
-#### 4.2.2 Core dump in translateDeviceKernelToLLVM
+#### Core dump in translateDeviceKernelToLLVM
 
 Example:
 

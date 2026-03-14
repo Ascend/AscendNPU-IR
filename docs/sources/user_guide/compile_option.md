@@ -1,8 +1,8 @@
 # Compile options
 
-## 1 bishengir-compile options
+## bishengir-compile options
 
-### 1.1 BiShengIR Feature Control Options
+### BiShengIR Feature Control Options
 
 
 | Option                              | Description                                                                              | Type | Default                                         | Status |
@@ -22,7 +22,7 @@
 | --disable-hivm-tensor-compile       | Disable BiShengHIR HIVM Tensor compilation.                                              | bool | false                                           | In use |
 
 
-### 1.2 BiShengIR General Optimization Options
+### BiShengIR General Optimization Options
 
 
 | Option                                          | Description                                                                     | Type     | Default | Status |
@@ -33,7 +33,7 @@
 | --block-dim=                                    | Number of blocks to use.                                                        | unsigned | 1       | In use |
 
 
-### 1.3 BiShengIR HFusion Optimization Options
+### BiShengIR HFusion Optimization Options
 
 
 | Option                                | Description                                                                                                                                               | Type         | Default | Status |
@@ -46,7 +46,7 @@
 | --enable-hfusion-count-buffer-dma-opt | If enabled, buffer used by DMA is not reused by Vector ops.                                                                                               | bool         | false   | In use |
 
 
-### 1.5 BiShengIR Target Options
+### BiShengIR Target Options
 
 
 | Option          | Value               | Status |
@@ -76,9 +76,9 @@
 | =Unknown        | Unknown             | In use |
 
 
-## 2 bishengir-hivm-compile options
+## bishengir-hivm-compile options
 
-### 2.1 BiShengIR HIVM Optimization Options
+### BiShengIR HIVM Optimization Options
 
 
 | Option                                     | Description                                                                                                                | Type                | Default   | Status         |
@@ -101,7 +101,7 @@
 | --tile-mix-cube-loop=                      | Trip count of tiled cube loop for mix kernels.                                                                             | unsigned            | 1         | In use         |
 
 
-### 2.2 Options shared with bishengir-hivm-compile
+### Options shared with bishengir-hivm-compile
 
 
 | Option                                | Description                                                   | Type | Default | Status |

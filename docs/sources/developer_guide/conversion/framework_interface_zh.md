@@ -5,7 +5,7 @@ AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方
 - **DSL 接入方式**：通过 Triton、TileLang 等领域特定语言接入，将算子编译为 AscendNPU IR。
 - **IR 接入方式**：通过 IR 表示接入，支持 Torch IR、Linalg/HFusion IR、HIVM IR 多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
 
-## 1. DSL 接入方式
+## DSL 接入方式
 
 AscendNPU IR 向上支持与 Triton、TileLang 等语言或框架的对接，使能三方 DSL 支持昇腾硬件，在 NPU 上运行自定义算子。
 
@@ -14,7 +14,7 @@ AscendNPU IR 向上支持与 Triton、TileLang 等语言或框架的对接，使
 | **Triton** | 使用 Triton 编写高性能内核，通过 Triton Ascend 在昇腾 NPU 上运行。含安装、环境、算子映射及昇腾扩展说明。 | [Triton 接入](triton_interface_zh.md) |
 | **TileLang** | 使用 TileLang Ascend（基于 tile-lang/TVM 的 DSL）开发面向昇腾 NPU 的内核（如 GEMM、向量运算、attention）。含环境、构建与快速开始。 | [TileLang 接入](tile_lang_interface_zh.md) |
 
-## 2. IR 接入方式
+## IR 接入方式
 
 AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒度上有所差异（详见 [IR 接入简介 - 多级 IR 抽象架构](interface_api_zh.md#多级ir抽象架构)）：
 
@@ -22,7 +22,7 @@ AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒
 - **Linalg/HFusion IR**：通用张量代数层与硬件感知融合层，标准 MLIR dialect 表达算子语义，HFusion 自动完成融合、切分和调度。
 - **HIVM IR**：NPU 指令层，直接映射硬件指令，显式控制存储层级（GM/UB/L1/L0）和计算流水线（Vector/Cube/MTE），支持精细粒度调优。
 
-### 2.1 Torch IR 接入
+### Torch IR 接入
 
 直接使用 Torch dialect 的 ATen 算子，通过 `convert-torch-to-hfusion` 等 Pass 自动转换为 Linalg/HFusion Named Op，再进入自动融合和调度流程。
 
@@ -147,7 +147,7 @@ bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enabl
 | `aten.where.self` | `hfusion.select` |
 | `aten.arange.start_step` | `hfusion.arange` |
 
-### 2.2 Linalg/HFusion IR 接入
+### Linalg/HFusion IR 接入
 
 使用 Linalg/Tensor、HFusion 等标准 MLIR dialect 表达算子语义，直接进入 Linalg/HFusion IR 层级的自动融合和调度流程。
 
@@ -189,7 +189,7 @@ Linalg/HFusion IR 接入后，HFusion 编译流程会对符合融合条件的算
 
 关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅 [HFusion AutoSchedule 自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule_zh.md)。
 
-### 2.3 HIVM IR 接入
+### HIVM IR 接入
 
 对于需要精细控制硬件行为的场景，可以直接使用 HIVM dialect 编写 kernel，显式管理存储层级和计算流水线。
 
@@ -220,7 +220,7 @@ HIVM 层使用 `#hivm.address_space` 标注存储层级：`gm`（全局内存）
 
 #### 调用方式
 
-HIVM 层无需使能 HFusion 编译流程，默认的 HIVM 编译流程会完成同步插入、内存规划等优化：
+HIVM 层无需使能 HFusion 编译流程，默认的 HIVM 编译流程会完成同步插入、内存规划等优化。
 
 ```
 # 端到端编译，经过 HIVM IR 编译 pipeline，直接生成二进制

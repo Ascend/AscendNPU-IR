@@ -2,7 +2,7 @@
 
 本文介绍HIVM中的AutoBindSubBlock Pass。该Pass通过Cube-Vector 1比2切分，针对CV类kernel进行优化。在阅读本文之前，建议先阅读CV Optimization了解CV编译相关术语。
 
-## 1. 硬件背景
+## 硬件背景
 
 当前昇腾AI加速芯片，AIC与AIV分离，核数1:2。
 
@@ -10,7 +10,7 @@
 
 在现有生态下，无论是用户编写的算法实现还是社区共享的算子，普遍没有昇腾 Cube-Vector 1:2 分核处理逻辑。为优化计算效率并实现昇腾亲和性，编译器需具备自动分核能力。该特性期待自动应用 Cube-Vector 1:2 分核策略，实现数据切分。
 
-## 2. 算法原理
+## 算法原理
 
 总体实现的思路是：
 
@@ -20,11 +20,11 @@
 
 ![](./3.png)
 
-### 2.1 输入输出样例
+### 输入输出样例
 
 ![](./SuccInOut.png)
 
-### 2.2 实现思路
+### 实现思路
 
 1. 通过extract-slice和for-loop对Store数据进行对半切分
 2. 通过BubbleUpExtractSlice Pattern把extract slice往上冒泡
@@ -37,7 +37,7 @@
 
 图 Autosubtiling 1:2实现思路
 
-### 2.3 实现设计 
+### 实现设计 
 
 ##### Dimension Analyzer选轴：
 
@@ -61,7 +61,7 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 后续可以通过增加matchAndRewritePattern增加对更多Op类型的支持
 
-## 3. 接口说明
+## 接口说明
 
 可通过选项控制 
 
@@ -69,7 +69,7 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 --enable-auto-bind-sub-block=False 为关闭此特性
 
-## 4. 约束能力
+## 约束能力
 
 如果尝试切分失败，或中间转换失败，会自动回退1:1，保证功能正确性。
 
@@ -78,6 +78,6 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 1. 选轴分析失败，没有可切分的平行轴
 2. BubbleUpExtractSlicePattern中途遇到了未支持的Op
 
-### 4.1 回退1:1样例
+### 回退1:1样例
 
 ![](./FailInOut.png)

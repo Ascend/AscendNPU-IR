@@ -2,11 +2,11 @@
 
 This document describes dependency installation, build methods (source and binary), and running tests for AscendNPU IR.
 
-## 1 Install dependencies
+## Install dependencies
 
-### 1.1 Build dependencies
+### Build dependencies
 
-#### 1.1.1 Compiler and toolchain requirements
+#### Compiler and toolchain requirements
 
 Minimum requirements:
 
@@ -18,7 +18,7 @@ Recommended:
 - Clang >= 10
 - LLD >= 10 (LLVM LLD significantly speeds up builds)
 
-#### 1.1.2 Source preparation
+#### Source preparation
 
 1. Clone the repository (then enter the repo directory, typically `ascendnpu-ir`):
 
@@ -36,9 +36,9 @@ The project depends on LLVM, Torch-MLIR, and other third-party code; submodules 
 git submodule update --init --recursive
 ```
 
-### 1.2 Runtime dependencies
+### Runtime dependencies
 
-#### 1.2.1 CANN package installation
+#### CANN package installation
 
 End-to-end runs depend on the CANN environment.
 
@@ -60,11 +60,11 @@ chmod +x Ascend-cann-A3-ops_8.5.0_linux-x86_64.run
 source ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 ```
 
-## 2 Build commands
+## Build commands
 
-### 2.1 Source build
+### Source build
 
-#### 2.1.1 Using the build script (recommended)
+#### Using the build script (recommended)
 
 A convenience script `build.sh` automates configuration and build.
 
@@ -81,7 +81,7 @@ Common options:
 - `-o`: Build output directory.
 - `--build-type`: Build type, e.g. "Release", "Debug".
 
-#### 2.1.2 Manual build (advanced)
+#### Manual build (advanced)
 
 From the repo root:
 
@@ -106,13 +106,13 @@ ninja -j32
 
 For LLVM >= 21, add `-DLLVM_MAJOR_VERSION_21_COMPATIBLE=ON`.
 
-### 2.2 Binary installation
+### Binary installation
 
-#### 2.2.1 With CANN package
+#### With CANN package
 
 AscendNPU IR binaries can be installed as part of the CANN toolkit; see "1.2.1 CANN package installation" above.
 
-#### 2.2.2 Standalone AscendNPU IR package
+#### Standalone AscendNPU IR package
 
 A standalone installer is also available.
 
@@ -126,7 +126,7 @@ chmod +x ascendnpu-ir_1.0.0_linux-x86.run
 ./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
 ```
 
-### 2.3 Environment variables
+### Environment variables
 
 Add the directory containing `bishengir-compile` to your PATH:
 
@@ -134,23 +134,23 @@ Add the directory containing `bishengir-compile` to your PATH:
 export PATH=${PATH-TO-BISHENGIR-COMPILE}:$PATH
 ```
 
-## 3 Running tests
+## Running tests
 
-### 3.1 Build test target
+### Build test target
 
 ```bash
 # From the build directory
 cmake --build . --target "check-bishengir"
 ```
 
-### 3.2 Run tests with LLVM LIT
+### Run tests with LLVM LIT
 
 ```bash
 # From the build directory
 ./bin/llvm-lit ../bishengir/test
 ```
 
-## 4 FAQ
+## FAQ
 
 **Q:** When building with `build-tools/build.sh`, I get "ninja: error: loading 'build.ninja': No such file or directory". What should I do?  
 **A:** Add the `-r` option to rerun CMake and regenerate `build.ninja`.
