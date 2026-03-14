@@ -4,7 +4,7 @@ This document describes the **PlanMemory** transformation (`PlanMemoryPass`) in 
 
 ---
 
-## 1. Hardware background
+## Hardware background
 
 Ascend on-chip memory uses a buffer model. It includes storage for the Cube (matrix) and Vector units. Software must control addresses explicitly and respect alignment.
 
@@ -26,15 +26,15 @@ Buffer alignment requirements:
 
 ---
 
-## 2. Algorithm
+## Algorithm
 
-### 2.1 Software context
+### Software context
 
 In the input IR, `memref.alloc` buffers have a name and size but no address. The AscendNPU IR memory module (PlanMemory) assigns addresses based on **lifetime** to avoid overwrites and precision issues. To fit all buffers in limited on-chip memory, PlanMemory performs **memory reuse** using IR semantics and hardware rules. To avoid unnecessary data dependencies that hurt performance, it uses a **three-level allocation** strategy to balance performance and utilization.
 
 Allocation targets the storage used by Cube (L1, L0A, L0B, L0C, etc.) and Vector (UB). Cube uses L0A/L0B for left/right matrices (loaded from L1) and L0C for results; allocation is mainly for L1 and L0C. Vector uses UB for inputs and outputs. PlanMemory also allocates a small amount of **Workspace** (`memref_ext.alloc_workspace`) for CV flows (e.g. moving Cube results from L0C to UB via workspace). Workspace size is reported to the framework runtime.
 
-### 2.2 Terms
+### Terms
 
 - **BufferLife**: The **lifetime** of a buffer — from first write (gen) to last read (kill). Non-overlapping lifetimes can share the same memory; PlanMemory computes offsets so non-overlapping buffers reuse space.
 - **Alias**: Two values that refer to the same underlying data (e.g. before/after `subview`).
@@ -43,7 +43,7 @@ Allocation targets the storage used by Cube (L1, L0A, L0B, L0C, etc.) and Vector
 
 ---
 
-### 2.3 Implementation
+### Implementation
 
 **Source**: `bishengir/lib/Dialect/HIVM/Transforms/PlanMemory.cpp`
 
@@ -53,24 +53,24 @@ Main steps:
 - **Allocation**: Assign addresses from lifetime and reuse rules.
 - **OP rewrite**: Replace original `alloc` with `hivm.hir.pointer_cast(offset)`.
 
-#### 2.3.1 Lifetime analysis
+#### Lifetime analysis
 
 1. Use community `Liveness` for liveness.
 2. Walk the IR (including scf.for, scf.if, scf.while), collect **gen** (buffers defined) and **kill** (last use) per op to get BufferLife.
 3. Compute **lifetime** per buffer (first write to last read). Non-overlapping lifetimes may share memory.
 4. Use Alias to identify **inplace** candidates and assign the same base address where valid.
 
-#### 2.3.2 Allocation
+#### Allocation
 
 Two modes: **sequential** and **reuse**. If the sum of buffer sizes fits in a Memory Scope (e.g. UB, L1), sequential allocation is used. Otherwise, reuse is applied so that reuse does not cause conflicts.
 
 Reuse includes **Inplace** and **three-level reuse**.
 
-##### 2.3.2.1 Inplace
+##### Inplace
 
 Conditions: same Memory Scope (e.g. UB); in an `A = B + C` pattern, A’s kill is C’s gen; and hardware inplace rules are satisfied.
 
-##### 2.3.2.2 Three-level reuse
+##### Three-level reuse
 
 The compiler tries higher levels first and rolls back to a lower level if allocation fails.
 
@@ -139,13 +139,13 @@ Level0: any two buffers with non-overlapping lifetimes can share memory.
 - Pros: Maximum reuse.
 - Cons: Ignores pipeline structure; bad reuse can hurt performance.
 
-#### 2.3.3 OP rewrite
+#### OP rewrite
 
 After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_PLAN) and `memref.alloc` (LOCAL_MEM_PLAN) with `hivm.hir.pointer_cast(offset)`.
 
 ---
 
-### 2.4 Tests
+### Tests
 
 **File**: `bishengir/test/Dialect/HIVM/plan-memory.mlir`
 
@@ -159,7 +159,7 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 
 ---
 
-## 3. Interface
+## Interface
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -169,7 +169,7 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 
 ---
 
-## 4. Constraints
+## Constraints
 
 **The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.**
 

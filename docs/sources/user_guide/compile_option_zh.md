@@ -1,7 +1,7 @@
 # 编译选项
 
-## 1 bishengir-compile编译选项
-### 1.1 BiShengIR Feature Control Options:
+## bishengir-compile编译选项
+### BiShengIR Feature Control Options:
 
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|--------|
@@ -20,7 +20,7 @@
 | --disable-hivm-tensor-compile | Disable BiShengHIR HIVM Tensor compilation. | bool | false | In use  |
 
 
-### 1.2 BiShengIR General Optimization Options:
+### BiShengIR General Optimization Options:
 
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|--------|
@@ -29,7 +29,7 @@
 | --enable-tuning-mode | Enable tuning mode and will not try compile multi times in case of plan memory failure | bool | false | In use  |
 | --block-dim=<uint> | Number of blocks to use | unsigned | 1 | In use  |
 
-### 1.3 BiShengIR HFusion Optimization Options:
+### BiShengIR HFusion Optimization Options:
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|--------|
 | --enable-deterministic-computing | If enabled, the computation result is deterministic. If disabled, we will enable extra optimizations that might boost performance, e.g. bind reduce to multiple cores. However, the result will be non-deterministic. | bool | true | In use  |
@@ -39,7 +39,7 @@
 | --cube-tiling-tuning=<long> | Cube block size tuning in HFusion auto schedule | list int64_t | "" | In use  |
 | --enable-hfusion-count-buffer-dma-opt | If enabled, the buffer used by DMA operations will not be reused by Vector operations. | bool | false | In use  |
 
-### 1.5 BiShengIR Target Options:
+### BiShengIR Target Options:
 | 选项名 | 数值 | 状态 |
 |--------|------|------|
 | --target=<value>  |Target device name. | In use  |
@@ -67,8 +67,8 @@
 | =Unknown | Unknown | In use  |
 
 
-## 2 bishengir-hivm-compile编译选项
-### 2.1 BiShengIR HIVM Optimization Options
+## bishengir-hivm-compile编译选项
+### BiShengIR HIVM Optimization Options
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|--------|
 | --limit-auto-multi-buffer-of-local-buffer=<value> | When enable-auto-multi-buffer = true, limit local buffer mode. Value=<no-limit/no-l0c> | MultiBufferStrategy  | no-l0c  | In use  |
@@ -90,7 +90,7 @@
 
 
 
-### 2.2 Options Shared with bishengir-hivm-compile:
+### Options Shared with bishengir-hivm-compile:
 | 选项名 | 描述 | 类型 | 默认值 | 状态 |
 |--------|------|------|--------|----------|
 | --enable-static-bare-ptr | Enable generating bare ptr calling convention for static shaped kernels. | bool | true | In use |

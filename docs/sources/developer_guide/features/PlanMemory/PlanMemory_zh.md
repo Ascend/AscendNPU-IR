@@ -4,7 +4,7 @@
 
 ---
 
-## 1. 硬件背景
+## 硬件背景
 
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
 
@@ -25,9 +25,9 @@
 
 ---
 
-## 2. 算法原理
+## 算法原理
 
-### 2.1. 软件背景
+### 软件背景
 
 针对昇腾片上内存，由于输入IR中`memref.alloc`的Buffer仅包含变量名称、需要的内存空间大小，不包含地址信息，因此AscendNPU IR内存管理模块（PlanMemory）需要根据Buffer的**生命区间**分配合适的内存地址，防止运算过程中出现内存覆写导致精度问题。为了尽可能在有限的内存空间下分配完所有的Buffer，PlanMemory会基于「IR语义」和「硬件支持」进行**内存复用**。同时为了避免引入不必要的数据依赖影响性能，PlanMemory提供了三级分配内存算法，在尽量保障性能的情况下，提高内存利用率。
 
@@ -35,7 +35,7 @@
 
 除了片上内存，PlanMemory还会进行少量的Workspace的内存分配(`memref_ext.alloc_workspace`)，主要用于CV场景。如果涉及Cube计算完成后Vector单元继续参与运算，则需要将Cube运算结果从L0C搬出，临时保存在Workspace空间，再搬入UB进行Vector运算。片外空间交给框架Rumtime统一申请管理，因此算子需要反馈所需的Workspace空间大小。
 
-### 2.2 相关术语说明
+### 相关术语说明
 
 - **BufferLife**：某Buffer的「生命区间」——从第一次被写入（gen）到最后一次被读（kill）。若两个Buffer的生命区间不重叠，它们可以共用同一块内存；PlanMemory据此计算每个alloc Buffer的地址偏移，使生命区间不重叠的Buffer可以共享内存。
 - **Alias**：当两个数据本质来源于同一个数据的时候，这两个数据就属于alias（别名）关系，如 `subview` 前后的数据。
@@ -44,7 +44,7 @@
 
 ---
 
-### 2.3. 实现原理
+### 实现原理
 
 **源文件**：`bishengir/lib/Dialect/HIVM/Transforms/PlanMemory.cpp`
 
@@ -54,7 +54,7 @@
 - **内存分配**：基于上述生命区间的分析，对不同Buffer进行内存地址分配；
 - **OP变换**：使用`hivm.hir.pointer_cast(offset)`替换原`alloc`，将分配完成的内存起始地址写回到对应的Buffer上进行指示。
 
-### 2.3.1 生命区间分析
+### 生命区间分析
 
 主流程包含：
 1. 通过社区`Liveness`类分析各个节点的活跃性。
@@ -62,20 +62,20 @@
 3. 根据gen/kill计算每个Buffer的**lifetime**（从第一次写到最后一次读的区间）。如果两个Buffer的lifetime不重叠，即可共享内存。
 4. 基于Alias关系，识别出一部分可**inplace**的Buffer，分配相同的内存起始地址。
 
-#### 2.3.2 内存分配
+#### 内存分配
 
 内存分配有两种模式：顺序分配 和 可复用分配。当所有Buffer内存相加都能在对应的Memory Scope（内存空间，如 UB、L1等）分的下时，无需复杂算法，可以直接进行顺序分配。当所有Buffer内存相加，超出对应的Memory Scope大小时，需由算法分析可复用内存的Buffer，确保内存在复用的同时，避免冲突产生精度问题。
 
 可复用分配 包括**Inplace复用**和**三级分配复用**。
 
-##### 2.3.2.1 Inplace复用
+##### Inplace复用
 
 Inplace复用条件：
 1. Memory Scope相同，例如同为 UB 。
 2. `A = B + C`场景，A的kill节点是C的gen节点。
 3. 符合硬件约束。
 
-##### 2.3.2.2 三级分配复用
+##### 三级分配复用
 
 从高level到低level策略尝试分配内存，分不下时会降level进行回滚重试。
 
@@ -151,13 +151,13 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
  - 优点：能够尽可能地复用内存，内存可复用概率高。
  - 缺点：完全无视硬件并行流水，不合理的复用会导致算子性能差。
 
-#### 2.3.3 OP变换
+#### OP变换
 
 计算完成所有Buffer的地址后，将 `memref_ext.alloc_workspace`（GLOBAL_WORKSPACE_PLAN） 和 `memref.alloc`（LOCAL_MEM_PLAN）替换为 `hivm.hir.pointer_cast(offset)`，指示Buffer的内存起始地址。
 
 ---
 
-### 2.4. 测试用例
+### 测试用例
 
 **文件**：`bishengir/test/Dialect/HIVM/plan-memory.mlir`
 
@@ -170,7 +170,7 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 
 ---
 
-## 3. 接口说明
+## 接口说明
 
 | 选项 | 默认值 | 说明 |
 |--------|--------|--------|
@@ -180,7 +180,7 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 
 ---
 
-## 4. 约束能力
+## 约束能力
 
 **用户需要保证「同一时间所申请的Buffer总大小」小于等于「实际硬件内存空间大小」。**
 

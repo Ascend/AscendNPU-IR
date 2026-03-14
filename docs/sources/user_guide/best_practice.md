@@ -2,7 +2,7 @@
 
 ## Performance optimization
 
-## 1. Tiling strategy
+## Tiling strategy
 
 ### Case description
 
@@ -87,7 +87,7 @@ gather_dim1_kernel[grid](
 )
 ```
 
-## 2. Ascend-friendly kernel rewrite (vectorized compare)
+## Ascend-friendly kernel rewrite (vectorized compare)
 
 ### Case description
 
@@ -108,9 +108,9 @@ In the original GPU flow, i64/i32 compare operations cannot use the vector unit 
 
 This section covers common function or precision issues.
 
-## 3. Hang / timeout
+## Hang / timeout
 
-### 3.1 Delimitation
+### Delimitation
 
 - **Symptom**: Kernel hang or timeout. Some hangs are related to hardware synchronization (intra-core, inter-core, or pipeline sync). If you encounter a hang, you can try passing the following options when invoking the kernel to change the binary’s sync behavior and avoid the hang.
 - **Example**:
@@ -144,15 +144,15 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-### 3.2 Invalid varlen arguments
+### Invalid varlen arguments
 
 For varlen-style kernels that randomly sample indices in seqlen, ensure indices are valid: strictly increasing and in the range [0, seqlen].
 
 ---
 
-## 4. UB overflow
+## UB overflow
 
-### 4.1 Triton argmax: 32B alignment then axis fusion wastes UB
+### Triton argmax: 32B alignment then axis fusion wastes UB
 
 MLIR snippet:
 
@@ -169,7 +169,7 @@ hivm.hir.load ins(%collapse_shape : ...) outs(%collapse_shape_0 : ...) ...
 
 - **Summary**: Original data 256x9x11xi8 is 25344 B; after loading from GM to UB, UB usage (256x32x11x1xi8) is 90112 B, about 3.5× the original size.
 
-### 4.2 Triton Not op: unreasonable lowering wastes UB
+### Triton Not op: unreasonable lowering wastes UB
 
 The Triton Not op is lowered in NPU IR to a sequence of VOR, VAND, VNOT, VAND; in many cases a single VNOT is sufficient. MLIR snippet:
 
@@ -191,7 +191,7 @@ hivm.hir.vand ins(%5, %4 : ...) outs(%6 : ...)
 
 - **Summary**: Prefer an implementation that lowers to a single VNOT where possible.
 
-### 4.3 Triton max_dim0 (int64): PlanMemory before HIVMLowerToLoops wastes UB
+### Triton max_dim0 (int64): PlanMemory before HIVMLowerToLoops wastes UB
 
 MLIR snippet:
 
@@ -208,28 +208,28 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : ...) outs(%3 : ...) te
 
 ---
 
-## 5. D-cache
+## D-cache
 
-### 5.1 Invalid address access
+### Invalid address access
 
 - **Symptom**: Inputs are valid and on the same device ID, but the kernel’s device ID is set incorrectly, so data cannot be read and D-cache read/write errors occur.
 - **Wrong**: `A = torch.empty(shape, dtype)` (not on NPU).
 - **Correct**: `A = torch.empty(shape, dtype).npu()` or `A = torch.empty(shape, dtype, device="npu:0").npu()`.
 
-### 5.2 Negative or overflowing offset
+### Negative or overflowing offset
 
 - **Symptom**: The offset value is a computed value in the IR.
 - **Examples**: (1) The computed offset is negative, leading to incorrect read address. (2) The operator’s offset is represented as int32; if the value exceeds that range, i32 overflows.
 
-### 5.3 Use non-negative loop iter as memory index
+### Use non-negative loop iter as memory index
 
 - **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices.
 
 ---
 
-## 6. Memory access
+## Memory access
 
-### 6.1 Load introducing unexpected vtranspose and UB overflow
+### Load introducing unexpected vtranspose and UB overflow
 
 - **Symptom**: Compile or precision error; a sign of implicit transpose is innermost stride ≠ 1 and outer stride = 1.
 - **Wrong example**:
@@ -253,7 +253,7 @@ k = tl.load(K_block_ptr)
 trans_k = tl.trans(k)
 ```
 
-### 6.2 Implicit transpose in load
+### Implicit transpose in load
 
 “Implicit transpose” means the load or store performs a transpose in one go, avoiding a separate transpose kernel or explicit data reorder. It is usually done by adjusting pointer shape and strides so that the access pattern swaps dimensions. You can use `tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)` with `order` or strides to achieve this. For a matrix transpose with input A (M, K) and output B (K, M), each block can process a block of B and load the corresponding transposed block from A (e.g. with swapped strides), or load a normal block of A and use `tl.trans` before storing to B.
 
@@ -277,7 +277,7 @@ def transpose_kernel(x_ptr, y_ptr, M, N,
     tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
 ```
 
-### 6.3 Use mayDiscretememaccess to avoid UB overflow
+### Use mayDiscretememaccess to avoid UB overflow
 
 - **Symptom**: UB overflow can be caused by large tensor size (e.g. beyond 192 KB UB) or by non-contiguous access that expands the last axis (e.g. `<Nx1xf32>` becomes `<Nx8xf32>` for 32B alignment). Adding the `mayDiscretememaccess` compile hint degenerates the tensor op to scalar access and can avoid UB overflow.
 
@@ -313,17 +313,17 @@ Before the hint, the IR uses tensor load/store and `linalg.transpose`; after the
 
 ---
 
-## 7. Baseline (compute)
+## Baseline (compute)
 
 - **TODO**: TRITON_INTERPRET mode (compute), GPU-specific logic (compute), to be added.
 
 ---
 
-## 8. Scenario-based debugging
+## Scenario-based debugging
 
 This section gives guidance on Triton NPU kernel performance tuning.
 
-### 8.1 Use bitwise_mask for mask memory
+### Use bitwise_mask for mask memory
 
 #### Problem
 
@@ -356,7 +356,7 @@ Because bitwise mask packs 8 i8 booleans into one i8, the mask assembly logic mu
 
 Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
 
-### 8.2 Dynamically generated mask
+### Dynamically generated mask
 
 #### Problem
 
@@ -380,9 +380,9 @@ for idx_ingroup in range(GROUP_SIZE):
 
 ---
 
-## 9. Cube–Vector (CV)
+## Cube–Vector (CV)
 
-### 9.1 Use tile_cube_loop to avoid L1 overflow
+### Use tile_cube_loop to avoid L1 overflow
 
 #### Problem
 
@@ -407,7 +407,7 @@ pv = tl.dot(p, v)
 tl.compile_hint(pv, "tile_cube_loop", 2)
 ```
 
-### 9.2 Compile options (reference)
+### Compile options (reference)
 
 | Option | Meaning | Values |
 |--------|---------|--------|
@@ -423,7 +423,7 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 
 For attention, workload can be imbalanced across cores (e.g. lower-triangular mask so later cores do more work). Prefer splitting so that lighter and heavier work are grouped on the same core where possible. See [matrix multiplication optimized](https://gitee.com/guangpengz/triton-ascend/blob/master/ascend/examples/tutorials/13-matrix-multiplication-optimized.py).
 
-### 9.3 Kernel options to avoid timeout
+### Kernel options to avoid timeout
 
 #### Problem
 
@@ -461,7 +461,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 ---
 
-## 10. Triton NPU programming tutorials
+## Triton NPU programming tutorials
 
 Triton NPU programming reference:
 

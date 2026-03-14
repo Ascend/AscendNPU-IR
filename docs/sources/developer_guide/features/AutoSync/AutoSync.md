@@ -4,17 +4,17 @@ Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts
 
 ---
 
-## 1. AICore Architecture
+## AICore Architecture
 
 <https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
 
 ---
 
-## 1. HIVM Synchronization Operations (MLIR)
+## HIVM Synchronization Operations (MLIR)
 
 Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below they are described in terms of **MLIR usage** (operands/attributes), not assembly syntax.
 
-### 1.1 Intra-Core-Sync (Normal-Sync)
+### Intra-Core-Sync (Normal-Sync)
 
 - **`hivm.set_flag`**  
   Operands/attributes: `set_pipe`, `wait_pipe` and `flag_id`  
@@ -31,7 +31,7 @@ Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below the
   Barrier across a given pipe.  
   Block all following instructions on `pipe` until all previous instructions finishes.
 
-### 1.2 Cross-Core-Sync (Block-Sync) (Intra-Block)
+### Cross-Core-Sync (Block-Sync) (Intra-Block)
 
 - **`hivm.sync_block_set`**  
   Operands/attributes:  
@@ -55,7 +55,7 @@ Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below the
 
 ---
 
-## 2. Auto-Sync Solutions Overview
+## Auto-Sync Solutions Overview
 
 The codebase provides **two** auto-sync solutions:  
 
@@ -71,7 +71,7 @@ The codebase provides **two** auto-sync solutions:
 
 ---
 
-## 3. InjectSync (Primary Intra-Core Auto-Sync Pass)
+## InjectSync (Primary Intra-Core Auto-Sync Pass)
 
 ![alt text](0.png)
 
@@ -99,7 +99,7 @@ The codebase provides **two** auto-sync solutions:
 
 ---
 
-## 4. InjectBlockSync (Block-Level Sync Pass)
+## InjectBlockSync (Block-Level Sync Pass)
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
 
@@ -115,7 +115,7 @@ The codebase provides **two** auto-sync solutions:
 
 ---
 
-## 5. GraphSyncSolver (Solver-Based Intra-Core Pass)
+## GraphSyncSolver (Solver-Based Intra-Core Pass)
 
 ![alt text](1.png)
 
@@ -137,7 +137,7 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 
 ---
 
-## 6. CrossCoreGSS (Cross-Core Synchronization)
+## CrossCoreGSS (Cross-Core Synchronization)
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
 
@@ -149,9 +149,9 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 
 ---
 
-## 7. Pass Options and CLI Flags
+## Pass Options and CLI Flags
 
-### 7.1 Global CLI flags (compile tool)
+### Global CLI flags (compile tool)
 
 These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`); see `Passes.td` and tools under `bishengir/lib/Tools/` for exact mapping.
 
@@ -166,7 +166,7 @@ These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`)
 
 ---
 
-## 8. Extending and Debugging
+## Extending and Debugging
 
 - **InjectSync:** Start from `InjectSync.cpp`; follow analysis → allocation → codegen → move → remove. Memory and sync decisions: `MemoryDependentAnalyzer`, `SyncAnalysis`; event IDs: `SyncEventIdAllocation`; emission: `SyncCodegen`, `IRTranslator`; cleanup: `MoveSyncState`, `RemoveRedundantSync`. Use `SyncDebug` for logging.
 - **InjectBlockSync:** Entry in `InjectBlockSync.cpp`; block IR is built by `SyncBlockIRTranslator`; rest of pipeline shared with InjectSync in BLOCKSYNC mode.

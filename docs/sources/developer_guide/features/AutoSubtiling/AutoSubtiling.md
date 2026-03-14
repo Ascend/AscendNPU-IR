@@ -1,6 +1,6 @@
 # Auto-Subtiling
 
-## 1. Hardware background
+## Hardware background
 
 During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
@@ -8,7 +8,7 @@ During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
 In the current ecosystem, neither user-written kernels nor community operators typically implement Ascend Cube–Vector 1:2 sub-block logic. To improve compute efficiency and Ascend affinity, the compiler needs automatic sub-block (subtiling) capability. This feature applies a Cube–Vector 1:2 subtiling strategy and performs the corresponding data splitting.
 
-## 2. Algorithm overview
+## Algorithm overview
 
 The overall approach is:
 
@@ -22,7 +22,7 @@ Effects:
 
 ![](./SuccInOut.png)
 
-### 2.2 Implementation idea
+### Implementation idea
 
 1. Split Store data in half via extract-slice and for-loop.
 2. Bubble up the extract-slice using the BubbleUpExtractSlice pattern.
@@ -35,7 +35,7 @@ If subtiling fails, the compiler falls back to 1:1.
 
 Figure: Auto-subtiling 1:2 implementation.
 
-### 2.3 Design
+### Design
 
 ##### Dimension analyzer (axis selection)
 
@@ -58,14 +58,14 @@ A BubbleUp strategy is implemented per op type. Supported op types include:
 
 Additional op types can be supported by adding matchAndRewrite patterns.
 
-## 3. Interface
+## Interface
 
 Behavior is controlled by:
 
 - `--enable-auto-bind-sub-block=True` — enable this feature (default)
 - `--enable-auto-bind-sub-block=False` — disable this feature
 
-## 4. Constraints and fallback
+## Constraints and fallback
 
 If subtiling or an intermediate transformation fails, the compiler automatically falls back to 1:1 to preserve correctness.
 
@@ -76,6 +76,6 @@ Common reasons for falling back to 1:1:
 1. Axis selection fails (no valid parallel axis for splitting).
 2. BubbleUpExtractSlicePattern encounters an unsupported op.
 
-### 4.1 Fallback example
+### Fallback example
 
 ![](./FailInOut.png)

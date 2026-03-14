@@ -6,8 +6,8 @@
 
 在参与社区贡献前，您需要签署 Ascend 社区贡献者许可协议（CLA）：
 
-- **个人贡献者**：请选择「签署个人 CLA」
-- **企业**：请选择「签署法人 CLA」
+- **个人贡献者**：请选择「签署个人 CLA」。
+- **企业**：请选择「签署法人 CLA」。
 - **企业员工**：请选择「法人贡献者登记」；签署后会收到主题为 “Signing CLA on project of xx” 的邮件，请联系邮件中的 Corporation Managers 进行审批。
 
 ## 开发者贡献
@@ -22,8 +22,7 @@
 
 - 贡献代码
 
-  您可以新建 [Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml) 类Issue对新的样例算子予以说明，并提供您的设计方案，
-  然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
+  您可以新建 [Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml) 类Issue对新的样例算子予以说明，并提供您的设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
 
   对于您浏览的其他 Issue：
   - 若该问题正是您要解决的，请在问题下评论说明您将负责处理。
@@ -48,9 +47,9 @@
 
 本代码仓采用 LLVM 社区通用的代码规范与编程风格，参见 [LLVM 编码规范](https://llvm.org/docs/CodingStandards.html)。可使用以下工具进行代码风格检查：
 
-- [clang-tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
+- [Clang-Tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
 - [CppLint](https://github.com/cpplint/cpplint)
-- [CppCheck](http://cppcheck.sourceforge.net/)
+- [Cppcheck](http://cppcheck.sourceforge.net/)
 - [CMakeLint](https://github.com/cmake-lint/cmake-lint)
 
 ### 提交 PR

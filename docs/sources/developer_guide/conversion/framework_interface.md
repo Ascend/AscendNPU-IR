@@ -5,7 +5,7 @@ AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in tw
 - **DSL integration**: Integrate via domain-specific languages such as Triton and TileLang, which compile to AscendNPU IR.
 - **IR integration**: Integrate via IR representation, supporting multi-level IR (Torch IR, Linalg/HFusion IR, HIVM IR), with automatic fusion and tiling for Ascend-friendly kernels.
 
-## 1. DSL integration
+## DSL integration
 
 AscendNPU IR supports upstream integration with languages and frameworks such as Triton and TileLang, so that third-party DSLs can target Ascend hardware and run custom operators on the NPU.
 
@@ -14,7 +14,7 @@ AscendNPU IR supports upstream integration with languages and frameworks such as
 | **Triton** | Use Triton to write high-performance kernels and run them on Ascend NPU via Triton Ascend. Covers installation, environment, op mapping, and Ascend extensions. | [Triton interface](triton_interface.md) |
 | **TileLang** | Use TileLang Ascend (tile-lang/TVM-based DSL) to develop kernels for Ascend NPU (e.g., GEMM, vector ops, attention). Covers environment, build, and quick start. | [TileLang interface](tile_lang_interface.md) |
 
-## 2. IR integration
+## IR integration
 
 AscendNPU IR supports multi-level IR integration; each level differs in abstraction and control granularity (see [Interface API - Multi-level IR Abstraction](interface_api.md#multi-level-ir-abstraction)):
 
@@ -22,7 +22,7 @@ AscendNPU IR supports multi-level IR integration; each level differs in abstract
 - **Linalg/HFusion IR**: General tensor algebra and hardware-aware fusion layer; standard MLIR dialects for operator semantics, HFusion performs fusion, tiling, and scheduling automatically.
 - **HIVM IR**: NPU instruction layer; direct mapping to hardware instructions, explicit control of memory hierarchy (GM/UB/L1/L0) and compute pipelines (Vector/Cube/MTE) for fine-grained tuning.
 
-### 2.1 Torch IR integration
+### Torch IR integration
 
 Use Torch dialect ATen ops; Passes such as `convert-torch-to-hfusion` lower to Linalg/HFusion named ops, then enter the fusion and scheduling flow.
 
@@ -147,7 +147,7 @@ bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enabl
 | `aten.where.self` | `hfusion.select` |
 | `aten.arange.start_step` | `hfusion.arange` |
 
-### 2.2 Linalg/HFusion IR integration
+### Linalg/HFusion IR integration
 
 Use Linalg/Tensor, HFusion, and other standard MLIR dialects for operator semantics; input goes directly into the Linalg/HFusion IR layer's fusion and scheduling flow.
 
@@ -189,7 +189,7 @@ Supported op types:
 
 For algorithm details, constraints, architecture, and related topics, see [HFusion AutoSchedule: Automatic Fusion and Scheduling](../features/AutoSchedule/HFusion_AutoSchedule.md).
 
-### 2.3 HIVM IR integration
+### HIVM IR integration
 
 For fine-grained hardware control, you can write kernels directly in the HIVM dialect, managing memory hierarchy and compute pipelines explicitly.
 

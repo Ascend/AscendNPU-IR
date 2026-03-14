@@ -47,9 +47,9 @@ Common contribution scenarios include:
 
 This repository follows the LLVM community coding standards and style. See the [LLVM Coding Standards](https://llvm.org/docs/CodingStandards.html). You can use the following tools for style checks:
 
-- [clang-tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
+- [Clang-Tidy](https://github.com/llvm/llvm-project/blob/main/.clang-tidy)
 - [CppLint](https://github.com/cpplint/cpplint)
-- [CppCheck](http://cppcheck.sourceforge.net/)
+- [Cppcheck](http://cppcheck.sourceforge.net/)
 - [CMakeLint](https://github.com/cmake-lint/cmake-lint)
 
 ### Submitting a PR
