@@ -1,4 +1,4 @@
-# PlanMemoryPass
+# Plan Memory
 
 This document describes the **PlanMemory** transformation (`PlanMemoryPass`) in HIVM: hardware context, algorithm, interface, and constraints.
 
