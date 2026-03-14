@@ -85,7 +85,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
 // CHECK: %[[DYN:.*]] = memref.alloc(%[[M:.*]], %[[N:.*]]) : memref<?x?xf32, #hivm.address_space<ub>>
 // CHECK-NOT: memref<?x?x1xf32, #hivm.address_space<ub>>
 // CHECK-NOT: annotation.mark %[[DYN]] {hivm.stride_align_dims = array<i32: 1>
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @dot_mask_exp_kernel_mix_aic(%arg0: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32, %arg6: i32, %arg7: i32 {tt.divisibility = 16 : i32}, %arg8: i32 {tt.divisibility = 16 : i32}, %arg9: i32 {tt.divisibility = 16 : i32}, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, false, false, false, false, false, false, false, false]> : vector<13xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %c32 = arith.constant 32 : index
     %true = arith.constant true
