@@ -211,7 +211,7 @@ PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
 PKG_INC=${ASCEND_HOME_PATH}/pkg_inc
 RT_LIB=${ASCEND_HOME_PATH}/lib64
 
-g++ main.cpp -I${RT_INC}  -I${PROF_INC}/ ${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
+g++ main.cpp -I${RT_INC}  -I${PROF_INC} -I${PKG_INC} -L ${RT_LIB} -l runtime -l ascendcl -o vec-add
 ```
 
 运行示例：

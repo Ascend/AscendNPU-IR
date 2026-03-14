@@ -1,4 +1,4 @@
-# Auto-Subtiling
+# 自动子块切分（Auto-Subtiling）
 
 本文介绍HIVM中的AutoBindSubBlock Pass。该Pass通过Cube-Vector 1比2切分，针对CV类kernel进行优化。在阅读本文之前，建议先阅读CV Optimization了解CV编译相关术语。
 

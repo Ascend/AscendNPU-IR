@@ -1,53 +1,54 @@
-# CustomOp
+# 自定义算子（CustomOp）
 
-## Overview
+## 概述
 
-AscendNPU-IR already supports a rich operator set for upstream models. However, in certain scenarios, there are needs to define their own operators to perform custom computations:
+AscendNPU-IR 已为上游模型支持丰富的算子集合。然而，在某些场景下，用户需要定义自己的算子来执行自定义计算：
 
-- Supported operaters' combination couldn't fulfill desired computations.
-- Vendor wants the custom operator to be private.
-- Combining multiple operators could not reach optimal performance.
+- 现有算子的组合无法满足所需的计算需求。
+- 厂商希望自定义算子保持私有。
+- 多个算子的组合无法达到最优性能。
 
-Custom operator allows users to freely use the interfaces provided by AscendNPU-IR to provide their own operators that compiles with other operators.
+自定义算子允许用户自由使用 AscendNPU-IR 提供的接口，提供能与其他算子一起编译的自有算子。
 
 ---
 
-## Interface
+## 接口
 
-Generic interface for custom op as following:
-- name : unique op name.
+自定义算子的通用接口如下：
 
-         Note : there are names reserved for builtins, usually starts with "__builtin".
-                Compiler will link these builtins to self-contained template library,
-                which comes together within bishengir-compile.
+- **name**：唯一算子名称。
 
-                For normal names/cases, user needs to specify implementation location/compilation commands (TODO),
-                and all ther necessary informations.
+         注意：某些名称为内置算子保留，通常以 "__builtin" 开头。
+                编译器会将这些内置算子链接到随 bishengir-compile 一起提供的
+                自包含模板库。
 
-         Available builtin names :
+                对于普通名称/场景，用户需指定实现位置/编译命令（TODO），
+                以及所有必要的信息。
+
+         可用的内置名称：
             "__builtin_gather_load"
 
-- inputs : input parameters.
-- outputs : output results, designated "init" operands, which act as initial values for the results
-            of the operation or the init locations to which the results of the op will be written.
+- **inputs**：输入参数。
+- **outputs**：输出结果，指定为 "init" 操作数，作为操作结果的初始值，
+              或操作结果将写入的初始位置。
 
-In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
-to retreive necessary information, required informations are:
-- CoreType : which core type to execute on, refer to TCoreTypeAttr.
-- Pipe     : which pipe to execute on, refer to PipeAttr.
-- VFMode   : which mode to run on vector units, refer to VFModeAttr.
-             this attribute is ignored when core type is cube.
+为了快速适应未来的功能扩展，自定义算子依赖属性来获取必要信息，所需信息包括：
 
-             Note : for builtins, user could specify these informations or not,
-                    compiler will help to check the correctness and canonicalize.
+- **CoreType**：在哪种核类型上执行，参见 TCoreTypeAttr。
+- **Pipe**：在哪个 pipe 上执行，参见 PipeAttr。
+- **VFMode**：在向量单元上的运行模式，参见 VFModeAttr。
+             当核类型为 cube 时，此属性被忽略。
 
-TODO:
-- Impl : user provided implementation and linking process.
-- Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
+             注意：对于内置算子，用户可以指定或不指定这些信息，
+                   编译器会帮助检查正确性并进行规范化。
+
+TODO：
+- **Impl**：用户提供的实现和链接流程。
+- **Multi Pipe**：自定义算子希望使用多个 pipe（在 HIVM 语境中为 MacroOp）。
 
 ---
 
-## Lowering Process
+## 降级流程
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -59,49 +60,50 @@ TODO:
 ┌─────────────────────────────────────────────────────────────────┐
 │  HIVMToStandard                                                 │
 │  ───────────────────────────────────────────────────────────────│
-│  • Builtins                                                     │
-│    -> call to builtins libraries                                │
-│  • User provided implementations (WIP) ->                       │
-|    -> call to user provided function name                       |
-|      -> bishengir-compile link with user provided link commands |
+│  • 内置算子                                                     │
+│    -> 调用内置库                                                │
+│  • 用户提供的实现（开发中）->                                   │
+|    -> 调用用户提供的函数名                                      |
+|      -> bishengir-compile 使用用户提供的链接命令进行链接        |
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-            BiSheng Compiler compiles to objects
+            毕昇编译器将其编译为目标文件
 ```
+
 ---
 
-## Capability & Limitation
+## 能力与限制
 
-### ✅ Capabilities
+### ✅ 能力
 
-| Feature                         | Description                                                  |
+| 特性 | 说明 |
 | ------------------------------- | ------------------------------------------------------------ |
-| **CoreType**                    | Custom op execution core.                                    |
-| **Pipe**                        | Custom op execution pipe.                                    |
-| **VFMode**                      | Custom op running mode on vector core, SIMT/SIMD/MIX.        |
-| **Buitlins**                    | Set of builtins (name reserved).                             |
+| **CoreType** | 自定义算子执行核。 |
+| **Pipe** | 自定义算子执行 pipe。 |
+| **VFMode** | 自定义算子在向量核上的运行模式：SIMT/SIMD/MIX。 |
+| **内置算子** | 一组内置算子（名称预留）。 |
 
-### ⚠️ Limitations
+### ⚠️ 限制
 
-| Limitation                   | Description                                               | Status                                                                 |
+| 限制 | 说明 | 状态 |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| **User implementations**     | Custom op lowered to user provided implementations:       | Work in progress.
-|                              | - HIVM IR link to user provided sources/bitcodes/objects  |
-|                              | - User implementations registeration                      |
-|                              | - Spcific link commands registeration to bisheng-compile  |
-| **Passes interactions**      | Transformation passes that adapt to custom op:            | NA, work in progress.
-|                              | - Flatten optimization                                    |
-|                              | - Alignment adjustment                                    |
-|                              | - Memory planning                                         |
-|                              | - Layout transformation                                   |
-|                              | - ... more to go                                          |
+| **用户实现** | 自定义算子降级到用户提供的实现： | 进行中。 |
+| | - HIVM IR 链接到用户提供的源码/bitcodes/对象 | |
+| | - 用户实现注册 | |
+| | - 向 bisheng-compile 注册特定链接命令 | |
+| **Pass 交互** | 适配自定义算子的变换 Pass： | 不适用，进行中。 |
+| | - Flatten 优化 | |
+| | - 对齐调整 | |
+| | - 内存规划 | |
+| | - 布局变换 | |
+| | - ... 更多待补充 | |
 
 ---
 
-## MLIR Example
+## MLIR 示例
 
-### Builtin
+### 内置算子
 
 ```mlir
 %0 = hivm.hir.custom
@@ -112,7 +114,7 @@ TODO:
 
 ```
 
-### Custom
+### 自定义算子
 
 ```mlir
 %0 = hivm.hir.custom
@@ -125,10 +127,11 @@ TODO:
 
 ---
 
-## TRITON CustomOp Lowering Example
+## TRITON 自定义算子降级示例
+
 ```python
-# For more detail of Triton custom op design, please refer to
-# https://gitcode.com/Ascend/triton-ascend/pull/988 for more details
+# 更多关于 Triton 自定义算子设计的详情，请参考
+# https://gitcode.com/Ascend/triton-ascend/pull/988
 
 import pytest
 import torch
@@ -139,29 +142,29 @@ import triton.language.extra.cann.extension as al
 
 @triton.jit
 def builtin_index_select_kernel(src_ptr, index_ptr, out_ptr):
-    # Define 2x2 tile indices for output tensor
-    r = tl.arange(0, 2)[:, None]  # Row indices: shape [2, 1]
-    c = tl.arange(0, 2)[None, :]  # Column indices: shape [1, 2]
+    # 为输出张量定义 2x2 tile 索引
+    r = tl.arange(0, 2)[:, None]  # 行索引：形状 [2, 1]
+    c = tl.arange(0, 2)[None, :]  # 列索引：形状 [1, 2]
 
-    # Load index tensor (shape [2]) from GM to UB
+    # 将索引张量（形状 [2]）从 GM 加载到 UB
     idx = tl.load(index_ptr + tl.arange(0, 2))
-    # Initialize empty 2x2 output tile in UB (default value: 0)
+    # 在 UB 中初始化空的 2x2 输出 tile（默认值：0）
     dst = tl.full((2, 2), 0, dtype=tl.float32)
 
-    # Invoke __builtin_index_select custom op to gather elements
+    # 调用 __builtin_index_select 自定义算子进行 gather
     out_tile = al.custom(
         "__builtin_index_select",
-        src_ptr,          # Pointer to source tensor in GM
-        idx,              # Index tensor (in UB) for gathering
-        dim=0,            # Dimension to gather along
-        bound=4,          # Upper bound for valid index values (out-of-bound check)
-        end_offset=(2, 2),# End offsets of each dimension for the index tensor
-        start_offset=(0, 0), # Start offsets of each dimension for the source tensor
-        src_stride=(4, 1),# Stride of each dimension for the source tensor in GM
-        out=dst           # Output tensor (in UB) to store gathered elements
+        src_ptr,          # 指向 GM 中源张量的指针
+        idx,              # 用于 gather 的索引张量（在 UB 中）
+        dim=0,            # gather 的维度
+        bound=4,          # 有效索引值的上界（越界检查）
+        end_offset=(2, 2),# 索引张量每个维度的结束偏移
+        start_offset=(0, 0), # 源张量每个维度的起始偏移
+        src_stride=(4, 1),# GM 中源张量每个维度的步长
+        out=dst           # 用于存储 gather 结果的输出张量（在 UB 中）
     )
 
-    # Store the gathered tile from UB to output tensor in GM
+    # 将 gather 后的 tile 从 UB 存回 GM 中的输出张量
     tl.store(out_ptr + r * 2 + c, out_tile)
 
 
@@ -180,7 +183,8 @@ if __name__ == "__main__":
     builtin_index_select_kernel[(1,)](src, index, out)
     torch.testing.assert_close(out, ref) # ref: [[30., 31.], [10., 11.]]
 ```
-Lowering to MLIR
+
+降级为 MLIR：
 
 ```mlir
 module {

@@ -41,7 +41,7 @@ See "Running tests" in [Install and build](../introduction/quick_start/installin
 
 **Q2.2** What is needed to run on device?
 
-You need **CANN** (installed and `set_env.sh` sourced), a device binary built with **bishengir-compile** (e.g. `kernel.o`), and a Host program that uses CANN runtime to register and launch the kernel. See [Quick start example](../introduction/quick_start/examples.md) and [Quick start](../introduction/quick_start/index.md).
+You need **CANN** (installed and `set_env.sh` sourced), a device binary built with **bishengir-compile** (e.g. `kernel.o`), and a Host program that uses CANN runtime to register and launch the kernel. See [Quick start example](../introduction/quick_start/examples.md) and [Quick start](../introduction/quick_start/index.rst).
 
 **Q2.3** How do I get intermediate MLIR (e.g. HFusion, HIVM)?
 

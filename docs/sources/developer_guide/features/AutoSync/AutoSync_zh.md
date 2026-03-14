@@ -1,177 +1,177 @@
-# Auto-Sync
+# 自动同步（Auto-Sync）
 
-Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts synchronization operations so producers and consumers of shared data or resources are correctly ordered. Goals: **correctness** (no data races or ordering bugs) and **minimal overhead** (fewest syncs needed, reuse of hardware events when safe).
+Auto-Sync 是 AscendNPU-IR（HIVM）编译器的自动同步插入功能，用于自动为共享数据或资源的生产者与消费者插入同步操作，确保正确的执行顺序。设计目标：**正确性**（避免数据竞争和顺序错误）与**最小开销**（仅插入必要的同步，安全时复用硬件事件）。
 
 ---
 
-## 1. AICore Architecture
+## 1. AICore 架构
 
 <https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
 
 ---
 
-## 1. HIVM Synchronization Operations (MLIR)
+## 1. HIVM 同步操作（MLIR）
 
-Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below they are described in terms of **MLIR usage** (operands/attributes), not assembly syntax.
+同步操作定义于 `HIVMIR/HIVMSynchronizationOps.td`，以下从 **MLIR 使用角度**（操作数/属性）进行描述，而非汇编语法。
 
-### 1.1 Intra-Core-Sync (Normal-Sync)
+### 1.1 核内同步（Normal-Sync）
 
-- **`hivm.set_flag`**  
-  Operands/attributes: `set_pipe`, `wait_pipe` and `flag_id`  
-  Executes on `set_pipe` after all previous instructions on that pipe finishes.  
-  Triggers `flag_id` on execution  
+- **`hivm.set_flag`**
+  操作数/属性：`set_pipe`、`wait_pipe` 和 `flag_id`
+  在 `set_pipe` 上等待该 pipe 所有前序指令执行完毕后执行。
+  执行时触发 `flag_id`。
 
-- **`hivm.wait_flag`**  
-  Operands/attributes: `set_pipe`, `wait_pipe` and `flag_id`  
-  Executes on `wait_pipe`  
-  Blocks all following instructions until `flag_id` get triggered
+- **`hivm.wait_flag`**
+  操作数/属性：`set_pipe`、`wait_pipe` 和 `flag_id`
+  在 `wait_pipe` 上执行。
+  阻塞其后所有指令，直到 `flag_id` 被触发。
 
-- **`hivm.pipe_barrier`**  
-  Operands/attributes: `pipe`  
-  Barrier across a given pipe.  
-  Block all following instructions on `pipe` until all previous instructions finishes.
+- **`hivm.pipe_barrier`**
+  操作数/属性：`pipe`
+  对指定 pipe 的屏障操作。
+  阻塞 `pipe` 上的所有后续指令，直到所有前序指令执行完毕。
 
-### 1.2 Cross-Core-Sync (Block-Sync) (Intra-Block)
+### 1.2 跨核同步（Block-Sync，块内）
 
-- **`hivm.sync_block_set`**  
-  Operands/attributes:  
-  - `tcore_type`  target core type (vector/cube)  
-  - `tpipe`, `pipe`  (set/wait pipes on target core)  
-  - `sync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)  
-  - `event_id`  
+- **`hivm.sync_block_set`**
+  操作数/属性：
+  - `tcore_type`：目标核类型（vector/cube）
+  - `tpipe`、`pipe`：目标核上的 set/wait pipe
+  - `sync_instr_mode`（默认 `INTRA_BLOCK_SYNCHRONIZATION`）
+  - `event_id`
 
-  Executes on `tpipe` (set_pipe) on the `tcore_type` core after all previous instructions on the same core.pipe finishes.
-  Sets `event_id`
+  在目标核的 `tpipe`（set_pipe）上，等待同一核的所有前序指令完成后执行。
+  设置 `event_id`。
 
-- **`hivm.sync_block_wait`**  
-  Operands/attributes:  
-  - `tcore_type`  target core type (vector/cube)  
-  - `tpipe`, `pipe`  (set/wait pipes on target core)  
-  - `sync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)  
-  - `event_id`  
+- **`hivm.sync_block_wait`**
+  操作数/属性：
+  - `tcore_type`：目标核类型（vector/cube）
+  - `tpipe`、`pipe`：目标核上的 set/wait pipe
+  - `sync_instr_mode`（默认 `INTRA_BLOCK_SYNCHRONIZATION`）
+  - `event_id`
 
-  Executes on `pipe` (pipe_wait) on the `tcore_type`  
-  Block all following instructions on `pipe` on the `tcore_type` core until all previous instructions finishes.
-
----
-
-## 2. Auto-Sync Solutions Overview
-
-The codebase provides **two** auto-sync solutions:  
-
-### **`Inject-Sync/Inject-Block-Sync`**  
-
-  Uses multiple passe to insert needed sync operations, remove redundant ones, and allocate flag-ids/event-ids using liveliness analysis.  
-  It is the primary solution enabled by default.  
-
-### **`Graph-Sync-Solver/Cross-Core-GSS`**  
-
-  Uses graph-based algorithms to analyze the input code structure and inserts needed sync operations.  
-  Still an optional feature that can be enabled by `-hivm-enable-graph-sync-solver=true` command line option, or sync_solver=True triton-ascend option.
+  在目标核的 `pipe`（wait pipe）上执行。
+  阻塞该核 `pipe` 上的所有后续指令，直到所有前序指令执行完毕。
 
 ---
 
-## 3. InjectSync (Primary Intra-Core Auto-Sync Pass)
+## 2. 自动同步方案概述
+
+代码库提供 **两种** 自动同步方案：
+
+### **`Inject-Sync / Inject-Block-Sync`**
+
+通过多个 Pass 插入所需同步操作、移除冗余同步，并利用活跃性分析分配 flag-id/event-id。
+这是默认启用的主要方案。
+
+### **`Graph-Sync-Solver / Cross-Core-GSS`**
+
+使用基于图的算法分析输入代码结构并插入所需同步操作。
+可选功能，通过 `-hivm-enable-graph-sync-solver=true` 命令行选项或 triton-ascend 的 `sync_solver=True` 选项启用。
+
+---
+
+## 3. InjectSync（主要的核内自动同步 Pass）
 
 ![alt text](0.png)
 
-**Purpose:** Insert core-level (intra-core) synchronization (`set_flag` / `wait_flag`) using memory-dependence analysis, sync analysis, event-id allocation, and cleanup (move/remove redundant syncs).
+**目的：** 通过内存依赖分析、同步分析、事件 ID 分配和冗余同步清理（移动/删除），插入核级（核内）同步操作（`set_flag` / `wait_flag`）。
 
-**Source:**  
+**源码位置：**
 
-- Headers: `include/../InjectSync/`.  
-- Implementation: `lib/../InjectSync/` (e.g. `InjectSync.cpp`, `MemoryDependentAnalyzer.cpp`, `SyncAnalysis.cpp`, `SyncEventIdAllocation.cpp`, `IRTranslator.cpp`, `SyncCodegen.cpp`, `MoveSyncState.cpp`, `RemoveRedundantSync.cpp`, `SyncCommon.cpp`).  
+- 头文件：`include/../InjectSync/`
+- 实现：`lib/../InjectSync/`（如 `InjectSync.cpp`、`MemoryDependentAnalyzer.cpp`、`SyncAnalysis.cpp`、`SyncEventIdAllocation.cpp`、`IRTranslator.cpp`、`SyncCodegen.cpp`、`MoveSyncState.cpp`、`RemoveRedundantSync.cpp`、`SyncCommon.cpp`）
 
-**Stages:**  
+**执行阶段：**
 
-1. **IRTranslator**:  
-   Build Sync-IR from the input function (compound elements, loops, conditions, memory ops).  
-2. **SyncAnalyzer**:  
-   For each pair of conflicting operations, it inserts a pair of set_flag/wait_flag operations or a barrier(pipe) operations if both operations are of same pipe.
-3. **MoveSyncState**:  
-   Reposition sync ops to reduce stalls while preserving semantics.  
-4. **RemoveRedundantSync**:  
-   Drop redundant sync pairs.  
-5. **SyncEventIdAllocation**:  
-   Assign static or dynamic event IDs; reuse when safe.  
-6. **SyncCodegen**:  
-   Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`
-
----
-
-## 4. InjectBlockSync (Block-Level Sync Pass)
-
-**Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
-
-**Source:** `InjectBlockSync.cpp` `InjectBlockSync.h`  
-
-**Behavior:**
-
-- Runs only on **MIX** kernels (not host, not pure AIC/AIV).
-- Inserts `SetFFTSBaseAddrOp` when an FFTS base addr kernel argument is present.
-- Three modes (controlled by options and fusion kind):
-  - **InjectAllBlockSync** — Emit block sync before/after every `LoadOp` and every `StoreOp` (cube/vector handoff).
-  - **InjectBlockMixSync** — Full mix: build block sync IR via `SyncBlockIRTranslator`, then run SyncAnalyzer (BLOCKSYNC mode), MoveSyncState, RemoveRedundantSync, SyncEventIdAllocation, SyncCodegen.
+1. **IRTranslator**：
+   从输入函数构建 Sync-IR（复合元素、循环、条件、内存操作）。
+2. **SyncAnalyzer**：
+   对每对冲突操作，插入一对 set_flag/wait_flag；若两操作属于同一 pipe，则插入 barrier(pipe)。
+3. **MoveSyncState**：
+   在保持语义的前提下，重新定位同步操作以减少流水线停顿。
+4. **RemoveRedundantSync**：
+   删除冗余的同步对。
+5. **SyncEventIdAllocation**：
+   分配静态或动态事件 ID，安全时进行复用。
+6. **SyncCodegen**：
+   生成 `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`。
 
 ---
 
-## 5. GraphSyncSolver (Solver-Based Intra-Core Pass)
+## 4. InjectBlockSync（块级同步 Pass）
+
+**目的：** 为 **MIX** 内核（cube 和 vector 核）插入块级（块内）跨核同步操作：`sync_block_set`、`sync_block_wait`。
+
+**源码：** `InjectBlockSync.cpp` `InjectBlockSync.h`
+
+**行为：**
+
+- 仅在 **MIX** 内核（非 host、非纯 AIC/AIV）上运行。
+- 当内核参数中存在 FFTS 基址时，插入 `SetFFTSBaseAddrOp`。
+- 三种模式（由选项和融合类型控制）：
+  - **InjectAllBlockSync** — 在每个 `LoadOp` 和 `StoreOp`（cube/vector 交接处）前后插入块同步。
+  - **InjectBlockMixSync** — 完整 mix 模式：通过 `SyncBlockIRTranslator` 构建块同步 IR，然后依次执行 SyncAnalyzer（BLOCKSYNC 模式）、MoveSyncState、RemoveRedundantSync、SyncEventIdAllocation、SyncCodegen。
+
+---
+
+## 5. GraphSyncSolver（基于求解器的核内 Pass）
 
 ![alt text](1.png)
 
-**Purpose:** Alternative to Inject-Sync solution, uses graph-based algorithms decide when to insert pairs of set/wait operations and assign event IDs (often with better reuse than InjectSync).
+**目的：** InjectSync 方案的替代实现，使用基于图的算法决定何时插入 set/wait 对并分配事件 ID（通常比 InjectSync 具有更好的复用效果）。
 
-**Source:**  
+**源码：**
 
-- Headers: `include/../GraphSyncSolver/`
-- Implementation: `lib/../GraphSyncSolver/` (`GraphSyncSolver.cpp`, `SyncSolver.cpp`, `SyncSolverIR.cpp`, `SyncSolverIRTranslator.cpp`, `SyncSolverCodeGen.cpp`, `GraphSolver.cpp`, `EventIdSolver.cpp`, `Utility.cpp`, `SyncSolverTest.cpp`, `SyncSolverTester.cpp`).  
+- 头文件：`include/../GraphSyncSolver/`
+- 实现：`lib/../GraphSyncSolver/`（`GraphSyncSolver.cpp`、`SyncSolver.cpp`、`SyncSolverIR.cpp`、`SyncSolverIRTranslator.cpp`、`SyncSolverCodeGen.cpp`、`GraphSolver.cpp`、`EventIdSolver.cpp`、`Utility.cpp`、`SyncSolverTest.cpp`、`SyncSolverTester.cpp`）
 
-**Stages:**
+**执行阶段：**
 
-1. **IRTranslator**:  
-Build Sync-IR from the input function (function, scopes, loops, conditions, rw-operations).  
-2. **Solver**:  
-Collect conflict pairs (producer–consumer pairs), run pair selection and ordering, optionally reuse conflict pairs to save event IDs.  
-3. **CodeGenerator**:  
-Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`
-
----
-
-## 6. CrossCoreGSS (Cross-Core Synchronization)
-
-**Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
-
-**Source:** `CrossCoreGSS.h` `CrossCoreGSS.cpp`; reuses `IRTranslator`, `Solver`, and `CodeGenerator` from GraphSyncSolver.
-
-**How it works:**
-
-- Same as intra-core GSS pass, but handles cross-core memory operations.
+1. **IRTranslator**：
+   从输入函数构建 Sync-IR（函数、作用域、循环、条件、读写操作）。
+2. **Solver**：
+   收集冲突对（生产者–消费者对），执行对选择与排序，可选地复用冲突对以节省事件 ID。
+3. **CodeGenerator**：
+   将求解结果转换回 MLIR，生成 `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`。
 
 ---
 
-## 7. Pass Options and CLI Flags
+## 6. CrossCoreGSS（跨核同步）
 
-### 7.1 Global CLI flags (compile tool)
+**目的：** 为 **MIX** 内核（cube 和 vector 核）插入块级（块内）跨核同步操作：`sync_block_set`、`sync_block_wait`。
 
-These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`); see `Passes.td` and tools under `bishengir/lib/Tools/` for exact mapping.
+**源码：** `CrossCoreGSS.h` `CrossCoreGSS.cpp`；复用 GraphSyncSolver 中的 `IRTranslator`、`Solver` 和 `CodeGenerator`。
 
-| Flag | Type | Default | Description |
+**工作原理：**
+
+- 与核内 GSS Pass 相同，但处理跨核内存操作。
+
+---
+
+## 7. Pass 选项与命令行标志
+
+### 7.1 全局命令行标志（编译工具）
+
+这些标志通常在编译器驱动中（如 `bishengir-hivm-compile`）配置，具体映射关系参见 `Passes.td` 及 `bishengir/lib/Tools/` 下的工具。
+
+| 标志 | 类型 | 默认值 | 说明 |
 | ---- | ---- | ------- | ----------- |
-| `--disable-auto-inject-block-sync` | bool | false | Disable automatic block-level set/wait insertion (InjectBlockSync / CrossCoreGSS). |
-| `--disable-hivm-auto-inject-sync` | bool | false | Disable InjectSync (Intra-Core sync). |
-| `--enable-hivm-inject-barrier-all-sync` | bool | false | Make InjectSync inserts barrier(all) instructions (useful auto-sync fails) |
-| `--enable-hivm-inject-block-all-sync` | bool | false | Make InjectBlockSync inserts block(all) instructions (useful auto-sync fails) |
-| `--enable-hivm-unit-flag-sync` | bool | false | Enable unit-flag sync feature. |
-| `--enable-hivm-graph-sync-solver` | bool | false | Use GraphSyncSolver/CrossCoreGSS instead of InjectSync/InjectBlockSync for Intra-Core/Cross-Core auto-sync. |
+| `--disable-auto-inject-block-sync` | bool | false | 禁用块级 set/wait 的自动插入（InjectBlockSync / CrossCoreGSS）。 |
+| `--disable-hivm-auto-inject-sync` | bool | false | 禁用 InjectSync（核内同步）。 |
+| `--enable-hivm-inject-barrier-all-sync` | bool | false | 使 InjectSync 插入 barrier(all) 指令（在自动同步失败时有用）。 |
+| `--enable-hivm-inject-block-all-sync` | bool | false | 使 InjectBlockSync 插入 block(all) 指令（在自动同步失败时有用）。 |
+| `--enable-hivm-unit-flag-sync` | bool | false | 启用 unit-flag 同步特性。 |
+| `--enable-hivm-graph-sync-solver` | bool | false | 使用 GraphSyncSolver/CrossCoreGSS 替代 InjectSync/InjectBlockSync 进行核内/跨核自动同步。 |
 
 ---
 
-## 8. Extending and Debugging
+## 8. 扩展与调试
 
-- **InjectSync:** Start from `InjectSync.cpp`; follow analysis → allocation → codegen → move → remove. Memory and sync decisions: `MemoryDependentAnalyzer`, `SyncAnalysis`; event IDs: `SyncEventIdAllocation`; emission: `SyncCodegen`, `IRTranslator`; cleanup: `MoveSyncState`, `RemoveRedundantSync`. Use `SyncDebug` for logging.
-- **InjectBlockSync:** Entry in `InjectBlockSync.cpp`; block IR is built by `SyncBlockIRTranslator`; rest of pipeline shared with InjectSync in BLOCKSYNC mode.
-- **GraphSyncSolver / CrossCoreGSS:** Entry in `GraphSyncSolver.cpp` and `CrossCoreGSS.cpp`. Inspect `IRTranslator` (sync IR build), `Solver` (conflict selection), `SyncSolverCodeGen` (MLIR emission). Cross-core behavior is gated by `SyncMode::CROSS_CORE_SYNC` in translator, solver, and codegen (block set/wait, no barrier).
+- **InjectSync：** 从 `InjectSync.cpp` 入手，按分析 → 分配 → 代码生成 → 移动 → 删除的流程进行。内存与同步决策：`MemoryDependentAnalyzer`、`SyncAnalysis`；事件 ID：`SyncEventIdAllocation`；生成：`SyncCodegen`、`IRTranslator`；清理：`MoveSyncState`、`RemoveRedundantSync`。使用 `SyncDebug` 进行日志记录。
+- **InjectBlockSync：** 入口在 `InjectBlockSync.cpp`，块 IR 由 `SyncBlockIRTranslator` 构建，其余流水线在 BLOCKSYNC 模式下与 InjectSync 共享。
+- **GraphSyncSolver / CrossCoreGSS：** 入口分别在 `GraphSyncSolver.cpp` 和 `CrossCoreGSS.cpp`。检查 `IRTranslator`（同步 IR 构建）、`Solver`（冲突选择）、`SyncSolverCodeGen`（MLIR 生成）。跨核行为通过 translator、solver 和 codegen 中的 `SyncMode::CROSS_CORE_SYNC` 控制（块 set/wait，无 barrier）。
 
-**Verification:** Check that emitted ops satisfy dialect verification; set and wait must share the same event/flag ID and compatible pipes.
+**验证：** 检查生成的操作是否满足方言验证规范；set 和 wait 必须共享相同的 event/flag ID 且具有兼容的 pipe。
 
 ---
