@@ -30,6 +30,10 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
+
 #include <cstdint>
 
 #define DEBUG_TYPE "normalize-last-dim-unaligned-tensor-op"
@@ -280,12 +284,31 @@ public:
                                      PatternRewriter &rewriter) const {
     Type elemType = concatOp.getResultType().getElementType();
     SmallVector<Value> result;
+
+    auto concatResultType = concatOp.getResultType();
+    SmallVector<int64_t> concatShape(concatResultType.getShape());
+    std::optional<int64_t> bufferSizeByte;
+    auto totalBits = utils::getStaticTotalSizeInBits(concatShape, elemType);
+    if (totalBits.has_value()) {
+      bufferSizeByte = totalBits.value() / mlir::utils::kBitsToByte;
+    }
+
     for (Value operand : concatOp.getInputs()) {
       auto oldSizes =
           tensor::getMixedSizes(rewriter, concatOp.getLoc(), operand);
       auto newSizes = transposeMixedSizes(oldSizes, perm);
       auto newInit = rewriter.create<tensor::EmptyOp>(concatOp.getLoc(),
                                                       newSizes, elemType);
+
+      auto operandType = cast<ShapedType>(operand.getType());
+      SmallVector<int64_t> operandShape(operandType.getShape());
+      if (!utils::isFullyStatic(operandShape) && bufferSizeByte.has_value()) {
+        auto markOp = rewriter.create<annotation::MarkOp>(concatOp.getLoc(),
+                                                          newInit.getResult());
+        markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                        rewriter.getI64IntegerAttr(bufferSizeByte.value()));
+      }
+
       auto newInput = rewriter.create<linalg::TransposeOp>(
           concatOp.getLoc(), operand, newInit, perm);
       result.push_back(newInput->getResult(0));

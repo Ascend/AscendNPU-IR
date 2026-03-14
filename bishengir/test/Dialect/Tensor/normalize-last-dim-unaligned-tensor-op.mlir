@@ -135,3 +135,52 @@ func.func @test_dynamic_concat_2(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>) -> 
   %concat = tensor.concat dim(0) %arg0, %arg1 : (tensor<?xf32>, tensor<?xf32>) -> tensor<1024xf32>
   return %concat : tensor<1024xf32>
 }
+
+// -----
+
+// CHECK-LABEL: test_dynamic_concat_with_annotation
+// This test verifies that annotation.mark with buffer_size_in_byte is generated
+// when operand shapes are dynamic but concat result shape is fully static.
+// CHECK: %[[EMPTY0:.*]] = tensor.empty
+// CHECK: annotation.mark %[[EMPTY0]] {buffer_size_in_byte = 6016 : i64}
+// CHECK: linalg.transpose
+// CHECK: %[[EMPTY1:.*]] = tensor.empty
+// CHECK: annotation.mark %[[EMPTY1]] {buffer_size_in_byte = 6016 : i64}
+// CHECK: linalg.transpose
+// CHECK: tensor.concat
+func.func @test_dynamic_concat_with_annotation(%arg0: tensor<?x31xf32>, %arg1: tensor<?x63xf32>) -> tensor<16x94xf32> {
+  %concat = tensor.concat dim(1) %arg0, %arg1 : (tensor<?x31xf32>, tensor<?x63xf32>) -> tensor<16x94xf32>
+  return %concat : tensor<16x94xf32>
+}
+
+// -----
+
+// CHECK-LABEL: test_dynamic_concat_result_dynamic_no_annotation
+// When concat result shape is also dynamic, no annotation.mark is generated
+// because buffer_size_in_byte cannot be computed.
+// CHECK: %[[EMPTY0:.*]] = tensor.empty
+// CHECK-NOT: annotation.mark %[[EMPTY0]]
+// CHECK: linalg.transpose
+// CHECK: %[[EMPTY1:.*]] = tensor.empty
+// CHECK-NOT: annotation.mark %[[EMPTY1]]
+// CHECK: linalg.transpose
+// CHECK: tensor.concat
+func.func @test_dynamic_concat_result_dynamic_no_annotation(%arg0: tensor<?x31xf32>, %arg1: tensor<?x63xf32>) -> tensor<?x94xf32> {
+  %concat = tensor.concat dim(1) %arg0, %arg1 : (tensor<?x31xf32>, tensor<?x63xf32>) -> tensor<?x94xf32>
+  return %concat : tensor<?x94xf32>
+}
+
+// -----
+
+// CHECK-LABEL: test_dynamic_concat_fully_static_no_annotation
+// CHECK: %[[EMPTY0:.*]] = tensor.empty
+// CHECK-NOT: annotation.mark %[[EMPTY0]]
+// CHECK: linalg.transpose
+// CHECK: %[[EMPTY1:.*]] = tensor.empty
+// CHECK-NOT: annotation.mark %[[EMPTY1]]
+// CHECK: linalg.transpose
+// CHECK: tensor.concat
+func.func @test_dynamic_concat_fully_static_no_annotation(%arg0: tensor<16x31xf32>, %arg1: tensor<16x63xf32>) -> tensor<16x94xf32> {
+  %concat = tensor.concat dim(1) %arg0, %arg1 : (tensor<16x31xf32>, tensor<16x63xf32>) -> tensor<16x94xf32>
+  return %concat : tensor<16x94xf32>
+}
