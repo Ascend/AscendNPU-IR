@@ -64,12 +64,21 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
     }
   }
 
+  memref_t<__ubuf__ T, 1> new_src = *src;
+  memref_t<__ubuf__ T, 1> new_dst = *dst;
+  if (src_stride0 != 1) {
+    new_src.sizes[0] = src_size0 * src_stride0;
+    new_src.strides[0] = 1;
+    new_dst.sizes[0] = dst->sizes[0] * dst->strides[0];
+    new_dst.strides[0] = 1;
+  }
+
   if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_2_CHANNELS) {
     vreducev2_1d_with_pattern_mode<T, PatternMode::INDEX_0_FROM_2_ELEMENTS>(
-        src, dst);
+        &new_src, &new_dst);
   } else if constexpr (MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
     vreducev2_1d_with_pattern_mode<T, PatternMode::INDEX_1_FROM_2_ELEMENTS>(
-        src, dst);
+        &new_src, &new_dst);
   } else {
     static_assert("deinterleave op's unsupported mode");
   }
