@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -135,10 +136,10 @@ struct AddAlignAnnotationMarkForAlloc
     }
 
     auto resType = mlir::dyn_cast<MemRefType>(allocOp.getResult().getType());
-    if (resType && llvm::all_of(resType.getShape(), [](int64_t d) { return d == 1; })) {
-        return failure();
+    if (resType &&
+        llvm::all_of(resType.getShape(), [](int64_t d) { return d == 1; })) {
+      return failure();
     }
-
 
     auto alignDims = allocOp->getAttrOfType<DenseI32ArrayAttr>(
         hivm::StrideAlignDimsAttr::name);
@@ -310,9 +311,8 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
 
   LogicalResult matchAndRewrite(AllocLikeOp allocOp,
                                 PatternRewriter &rewriter) const override {
-    LLVM_DEBUG(
-      llvm::dbgs() << DEBUG_LINE_BEG("EnableStrideAlign-EnableAlignAllocation");
-    );
+    LDBG("==> EnableAlignAllocation for allocOp: " << allocOp);
+
     auto alignDimsAttr = allocOp->getAttr(hivm::StrideAlignDimsAttr::name);
     auto alignBytesAttr =
         allocOp->getAttr(hivm::StrideAlignValueInByteAttr::name);
@@ -326,34 +326,15 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
         alignDims.asArrayRef(), alignBytes.asArrayRef(), unalignedTy,
         archIsRegbased);
 
-    LLVM_DEBUG(
-      size_t n = alignUnits.size();
-      llvm::dbgs() << "alignUnits(" << n << " entries) = [";
-      for (size_t i = 0; i < n - 1; ++i) {
-        llvm::dbgs() << alignUnits[i] << ", ";
-      }
-      llvm::dbgs() << alignUnits[n - 1] << "]\n";
-    );
+    LDBG(alignUnits);
 
     SmallVector<OpFoldResult> shape = allocOp.getMixedSizes();
     auto [alignedShape, subShape] =
         calculateAlignedShape(rewriter, allocOp.getLoc(), shape, alignUnits);
 
-    LLVM_DEBUG(
-      size_t n = alignedShape.size();
-      llvm::dbgs() << "alignedShape(" << n << " entries) = [";
-      for (size_t i = 0; i < n - 1; ++i) {
-        llvm::dbgs() << alignedShape[i] << ", ";
-      }
-      llvm::dbgs() << alignedShape[n - 1] << "]\n";
+    LDBG(alignedShape);
+    LDBG(subShape);
 
-      n = subShape.size();
-      llvm::dbgs() << "subShape(" << n << " entries) = [";
-      for (size_t i = 0; i < n - 1; ++i) {
-        llvm::dbgs() << subShape[i] << ", ";
-      }
-      llvm::dbgs() << subShape[n - 1] << "]\n";
-    );
     if (!isEqualConstantIntOrValueArray(alignedShape, subShape)) {
       SmallVector<Value> dynSizes;
       SmallVector<int64_t> staticSizes;
@@ -388,9 +369,7 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
         allocOp->removeAttr(hivm::StrideAlignValueInByteAttr::name);
       });
     }
-    LLVM_DEBUG(
-      llvm::dbgs() << DEBUG_LINE_END("EnableStrideAlign-EnableAlignAllocation");
-    );
+    LDBG("<== EnableAlignAllocation for allocOp: " << allocOp << " is done");
     return success();
   }
 };
@@ -591,6 +570,15 @@ void EnableStrideAlignPass::runOnOperation() {
   mod->walk([&](func::FuncOp funcOp) {
     if (hacc::utils::isHost(funcOp))
       return;
+
+    std::optional<hivm::TFuncCoreType> funcCoreType =
+        hivm::queryFuncCoreType(funcOp);
+    if (funcCoreType.has_value()) {
+      if (funcCoreType.value() == hivm::TFuncCoreType::AIC) {
+        LDBG(funcOp.getName() << "skip stride align for AIC function");
+        return;
+      }
+    }
 
     auto *context = &getContext();
     // Propagate align info up to alloc op
