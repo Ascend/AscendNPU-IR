@@ -1062,8 +1062,8 @@ store_ubuf_to_gm_initial_misalignment_1d(memref_t<__ubuf__ T, 1> *src,
     src->sizes[0] -= data_to_copy;
     dst->offset += data_to_copy;
     dst->sizes[0] -= data_to_copy;
-    INTRINSIC(dcci, dst->allocated, 1);
   }
+  INTRINSIC(dcci, dst->allocated, 1);
   return data_to_copy;
 }
 
