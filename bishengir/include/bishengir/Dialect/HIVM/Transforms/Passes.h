@@ -267,6 +267,9 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
+/// Create a pass to normalize conv1d operation.
+std::unique_ptr<Pass> createNormalizeConvOpsPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
