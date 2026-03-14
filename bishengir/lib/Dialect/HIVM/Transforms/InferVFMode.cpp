@@ -56,8 +56,7 @@ static inline bool isMIX(Operation *op) {
   return false;
 }
 
-template <typename... OpTypes>
-static bool isVectorOp(Operation *op) {
+template <typename... OpTypes> static bool isVectorOp(Operation *op) {
   return (... || isa<OpTypes>(op));
 }
 
@@ -117,6 +116,11 @@ resolveNestedModes(Operation *rootOp, std::optional<VFMode> currentMode) {
 
     // Recursively infer mode for nested operation
     std::optional<VFMode> nestedMode = inferVFMode(op);
+
+    // Ops are SIMD defaulty. SIMT ops are specified.
+    if (!nestedMode && !isa<func::ReturnOp>(op)) {
+      nestedMode = VFMode::SIMD;
+    }
 
     LLVM_DEBUG({
       llvm::dbgs() << "\n";
