@@ -20,7 +20,6 @@ Getting Started
 - :doc:`安装与构建 <sources/introduction/quick_start/installing_guide_zh>` — 环境要求与编译步骤
 - :doc:`快速开始 <sources/introduction/quick_start/index_zh>` — 安装说明与示例
 - :doc:`简介与架构 <sources/introduction/architecture_zh>` — 逻辑架构与代码结构
-- :doc:`编程模型 <sources/introduction/programming_model_zh>` — 编程模型说明
 
 User Guide / 用户指南
 ---------------------
@@ -52,7 +51,6 @@ About / 更多
 
    sources/introduction/introduction_zh
    sources/introduction/quick_start/index_zh
-   sources/introduction/programming_model_zh
    sources/introduction/architecture_zh
 
 .. toctree::

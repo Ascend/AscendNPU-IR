@@ -27,4 +27,3 @@
 - [Install and build](quick_start/installing_guide) — Environment and build
 - [Quick start](quick_start/index) — Examples and entry
 - [Architecture](architecture) — Logical and code architecture, compilation flow
-- [Programming model](programming_model) — Host/Device and Tile programming model
