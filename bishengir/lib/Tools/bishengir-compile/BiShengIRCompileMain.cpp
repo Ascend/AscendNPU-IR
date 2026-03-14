@@ -110,6 +110,9 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
 
   bool hirCompileSuccess = false;
   int tryTimes = config.isTuning() ? 1 : 5;
+  // triton compile has nothing to do with HFusion auto schedule, so we don't
+  // need to tune for it.
+  tryTimes = config.shouldCompileTriton() ? 1 : tryTimes;
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.maxBufferCountTuning());
