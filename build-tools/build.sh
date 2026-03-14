@@ -194,8 +194,24 @@ parse_arguments() {
                 CMAKE_OPTIONS+=" $2"
                 shift 2
                 ;;
+            --add-cmake-options=*)
+                CMAKE_OPTIONS+=" ${1#--add-cmake-options=}"
+                shift
+                ;;
             --apply-patches)
                 APPLY_PATCHES="1"
+                shift
+                ;;
+            --bisheng-compiler)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --bisheng-compiler requires an argument"
+                    exit 1
+                fi
+                BISHENG_COMPILER="$2"
+                shift 2
+                ;;
+            --bisheng-compiler=*)
+                BISHENG_COMPILER="${1#--bisheng-compiler=}"
                 shift
                 ;;
             --bishengir-publish)
@@ -206,6 +222,10 @@ parse_arguments() {
                 BISHENGIR_PUBLISH="$2"
                 shift 2
                 ;;
+            --bishengir-publish=*)
+                BISHENGIR_PUBLISH="${1#--bishengir-publish=}"
+                shift
+                ;;
             -o|--build)
                 if [[ -z "$2" || "$2" == -* ]]; then
                     echo "Error: --build requires a path argument"
@@ -213,6 +233,18 @@ parse_arguments() {
                 fi
                 BUILD_DIR="$2"
                 shift 2
+                ;;
+            --build=*)
+                BUILD_DIR="${1#--build=}"
+                shift
+                ;;
+            -t|--build-bishengir-template)
+                BISHENGIR_BUILD_TEMPLATE="ON"
+                shift
+                ;;
+            --build-bishengir-template=*)
+                BISHENGIR_BUILD_TEMPLATE="${1#--build-bishengir-template=}"
+                shift
                 ;;
             --build-bishengir-doc)
                 BUILD_BISHENGIR_DOC="ON"
@@ -230,6 +262,10 @@ parse_arguments() {
                 BUILD_TYPE="$2"
                 shift 2
                 ;;
+            --build-type=*)
+                BUILD_TYPE="${1#--build-type=}"
+                shift
+                ;;
             --build-torch-mlir)
                 BUILD_TORCH_MLIR="ON"
                 shift
@@ -242,6 +278,10 @@ parse_arguments() {
                 C_COMPILER="$2"
                 shift 2
                 ;;
+            --c-compiler=*)
+                C_COMPILER="${1#--c-compiler=}"
+                shift
+                ;;
             --cxx-compiler)
                 if [[ -z "$2" || "$2" == -* ]]; then
                     echo "Error: --cxx-compiler requires an argument"
@@ -249,6 +289,10 @@ parse_arguments() {
                 fi
                 CXX_COMPILER="$2"
                 shift 2
+                ;;
+            --cxx-compiler=*)
+                CXX_COMPILER="${1#--cxx-compiler=}"
+                shift
                 ;;
             --disable-ccache)
                 CCACHE_BUILD="OFF"
@@ -274,6 +318,10 @@ parse_arguments() {
                 INSTALL_PREFIX="$2"
                 shift 2
                 ;;
+            --install-prefix=*)
+                INSTALL_PREFIX="${1#--install-prefix=}"
+                shift
+                ;;
             -j|--jobs)
                 if [[ -z "$2" || "$2" == -* ]]; then
                     echo "Error: --jobs requires an argument"
@@ -282,6 +330,10 @@ parse_arguments() {
                 THREADS="$2"
                 shift 2
                 ;;
+            --jobs=*)
+                THREADS="${1#--jobs=}"
+                shift
+                ;;
             --llvm-source-dir)
                 if [[ -z "$2" || "$2" == -* ]]; then
                     echo "Error: --llvm-source-dir requires an argument"
@@ -289,6 +341,10 @@ parse_arguments() {
                 fi
                 LLVM_SOURCE_DIR="$2"
                 shift 2
+                ;;
+            --llvm-source-dir=*)
+                LLVM_SOURCE_DIR="${1#--llvm-source-dir=}"
+                shift
                 ;;
             --python-binding)
                 PYTHON_BINDING="ON"
@@ -317,6 +373,10 @@ parse_arguments() {
                 fi
                 TORCH_MLIR_SOURCE_DIR="$2"
                 shift 2
+                ;;
+            --torch-mlir-source-dir=*)
+                TORCH_MLIR_SOURCE_DIR="${1#--torch-mlir-source-dir=}"
+                shift
                 ;;
             --enable-cpu-runner)
                 LLVM_BUILD_TARGETS+=";Native"
