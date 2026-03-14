@@ -1,76 +1,73 @@
-# TileLang接入
+# TileLang 接入
 
-Tile Language Ascend (**tilelang-ascend**) is a specialized variant of the tile-lang domain-specific language, specifically optimized for Huawei Ascend NPU (Neural Processing Unit) architecture. Built upon the foundation of tile-lang's Pythonic syntax and [TVM](https://tvm.apache.org/) compiler infrastructure, tilelang-ascend enables developers to efficiently create high-performance AI compute kernels tailored for Ascend processors, including operations like GEMM, vector operations, and attention mechanisms. Tilelang-ascend allows developers to focus on productivity without sacrificing the low-level optimizations necessary for state-of-the-art performance on the NPU.
+Tile Language Ascend（**tilelang-ascend**）是 tile-lang 领域特定语言针对华为昇腾 NPU（神经网络处理器）架构的专用变体，经过专门优化。它基于 tile-lang 的 Python 式语法和 [TVM](https://tvm.apache.org/) 编译器基础架构，使开发者能够高效地为昇腾处理器（包括 GEMM、向量运算和注意力机制等操作）创建高性能 AI 计算内核。tilelang-ascend 让开发者能够专注于生产效率，同时不牺牲在 NPU 上实现前沿性能所需的底层优化。
 
-Within the TileLang ecosystem, we have developed an NPU Intermediate Representation (AscendNPU IR) infrastructure specifically for Ascend, enabling seamless integration into the open-source AI compiler ecosystem based on MLIR. This effort not only enhances the openness and extensibility of the compiler stack but also provides developers with a more flexible and efficient pathway for custom operator development. The compiler backend supports two technical routes: [AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) and [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto).
-
+在 TileLang 生态系统中，我们专为昇腾开发了 NPU 中间表示（AscendNPU IR）基础设施，实现了与基于 MLIR 的开源 AI 编译器生态系统的无缝集成。这不仅提升了编译器栈的开放性和可扩展性，还为开发者提供了更灵活高效的自定义算子开发途径。编译器后端支持两种技术路线：[AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) 和 [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto)。
 
 ![](figs/npuir_architecture.png)
 
-## Installation
-### Environment Setup
+## 安装
 
-Install the Ascend Toolkit.
+### 环境准备
 
-[Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002)，install`Ascend-cann-toolkit`.For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
+安装 Ascend Toolkit。
+
+[下载安装包](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002)，安装 `Ascend-cann-toolkit`。完整安装说明请参考[相关文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit)。
 
 ```shell
 chmod +x Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run
 ./Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run --install
 ```
 
-Configure environment variables:
+配置环境变量：
 
 ```
 source /path/to/install/Ascend/ascend-toolkit/set_env.sh
 ```
 
-Prepare a Python environment with Python version between 3.7.*x* and 3.11.4 (inclusive) and ensure that `pip3` is available.
+准备 Python 环境（Python 版本在 3.7.*x* 到 3.11.4 之间，含边界），并确保 `pip3` 可用。
 
-
-   Ascend Toolkit Installation Requirements
+   Ascend Toolkit 安装依赖：
 
    ```shell
    pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml pathlib2 psutil protobuf==3.20.0 scipy requests absl-py
    ```
 
-
-
-Set Environment Variables
+设置环境变量：
 
 ```shell
 export ACL_OP_INIT_MODE=1
 ```
 
-#### Build
+#### 构建
 
-Pull the code
+拉取代码：
 
 ```shell
 git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 ```
 
-Run the installation script
+运行安装脚本：
 
 ```shell
 cd tilelang-ascend
-# build AscendNPU-IR in 3rdparty
+# 在 3rdparty 中构建 AscendNPU-IR
 bash install_npuir.sh
-# Alternative way of building with local AscendNPU-IR
+# 使用本地 AscendNPU-IR 的替代构建方式
 bash install_npuir.sh --bishengir-path=/path/to/bishengir-compile
 ```
 
-Install torch_npu
+安装 torch_npu：
 
 ```shell
 pip install pybind11 torch_npu
 ```
 
-## Quick Start
+## 快速开始
 
-This code implements a vector addition kernel using TileLang, a domain-specific language for NPU (Neural Processing Unit) programming. It defines a parallel kernel that adds two float32 vectors of length 4096 on the NPU by loading data into on-chip unified buffers, performing element-wise addition via a low-level NPU instruction (`npuir_add`), and writing the result back to global memory. The test function compares the kernel’s output against PyTorch’s native vector addition to verify correctness. The example runs on NPU device 6 and demonstrates basic TileLang workflow: kernel definition, compilation to AscendNPU IR, and execution with PyTorch tensors.
+以下代码使用 TileLang（NPU 编程的领域特定语言）实现了向量加法内核。该内核定义了一个并行内核，通过将数据加载到片上统一缓冲区（UB）、使用低级 NPU 指令（`npuir_add`）执行逐元素加法，并将结果写回全局内存，在 NPU 上对两个长度为 4096 的 float32 向量进行加法运算。测试函数将内核输出与 PyTorch 原生向量加法进行比较以验证正确性。示例在 NPU 设备上运行，演示了 TileLang 的基本工作流程：内核定义、编译为 AscendNPU IR，以及使用 PyTorch 张量执行。
 
-### TileLang Kernel (vector addition)
+### TileLang 内核（向量加法）
 
 ```python
 # Copyright (c) Tile-AI Corporation.
@@ -79,103 +76,103 @@ This code implements a vector addition kernel using TileLang, a domain-specific 
 import os
 
 import tilelang
-import tilelang.language as T  # Import TileLang DSL for kernel definition
+import tilelang.language as T  # 导入 TileLang DSL 用于内核定义
 
 import torch
-import torch_npu  # Import NPU (Neural Processing Unit) backend support for PyTorch
+import torch_npu  # 导入 NPU（神经网络处理器）PyTorch 后端支持
 
-# Clear any previously cached compiled kernels to ensure a clean run
+# 清除之前缓存的编译内核，确保干净运行
 tilelang.cache.clear_cache()
 
-# Define data type and sequence length for the vector addition
+# 定义向量加法的数据类型和序列长度
 dtype = "float32"
-seq_len = 4096  # Length of the vectors to be added
+seq_len = 4096  # 待相加向量的长度
 
 def vec_add(N, block_N, dtype="float32"):
     """
-    Define a vector addition kernel using TileLang.
-    
-    Parameters:
-    - N: Total length of the vectors.
-    - block_N: Number of elements processed per kernel thread/block.
-    - dtype: Data type of the tensors (default: "float32").
-    
-    Returns:
-    - A TileLang prim_func representing the vector addition kernel.
+    使用 TileLang 定义向量加法内核。
+
+    参数：
+    - N: 向量总长度。
+    - block_N: 每个内核线程/块处理的元素数量。
+    - dtype: 张量的数据类型（默认："float32"）。
+
+    返回：
+    - 表示向量加法内核的 TileLang prim_func。
     """
-    n_num = N // block_N  # Number of blocks (each block processes `block_N` elements)
+    n_num = N // block_N  # 块数量（每块处理 `block_N` 个元素）
 
     @T.prim_func
     def main(
-        A: T.Tensor((N), dtype),  # Input tensor A
-        B: T.Tensor((N), dtype),  # Input tensor B
-        C: T.Tensor((N), dtype),  # Output tensor C = A + B
-        shape: T.int32,           # Actual size (used for handling tail cases if N is not divisible by block_N)
+        A: T.Tensor((N), dtype),  # 输入张量 A
+        B: T.Tensor((N), dtype),  # 输入张量 B
+        C: T.Tensor((N), dtype),  # 输出张量 C = A + B
+        shape: T.int32,           # 实际大小（用于处理 N 不能被 block_N 整除的尾部情况）
     ):
-        # Launch kernel with `n_num` parallel threads on the NPU
+        # 在 NPU 上以 `n_num` 个并行线程启动内核
         with T.Kernel(n_num, is_npu=True) as (cid, _):
-            # Allocate on-chip Unified Buffer (UB) for local computation
+            # 分配片上统一缓冲区（UB）用于本地计算
             A_VEC = T.alloc_ub((block_N), dtype)
             B_VEC = T.alloc_ub((block_N), dtype)
             C_VEC = T.alloc_ub((block_N), dtype)
 
-            # Calculate the starting index for this thread
+            # 计算当前线程的起始索引
             start_idx = cid * block_N
-            # Compute remaining elements from this start index to the end of the tensor
+            # 计算从该起始索引到张量末尾的剩余元素数
             remaining = shape - start_idx
-            # Determine how many elements this thread should actually process (handles tail)
+            # 确定当前线程实际应处理的元素数（处理尾部情况）
             tail_size = T.min(block_N, remaining)
 
-            # Copy data from global memory (A, B) into on-chip buffers (A_VEC, B_VEC)
+            # 将数据从全局内存（A、B）复制到片上缓冲区（A_VEC、B_VEC）
             T.copy(A[start_idx], A_VEC, [tail_size])
             T.copy(B[start_idx], B_VEC, [tail_size])
 
-            # Perform vector addition on the NPU using low-level NPU IR instruction
+            # 使用低级 NPU IR 指令在 NPU 上执行向量加法
             T.npuir_add(A_VEC, B_VEC, C_VEC)
 
-            # Write the result back from on-chip buffer (C_VEC) to global memory (C)
+            # 将结果从片上缓冲区（C_VEC）写回全局内存（C）
             T.copy(C_VEC, C[start_idx], [tail_size])
 
     return main
 
 def test_vec_add():
     """
-    Test function to validate the vector addition kernel.
-    Compares the result of the custom TileLang kernel against PyTorch's native addition.
+    验证向量加法内核的测试函数。
+    将自定义 TileLang 内核的结果与 PyTorch 原生加法进行比较。
     """
-    # Set the target NPU device (device ID 6 in this case)
+    # 设置目标 NPU 设备
     torch.npu.set_device(0)
 
-    # Instantiate the vector addition kernel for the full sequence length (single block)
+    # 为完整序列长度实例化向量加法内核（单块）
     func = vec_add(seq_len, seq_len)
 
-    # Compile the TileLang function to NPU IR for execution on the NPU
+    # 将 TileLang 函数编译为 NPU IR 以在 NPU 上执行
     compiled_kernel = tilelang.compile(func, target="npuir")
 
-    # Create random input tensors on the NPU
+    # 在 NPU 上创建随机输入张量
     v1 = torch.randn(size=[seq_len], dtype=eval("torch." + dtype)).npu()
     v2 = torch.randn(size=[seq_len], dtype=eval("torch." + dtype)).npu()
-    v3 = torch.zeros(size=[seq_len], dtype=eval("torch." + dtype)).npu()  # Output buffer
+    v3 = torch.zeros(size=[seq_len], dtype=eval("torch." + dtype)).npu()  # 输出缓冲区
 
-    # Compute reference result using PyTorch's native addition (on NPU)
+    # 使用 PyTorch 原生加法计算参考结果（在 NPU 上）
     y_ref = v1 + v2
 
-    # Launch the compiled TileLang kernel
+    # 启动已编译的 TileLang 内核
     compiled_kernel(v1, v2, v3, seq_len)
 
-    # Print both results for visual comparison (should be nearly identical)
-    print("Reference result (PyTorch):")
+    # 打印两个结果进行对比（应基本相同）
+    print("参考结果（PyTorch）：")
     print(y_ref)
-    print("TileLang kernel result:")
+    print("TileLang 内核结果：")
     print(v3)
 
 if __name__ == "__main__":
     test_vec_add()
   ```
 
-### AscendNPU-IR (vector addition)
+### AscendNPU-IR（向量加法）
 
-The above kernel generates following AscendNPU-IR:
+以上内核生成如下 AscendNPU-IR：
 
   ```mlir
   module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {

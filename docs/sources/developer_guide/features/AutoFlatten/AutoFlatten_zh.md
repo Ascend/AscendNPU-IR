@@ -1,40 +1,40 @@
-# Auto Flatten
+# 自动展平（Auto Flatten）
 
-## Overview
+## 概述
 
-The Auto Flatten pass (`HIVMFlattenOps`) automatically collapses multi-dimensional tensor operations into lower-dimensional equivalents, reducing rank while preserving semantic correctness. This optimization simplifies memory access patterns and improves hardware utilization on the target accelerator.
+Auto Flatten Pass（`HIVMFlattenOps`）自动将多维张量操作折叠为低维等价形式，在保持语义正确性的同时降低秩（rank）。该优化简化了内存访问模式，提升了目标加速器上的硬件利用率。
 
 ---
 
-## Hardware Background
+## 硬件背景
 
-Modern hardware accelerators often have constraints and performance characteristics that favor lower-rank tensor operations:
+现代硬件加速器通常存在有利于低秩张量操作的约束和性能特性：
 
-| Aspect                  | Impact of High Rank                                          | Benefit of Flattening                                    |
+| 方面 | 高秩的影响 | 展平的收益 |
 | ----------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| **Address Calculation** | Multi-dimensional indexing requires multiple multiply-add operations | Simplified linear addressing reduces overhead            |
-| **Memory Coalescing**   | Complex stride patterns may prevent efficient memory access  | Contiguous flattened dimensions enable better coalescing |
-| **Hardware Loops**      | Limited number of hardware loop counters                     | Fewer dimensions = fewer loop nests required             |
-| **DMA Efficiency**      | Multi-strided transfers may require multiple DMA descriptors | Collapsed dimensions enable bulk transfers               |
-| **Register Pressure**   | More index variables consume registers                       | Reduced bookkeeping overhead                             |
+| **地址计算** | 多维索引需要多次乘加运算 | 简化的线性寻址降低了开销 |
+| **内存合并** | 复杂的步长模式可能阻碍高效内存访问 | 连续的展平维度实现更好的合并 |
+| **硬件循环** | 硬件循环计数器数量有限 | 维度更少 = 所需循环嵌套更少 |
+| **DMA 效率** | 多步长传输可能需要多个 DMA 描述符 | 折叠维度实现批量传输 |
+| **寄存器压力** | 更多的索引变量占用寄存器 | 减少簿记开销 |
 
-### Example Scenario
+### 示例场景
 
-Consider a 5D elementwise operation on shape `[1, 64, 1, 128, 256]`:
-- **Before**: 5 nested loops, complex stride calculations
-- **After flattening**: Shape becomes `[64, 128, 256]` or even `[64, 32768]`, enabling more efficient hardware utilization
+考虑一个形状为 `[1, 64, 1, 128, 256]` 的 5D 逐元素操作：
+- **展平前**：5 层嵌套循环，复杂的步长计算
+- **展平后**：形状变为 `[64, 128, 256]` 甚至 `[64, 32768]`，实现更高效的硬件利用率
 
 ---
 
-## Algorithm Principle
+## 算法原理
 
-The flattening algorithm operates as a **multi-stage pipeline** that progressively collapses dimensions while respecting operation-specific constraints.
+展平算法作为**多阶段流水线**运行，在遵守操作特定约束的同时逐步折叠维度。
 
-### Core Concepts
+### 核心概念
 
-#### Reassociation Maps
+#### 重关联映射（Reassociation Maps）
 
-A reassociation map defines how original dimensions map to collapsed dimensions:
+重关联映射定义了原始维度如何映射到折叠后的维度：
 
 ```
 Original shape: [A, B, C, D, E] (rank 5)
@@ -42,24 +42,24 @@ Reassociation:  [[0, 1], [2], [3, 4]]
 Result shape:   [A*B, C, D*E] (rank 3)
 ```
 
-#### Dimension Classification (Ternary Mask)
+#### 维度分类（三值掩码）
 
-Each dimension is classified into one of three categories:
+每个维度被分类为以下三种类型之一：
 
-| Category           | Symbol | Description                  | Collapsing Behavior                  |
+| 类别 | 符号 | 描述 | 折叠行为 |
 | ------------------ | ------ | ---------------------------- | ------------------------------------ |
-| **Unit**           | `U`    | Size-1 dimension             | Absorbed into adjacent groups        |
-| **Collapsible**    | `C`    | Can be merged with neighbors | Forms groups, absorbs adjacent units |
-| **NonCollapsible** | `N`    | Barrier dimension            | Isolated, blocks unit absorption     |
+| **单元维度** | `U` | 大小为 1 的维度 | 被吸收到相邻组中 |
+| **可折叠维度** | `C` | 可与邻居合并 | 形成组，吸收相邻单元维度 |
+| **不可折叠维度** | `N` | 屏障维度 | 独立存在，阻止单元维度吸收 |
 
-#### Barrier Dimensions
+#### 屏障维度（Barrier Dimensions）
 
-Certain dimensions cannot be collapsed together due to semantic requirements:
-- **Reduce dimensions**: Must remain separate to preserve reduction semantics
-- **Broadcast dimensions**: Shape mismatches prevent collapsing
-- **Transpose dimensions**: Permutation requirements constrain grouping
+某些维度由于语义要求不能一起折叠：
+- **归约维度**：必须保持独立以保留归约语义
+- **广播维度**：形状不匹配阻止折叠
+- **转置维度**：置换要求约束分组
 
-### Pipeline Stages
+### 流水线阶段
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -111,9 +111,9 @@ Certain dimensions cannot be collapsed together due to semantic requirements:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Special Case: Transposable OTF (On-The-Fly)
+### 特殊情况：可转置的 OTF（On-The-Fly）
 
-For operations with inline transpose semantics, the algorithm handles input and output reassociations **separately**:
+对于具有内联转置语义的操作，算法**分别**处理输入和输出重关联映射：
 
 ```
 Input shape:   [A, B, C, D, E, F]
@@ -126,19 +126,19 @@ Step 3: Generate separate input/init reassociation maps
 Step 4: Compose results maintaining permutation semantics
 ```
 
-### Mask Building Logic
+### 掩码构建逻辑
 
 ```cpp
 for each dimension i:
     if (strictBarrierWithUnit && isBarrier[i]):
-        mask[i] = NonCollapsible    // Strict mode: barriers isolated
+        mask[i] = NonCollapsible    // 严格模式：屏障维度独立
     else if (isUnit[i] && !isBarrier[i]):
-        mask[i] = Unit              // Unit dims absorbed
+        mask[i] = Unit              // 单元维度被吸收
     else:
-        mask[i] = Collapsible       // Can form groups
+        mask[i] = Collapsible       // 可形成组
 ```
 
-### Reassociation Generation from Mask
+### 从掩码生成重关联
 
 ```
 Input Mask: [U, C, U, N, U, C, U]
@@ -155,28 +155,28 @@ Result: [[0, 1, 2], [3], [4, 5, 6]]
 
 ## API
 
-### Pass Registration
+### Pass 注册
 
 ```cpp
-// Create the flatten pass
+// 创建展平 Pass
 std::unique_ptr<Pass> mlir::hivm::createFlattenOpsPass();
 
-// In pass pipeline
+// 在 Pass 流水线中使用
 pm.addPass(mlir::hivm::createFlattenOpsPass());
 ```
 
 ### FlattenInterface
 
-Operations must implement `FlattenInterface` to participate in auto-flattening:
+实现自动展平的操作必须实现 `FlattenInterface`：
 
 ```cpp
 class FlattenInterface {
 public:
-  /// Compute flattening result for this operation
+  /// 计算该操作的展平结果
   virtual FailureOr<FlattenResult> getFlattened(FlattenOptions options) = 0;
-  
-  /// Adjust operation attributes after flattening
-  virtual void adjustTargetDimensions(OpBuilder &builder, 
+
+  /// 展平后调整操作属性
+  virtual void adjustTargetDimensions(OpBuilder &builder,
                                        const FlattenResult &result) = 0;
 };
 ```
@@ -185,13 +185,13 @@ public:
 
 ```cpp
 struct FlattenOptions {
-  /// When true, barrier dimensions become NonCollapsible even if unit
+  /// 为 true 时，即使是单元维度的屏障也变为 NonCollapsible
   bool strictBarrierWithUnit = false;
-  
-  /// Check stride annotations for alignment requirements  
+
+  /// 检查步长注释的对齐要求
   bool checkMarkStride = false;
-  
-  /// Verify input shapes are consistent before collapsing (for broadcast)
+
+  /// 折叠前验证输入形状一致性（用于广播）
   bool checkInputConsistency = false;
 };
 ```
@@ -200,173 +200,173 @@ struct FlattenOptions {
 
 ```cpp
 struct FlattenResult {
-  // Core data
-  Operation *op;                               // Source operation
-  SmallVector<ReassociationMap> reassociation; // Collapse mappings
-  SmallVector<KindTypePair> operandTypes;      // Types after collapse
-  SmallVector<Value> operandOriginalVal;       // Original operand values
-  
-  // Dimension tracking
-  SmallVector<int64_t> originalTargetDims;     // Original target dim indices
-  SmallVector<int64_t> adjustedTargetDims;     // Adjusted after collapse
-  SmallVector<int64_t> barrierDims;            // Non-collapsible boundaries
-  
-  // Query methods
+  // 核心数据
+  Operation *op;                               // 源操作
+  SmallVector<ReassociationMap> reassociation; // 折叠映射
+  SmallVector<KindTypePair> operandTypes;      // 折叠后的类型
+  SmallVector<Value> operandOriginalVal;       // 原始操作数值
+
+  // 维度追踪
+  SmallVector<int64_t> originalTargetDims;     // 原始目标维度索引
+  SmallVector<int64_t> adjustedTargetDims;     // 折叠后调整的索引
+  SmallVector<int64_t> barrierDims;            // 不可折叠的边界维度
+
+  // 查询方法
   bool isIdentityCollapse() const;
   int getRankAfterFlatten() const;
   SmallVector<Type> getOperandTypes(DpsKind kind) const;
   ReassociationMap getInputReassociation() const;
   ReassociationMap getInitReassociation() const;
-  bool uniformReassociation() const;  // Same reassoc for inputs and inits
+  bool uniformReassociation() const;  // 所有输入和 init 的重关联是否相同
 };
 ```
 
-### Operation Traits
+### 操作特性（Operation Traits）
 
 ```cpp
-// Indicates operation uses same reassociation for all operands
+// 表示操作对所有操作数使用相同的重关联
 OpTrait::UniformReassociationFlattenTrait
 
-// Indicates consecutive target dimensions can be collapsed
+// 表示连续的目标维度可以被折叠
 OpTrait::CollapsibleConsecutiveTargetDimsTrait
 ```
 
-### Supported Operation Adjustments
+### 支持的操作调整
 
-Each operation type implements `adjustTargetDimensions`:
+每种操作类型均实现了 `adjustTargetDimensions`：
 
-| Operation                  | Adjusted Attribute                            |
+| 操作 | 调整的属性 |
 | -------------------------- | --------------------------------------------- |
-| `VBrcOp`                   | `broadcast_dims`                              |
-| `VReduceOp`                | `reduce_dims`                                 |
-| `VTransposeOp`             | `permutation`                                 |
-| `VCumsumOp` / `VCumprodOp` | `cum_dims`                                    |
-| `VPadOp`                   | `static_low`, `static_high`                   |
-| `VConcatOp`                | `dim`                                         |
-| `VFlipOp`                  | `flip_axis`                                   |
-| Elementwise                | `iterator_types` (broadcast/transpose arrays) |
+| `VBrcOp` | `broadcast_dims` |
+| `VReduceOp` | `reduce_dims` |
+| `VTransposeOp` | `permutation` |
+| `VCumsumOp` / `VCumprodOp` | `cum_dims` |
+| `VPadOp` | `static_low`、`static_high` |
+| `VConcatOp` | `dim` |
+| `VFlipOp` | `flip_axis` |
+| 逐元素操作 | `iterator_types`（broadcast/transpose 数组） |
 
 ---
 
-## Capability & Limitation
+## 能力与限制
 
-### ✅ Capabilities
+### ✅ 能力
 
-| Feature                         | Description                                                  |
+| 特性 | 描述 |
 | ------------------------------- | ------------------------------------------------------------ |
-| **Unit Dimension Collapse**     | Automatically removes size-1 dimensions                      |
-| **Contiguity-Aware**            | Respects memory layout; non-contiguous dims stay separate    |
-| **Operation-Specific Handling** | Custom logic for reduce, broadcast, transpose, pad, etc.     |
-| **Pipeline Composition**        | Multiple collapse stages compose correctly                   |
-| **Uniform Reassociation**       | Efficient handling when all operands collapse identically    |
-| **Non-Uniform Reassociation**   | Supports different input/init reassociations (transpose OTF) |
-| **Barrier Preservation**        | Semantic-critical dimensions remain isolated                 |
-| **Host Function Skipping**      | Automatically skips host-side functions                      |
+| **单元维度折叠** | 自动移除大小为 1 的维度 |
+| **连续性感知** | 遵守内存布局；非连续维度保持独立 |
+| **操作特定处理** | 针对归约、广播、转置、填充等的自定义逻辑 |
+| **流水线组合** | 多个折叠阶段可正确组合 |
+| **均匀重关联** | 所有操作数折叠方式相同时的高效处理 |
+| **非均匀重关联** | 支持不同的输入/init 重关联（转置 OTF） |
+| **屏障保护** | 语义关键维度保持独立 |
+| **跳过 Host 函数** | 自动跳过 host 侧函数 |
 
-### ⚠️ Limitations
+### ⚠️ 限制
 
-| Limitation                   | Description                                               | Workaround                                              |
+| 限制 | 描述 | 规避方案 |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| **MemRef Types Only**        | Only `MemRefType` operands are collapsed                  | Tensors must be bufferized first                        |
-| **Static Shapes Required**   | Dynamic dimensions may not collapse correctly             | Consider symbol dialect or shape inference passes first |
-| **Strict Barrier Mode**      | `VFlipOp` requires `strictBarrierWithUnit=true`           | Handled automatically                                   |
-| **Transpose Back Dimension** | Last dimension cannot be OTF transposed for certain ops   | Algorithm leaves last dim uncollapsed                   |
-| **Non-HIVMStructuredOp**     | Operations not implementing the interface return identity | Implement `FlattenInterface`                            |
+| **仅支持 MemRef 类型** | 只折叠 `MemRefType` 操作数 | 张量必须先进行缓冲化（bufferize） |
+| **需要静态形状** | 动态维度可能无法正确折叠 | 优先运行符号方言或形状推断 Pass |
+| **严格屏障模式** | `VFlipOp` 需要 `strictBarrierWithUnit=true` | 自动处理 |
+| **转置后向维度** | 某些操作的最后一个维度不能进行 OTF 转置 | 算法保留最后一个维度不折叠 |
+| **非 HIVMStructuredOp** | 未实现接口的操作返回恒等映射 | 实现 `FlattenInterface` |
 
-### Edge Cases
+### 边界情况
 
 ```cpp
-// Identity collapse (no change) - pass reports match failure
+// 恒等折叠（无变化）—— Pass 报告匹配失败
 if (res->isIdentityCollapse())
   return rewriter.notifyMatchFailure(op, "Identity reassociation");
 
-// Operation cannot be handled
+// 操作无法处理
 if (failed(res))
   return rewriter.notifyMatchFailure(op, "Operation cannot be handled");
 ```
 
-### Debugging
+### 调试
 
-Enable debug logging with the `LDBG` macro to trace:
-- Reassociation maps at each stage
-- Mask classifications
-- Adjusted target dimensions
-- Composition results
+使用 `LDBG` 宏启用调试日志，可追踪：
+- 每个阶段的重关联映射
+- 掩码分类
+- 调整后的目标维度
+- 组合结果
 
 ---
 
-## Example Transformation
+## 变换示例
 
-### Before
+### 变换前
 
 ```mlir
-%0 = hivm.vbrc %input broadcast_dims = [3] 
+%0 = hivm.vbrc %input broadcast_dims = [3]
      : memref<1x64x1x128x256xf32> -> memref<1x64x16x128x256xf32>
 ```
 
-### After Flatten Pass
+### 经过 Flatten Pass 后
 
 ```mlir
-// Collapse input: [[0, 1, 2], [3, 4]] → rank 2
-%collapsed_input = memref.collapse_shape %input [[0, 1, 2], [3, 4]] 
+// 折叠输入：[[0, 1, 2], [3, 4]] → 秩 2
+%collapsed_input = memref.collapse_shape %input [[0, 1, 2], [3, 4]]
      : memref<1x64x1x128x256xf32> into memref<64x1x32768xf32>
 
-// Broadcast with adjusted dims: [1, 3] → [0] (after remapping)
+// 广播后调整维度：[1, 3] → [0]（重映射后）
 %0 = hivm.vbrc %collapsed_input broadcast_dims = [1]
      : memref<64x1x32768xf32> -> memref<64x16x32768xf32>
 
-// Note: Output expansion would be handled by separate pass
+// 注：输出展开由单独的 Pass 处理
 ```
 
-## Additional Example Scenarios: Strided Broadcast Operations
+## 补充示例：带步长的广播操作
 
-### About Strided Memref Type
+### 关于带步长的 MemRef 类型
 
-A memref with type `memref<N₀×N₁×…×Nₙ×f32, strides={S[0], S[1], …, S[n]}, offset=O>` maps a coordinate $[i_0, i_1, \dots, i_n]$ to a linear memory address:
+类型为 `memref<N₀×N₁×…×Nₙ×f32, strides={S[0], S[1], …, S[n]}, offset=O>` 的 memref 将坐标 $[i_0, i_1, \dots, i_n]$ 映射到线性内存地址：
 
 $$\text{address} = \sum_{k=0}^{n} i_k \cdot S[k] \;+\; O$$
 
-For example, `memref<5x6xf32>` has the default (identity) layout with strides `[6, 1]` and offset `0`. Accessing element `[2, 4]` gives:
+例如，`memref<5x6xf32>` 具有步长为 `[6, 1]`、偏移为 `0` 的默认（恒等）布局。访问元素 `[2, 4]` 得到：
 
 $$\text{address} = 2 \times 6 + 4 \times 1 + 0 = 16$$
 
-When no explicit layout is specified, MLIR uses **row-major** ordering. Strides are computed from innermost to outermost:
+当未指定显式布局时，MLIR 使用**行主序**。步长从最内维到最外维计算：
 
 $S[n] = 1$
 
 $S[i] = S[i+1] \times N_{i+1}$
 
-This means elements along the last dimension are adjacent in memory, and each "row" of the next-outer dimension follows immediately after the previous one — no gaps.
+这意味着最后一个维度上的元素在内存中相邻，下一个外层维度的每一"行"紧跟在前一行之后——没有间隙。
 
-When a dimension has size 1, its index is always 0. The stride for that dimension contributes $0 \times S[k] = 0$ to the address, making the stride value **irrelevant**. This is why the flatten pass can freely absorb unit dimensions into adjacent groups regardless of their stride values.
+当一个维度大小为 1 时，其索引始终为 0。该维度的步长对地址的贡献为 $0 \times S[k] = 0$，使得步长值**无关紧要**。这就是为什么展平 Pass 可以自由地将单元维度吸收到相邻组中，而无需考虑其步长值。
 
-Without loss of generality, and under the assumption that row-major ordering is used. Two adjacent dimensions $d_i$ and $d_{i+1}$ are **contiguous** if and only if:
+在不失一般性且假设使用行主序的情况下，相邻的两个维度 $d_i$ 和 $d_{i+1}$ **连续**当且仅当：
 
 $$S[i] = S[i{+}1] \times N_{i+1}$$
 
-This means that stepping through all elements of dimension $i{+}1$ and then incrementing dimension $i$ by one lands exactly at the next element — no gaps, no overlaps. The base case is that the outermost dimension (axis 0) is always considered contiguous by convention.
+这意味着遍历维度 $i{+}1$ 的所有元素后，维度 $i$ 增加 1 时恰好落在下一个元素上——没有间隙，没有重叠。基础情况是最外层维度（轴 0）按惯例始终被认为是连续的。
 
-**Only contiguous adjacent dimensions can be collapsed.** Collapsing non-contiguous dimensions would change which memory locations are accessed.
+**只有连续的相邻维度才能被折叠。** 折叠非连续维度会改变实际访问的内存位置。
 
-The following scenarios demonstrate how the flatten pass interacts with **strided memory layouts**, a common situation when working with non-contiguous memory views. These examples use `hivm.hir.vbrc` — a scalar broadcast operation that fills a memref with a scalar value.
+以下场景演示了展平 Pass 如何与**带步长的内存布局**交互，这是处理非连续内存视图时的常见情况。这些示例使用 `hivm.hir.vbrc`——一种将 memref 填充为标量值的标量广播操作。
 
 ---
 
-### Scenario 1 Example: Non-Contiguous Strides Block All Collapsing
+### 场景 1：非连续步长阻止所有折叠
 
-**Function:** `@strided_brc`
+**函数：** `@strided_brc`
 
 ```mlir
 // memref<16x16xf32, strided<[16, 2]>>
 //   dim 0: size=16, stride=16
-//   dim 1: size=16, stride=2   ← NOT contiguous (would need stride=1)
+//   dim 1: size=16, stride=2   ← 非连续（连续要求 stride=1）
 ```
 
-**Analysis:**
+**分析：**
 
-Cannot merge dims 0 and 1: for contiguity, dim 1's stride must equal 1 (the element stride). Here stride = 2, indicating a non-contiguous "every-other-element" access pattern. Collapsing dimensions $[0, 1]$ into a single dimension would produce a flat index $i \cdot 16 + j$, but the actual memory access pattern is $i \cdot 16 + j \cdot 2$. These are not equivalent — flattening would silently change which memory locations are accessed.
+无法合并维度 0 和 1：为满足连续性，维度 1 的步长必须等于 1（元素步长）。这里步长为 2，表示"每隔一个元素"的非连续访问模式。将维度 $[0, 1]$ 折叠为单个维度会产生平坦索引 $i \cdot 16 + j$，但实际内存访问模式为 $i \cdot 16 + j \cdot 2$。两者并不等价——展平会悄悄改变实际访问的内存位置。
 
-**Output (unchanged):**
+**输出（未变化）：**
 
 ```mlir
 func.func @strided_brc(%arg0: f32, %arg1: memref<16x16xf32, strided<[16, 2]>>) {
@@ -377,29 +377,30 @@ func.func @strided_brc(%arg0: f32, %arg1: memref<16x16xf32, strided<[16, 2]>>) {
 
 ---
 
-### Scenario 2 Example: Partially Contiguous Strides Allow Partial Collapsing
+### 场景 2：部分连续步长允许部分折叠
 
-**Function:** `@strided_brc_collapse_continuous`
+**函数：** `@strided_brc_collapse_continuous`
 
 ```mlir
 // memref<8x?x4x2xf32, strided<[?, ?, 2, 1]>>
-//   dim 0: size=8,  stride=?   ← dynamic, cannot verify contiguity with dim 1
-//   dim 1: size=?,  stride=?   ← dynamic, cannot verify contiguity with dim 2
+//   dim 0: size=8,  stride=?   ← 动态，无法验证与 dim 1 的连续性
+//   dim 1: size=?,  stride=?   ← 动态，无法验证与 dim 2 的连续性
 //   dim 2: size=4,  stride=2   ← stride = dim3.size(2) × dim3.stride(1) = 2 ✓
-//   dim 3: size=2,  stride=1   ← innermost, contiguous
+//   dim 3: size=2,  stride=1   ← 最内层，连续
 ```
 
-**Contiguity check for adjacent dimension pairs:**
+**相邻维度对的连续性检验：**
 
 $$\text{contiguous}(d_i, d_{i+1}) \iff \text{stride}(d_i) = \text{size}(d_{i+1}) \times \text{stride}(d_{i+1})$$
 
-| Pair     | Calculation          | Contiguous?         |
+| 维度对 | 计算 | 是否连续 |
 | -------- | -------------------- | ------------------- |
-| dims 0–1 | $? = ? \times ?$     | ❌ Unknown (dynamic) |
-| dims 1–2 | $? = 4 \times 2 = 8$ | ❌ Unknown (dynamic) |
-| dims 2–3 | $2 = 2 \times 1 = 2$ | ✅ Yes               |
+| 维度 0–1 | $? = ? \times ?$ | ❌ 未知（动态） |
+| 维度 1–2 | $? = 4 \times 2 = 8$ | ❌ 未知（动态） |
+| 维度 2–3 | $2 = 2 \times 1 = 2$ | ✅ 是 |
 
-**Output (dims 2 and 3 collapsed):**
+**输出（维度 2 和 3 已折叠）：**
+
 ```mlir
 func.func @strided_brc_collapse_continuous(
     %arg0: f32, %arg1: memref<8x?x4x2xf32, strided<[?, ?, 2, 1]>>) {
@@ -412,35 +413,35 @@ func.func @strided_brc_collapse_continuous(
 }
 ```
 
-The collapsed result has:
-- Dimensions 2 and 3 merged: size $4 \times 2 = 8$, stride $= 1$ (contiguous)
-- Rank reduced from 4 to 3
+折叠后的结果：
+- 维度 2 和 3 合并：大小 $4 \times 2 = 8$，步长 $= 1$（连续）
+- 秩从 4 降为 3
 
 ---
 
-### Scenario 3 Example: Dynamic Inner Dimension Prevents Contiguity Verification
+### 场景 3：动态内层维度阻止连续性验证
 
-**Function:** `@scalar_brc_cannot_collapse_continuous`
+**函数：** `@scalar_brc_cannot_collapse_continuous`
 
 ```mlir
 // memref<8x?x4x?xf32, strided<[?, ?, 2, 1]>>
 //   dim 0: size=8,  stride=?
 //   dim 1: size=?,  stride=?
 //   dim 2: size=4,  stride=2
-//   dim 3: size=?,  stride=1   ← dynamic size!
+//   dim 3: size=?,  stride=1   ← 动态大小！
 ```
 
-**Contiguity check for dims 2–3:**
+**维度 2–3 的连续性检验：**
 
-The compiler **cannot statically prove** that $2 = ?$. If dim 3 has runtime size 2, they would be contiguous; if dim 3 has size 3, they would not. The pass conservatively refuses to collapse.
+编译器**无法静态证明** $2 = ?$。若维度 3 的运行时大小为 2，则它们连续；若大小为 3，则不连续。Pass 保守地拒绝折叠。
 
-| Pair     | Calculation          | Contiguous?                           |
+| 维度对 | 计算 | 是否连续 |
 | -------- | -------------------- | ------------------------------------- |
-| dims 0–1 | $? = ? \times ?$     | ❌ Unknown                             |
-| dims 1–2 | $? = 4 \times 2 = 8$ | ❌ Unknown                             |
-| dims 2–3 | $2 = ? \times 1 = ?$ | ❌ **Unknown** (dim 3 size is dynamic) |
+| 维度 0–1 | $? = ? \times ?$ | ❌ 未知 |
+| 维度 1–2 | $? = 4 \times 2 = 8$ | ❌ 未知 |
+| 维度 2–3 | $2 = ? \times 1 = ?$ | ❌ **未知**（维度 3 大小为动态） |
 
-**Output (unchanged):**
+**输出（未变化）：**
 
 ```mlir
 func.func @scalar_brc_cannot_collapse_continuous(
