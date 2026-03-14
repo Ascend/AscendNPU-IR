@@ -91,7 +91,9 @@ static bool isConstZero(Value v) {
 /// Optimize padding on L1 if we're given the hint.
 bool tryOptimizePad(Operation *maybeLoadOp, Value mmadSource,
                     PatternRewriter &rewriter) {
-  assert(!isa<BlockArgument>(mmadSource));
+  if (isa<BlockArgument>(mmadSource))
+    return false;
+
   bool padKOnly =
       utils::getAnnotateOpWithAttr(mmadSource, kDotPadOnlyK).has_value();
   if (!padKOnly)
