@@ -2022,3 +2022,66 @@ func.func @test_set_atomic_NONE_f32() {
   hivm.hir.set_atomic kind = <none>[type = f32]
   return
 }
+
+// -----
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
+// CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
+// CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <add>
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+// CHECK: return
+func.func @test_atomic_add_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
+  %alloc = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%alloc : memref<16xi8>)
+  %alloc2 = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%alloc2 : memref<16xi8>)
+  hivm.hir.store ins(%alloc : memref<16xi8>) outs(%arg2 : memref<16xi8>) atomic = <add>
+  hivm.hir.store ins(%alloc2 : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+  return
+}
+
+// -----
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
+// CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
+// CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <min>
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+// CHECK: return
+func.func @test_atomic_min_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
+  %alloc = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%alloc : memref<16xi8>)
+  %alloc2 = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%alloc2 : memref<16xi8>)
+  hivm.hir.store ins(%alloc : memref<16xi8>) outs(%arg2 : memref<16xi8>) atomic = <min>
+  hivm.hir.store ins(%alloc2 : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+  return
+}
+
+// -----
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%[[ALLOC]] : memref<16xi8>)
+// CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<16xi8>
+// CHECK: %[[VAL:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC2]] : memref<16xi8>)
+// CHECK: hivm.hir.store ins(%[[ALLOC]] : memref<16xi8>) outs(%arg2 : memref<16xi8>) {already_sync} atomic = <max>
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL]] : memref<1xi64>)
+// CHECK: hivm.hir.store ins(%[[ALLOC2]] : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+// CHECK: return
+func.func @test_atomic_max_with_retuned_value(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<16xi8>, %arg2: memref<16xi8>, %arg3: memref<16xi8>) {
+  %alloc = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg1 : memref<16xi8>) outs(%alloc : memref<16xi8>)
+  %alloc2 = memref.alloc() : memref<16xi8>
+  hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%alloc2 : memref<16xi8>)
+  hivm.hir.store ins(%alloc : memref<16xi8>) outs(%arg2 : memref<16xi8>) atomic = <max>
+  hivm.hir.store ins(%alloc2 : memref<16xi8>) outs(%arg3 : memref<16xi8>)
+  return
+}
