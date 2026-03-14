@@ -41,7 +41,7 @@ ulimit -n 65535
 
 **Q2.2** 上板运行需要什么环境？
 
-端到端在 NPU 上运行算子需要：**CANN**（安装并 source set_env.sh）、**bishengir-compile** 生成的设备端二进制（如 kernel.o）、以及使用 CANN runtime 的 Host 程序完成注册与调用。参见 [快速开始示例](../introduction/quick_start/examples_zh.md) 与 [快速开始](../introduction/quick_start/index_zh.md)。
+端到端在 NPU 上运行算子需要：**CANN**（安装并 source set_env.sh）、**bishengir-compile** 生成的设备端二进制（如 kernel.o）、以及使用 CANN runtime 的 Host 程序完成注册与调用。参见 [快速开始示例](../introduction/quick_start/examples_zh.md) 与 [快速开始](../introduction/quick_start/index_zh.rst)。
 
 **Q2.3** 如何获取各层 MLIR 的中间编译态（如 HFusion、HIVM）？
 
