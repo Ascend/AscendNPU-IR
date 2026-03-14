@@ -18,7 +18,6 @@ Getting Started
 - :doc:`Install and build <sources/introduction/quick_start/installing_guide>` — Environment and build steps
 - :doc:`Quick start <sources/introduction/quick_start/index>` — Setup and examples
 - :doc:`Introduction and architecture <sources/introduction/architecture>` — Architecture and layout
-- :doc:`Programming model <sources/introduction/programming_model>` — Programming model
 
 User Guide
 ----------
@@ -50,7 +49,6 @@ About
 
    sources/introduction/introduction
    sources/introduction/quick_start/index
-   sources/introduction/programming_model
    sources/introduction/architecture
 
 .. toctree::
