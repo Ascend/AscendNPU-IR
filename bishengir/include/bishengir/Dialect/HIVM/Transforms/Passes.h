@@ -242,7 +242,8 @@ std::unique_ptr<Pass> createArithVectorMaskAnalysisPass();
 std::unique_ptr<Pass> createTileAndBindSubBlockPass();
 
 /// Create a pass to bubble up extract slice for hivm ops.
-std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass();
+std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
+    const HIVMBubbleUpExtractSliceOptions &options = {});
 
 /// Create a pass to vectorize hivm ops.
 std::unique_ptr<Pass> createHIVMVectorizeOpsPass();

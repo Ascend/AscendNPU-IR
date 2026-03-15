@@ -467,6 +467,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
+  pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   hfusionAutoVectorizePipeline(pm, options);
 }
 

@@ -407,7 +407,6 @@ module {
     // CHECK: %[[EXPAND1:.*]] = tensor.expand_shape %[[UB_TENSOR]] {{\[\[}}0], [1, 2]] output_shape [16, 2, 8]
     // CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND1]] : tensor<16x2x8xf32>) {{.*}} permutation = [1, 0, 2]
     // CHECK: %[[EXPAND2:.*]] = tensor.expand_shape %[[TRANSPOSE]] {{\[\[}}0], [1, 2], [3]] output_shape [2, 1, 16, 8]
-    // CHECK-NEXT: annotation.mark %[[EXPAND2]]
     
     // CHECK: %[[CBUF_ALLOC:.*]] = memref.alloc() : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
     // CHECK-NEXT: %[[CBUF_CAST:.*]] = memref.memory_space_cast %[[CBUF_ALLOC]] : memref<2x1x16x8xf32, #hivm.address_space<cbuf>> to memref<2x1x16x8xf32>

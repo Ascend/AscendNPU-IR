@@ -36,6 +36,7 @@ static bool isInlinableOp(Operation *op) {
          isa<linalg::ElemwiseUnaryOp>(op) ||
          isa<hfusion::ElemwiseBinaryOp>(op) ||
          isa<hfusion::ElemwiseUnaryOp>(op) ||
+         isa<hfusion::CompareOp>(op) ||
          isa<hfusion::SelectOp>(op) ||
          isa<linalg::SelectOp>(op);
 }

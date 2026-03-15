@@ -252,6 +252,13 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                       })
                       .Case([&builder, &loc, &valueToTile,
                              &sliceParams](RankedTensorType) {
+                        if (auto defOp = valueToTile.getDefiningOp()) {
+                          builder.setInsertionPointAfter(
+                              defOp); // Set the sliceOp right after sourceOp
+                        } else {
+                          builder.setInsertionPointToStart(
+                              valueToTile.getParentBlock());
+                        }
                         return builder.create<tensor::ExtractSliceOp>(
                             loc, valueToTile, sliceParams.offsets,
                             sliceParams.sizes, sliceParams.strides);

@@ -22,7 +22,6 @@ public:
     Parallel,
     RankReduced,
     Reduce,
-    Transposed,
   };
   explicit DimensionAnalyzer(Operation *op);
   LogicalResult initialize() override;

@@ -28,7 +28,7 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   LDBG("Checking parallelDim of " << solverIndex);
   auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
   if (tilingDimKindVal != tilingDimKindMap.end()) {
-    return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
+    return tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel;
   }
   // By default, assume it's parallel
   return true;
@@ -46,12 +46,8 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   for (auto [value, _] : argumentsRefPointer_)
     tilingDim_[value] = -1;
 
-  if (isVectorOp) {
-    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
-  } else {
-    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
-  }
+  isVectorOp ? computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps)
+ 	           : computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
 
   DenseMap<int64_t, int> selectedTilingParIdxMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
@@ -73,10 +69,8 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
       }
     }
   }
-  LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
   for (auto[_, parIdx] : selectedTilingParIdxMap)
     selectedTilingParIdx.insert(parIdx);
-  LDBG(utils::debugger::to_string(selectedTilingParIdx));
 }
 
 int64_t DimensionAnalyzer::getTilingDim(Value v) {
@@ -104,7 +98,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
     if (rank == 0)
       return;
     auto shape = utils::getShape(src.getType());
-    LDBG("Checking operation: " << op);
+
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim) && shape[i] != 1) {

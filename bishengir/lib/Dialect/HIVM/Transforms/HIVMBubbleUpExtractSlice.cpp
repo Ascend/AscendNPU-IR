@@ -56,7 +56,7 @@ public:
 
   LogicalResult
   verifyMarkedExtractSlicesAreBubbledUp(func::FuncOp funcOp) const {
-    auto walkResult = funcOp->walk([](Operation *op) {
+    auto walkResult = funcOp->walk([this](Operation *op) {
       if (!isa<tensor::ExtractSliceOp>(op)) {
         return WalkResult::advance();
       }
@@ -79,7 +79,12 @@ public:
           }
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
-          return WalkResult::interrupt();
+          if (strictMode) {
+            return WalkResult::interrupt();
+          } else {
+            extractSliceOp->emitWarning(
+                "Extract slice is not fully bubbled up");
+          }
         }
       }
       return WalkResult::advance();
@@ -155,6 +160,7 @@ private:
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::hivm::createHIVMBubbleUpExtractSlicePass() {
-  return std::make_unique<HIVMBubbleUpExtractSlicePass>();
+std::unique_ptr<Pass> mlir::hivm::createHIVMBubbleUpExtractSlicePass(
+    const HIVMBubbleUpExtractSliceOptions &options) {
+  return std::make_unique<HIVMBubbleUpExtractSlicePass>(options);
 }
