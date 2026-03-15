@@ -229,6 +229,28 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_fixpipe_store(
+  // CHECK: %[[ALLOC_UB:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+  // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+  // CHECK: hivm.hir.fixpipe {{.*}} ins({{.*}} : tensor<16x16xf32>) outs(%[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>>)
+  // CHECK: %[[TT:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16x16xf16>
+  // CHECK: hivm.hir.store ins(%[[TT]]
+
+  func.func @test_fixpipe_store(%arg0 : memref<?xf16>, %arg1 : memref<?xi8>) {
+    %cst_1 = arith.constant 2.000000e+00 : f16
+    %1 = tensor.empty() : tensor<16x16xf32>
+    %2 = tensor.empty() : tensor<16x16xf16>
+    %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [512], strides: [ 1] : memref<?xi8> to memref<512xi8, strided<[1], offset: 0>>
+    %cst0 = arith.constant 0 : index
+    %view = memref.view %reinterpret_cast_0[%cst0][] : memref<512xi8, strided<[1], offset: 0>> to memref<16x16xf16>
+    hivm.hir.store ins(%3 : tensor<16x16xf16>) outs(%view : memref<16x16xf16>)
+    return
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: func.func @test_mmad_fixpipe_vadd_dynamic(
   // CHECK-SAME: %{{.*}}: tensor<16x32xf32>, %{{.*}}: tensor<32x16xf32>, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index
   // CHECK: %[[MINSI:.*]] = arith.minsi %[[ARG2]], %{{.*}} : index
@@ -363,6 +385,39 @@ module {
       scf.yield %9, %7 : tensor<16x16xf16>, tensor<16x16xf32>
     }
     return %2#1 : tensor<16x16xf32>
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @test_fixpipe_to_mmadl1_tight_coupled
+  // CHECK-SAME: (%[[ARG0:.*]]: tensor<16x16xf32>, %[[ARG1:.*]]: tensor<16x16xf32>, %[[ARG2:.*]]: tensor<16x16xf32>, %[[ARG3:.*]]: tensor<16x16xf32>)
+  func.func @test_fixpipe_to_mmadl1_tight_coupled(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>, %arg3: tensor<16x16xf32>) -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    // CHECK: %[[MMAD_OUT:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[ARG1]], %[[ARG2]]
+    %0 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%arg1, %arg2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%arg3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK-NEXT: %[[UB_ALLOC:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+    // CHECK-NEXT: %[[UB_CAST:.*]] = memref.memory_space_cast %[[UB_ALLOC]] : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+    // CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD_OUT]] : tensor<16x16xf32>) outs(%[[UB_ALLOC]] : memref<16x16xf32, #hivm.address_space<ub>>)
+    // CHECK-NEXT: %[[UB_TENSOR:.*]] = bufferization.to_tensor %[[UB_CAST]] restrict writable : memref<16x16xf32>
+    %empty_fixpipe = tensor.empty() : tensor<16x16xf32>
+    %1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%0 : tensor<16x16xf32>) outs(%empty_fixpipe : tensor<16x16xf32>) -> tensor<16x16xf32>
+    
+    // CHECK: %[[EXPAND1:.*]] = tensor.expand_shape %[[UB_TENSOR]] {{\[\[}}0], [1, 2]] output_shape [16, 2, 8]
+    // CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND1]] : tensor<16x2x8xf32>) {{.*}} permutation = [1, 0, 2]
+    // CHECK: %[[EXPAND2:.*]] = tensor.expand_shape %[[TRANSPOSE]] {{\[\[}}0], [1, 2], [3]] output_shape [2, 1, 16, 8]
+    // CHECK-NEXT: annotation.mark %[[EXPAND2]]
+    
+    // CHECK: %[[CBUF_ALLOC:.*]] = memref.alloc() : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    // CHECK-NEXT: %[[CBUF_CAST:.*]] = memref.memory_space_cast %[[CBUF_ALLOC]] : memref<2x1x16x8xf32, #hivm.address_space<cbuf>> to memref<2x1x16x8xf32>
+    // CHECK-NEXT: %[[CBUF_TENSOR:.*]] = bufferization.to_tensor %[[CBUF_CAST]] restrict writable : memref<2x1x16x8xf32>
+    // CHECK-NEXT: hivm.hir.copy ins(%[[EXPAND2]] : tensor<2x1x16x8xf32>) outs(%[[CBUF_CAST]] : memref<2x1x16x8xf32>)
+    
+    // CHECK: %[[FINAL_MMAD:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[CBUF_TENSOR]], %[[ARG0]]
+    %empty_mmad = tensor.empty() : tensor<16x16xf32>
+    %2 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%1, %arg0, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%empty_mmad : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %2 : tensor<16x16xf32>
   }
 }
 

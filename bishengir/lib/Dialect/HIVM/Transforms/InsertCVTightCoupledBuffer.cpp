@@ -461,6 +461,45 @@ struct InsertMoveL1BetweenVectorAndCube
   }
 };
 
+struct InsertDataMovementFixpipeToL1 : public OpRewritePattern<hivm::MmadL1Op> {
+  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+  virtual ~InsertDataMovementFixpipeToL1() override = default;
+
+  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+                                PatternRewriter &rewriter) const override {
+    bool changed = false;
+
+    for (OpOperand &operand : op->getOpOperands()) {
+      auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
+      if (!maybeFixpipe)
+        continue;
+      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(maybeFixpipe.value());
+
+      llvm::SmallVector<OpOperand *> consumerOperands{&operand};
+
+      LogicalResult ubResult =
+          InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
+      if (failed(ubResult))
+        continue;
+
+      Value valueAfterUb = operand.get(); 
+
+      LogicalResult l1Result =
+          InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
+      if (failed(l1Result))
+        continue;
+
+      Value convertedToL1 = operand.get();
+      if (valueAfterUb != convertedToL1) {
+        rewriter.modifyOpInPlace(
+            op, [&]() { op->replaceUsesOfWith(valueAfterUb, convertedToL1); });
+      }
+      changed = true;
+    }
+    return changed ? success() : failure();
+  }
+};
+
 template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<OpType>,
@@ -475,6 +514,8 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
+  patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
 }
 
 void InsertCVTightCoupledBufferPass::runOnOperation() {
