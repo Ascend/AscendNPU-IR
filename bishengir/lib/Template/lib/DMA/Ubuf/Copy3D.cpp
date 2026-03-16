@@ -360,7 +360,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
   bool is_stride_aligned =
       are_outer_strides_32bytes_aligned<T, 3>(src->strides) &&
       are_outer_strides_32bytes_aligned<T, 3>(dst->strides);
-  bool is_contiguous = (src_stride0 == 1 && dst_stride0 == 1);
+  bool is_contiguous = (src_stride2 == 1 && dst_stride2 == 1);
   bool is_offset_aligned =
       isAddress32ByteAligned(dst_ptr) && isAddress32ByteAligned(src_ptr);
 
