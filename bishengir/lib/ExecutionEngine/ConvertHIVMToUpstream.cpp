@@ -452,6 +452,11 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
                                        std::optional<bool> maybeIsTieBreakLeft,
                                        bool isUnsignedSrc) -> Operation * {
       assert(maybeIsTieBreakLeft.has_value());
+      Value emptyIdx = rewriter.create<tensor::EmptyOp>(
+        loc, 
+        dyn_cast<RankedTensorType>(srcs[0].getType()).getShape(), 
+        rewriter.getI32Type());
+      srcs.push_back(emptyIdx);
       bool isTieBreakLeft = maybeIsTieBreakLeft.value();
       return rewriter.create<hfusion::ReduceWithIndexOp>(
           loc, ValueRange(dstsWithoutDims).getTypes(), srcs, dstsWithoutDims,
