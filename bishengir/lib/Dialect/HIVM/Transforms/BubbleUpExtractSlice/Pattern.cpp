@@ -1184,12 +1184,14 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
                                                      newSizes[tilingDim]);
       rewriter.setInsertionPointAfterValue(sizeVal);
-      auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                        sizes[tilingDim]);
-      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
+      auto tilingSize = getValueOrCreateConstantIndexOp(
+          rewriter, sliceOp.getLoc(), sizes[tilingDim]);
+      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal,
+                                                  sizeVal);
       sizeVal =
           rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
+      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal,
+                                                tilingSize);
       newSizes[tilingDim] = sizeVal;
 
       // Rewrite operations
@@ -1216,12 +1218,13 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       });
 
       rewriter.setInsertionPoint(sliceOp);
-      rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
-          sliceOp, allocOp.getResult(), true, true);
+      auto newToTensorOp =
+          rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
+              sliceOp, allocOp.getResult(), true, true);
 
       rewriter.eraseOp(subViewOp);
       rewriter.eraseOp(subViewOpGM);
-      rewriter.eraseOp(toTensorOp);
+      rewriter.replaceOp(toTensorOp, newToTensorOp);
 
       LDBG(newSubViewOp->getParentOfType<func::FuncOp>());
       return success();
