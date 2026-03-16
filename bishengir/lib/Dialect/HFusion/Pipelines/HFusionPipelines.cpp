@@ -350,6 +350,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
+    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {

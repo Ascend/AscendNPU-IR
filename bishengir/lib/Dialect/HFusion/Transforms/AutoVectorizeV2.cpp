@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -1284,6 +1285,15 @@ void AutoVectorizeV2::runOnOperation() {
   MLIRContext *context = op->getContext();
   IRRewriter rewriter(context);
   OpBuilder builder(context);
+
+  if (treeReduce) {
+    RewritePatternSet treeReducePatterns(context);
+    mlir::GreedyRewriteConfig config;
+    config.maxIterations = 1;
+    config.maxNumRewrites = 1;
+    hfusion::populateTreeReducePattern(treeReducePatterns);
+    (void)applyPatternsGreedily(op, std::move(treeReducePatterns), config);
+  }
 
   SmallVector<func::FuncOp> fusableFuncList;
   collectFusableFuncInModule(op, fusableFuncList);
