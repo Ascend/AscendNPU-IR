@@ -124,7 +124,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                                               config, "BiShengTTIR"));
       }
 
-      // Pass top module to HIVMpipeline and hivmc
+      hlResult &= succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BiShengHIR"));
     } else if (config.shouldCompileTritonDialect()) {
       // simt-only pipeline(The input is ttir).
       hlResult = succeeded(runPipeline(

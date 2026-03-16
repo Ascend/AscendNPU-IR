@@ -41,6 +41,8 @@ struct SplitSimtModulePass
 } // namespace
 
 void SplitSimtModulePass::runOnOperation() {
+  static constexpr int GridSizeCount = 3;
+  static constexpr int GridSizeWidth = 32;
   auto mod = llvm::cast<ModuleOp>(getOperation());
   auto ctx = &getContext();
   OpBuilder builder(ctx);
@@ -53,37 +55,50 @@ void SplitSimtModulePass::runOnOperation() {
     auto funcOp = llvm::cast<func::FuncOp>(
         SymbolTable::lookupNearestSymbolFrom(mod, callOp.getCalleeAttr()));
     if (util::isSIMTVF(funcOp)) {
-      auto gridSizeArgs = parentFuncOp.getArguments().take_back(3);
+      auto gridSizeArgs = parentFuncOp.getArguments().take_back(GridSizeCount);
       for (auto arg : gridSizeArgs) {
         auto argType = llvm::dyn_cast<IntegerType>(arg.getType());
-        assert(argType && argType.getWidth() == 32 &&
+        assert(argType && argType.getWidth() == GridSizeWidth &&
                "grid size arg type should be i32");
       }
       gridSizeType = gridSizeArgs[0].getType();
       callOp.getOperandsMutable().append(gridSizeArgs);
     }
   });
-  mod->walk([&builder, modBlock, &mod, &gridSizeType](func::FuncOp funcOp) {
+  if (!gridSizeType) {
+    llvm::report_fatal_error("gridSizeType is not initialized for SIMT vf");
+  }
+
+  // Collect simt vf
+  SmallVector<func::FuncOp> simtVFs;
+  mod->walk([&simtVFs](func::FuncOp funcOp) {
     if (util::isSIMTVF(funcOp)) {
-      auto newMod = builder.create<ModuleOp>(funcOp->getLoc());
-      builder.setInsertionPointToStart(newMod.getBody());
-      builder.clone(*funcOp);
-      funcOp.eraseBody();
-      funcOp.setSymVisibility("private");
-      builder.setInsertionPointToStart(modBlock);
-      newMod->setAttrs(mod->getAttrs());
-      newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
-      auto funcType = funcOp.getFunctionType();
-      auto newInputs = funcType.getInputs().vec();
-      // only add grid size args for simt vf declare in simd module
-      // because AdaptTritonIRKernel pass will add args for simt vf
-      newInputs.insert(newInputs.end(),
-                       {gridSizeType, gridSizeType, gridSizeType});
-      auto newFuncType =
-          builder.getFunctionType(newInputs, funcType.getResults());
-      funcOp.setFunctionType(newFuncType);
+      simtVFs.push_back(funcOp);
     }
   });
+  // Create simt modules and then put simt vfs into their respective simt
+  // modules.
+  for (auto funcOp : simtVFs) {
+    auto newMod = builder.create<ModuleOp>(funcOp->getLoc());
+    builder.setInsertionPointToStart(newMod.getBody());
+    builder.clone(*funcOp);
+
+    // only add grid size args for simt vf declare in simd module
+    // because AdaptTritonIRKernel pass will add args for simt vf
+    auto emptyAttr = DictionaryAttr::get(funcOp.getContext());
+    auto insertPos = funcOp.getNumArguments();
+    auto loc = funcOp.getLoc();
+    for (int i = 0; i < GridSizeCount; i++) {
+      funcOp.insertArgument(insertPos, gridSizeType, emptyAttr, loc);
+    }
+
+    funcOp.eraseBody();
+    funcOp.setSymVisibility("private");
+    builder.setInsertionPointToStart(modBlock);
+    newMod->setAttrs(mod->getAttrs());
+    newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
+  }
+
   llvm::SmallVector<Operation *> simdFuncs;
   for (auto &op : mod.getBody()->getOperations()) {
     if (!llvm::isa<ModuleOp>(&op)) {

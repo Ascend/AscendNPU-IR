@@ -289,6 +289,8 @@ std::unique_ptr<Pass> createInsertMemSemanticForSimtVFPass();
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 
+std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
+std::unique_ptr<Pass> createWriteBackSharedPass();
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

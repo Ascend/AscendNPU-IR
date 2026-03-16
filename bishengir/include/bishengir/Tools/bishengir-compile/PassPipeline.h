@@ -19,6 +19,8 @@ namespace bishengir {
 /// Build the pipelines of BiShengHIR from config.
 void buildBiShengHIRPipeline(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config);
+void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
+                                   const BiShengIRCompileMainConfig &config);
 
 void buildBiShengTTIRPipeline(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config);

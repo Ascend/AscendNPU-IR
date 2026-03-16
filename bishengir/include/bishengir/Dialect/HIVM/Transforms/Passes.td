@@ -807,4 +807,14 @@ def AutoScope : Pass<"auto-scope"> {
   let constructor = "mlir::hivm::createAutoScopePass()";
   let dependentDialects = ["hivm::HIVMDialect", "scope::ScopeDialect"];
 }
+
+def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp"> {
+  let summary = "Insert placeholder memref.alloc with a dummy size";
+  let constructor = "mlir::hivm::createInsertAllocBasePlaceholderPass()";
+}
+
+def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
+  let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
+  let constructor = "mlir::hivm::createWriteBackSharedPass()";
+}
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

@@ -35,6 +35,9 @@ struct InferSimtVFMemEffectPass
 
   void setFuncArgMemEffect(func::FuncOp funcOp, Value blockArg,
                            hivm::MemoryEffect memEffect);
+  template <typename OpTy, typename GetMemRefFn>
+  void handleMemOp(OpTy op, func::FuncOp funcOp, GetMemRefFn &&getMemRefFn,
+                   hivm::MemoryEffect memEffect);
 };
 
 } // namespace
@@ -62,59 +65,61 @@ void InferSimtVFMemEffectPass::setFuncArgMemEffect(
   }
 }
 
+template <typename OpTy, typename GetMemRefFn>
+void InferSimtVFMemEffectPass::handleMemOp(OpTy op, func::FuncOp funcOp,
+                                           GetMemRefFn &&getMemRefFn,
+                                           hivm::MemoryEffect memEffect) {
+  Value memRef = getMemRefFn(op);
+  Value blockArg;
+
+  auto blockArgs = utils::tracebackMemRefVecByTargetFn(
+      memRef, [](Value val) { return !val.getDefiningOp(); });
+
+  if (blockArgs.empty() && !memRef.getDefiningOp()) {
+    blockArg = memRef;
+  } else {
+    assert((blockArgs.size() == 1) &&
+           "tracebackMemRef found multiple sources!");
+    blockArg = blockArgs[0];
+  }
+
+  setFuncArgMemEffect(funcOp, blockArg, memEffect);
+}
+
 void InferSimtVFMemEffectPass::inferFuncArgMemEffect(func::FuncOp funcOp) {
   funcOp->walk([this, &funcOp](Operation *op) {
     if (auto loadOp = llvm::dyn_cast<hivm::LoadOp>(op)) {
-      Value blockArg;
-      auto blockArgs = utils::tracebackMemRefVecByTargetFn(
-          loadOp.getSrc(), [](Value val) { return !val.getDefiningOp(); });
-      if (blockArgs.empty() && !loadOp.getSrc().getDefiningOp()) {
-        blockArg = loadOp.getSrc();
-      } else {
-        assert(blockArgs.size() == 1 &&
-               "tracebackMemRef found multiple sources!");
-        blockArg = blockArgs[0];
-      }
-      setFuncArgMemEffect(funcOp, blockArg, hivm::MemoryEffect::READ);
-    } else if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(op)) {
-      Value blockArg;
-      auto blockArgs = utils::tracebackMemRefVecByTargetFn(
-          loadOp.getBase(), [](Value val) { return !val.getDefiningOp(); });
-      if (blockArgs.empty() && !loadOp.getBase().getDefiningOp()) {
-        blockArg = loadOp.getBase();
-      } else {
-        assert(blockArgs.size() == 1 &&
-               "tracebackMemRef found multiple sources!");
-        blockArg = blockArgs[0];
-      }
-      setFuncArgMemEffect(funcOp, blockArg, hivm::MemoryEffect::READ);
+      handleMemOp(
+          loadOp, funcOp, [](hivm::LoadOp op) { return op.getSrc(); },
+          hivm::MemoryEffect::READ);
+    } else if (auto gatherLoadOp = llvm::dyn_cast<hivm::GatherLoadOp>(op)) {
+      handleMemOp(
+          gatherLoadOp, funcOp,
+          [](hivm::GatherLoadOp op) { return op.getBase(); },
+          hivm::MemoryEffect::READ);
     } else if (auto storeOp = llvm::dyn_cast<hivm::StoreOp>(op)) {
-      Value blockArg;
-      auto blockArgs = utils::tracebackMemRefVecByTargetFn(
-          storeOp.getDst(), [](Value val) { return !val.getDefiningOp(); });
-      if (blockArgs.empty() && !storeOp.getDst().getDefiningOp()) {
-        blockArg = storeOp.getDst();
-      } else {
-        assert(blockArgs.size() == 1 &&
-               "tracebackMemRef found multiple sources!");
-        blockArg = blockArgs[0];
-      }
-      setFuncArgMemEffect(funcOp, blockArg, hivm::MemoryEffect::WRITE);
-    } else if (auto storeOp = llvm::dyn_cast<hivm::ScatterStoreOp>(op)) {
-      Value blockArg;
-      auto blockArgs = utils::tracebackMemRefVecByTargetFn(
-          storeOp.getBase(), [](Value val) { return !val.getDefiningOp(); });
-      if (blockArgs.empty() && !storeOp.getBase().getDefiningOp()) {
-        blockArg = storeOp.getBase();
-      } else {
-        assert(blockArgs.size() == 1 &&
-               "tracebackMemRef found multiple sources!");
-        blockArg = blockArgs[0];
-      }
-      setFuncArgMemEffect(funcOp, blockArg, hivm::MemoryEffect::WRITE);
+      handleMemOp(
+          storeOp, funcOp, [](hivm::StoreOp op) { return op.getDst(); },
+          hivm::MemoryEffect::WRITE);
+    } else if (auto scatterStoreOp = llvm::dyn_cast<hivm::ScatterStoreOp>(op)) {
+      handleMemOp(
+          scatterStoreOp, funcOp,
+          [](hivm::ScatterStoreOp op) { return op.getBase(); },
+          hivm::MemoryEffect::WRITE);
+    } else if (auto localLoadOp = llvm::dyn_cast<hivm::LocalLoadOp>(op)) {
+      handleMemOp(
+          localLoadOp, funcOp,
+          [](hivm::LocalLoadOp op) { return op.getAddr(); },
+          hivm::MemoryEffect::READ);
+    } else if (auto localStoreOp = llvm::dyn_cast<hivm::LocalStoreOp>(op)) {
+      handleMemOp(
+          localStoreOp, funcOp,
+          [](hivm::LocalStoreOp op) { return op.getAddr(); },
+          hivm::MemoryEffect::WRITE);
     }
   });
 }
+
 
 void InferSimtVFMemEffectPass::runOnOperation() {
   auto mod = getOperation();

@@ -705,7 +705,9 @@ void IRTranslator::UpdateCallOp(func::CallOp callOp) {
   ModuleOp module = func_->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!callee->hasAttr(hivm::VectorFunctionAttr::name)) {
+  // All calls to vf funcs with simd or simt mode need to update def & uses.
+  if (!callee->hasAttr(hivm::VectorFunctionAttr::name) &&
+      !util::isSIMTVF(callee)) {
     return;
   }
   SmallVector<const BaseMemInfo *> defVec, useVec;

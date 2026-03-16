@@ -70,6 +70,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   InsertMemSemanticForSimtVF.cpp
   InsertNZ2NDForDebug.cpp
   InsertL12UBForDebug.cpp
+  InsertAllocBasePlaceholder.cpp
   InsertWorkSpaceForMixCV.cpp
   LegalizeForLLVMExport.cpp
   LiftLowestStride.cpp
@@ -97,6 +98,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   TileBatchMMIntoLoop.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
+  WriteBackShared.cpp
   AnalyzeArithVectorMask.cpp
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms

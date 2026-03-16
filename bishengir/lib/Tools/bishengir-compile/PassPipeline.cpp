@@ -140,6 +140,11 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 }
 #endif
 
+void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
+                                   const BiShengIRCompileMainConfig &config) {
+  pm.addPass(hivm::createWriteBackSharedPass());
+}
+
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (!config.shouldCompileHost()) {
@@ -199,6 +204,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
+      pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
+      pm.addPass(hivm::createInferSimtVFMemEffectPass());
       pm.addPass(hivm::createInferHIVMMemScopePass());
       pm.addPass(hivm::createSplitSimtModulePass());
     }

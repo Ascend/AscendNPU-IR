@@ -1029,6 +1029,12 @@ def HIVM_UnlikelyConditionAttr
   }];
 }
 
+def HIVM_SharedMemoryAttr : HIVM_Attr<"SharedMemory", "shared_memory"> {
+  let description = [{
+    Shared memory for simt vf.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Memory Effect
 //===----------------------------------------------------------------------===//
