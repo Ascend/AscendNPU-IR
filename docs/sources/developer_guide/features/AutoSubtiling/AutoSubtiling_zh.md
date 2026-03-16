@@ -39,19 +39,19 @@
 
 ### 实现设计 
 
-##### Dimension Analyzer选轴：
+#### Dimension Analyzer选轴：
 
 Dimension Analyzer 的核心功能在于其选轴算法。该算法通过对目标计算内核 (Kernel) 内所有算子 (Operators) 的综合分析，识别并选定一个**平行轴 (Parallel Axis)** 作为数据切分的维度。
 
-##### 选择平行轴的依据：
+#### 选择平行轴的依据：
 
 此设计决策源于底层硬件架构的关键特性：​**Vector核之间不存在直接的数据通路**​。为了最大化并行效率并确保计算正确性，数据切分策略必须**严格避免**引入跨分片的数据依赖。选择平行轴进行切分数据可被独立地分配至一个向量计算单元进行运算，从而实现高效的并行处理。
 
-##### Tile And Slice Store(Leaf):
+#### Tile And Slice Store(Leaf):
 
 会在每个StoreOp/ Leaf节点前，根据Dimension Analyzer选出的轴，插入1:2切分的Extract SliceOp
 
-##### BubbleUp Extract Slice:
+#### BubbleUp Extract Slice:
 
 针对每个类型的Op实现了对应的BubbleUp Strategy，目前支持的Op类型包括：
 

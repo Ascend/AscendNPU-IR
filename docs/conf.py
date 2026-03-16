@@ -102,6 +102,9 @@ source_suffix = {
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
+# 加载自定义CSS文件
+html_css_files = ['custom.css']
+
 def setup(app):
     """Register Pygments lexer aliases; for zh build copy index_zh.html to index.html (RTD + local)."""
     from sphinx.highlighting import lexers
