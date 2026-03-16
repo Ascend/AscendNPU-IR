@@ -2,13 +2,16 @@
 
 本文介绍 HIVM 中的 **TileCubeVectorLoop** Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读 [CV Optimization](./CVOptimization_zh.md)，了解CV编译相关术语。
 
----
+## 硬件背景
+
+当代昇腾AI加速芯片采取AIC、AIV的分离模式，AIC与AIV核的数据交互需要经过Global Memory。当AIC与AIV核存在数据依赖时，需要核间同步指令保证数据的正确性。然而，频繁的核间同步会导致性能下降。因此，为了提升算子的运行性能，需要尽可能地降低AIC与AIV核的同步频率。
+![](../AutoSubtiling//1.png)
 
 ## 功能介绍
 
 ![Effect of using Tile Cube and Vector Loop](TileCubeAndVectorLoop.png)
 
-**对MIX算子中已经完成软件流水（CV Pipelining）的 Cube 循环和 Vector 循环，再做一次Tiling切分**，把原来一次迭代干完的一整块计算，拆成多次迭代、每次处理更小的一块。这样做的目的主要有两点：
+对MIX算子中已经完成软件流水（CV Pipelining）的 Cube 循环和 Vector 循环，再做一次Tiling切分，把原来一次迭代干完的一整块计算，拆成多次迭代、每次处理更小的一块。这样做的目的主要有两点：
 
 1. **减少核间同步**：每次迭代处理的数据更小，更可能被限制在本地 buffer（L0C、UB 等）内，从而减少跨核同步的开销。
 2. **增大切分粒度**：在满足硬件约束的前提下，有机会使用更大的 tile size，有利于访存与计算效率：
@@ -24,9 +27,6 @@
 |------|--------|------|
 | `tile-mix-cube-loop` | 1 | Cube 循环目标 trip count；为 1 时不 tiling。 |
 | `tile-mix-vector-loop` | 1 | Vector 循环目标 trip count；为 1 时不 tiling。 |
-
-
----
 
 ## 算法原理
 
@@ -57,8 +57,6 @@ scf.for {
 } {cube_loop}
 
 ```
-
----
 
 ## 约束能力
 

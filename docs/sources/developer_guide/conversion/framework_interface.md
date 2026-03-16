@@ -9,10 +9,10 @@ AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in tw
 
 AscendNPU IR supports upstream integration with languages and frameworks such as Triton and TileLang, so that third-party DSLs can target Ascend hardware and run custom operators on the NPU.
 
-| Integration | Description | Document |
-|-------------|-------------|----------|
-| **Triton** | Use Triton to write high-performance kernels and run them on Ascend NPU via Triton Ascend. Covers installation, environment, op mapping, and Ascend extensions. | [Triton interface](triton_interface.md) |
-| **TileLang** | Use TileLang Ascend (tile-lang/TVM-based DSL) to develop kernels for Ascend NPU (e.g., GEMM, vector ops, attention). Covers environment, build, and quick start. | [TileLang interface](tile_lang_interface.md) |
+| Integration | Description |
+|-------------|-------------|
+| [Triton interface](triton_interface.md) | Use Triton to write high-performance kernels and run them on Ascend NPU via Triton Ascend. Covers installation, environment, op mapping, and Ascend extensions. |
+| [TileLang interface](tile_lang_interface.md) | Use TileLang Ascend (tile-lang/TVM-based DSL) to develop kernels for Ascend NPU (e.g., GEMM, vector ops, attention). Covers environment, build, and quick start. |
 
 ## IR integration
 

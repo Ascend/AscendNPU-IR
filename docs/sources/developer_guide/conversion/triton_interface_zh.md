@@ -1558,7 +1558,7 @@ def my_kernel(...):
 
 ## Triton独有扩展枚举
 
-#### SYNC_IN_VF
+### SYNC_IN_VF
 
 | 枚举值 | 描述 |
 |--------|----------|
@@ -1575,7 +1575,7 @@ def my_kernel(...):
 | `LD_VST` | 阻塞向量存储指令的执行，直到所有标量加载指令完成 |
 | `ST_VST` | 阻塞向量存储指令的执行，直到所有标量存储指令完成 |
 
-#### FixpipeDMAMode
+### FixpipeDMAMode
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1583,7 +1583,7 @@ def my_kernel(...):
 | `NZ2ND` | 非零存储格式到列行主序格式的数据转换 |
 | `NZ2NZ` | 非零存储格式之间的数据转换（保持原格式） |
 
-#### FixpipeDualDstMode
+### FixpipeDualDstMode
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1591,7 +1591,7 @@ def my_kernel(...):
 | `COLUMN_SPLIT` | 列分割双目标模式，按列将数据分割到两个目标 |
 | `ROW_SPLIT` | 行分割双目标模式，按行将数据分割到两个目标 |
 
-#### FixpipePreQuantMode
+### FixpipePreQuantMode
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1600,7 +1600,7 @@ def my_kernel(...):
 | `F322F16` | 浮点32位到浮点16位格式的量化转换 |
 | `S322I8` | 有符号32位整数到8位整数格式的量化转换 |
 
-#### FixpipePreReluMode
+### FixpipePreReluMode
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1609,7 +1609,7 @@ def my_kernel(...):
 | `NORMAL_RELU` | 标准ReLU激活函数处理 |
 | `P_RELU` | Parametric ReLU激活函数处理 |
 
-#### CORE
+### CORE
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1618,7 +1618,7 @@ def my_kernel(...):
 | `CUBE_OR_VECTOR` | Cube或Vector核（二选一） |
 | `CUBE_AND_VECTOR` | Cube和Vector核（混合使用） |
 
-#### MODE
+### MODE
 
 | 枚举值 | 描述 |
 |--------|------|
@@ -1626,7 +1626,7 @@ def my_kernel(...):
 | `SIMT` | 单指令多线程执行模式 |
 | `MIX` | 混合执行模式 |
 
-#### PIPE
+### PIPE
 
 | 枚举值 | 描述 |
 |--------|------|
