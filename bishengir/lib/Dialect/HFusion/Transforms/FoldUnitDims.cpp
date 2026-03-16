@@ -826,16 +826,16 @@ public:
  * mismatch)
  */
 // clang-format on
-template <typename CopyOp>
-struct DropUnitDimsCopyPattern : public OpRewritePattern<CopyOp> {
+template <typename OpTy>
+struct DropUnitDimsLoadStorePattern : public OpRewritePattern<OpTy> {
 public:
-  using OpRewritePattern<CopyOp>::OpRewritePattern;
+  using OpRewritePattern<OpTy>::OpRewritePattern;
   LogicalResult
-  matchAndRewrite(CopyOp op, mlir::PatternRewriter &rewriter) const override {
+  matchAndRewrite(OpTy op, mlir::PatternRewriter &rewriter) const override {
 
     auto loc = op.getLoc();
     Value src, dst;
-    // We statically check the type of CopyOp and throw error when CopyOp type
+    // We statically check the type of OpTy and throw error when OpTy type
     // is not memref::CopyOp or bufferization::MaterializeInDestinationOp in
     // the end of this func.
     src = op.getOperand(0);
@@ -876,7 +876,7 @@ public:
       } else {
         // clang-format off
         LLVM_DEBUG(
-          llvm::dbgs() << "[DropUnitDimsCopyPattern]"
+          llvm::dbgs() << "[DropUnitDimsLoadStorePattern]"
                           " src|dst is non-collapsible\n"
                        << "src: " << src << "\n"
                        << "dst: " << dst << "\n";
@@ -897,20 +897,34 @@ public:
 
     Operation *newOp;
     if (needUpdate) {
-      if constexpr (std::is_same_v<CopyOp, memref::CopyOp>) {
+      if constexpr (std::is_same_v<OpTy, memref::CopyOp>) {
         newOp =
             rewriter.create<memref::CopyOp>(loc, collapsedSrc, collapsedDst);
       } else if constexpr (std::is_same_v<
-                               CopyOp,
+                               OpTy,
                                bufferization::MaterializeInDestinationOp>) {
         newOp = rewriter.create<bufferization::MaterializeInDestinationOp>(
             loc, collapsedSrc, collapsedDst);
         auto bufMIDOp = cast<bufferization::MaterializeInDestinationOp>(newOp);
         bufMIDOp.setRestrictAttr(op.getRestrictAttr());
         bufMIDOp.setWritableAttr(op.getWritableAttr());
+      } else if constexpr (std::is_same_v<OpTy, hivm::StoreOp>) {
+        // Only handle side-effecting hivm::StoreOp with no SSA results.
+        if (!op->getResults().empty()) {
+          return rewriter.notifyMatchFailure(
+              op, "[DropUnitDimsLoadStorePattern] hivm::StoreOp with results "
+                  "is not supported");
+        }
+        TypeRange resTypes;
+        newOp = rewriter.create<hivm::StoreOp>(loc, resTypes, collapsedSrc,
+                                               collapsedDst);
+        auto oldStore = cast<hivm::StoreOp>(op);
+        if (oldStore.getAtomicKindAttr())
+          cast<hivm::StoreOp>(newOp).setAtomicKindAttr(
+              oldStore.getAtomicKindAttr());
       } else {
-        static_assert(std::is_same_v<CopyOp, memref::AllocOp>,
-                      "Unsupported CopyOp type");
+        static_assert(std::is_same_v<OpTy, memref::AllocOp>,
+                      "Unsupported OpTy type");
       }
       rewriter.replaceOp(op, newOp);
     } else {
@@ -1453,11 +1467,13 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
   // First drop unit dims on memref related ops
   {
     RewritePatternSet patterns(context);
-    patterns.insert<FilteredPattern<DropUnitDimsCopyPattern<memref::CopyOp>,
+    patterns.insert<FilteredPattern<DropUnitDimsLoadStorePattern<memref::CopyOp>,
                                     memref::CopyOp>>(context, shouldSkip);
     patterns.insert<FilteredPattern<
-        DropUnitDimsCopyPattern<bufferization::MaterializeInDestinationOp>,
+        DropUnitDimsLoadStorePattern<bufferization::MaterializeInDestinationOp>,
         bufferization::MaterializeInDestinationOp>>(context, shouldSkip);
+    patterns.insert<FilteredPattern<DropUnitDimsLoadStorePattern<hivm::StoreOp>,
+        hivm::StoreOp>>(context, shouldSkip);
     patterns.insert<FilteredPattern<DropUnitDimsToTensorPattern,
                                     bufferization::ToTensorOp>>(context,
                                                                 shouldSkip);
