@@ -69,6 +69,14 @@ def EnableUbufSaving : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
 }
 
+def DisableSizeAlignForCast : FeatureControlOptions<
+  "Disable VCast alloc size alignment and use new temp buffer scheme (s32/s16->s8).",
+  "bool",
+  "false"
+>{
+  let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
+}
+
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 def EnableTorchCompile : FeatureControlOptions<
   "Enable Torch-MLIR compilation.",

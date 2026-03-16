@@ -163,6 +163,15 @@ std::string getVCastOpLibraryCallName(VCastOp concreteOp,
        isI64ToI32) &&
       concreteOp.getRoundMode() == hivm::RoundMode::TRUNCWITHOVERFLOW) {
     ss << "_with_overflow";
+    bool disableSizeAlignForCast = false;
+    if (auto funcOp = concreteOp->getParentOfType<func::FuncOp>()) {
+      if (funcOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        disableSizeAlignForCast = true;
+      }
+    }
+    // Disable size align for overflow cast only when the cast is I32 to I8 or I16 to I8
+    if (disableSizeAlignForCast && (isI32ToI8 || isI16ToI8))
+      ss << "_no_size_align";
   } else {
     ss << (tempBufferCond ? "_with_temp" : "_with_mode");
   }

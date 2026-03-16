@@ -2548,7 +2548,7 @@ func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
 
 // -----
 
-func.func @test_cast_s322s8_2d() {
+func.func @test_cast_s322s8_2d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2x16xi32, #hivm.address_space<ub>> // 32 * 16 * i32
   %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
 
@@ -2562,7 +2562,7 @@ func.func @test_cast_s322s8_2d() {
 
 // -----
 
-func.func @test_cast_s322s8_1d() {
+func.func @test_cast_s322s8_1d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2xi32, #hivm.address_space<ub>> // 256 * i32
   %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
 
@@ -2576,7 +2576,7 @@ func.func @test_cast_s322s8_1d() {
 
 // -----
 
-func.func @test_cast_s162s8_2d() {
+func.func @test_cast_s162s8_2d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2x16xi16, #hivm.address_space<ub>> //  32 * 16 * i16
   %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
 
@@ -2590,7 +2590,7 @@ func.func @test_cast_s162s8_2d() {
 
 // -----
 
-func.func @test_cast_s162s8_1d() {
+func.func @test_cast_s162s8_1d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2xi16, #hivm.address_space<ub>> // 512 * i16
   %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
 

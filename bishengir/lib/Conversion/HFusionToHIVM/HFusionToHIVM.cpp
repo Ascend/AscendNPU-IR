@@ -1205,6 +1205,10 @@ public:
         funcOp->setAttr(hivm::EnableSavingUbAttr::name,
                         UnitAttr::get(&getContext()));
       }
+      if (this->isDisableSizeAlignForCast) {
+        funcOp->setAttr(hivm::DisableSizeAlignForCastAttr::name,
+                        UnitAttr::get(&getContext()));
+      }
     });
 
     moduleOp->walk([&](hivm::MmadL1Op op) {
