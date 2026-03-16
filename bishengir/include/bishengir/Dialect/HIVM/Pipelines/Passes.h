@@ -186,6 +186,12 @@ struct HIVMPipelineOptions
       *this, "max-reduction-split",
       llvm::cl::desc("Max split times for reductionLoop. Default is 1"),
       llvm::cl::init(1)};
+
+  PassOptions::Option<std::string> injectIrFromFile{
+      *this, "inject-ir-from-file",
+      llvm::cl::desc("Path to IR file for inject-ir pass; when set, matching "
+                     "functions are replaced with those from the file for debug"),
+      llvm::cl::init("")};
 };
 
 struct ConvertToHIVMPipelineOptions

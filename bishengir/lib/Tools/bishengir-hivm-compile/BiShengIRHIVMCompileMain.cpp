@@ -27,6 +27,25 @@ using namespace llvm;
 using namespace mlir;
 using namespace object;
 
+static std::vector<std::string> skipOptions(const std::vector<std::string> &options,
+                                     const std::set<std::string> &skip) {
+  std::vector<std::string> result;
+  for (const std::string &arg : options) {
+    StringRef argRef = arg;
+    SmallVector<StringRef> parts;
+    argRef.split(parts, '=');
+    if (parts.empty()) {
+      continue;
+    }
+    std::string trimArg = parts[0].trim().ltrim('-').str();
+    if (skip.count(trimArg) != 0) {
+      continue;
+    }
+    result.push_back(arg);
+  }
+  return result;
+}
+
 llvm::LogicalResult
 runExternalHIVMC(ModuleOp &module,
                         const bishengir::BiShengIRCompileMainConfig &config) {
@@ -59,7 +78,10 @@ runExternalHIVMC(ModuleOp &module,
   arguments.push_back(outputFile);
   arguments.push_back("--only-run-hivm-pipeline=false");
 
-  SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
+  std::set<std::string> blacklist = {"inject-ir-from-file"};
+  auto skippedArgs = skipOptions(arguments,blacklist);
+
+  SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
   if (failed(execute(getHIVMCName(),
                      getBiShengIRHIVMCompileInstallPath(), argumentsRef))) {
     return failure();

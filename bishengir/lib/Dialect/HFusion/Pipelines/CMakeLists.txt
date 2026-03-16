@@ -12,6 +12,7 @@ add_bishengir_dialect_library(MLIRHFusionPipelines
 
   LINK_LIBS PUBLIC
   ${BISHENGIR_PRIVATE_LIBS}
+  BishengIRTransform
   MLIRBufferizationTransforms
   MLIRFuncTransforms
   MLIRHFusionTransforms

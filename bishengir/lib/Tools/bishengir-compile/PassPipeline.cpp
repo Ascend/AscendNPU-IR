@@ -97,6 +97,7 @@ void setupHFusionPipelineOptions(
       hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
   hfusionPipelineOptions.enableHighPrecision =
       config.shouldEnableHighPrecision();
+  hfusionPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
 }
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE

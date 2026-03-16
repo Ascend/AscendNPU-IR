@@ -85,6 +85,7 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
       config.shouldenablePrintMemoryAllocatedSize();
   hivmPipelineOptions.maxReductionSplitNum =
       config.getMaxReductionSplitNum();
+  hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
 }
 
 void buildBiShengHIRHIVMPipeline(OpPassManager &pm,

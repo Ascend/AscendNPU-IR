@@ -256,6 +256,13 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             cl::location(enablePrintMemoryAllocatedSizeFlag), cl::init(false),
             cl::cat(dfxCtrlCategory));
 
+    static cl::opt<std::string, /*ExternalStorage=*/true> injectIrFromFile(
+        "inject-ir-from-file",
+        cl::desc("Path to IR file for inject-ir pass; when set, matching "
+                 "functions are replaced with those from the file for debug"),
+        cl::location(injectIrFromFileFlag), cl::init(""),
+        cl::cat(dfxCtrlCategory));
+
     // -------------------------------------------------------------------------//
     //                        Output setting options
     // -------------------------------------------------------------------------//

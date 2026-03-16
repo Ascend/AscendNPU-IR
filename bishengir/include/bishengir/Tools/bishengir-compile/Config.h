@@ -273,6 +273,12 @@ public:
     return enablePrintMemoryAllocatedSizeFlag;
   }
 
+  BiShengIRCompileMainConfig &setInjectIrFromFile(const std::string &path) {
+    injectIrFromFileFlag = path;
+    return *this;
+  }
+  const std::string &getInjectIrFromFile() const { return injectIrFromFileFlag; }
+
   // -------------------------------------------------------------------------//
   //                        Output setting options                            //
   // -------------------------------------------------------------------------//
@@ -812,6 +818,9 @@ protected:
 
   /// Enable to get Ub allocation.
   bool enablePrintMemoryAllocatedSizeFlag{false};
+
+  /// Path to IR file for inject-ir pass (debug).
+  std::string injectIrFromFileFlag{""};
 
   // -------------------------------------------------------------------------//
   //                        Output setting options                            //

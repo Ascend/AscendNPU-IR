@@ -139,6 +139,12 @@ struct HFusionPipelineOptions
       *this, "external-tiling-func-path",
       llvm::cl::desc("auto add external tiling func"), llvm::cl::init("-")};
 
+  PassOptions::Option<std::string> injectIrFromFile{
+      *this, "inject-ir-from-file",
+      llvm::cl::desc("Path to IR file for inject-ir pass; when set, matching "
+                     "functions are replaced with those from the file for debug"),
+      llvm::cl::init("")};
+
   /// TODO : remove it after add platform info
   PassOptions::Option<unsigned> blockDim{*this, "block-dim",
                                          llvm::cl::desc("Block dimension size"),
