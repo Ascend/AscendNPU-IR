@@ -187,7 +187,7 @@ template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 scalar_reduce_ra(memref_t<__ubuf__ T, 2> *src0,
                  memref_t<__ubuf__ T, 2> *dst) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance.\n");
+  WARN_SCALAR_IMPL("reduceRA");
   const int64_t src0_size0 = src0->sizes[0];
   const int64_t src0_size1 = src0->sizes[1];
   const int64_t src0_stride0 = src0->strides[0];

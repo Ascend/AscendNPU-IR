@@ -112,7 +112,7 @@ __aiv__ void reduce_with_index_scalar_iml(memref_t<__ubuf__ T, 2> *src,
                                           int64_t size0, int64_t size1,
                                           T initvalue,
                                           bool need_merge = false) {
-  cce::printf("Warning: [ReduceAR_With_Index]This implementation uses scalar instructions, which may result in suboptimal performance\n");
+  WARN_SCALAR_IMPL("reduceAR with index");
   int64_t num_rows = size0;
   int64_t num_cols = size1;
 

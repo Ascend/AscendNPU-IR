@@ -76,7 +76,7 @@ __aiv__ void reduce_scalar_iml(memref_t<__ubuf__ T, 2> *src,
                                int64_t size0, int64_t size1,
                                T /*initvalue*/,
                                bool need_merge = false) {
-  cce::printf("Warning: [ReduceAR]This implementation uses scalar instructions, which may result in suboptimal performance\n");
+  WARN_SCALAR_IMPL("reduceAR");
   if (size1 <= 0) return;
 
   __ubuf__ T* src_ptr       = src->aligned + src->offset;

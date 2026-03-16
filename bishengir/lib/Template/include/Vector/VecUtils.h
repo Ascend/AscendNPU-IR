@@ -37,6 +37,10 @@ constexpr uint64_t HALF_BITS = 16;
 constexpr int64_t BITS_PER_BYTE = 8;
 constexpr int32_t MAX_VBRCB_REPEAT_TIMES = 254;
 
+#define WARN_SCALAR_IMPL(x) \
+cce::printf("Warning: [%s] - This implementation uses scalar instructions, "\
+  "which may result in suboptimal performance\n", (x))
+
 enum class VectorOpTy : uint32_t {
   BINARY_VV_BEGIN = 100,
   VADD = 101,

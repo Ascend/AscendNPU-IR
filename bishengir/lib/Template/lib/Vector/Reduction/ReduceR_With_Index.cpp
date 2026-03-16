@@ -84,7 +84,7 @@ reduce_r_with_index_on_scalar(memref_t<__ubuf__ T, 1> *src0,
                               memref_t<__ubuf__ T, 1> *dst_value,
                               memref_t<__ubuf__ int32_t, 1> *dst_index,
                               int64_t scalar_element_num, bool need_merge) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+  WARN_SCALAR_IMPL("reduceR with index");
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
   __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
