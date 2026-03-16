@@ -192,7 +192,7 @@ template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void scalar_eltwise_1d(
     memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
     memref_t<__ubuf__ T, 1> *dst, int64_t size, VectorLastAxisMode mode, T scalar) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+  WARN_SCALAR_IMPL("eltwise 1d");
   auto src0_ptr = src0 == nullptr ? nullptr : src0->aligned + src0->offset;
   auto src1_ptr = src1 == nullptr ? nullptr : src1->aligned + src1->offset;
   auto dst_ptr = dst->aligned + dst->offset;

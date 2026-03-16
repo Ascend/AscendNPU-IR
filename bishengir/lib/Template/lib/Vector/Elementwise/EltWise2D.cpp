@@ -189,7 +189,7 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
     memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *src1,
     memref_t<__ubuf__ T, 2> *dst, int64_t size0, int64_t size1,
     VectorLastAxisMode mode, T scalar) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+  WARN_SCALAR_IMPL("eltwise 2d");
   auto src0_ptr = src0 == nullptr ? nullptr : src0->aligned + src0->offset;
   auto src1_ptr = src1 == nullptr ? nullptr : src1->aligned + src1->offset;
   auto dst_ptr = dst->aligned + dst->offset;

@@ -308,7 +308,7 @@ __aiv__ __attribute__((always_inline)) void
 reduce_r_core_on_scalar(memref_t<__ubuf__ T, 1> *src0,
                         memref_t<__ubuf__ T, 1> *dst,
                         int64_t scalar_element_num, bool need_merge) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+  WARN_SCALAR_IMPL("reduceR");
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst->aligned + dst->offset;
 
