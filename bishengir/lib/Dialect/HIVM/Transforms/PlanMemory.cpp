@@ -80,6 +80,34 @@ bool isReusableNarrowWidth(Operation *op, Value output, Value input) {
   return true;
 }
 
+static std::optional<int64_t> getStaticOffset(Value v) {
+  auto memrefTy = dyn_cast<MemRefType>(v.getType());
+  if (!memrefTy)
+    return std::nullopt;
+  if (auto strided = memrefTy.getLayout().dyn_cast_or_null<StridedLayoutAttr>())
+    return strided.getOffset();
+  return 0;
+}
+
+// Memory can reuse by offset if the offset of the output and input are the same.
+static bool isReusableByOffset(HIVMStructuredOp &hivmOp) {
+  auto output = hivmOp.getDpsInits().front();
+  auto outputOffset = getStaticOffset(output);
+  if (!outputOffset) {
+    return false;
+  }
+  for (Value in : hivmOp.getDpsInputs()) {
+    auto inOffset = getStaticOffset(in);
+    // if the input is not a memref, skip
+    if (!inOffset)
+      continue;
+    if (*inOffset != *outputOffset) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// Memory can inplace with rules as follows:
 ///   Scene1: Output has same width with input.
 ///   Scene2: Output width is smaller than input except VCastOp.
@@ -858,6 +886,10 @@ StorageEntry::GetBufferLifeByValue(const Value v) const {
 
 bool MemPlan::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                             const Value &killBuffer) const {
+  auto hivmOp = dyn_cast<hivm::HIVMStructuredOp>(op);
+  if (!hivmOp || !isReusableByOffset(hivmOp))
+    return false;
+
   if (mlir::isa<hivm::VAddOp, hivm::VSubOp, hivm::VMaxOp, hivm::VMinOp,
                 hivm::VOrOp, hivm::VAndOp, hivm::VMulOp>(op) &&
       !hasInlineBroadcastOrTransposeAttr(op)) {
@@ -875,8 +907,7 @@ bool MemPlan::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
   if (!isReusableExtraBuffer(op))
     return false;
 
-  auto hivmOp = dyn_cast<hivm::HIVMStructuredOp>(op);
-  if (!hivmOp || !mlir::hivm::detail::isElemwiseNaryOpImpl(op))
+  if (!mlir::hivm::detail::isElemwiseNaryOpImpl(op))
     return false;
 
   // Tranpose operands can not inplace even with same shape
