@@ -1,10 +1,10 @@
-# Cube-Vector 优化总览
+# Cube-Vector优化总览
 
-## 功能介绍
+## 1. 功能介绍
 
 本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Ascend 910B 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
-### 术语与背景知识（阅读前必读）
+### 1.1 术语与背景知识（阅读前必读）
 
 以下术语在 CV 文档中反复出现，建议先建立基本概念后再阅读各 pass 细节。
 
@@ -24,7 +24,7 @@
 **关于「预 bufferization」与「后 bufferization」**：  
 CV 相关 pass 多数在 **预 bufferization** 阶段（`hivmPreBufferizationOptimizationPipeline`）执行，此时 IR 仍是 tensor 为主、带 `scf.for` 等控制流。Bufferization 会把 tensor 转为 memref 并决定物理布局；在此之后还有 **后 bufferization** 阶段的优化（如另一轮 PlanMemory 针对 `memref.alloc`）。理解「先做 CV 结构变换，再做内存具体化」有助于理解 pass 顺序。
 
-### 硬件背景
+### 1.2 硬件背景
 
 Ascend 910B NPU 采用异构计算架构，主要包含：
 
@@ -40,7 +40,7 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 **fixpipe** 是 Cube 与 Vector 之间的数据搬运通道，昇腾芯片的 **Cube**和**Vector**底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说， Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 GM，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。910系列的芯片架构如下
 ![V220架构](./cvarch.png)
 
-### Mix 内核与 CV 优化目标
+### 1.3 Mix 内核与 CV 优化目标
 
 **Mix 内核**（`mix_mode = "mix"`）在同一函数内同时包含 Cube 和 Vector 运算，二者通过 fixpipe、load/store 等衔接。CV 优化的核心目标包括：
 
@@ -52,7 +52,7 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 
 ---
 
-## 接口说明 
+## 2. 接口说明 
 
 验证单个 Pass
 
@@ -66,11 +66,22 @@ bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir
 bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 ```
 
+
+### 2.1 测试用例
+目前库上所有的测试用例所在的路径都在 `path-to-ascendnpuir\bishengir\test`下，需要运行某个pass，搜索对应的编译命令即可找到对应的测试文件，例如搜索`hivm-normalize-matmul`即可找到对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
+
+### 2.2 测试命令
+具体的运行命令再每个测试文件的最上面。例如
+```bash
+// RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
+```
+其中，`bishengir-opt`和`FileCheck`均为编译生成的二进制可执行文件，路径再`path-to-ascendnpuir\build\bin`下。上述命令中的`%s`替换成对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
+
 ---
 
-## 算法原理 
+## 3. 算法原理 
 
-### createNormalizeMatmulPass
+### 3.1 createNormalizeMatmulPass
 
 - **作用**：规范化 `hivm.hir.mmadL1`、`hivm.hir.batchMmadL1` 的 M/K/N 维度、init 条件及 per-channel add 形式
 - **目的**：统一 matmul 的 IR 形态，便于后续 fixpipe 插入、tiling 等 pass 匹配与变换
@@ -89,11 +100,10 @@ after
 %3 = tensor.empty() : tensor<16x32xf32>
 %4 = hivm.hir.mmadL1 ins(*)
         outs(%3 : tensor<16x32xf32>) -> tensor<16x32xf32>
-%5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 :
-tensor<16x32xf32>)
+%5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 : tensor<16x32xf32>)
 ```
 
-### createInlineFixpipePass
+### 3.2 createInlineFixpipePass
 
 - **作用**：在 mmadL1/batchMmadL1 与 store 之间插入 `hivm.hir.fixpipe`，将 store+vcast 等合并进 fixpipe 的量化/激活选项
 - **目的**：显式表达 Cube 到 Vector 的数据搬运，使后续 workspace 分配、load/store 插入有明确插入点
@@ -110,7 +120,7 @@ mmadL1 -> fixpipe
 ```
 InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试inline op,如hivm.vcast/hivm.vrelu/hivm.store。
 
-### createTileBatchMMIntoLoopPass
+### 3.3 createTileBatchMMIntoLoopPass
 
 - **作用**：将 `hivm.hir.batchMmadL1` 沿 batch 维度展开为 `scf.for` 循环，每次迭代执行单次 `mmadL1` 和 fixpipe
 - **目的**：将 batch 维拆成循环，使 load/fixpipe/store 等可以按 batch 索引访问，便于 workspace 管理和流水
@@ -127,7 +137,7 @@ for batch_idx in range(batch):
   fixpipe(extract_slice(workspace))
 ```
 
-### createInsertLoadStoreForMixCVPass
+### 3.4 createInsertLoadStoreForMixCVPass
 - **作用**：在 Cube-Vector 交汇处插入 load/store，使数据在 tensor 与 全局workspace 间正确流转
 - **目的**：保证CV之间数据的正确传递
 - **典型变换**：batchMmadL1 + fixpipe 被改写为循环内的 mmadL1 + fixpipe，对输入/输出做 extract_slice / insert_slice
@@ -147,7 +157,7 @@ load
 vadd
 ```
 
-### createInsertWorkSpaceForMixCVPass
+### 3.4 createInsertWorkSpaceForMixCVPass
 
 - **作用**：在 Cube-Vector 交汇点（CC/CV/VC/VV）用 `memref_ext.alloc_workspace` 替换 `tensor.empty`
 - **目的**：将 fixpipe 输出、store 输出等中间 buffer 改为从全局 workspace 分配，实现跨迭代、跨核共享
@@ -171,7 +181,7 @@ after：
 vadd (%5)
 ```
 
-### createBindWorkSpaceArgPass
+### 3.5 createBindWorkSpaceArgPass
 
 - **作用**：将函数内的 `memref_ext.alloc_workspace` 绑定到函数的 workspace 参数（`hacc.arg_type = #hacc.arg_type<workspace>`）
 - **目的**：统一 workspace 来源，使运行时通过参数传入 workspace 指针，实现多 kernel 共享一块 workspace
@@ -196,7 +206,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-### createPlanMemoryPass
+### 3.6 createPlanMemoryPass
 
 - **作用**：在 `GLOBAL_WORKSPACE_PLAN` 模式下，对 `memref_ext.alloc_workspace` 进行内存规划，将 alloc 替换为 `hivm.hir.pointer_cast` + 偏移
 - **目的**：在给定 workspace 基址上，按 liveness 与 inplace 规则分配偏移，最大化复用、减少总 workspace 大小
@@ -220,7 +230,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-### createSplitMixKernelPass
+### 3.7 createSplitMixKernelPass
 
 - **作用**：将 Mix 内核拆分为 AIC（Cube 主）和 AIV（Vector 主）两个子函数，并生成 mix entry
 - **目的**：后端可按 AIC/AIV 分别调度到 Cube/Vector 核心，便于流水与同步
@@ -259,38 +269,6 @@ func.func @bind_workspace_arg_aiv(
 
 ---
 
-
-## 快速上手与问题定位
-
-### 测试用例路径
-
-- `bishengir/test/Dialect/HIVM/normalize-matmul.mlir`
-- `bishengir/test/Dialect/HIVM/inline-fixpipe.mlir`
-- `bishengir/test/Dialect/HIVM/tile-batchmm-into-loop.mlir`
-- `bishengir/test/Dialect/HIVM/insert-workspace-for-mix-cv.mlir`
-- `bishengir/test/Dialect/HIVM/bind-workspace-arg.mlir`
-- `bishengir/test/Dialect/HIVM/plan-memory.mlir`
-- `bishengir/test/Dialect/HIVM/split-mix-kernel.mlir`
-
-### 常见问题定位
-#### copy op报错
-报错信息如下：
-```
-error: 'hivm.hir.copy' op Unsupported copy from cbuf to cbuf!
-error: 'hivm.hir.copy' op Unsupported copy from gm to gm!
-```
-一般常见的原因：
-- workspace插入不正确， 可以单点调试 InsertWorkSpaceForMixCV
-  - 确认数据流符合 CC/CV/VC/VV 之一（从 load 的 src 反推能否到 fixpipe/store，再能否到 tensor.empty）；若 fixpipe/store 的 outs 不是 tensor.empty 定义，则不会替换 
-- splitmixkernel
-  - 确定没有冗余的copy错分再aic中
-
-#### core dump for translateDeviceKernelToLLVM
-报错信息如下：
-```
- #6 0x0000000007805d75 llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::Instruction*)
-```
-- split-mix-kernel分离不正确，aic中出现aiv的指令或者alloc， aiv中出现aic的指令
-  - 确定aic/aiv的分核后结果
-
----
+## 4. 约束能力
+- createPlanMemoryPass处理数据交互处的空间大小，因为会动态返回数据的需要总空间大小，因此对大小没有限制。
+- createInlineFixpipePass目前只能inline vast/relu/store三类op。

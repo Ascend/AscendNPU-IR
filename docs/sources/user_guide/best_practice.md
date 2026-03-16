@@ -216,15 +216,19 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : ...) outs(%3 : ...) te
 - **Wrong**: `A = torch.empty(shape, dtype)` (not on NPU).
 - **Correct**: `A = torch.empty(shape, dtype).npu()` or `A = torch.empty(shape, dtype, device="npu:0").npu()`.
 
-### Negative or overflowing offset
-
-- **Symptom**: The offset value is a computed value in the IR.
-- **Examples**: (1) The computed offset is negative, leading to incorrect read address. (2) The operator’s offset is represented as int32; if the value exceeds that range, i32 overflows.
-
 ### Use non-negative loop iter as memory index
 
 - **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices.
-
+- **Wrong**:
+```python
+for i_w in tl.static_range(-W+1, 1):
+    p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
+```
+- **Correct**: 
+```python
+for i_w in tl.static_range(W):
+    p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
+```
 ---
 
 ## Memory access
@@ -341,13 +345,45 @@ tl.compile_hint(cond, "bitwise_mask")
 Mask pointer offsets must be computed correctly for the bitmask layout. See the figures in the Chinese version for layout.
 
 #### Example
-
 See [Ascend where kernel](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py). For i8 bitwise mask input, add the hint to the result of `tl.where`:
 
+ [related script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 ```python
-res = tl.where(cond, in1, in0)
-tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
-tl.store(out_ptr0 + (xindex), res, xmask)
+import triton
+import triton.language as tl
+import torch 
+import torch_npu
+import test_common
+
+@triton.jit
+def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
+    xoffset = tl.program_id(0) * XBLOCK
+    for xoffset_sub in range(0, XBLOCK, XBLOCK_SUB):
+        xindex = xoffset + xoffset_sub + tl.arange(0, XBLOCK_SUB)[:]
+        xmask = xindex < xnumel
+        in0 = tl.load(in_ptr0 + xindex, xmask)
+        in1 = tl.load(in_ptr1 + xindex, xmask)
+        cond = tl.load(cond_ptr + xindex, xmask)
+        res = tl.where(cond, in1, in0)
+        tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+        tl.store(out_ptr0 + (xindex), res, xmask)
+
+def test_where_lt_case1():
+       dtype = "float32"
+       shape = (1, 1024, 8) 
+       ncore = 1 
+       xblock = 8192
+       xblock_sub = 1024
+       if shape[-1] %8 != 0:
+           raise ValueError("The last dimension should be a multiple of 8")
+       x0 = test_common.generate_tensor(shape, dtype).npu()
+       x1 = test_common.generate_tensor(shape, dtype).npu()
+       # Run triton with i8 bitwise mask
+       cond_i8 = test_common.generate_tensor(shape, 'uint8').npu()
+       y_cal = test_common.generate_tensor(shape, dtype).npu()
+       triton_where_lt_case1[ncore, 1, 1](x0, x1, cond_i8, y_cal, x0.numel(), xblock, xblock_sub)
+       
+test_where_lt_case1()
 ```
 
 Because bitwise mask packs 8 i8 booleans into one i8, the mask assembly logic must be updated accordingly (e.g. expand byte to 8 bits when comparing with torch reference). See the Chinese version for the full test_where_lt_case1 example.
@@ -355,28 +391,6 @@ Because bitwise mask packs 8 i8 booleans into one i8, the mask assembly logic mu
 #### Limit
 
 Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
-
-### Dynamically generated mask
-
-#### Problem
-
-A common pattern is `tl.arange` followed by compare to form a lower-triangular mask. The hardware may not support i32/i64 compare and falls back to scalar. See the figures in the Chinese version.
-
-#### Example (e.g. diffusion_attention-style)
-
-```python
-for idx_ingroup in range(GROUP_SIZE):
-    idx_n = idx_group * GROUP_SIZE + idx_ingroup
-    offs_r_local = tl.arange(0, BLOCK_C)[:, None]
-    offs_c_local = tl.arange(0, BLOCK_C)[None, :]
-    chunk_idx_r = offs_r_local // BLOCK_SIZE
-    chunk_idx_c = offs_c_local // BLOCK_SIZE
-    block_mask_bool = (
-        (chunk_idx_r > chunk_idx_c)
-        & (seq_st + idx_c * BLOCK_C + offs_r_local < seq_ed)
-        & (seq_st + idx_c * BLOCK_C + offs_c_local < seq_ed)
-    )
-```
 
 ---
 
@@ -419,9 +433,6 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 | tile_mix_vector_loop | When above is false: vector tile count (can autotune). | 1 (default), 2, 4 |
 | tile_mix_cube_loop | When above is false: cube tile count (can autotune). | 1 (default), 2, 4 |
 
-### Kernel split (load balance)
-
-For attention, workload can be imbalanced across cores (e.g. lower-triangular mask so later cores do more work). Prefer splitting so that lighter and heavier work are grouped on the same core where possible. See [matrix multiplication optimized](https://gitee.com/guangpengz/triton-ascend/blob/master/ascend/examples/tutorials/13-matrix-multiplication-optimized.py).
 
 ### Kernel options to avoid timeout
 
