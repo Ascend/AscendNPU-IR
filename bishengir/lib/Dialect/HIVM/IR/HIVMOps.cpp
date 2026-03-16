@@ -598,6 +598,9 @@ LogicalResult CustomOp::verify() {
     // Cube function ignores vf mode information
   }
 
+  if (getFuncName().empty())
+    return emitOpError() << "Missing implementation function name";
+
   return success();
 }
 
@@ -609,5 +612,20 @@ PIPE CustomOp::getPipe() {
   return PIPE::PIPE_UNASSIGNED;
 }
 
-const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
-    {"__builtin_gather_load", {TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}}};
+int CustomOp::getMaxRank() {
+  if (auto maxRankAttr =
+          getOperation()->template getAttrOfType<IntegerAttr>(kMaxRankAttrName))
+    return static_cast<int>(maxRankAttr.getValue().getSExtValue());
+
+  static constexpr int defaultMaxRank = 5;
+  return defaultMaxRank;
+}
+
+std::string CustomOp::getFuncName() {
+  if (auto attr =
+          getOperation()->template getAttrOfType<StringAttr>(kFuncNameAttrName))
+    return attr.str();
+  return "";
+}
+
+const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};

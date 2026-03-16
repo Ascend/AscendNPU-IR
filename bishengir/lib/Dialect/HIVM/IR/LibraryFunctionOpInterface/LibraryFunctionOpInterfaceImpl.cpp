@@ -1058,6 +1058,34 @@ std::string InferMaxRankExternalModel<VTransposeOp>::getOpLibraryCallName(
   return ss.str();
 }
 
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+template <>
+int InferMaxRankExternalModel<CustomOp>::inferOpLibraryMaxRank(
+    Operation *op) const {
+  return cast<CustomOp>(op).getMaxRank();
+}
+
+template <>
+std::string InferMaxRankExternalModel<CustomOp>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<CustomOp>(op);
+
+  using InferBuiltinMaxRankFuncTy =
+      std::function<std::string(std::optional<bool>)>;
+  static const DenseMap<StringRef, InferBuiltinMaxRankFuncTy>
+      builtinsCallName{};
+
+  if (concreteOp.isBuiltin()) {
+    const auto inferBuiltinCallName = builtinsCallName.at(concreteOp.getName());
+    return inferBuiltinCallName(isOpsAligned);
+  }
+
+  return concreteOp.getFuncName();
+}
+
 #define REGISTER_STATIC_MAX_RANK(OP, MAX_RANK)                                 \
   OP::attachInterface<StaticMaxRankExternalModel<OP, /*MaxRank=*/MAX_RANK>>(   \
       *ctx)
@@ -1079,6 +1107,8 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_INFER_MAX_RANK(VReduceOp);
     REGISTER_INFER_MAX_RANK(VDeinterleaveOp);
     REGISTER_INFER_MAX_RANK(VTransposeOp);
+
+    REGISTER_INFER_MAX_RANK(CustomOp);
 
     REGISTER_STATIC_MAX_RANK(VExpOp, 3);
     REGISTER_STATIC_MAX_RANK(VAbsOp, 3);
