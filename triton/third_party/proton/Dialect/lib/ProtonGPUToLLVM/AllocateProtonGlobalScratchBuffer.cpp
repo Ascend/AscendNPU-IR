@@ -1,5 +1,8 @@
 #include "Conversion/ProtonGPUToLLVM/Passes.h"
 #include "Dialect/ProtonGPU/IR/Dialect.h"
+#if BSPRIV_DAVINCI_BISHENGIR
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#endif
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -17,31 +20,35 @@ struct AllocateProtonGlobalScratchBufferPass
     MLIRContext *ctx = &getContext();
     OpBuilder builder(ctx);
 
+#if BSPRIV_DAVINCI_BISHENGIR
+    // if TritonAscendGPUToLLVM isn't run
+    bool hasTTFunc = false;
+    mod.walk([&](triton::FuncOp op) {
+      hasTTFunc = true;
+    });
+    if (hasTTFunc)
+      return;
+#endif
+
     int numFuncOps = 0;
     FunctionOpInterface func;
     mod.walk([&](FunctionOpInterface op) {
+#if BSPRIV_DAVINCI_BISHENGIR
+      // some kernel names also contain "__"
+      // temporary fix until triton upgrades
+      // see triton PR 9536
+      if (op->hasAttr(NVVM::NVVMDialect::getKernelFuncAttrName())) {
+#else
       // Ignore any intrinsic functions. On AMD the predicate load/store ops
       // are currently pseduo instrunctions at this point and will get picked up
       // here and trigger the FunctionOpInterface range based assert below
       StringRef funcName(op.getNameAttr());
       if (!funcName.contains("__")) {
+#endif
         numFuncOps += 1;
         func = op;
       }
     });
-
-#if BSPRIV_DAVINCI_BISHENGIR
-    // if triton-gpu-to-llvm is not turned on in bishengir,
-    // tt.func has not been converted to llvm.func and somehow isn't picked up
-    // by the FunctionOpInterface above
-    // TODO: remove this when triton-gpu-to-llvm is turned on
-    if (numFuncOps == 0) {
-      mod.walk([&](triton::FuncOp op) {
-        numFuncOps += 1;
-        func = op;
-      });
-    }
-#endif
 
     assert(numFuncOps == 1);
 
