@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/Vector/Transforms/Transforms.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 #define DEBUG_TYPE "flatten-vector-ops"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -283,6 +284,45 @@ int64_t getNonUnitDimNum(Value value) {
   return num;
 }
 
+/// Flatten a contiguous mask (constant_mask) to 1D for use with flattened
+/// transfer_write. Returns nullopt if the mask is not contiguous (e.g. not a
+/// constant_mask). Constant_mask produces a hyper-rectangular region [0,d0) x
+/// [0,d1) x ... which is always contiguous in row-major flattened layout.
+/// Returns optional(null Value) when original has no mask (caller should omit
+/// mask in new op).
+static std::optional<Value> flattenContiguousMask(Value mask,
+                                                  int64_t flattenedVectorSize,
+                                                  Location loc,
+                                                  PatternRewriter &rewriter) {
+  if (!mask) {
+    return Value();
+  }
+  auto constMaskOp = mask.getDefiningOp<vector::ConstantMaskOp>();
+  if (!constMaskOp) {
+    return std::nullopt;
+  }
+  ArrayRef<Attribute> maskDimSizes = constMaskOp.getMaskDimSizes().getValue();
+  int64_t product = 1;
+  for (Attribute attr : maskDimSizes) {
+    int64_t dim = cast<IntegerAttr>(attr).getInt();
+    if (dim < 0) {
+      return std::nullopt;
+    }
+    product *= dim;
+  }
+  if (product > flattenedVectorSize) {
+    // Invalid mask: mask dim size product is greater than flattened vector size
+    return std::nullopt;
+  }
+  auto flatMaskType =
+      VectorType::get({flattenedVectorSize}, rewriter.getI1Type());
+  return rewriter
+      .create<vector::ConstantMaskOp>(
+          loc, flatMaskType,
+          rewriter.getArrayAttr(rewriter.getI64IntegerAttr(product)))
+      .getResult();
+}
+
 // Flatten transfer_write with multiple non-unit dimensions, only works when the
 // write source is contiguous memref.
 //
@@ -324,16 +364,99 @@ struct FlattenContiguousTransferWrite
       return rewriter.notifyMatchFailure(writeOp, "fail to flatten subview");
     }
     Value newSubview = newSubviewMaybe.value();
+    VectorType flattenedVecType =
+        VectorType::get({writeOp.getVectorType().getNumElements()},
+                        writeOp.getVectorType().getElementType());
     Value newVector =
         flattenVector(vector, writeOp.getVectorType(), loc, rewriter);
 
-    // TODO: should we handle mask?
+    // Only support contiguous masks (constant_mask). Non-contiguous masks
+    // cannot be correctly flattened, so bail out.
+    auto flatMaskMaybe = flattenContiguousMask(
+        writeOp.getMask(), flattenedVecType.getNumElements(), loc, rewriter);
+    if (!flatMaskMaybe.has_value()) {
+      return rewriter.notifyMatchFailure(
+          writeOp, "mask is not contiguous, skip flatten");
+    }
+
     Value cst0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     SmallVector<Value> indices(1, cst0);
+    AffineMap permMap = getTransferMinorIdentityMap(
+        llvm::cast<ShapedType>(newSubview.getType()), flattenedVecType);
+    // Preserve in_bounds: flattened 1D transfer uses [true] when all original
+    // dimensions were in bounds.
+    ArrayAttr inBoundsAttr = writeOp.getInBoundsAttr();
+    bool allInBounds =
+        !inBoundsAttr || llvm::all_of(inBoundsAttr.getAsRange<BoolAttr>(),
+                                      [](BoolAttr b) { return b.getValue(); });
+    auto newInBoundsAttr =
+        rewriter.getBoolArrayAttr(SmallVector<bool>(1, allInBounds));
+
     auto newWrite = rewriter.create<vector::TransferWriteOp>(
-        loc, newVector, newSubview, indices);
+        loc, newVector, newSubview, indices, AffineMapAttr::get(permMap),
+        flatMaskMaybe.value(), newInBoundsAttr);
     rewriter.replaceOp(writeOp, newWrite);
     return success();
+  }
+};
+
+// Flatten vector.gather when result (and thus index_vec, mask, pass_thru) has
+// rank > 1 with shape 1x1x...x1xn.
+//
+// before:
+// vector.gather %base[%c0][%idx], %mask, %pass_thru
+//        : memref<320xi32>, vector<1x64xi32>, vector<1x64xi1>, vector<1x64xi32>
+//        into vector<1x64xi32>
+// after:
+// vector.gather %base[%c0][%flat_idx], %flat_mask, %flat_pass_thru
+//        : memref<320xi32>, vector<64xi32>, vector<64xi1>, vector<64xi32>
+//        into vector<64xi32>
+struct FlattenVectorGatherOp : public OpRewritePattern<vector::GatherOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::GatherOp gatherOp,
+                                PatternRewriter &rewriter) const override {
+    VectorType resType = gatherOp.getVectorType();
+    if (resType.getRank() <= 1) {
+      return rewriter.notifyMatchFailure(gatherOp, "no need to flatten");
+    }
+    if (!isLeadingOnesShape(resType.getShape())) {
+      return rewriter.notifyMatchFailure(
+          gatherOp, "only shape with leading ones is supported for flatten");
+    }
+    Location loc = gatherOp.getLoc();
+    int64_t numElements = resType.getNumElements();
+    VectorType flatResType =
+        VectorType::get({numElements}, resType.getElementType());
+
+    Value flatIndexVec = flattenVector(
+        gatherOp.getIndexVec(), gatherOp.getIndexVectorType(), loc, rewriter);
+    Value flatMask = flattenVector(gatherOp.getMask(),
+                                   gatherOp.getMaskVectorType(), loc, rewriter);
+    Value flatPassThru =
+        flattenVector(gatherOp.getPassThru(), gatherOp.getPassThruVectorType(),
+                      loc, rewriter);
+
+    auto newGather = rewriter.create<vector::GatherOp>(
+        loc, flatResType, gatherOp.getBase(), gatherOp.getIndices(),
+        flatIndexVec, flatMask, flatPassThru);
+    // Cast back to original shape so existing uses (e.g. transfer_write to
+    // memref<1x64xi32>) remain valid.
+    Value castBack = rewriter.create<vector::ShapeCastOp>(
+        loc, resType, newGather.getResult());
+    rewriter.replaceOp(gatherOp, castBack);
+    return success();
+  }
+
+private:
+  bool isLeadingOnesShape(ArrayRef<int64_t> shape) const {
+    if (shape.size() <= 1)
+      return false;
+    for (size_t i = 0; i < shape.size() - 1; ++i) {
+      if (shape[i] != 1)
+        return false;
+    }
+    return true;
   }
 };
 
@@ -781,6 +904,7 @@ static void registerAll(RewritePatternSet &patterns) {
 void vector::populateFlattenVectorOpsPattern(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<FlattenContiguousTransferWrite>(ctx);
+  patterns.add<FlattenVectorGatherOp>(ctx);
   patterns.add<FlattenTransferReadWithRankReduceShapeCast>(ctx);
   patterns.add<NormalizeIneffectiveTranspose>(ctx);
   registerAll<
