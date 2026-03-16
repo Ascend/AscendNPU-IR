@@ -660,6 +660,99 @@ private:
   }
 };
 
+/// =============== Optimizing rewrite for vsel(vcmp(...), ...) ===============================
+/// Match:
+///   vsel(vcmp(...): (...) --> container(i1), ...) --> ...
+/// Replace with:
+///   vsel(vcmp(...): (...) --> container(i8), ...) --> ...
+/// Why?
+///   vsel works faster on NPU when it uses i8 as the filtering condition output instead of i1.
+struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
+  using OpRewritePattern<hivm::VSelOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::VSelOp op,
+                                PatternRewriter &rewriter) const final {
+    // [[Guard 0]] Quit if op does not already have pure buffer semantics.
+    if (!op.hasPureBufferSemantics()) {
+      return failure();
+    }
+    
+    // [[Guard 1]] Quit if vsel uses something other than il for the condition argument.
+    Value condUB = op->getOperand(0);
+    Type condUBType = condUB.getType();
+    auto condUBTypeValue = getElementTypeOrSelf(condUBType);
+    if (!condUBTypeValue.isInteger(1)) {
+      return failure();
+    }
+
+    // [[Guard 2]] Quit if the output type of the vsel is something other than int64.
+    Value vselDst = op.getDst()[0];
+    auto vselDstElemType = getElementTypeOrSelf(vselDst);
+    if (!vselDstElemType.isInteger(64)) {
+      return failure();
+    }
+
+    // [[Guard 3]] Find the vcmp producing the condition filter for vsel.
+    hivm::VCmpOp cmpOp = nullptr;
+    {
+      size_t usersCount = 0;
+      for (Operation *user : condUB.getUsers()) {
+        // [[Guard 3.1]] There should only be 2 users:
+        if (++usersCount > 2) {
+          return failure();
+        }
+        // - one of the users is the vsel itself:
+        if (op == dyn_cast<hivm::VSelOp>(user)) {
+          continue;
+        }
+        // - the second user should be a vcmp:
+        cmpOp = dyn_cast<hivm::VCmpOp>(user);
+      }
+
+      // [[Guard 3.2]] Quit if no vcmp user is found.
+      if (nullptr == cmpOp) {
+        return failure();
+      }
+
+      // [[Guard 3.3]] Quit if the vcmp does not produce the output for the vsel.
+      if (cmpOp.getDst()[0] != condUB) {
+        return failure();
+      }
+    }
+
+    // [[Guard 4]] Quit if the vcmp uses something other than il for the output.
+    // This should never happen if [[Guard 1]] is passed, but who knows...
+    Value dst = cmpOp.getDst()[0];
+    auto dstElemType = getElementTypeOrSelf(dst);
+    if (!dstElemType.isInteger(1)) {
+      return failure();
+    }
+
+
+    // [[Step 1]] Allocate enough memory to store the result of vcmp as i8's instead of il's.
+    rewriter.setInsertionPoint(cmpOp);
+    auto cmpAlloc = createTmpBufferOrTensorWithTargetType(
+        rewriter, cmpOp.getLoc(), cmpOp.getOperand(0), rewriter.getIntegerType(8));
+
+    // [[Step 2]] Update the original vcmp to output its result as i8's to the allocated memory.
+    rewriter.setInsertionPointAfter(cmpOp);
+    hivm::VCmpOp newCmpOp = rewriter.create<hivm::VCmpOp>(
+        cmpOp.getLoc(), TypeRange(), ValueRange({cmpOp->getOperand(0), cmpOp->getOperand(1)}),
+        Value(cmpAlloc), cmpOp.getCompareModeAttr(),
+        cmpOp.getTransposeAttr(), cmpOp.getBroadcastAttr());
+    rewriter.replaceOp(cmpOp, newCmpOp);
+    
+    // [[Step 3]] Update the original vsel to use the i8-typed result of vcmp.
+    rewriter.setInsertionPointAfter(op);
+    hivm::VSelOp newSelOp = rewriter.create<hivm::VSelOp>(op.getLoc(), TypeRange(),
+        ValueRange({cmpAlloc, op->getOperand(1), op->getOperand(2)}),
+        op.getDst(), Value());
+    rewriter.replaceOp(op, newSelOp);
+
+
+    return success();
+  }
+};
+
 struct VCmpOpLowering : public OpRewritePattern<VCmpOp> {
   using OpRewritePattern<VCmpOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(VCmpOp op,
@@ -1661,7 +1754,8 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
-               AtomicRMWOpLowering, HIVMSetAtomicOpLowering>(&getContext());
+               AtomicRMWOpLowering, HIVMSetAtomicOpLowering,
+               VSelOpLowering>(&getContext());
 
   bool isMixModule =
       mlir::hivm::isMixModule(funcOp->getParentOfType<ModuleOp>());
