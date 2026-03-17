@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -75,9 +76,10 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
       if (placeHolderOp->scopeBegin) {
         rewriter.setInsertionPointToStart(placeHolderOp->block);
       } else {
-        if (auto yieldOp =
-                dyn_cast<scf::YieldOp>(placeHolderOp->block->back())) {
-          rewriter.setInsertionPoint(yieldOp);
+        if (!placeHolderOp->block->empty() &&
+            placeHolderOp->block->back()
+                .hasTrait<mlir::OpTrait::IsTerminator>()) {
+          rewriter.setInsertionPoint(&placeHolderOp->block->back());
         } else {
           rewriter.setInsertionPointToEnd(placeHolderOp->block);
         }
@@ -490,6 +492,9 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
 }
 
 Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
+  if (!checkAllParentLoopsAreForLoops(op)) {
+    return nullptr;
+  }
   auto parentLoop = op->getParentOfType<LoopLikeOpInterface>();
   if (!parentLoop) {
     return nullptr;
