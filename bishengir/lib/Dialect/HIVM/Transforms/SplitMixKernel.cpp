@@ -67,8 +67,7 @@ void annotateOpOperand(OpBuilder builder, Operation *op,
       return;
     auto opCoreType = getCoreType(definingOp);
     assert(succeeded(opCoreType));
-    if (opCoreType.value() == coreType ||
-        isa<LoopLikeOpInterface, scf::IfOp>(definingOp)) {
+    if (opCoreType.value() == coreType) {
       builder.setInsertionPointAfter(definingOp);
       builder.create<annotation::MarkOp>(definingOp->getLoc(), val);
     } else if (opCoreType.value() == TCoreType::CUBE_OR_VECTOR) {
