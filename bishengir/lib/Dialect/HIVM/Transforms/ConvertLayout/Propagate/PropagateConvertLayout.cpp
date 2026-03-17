@@ -50,6 +50,7 @@ struct PropagateConvertLayoutPass
     populateConvertLayoutScfIf(patterns, context);
     populateConvertLayoutScfFor(patterns, context);
     populateConvertLayoutScfWhile(patterns, context);
+    populateHoistConvertLayout(patterns, context);
     ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingAndNewOps;

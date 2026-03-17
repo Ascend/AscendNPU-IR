@@ -85,66 +85,6 @@ struct FoldEmptyConvertLayoutPattern : public OpRewritePattern<ConvertLayoutOp> 
 };
 
 //===----------------------------------------------------------------------===//
-// Move ConvertLayout Adjacent to Source Definition
-//===----------------------------------------------------------------------===//
-
-/// Pattern to move convert_layout operations right after their source definition.
-/// This improves code locality and can enable other canonicalization patterns.
-struct MoveConvertLayoutToSourcePattern : public OpRewritePattern<
-      ConvertLayoutOp> {
-  MoveConvertLayoutToSourcePattern(MLIRContext *context)
-    : OpRewritePattern(context, /*benefit=*/1) {
-  } // Lower benefit than folding patterns
-
-  LogicalResult matchAndRewrite(ConvertLayoutOp op,
-                                PatternRewriter &rewriter) const override {
-    Value source = op.getSource();
-    Operation *sourceOp = source.getDefiningOp();
-
-    // If source is a block argument, move to the head of the owning block
-    if (!sourceOp) {
-      auto blockArg = cast<BlockArgument>(source);
-      Block *ownerBlock = blockArg.getOwner();
-
-      // Check if already at the head of the block
-      if (op->getBlock() == ownerBlock)
-        return rewriter.notifyMatchFailure(op, "already at block head");
-
-      LDBG("Moving convert_layout to head of block for block argument");
-
-      rewriter.modifyOpInPlace(op, [&]() {
-        op->moveBefore(ownerBlock, ownerBlock->begin());
-      });
-
-      return success();
-    }
-
-    // Check if the convert_layout is already right after the source
-    // getPrevNode() returns nullptr if op is first in block, which is safe
-    auto previousNode = op->getPrevNode();
-    bool validConvertLayoutPosition = previousNode == sourceOp;
-    if (previousNode != nullptr) {
-      auto previousNodeConvertLayout = dyn_cast<ConvertLayoutOp>(previousNode);
-      if (previousNodeConvertLayout) {
-        validConvertLayoutPosition |= previousNodeConvertLayout.getSource() ==
-          source;
-      }
-    }
-    if (validConvertLayoutPosition)
-      return rewriter.notifyMatchFailure(op, "already adjacent to source");
-
-    LDBG("Moving convert_layout after source: " << *sourceOp);
-
-    // Move the convert_layout right after the source operation
-    rewriter.modifyOpInPlace(op, [&]() {
-      op->moveAfter(sourceOp);
-    });
-
-    return success();
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // Fold tensor.cast + ConvertLayout into ConvertLayout
 //===----------------------------------------------------------------------===//
 
@@ -175,75 +115,6 @@ struct FoldCastConvertLayoutPattern : public OpRewritePattern<ConvertLayoutOp> {
   }
 };
 
-// Move convert_layout op out of scf.if region
-//
-// before:
-//   %1 = scf.if %0 -> (memref<128x128xbf16, #hivm.address_space<cbuf>>)
-//     %2 = hivm.hir.convert_layout %alloc
-//     scf.yield %2 : memref<128x128xbf16, #hivm.address_space<cbuf>>
-//   else:
-//     %2 = hivm.hir.convert_layout %alloc_0
-//     scf.yield %2 : memref<128x128xbf16, #hivm.address_space<cbuf>>
-//   where two branches have same convert_layout
-//
-// after:
-//   %1 = arith.select %0, %alloc, %alloc_0
-//   hivm.hir.convert_layout %1
-struct PropagateConvertLayoutDownIf : public OpRewritePattern<ConvertLayoutOp> {
-  explicit PropagateConvertLayoutDownIf(mlir::MLIRContext *context)
-      : OpRewritePattern<ConvertLayoutOp>(context) {}
-
-  LogicalResult matchAndRewrite(ConvertLayoutOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op->hasOneUse())
-      return rewriter.notifyMatchFailure(op, "More than one user");
-
-    auto singleUse = op->getUses().begin();
-    auto yieldOp = dyn_cast<scf::YieldOp>(singleUse->getOwner());
-    if (!yieldOp)
-      return rewriter.notifyMatchFailure(op, "Single user is not scf.yield");
-
-    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
-    if (!ifOp)
-      return rewriter.notifyMatchFailure(op, "Single user is not in scf.if");
-
-    auto yieldedIdx = singleUse->getOperandNumber();
-    // If there is else block, check if both branches are returning convert
-    // layout op.
-    if (!ifOp.getElseRegion().empty()) {
-      auto &maybeConvertLayoutOperand =
-          ifOp.elseYield()->getOpOperand(yieldedIdx);
-      auto maybeConvertLayoutOp = dyn_cast<ConvertLayoutOp>(
-          maybeConvertLayoutOperand.get().getDefiningOp());
-      if (!maybeConvertLayoutOp) {
-        return rewriter.notifyMatchFailure(op,
-                                           "Else branch is not convert layout");
-      }
-      // Replace else block's yield
-      rewriter.modifyOpInPlace(ifOp.elseYield(), [&maybeConvertLayoutOperand,
-                                                  &maybeConvertLayoutOp]() {
-        maybeConvertLayoutOperand.assign(maybeConvertLayoutOp.getSource());
-      });
-
-      rewriter.eraseOp(maybeConvertLayoutOp);
-    }
-
-    // Replace then block's yield
-    rewriter.modifyOpInPlace(ifOp.thenYield(), [&ifOp, &yieldedIdx, &op]() {
-      ifOp.thenYield()->getOpOperand(yieldedIdx).assign(op.getSource());
-    });
-
-    rewriter.setInsertionPointAfter(ifOp);
-    // Push convert layout down
-    auto newConvertLayoutOp = cast<ConvertLayoutOp>(rewriter.clone(*op));
-    newConvertLayoutOp.getSourceMutable().assign(ifOp.getResult(yieldedIdx));
-    rewriter.replaceAllUsesExcept(ifOp.getResult(yieldedIdx),
-                                  newConvertLayoutOp, newConvertLayoutOp);
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
 //===----------------------------------------------------------------------===//
 // ConvertLayoutOp Canonicalization
 //===----------------------------------------------------------------------===//
@@ -252,9 +123,7 @@ void ConvertLayoutOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
   results.add<EliminateRedundantConversionPattern>(context);
   results.add<FoldEmptyConvertLayoutPattern>(context);
-  results.add<MoveConvertLayoutToSourcePattern>(context);
   results.add<FoldCastConvertLayoutPattern>(context);
-  // results.add<PropagateConvertLayoutDownIf>(context);
 }
 
 } // namespace mlir::hivm

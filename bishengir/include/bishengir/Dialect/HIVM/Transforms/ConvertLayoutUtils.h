@@ -147,6 +147,9 @@ void populateConvertLayoutScfWhile(RewritePatternSet &patterns,
 
 void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
                                        MLIRContext *context);
+
+void populateHoistConvertLayout(RewritePatternSet &patterns,
+                                MLIRContext *context);
 } // namespace mlir
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_CONVERTLAYOUTUTILS_H
