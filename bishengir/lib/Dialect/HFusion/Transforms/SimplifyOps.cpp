@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Matchers.h"
@@ -73,10 +74,77 @@ public:
       return inputCastOp;
     };
 
+    // Helper to test for fastmath<contract> attribute.
+    auto hasFastMathContract = [](CastOp op) -> bool {
+      auto fastMathAttr = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>(
+          mlir::arith::FastMathFlagsAttr::name);
+      if (!fastMathAttr)
+        return false;
+      
+      using arith::FastMathFlags;
+      FastMathFlags flags = fastMathAttr.getValue();
+
+      return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
+    };
+
     // Process ops bottom-to-top.
+
+    // Helper to get precision rank for float types (higher = more precision)
+    auto getPrecisionRank = [](Type type) -> int {
+      if (type.isBF16())
+        return 0; // lowest precision
+      if (type.isF16())
+        return 1;
+      if (type.isF32())
+        return 2;
+      if (type.isF64())
+        return 3; // highest precision
+      return -1;  // non-float type
+    };
+
+    // Helper to check if chain has precision down-then-up pattern
+    auto hasPrecisionDownUpPattern = [&](SmallVector<CastOp> &chain) -> bool {
+      if (chain.size() < 2)
+        return false;
+
+      // Track if we've seen a precision decrease
+      bool hasDecreased = false;
+
+      for (size_t i = 0; i < chain.size(); ++i) {
+        Type inType = getElementTypeOrSelf(chain[i].getInputs()[0].getType());
+        Type outType = getElementTypeOrSelf(chain[i].getOutputs()[0].getType());
+
+        int inRank = getPrecisionRank(inType);
+        int outRank = getPrecisionRank(outType);
+
+        // Skip if not float-to-float cast
+        if (inRank < 0 || outRank < 0)
+          continue;
+
+        if (outRank < inRank) {
+          // Precision decrease
+          hasDecreased = true;
+        } else if (outRank > inRank && hasDecreased) {
+          // Precision increase after a decrease - this is the pattern we're
+          // looking for
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Helper to check if all casts in chain have fastmath contract
+    auto allHaveFastMathContract = [&](SmallVector<CastOp> &chain) -> bool {
+      for (CastOp op : chain) {
+        if (!hasFastMathContract(op))
+          return false;
+      }
+      return true;
+    };
 
     // Traverse the chain of input cast ops to see if an op with the same
     // input types can be found.
+    SmallVector<CastOp> castChain;
     CastOp nextCast = castOp;
     while (nextCast) {
       // In total cast chain, if one cast of chain has the same type input and
@@ -85,10 +153,18 @@ public:
       if (nextCast.getInputs().getTypes() == nextCast.getResultTypes())
         break;
 
+      castChain.push_back(nextCast);
+
       if (nextCast.getInputs().getTypes() == castOp.getResultTypes()) {
         // Found a cast where the input types match the output types of the
         // matched op. We can directly use those inputs and the matched op can
         // be removed.
+        // Check if chain has precision down-then-up pattern, if so all casts
+        // must have fastmath contract to allow optimization.
+        if (hasPrecisionDownUpPattern(castChain) &&
+            !allHaveFastMathContract(castChain))
+          break;
+
         rewriter.replaceOp(castOp, nextCast.getInputs());
         return success();
       }
