@@ -313,6 +313,10 @@ def HIVMAggregatedDecomposeOp : Pass<"hivm-aggregated-decompose-op", "func::Func
                        "after-infer-hivm-data-layout",
                        "for ops that get decompose after infer HIVM data "
                        "layout"),
+            clEnumValN(bishengir::DecomposePhase::AFTER_LIFT_LOWEST_STRIDE,
+                       "after-hivm-lift-lowest-stride",
+                       "for ops that get decompose after infer lift lowest "
+                       "stride"),
             clEnumValN(bishengir::DecomposePhase::AFTER_HIVM_FLATTEN_OPS,
                        "after-hivm-flatten-ops",
                        "for ops that get decompose after HIVM flatten ops"))}]>,

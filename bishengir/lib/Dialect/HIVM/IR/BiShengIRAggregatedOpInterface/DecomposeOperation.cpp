@@ -1013,3 +1013,108 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
 FailureOr<SmallVector<Value>> VTransposeOp::decomposeOperation(OpBuilder &b) {
   return decomposeUnalignTransposeOp(*this, b);
 }
+
+// if src0 (m, stride[1]) op src1 (m, stride[n])
+// after liftLowestStride Pass will be 2d :
+// src0 (mx1, stride[1, 1])  src1 (mx1, stride[n, 1]) which vector instruction not support
+// src0 transforms by:
+// 1. src0 broadcast to a new buffer with mxn stride[n, 1]
+// 2. subview mxn -> mx1 stride[n, 1]
+// 3. new_src0 (mx1, stride[n, 1])  src1 (mx1, stride[n, 1])
+static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Value src1) {
+  auto type0 = dyn_cast<MemRefType>(src0.getType());
+  auto type1 = dyn_cast<MemRefType>(src1.getType());
+
+  // only for binary vector op
+  // after LIFT_LOWEST_STRIDE Pass, rank will be >= 2
+  // TODO: only support 2d scenario now, other scenario need to be support.
+  if (!type0 || !type1 || type0.getRank() != 2 || type1.getRank() != 2) {
+    return src0;
+  }
+
+  int64_t offset0, offset1;
+  SmallVector<int64_t, 2> strides0, strides1;
+  if (failed(getStridesAndOffset(type0, strides0, offset0)) ||
+      failed(getStridesAndOffset(type1, strides1, offset1))) {
+    return src0;
+  }
+
+  int64_t strideL = strides0[0];
+  int64_t strideR = strides1[0];
+  if (strideL == 1 && strideR > 1) {
+    int64_t dim0 = type0.getDimSize(0);
+    int64_t dim1 = type0.getDimSize(1);
+
+    // only dim1 == 1 can be broadcast
+    if (dim1 != 1) {
+        return src0;
+    }
+
+    int n = strideR;
+    auto ctx = b.getContext();
+    auto elemType = type0.getElementType();
+    auto addrSpace = type0.getMemorySpace();
+
+    // alloc buffer, size = dim0 x n
+    SmallVector<int64_t, 2> expandedShape = {dim0, n};
+    StridedLayoutAttr layout = {};
+    auto expandedType = MemRefType::get(expandedShape, elemType, layout, addrSpace);
+    Value expandedBuffer = b.create<memref::AllocOp>(loc, expandedType);
+
+    // dim0x1 broadcat to dim0xn broadDim=1
+    b.create<hivm::VBrcOp>(loc, TypeRange(), src0, expandedBuffer, b.getDenseI64ArrayAttr({1}));
+
+    // subview to get dim0x1 with stride[n, 1]
+    auto subviewLayout = StridedLayoutAttr::get(ctx, 0, {n, 1});
+    auto subviewType = MemRefType::get({dim0, dim1}, elemType, subviewLayout, addrSpace);
+
+    SmallVector<OpFoldResult> offsets = {b.getIndexAttr(0), b.getIndexAttr(0)};
+    SmallVector<OpFoldResult> sizes = {b.getIndexAttr(dim0), b.getIndexAttr(dim1)};
+    SmallVector<OpFoldResult> strides = {b.getIndexAttr(1), b.getIndexAttr(1)};
+    Value alignSrc = b.create<memref::SubViewOp>(
+      loc, subviewType, expandedBuffer, offsets, sizes, strides).getResult();
+    return alignSrc;
+  }
+  return src0;
+}
+
+template <typename OpType>
+static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op, OpBuilder &b) {
+  if (op.hasPureTensorSemantics()) {
+    return failure();
+  }
+
+  Value lhs = op.getDpsInputs()[0];
+  Value rhs = op.getDpsInputs()[1];
+  Location loc = op.getLoc();
+
+  Value alignedLhs = alignElementwiseStrides(b, loc, lhs, rhs);
+  if (alignedLhs != lhs) {
+    b.create<OpType>(loc, TypeRange{}, ValueRange{alignedLhs, rhs}, op.getDst());
+    return SmallVector<Value>{};
+  }
+
+  Value alignedRhs = alignElementwiseStrides(b, loc, rhs, lhs);
+  if (alignedRhs != rhs) {
+    b.create<OpType>(loc, TypeRange{}, ValueRange{lhs, alignedRhs}, op.getDst());
+    return SmallVector<Value>{};
+  }
+
+  return failure();
+}
+
+// Binary VectorOp
+#define DECOMPOSE_BINARY_VEC_OP(opName)                                           \
+  FailureOr<SmallVector<Value>> opName::decomposeOperation(OpBuilder &b) {        \
+    return decomposeBinaryVecOpLayout(*this, b);                                  \
+  }
+
+DECOMPOSE_BINARY_VEC_OP(VMulOp)
+DECOMPOSE_BINARY_VEC_OP(VAndOp)
+DECOMPOSE_BINARY_VEC_OP(VOrOp)
+DECOMPOSE_BINARY_VEC_OP(VAddOp)
+DECOMPOSE_BINARY_VEC_OP(VSubOp)
+DECOMPOSE_BINARY_VEC_OP(VDivOp)
+DECOMPOSE_BINARY_VEC_OP(VMaxOp)
+DECOMPOSE_BINARY_VEC_OP(VMinOp)
+DECOMPOSE_BINARY_VEC_OP(VXorOp)

@@ -3,6 +3,7 @@
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-infer-hivm-data-layout" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERLAYOUT
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-recognize-deinterleave" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERDEINTERLEAVE
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-recognize-broadcast" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERBROADCAST
+// RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-lift-lowest-stride" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERLIFT
 
 // AFTERALIGN-LABEL: func @test_static_concat_last_dim
 func.func @test_static_concat_last_dim() -> memref<136x4096xf32> {
@@ -654,5 +655,21 @@ func.func @test_vtranspose_disable_align() -> memref<2x3x256xf32, #hivm.address_
 
   hivm.hir.vtranspose ins(%src : memref<2x256x3xf32, #hivm.address_space<ub>>) outs(%dst : memref<2x3x256xf32, #hivm.address_space<ub>>) permutation = [0, 2, 1] disable_align = true
   return %dst : memref<2x3x256xf32, #hivm.address_space<ub>>
+}
+
+// -----
+// AFTERLIFT-LABEL: func @test_stride_layout_not_same
+func.func @test_stride_layout_not_same() {
+  %alloc = memref.alloc() : memref<128x1xi32, #hivm.address_space<ub>>
+  %alloc_0 = memref.alloc() : memref<128x8xi32, #hivm.address_space<ub>>
+  %alloc_1 = memref.alloc() : memref<128x8xi32, #hivm.address_space<ub>>
+  %subview = memref.subview %alloc_0[0, 0] [128, 1] [1, 1] : memref<128x8xi32, #hivm.address_space<ub>> to memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>
+  %subview_2 = memref.subview %alloc_1[0, 0] [128, 1] [1, 1] : memref<128x8xi32, #hivm.address_space<ub>> to memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>
+  // CHECK:  %[[alloc3:.*]] = memref.alloc() : memref<128x8xi32, #hivm.address_space<ub>>
+  // CHECK:  hivm.hir.vbrc ins(%alloc : memref<128x1xi32, #hivm.address_space<ub>>) outs(%[[alloc3]] : memref<128x8xi32, #hivm.address_space<ub>>) broadcast_dims = [1]
+  // CHECK:  %[[subview_4:.*]] = memref.subview %[[alloc3]][0, 0] [128, 1] [1, 1] : memref<128x8xi32, #hivm.address_space<ub>> to memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>
+  // CHECK:  hivm.hir.vmul ins(%[[subview_4]], %subview : memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>, memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>) outs(%subview_2 : memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>)
+  hivm.hir.vmul ins(%alloc, %subview : memref<128x1xi32, #hivm.address_space<ub>>, memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>) outs(%subview_2: memref<128x1xi32, strided<[8, 1]>, #hivm.address_space<ub>>)
+  return
 }
 
