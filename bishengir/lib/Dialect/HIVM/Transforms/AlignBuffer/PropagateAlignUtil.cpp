@@ -949,7 +949,7 @@ FailureOrCastVec propagateBitcastOp(RewriterBase &rewriter,
 
   // add conversion op to replace
   auto newConversionOp = rewriter.create<UnrealizedConversionCastOp>(
-      newBitcastOp.getLoc(), newBitcastOp.getType(), newBitcastOp.getResult());
+      bitcastOp.getLoc(), bitcastOp.getType(), newBitcastOp.getResult());
   rewriter.replaceOp(bitcastOp, newConversionOp);
 
   return SmallVector<UnrealizedConversionCastOp>({newConversionOp});
