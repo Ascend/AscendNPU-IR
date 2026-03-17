@@ -168,17 +168,18 @@ public:
 };
 
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
-  auto intputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
+  auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
-  if (intputType.isF32() && outputType.isF16()) {
+  if (inputType.isF32() && outputType.isF16()) {
     return symbolizeFixpipePreQuantMode("F322F16");
   }
-  if (intputType.isF32() && outputType.isBF16()) {
+  if (inputType.isF32() && outputType.isBF16()) {
     return symbolizeFixpipePreQuantMode("F322BF16");
-  } else if (intputType.isInteger(32) && outputType.isInteger(8)) {
+  }
+  if (inputType.isInteger(32) && outputType.isInteger(8)) {
     return symbolizeFixpipePreQuantMode("S322I8");
   }
-  llvm_unreachable("unsupported QuantMode");
+  return std::nullopt;
 }
 
 /// when all the activationOps are ready, there should be relu, leaky-relu and
@@ -195,11 +196,11 @@ std::optional<FixpipePreReluMode> getReluMode(OpType op) {
 
 Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
                  PatternRewriter &rewriter) {
-  if (quant == FixpipePreQuantMode ::NO_QUANT)
+  if (quant == FixpipePreQuantMode::NO_QUANT)
     return getElementTypeOrSelf(v);
-  if (quant == FixpipePreQuantMode ::F322F16)
+  if (quant == FixpipePreQuantMode::F322F16)
     return rewriter.getF16Type();
-  if (quant == FixpipePreQuantMode ::F322BF16)
+  if (quant == FixpipePreQuantMode::F322BF16)
     return rewriter.getBF16Type();
   if (quant == FixpipePreQuantMode::S322I8)
     return rewriter.getI8Type();
@@ -241,7 +242,8 @@ private:
 
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
-    if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp) {
+    if (op.getFixpipeState() <= op.needFixpipePreFuse() && castOp &&
+        getQuantMode(castOp).has_value()) {
       matched = true;
       inlineFixPipeWithRreQuant(rewriter, loc, op, castOp,
                                 op.getDpsInputOperand(0)->get());
