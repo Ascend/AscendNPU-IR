@@ -152,7 +152,7 @@ usage() {
                 [--enable-cpu-runner]
 
     Options:
-      --add-cmake-options CMAKE_OPTIONS    Add options to CMake. (Default: null)
+      --add-cmake-options CMAKE_OPTIONS    Add options to CMake; use quotes for multiple, e.g. --add-cmake-options '-DFOO=ON -DBAR=1'. (Default: null)
       --apply-patches                      Apply patches to third-party submodules. (Default: disabled)
       --bisheng-compiler BISHENG_COMPILER   Path to bisheng compiler. (Default: null)
       --bishengir-publish VALUE            Whether to disable features is currently unpublished. (Default: ON)
@@ -187,7 +187,7 @@ parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --add-cmake-options)
-                if [[ -z "$2" || "$2" == -* ]]; then
+                if [[ -z "${2+x}" ]]; then
                     echo "Error: --add-cmake-options requires an argument"
                     exit 1
                 fi
