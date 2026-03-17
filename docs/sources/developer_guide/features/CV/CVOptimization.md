@@ -1,10 +1,10 @@
 # Cube–Vector optimization overview
 
-## Overview
+## 1. Hardware background
 
 This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Ascend 910B: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
 
-### Terms and background (read first)
+### 1.1 Terms and background (read first)
 
 The following terms appear throughout the CV documentation. It helps to understand them before reading individual pass details.
 
@@ -24,7 +24,7 @@ The following terms appear throughout the CV documentation. It helps to understa
 **Pre- vs post-bufferization:**  
 Most CV passes run in the **pre-bufferization** phase (`hivmPreBufferizationOptimizationPipeline`), when IR is still tensor-centric with `scf.for` and similar control flow. Bufferization turns tensors into memrefs and fixes layout; after that, **post-bufferization** optimizations (e.g. another PlanMemory pass on `memref.alloc`) run. Understanding “CV structure first, then memory materialization” helps with pass ordering.
 
-### Hardware background
+### 1.2 Architecture
 
 Ascend 910B NPU uses a heterogeneous architecture with:
 
@@ -41,47 +41,10 @@ Ascend 910B NPU uses a heterogeneous architecture with:
 
 ![V220 architecture](./cvarch.png)
 
-### Mix kernel and CV optimization goals
-
-A **Mix kernel** (`mix_mode = "mix"`) contains both Cube and Vector ops in one function, connected by fixpipe, load/store, etc. CV optimization aims to:
-
-1. **Normalize data flow**: Organize mmadL1, fixpipe, vadd, etc. into a form that satisfies hardware constraints.
-2. **Manage workspace**: Allocate global workspace for Cube–Vector intermediates to reduce local buffer pressure.
-3. **Software pipelining**: Pipeline Cube and Vector loops to improve utilization.
-4. **Memory planning**: Allocate and reuse buffers across UB, L0C, workspace, etc.
-5. **Kernel splitting**: Split the Mix kernel into AIC (Cube) and AIV (Vector) sub-kernels for backend scheduling.
-
 ---
+## 2. Algorithm overview
 
-## Interface
-
-Testing individual passes:
-
-```bash
-bishengir-opt -hivm-normalize-matmul input.mlir -o output.mlir
-bishengir-opt -hivm-inline-fixpipe input.mlir -o output.mlir
-bishengir-opt --hivm-tile-batchmm-into-loop input.mlir -o output.mlir
-bishengir-opt -insert-workspace-for-mix-cv input.mlir -o output.mlir
-bishengir-opt --hivm-bind-workspace-arg input.mlir -o output.mlir
-bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir -o output.mlir
-bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
-```
-
-### 2.1 Test Cases
-Currently, all test cases in the repository are located under `path-to-ascendnpuir\bishengir\test`. To run a specific pass, search for the corresponding compilation command to locate the relevant test file. For example, searching for `hivm-normalize-matmul` will lead you to the corresponding test file `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
-
-### 2.2 Test Commands
-The specific run commands are provided at the top of each test file. For example:
-```bash
-// RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
-```
-Here, `bishengir-opt` and `FileCheck` are binary executable files generated during compilation, located in `path-to-ascendnpuir\build\bin`. In the above command, `%s` should be replaced with the corresponding test file, such as `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
-
----
-
-## Pass descriptions
-
-### createNormalizeMatmulPass
+### 2.1 createNormalizeMatmulPass
 
 - **Role**: Normalize M/K/N dimensions, init conditions, and per-channel add form for `hivm.hir.mmadL1` and `hivm.hir.batchMmadL1`.
 - **Goal**: Unify matmul IR so that later fixpipe insertion, tiling, etc. can match and transform consistently.
@@ -106,7 +69,7 @@ After:
 %5 = hivm.hir.vadd ins(%2, %4: tensor<1x32xf32>) outs(%2 : tensor<16x32xf32>)
 ```
 
-### createInlineFixpipePass
+### 2.2 createInlineFixpipePass
 
 - **Role**: Insert `hivm.hir.fixpipe` between mmadL1/batchMmadL1 and store; merge store+vcast etc. into fixpipe’s quant/activation options.
 - **Goal**: Make Cube-to-Vector data movement explicit so that workspace allocation and load/store insertion have clear insertion points.
@@ -127,7 +90,7 @@ mmadL1 -> fixpipe
 
 InlineFixpipe inserts fixpipe and then tries to inline ops such as hivm.vcast, hivm.vrelu, hivm.store onto the new fixpipe.
 
-### createTileBatchMMIntoLoopPass
+### 2.3 createTileBatchMMIntoLoopPass
 
 - **Role**: Expand `hivm.hir.batchMmadL1` along the batch dimension into an `scf.for` loop; each iteration runs a single `mmadL1` and fixpipe.
 - **Goal**: Turn the batch dimension into a loop so that load/fixpipe/store can be indexed by batch for workspace and pipelining.
@@ -148,7 +111,7 @@ for batch_idx in range(batch):
   fixpipe(extract_slice(workspace))
 ```
 
-### createInsertLoadStoreForMixCVPass
+### 2.4 createInsertLoadStoreForMixCVPass
 
 - **Role**: Insert load/store at Cube–Vector boundaries so that data flows correctly between tensor and global workspace.
 - **Goal**: Ensure correct data transfer between Cube and Vector.
@@ -172,7 +135,7 @@ load
 vadd
 ```
 
-### createInsertWorkSpaceForMixCVPass
+### 2.5 createInsertWorkSpaceForMixCVPass
 
 - **Role**: At Cube–Vector boundaries (CC/CV/VC/VV), replace `tensor.empty` with `memref_ext.alloc_workspace`.
 - **Goal**: Allocate fixpipe output, store output, and other intermediates from global workspace for cross-iteration and cross-core sharing.
@@ -200,7 +163,7 @@ After:
 vadd (%5)
 ```
 
-### createBindWorkSpaceArgPass
+### 2.6 createBindWorkSpaceArgPass
 
 - **Role**: Bind in-function `memref_ext.alloc_workspace` to the function’s workspace argument (`hacc.arg_type = #hacc.arg_type<workspace>`).
 - **Goal**: Single source of workspace so that the runtime passes the workspace pointer as an argument and multiple kernels can share one workspace.
@@ -229,7 +192,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-### createPlanMemoryPass
+### 2.7 createPlanMemoryPass
 
 - **Role**: In `GLOBAL_WORKSPACE_PLAN` mode, plan memory for `memref_ext.alloc_workspace`, replacing alloc with `hivm.hir.pointer_cast` + offset.
 - **Goal**: On a given workspace base, assign offsets by liveness and inplace rules to maximize reuse and minimize total workspace size.
@@ -253,7 +216,7 @@ func.func @bind_workspace_arg(..., %arg1: memref<?xi8> {hacc.arg_type = #hacc.ar
 }
 ```
 
-### createSplitMixKernelPass
+### 2.8 createSplitMixKernelPass
 
 - **Role**: Split the Mix kernel into AIC (Cube) and AIV (Vector) sub-functions and generate the mix entry.
 - **Goal**: The backend can schedule AIC/AIV to Cube/Vector cores separately for pipelining and sync.
@@ -286,6 +249,33 @@ func.func @bind_workspace_arg_aiv(..., hivm.func_core_type = #hivm.func_core_typ
 ```
 
 ---
+
+## 3 Interface
+
+Testing individual passes:
+
+```bash
+bishengir-opt -hivm-normalize-matmul input.mlir -o output.mlir
+bishengir-opt -hivm-inline-fixpipe input.mlir -o output.mlir
+bishengir-opt --hivm-tile-batchmm-into-loop input.mlir -o output.mlir
+bishengir-opt -insert-workspace-for-mix-cv input.mlir -o output.mlir
+bishengir-opt --hivm-bind-workspace-arg input.mlir -o output.mlir
+bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir -o output.mlir
+bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
+```
+
+### 3.1 Test Cases
+Currently, all test cases in the repository are located under `path-to-ascendnpuir\bishengir\test`. To run a specific pass, search for the corresponding compilation command to locate the relevant test file. For example, searching for `hivm-normalize-matmul` will lead you to the corresponding test file `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
+
+### 3.2 Test Commands
+The specific run commands are provided at the top of each test file. For example:
+```bash
+// RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
+```
+Here, `bishengir-opt` and `FileCheck` are binary executable files generated during compilation, located in `path-to-ascendnpuir\build\bin`. In the above command, `%s` should be replaced with the corresponding test file, such as `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
+
+---
+
 
 ## 4. Constriants
 - The createPlanMemoryPass handles the space size for data interaction points. Since the total required space size is dynamically returned, there is no limitation on the size.
