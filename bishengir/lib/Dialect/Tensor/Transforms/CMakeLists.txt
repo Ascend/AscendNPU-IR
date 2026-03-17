@@ -21,6 +21,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   PropagateReshape/SwapCollapseExpand.cpp
   PropagateReshape/Utils.cpp
   PropagateReshape/Utils/ConcatUtils.cpp
+  ReplicateOutEmptyTensor.cpp
   TilingInterfaceImpl.cpp
   TrickleConcatDown.cpp
 
