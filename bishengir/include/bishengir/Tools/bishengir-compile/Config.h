@@ -166,6 +166,13 @@ public:
     return *this;
   }
   bool shouldEnableAutoVectorizeV2() const { return enableAutoVectorizeV2Flag; }
+  BiShengIRCompileMainConfig &setMaxFusedOpsInAutoVectorizeV2(int32_t count) {
+    maxFusedOpsInAutoVectorizeV2Flag = count;
+    return *this;
+  }
+  int32_t maxFusedOpsInAutoVectorizeV2() const {
+    return maxFusedOpsInAutoVectorizeV2Flag;
+  }
 
   BiShengIRCompileMainConfig &VFFusion(bool enable) {
     enableVFFusionFlag = enable;
@@ -277,7 +284,9 @@ public:
     injectIrFromFileFlag = path;
     return *this;
   }
-  const std::string &getInjectIrFromFile() const { return injectIrFromFileFlag; }
+  const std::string &getInjectIrFromFile() const {
+    return injectIrFromFileFlag;
+  }
 
   // -------------------------------------------------------------------------//
   //                        Output setting options                            //
@@ -724,6 +733,8 @@ protected:
 
   /// Enable Auto Vectorize V2
   bool enableAutoVectorizeV2Flag{true};
+  /// Maximum number of ops to fuse in AutoVectorizeV2, -1 uses pass default.
+  int32_t maxFusedOpsInAutoVectorizeV2Flag{-1};
 
   bool enableVFFusionFlag{false};
 

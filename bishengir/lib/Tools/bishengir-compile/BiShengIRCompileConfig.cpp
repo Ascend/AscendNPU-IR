@@ -415,6 +415,13 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::desc("Number of horizontal fusion attempt (Default: unlimited)"),
         cl::location(maxHorizontalFusionSizeFlag), cl::init(-1),
         cl::cat(hfusionOptCategory));
+    static cl::opt<int32_t, /*ExternalStorage=*/true>
+        maxFusedOpsInAutoVectorizeV2(
+            "hfusion-max-fused-ops-in-auto-vectorize-v2",
+            cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "
+                     "(Default: pass default)"),
+            cl::location(maxFusedOpsInAutoVectorizeV2Flag), cl::init(-1),
+            cl::cat(hfusionOptCategory));
     static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
         "hfusion-max-fused-elementwise-ops",
         cl::desc("Maximum number of elementwise ops to fuse in "

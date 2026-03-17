@@ -90,6 +90,8 @@ void setupHFusionPipelineOptions(
       config.shouldEnableSymbolAnalysis();
   hfusionPipelineOptions.enableAutoVectorizeV2 =
       config.shouldEnableAutoVectorizeV2();
+  hfusionPipelineOptions.maxFusedOpsInAutoVectorizeV2 =
+      config.maxFusedOpsInAutoVectorizeV2();
   hfusionPipelineOptions.enableVFFusion = config.shouldEnableVFFusion();
   hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
   hfusionPipelineOptions.skipScope = config.shouldSkipScope();
@@ -305,6 +307,7 @@ public:
     saveLinkedIR = pass.saveLinkedIR;
     enableSymbolAnalysis = pass.enableSymbolAnalysis;
     enableAutoVectorizeV2 = pass.enableAutoVectorizeV2;
+    maxFusedOpsInAutoVectorizeV2 = pass.maxFusedOpsInAutoVectorizeV2;
     enableVFFusion = pass.enableVFFusion;
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
     ensureNoImplicitBroadcast = pass.ensureNoImplicitBroadcast;
@@ -372,6 +375,7 @@ public:
         .setSaveLinkedIR(saveLinkedIR)
         .symbolAnalysis(enableSymbolAnalysis)
         .autoVectorizeV2(enableAutoVectorizeV2)
+        .setMaxFusedOpsInAutoVectorizeV2(maxFusedOpsInAutoVectorizeV2)
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
         .noImplicitBroadcast(ensureNoImplicitBroadcast)
 #endif
@@ -502,6 +506,11 @@ protected:
   Pass::Option<bool> enableAutoVectorizeV2{
       *this, "enable-auto-vectorize-v2",
       llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
+  Pass::Option<int> maxFusedOpsInAutoVectorizeV2{
+      *this, "hfusion-max-fused-ops-in-auto-vectorize-v2",
+      llvm::cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "
+                     "(Default: pass default)"),
+      llvm::cl::init(-1)};
   Pass::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
                                     llvm::cl::desc("Enable vf fusion"),
                                     llvm::cl::init(false)};
