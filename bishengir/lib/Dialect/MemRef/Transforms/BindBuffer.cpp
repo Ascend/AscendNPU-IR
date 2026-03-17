@@ -41,12 +41,20 @@ public:
       return rewriter.notifyMatchFailure(op,
                                          "Not annotated by bind buffer info");
 
-    auto targetAlloc = op.getDynamicAttrValue(memref::kBindBufferAttrName);
+    Value source = op.getSrc();
+    Value targetBuffer = op.getDynamicAttrValue(memref::kBindBufferAttrName);
+    if (source == targetBuffer) {
+      // bind buffer to itself is not effective.
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto targetAlloc = targetBuffer;
     if (!isa<memref::AllocOp>(targetAlloc.getDefiningOp()))
       return rewriter.notifyMatchFailure(op,
                                          "The target buffer is not an alloc");
 
-    SmallVector<Value> allocs = utils::tracebackMemRefVec(op.getSrc());
+    SmallVector<Value> allocs = utils::tracebackMemRefVec(source);
     if (allocs.empty())
       return rewriter.notifyMatchFailure(op, "Cannot find source alloc");
 

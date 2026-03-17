@@ -70,3 +70,16 @@ func.func @bind_if_else(%condition: i1) -> (memref<16xf32>) {
   annotation.mark %0 keys = ["bind_buffer"] values = [%target : memref<16xf32>] : memref<16xf32>
   return %0 : memref<16xf32>
 }
+
+// -----
+
+func.func @bind_buffer_reshape_self() {
+  // Reshape bound to itself: alloc -> expand_shape, annotation on reshape.
+  // Should just remove annotation (replace alloc with itself).
+  %alloc = memref.alloc() : memref<16xf32>
+  %reshape = memref.expand_shape %alloc [[0, 1]] output_shape [4, 4] : memref<16xf32> into memref<4x4xf32>
+  "some_op"(%reshape) : (memref<4x4xf32>) -> ()
+  // CHECK-NOT: annotation.mark
+  annotation.mark %reshape keys = ["bind_buffer"] values = [%reshape : memref<4x4xf32>] : memref<4x4xf32>
+  return
+}
