@@ -894,11 +894,6 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // walk through the store op and copy op
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
-      op->erase();
-      return WalkResult::advance();
-    }
     if (!isa<hivm::StoreOp, hivm::CopyOp>(op)) {
       return WalkResult::advance();
     }
@@ -920,8 +915,9 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
       toBeRemoved.push_back(op);
     }
   });
-  for (auto *op : toBeRemoved)
+  for (auto *op : toBeRemoved) {
     op->erase();
+  }
 
   if (isFailed) {
     failAndRevert(newFunc);
@@ -1177,8 +1173,9 @@ void TileAndBindSubBlockPass::runOnOperation() {
         toBeErased.push_back(op);
       }
     });
-    for (auto *op : toBeErased)
+    for (auto *op : toBeErased) {
       op->erase();
+    }
     if (failed(res)) {
       if (failed(limitUniqueSubBlockToStore(originalFunc))) {
         LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
