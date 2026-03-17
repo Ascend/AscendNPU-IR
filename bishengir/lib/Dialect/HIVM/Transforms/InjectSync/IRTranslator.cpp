@@ -58,8 +58,8 @@ void IRTranslator::UpdateKernelArgMemInfo() {
       continue;
     }
     auto newMemInfo = std::make_unique<BaseMemInfo>(
-        arg, arg, hivm::AddressSpace::GM, SmallVector<int64_t>(1, 0), 0,
-        false, std::nullopt);
+        arg, arg, hivm::AddressSpace::GM, SmallVector<int64_t>(1, 0), 0, false,
+        std::nullopt);
     bool isSplittedMixKernel =
         func_->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name);
     bool isWorkSpaceArg =
@@ -539,7 +539,22 @@ void IRTranslator::UpdateOpDefUseVec(func::CallOp callOp,
     bool isWrite = false;
     Value curOperand;
 
-    if (auto tr = dyn_cast<vector::TransferReadOp>(op)) {
+    if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
+      isRead = true;
+      curOperand = loadOp.getMemRef();
+    } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+      isWrite = true;
+      curOperand = storeOp.getMemRef();
+    } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+      isRead = true;
+      curOperand = loadOp.getMemRef();
+    } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+      isWrite = true;
+      curOperand = storeOp.getMemRef();
+    } else if (auto tensorExtractOp = dyn_cast<tensor::ExtractOp>(op)) {
+      isRead = true;
+      curOperand = tensorExtractOp.getTensor();
+    } else if (auto tr = dyn_cast<vector::TransferReadOp>(op)) {
       isRead = true;
       curOperand = tr.getSource();
     } else if (auto tw = dyn_cast<vector::TransferWriteOp>(op)) {

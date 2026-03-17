@@ -458,37 +458,72 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
   if (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name)) {
     return nullptr;
   }
-  SmallVector<Value> readMemVals, writeMemVals;
-  auto handleRWValue = [&](Value val, bool isRead, bool isWrite) {
+  llvm::SetVector<Value> readMemVals, writeMemVals;
+  auto handleRWValue = [&](Value val, hivm::MemoryEffect memoryEffect) {
     for (auto &rwVal : getMemoryOps({val}, calledFuncOp)) {
       if (auto blockArg = dyn_cast<BlockArgument>(rwVal)) {
         auto callArg = callOp->getOperand(blockArg.getArgNumber());
-        if (isRead) {
-          readMemVals.push_back(callArg);
+        if (memoryEffect == MemoryEffect::READ ||
+            memoryEffect == MemoryEffect::READ_WRITE) {
+          readMemVals.insert(callArg);
         }
-        if (isWrite) {
-          writeMemVals.push_back(callArg);
+        if (memoryEffect == MemoryEffect::WRITE ||
+            memoryEffect == MemoryEffect::READ_WRITE) {
+          writeMemVals.insert(callArg);
         }
       }
     }
   };
+
+  // handle function arguments annotated with memory effect attributes
+  for (auto [i, arg] : llvm::enumerate(calledFuncOp.getArguments())) {
+    // get the attribute by name for i-th argument
+    auto memEffectAttr =
+        calledFuncOp.getArgAttr(i, hivm::MemoryEffectAttr::name);
+    if (!memEffectAttr) {
+      continue;
+    }
+    auto effect = cast<hivm::MemoryEffectAttr>(memEffectAttr).getEffect();
+    auto callArg = callOp->getOperand(i);
+    // logic based on the attribute value
+    if (effect == hivm::MemoryEffect::READ) {
+      handleRWValue(callArg, MemoryEffect::READ);
+    } else if (effect == hivm::MemoryEffect::WRITE) {
+      handleRWValue(callArg, MemoryEffect::WRITE);
+    } else if (effect == hivm::MemoryEffect::READ_WRITE) {
+      handleRWValue(callArg, MemoryEffect::READ_WRITE);
+    }
+  }
+
   calledFuncOp.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (auto transferReadOp = dyn_cast<vector::TransferReadOp>(op)) {
-      handleRWValue(transferReadOp.getSource(), true, false);
+    if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
+      handleRWValue(loadOp.getMemRef(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+      handleRWValue(storeOp.getMemRef(), MemoryEffect::WRITE);
+    } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+      handleRWValue(loadOp.getMemRef(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+      handleRWValue(storeOp.getMemRef(), MemoryEffect::WRITE);
+    } else if (auto tensorExtractOp = dyn_cast<tensor::ExtractOp>(op)) {
+      handleRWValue(tensorExtractOp.getTensor(), MemoryEffect::READ);
+    } else if (auto transferReadOp = dyn_cast<vector::TransferReadOp>(op)) {
+      handleRWValue(transferReadOp.getSource(), MemoryEffect::READ);
     } else if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
-      handleRWValue(transferWriteOp.getVector(), true, false);
-      handleRWValue(transferWriteOp.getSource(), false, true);
+      handleRWValue(transferWriteOp.getVector(), MemoryEffect::READ);
+      handleRWValue(transferWriteOp.getSource(), MemoryEffect::WRITE);
     } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
-      handleRWValue(gatherOp.getBase(), true, false);
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
     }
   });
-  readMemVals = getMemoryOps(readMemVals);
-  writeMemVals = getMemoryOps(writeMemVals);
+
+  auto readMemValsVec = getMemoryOps(readMemVals.takeVector());
+  auto writeMemValsVec = getMemoryOps(writeMemVals.takeVector());
+
   auto coreTypeVal = options.isIntraCoreMode() ? hivm::TCoreType::CUBE_OR_VECTOR
                                                : hivm::TCoreType::VECTOR;
   auto rwOp = std::make_unique<RWOperation>(
       callOp.getOperation(), parentOp, coreTypeVal, hivm::PIPE::PIPE_V,
-      hivm::PIPE::PIPE_V, readMemVals, writeMemVals);
+      hivm::PIPE::PIPE_V, readMemValsVec, writeMemValsVec);
   return rwOp;
 }
 
