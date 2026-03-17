@@ -470,8 +470,8 @@ struct ExpandShapeToImplicitBrcInGenericPattern
       // input from tensor.expand_shape
 
       auto expandShapeOp = input.getDefiningOp<tensor::ExpandShapeOp>();
-      if (!expandShapeOp ||
-          isa<tensor::CollapseShapeOp>(expandShapeOp.getSrc().getDefiningOp())) {
+      if (!expandShapeOp || isa_and_nonnull<tensor::CollapseShapeOp>(
+                                expandShapeOp.getSrc().getDefiningOp())) {
         newInputs.push_back(input);
         newMaps.push_back(oldMap);
         continue;
