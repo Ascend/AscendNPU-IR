@@ -45,21 +45,11 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 }
 ```
 
-#### 调用方式
+调用方式：有两种方式，二者共享同一套编译 pipeline。
 
-有两种调用方式，二者共享同一套编译 pipeline：
-
-**分步转换**
-
-先将 Torch IR 转换为 Linalg/HFusion IR，适用于需要缓存或查看中间 IR 的场景。转换完成后，可将 `torch_to_hfusion.mlir` 作为输入，按 [Linalg/HFusion IR 接入](#linalghfusion-ir-接入) 流程继续编译生成二进制。
-
-命令：
-
-```
-bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir
-```
-
-**预期产物**：MLIR 文本文件（`.mlir` 格式），内容为转换后的 Linalg/HFusion IR。例如：
+- **分步转换**：先将 Torch IR 转换为 Linalg/HFusion IR，适用于需要缓存或查看中间 IR 的场景。转换完成后，可将 `torch_to_hfusion.mlir` 作为输入，按 [Linalg/HFusion IR 接入](#linalghfusion-ir-接入) 流程继续编译生成二进制。
+  - 命令：`bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir`
+  - **预期产物**：MLIR 文本文件（`.mlir` 格式），内容为转换后的 Linalg/HFusion IR。例如：
 
 ```
 func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -70,17 +60,9 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 }
 ```
 
-**端到端编译**
-
-使用 `bishengir-compile` 直接将 Torch IR 编译为可执行二进制，完整经过 Torch → HFusion → HIVM IR 编译 pipeline。
-
-命令：
-
-```
-bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o
-```
-
-**预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
+- **端到端编译**：使用 `bishengir-compile` 直接将 Torch IR 编译为可执行二进制，完整经过 Torch → HFusion → HIVM IR 编译 pipeline。
+  - 命令：`bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o`
+  - **预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
 
 #### 支持的 Torch 算子
 
@@ -183,14 +165,10 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 }
 ```
 
-#### 调用方式
+调用方式：
 
-```
-# 端到端编译，经过 HFusion/HIVM IR 编译 pipeline，直接生成二进制
-bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 hfusion.mlir -o hfusion_kernel.o
-```
-
-**预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
+- 命令：`bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 hfusion.mlir -o hfusion_kernel.o`
+- **预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
 
 #### 自动融合
 
@@ -235,15 +213,9 @@ func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
 
 HIVM 层使用 `#hivm.address_space` 标注存储层级：`gm`（全局内存）、`ub`（Unified Buffer）、`l1`（L1 Buffer）、`l0a`/`l0b`/`l0c`（L0 Buffer）。通过 `hivm.hir.load`/`hivm.hir.store` 进行显式 DMA 搬运，通过 `hivm.hir.vadd` 等指令在片上完成计算。
 
-#### 调用方式
+调用方式：HIVM 层无需使能 HFusion 编译流程，默认的 HIVM 编译流程会完成同步插入、内存规划等优化。
 
-HIVM 层无需使能 HFusion 编译流程，默认的 HIVM 编译流程会完成同步插入、内存规划等优化。
-
-```
-# 端到端编译，经过 HIVM IR 编译 pipeline，直接生成二进制
-bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o
-```
-
-**预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
+- 命令：`bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o`
+- **预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
 
 关于 IR 层概念、公共编译选项及其他接入路径（如 Triton、TileLang），请参阅 [IR 接入简介](interface_api_zh.md)。
