@@ -1083,7 +1083,7 @@ std::string InferMaxRankExternalModel<CustomOp>::getOpLibraryCallName(
     return inferBuiltinCallName(isOpsAligned);
   }
 
-  return concreteOp.getFuncName();
+  return concreteOp.getSymbol();
 }
 
 #define REGISTER_STATIC_MAX_RANK(OP, MAX_RANK)                                 \

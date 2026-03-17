@@ -16,8 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -592,13 +593,15 @@ LogicalResult CustomOp::verify() {
 
   // Check VF mode attribute
   if (*coreType != TCoreType::CUBE) {
-    if (!getVFMode())
+    auto moduleOp =
+        this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+    if (hacc::utils::isAscend910_95(moduleOp) && (!getVFMode()))
       return emitOpError() << "Missing vf mode information";
   } else { // Pure cube
     // Cube function ignores vf mode information
   }
 
-  if (getFuncName().empty())
+  if (getSymbol().empty())
     return emitOpError() << "Missing implementation function name";
 
   return success();
@@ -621,9 +624,9 @@ int CustomOp::getMaxRank() {
   return defaultMaxRank;
 }
 
-std::string CustomOp::getFuncName() {
+std::string CustomOp::getSymbol() {
   if (auto attr =
-          getOperation()->template getAttrOfType<StringAttr>(kFuncNameAttrName))
+          getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
     return attr.str();
   return "";
 }

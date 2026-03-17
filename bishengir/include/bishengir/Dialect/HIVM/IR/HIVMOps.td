@@ -403,8 +403,8 @@ def CustomOp
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       int getMaxRank();
 
-      static constexpr StringLiteral kFuncNameAttrName = "func_name";
-      std::string getFuncName();
+      static constexpr StringLiteral kSymbolAttrName = "symbol";
+      std::string getSymbol();
 
       // Builtins helpers
       struct BuiltinInfo {
