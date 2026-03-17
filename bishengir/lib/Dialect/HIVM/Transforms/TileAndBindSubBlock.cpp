@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Transforms.h"
 
@@ -889,8 +890,12 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   bb1->erase();
 
   bool isBroadcastAxisCase = false;
+  
+  PassManager pm(newFunc->getContext());
+  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
 
-  if (failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim, isBroadcastAxisCase))) {
+  if (failed(pm.run(newFunc)) ||
+      failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim, isBroadcastAxisCase))) {
     failAndRevert(newFunc);
     return failure();
   }
@@ -933,10 +938,10 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     return failure();
   }
 
-  PassManager pm(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm, strictMode);
+  PassManager pm2(newFunc->getContext());
+  populateBindSubBlockBubbleUpPassManager(pm2, strictMode);
 
-  LogicalResult bubbleUpResult = pm.run(newFunc);
+  LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
       newFunc.verifyBody().failed() || newFunc.verifyRegions().failed()) {
     failAndRevert(newFunc);
