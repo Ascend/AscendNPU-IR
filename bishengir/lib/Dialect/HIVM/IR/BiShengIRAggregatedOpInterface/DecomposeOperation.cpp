@@ -1032,6 +1032,11 @@ static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Val
     return src0;
   }
 
+  // as for broadcast scenario, not to handle now.
+  if (type0.getDimSize(0) != type1.getDimSize(0) || type0.getDimSize(1) != type1.getDimSize(1)) {
+    return src0;
+  }
+
   int64_t offset0, offset1;
   SmallVector<int64_t, 2> strides0, strides1;
   if (failed(getStridesAndOffset(type0, strides0, offset0)) ||
