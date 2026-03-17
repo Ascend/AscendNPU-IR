@@ -1,4 +1,4 @@
-// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1
+// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @backward_dkdv(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg8: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg9: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg10: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg11: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg12: i32 {tt.divisibility = 16 : i32}, %arg13: i32, %arg14: i32 {tt.divisibility = 16 : i32}, %arg15: i32 {tt.divisibility = 16 : i32}, %arg16: f32, %arg17: i1 {tt.divisibility = 16 : i32}, %arg18: i32 {tt.divisibility = 16 : i32}, %arg19: i32 {tt.divisibility = 16 : i32}, %arg20: i32 {tt.divisibility = 16 : i32}, %arg21: i32 {tt.divisibility = 16 : i32}, %arg22: i32 {tt.divisibility = 16 : i32}, %arg23: i32 {tt.divisibility = 16 : i32}, %arg24: i32, %arg25: i32, %arg26: i32 {tt.divisibility = 16 : i32}, %arg27: i32 {tt.divisibility = 16 : i32}, %arg28: i32 {tt.divisibility = 16 : i32}, %arg29: i32 {tt.divisibility = 16 : i32}, %arg30: i32 {tt.divisibility = 16 : i32}, %arg31: i32 {tt.divisibility = 16 : i32}, %arg32: i32 {tt.divisibility = 16 : i32}, %arg33: i32 {tt.divisibility = 16 : i32}, %arg34: i32, %arg35: i32, %arg36: i32, %arg37: i32, %arg38: i32, %arg39: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "mix", parallel_mode = "simd"} {
     %cst = arith.constant 0.000000e+00 : f16
@@ -146,9 +146,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
       %99 = arith.index_cast %98 : i32 to index
       %100 = arith.addi %94, %99 : index
       %101 = tensor.empty() : tensor<128x32xf16>
-      %transposed = linalg.transpose ins(%71 : tensor<32x128xf16>) outs(%101 : tensor<128x32xf16>) permutation = [1, 0] 
+      %transposed = linalg.transpose ins(%71 : tensor<32x128xf16>) outs(%101 : tensor<128x32xf16>) permutation = [1, 0]
       %102 = linalg.fill ins(%extracted : f32) outs(%4 : tensor<32x32xf32>) -> tensor<32x32xf32>
-      %transposed_13 = linalg.transpose ins(%83 : tensor<32x128xf16>) outs(%101 : tensor<128x32xf16>) permutation = [1, 0] 
+      %transposed_13 = linalg.transpose ins(%83 : tensor<32x128xf16>) outs(%101 : tensor<128x32xf16>) permutation = [1, 0]
       %103 = linalg.fill ins(%arg16 : f32) outs(%4 : tensor<32x32xf32>) -> tensor<32x32xf32>
       %104:6 = scf.for %arg40 = %c0_i32 to %12 step %c32_i32 iter_args(%arg41 = %3, %arg42 = %3, %arg43 = %c0_i32, %arg44 = %c0_i32, %arg45 = %c0_i32, %arg46 = %c0_i32) -> (tensor<32x128xf32>, tensor<32x128xf32>, i32, i32, i32, i32)  : i32 {
         %121 = arith.index_cast %arg46 : i32 to index
@@ -233,20 +233,20 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
         %168 = linalg.matmul {input_precison = "ieee"} ins(%145, %transposed : tensor<32x128xf16>, tensor<128x32xf16>) outs(%5 : tensor<32x32xf32>) -> tensor<32x32xf32>
         %169 = arith.mulf %168, %102 : tensor<32x32xf32>
         %170 = arith.addf %169, %5 : tensor<32x32xf32>
-        %broadcasted = linalg.broadcast ins(%162 : tensor<32xf32>) outs(%4 : tensor<32x32xf32>) dimensions = [1] 
+        %broadcasted = linalg.broadcast ins(%162 : tensor<32xf32>) outs(%4 : tensor<32x32xf32>) dimensions = [1]
         %171 = arith.subf %170, %broadcasted : tensor<32x32xf32>
         %172 = math.exp2 %171 : tensor<32x32xf32>
         %173 = linalg.matmul {input_precison = "ieee"} ins(%157, %transposed_13 : tensor<32x128xf16>, tensor<128x32xf16>) outs(%5 : tensor<32x32xf32>) -> tensor<32x32xf32>
         %174 = arith.mulf %103, %172 : tensor<32x32xf32>
-        %broadcasted_33 = linalg.broadcast ins(%167 : tensor<32xf32>) outs(%4 : tensor<32x32xf32>) dimensions = [1] 
+        %broadcasted_33 = linalg.broadcast ins(%167 : tensor<32xf32>) outs(%4 : tensor<32x32xf32>) dimensions = [1]
         %175 = arith.subf %173, %broadcasted_33 : tensor<32x32xf32>
         %176 = arith.mulf %174, %175 : tensor<32x32xf32>
         %177 = arith.truncf %172 : tensor<32x32xf32> to tensor<32x32xf16>
         %178 = arith.truncf %176 : tensor<32x32xf32> to tensor<32x32xf16>
         %179 = tensor.empty() : tensor<32x32xf16>
-        %transposed_34 = linalg.transpose ins(%178 : tensor<32x32xf16>) outs(%179 : tensor<32x32xf16>) permutation = [1, 0] 
+        %transposed_34 = linalg.transpose ins(%178 : tensor<32x32xf16>) outs(%179 : tensor<32x32xf16>) permutation = [1, 0]
         %180 = linalg.matmul {input_precison = "ieee"} ins(%transposed_34, %145 : tensor<32x32xf16>, tensor<32x128xf16>) outs(%arg41 : tensor<32x128xf32>) -> tensor<32x128xf32>
-        %transposed_35 = linalg.transpose ins(%177 : tensor<32x32xf16>) outs(%179 : tensor<32x32xf16>) permutation = [1, 0] 
+        %transposed_35 = linalg.transpose ins(%177 : tensor<32x32xf16>) outs(%179 : tensor<32x32xf16>) permutation = [1, 0]
         %181 = linalg.matmul {input_precison = "ieee"} ins(%transposed_35, %157 : tensor<32x32xf16>, tensor<32x128xf16>) outs(%arg42 : tensor<32x128xf32>) -> tensor<32x128xf32>
         %182 = arith.addi %arg43, %c32_i32 : i32
         %183 = arith.addi %arg44, %c32_i32 : i32

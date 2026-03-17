@@ -1,4 +1,4 @@
-// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1
+// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 #map = affine_map<(d0) -> (d0)>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @backward_dq(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg8: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg9: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg10: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg11: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg12: i32, %arg13: i32, %arg14: i32 {tt.divisibility = 16 : i32}, %arg15: i32, %arg16: f32, %arg17: i32 {tt.divisibility = 16 : i32}, %arg18: i32 {tt.divisibility = 16 : i32}, %arg19: i32 {tt.divisibility = 16 : i32}, %arg20: i32 {tt.divisibility = 16 : i32}, %arg21: i32 {tt.divisibility = 16 : i32}, %arg22: i32 {tt.divisibility = 16 : i32}, %arg23: i32, %arg24: i32, %arg25: i32, %arg26: i32 {tt.divisibility = 16 : i32}, %arg27: i32 {tt.divisibility = 16 : i32}, %arg28: i32 {tt.divisibility = 16 : i32}, %arg29: i32 {tt.divisibility = 16 : i32}, %arg30: i32 {tt.divisibility = 16 : i32}, %arg31: i32 {tt.divisibility = 16 : i32}, %arg32: i32, %arg33: i32, %arg34: i32, %arg35: i32, %arg36: i32, %arg37: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "mix", parallel_mode = "simd"} {
@@ -107,7 +107,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
         %66 = arith.select %65, %3, %4 : tensor<8xi1>, tensor<8xi32>
         %67 = bufferization.alloc_tensor() : tensor<i32>
         %68 = linalg.fill ins(%c0_i32 : i32) outs(%67 : tensor<i32>) -> tensor<i32>
-        %reduced = linalg.reduce ins(%66 : tensor<8xi32>) outs(%68 : tensor<i32>) dimensions = [0] 
+        %reduced = linalg.reduce ins(%66 : tensor<8xi32>) outs(%68 : tensor<i32>) dimensions = [0]
           (%in: i32, %init: i32) {
             %171 = arith.addi %in, %init : i32
             linalg.yield %171 : i32
@@ -235,9 +235,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
         %155 = bufferization.to_tensor %alloc_23 restrict writable : memref<16x1xf32>
         %156 = linalg.fill ins(%50 : i32) outs(%46 : tensor<64xi32>) -> tensor<64xi32>
         %collapsed = tensor.collapse_shape %139 [[0, 1]] : tensor<16x1xf32> into tensor<16xf32>
-        %broadcasted = linalg.broadcast ins(%collapsed : tensor<16xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [1] 
+        %broadcasted = linalg.broadcast ins(%collapsed : tensor<16xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [1]
         %collapsed_26 = tensor.collapse_shape %155 [[0, 1]] : tensor<16x1xf32> into tensor<16xf32>
-        %broadcasted_27 = linalg.broadcast ins(%collapsed_26 : tensor<16xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [1] 
+        %broadcasted_27 = linalg.broadcast ins(%collapsed_26 : tensor<16xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [1]
         %157 = scf.for %arg39 = %c0_i32 to %extracted_8 step %c1_i32 iter_args(%arg40 = %11) -> (tensor<16x128xf32>)  : i32 {
           %171 = arith.index_cast %arg39 : i32 to index
           %172 = arith.addi %55, %171 : index
@@ -290,7 +290,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
           memref.copy %subview_36, %subview_37 : memref<?x?xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[128, 1]>>
           %203 = bufferization.to_tensor %alloc_35 restrict writable : memref<64x128xf16>
           %204 = tensor.empty() : tensor<128x64xf16>
-          %transposed = linalg.transpose ins(%203 : tensor<64x128xf16>) outs(%204 : tensor<128x64xf16>) permutation = [1, 0] 
+          %transposed = linalg.transpose ins(%203 : tensor<64x128xf16>) outs(%204 : tensor<128x64xf16>) permutation = [1, 0]
           %205 = linalg.fill ins(%174 : i32) outs(%46 : tensor<64xi32>) -> tensor<64xi32>
           %206 = arith.addi %205, %47 : tensor<64xi32>
           %207 = arith.cmpi sge, %156, %206 : tensor<64xi32>
@@ -298,8 +298,8 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
           %208 = arith.select %expanded, %6, %7 : tensor<1x64xi1>, tensor<1x64xf32>
           %209 = arith.addf %208, %6 : tensor<1x64xf32>
           %collapsed_38 = tensor.collapse_shape %209 [[0, 1]] : tensor<1x64xf32> into tensor<64xf32>
-          %broadcasted_39 = linalg.broadcast ins(%collapsed_38 : tensor<64xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [0] 
-          %transposed_40 = linalg.transpose ins(%189 : tensor<64x128xf16>) outs(%204 : tensor<128x64xf16>) permutation = [1, 0] 
+          %broadcasted_39 = linalg.broadcast ins(%collapsed_38 : tensor<64xf32>) outs(%8 : tensor<16x64xf32>) dimensions = [0]
+          %transposed_40 = linalg.transpose ins(%189 : tensor<64x128xf16>) outs(%204 : tensor<128x64xf16>) permutation = [1, 0]
           %210 = linalg.matmul {input_precison = "ieee"} ins(%107, %transposed_40 : tensor<16x128xf16>, tensor<128x64xf16>) outs(%9 : tensor<16x64xf32>) -> tensor<16x64xf32>
           %211 = arith.mulf %210, %48 : tensor<16x64xf32>
           %212 = arith.addf %broadcasted_39, %211 : tensor<16x64xf32>

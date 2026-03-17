@@ -1,4 +1,4 @@
-// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1
+// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @_hstu_attn_fwd(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg8: memref<?xf32> {tt.divisibility = 16 : i32}, %arg9: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}, %arg10: f32, %arg11: f32, %arg12: i32, %arg13: i32, %arg14: i32 {tt.divisibility = 16 : i32}, %arg15: i32, %arg16: i32, %arg17: i32, %arg18: i32, %arg19: i32, %arg20: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "mix", parallel_mode = "simd"} {
     %c192 = arith.constant 192 : index
@@ -173,7 +173,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
           memref.copy %subview_9, %subview_10 : memref<?x128xf16, strided<[128, 1], offset: ?>> to memref<?x128xf16, strided<[128, 1]>>
           %85 = bufferization.to_tensor %alloc_8 restrict writable : memref<352x128xf16>
           %86 = tensor.empty() : tensor<128x352xf16>
-          %transposed = linalg.transpose ins(%85 : tensor<352x128xf16>) outs(%86 : tensor<128x352xf16>) permutation = [1, 0] 
+          %transposed = linalg.transpose ins(%85 : tensor<352x128xf16>) outs(%86 : tensor<128x352xf16>) permutation = [1, 0]
           %87 = linalg.matmul {input_precison = "ieee"} ins(%75, %transposed : tensor<64x128xf16>, tensor<128x352xf16>) outs(%1 : tensor<64x352xf32>) -> tensor<64x352xf32>
           %88 = arith.mulf %87, %31 : tensor<64x352xf32>
           %89 = arith.subf %1, %88 : tensor<64x352xf32>
