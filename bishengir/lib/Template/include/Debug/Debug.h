@@ -32,7 +32,7 @@
           char *prefix, const int64_t len,                                     \
           memref_t<__##mem##__ type, dim> *arg, const int8_t hex)
 
-#define DECLARE_PRINT_1TO4D_TENSOR(type, mem)                                  \
+#define DECLARE_PRINT_1TO8D_TENSOR(type, mem)                                  \
   DECLARE_PRINT_TENSOR(1, type, mem);                                          \
   DECLARE_PRINT_TENSOR(2, type, mem);                                          \
   DECLARE_PRINT_TENSOR(3, type, mem);                                          \
@@ -52,7 +52,7 @@
     print_##dim##d_core<type, __##mem##__ type>(prefix, len, arg, hex);        \
   }
 
-#define REGISTER_PRINT_1TO4D_TENSOR(type, mem)                                 \
+#define REGISTER_PRINT_1TO8D_TENSOR(type, mem)                                 \
   REGISTER_PRINT_TENSOR(1, type, mem);                                         \
   REGISTER_PRINT_TENSOR(2, type, mem);                                         \
   REGISTER_PRINT_TENSOR(3, type, mem);                                         \
@@ -109,17 +109,17 @@ DECLARE_PRINT_SCALAR(half, gm);
 DECLARE_PRINT_SCALAR(bfloat16_t, gm);
 DECLARE_PRINT_SCALAR(float, gm);
 DECLARE_PRINT_SCALAR(bool, gm);
-DECLARE_PRINT_1TO4D_TENSOR(int8_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(uint8_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(int16_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(uint16_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(int32_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(uint32_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(int64_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(half, gm);
-DECLARE_PRINT_1TO4D_TENSOR(bfloat16_t, gm);
-DECLARE_PRINT_1TO4D_TENSOR(float, gm);
-DECLARE_PRINT_1TO4D_TENSOR(bool, gm);
+DECLARE_PRINT_1TO8D_TENSOR(int8_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(uint8_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(int16_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(uint16_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(int32_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(uint32_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(int64_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(half, gm);
+DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, gm);
+DECLARE_PRINT_1TO8D_TENSOR(float, gm);
+DECLARE_PRINT_1TO8D_TENSOR(bool, gm);
 DECLARE_ASSERT_SCALAR(gm);
 DECLARE_ASSERT_1TO4D_TENSOR(gm);
 
@@ -138,17 +138,17 @@ DECLARE_PRINT_SCALAR(half, ubuf);
 DECLARE_PRINT_SCALAR(bfloat16_t, ubuf);
 DECLARE_PRINT_SCALAR(float, ubuf);
 DECLARE_PRINT_SCALAR(bool, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(int8_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(uint8_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(int16_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(uint16_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(int32_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(uint32_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(int64_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(half, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(bfloat16_t, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(float, ubuf);
-DECLARE_PRINT_1TO4D_TENSOR(bool, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(int8_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(uint8_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(int16_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(uint16_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(int32_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(uint32_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(int64_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(half, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(bfloat16_t, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(float, ubuf);
+DECLARE_PRINT_1TO8D_TENSOR(bool, ubuf);
 DECLARE_ASSERT_SCALAR(ubuf);
 DECLARE_ASSERT_1TO4D_TENSOR(ubuf);
 #endif
