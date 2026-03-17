@@ -93,6 +93,7 @@ struct DuplicateTensorExtractForCube
         continue;
       }
  
+      // Check current operation and its nested operations
       currentOp->walk([&hasCubeUser](Operation *nestedOp) {
         if (getCoreType(nestedOp) == TCoreType::CUBE) {
           hasCubeUser = true;
@@ -105,6 +106,13 @@ struct DuplicateTensorExtractForCube
  
       if (hasCubeUser) {
         return true;
+      }
+      
+      // Add all users of currentOp to worklist for indirect user checking
+      for (auto result : currentOp->getResults()) {
+        for (Operation *userOp : result.getUsers()) {
+          worklist.push_back(userOp);
+        }
       }
     }
  
