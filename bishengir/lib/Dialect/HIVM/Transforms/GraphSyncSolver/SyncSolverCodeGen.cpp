@@ -492,6 +492,9 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
 }
 
 Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
+  if (!checkAllParentLoopsAreForLoops(op)) {
+    return nullptr;
+  }
   auto parentLoop = op->getParentOfType<LoopLikeOpInterface>();
   if (!parentLoop) {
     return nullptr;
