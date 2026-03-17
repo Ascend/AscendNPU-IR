@@ -218,7 +218,7 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : ...) outs(%3 : ...) te
 
 ### Use non-negative loop iter as memory index
 
-- **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices.
+- **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices. Take the following code snippet as an example. For actual scenarios, please modify the access method by referring to the example below.
 - **Wrong**:
 ```python
 for i_w in tl.static_range(-W+1, 1):
