@@ -35,10 +35,10 @@ Torch IR is integrated via the `torch-backend-to-named-op-backend-pipeline` conv
 - `convert-torch-to-scf / arith / tensor`: Upstream torch-mlir for control flow, arithmetic, and tensor conversion.
 - `func-backend-type-conversion`: Converts Torch types (`!torch.vtensor`) to builtin types (`tensor`).
 
-#### Example
+#### Example `torch.mlir`
 
 ```
-func.func @torch.aten.mul_tensor(%arg0: !torch.vtensor<[4096],f16>, %arg1: !torch.vtensor<[1,56,4096],f16>) -> !torch.vtensor<[1,56,4096],f16>
+func.func @torch_mul(%arg0: !torch.vtensor<[4096],f16>, %arg1: !torch.vtensor<[1,56,4096],f16>) -> !torch.vtensor<[1,56,4096],f16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = torch.aten.mul.Tensor %arg0, %arg1 : !torch.vtensor<[4096],f16>, !torch.vtensor<[1,56,4096],f16> -> !torch.vtensor<[1,56,4096],f16>
   return %0 : !torch.vtensor<[1,56,4096],f16>
@@ -49,23 +49,38 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 There are two invocation methods; both share the same compile pipeline:
 
-- **Stepwise conversion**: Use `bishengir-opt -torch-backend-to-named-op-backend-pipeline` to convert Torch IR to Linalg/HFusion IR first, then compile via the [Linalg/HFusion IR integration](#22-linalghfusion-ir-integration) flow; suitable for caching intermediate IR.
-- **End-to-end compilation**: Use `bishengir-compile` to compile Torch IR to binary directly.
+**Stepwise conversion**
+
+Converts Torch IR to Linalg/HFusion IR first, suitable for caching or inspecting intermediate IR. After conversion, use `torch_to_hfusion.mlir` as input and continue with the [Linalg/HFusion IR integration](#linalghfusion-ir-integration) flow to produce a binary.
+
+Command:
 
 ```
-# Stepwise conversion; expected output is Linalg/HFusion IR
-bishengir-opt -torch-backend-to-named-op-backend-pipeline test.mlir -o hfusion.mlir
-# Expected result
+bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir
+```
+
+**Expected output**: MLIR text file (`.mlir` format) containing the converted Linalg/HFusion IR. For example:
+
+```
 func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = tensor.empty() : tensor<1x56x4096xf16>
   %broadcasted = linalg.broadcast ins(%arg0 : tensor<4096xf16>) outs(%0 : tensor<1x56x4096xf16>) dimensions = [0, 1] 
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%broadcasted, %arg1 : tensor<1x56x4096xf16>, tensor<1x56x4096xf16>) outs(%0 : tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16>
   return %1 : tensor<1x56x4096xf16>
 }
-
-# End-to-end compilation; runs through Torch/HFusion/HIVM IR pipeline and produces binary directly
-bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
 ```
+
+**End-to-end compilation**
+
+Uses `bishengir-compile` to compile Torch IR directly to an executable binary, running through the full Torch → HFusion → HIVM IR compile pipeline.
+
+Command:
+
+```
+bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o
+```
+
+**Expected output**: Ascend NPU operator binary (`.o` format), loadable and runnable on device via CANN runtime.
 
 #### Supported Torch ops
 
@@ -151,10 +166,10 @@ bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enabl
 
 Use Linalg/Tensor, HFusion, and other standard MLIR dialects for operator semantics; input goes directly into the Linalg/HFusion IR layer's fusion and scheduling flow.
 
-#### Example
+#### Example `hfusion.mlir`
 
 ```
-func.func @test_reduce(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
+func.func @hfusion_reduce_mul(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %1 = tensor.empty() : tensor<40960x1024xf32>
   %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg1, %arg2 : tensor<40960x1024xf32>, tensor<40960x1024xf32>) outs(%arg3: tensor<40960x1024xf32>) -> tensor<40960x1024xf32>
@@ -172,8 +187,10 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 ```
 # End-to-end compilation; runs through HFusion/HIVM IR pipeline and produces binary directly
-bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 test.mlir
+bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 hfusion.mlir -o hfusion_kernel.o
 ```
+
+**Expected output**: Ascend NPU operator binary (`.o` format), loadable and runnable on device via CANN runtime.
 
 #### Automatic fusion
 
@@ -193,10 +210,10 @@ For algorithm details, constraints, architecture, and related topics, see [HFusi
 
 For fine-grained hardware control, you can write kernels directly in the HIVM dialect, managing memory hierarchy and compute pipelines explicitly.
 
-#### Example
+#### Example `hivm.mlir`
 
 ```
-func.func @vadd_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
+func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
                        %valueB: memref<16xf16, #hivm.address_space<gm>>,
                        %valueC: memref<16xf16, #hivm.address_space<gm>>)
     attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -224,7 +241,9 @@ HIVM does not require the HFusion compile pipeline. The default HIVM compile pip
 
 ```
 # End-to-end compilation; runs through HIVM IR pipeline and produces binary directly
-bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 test.mlir
+bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o
 ```
+
+**Expected output**: Ascend NPU operator binary (`.o` format), loadable and runnable on device via CANN runtime.
 
 For IR-level concepts, common compile options, and other integration paths (e.g., Triton, TileLang), see [Interface API](interface_api.md).
