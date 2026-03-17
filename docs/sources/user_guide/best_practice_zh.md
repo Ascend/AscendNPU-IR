@@ -440,7 +440,7 @@ A=torch.empty(shape, dtype, device=DEVICE).npu()
 ### 使用非负数iter arg作为访存索引
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
 - **示例**
-以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中i_w可能是负数.
+以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中offset的数值i_w可能是负数，以下面代码端作为示例，遇到实际的场景请参考下面示例改下访问方式。
 ```python
 for i_w in tl.static_range(-W+1, 1):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
