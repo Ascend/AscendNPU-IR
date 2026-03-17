@@ -155,11 +155,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createNormalizeBitwiseSelectPass());
   pm.addPass(mlir::hivm::createInlineFixpipePass());
-  pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForMixCVPass());
   }
+  pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
 
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(createInsertNZ2NDForDebugPass());

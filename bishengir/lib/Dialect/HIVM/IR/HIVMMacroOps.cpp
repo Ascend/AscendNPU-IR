@@ -420,7 +420,13 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 template <typename LocalMmadTy>
 MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   OpOperand &matmulOutput = localMatmulOp.getCMutable();
-
+  if constexpr(std::is_same_v<LocalMmadTy, hivm::BatchMmadL1Op>) {
+    auto defOp = matmulOutput.get().getDefiningOp();
+    if(defOp != nullptr &&  (dyn_cast_if_present<tensor::EmptyOp>(defOp) != nullptr)) {
+      return MatmulBiasMode::NoBias;
+    }
+    return MatmulBiasMode::ElementwiseAdd;
+  }
   // Here just traces forward to find satisfied first axis VBrcOp
   if (isPerChannelPattern(matmulOutput))
     return MatmulBiasMode::PerChannelAdd;
@@ -607,8 +613,7 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
-      !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }
