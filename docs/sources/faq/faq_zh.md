@@ -130,32 +130,105 @@ with torch_npu.profiler.profile(
         triton_example[6,1,1](input0, input1, output, 86, 64, XBLOCK=16, XBLOCK_SUB=16)
         prof.step()
 ```
-*TODO：本节内容待补充。建议涵盖：profiling 手段、与参考实现/竞品对比、关键 pass 对性能的影响等。*
-
-**Q3.2** 编译选项或优化 pass 对性能有何影响？
-
-*TODO：本节内容待补充。建议涵盖：常用编译选项、HFusion/HIVM 中与性能相关的 pass、Release/Debug 构建差异等。*
-
-**Q3.3** 如何开启或关闭某项优化（如 CVPipeline、AutoSubTiling）？
-
-*TODO：本节内容待补充。建议涵盖：bishengir-compile 或 pass 的开关选项、对应文档入口等。*
-
 ---
 
 ## 精度定位
 
 **Q4.1** 算子结果与参考（如 CPU/GPU 或参考实现）不一致时如何排查？
+在 Triton kernel 中调试精度问题时，tl.device_print 是必不可少的工具。
+它允许你在 NPU 运行时直接打印张量或标量的中间值，从而定位误差出现的具体位置。使用指南如下。
+```python
+# 使用时需要打开环境变量 TRITON_DEVICE_PRINT=1
+tl.device_print("前缀字符串",  value)
+```
 
-*TODO：本节内容待补充。建议涵盖：逐层对比中间结果、数据类型与舍入、与调试选项的结合等。*
+精度问题排查策略
+1. 分段打印：在关键计算步骤（如矩阵乘加、归约、激活函数）前后插入 tl.device_print，观察数值变化。
+2. 对比预期值：打印中间结果后，与手工计算或 CPU 参考实现的结果比对，快速定位误差源头。
+3. 关注异常值：若发现数值突然变为 NaN 或 Inf，可在相应位置前后打印更多上下文。
 
-**Q4.2** 如何对比各层 MLIR 或中间表示的数值结果？
+代码样例
+```python
+import triton
+import triton.language as tl
 
-*TODO：本节内容待补充。建议涵盖：插桩/打印中间结果、与 Q2.3 的配合、常用调试流程等。*
+@triton.jit
+def triton_add(in_ptr0, in_ptr1, out_ptr0, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
+    offset = tl.program_id(0) * XBLOCK
+    base1 = tl.arange(0, XBLOCK_SUB)
+    loops1: tl.constexpr = (XBLOCK + XBLOCK_SUB - 1) // XBLOCK_SUB
+    for loop1 in range(loops1):
+        x0_prime = offset + (loop1 * XBLOCK_SUB) + base1
+        x0 = offset + (loop1 * XBLOCK_SUB) + base1
+        tmp0 = tl.load(in_ptr0 + (x0), None)
+        # 在 NPU 运行时直接打印tmp0的数据
+        tl.device_print("tmp0",  tmp0)
+        tmp1 = tl.load(in_ptr1 + (x0), None)
+        tmp2 = tmp0 + tmp1
+        tl.store(out_ptr0 + (x0), tmp2, None)
+```
+
+**Q4.2** 如何使用bishengir-opt对比各层 MLIR？
+bishengir-opt 是类似于 mlir-opt 的工具，主要用于加载、优化和转换（降级）MLIR代码。你可以把它理解为一个“瑞士军刀”式的测试和调试工具，
+它读取一个.mlir文件，对其应用一系列由用户指定的编译过程（pass），然后将结果输出，因此可以用于对 AscendNPU IR 进行独立的 Pass 调试。
+通过它，开发者可以单独应用某个 Pass，并对比应用前后的 IR 差异，从而验证该 Pass 是否达到预期功能。
+
+基本语法：
+`bishengir-opt xx.mlir --{pass名称}`
+
+示例：
+test.mlir
+```c++
+// before hfusion-normalize-ops
+func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2xi32> {
+    %0 = tensor.empty() : tensor<1x2xi32>
+    %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>, rec} ins(%arg0 : tensor<1x2xi32>) outs(%0 : tensor<1x2xi32>) -> tensor<1x2xi32>
+    return %1 : tensor<1x2xi32>
+}
+```
+
+单独执行 hfusion-normalize-ops pass
+bishengir-opt test.mlir --hfusion-normalize-ops
+
+```c++
+// after hfusion-normalize-ops
+module {
+  func.func @test_normalize_rec_i32_to_f32(%arg0: tensor<1x2xi32>) -> tensor<1x2xi32> {
+    %cst = arith.constant 1.000000e+00 : f32
+    %0 = tensor.empty() : tensor<1x2xf32>
+    %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%arg0 : tensor<1x2xi32>) outs(%0 : tensor<1x2xf32>) -> tensor<1x2xf32>
+    %2 = tensor.empty() : tensor<1x2xf32>
+    %3 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} ins(%1 : tensor<1x2xf32>) outs(%2 : tensor<1x2xf32>) -> tensor<1x2xf32>
+    %4 = tensor.empty() : tensor<1x2xi32>
+    %5 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins(%3 : tensor<1x2xf32>) outs(%4 : tensor<1x2xi32>) -> tensor<1x2xi32>
+    return %5 : tensor<1x2xi32>
+  }
+}
+```
 
 **Q4.3** 常见精度问题有哪些（如 BF16/FP16 精度损失、累加顺序）？
 
-*TODO：本节内容待补充。建议涵盖：常见场景与缓解方式、文档或最佳实践链接等。*
+如何判断精度损失是否符合标准：使用三方对比方案验证精度损失 (NPU, GPU, CPU)
 
+这是一个非常经典且必要的验证流程，尤其在将算法从CPU移植到NPU或GPU时，用于确保硬件加速没有引入不可接受的精度损失。
+以CPU的float64作为“真值”基准，对比三者float32的输出，是衡量精度损失的黄金标准。
+
+为什么会有精度损失？
+计算机使用二进制表示小数，很多十进制小数（如 0.1）无法被有限长度的二进制精确表示，只能取近似值。float32 和 float64 的精度差异巨大：
+float32 (单精度)：约 7 位有效数字。内存占用 4 字节。
+float64 (双精度)：约 15-16 位有效数字。内存占用 8 字节。
+
+为什么需要三方对比？
+CPU (float64)：作为参考基准，提供最高精度的计算结果。
+CPU (float32)：用于隔离“精度损失”的来源。对比 float32 CPU 结果与 float64 结果，可以观察到单纯因“单精度”带来的理论损失。
+GPU/NPU (float32)：用于观察在特定硬件加速器上，由于硬件指令集差异、算子实现算法不同、中间结果保留精度不同（
+                   如某些NPU可能使用float16进行累加）或驱动/库的优化策略所引入的额外误差
+
+核心对比逻辑
+由于浮点数不能直接用 == 比较，必须使用容差比较。常用的方法有两种：
+绝对误差 (Absolute Error)：|a - b|
+相对误差 (Relative Error)：|a - b| / max(|a|, |b|)，适用于大数比较。
+混合容差：结合两者，如 np.isclose() 的实现。
 ---
 
 ## 贡献与社区
