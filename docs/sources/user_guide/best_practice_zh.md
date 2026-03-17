@@ -437,14 +437,19 @@ DEVICE="npu:0"
 A=torch.empty(shape, dtype, device=DEVICE).npu()
 ```
 
-### 可能是offset负数
-- **现象** ossfet数值ir中是一个计算数值。
-- **示例**
-1. offset算出来是一个负数，导致读取地址不正确。
-2. 算子的offset按照int32表示，实际数值超出这个数据表示范围，导致i32溢出。
-
 ### 使用非负数iter arg作为访存索引
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
+- **示例**
+以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中i_w可能是负数.
+```python
+for i_w in tl.static_range(-W+1, 1):
+    p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
+```
+正确示例
+```python
+for i_w in tl.static_range(W):
+    p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
+```
 
 ## 访存类
 ### load非预期引入vtranspose op导致ub overflow
@@ -794,8 +799,14 @@ tl.compile_hint(cond, "bitwise_mask")
 
 参考 [Ascend where 算子](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py)进行改写，
 若用户需要输入bitwise的i8掩码作为算子入参，只需为tl.where的结果加上compile_hint即可，见以下代码：
-
+[triton testcommon script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 ```python
+import triton
+import triton.language as tl
+import torch 
+import torch_npu
+import test_common
+
 @triton.jit
 def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: tl.constexpr, XBLOCK_SUB: tl.constexpr):
     xoffset = tl.program_id(0) * XBLOCK
@@ -808,13 +819,13 @@ def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: 
         res = tl.where(cond, in1, in0)
         tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
         tl.store(out_ptr0 + (xindex), res, xmask)
-```
 
-由于bitwise mask将8个i8类型的True/False压缩至一个i8类型的数据，因此mask组装逻辑也需相关更新，可参考以下代码：
-
-```python
-def test_where_lt_case1(param_list):
-       dtype, shape, ncore, xblock, xblock_sub = param_list
+def test_where_lt_case1():
+       dtype = "float32"
+       shape = (1, 1024, 8) 
+       ncore = 1 
+       xblock = 8192
+       xblock_sub = 1024
        if shape[-1] %8 != 0:
            raise ValueError("The last dimension should be a multiple of 8")
        x0 = test_common.generate_tensor(shape, dtype).npu()
@@ -823,58 +834,15 @@ def test_where_lt_case1(param_list):
        cond_i8 = test_common.generate_tensor(shape, 'uint8').npu()
        y_cal = test_common.generate_tensor(shape, dtype).npu()
        triton_where_lt_case1[ncore, 1, 1](x0, x1, cond_i8, y_cal, x0.numel(), xblock, xblock_sub)
-       # Run torch with i1 mask
-       flatten_cond_i8 = cond_i8.flatten()
-       numel = flatten_cond_i8.shape[-1]
-       num_sub_block = numel // xblock_sub
-       flatten_cond_bool = torch.zeros(flatten_cond_i8.shape, dtype=torch.bool).npu()
-       for sub_block_id in range(num_sub_block):
-           for i in range(min(numel, xblock_sub) // 8):
-               byte_value = flatten_cond_i8[xblock_sub * sub_block_id + i]
-               for bit in range(8):
-                   flatten_cond_bool[..., xblock_sub * sub_block_id + i*8 + bit] = (byte_value & (1 << bit)) != 0
-       cond_bool = flatten_cond_bool.view(shape)
-       y_ref = torch_where_lt_case1(x0, x1, cond_bool)
-       # Precision test
-       test_common.validate_cmp(dtype, y_cal, y_ref)
+       
+test_where_lt_case1()
 ```
 
 #### 限制
 
-只支持i8类型的mask
-
 - 由于Triton前端会将i1转换为i8，如果对其他类型如i16/i32等进行bitwise_mask操作反而会带来性能损耗，因此此功能只支持i8类型的mask
 
 ---
-
-### 动态生成mask类
-
-#### 问题描述
-
-经常出现range后cmp生成下三角的mask，我们硬件上的指令不支持i32/i64的比较，转scalar
-
-![image](figs/performance/aa3ea0d8-698d-4327-ad22-cfb823049c37.png)
-
-![image](figs/performance/79d71bc5-7851-4a0d-b64f-852d5b2195ca.png)
-
-#### 算子示例
-
-diffusion_attention类的
-
-```python
-for idx_ingroup in range(GROUP_SIZE):
-    idx_n = idx_group * GROUP_SIZE + idx_ingroup
-    offs_r_local = tl.arange(0, BLOCK_C)[:, None]
-            offs_c_local = tl.arange(0, BLOCK_C)[None, :]
-            chunk_idx_r = offs_r_local // BLOCK_SIZE
-            chunk_idx_c = offs_c_local // BLOCK_SIZE
-
-        block_mask_bool = (
-                (chunk_idx_r > chunk_idx_c)
-                & (seq_st + idx_c * BLOCK_C + offs_r_local < seq_ed)
-                & (seq_st + idx_c * BLOCK_C + offs_c_local < seq_ed)
-            )
-```
 
 ## CV类
 
@@ -929,18 +897,6 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 | set_workspace_multibuffer | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置CV并行的并行度使用时需确保数据没有依赖若设置为N，则N个CV操作并行执行 | 2 (默认),4 |
 | tile_mix_vector_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前vector的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
 | tile_mix_cube_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前cube的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
-
-### - 算子分核逻辑
-
-#### 问题描述
-
-对于attention的注意力机制，存在负载不均衡的问题。不同核计算的任务量不同。因为attetnionmask一般是存在倒三角，所以越到后面的核计算的任务量越重，因此我们尽可能把计算少的和计算多的放在同一个核上。
-
-![](figs/performance/5541cae3-7d7d-4979-aacb-45f9f06f2abd.png)
-
-#### 算子示例
-
-[mmad](https://gitee.com/guangpengz/triton-ascend/blob/master/ascend/examples/tutorials/13-matrix-multiplication-optimized.py)
 
 ---
 

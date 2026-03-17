@@ -67,6 +67,16 @@ bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir
 bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 ```
 
+### 2.1 Test Cases
+Currently, all test cases in the repository are located under `path-to-ascendnpuir\bishengir\test`. To run a specific pass, search for the corresponding compilation command to locate the relevant test file. For example, searching for `hivm-normalize-matmul` will lead you to the corresponding test file `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
+
+### 2.2 Test Commands
+The specific run commands are provided at the top of each test file. For example:
+```bash
+// RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
+```
+Here, `bishengir-opt` and `FileCheck` are binary executable files generated during compilation, located in `path-to-ascendnpuir\build\bin`. In the above command, `%s` should be replaced with the corresponding test file, such as `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
+
 ---
 
 ## Pass descriptions
@@ -277,43 +287,7 @@ func.func @bind_workspace_arg_aiv(..., hivm.func_core_type = #hivm.func_core_typ
 
 ---
 
-## Quick start and troubleshooting
+## 4. Constriants
+- The createPlanMemoryPass handles the space size for data interaction points. Since the total required space size is dynamically returned, there is no limitation on the size.
+- The createInlineFixpipePass currently can only inline three types of operations: vast, relu, and store.
 
-### Test paths
-
-- `bishengir/test/Dialect/HIVM/normalize-matmul.mlir`
-- `bishengir/test/Dialect/HIVM/inline-fixpipe.mlir`
-- `bishengir/test/Dialect/HIVM/tile-batchmm-into-loop.mlir`
-- `bishengir/test/Dialect/HIVM/insert-workspace-for-mix-cv.mlir`
-- `bishengir/test/Dialect/HIVM/bind-workspace-arg.mlir`
-- `bishengir/test/Dialect/HIVM/plan-memory.mlir`
-- `bishengir/test/Dialect/HIVM/split-mix-kernel.mlir`
-
-### Common issues
-
-#### copy op errors
-
-Example:
-
-```mlir
-error: 'hivm.hir.copy' op Unsupported copy from cbuf to cbuf!
-error: 'hivm.hir.copy' op Unsupported copy from gm to gm!
-```
-
-Common causes:
-
-- Workspace insertion is wrong; debug InsertWorkSpaceForMixCV.
-  - Check that the data flow matches one of CC/CV/VC/VV (from the load’s src, trace back to fixpipe/store, then to tensor.empty). If fixpipe/store outs are not defined by tensor.empty, they will not be replaced.
-- SplitMixKernel:
-  - Ensure no redundant copy is wrongly placed in AIC.
-
-#### Core dump in translateDeviceKernelToLLVM
-
-Example:
-
-```text
-#6 0x0000000007805d75 llvm::CallInst::CallInst(...)
-```
-
-- Split-mix-kernel separation is wrong: AIC contains AIV instructions or alloc, or AIV contains AIC instructions.
-  - Verify the AIC/AIV split result.
