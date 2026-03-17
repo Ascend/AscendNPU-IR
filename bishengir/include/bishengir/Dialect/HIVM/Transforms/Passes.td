@@ -323,7 +323,8 @@ def OutlineAllocInVF : Pass<"hivm-outline-alloc-in-VF", "ModuleOp"> {
 def OutlineCopyInVF : Pass<"hivm-outline-copy-in-VF", "ModuleOp"> {
   let summary = "rewrite hivm.load to hivm.copy in VF when operands are VF args";
   let constructor = "mlir::hivm::createOutlineCopyInVFPass()";
-  let dependentDialects = ["hivm::HIVMDialect"];
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "memref::MemRefDialect", "vector::VectorDialect"];
 }
 
 def ConstantizeBufferSize
