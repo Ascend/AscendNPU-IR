@@ -14,20 +14,20 @@ Currently, the Python version required by Triton-Ascend is py3.9-py3.11.
 
 The end-to-end operation of the Ascend NPU-IR depends on the CANN environment.
 
-1.  Download the CANN package: Download the toolkit package and the ops package corresponding to the hardware. You can download the toolkit package from[Ascend Community CANN Download Page](https://www.hiascend.com/developer/download/community/result?module=cann)	Get.
+1.  Download the CANN package: Download the toolkit package and the ops package corresponding to the hardware. You can download the toolkit package from[Ascend Community CANN Download Page](https://www.hiascend.com/cann/download) Get.
 2.  Install the CANN package.
 
 ```
-#In the x86 A3 environment, {version} indicates the CANN version, for example, 8.5.0.
-chmod +x Ascend-cann-toolkit_{version}_linux-x86_64.run
+#In the x86 A3 environment, {version} indicates the CANN version, for example, 9.0.0.
+chmod +x Ascend-cann_{version}_linux-x86_64.run
 chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-./Ascend-cann-toolkit_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
 ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
 #Installing the Python Dependency of CANN
 pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
 ```
 
-1.  Set environment variables:
+3.  Set environment variables:
 
 ```
 #If the version is earlier than 8.5.0, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh.
