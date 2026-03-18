@@ -169,6 +169,48 @@ addition, if there's only one CTA per CGA, then Triton canonicalizes CTAOrder to
 }
 
 //===----------------------------------------------------------------------===//
+// FractalzNSharedEncodingAttr
+//===----------------------------------------------------------------------===//
+
+def FractalzNSharedEncodingAttr
+    : TritonGPU_Attr<"FractalzNSharedEncoding", "fractalzn_shared_encoding",
+                     [SharedEncodingTrait, LayoutEncodingTrait]> {
+  let mnemonic = "fractalzn_shared";
+
+  let description = [{
+    Custom fractal shared memory layout for e.g. Huawei Ascend Cube emulation.
+  }];
+
+  let parameters = (
+    ins
+    "int64_t":$fractalM0,
+    "int64_t":$fractalN0,
+    ArrayRefParameter<"unsigned">:$order,   // fastest-changing dim first
+    "CTALayoutAttr":$CTALayout
+  );
+
+  let builders = [
+    AttrBuilder<(ins "int64_t":$fractalM0,
+                     "int64_t":$fractalN0,
+                     "ArrayRef<int64_t>":$shape,
+                     "ArrayRef<unsigned>":$order,
+                     "CTALayoutAttr":$CTALayout), [{
+      return get(context, fractalM0, fractalN0, order, CTALayout);
+    }]>
+  ];
+
+  let assemblyFormat = [{
+    `<`
+      `fractalM0` `=` $fractalM0 `,`
+      `fractalN0` `=` $fractalN0 `,`
+      `order` `=` `[` $order `]` `,`
+      `CTALayout` `=` $CTALayout `>`
+  }];
+
+  let genVerifyDecl = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Shared Layout Encoding
 //===----------------------------------------------------------------------===//
 

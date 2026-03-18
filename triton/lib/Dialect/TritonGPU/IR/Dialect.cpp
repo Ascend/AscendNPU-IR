@@ -1520,6 +1520,19 @@ Attribute parseSwizzledEncoding(AsmParser &parser, Type type) {
 }
 
 //===----------------------------------------------------------------------===//
+// FractalzNShared encoding
+//===----------------------------------------------------------------------===//
+LogicalResult FractalzNSharedEncodingAttr::verify(
+    ::llvm::function_ref<InFlightDiagnostic()> emitError, int64_t fractalM0,
+    int64_t fractalN0, ArrayRef<unsigned> order, CTALayoutAttr ctaLayout) {
+  if (!(llvm::isPowerOf2_32(fractalM0) && llvm::isPowerOf2_32(fractalN0)))
+    return emitError() << "fractal block must be power-of-2";
+  if (order.empty())
+    return emitError() << "order cannot be empty";
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // SwizzledShared encoding
 //===----------------------------------------------------------------------===//
 

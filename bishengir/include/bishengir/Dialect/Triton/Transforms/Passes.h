@@ -22,7 +22,7 @@ namespace triton {
 
 /// Create a pass to add SIMT opt attribution.
 std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
-  const SetBishengirSimtOptAttrOptions &options = {});
+    const SetBishengirSimtOptAttrOptions &options = {});
 
 /// Create a pass to adapt Triton IR kernel.
 std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass();
@@ -40,14 +40,17 @@ std::unique_ptr<mlir::Pass> createDecomposeReductionPass();
 /// performance
 std::unique_ptr<mlir::Pass> createOptimizeLayoutsPass();
 
-/// Create a pass to optimize loads 
+/// Create a pass to optimize loads
 std::unique_ptr<mlir::Pass> createOptimizeLoadsPass();
-
 
 /// Create a pass to split loops up and tailor arange ranges
 std::unique_ptr<mlir::Pass> createLoopRestructureArangeOptimizationPass();
 
 std::unique_ptr<mlir::Pass> createGetTritonMetadataPass(const GetTritonMetadataOptions &options = {});
+
+/// Create a pass that prints the fractal zN layout mapping for a given offset.
+std::unique_ptr<mlir::Pass>
+createDumpFractalLayoutPass(const DumpFractalLayoutOptions &options = {});
 
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
