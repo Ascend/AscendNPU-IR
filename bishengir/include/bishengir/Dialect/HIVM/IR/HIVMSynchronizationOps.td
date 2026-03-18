@@ -204,7 +204,7 @@ def CreateSyncBlockLockOp
 }
 
 def SyncBlockLockOp
-  : HIVM_Op<"sync_block_lock"> {
+  : HIVM_SynchronizationOp<"sync_block_lock", [HIVMCoreTypeInterface, VectorCoreTypeTrait]> {
   let summary = "sync block lock operation.";
   let description = [{
     The sync_block_lock operation will not release until the lock_var equals the block idx.
@@ -226,7 +226,7 @@ def SyncBlockLockOp
 }
 
 def SyncBlockUnlockOp
-  : HIVM_Op<"sync_block_unlock"> {
+  : HIVM_SynchronizationOp<"sync_block_unlock", [HIVMCoreTypeInterface, VectorCoreTypeTrait]> {
   let summary = "sync block unlock operation.";
   let description = [{
     The `sync_block_lock` operation will increase and release the lock_var.
