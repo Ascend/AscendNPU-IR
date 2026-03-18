@@ -380,6 +380,44 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   return VCastOp;
 }
 
+std::pair<bool, bool> analyzeCoreTypes(Block *block) {
+  bool hasC = false, hasV = false;
+
+  for (Operation &op : *block) {
+    auto coreType = mlir::hivm::detail::queryCoreTypeHelper(&op);
+
+    if (coreType.has_value()) {
+      if (coreType.value() == TCoreType::CUBE) {
+        hasC = true;
+      } else if (coreType.value() == TCoreType::VECTOR) {
+        hasV = true;
+      }
+    }
+  }
+  return std::pair<bool, bool>(hasC, hasV);
+}
+
+//===----------------------------------------------------------------------===//
+// Termination Check
+//===----------------------------------------------------------------------===//
+bool needsSplit(scf::IfOp ifOp) {
+
+  auto [thenHasC, thenHasV] = analyzeCoreTypes(ifOp.thenBlock());
+  auto [elseHasC, elseHasV] = ifOp.getElseRegion().empty()
+                                  ? std::pair<bool, bool>{false, false}
+                                  : analyzeCoreTypes(ifOp.elseBlock());
+
+  if ((thenHasC && thenHasV) || (elseHasC && elseHasV)) {
+    return true;
+  }
+
+  if ((thenHasC && elseHasV) || (thenHasV && elseHasC)) {
+    return true;
+  }
+
+  return false;
+}
+
 namespace util {
 bool isIdentityCollapse(ArrayRef<ReassociationIndices> reassociations) {
   return llvm::all_of(reassociations,

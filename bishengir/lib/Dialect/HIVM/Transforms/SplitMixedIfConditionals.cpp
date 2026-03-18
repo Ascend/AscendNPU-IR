@@ -140,23 +140,6 @@ struct FinalIfContext {
   Value elseResult;
 };
 
-static std::pair<bool, bool> analyzeCoreTypes(Block *block) {
-  bool hasC = false, hasV = false;
-
-  for (Operation &op : *block) {
-    auto coreType = queryCoreTypeHelper(&op);
-
-    if (coreType.has_value()) {
-      if (coreType.value() == TCoreType::CUBE) {
-        hasC = true;
-      } else if (coreType.value() == TCoreType::VECTOR) {
-        hasV = true;
-      }
-    }
-  }
-  return std::pair<bool, bool>(hasC, hasV);
-}
-
 // Check if an operation is a region operation (if, for, etc.)
 static bool isRegionOperation(Operation *op) { return op->getNumRegions() > 0; }
 
@@ -458,27 +441,6 @@ static scf::IfOp createSplitIfForGroup(const SplitIfContext &ctx) {
 
   return ctx.rewriter.create<scf::IfOp>(
       ctx.loc, ctx.cond, createBranchLogic(true), createBranchLogic(false));
-}
-
-//===----------------------------------------------------------------------===//
-// Termination Check
-//===----------------------------------------------------------------------===//
-static bool needsSplit(scf::IfOp ifOp) {
-
-  auto [thenHasC, thenHasV] = analyzeCoreTypes(ifOp.thenBlock());
-  auto [elseHasC, elseHasV] = ifOp.getElseRegion().empty()
-                                  ? std::pair<bool, bool>{false, false}
-                                  : analyzeCoreTypes(ifOp.elseBlock());
-
-  if ((thenHasC && thenHasV) || (elseHasC && elseHasV)) {
-    return true;
-  }
-
-  if ((thenHasC && elseHasV) || (thenHasV && elseHasC)) {
-    return true;
-  }
-
-  return false;
 }
 
 //===----------------------------------------------------------------------===//

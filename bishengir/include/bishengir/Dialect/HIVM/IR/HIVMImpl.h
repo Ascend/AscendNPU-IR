@@ -301,6 +301,11 @@ mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
 /// To retrieve real mmad perChannel bias from implicit broadcast and so on
 Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);
 
+std::pair<bool, bool> analyzeCoreTypes(Block *block);
+
+/// To judge whether yields of if have the same core type
+bool needsSplit(scf::IfOp ifOp);
+
 namespace util {
 /// Returns if the reassociations are identity that each indices group only
 /// contains a single dimension. e.g. `[[0], [1], [3]]` is indentity collapse.

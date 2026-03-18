@@ -61,6 +61,15 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
   return std::nullopt;
 }
 
+bool needYieldOut(Operation *user) {
+  if (isa<scf::ForOp>(user->getParentOp()))
+    return true;
+  if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp()))
+    return !needsSplit(ifOp);
+
+  return false;
+}
+
 /// Pushed down insert point only when a unique yieldop is traced
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
   // if op has multiple users, don't push the insert point down
@@ -72,7 +81,7 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
     // judge
     if (!isa<hivm::DebugOp>(user))
       count++;
-    if (!isa<scf::YieldOp>(user)) {
+    if (!isa<scf::YieldOp>(user) || !needYieldOut(user)) {
       continue;
     } else {
       yieldOperands.emplace(user);
