@@ -21,6 +21,11 @@ public:
 
   // Check if prefer shared memory (UB) for reduction.
   bool isSharedMemoryReductionPreferred();
+
+  // For ReduceWithinWarps reduction we may have multiple accumulators per thread
+  // and we need to know how many for storage purposes if we end up using shared
+  // memory space to do this.
+  unsigned getAccumulatorCount();
 };
 } // namespace ascend
 } // namespace triton

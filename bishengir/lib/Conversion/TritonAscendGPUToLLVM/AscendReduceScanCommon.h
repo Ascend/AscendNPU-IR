@@ -21,7 +21,7 @@
 #include <iterator>
 #include <type_traits>
 
-#define DEBUG_TYPE "ttgpu_to_llvm"
+#define DEBUG_TYPE "ttag-to-llvm"
 
 using namespace mlir;
 using namespace mlir::triton;
