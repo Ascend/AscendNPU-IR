@@ -64,6 +64,30 @@ vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
   return;
 }
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_broadcast_middle_axis_by_scalar(memref_t<__ubuf__ T, 3> *src,
+                                       memref_t<__ubuf__ T, 3> *dst) {
+  cce::printf("Warning: [broadcast middle axis]This implementation uses scalar "
+              "instructions, which may result in suboptimal performance");
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    for (int j = 0; j < dst->sizes[1]; ++j) {
+      for (int k = 0; k < dst->sizes[2]; ++k) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1] + k * dst->strides[2]) =
+            *(src_ptr + i * src->strides[0] + k * src->strides[2]);
+      }
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+
+  return;
+}
+
 /// Check if tensor has aligned strides
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
@@ -75,9 +99,9 @@ is_stride_aligned(memref_t<__ubuf__ T, 2> *tensor) {
 }
 
 /// Check if tensor has aligned offset
-template <typename T>
+template <typename T, size_t DIM>
 __aiv__ __attribute__((always_inline)) bool
-is_offset_aligned(memref_t<__ubuf__ T, 2> *tensor) {
+is_offset_aligned(memref_t<__ubuf__ T, DIM> *tensor) {
   return !tensor->offset ||
          isAddress32ByteAligned(tensor->aligned + tensor->offset);
 }
