@@ -87,6 +87,7 @@ InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试i
 - **作用**：将 `hivm.hir.batchMmadL1` 沿 batch 维度展开为 `scf.for` 循环，每次迭代执行单次 `mmadL1` 和 fixpipe
 - **目的**：将 batch 维拆成循环，使 load/fixpipe/store 等可以按 batch 索引访问，便于 workspace 管理和流水
 - **典型变换**：TileBatchMMIntoLoop 将 batchMmadL1 展开为循环
+
 before:
 ```
 batchmmadL1 a : [batch, m ,k], b[batch, k, n]
@@ -125,6 +126,7 @@ vadd
 - **目的**：将 fixpipe 输出、store 输出等中间 buffer 改为从全局 workspace 分配，实现跨迭代、跨核共享
 - **匹配模式**：CC（mmadL1→fixpipe→load→mmadL1）、CV（mmadL1→fixpipe→load→vector）、VC（vector→store→load→mmadL1）、VV（vector→store→load→vector）
 - **典型场景**：Cube-Vector 混合（CV 模式）
+
 before：
 ```
 %1 = mmadL1
@@ -149,6 +151,7 @@ vadd (%5)
 - **目的**：统一 workspace 来源，使运行时通过参数传入 workspace 指针，实现多 kernel 共享一块 workspace
 - **前置条件**：函数需有 workspace 参数；InsertWorkSpaceForMixCV 已插入 alloc_workspace
 - **典型场景**：Cube-Vector 混合（CV 模式）
+
 before：
 ```
 func.func @bind_workspace_arg(
@@ -173,6 +176,7 @@ func.func @bind_workspace_arg(
 - **作用**：在 `GLOBAL_WORKSPACE_PLAN` 模式下，对 `memref_ext.alloc_workspace` 进行内存规划，将 alloc 替换为 `hivm.hir.pointer_cast` + 偏移
 - **目的**：在给定 workspace 基址上，按 liveness 与 inplace 规则分配偏移，最大化复用、减少总 workspace 大小
 - **典型变换**：多个 alloc_workspace 被映射到同一块 workspace 的不同偏移；冲突的 buffer 分配不同偏移
+
 before：
 ```
 func.func @bind_workspace_arg(
@@ -197,6 +201,7 @@ func.func @bind_workspace_arg(
 - **作用**：将 Mix 内核拆分为 AIC（Cube 主）和 AIV（Vector 主）两个子函数，并生成 mix entry
 - **目的**：后端可按 AIC/AIV 分别调度到 Cube/Vector 核心，便于流水与同步
 - **典型变换**：根据 core type 遍历 IR，将 Cube 相关代码放入 AIC，Vector 放入 AIV；用 `annotation.mark` 标记跨核传递的 tensor
+
 before：
 ```
 func.func @bind_workspace_arg(
@@ -243,7 +248,6 @@ bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir
 bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 ```
 
-
 ### 3.1 测试用例
 目前库上所有的测试用例所在的路径都在 `path-to-ascendnpuir\bishengir\test`下，需要运行某个pass，搜索对应的编译命令即可找到对应的测试文件，例如搜索`hivm-normalize-matmul`即可找到对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
 
@@ -253,7 +257,7 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 // RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
 ```
 其中，`bishengir-opt`和`FileCheck`均为编译生成的二进制可执行文件，路径再`path-to-ascendnpuir\build\bin`下。上述命令中的`%s`替换成对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
-
+输出的mlir会匹配测试文件中的`CHECK:`部分，测试后没有任何`CHECK failed`的报错即执行成功。
 ---
 
 ## 4. 约束能力
