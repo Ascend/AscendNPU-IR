@@ -655,3 +655,43 @@ module {
     return
   }
 }
+
+// -----
+func.func @test_injcet_sync_while(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>,
+                               %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>,
+                               %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>,
+                               %arg3: memref<16x16x16xf16, #hivm.address_space<gm>>,
+                               %arg5: memref<16x16x16xf16, #hivm.address_space<gm>>,
+                               %arg4: i1) {
+  %c0_i64 = arith.constant 0 : i64
+  %c0_i32 = arith.constant 0 : i32
+  %c20_i32 = arith.constant 20 : i32
+  %c8192_i64 = arith.constant 8192 : i64
+  %c16384_i64 = arith.constant 16384 : i64
+  %c22912_i64 = arith.constant 22912 : i64
+
+  %0 = hivm.hir.pointer_cast(%c0_i64) [] : memref<16x16x16xf16, #hivm.address_space<ub>>
+  %2 = hivm.hir.pointer_cast(%c0_i64) [] : memref<16x16x16xf16, #hivm.address_space<ub>>
+  %4 = hivm.hir.pointer_cast(%c8192_i64) [] : memref<16x16x16xf16, #hivm.address_space<ub>>
+  %5 = hivm.hir.pointer_cast(%c16384_i64) [] : memref<16x16x16xf16, #hivm.address_space<ub>>
+
+  %ub_buf = hivm.hir.pointer_cast(%c22912_i64) [] : memref<16x16x16xf16, #hivm.address_space<ub>>
+
+  %70:2 = scf.while (%arg34 = %ub_buf, %arg35 = %c0_i32) : (memref<16x16x16xf16, #hivm.address_space<ub>>, i32) -> (memref<16x16x16xf16, #hivm.address_space<ub>>, i32) {
+    %71 = arith.cmpi slt, %arg35, %c20_i32 : i32
+    hivm.hir.vadd ins(%ub_buf, %4 : memref<16x16x16xf16, #hivm.address_space<ub>>,
+              memref<16x16x16xf16, #hivm.address_space<ub>>)
+              outs(%ub_buf : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    scf.condition(%71) %ub_buf, %arg35 : memref<16x16x16xf16, #hivm.address_space<ub>>, i32
+  } do {
+  ^bb0(%arg34 : memref<16x16x16xf16, #hivm.address_space<ub>>, %arg35 : i32):
+    scf.yield %arg34, %arg35 : memref<16x16x16xf16, #hivm.address_space<ub>>, i32
+  }
+    // CHECK: hivm.hir.set_flag[<PIPE_V>, <PIPE_MTE3>,
+    // CHECK: hivm.hir.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+  hivm.hir.store 
+    ins(%70#0 : memref<16x16x16xf16, #hivm.address_space<ub>>) 
+    outs(%arg5 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+
+  return
+}

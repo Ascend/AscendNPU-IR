@@ -292,6 +292,7 @@ void IRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
   UpdateWhileInitArgsAliasInfo(whileOp);
   RecursionIR(&whileOp.getBefore());
   RecursionIR(&whileOp.getAfter());
+  UpdateWhileResultAliasInfo(whileOp);
   loopBeginPtr->endId = index;
   auto forEnd = loopBeginPtr->CloneFor(KindOfLoop::LOOP_END);
   forEnd->elementOp = whileOp.getOperation();
@@ -325,6 +326,17 @@ void IRTranslator::UpdateWhileInitArgsAliasInfo(scf::WhileOp whileOp) {
        llvm::zip(conditionOp.getArgs(), whileOp.getAfterArguments())) {
     UpdateAliasBufferInfo(blockArg, yieldedArg);
   }
+}
+
+void IRTranslator::UpdateWhileResultAliasInfo(scf::WhileOp whileOp) {
+    for (auto [resultIdx, result] : llvm::enumerate(whileOp.getResults())) {
+        assert(whileOp.getConditionOp().getArgs().size() > resultIdx);
+        auto yieldedValueBefore = whileOp.getConditionOp().getArgs()[resultIdx];
+        assert(whileOp.getYieldedValues().size() > resultIdx);
+        auto yieldedValueAfter = whileOp.getYieldedValues()[resultIdx];
+        UpdateAliasBufferInfo(result, yieldedValueBefore);
+        UpdateAliasBufferInfo(result, yieldedValueAfter);
+    }
 }
 
 void IRTranslator::InsertPlaceHolderInst(InstanceElement *parentScope) {

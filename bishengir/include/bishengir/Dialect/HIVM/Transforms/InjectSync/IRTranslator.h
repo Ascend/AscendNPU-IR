@@ -67,6 +67,9 @@ public:
   /// Update whileOp InitArgs and RegionIterArgs alias info.
   void UpdateWhileInitArgsAliasInfo(scf::WhileOp whileOp);
 
+  /// Update whileOp Result and RegionIterArgs alias info.
+  void UpdateWhileResultAliasInfo(scf::WhileOp whileOp);
+
   /// Collect information on result replace source baseAddress and allocate
   /// size.
   void
