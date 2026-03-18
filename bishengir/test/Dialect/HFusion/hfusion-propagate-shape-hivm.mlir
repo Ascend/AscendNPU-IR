@@ -148,3 +148,19 @@ func.func @test_trivial_subview(%arg0: index, %arg1: index, %arg2: memref<?xf32>
   %0 = bufferization.to_tensor %alloc restrict writable : memref<128x1xf32>
   return %0 : tensor<128x1xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @reinterpret_cast
+// CHECK-SAME: %[[VAL_0:.*]]: memref<?xf32>,
+// CHECK-SAME: %[[VAL_1:.*]]: index) -> tensor<16x16xf32> {
+// CHECK: %{{.*}} = memref.reinterpret_cast %[[VAL_0]] to offset: [0], sizes: [16, 1], strides: {{\[}}%[[VAL_1]], %[[VAL_1]]] : memref<?xf32> to memref<16x1xf32, strided<[?, ?]>>
+func.func @reinterpret_cast(%arg0: memref<?xf32>, %arg1: index) -> tensor<16x16xf32> {
+  %alloc = memref.alloc() : memref<16x16xf32>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf32>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [16], strides: [%arg1] : memref<?xf32> to memref<16xf32, strided<[?]>>
+  %expand_shape = memref.expand_shape %reinterpret_cast [[0, 1]] output_shape [16, 1] : memref<16xf32, strided<[?]>> into memref<16x1xf32, strided<[?, ?]>>
+  %alloc_0 = memref.alloc() : memref<16x1xf32>
+  %collapse_shape = memref.collapse_shape %alloc_0 [[0, 1]] : memref<16x1xf32> into memref<16xf32>
+  hivm.hir.load ins(%expand_shape : memref<16x1xf32, strided<[?, ?]>>) outs(%alloc_0 : memref<16x1xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  return %0 : tensor<16x16xf32>
+}
