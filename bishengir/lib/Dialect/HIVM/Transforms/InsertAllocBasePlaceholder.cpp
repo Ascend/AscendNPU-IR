@@ -53,11 +53,12 @@ void InsertAllocBasePlaceholderPass::runOnOperation() {
       }
 
       auto *ctx = &getContext();
-      auto emptyAttr = DictionaryAttr::get(ctx);
       auto loc = UnknownLoc::get(ctx);
       OpBuilder builder(ctx);
       auto ty = MemRefType::get({PlaceholderSize}, builder.getI8Type());
-      funcOp.insertArgument(funcOp.getNumArguments(), ty, emptyAttr, loc);
+      auto sharedAttr = DictionaryAttr::get(
+          ctx, {NamedAttribute(SharedMemoryAttr::name, builder.getUnitAttr())});
+      funcOp.insertArgument(funcOp.getNumArguments(), ty, sharedAttr, loc);
 
       for (auto use : *symUses) {
         auto callOp = cast<func::CallOp>(use.getUser());
