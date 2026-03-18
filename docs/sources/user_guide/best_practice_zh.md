@@ -270,7 +270,7 @@ def npu_vector_cmp_kernel(
 
 ### 定界
 - **现象** 算子选项规避超时报错,导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
-- **示例**
+- **写法样例**
 
 | 编译选项 | 数值 | 说明 |
 |--------|------|------|
@@ -278,7 +278,7 @@ def npu_vector_cmp_kernel(
 | **inject_block_all**|  false(default). | 前端尝试打开为true,如果卡死问题消失，证明核间同步有问题,适用mix类kernel | 
 
 
-以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码调用为
+以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码写法样例调用如下：
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -301,7 +301,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-关闭CV流水后的调用则为
+开启CV全流水后的写法样例为
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -424,12 +424,12 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 
 ### 无效地址访问
 - **现象** 算子输入合法且均为同一个deviceID, 实际算子的deviceID设置不正确，导致无法取到数据，出现D-cache读写错误
-- **示例**
-错误示例
+- **写法样例**
+错误样例
 ```python
 A=torch.empty(shape, dtype)
 ```
-正确示例
+正确样例
 ```python
 A=torch.empty(shape, dtype).npu()
 or
@@ -439,47 +439,20 @@ A=torch.empty(shape, dtype, device=DEVICE).npu()
 
 ### 使用非负数iter arg作为访存索引
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
-- **示例**
-以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中offset的数值i_w可能是负数，以下面代码端作为示例，遇到实际的场景请参考下面示例改下访问方式。
+- **写法样例**
+以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中i_w可能是负数.
+错误样例
 ```python
 for i_w in tl.static_range(-W+1, 1):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
 ```
-正确示例
+正确样例
 ```python
 for i_w in tl.static_range(W):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
 ```
 
 ## 访存类
-### load非预期引入vtranspose op导致ub overflow
-- **现象** 算子编译或者精度报错，隐式转置明显特征最内轴stride不为1，外轴stride为1.
-- **示例**
-错误示例
-```python
-K_block_ptr=tl.make_block_ptr(
-    base = K,
-    shape =(HEAD_DIM, N_CTX),
-    stride=(kk, kn)
-    offsets=(0, 0),
-    block_shape=(HEAD_DIM, BLOCK_N),
-    order=(0, 1),
-)
-k=tl.load(K_block_ptr)
-```
-正确示例
-```python
-K_block_ptr=tl.make_block_ptr(
-    base = K,
-    shape =(N_CTX, HEAD_DIM),
-    stride=(kn, kk)
-    offsets=(0, 0),
-    block_shape=(BLOCK_N, HEAD_DIM),
-    order=(1, 0),
-)
-k=tl.load(K_block_ptr)
-trans_k=tl.trans(k)
-```
 
 ### Load隐式转置
 - **现象** “隐式转置”是指在加载或存储数据的同时完成矩阵转置操作，避免单独执行一个转置内核或额外的显式数据重排。
@@ -492,7 +465,7 @@ order参数指定内存中元素的迭代顺序，可以用来实现转置。或
 并从A中加载对应的转置块。加载时，可以使用make_block_ptr从A中加载，但步长设置为导致转置加载的步长？
 或者，更常见的做法是加载一个正常的A块，然后使用tl.trans转置后再存储到B。
 
-- **示例**
+- **写法样例**
 ```python
 import triton
 import triton.language as tl
@@ -546,9 +519,9 @@ def transpose_kernel(
 
 ### 使用mayDiscretememaccess规避UB overflow
 - **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
-- **示例**
+- **写法样例**
 改写算子时，只需在load/store操作的数据上加上`compile_hint`即可，参考以下代码段：
-
+triton-adaptor 3.2.0之前的版本
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
 value = tl.load(pointer)
@@ -559,7 +532,17 @@ tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-- **示例1**
+triton-adaptor 3.4.0之后的的版本需要改成
+```python
+# 若为load操作，compile_hint需加在加载出的value中
+value = tl.load(pointer)
+tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
+
+# 若为store操作，compile_hint需加在被存入的value中
+tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
+tl.store(pointer, value)
+```
+- **样例1**
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 ```
@@ -571,7 +554,7 @@ b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 tl.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
-- **示例2**
+- **样例2**
 ```diff
 import triton
 import triton.language as tl
@@ -798,8 +781,19 @@ tl.compile_hint(cond, "bitwise_mask")
 #### 算子示例
 
 参考 [Ascend where 算子](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py)进行改写，
-若用户需要输入bitwise的i8掩码作为算子入参，只需为tl.where的结果加上compile_hint即可，见以下代码：
+若用户需要输入bitwise的i8掩码作为算子入参，只需为tl.where的结果加上compile_hint即可。这里需要注意本地的TA版本。
+triton-adaptor 3.2.0之前的版本
+```python
+tl.compile_hint(cond, "bitwise_mask")
+```
+
+triton-adaptor 3.4.0之后的的版本需要改成
+```python
+tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+```
+其中依赖的代码脚本请下载链接，并将其和测试脚本放在同个目录下执行`python3 test_bitmask.py`。
 [triton testcommon script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
+bitmask功能cann9.0之后的版本才有，因此需要下载cann.9.0之后的版本。
 ```python
 import triton
 import triton.language as tl
@@ -817,7 +811,10 @@ def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: 
         in1 = tl.load(in_ptr1 + xindex, xmask)
         cond = tl.load(cond_ptr + xindex, xmask)
         res = tl.where(cond, in1, in0)
-        tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+        # versions after triton-adaptor 3.4.0
+        # tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+        # versions before triton-adaptor 3.2.0
+        tl.compile_hint(cond, "bitwise_mask")
         tl.store(out_ptr0 + (xindex), res, xmask)
 
 def test_where_lt_case1():
@@ -837,6 +834,7 @@ def test_where_lt_case1():
        
 test_where_lt_case1()
 ```
+执行结束不报错，证明运行成功。
 
 #### 限制
 

@@ -233,30 +233,6 @@ for i_w in tl.static_range(W):
 
 ## Memory access
 
-### Load introducing unexpected vtranspose and UB overflow
-
-- **Symptom**: Compile or precision error; a sign of implicit transpose is innermost stride ≠ 1 and outer stride = 1.
-- **Wrong example**:
-
-```python
-K_block_ptr = tl.make_block_ptr(
-    base=K, shape=(HEAD_DIM, N_CTX), stride=(kk, kn),
-    offsets=(0, 0), block_shape=(HEAD_DIM, BLOCK_N), order=(0, 1),
-)
-k = tl.load(K_block_ptr)
-```
-
-- **Correct example**:
-
-```python
-K_block_ptr = tl.make_block_ptr(
-    base=K, shape=(N_CTX, HEAD_DIM), stride=(kn, kk),
-    offsets=(0, 0), block_shape=(BLOCK_N, HEAD_DIM), order=(1, 0),
-)
-k = tl.load(K_block_ptr)
-trans_k = tl.trans(k)
-```
-
 ### Implicit transpose in load
 
 “Implicit transpose” means the load or store performs a transpose in one go, avoiding a separate transpose kernel or explicit data reorder. It is usually done by adjusting pointer shape and strides so that the access pattern swaps dimensions. You can use `tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)` with `order` or strides to achieve this. For a matrix transpose with input A (M, K) and output B (K, M), each block can process a block of B and load the corresponding transposed block from A (e.g. with swapped strides), or load a normal block of A and use `tl.trans` before storing to B.
@@ -336,16 +312,23 @@ On Ascend, boolean (i1) tensors are stored in GM as i8 (one byte). Triton Ascend
 #### Usage
 
 Add the hint on the condition used in `tl.where`:
-
+For versions prior to triton-adaptor 3.2.0:
 ```python
 mask = tl.where(cond, value1, value2)
 tl.compile_hint(cond, "bitwise_mask")
 ```
-
+For versions after triton-adaptor 3.4.0, it needs to be changed to:
+```python
+mask = tl.where(cond, value1, value2)
+tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+```
 Mask pointer offsets must be computed correctly for the bitmask layout. See the figures in the Chinese version for layout.
 
 #### Example
 See [Ascend where kernel](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py). For i8 bitwise mask input, add the hint to the result of `tl.where`:
+
+Please download the dependency script from the link below, place it in the same directory as the test script, and run `python3 test_bitmask.py`.
+The bitmask feature is only available in versions after CANN 9.0, so you need to download a version after CANN 9.0.
 
  [related script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 ```python
@@ -365,7 +348,10 @@ def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: 
         in1 = tl.load(in_ptr1 + xindex, xmask)
         cond = tl.load(cond_ptr + xindex, xmask)
         res = tl.where(cond, in1, in0)
-        tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+        # versions after triton-adaptor 3.4.0
+        # tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+        # versions before triton-adaptor 3.2.0
+        tl.compile_hint(cond, "bitwise_mask")
         tl.store(out_ptr0 + (xindex), res, xmask)
 
 def test_where_lt_case1():
@@ -385,8 +371,11 @@ def test_where_lt_case1():
        
 test_where_lt_case1()
 ```
+If it finishes execution without errors, it proves the run was successful.
 
 Because bitwise mask packs 8 i8 booleans into one i8, the mask assembly logic must be updated accordingly (e.g. expand byte to 8 bits when comparing with torch reference). See the Chinese version for the full test_where_lt_case1 example.
+
+
 
 #### Limit
 
