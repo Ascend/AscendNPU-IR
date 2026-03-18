@@ -1,0 +1,38 @@
+diff --git a/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h b/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
+index 4e27612d9fdd..0876be9a3da1 100644
+--- a/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
++++ b/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
+@@ -632,6 +632,10 @@ template <typename OpTy, typename... Args>
+ OpTy replaceOpWithNewBufferizedOp(RewriterBase &rewriter, Operation *op,
+                                   Args &&...args) {
+   auto newOp = rewriter.create<OpTy>(op->getLoc(), std::forward<Args>(args)...);
++  for (auto attr : op->getAttrs()) {
++    if (!newOp->hasAttr(attr.getName()))
++      newOp->setAttr(attr.getName(), attr.getValue());
++  }
+   replaceOpWithBufferizedValues(rewriter, op, newOp->getResults());
+   return newOp;
+ }
+diff --git a/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp b/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
+index d97a90157b55..49df92d24701 100644
+--- a/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
++++ b/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
+@@ -403,11 +403,16 @@ struct ExtractSliceOpInterface
+         bufferization::getBufferType(extractSliceOp.getResult(), options);
+     if (failed(resultMemrefType))
+       return failure();
+-    Value subView = rewriter.create<memref::SubViewOp>(
++    auto subView = rewriter.create<memref::SubViewOp>(
+         loc, llvm::cast<MemRefType>(*resultMemrefType), *srcMemref,
+         mixedOffsets, mixedSizes, mixedStrides);
++    
++    for (auto attr : op->getAttrs()) {
++      if (!subView->hasAttr(attr.getName()))
++        subView->setAttr(attr.getName(), attr.getValue());
++    }
+ 
+-    replaceOpWithBufferizedValues(rewriter, op, subView);
++    replaceOpWithBufferizedValues(rewriter, op, subView.getResult());
+     return success();
+   }
+ 
