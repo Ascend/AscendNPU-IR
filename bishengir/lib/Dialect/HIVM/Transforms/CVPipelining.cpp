@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -376,10 +377,10 @@ void CVPipeliningPass::printWorkList(
 }
 
 static int getMultibufferCount(annotation::MarkOp marker) {
+  auto attrDict = marker->getAttrDictionary();
+  hivm::util::validateMultiBufferAttr(attrDict);
   auto multibufferAttr = llvm::cast_if_present<IntegerAttr>(
-      marker->getAttr(MultiBufferAttr::name));
-  if (!multibufferAttr)
-    return -1;
+    marker->getAttr(MultiBufferAttr::name));
   return multibufferAttr.getInt();
 }
 

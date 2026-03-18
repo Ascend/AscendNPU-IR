@@ -85,6 +85,7 @@ static bool isMarked(Operation *op) {
     if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
       auto attrDict = markOp->getAttrDictionary();
       if (!attrDict.empty() && attrDict.contains(hivm::MultiBufferAttr::name)) {
+        hivm::util::validateMultiBufferAttr(attrDict);
         LLVM_DEBUG(DBGS() << "already marked, skip.\n");
         return true;
       }

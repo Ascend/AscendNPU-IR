@@ -398,6 +398,7 @@ bool isGMPointerCastOp(Operation *op);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

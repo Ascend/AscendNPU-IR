@@ -1274,6 +1274,18 @@ bool isArgminOrArgmax(ReduceOperation op) {
          op == ReduceOperation::min_with_index_right ||
          op == ReduceOperation::max_with_index_right;
 }
+
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {
+  auto attr = attrDict.get(hivm::MultiBufferAttr::name);
+  mlir::IntegerAttr intAttr = mlir::dyn_cast<mlir::IntegerAttr>(attr);
+  if (!intAttr) {
+    llvm::report_fatal_error("MultiBufferAttr illegal!!!");
+  }
+  int64_t attrValue = intAttr.getValue().getSExtValue();
+  if (attrValue < 1) {
+    llvm::report_fatal_error("MultiBufferAttr should be >= 1!!");
+  }
+}
 } // namespace util
 } // namespace hivm
 } // namespace mlir
