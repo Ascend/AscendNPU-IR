@@ -871,8 +871,8 @@ func.func @triton_argmax_3d(%arg0: memref<7x17x15x1xf16, strided<[272, 16, 1, 1]
 
 // CHECK-LABEL: transpose_with_unit(
 // CHECK: vtranspose
-// CHECK-SAME: memref<27x22x1xf16
-// CHECK-SAME: memref<22x27x1xf16
+// CHECK-SAME: memref<27x22xf16
+// CHECK-SAME: memref<22x27xf16
 func.func @transpose_with_unit(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.shape_0 = 0 : i32, tt.shape_1 = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, false, false, false]> : vector<7xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
   hivm.hir.set_mask_norm
   %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [27, 22, 1], strides: [22, 1, 1] : memref<?xf16, #hivm.address_space<gm>> to memref<27x22x1xf16, strided<[22, 1, 1]>, #hivm.address_space<gm>>
@@ -1092,4 +1092,23 @@ func.func @hivm_transpose_last_0(%arg0: memref<15x1x17xf32>, %arg1: memref<16x15
   // hivm.hir.vtranspose ins({{.*}} : memref<240x17x1xf16>) outs({{.*}} : memref<17x240x1xf16>) permutation = [1, 0, 2]
   hivm.hir.vtranspose ins(%arg1 : memref<16x15x17x1xf16>) outs(%3 : memref<17x16x15x1xf16>) permutation = [2, 0, 1, 3]
   return %3 : memref<17x16x15x1xf16>
+}
+
+// -----
+// CHECK-LABEL: func.func @hivm_transpose_mid_4
+func.func @hivm_transpose_mid_4(%arg1: memref<16x1x15x17xf16>) -> memref<16x15x17x1xf16> {
+  %3 = memref.alloc() : memref<16x15x17x1xf16>
+  // CHECK: hivm.hir.vtranspose ins(%{{.*}} : memref<4080xf16>) outs(%{{.*}} : memref<4080xf16>) permutation = [0]
+  hivm.hir.vtranspose ins(%arg1 : memref<16x1x15x17xf16>) outs(%3 : memref<16x15x17x1xf16>) permutation = [0, 2, 3, 1]
+  return %3 : memref<16x15x17x1xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @hivm_transpose_mid_5
+func.func @hivm_transpose_mid_5(%arg1: memref<16x1x15x17xf16>) -> memref<15x17x16x1xf16> {
+  %3 = memref.alloc() : memref<15x17x16x1xf16>
+  // CHECK: hivm.hir.vtranspose ins(%{{.*}} : memref<16x255xf16>) outs(%{{.*}} : memref<255x16xf16>) permutation = [1, 0]
+  hivm.hir.vtranspose ins(%arg1 : memref<16x1x15x17xf16>) outs(%3 : memref<15x17x16x1xf16>) permutation = [2, 3, 0, 1]
+  return %3 : memref<15x17x16x1xf16>
 }

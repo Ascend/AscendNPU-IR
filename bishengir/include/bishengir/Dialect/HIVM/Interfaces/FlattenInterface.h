@@ -170,8 +170,8 @@ FlattenResult getFlattenedBroadcastableOTF(HIVMStructuredOp op,
 
 /// Computes the `FlattenResult` for an elementwise operation that has inline
 /// transposing.
-FlattenResult getFlattenedTransposableOTF(HIVMStructuredOp op,
-                                          FlattenOptions &options);
+FlattenResult getFlattenedTransposeLike(HIVMStructuredOp op,
+                                        FlattenOptions &options);
 
 /// Computes the `FlattenResult` for any operation that is known to have a
 /// uniform reassociation map (e.g., rank-preserving ops).
@@ -191,10 +191,9 @@ FlattenResult getFlattenedUnit(FlattenResult &payload, FlattenOptions &options);
 /// @param op The structured operation to flatten.
 /// @param permutationArray The permutation array of transposableOTF
 /// @return A `FlattenResult` reflecting the collapsed unit dimensions.
-FlattenResult
-getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
-                                const FlattenOptions &options,
-                                ArrayRef<int64_t> permutationArray);
+FlattenResult getFlattenedUnitTransposeLike(HIVMStructuredOp op,
+                                            const FlattenOptions &options,
+                                            ArrayRef<int64_t> permutationArray);
 
 /// Computes the limited axes for a generic elementwise operation.
 SmallVector<int64_t> computeElementwiseLimitation(HIVMStructuredOp op);

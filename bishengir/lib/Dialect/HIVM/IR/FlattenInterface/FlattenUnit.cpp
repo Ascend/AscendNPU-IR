@@ -207,9 +207,9 @@ FlattenResult getFlattenedUnit(FlattenResult &payload,
 /// but its also assumed that after unit flattened the rank shall be the same
 /// still
 FlattenResult
-getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
-                                [[maybe_unused]] const FlattenOptions &options,
-                                ArrayRef<int64_t> permutationArray) {
+getFlattenedUnitTransposeLike(HIVMStructuredOp op,
+                              [[maybe_unused]] const FlattenOptions &options,
+                              ArrayRef<int64_t> permutationArray) {
   // Drop input first
   FlattenResult res(op.getOperation());
   res.originalTargetDims = llvm::to_vector(permutationArray);
@@ -218,10 +218,11 @@ getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
     auto val = opr.get();
     if (auto memrefType = dyn_cast<MemRefType>(val.getType())) {
       auto unitMask = getUnitAxesMaskImpl(memrefType);
-      // Disable flattening the back because vtranspose may not be able to
+      // Disable flattening the back because transposable OTF may not be able to
       // support back collapse, still need a pivot, collapse of the last element
       // will be done in the get flattened transposable phase
-      unitMask[static_cast<int>(unitMask.size()) - 1] = false;
+      if (!isa<VTransposeOp>(op))
+        unitMask[static_cast<int>(unitMask.size()) - 1] = false;
       ReassociationMap newReassociation =
           getReassociationFromUnitMask(unitMask);
       res.reassociation.push_back(newReassociation);

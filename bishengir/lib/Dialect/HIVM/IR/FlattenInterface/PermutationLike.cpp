@@ -109,11 +109,11 @@ static void getFragmentedPermutationAndInputReassociation(
   }
 }
 
-FlattenResult getFlattenedTransposableOTF(HIVMStructuredOp op,
-                                          FlattenOptions &options) {
+FlattenResult getFlattenedTransposeLike(HIVMStructuredOp op,
+                                        FlattenOptions &options) {
   //  First of all, remove all the unit operations
   FlattenResult unitResult =
-      getFlattenedUnitTransposableOTF(op, options, op.getPermutationArray());
+      getFlattenedUnitTransposeLike(op, options, op.getPermutationArray());
   LDBG(to_string(unitResult.getInputReassociation()));
 
   PermutationBlocks permutationBlocks = getPermutationBlocks(unitResult);
