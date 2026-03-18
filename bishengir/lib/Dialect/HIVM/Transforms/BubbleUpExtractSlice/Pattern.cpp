@@ -163,9 +163,15 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
 
   rewriter.setInsertionPoint(childOp);
 
-  return rewriter.create<OpTy2>(childOp->getLoc(), createdNewParent,
-                                std::forward(args)..., newViewOffsets,
-                                newViewSizes, parentOp.getMixedStrides());
+  auto newOp = rewriter.create<OpTy2>(childOp->getLoc(), createdNewParent,
+      std::forward(args)..., newViewOffsets,
+      newViewSizes, parentOp.getMixedStrides());
+  for (auto attr : childOp->getAttrs()) {
+    if (!newOp->hasAttr(attr.getName()) && 
+        attr.getName() != toBeBubbleUpSlice)
+      newOp->setAttr(attr.getName(), attr.getValue());
+  }
+  return newOp;
 }
 
 LogicalResult
@@ -537,6 +543,11 @@ handleExtractRankReducedCase(tensor::ExtractSliceOp sliceOp,
   auto newParentSliceOp = rewriter.create<tensor::ExtractSliceOp>(
       sliceOp->getLoc(), newSliceOp, parentSliceOp.getMixedOffsets(),
       newParentSizes, parentSliceOp.getMixedStrides());
+  for (auto attr : parentSliceOp->getAttrs()) {
+    if (!newParentSliceOp->hasAttr(attr.getName()) && 
+        attr.getName() != toBeBubbleUpSlice)
+      newParentSliceOp->setAttr(attr.getName(), attr.getValue());
+  }
   rewriter.replaceOp(parentSliceOp, newSliceOp);
 
   rewriter.modifyOpInPlace(newParentSliceOp, [&]() {
@@ -1043,7 +1054,6 @@ static void sliceRegionIterArg(BlockArgument regionIterArg,
                                PatternRewriter &rewriter) {
   regionIterArg.setType(sliceOp.getType());
   rewriter.setInsertionPointAfterValue(regionIterArg);
-  LDBG("!!!!: " << sliceOp);
   auto tmpEmpty = rewriter.create<tensor::EmptyOp>(loc, sliceOp.getSourceType(),
                                                    ValueRange{});
   auto argumentInsert = rewriter.create<tensor::InsertSliceOp>(

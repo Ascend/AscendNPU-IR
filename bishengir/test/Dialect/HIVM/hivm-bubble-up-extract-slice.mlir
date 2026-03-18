@@ -907,3 +907,16 @@ func.func @trivial_collapse2(%arg0: tensor<1x1x64xf32>, %arg1: memref<1x64xf32>,
   hivm.hir.store ins(%extracted_slice : tensor<1x32xf32>) outs(%subview : memref<1x32xf32, strided<[64, 1], offset: ?>>) {tiled_op}
   return
 }
+
+// -----
+// CHECK-LABEL:   func.func @extract_slice_attribute(
+// CHECK-SAME:                                       %[[VAL_0:.*]]: tensor<4x32x64xi32>) -> tensor<16x64xi32> {
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, 0, 0] [4, 16, 64] [1, 1, 1] {to_be_bubbled_slice} : tensor<4x32x64xi32> to tensor<4x16x64xi32>
+// CHECK:           %[[VAL_2:.*]] = tensor.extract_slice %[[VAL_1]][0, 0, 0] [1, 16, 64] [1, 1, 1] {hivm.preload_workspace} : tensor<4x16x64xi32> to tensor<16x64xi32>
+// CHECK:           return %[[VAL_2]] : tensor<16x64xi32>
+// CHECK:         }
+func.func @extract_slice_attribute(%arg0: tensor<4x32x64xi32>) -> tensor<16x64xi32> {
+  %extracted_slice = tensor.extract_slice %arg0[0, 0, 0] [1, 32, 64] [1, 1, 1] {hivm.preload_workspace} : tensor<4x32x64xi32> to tensor<32x64xi32>
+  %extracted_slice_0 = tensor.extract_slice %extracted_slice[0, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xi32> to tensor<16x64xi32>
+  return %extracted_slice_0 : tensor<16x64xi32>
+}
