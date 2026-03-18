@@ -223,10 +223,6 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   }
 #endif
 
-#if BISHENGIR_ENABLE_TRITON_COMPILE
-  buildBiShengTTIRPipeline(pm, config);
-#endif
-
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   if (config.shouldCompileHFusion()) {
     setupHFusionPipelineOptions(hfusionPipelineOptions, config);
