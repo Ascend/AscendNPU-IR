@@ -366,6 +366,7 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.setInsertionPointAfter(hivmOp);
   Operation *newOp = clone(rewriter, hivmOp, resultTensorTypes, tiledOperands);
   rewriter.replaceOp(sliceOp, newOp->getResults());
+  rewriter.eraseOp(hivmOp);
   return success();
 }
 

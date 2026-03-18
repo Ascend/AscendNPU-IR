@@ -8,7 +8,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/CSEPattern.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/MoveUpAffineMap.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
@@ -51,7 +51,8 @@ public:
       return true;
     auto allocOp = cast<memref::AllocOp>(maybeAlloc.value());
     return utils::getAnnotateOpWithAttr(
-        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name).has_value();
+               allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name)
+        .has_value();
   }
 
   LogicalResult
@@ -101,12 +102,11 @@ public:
     config.maxIterations = 50;
     // Apply bubble up patterns
     RewritePatternSet patterns(funcOp.getContext());
-    populateMoveUpAffineMapPattern(patterns);
+    populateHoistAffinePattern(patterns);
     populateBubbleUpExtractSliceOpPatterns(patterns);
     populateCSEPattern(patterns);
     tensor::populateFoldTensorEmptyPatterns(patterns, true);
-    if (failed(applyPatternsGreedily(funcOp, std::move(patterns),
-                                            config))) {
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       return signalPassFailure();
     }
     PassManager pm(funcOp->getContext());
@@ -118,7 +118,7 @@ public:
     // Apply bubble up once more, because canonicalize might bring more
     // opportunity.
     RewritePatternSet patterns2(funcOp.getContext());
-    populateMoveUpAffineMapPattern(patterns2);
+    populateHoistAffinePattern(patterns2);
     populateBubbleUpExtractSliceOpPatterns(patterns2);
     populateCSEPattern(patterns2);
     tensor::populateFoldTensorEmptyPatterns(patterns2, true);
