@@ -1003,6 +1003,11 @@ public:
     // auto splitMode = tilingDim == 0? hivm::FixpipeDualDstMode::ROW_SPLIT : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
+    auto verifyShape = [](ArrayRef<int64_t> shape) -> bool {
+      // Return true if the shape is valid:
+      return llvm::all_of(
+          shape, [](auto s) { return (s >= 0) || ShapedType::isDynamic(s); });
+    };
 
     if (!cvpipeFlag) {
       switch (splitMode) {
@@ -1014,6 +1019,9 @@ public:
         break;
       default:
         break;
+      }
+      if (!verifyShape(shape)) {
+        return failure();
       }
       auto newTy = MemRefType::get(shape, oldTy.getElementType(),
                                    oldTy.getLayout(), oldTy.getMemorySpace());
@@ -1041,89 +1049,89 @@ public:
       rewriter.eraseOp(markOp);
       rewriter.eraseOp(allocOp);
       return success();
-    } else {
-      switch (splitMode) {
-      case hivm::FixpipeDualDstMode::ROW_SPLIT:
-        shape[1] = shape[1] / 2;
-        break;
-      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-        shape[2] = shape[2] / 2;
-        break;
-      default:
-        break;
-      }
-      auto newTy = MemRefType::get(shape, oldTy.getElementType(),
-                                   oldTy.getLayout(), oldTy.getMemorySpace());
-
-      rewriter.setInsertionPoint(allocOp);
-      auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
-
-      rewriter.setInsertionPoint(markOp);
-      auto newMark =
-          rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
-      rewriter.modifyOpInPlace(newMark,
-                               [&] { newMark->setAttrs(markOp->getAttrs()); });
-      rewriter.setInsertionPoint(subviewOp);
-      SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
-      switch (splitMode) {
-      case hivm::FixpipeDualDstMode::ROW_SPLIT:
-        if (sizes[1].is<Attribute>()) {
-          int64_t oldSize =
-              cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
-          sizes[1] = rewriter.getIndexAttr(oldSize / 2);
-        }
-        break;
-      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-        if (sizes[2].is<Attribute>()) {
-          int64_t oldSize =
-              cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
-          sizes[2] = rewriter.getIndexAttr(oldSize / 2);
-        }
-        break;
-      default:
-        break;
-      }
-
-      int64_t dim1 = sizes[1].is<Attribute>()
-                         ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt()
-                         : ShapedType::kDynamic;
-      int64_t dim2 = sizes[2].is<Attribute>()
-                         ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt()
-                         : ShapedType::kDynamic;
-      SmallVector<int64_t> new2DShape = {dim1, dim2};
-
-      auto srcType = cast<MemRefType>(newAlloc.getType());
-      Type elementType = srcType.getElementType();
-      Attribute memorySpace = srcType.getMemorySpace();
-      auto layout = StridedLayoutAttr::get(rewriter.getContext(),
-                                           ShapedType::kDynamic, {dim2, 1});
-      auto result2DType =
-          MemRefType::get(new2DShape, elementType, layout, memorySpace);
-
-      auto newSubview = rewriter.create<memref::SubViewOp>(
-          subviewOp.getLoc(), result2DType, newAlloc,
-          subviewOp.getMixedOffsets(), sizes, subviewOp.getMixedStrides());
-
-      auto dualAttr =
-          hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
-      rewriter.setInsertionPoint(op);
-      NamedAttrList attrs(op->getAttrs());
-      attrs.set(op.getDualDstModeAttrName(), dualAttr);
-
-      auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-          op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
-          attrs.getAttrs());
-
-      rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
-      rewriter.replaceAllUsesWith(subviewOp.getResult(),
-                                  newSubview.getResult());
-      rewriter.replaceOp(op, newFixpipeOp->getResults());
-
-      rewriter.eraseOp(subviewOp);
-      rewriter.eraseOp(markOp);
-      rewriter.eraseOp(allocOp);
-      return success();
     }
+
+    switch (splitMode) {
+    case hivm::FixpipeDualDstMode::ROW_SPLIT:
+      shape[1] = shape[1] / 2;
+      break;
+    case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
+      shape[2] = shape[2] / 2;
+      break;
+    default:
+      break;
+    }
+    if (!verifyShape(shape)) {
+      return failure();
+    }
+    auto newTy = MemRefType::get(shape, oldTy.getElementType(),
+                                 oldTy.getLayout(), oldTy.getMemorySpace());
+
+    rewriter.setInsertionPoint(allocOp);
+    auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
+
+    rewriter.setInsertionPoint(markOp);
+    auto newMark =
+        rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
+    rewriter.modifyOpInPlace(newMark,
+                             [&] { newMark->setAttrs(markOp->getAttrs()); });
+    rewriter.setInsertionPoint(subviewOp);
+    SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
+    switch (splitMode) {
+    case hivm::FixpipeDualDstMode::ROW_SPLIT:
+      if (sizes[1].is<Attribute>()) {
+        int64_t oldSize = cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
+        sizes[1] = rewriter.getIndexAttr(oldSize / 2);
+      }
+      break;
+    case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
+      if (sizes[2].is<Attribute>()) {
+        int64_t oldSize = cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
+        sizes[2] = rewriter.getIndexAttr(oldSize / 2);
+      }
+      break;
+    default:
+      break;
+    }
+
+    int64_t dim1 = sizes[1].is<Attribute>()
+                       ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt()
+                       : ShapedType::kDynamic;
+    int64_t dim2 = sizes[2].is<Attribute>()
+                       ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt()
+                       : ShapedType::kDynamic;
+    SmallVector<int64_t> new2DShape = {dim1, dim2};
+
+    auto srcType = cast<MemRefType>(newAlloc.getType());
+    Type elementType = srcType.getElementType();
+    Attribute memorySpace = srcType.getMemorySpace();
+    auto layout = StridedLayoutAttr::get(rewriter.getContext(),
+                                         ShapedType::kDynamic, {dim2, 1});
+    auto result2DType =
+        MemRefType::get(new2DShape, elementType, layout, memorySpace);
+
+    auto newSubview = rewriter.create<memref::SubViewOp>(
+        subviewOp.getLoc(), result2DType, newAlloc, subviewOp.getMixedOffsets(),
+        sizes, subviewOp.getMixedStrides());
+
+    auto dualAttr =
+        hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
+    rewriter.setInsertionPoint(op);
+    NamedAttrList attrs(op->getAttrs());
+    attrs.set(op.getDualDstModeAttrName(), dualAttr);
+
+    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+        op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
+        attrs.getAttrs());
+
+    rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
+    rewriter.replaceAllUsesWith(subviewOp.getResult(), newSubview.getResult());
+    rewriter.replaceOp(op, newFixpipeOp->getResults());
+
+    rewriter.eraseOp(subviewOp);
+    rewriter.eraseOp(markOp);
+    rewriter.eraseOp(allocOp);
+    return success();
   }
 };
 } // namespace
