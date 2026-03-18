@@ -253,3 +253,21 @@ func.func @do_not_capture_loop_subview_offset(%arg0: memref<16xf32>) attributes 
   }
   return
 }
+
+
+// -----
+// CHECK-LABEL: @check_dominance_legal
+// CHECK: hivm.hir.load ins(%arg0 : memref<32xbf16>) outs(%alloc : memref<32xbf16>) pad_mode = <PadValue> pad_value = %0
+module {
+func.func private @some_vf_call() -> bf16
+func.func @check_dominance_legal(%arg0: memref<32xbf16>, %arg1: memref<32xbf16>, %cond: i1) {
+  %c0 = arith.constant 0 : index
+  %alloc = memref.alloc() : memref<32xbf16>
+  scf.if %cond {
+    memref.copy %arg0, %alloc : memref<32xbf16> to memref<32xbf16>
+    %res = func.call @some_vf_call() : () -> bf16
+    annotation.mark %alloc keys = ["pad_const"] values = [%res : bf16] : memref<32xbf16>
+  }
+  return
+}
+}
