@@ -491,7 +491,8 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       expandOp.getReassociationIndices());
 
     rewriter.replaceOp(sliceOp, newExpandOp);
-    rewriter.eraseOp(expandOp);
+    if (expandOp->use_empty())
+      rewriter.eraseOp(expandOp);
     return success();
   } 
   else {
@@ -522,7 +523,8 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         loc, sliceOp.getResultType(), newSliceOp,
         expandOp.getReassociationIndices());
     rewriter.replaceOp(sliceOp, newExpandOp);
-    rewriter.eraseOp(expandOp);
+    if (expandOp->use_empty())
+      rewriter.eraseOp(expandOp);
     return success();
   }
 }
@@ -943,7 +945,8 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     collapseOp.getReassociationIndices());
     
   rewriter.replaceOp(sliceOp, newCollapseOp);
-  rewriter.eraseOp(collapseOp);
+  if (collapseOp->use_empty())
+    rewriter.eraseOp(collapseOp);
   return success();
   }
 
@@ -1112,7 +1115,8 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   );
 
   rewriter.replaceOp(sliceOp, newVTransOp);
-  rewriter.eraseOp(VTransOp);
+  if (VTransOp->use_empty())
+    rewriter.eraseOp(VTransOp);
 
   return success();
 }
@@ -1198,8 +1202,10 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
           newToTensorOp->setOperand(0, newAllocOp.getResult()); });
     
         rewriter.replaceOp(sliceOp, newToTensorOp);
-        rewriter.eraseOp(ToTensorOp);
-        rewriter.eraseOp(subviewOp);
+        if (ToTensorOp->use_empty())
+          rewriter.eraseOp(ToTensorOp);
+        if (subviewOp->use_empty())
+          rewriter.eraseOp(subviewOp);
       }
     return success();
     }
@@ -1279,9 +1285,12 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
       rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
           sliceOp, allocOp.getResult(), true, true);
 
-      rewriter.eraseOp(subViewOp);
-      rewriter.eraseOp(subViewOpGM);
-      rewriter.eraseOp(ToTensorOp);
+      if (subViewOp->use_empty())
+        rewriter.eraseOp(subViewOp);
+      if (subViewOpGM->use_empty())
+        rewriter.eraseOp(subViewOpGM);
+      if (ToTensorOp->use_empty())
+        rewriter.eraseOp(ToTensorOp);
       return success();
     }
   }
@@ -1351,9 +1360,12 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
           );
       
         rewriter.replaceOp(sliceOp, newToTensorOp);
-        rewriter.eraseOp(ToTensorOp);
-        rewriter.eraseOp(memorySpaceCastOp);
-        rewriter.eraseOp(UbAllocOp);
+        if (ToTensorOp->use_empty())
+          rewriter.eraseOp(ToTensorOp);
+        if (memorySpaceCastOp->use_empty())
+          rewriter.eraseOp(memorySpaceCastOp);
+        if (UbAllocOp->use_empty())
+          rewriter.eraseOp(UbAllocOp);
       
         return success();
       }
@@ -1376,7 +1388,8 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
         );
 
       rewriter.replaceOp(sliceOp, newToTensorOp);
-      rewriter.eraseOp(ToTensorOp);
+      if (ToTensorOp->use_empty())
+        rewriter.eraseOp(ToTensorOp);
 
       return success();
     }
@@ -1472,10 +1485,14 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
         );
       
       rewriter.replaceOp(sliceOp, newToTensorOp);
-      rewriter.eraseOp(ToTensorOp);
-      rewriter.eraseOp(memExpandOp);
-      rewriter.eraseOp(memorySpaceCastOp);
-      rewriter.eraseOp(UbAllocOp);
+      if (ToTensorOp->use_empty())
+        rewriter.eraseOp(ToTensorOp);
+      if (memExpandOp->use_empty())
+        rewriter.eraseOp(memExpandOp);
+      if (memorySpaceCastOp->use_empty())
+        rewriter.eraseOp(memorySpaceCastOp);
+      if (UbAllocOp->use_empty())
+        rewriter.eraseOp(UbAllocOp);
 
       return success();
       }
@@ -1547,7 +1564,8 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       ValueRange{fixpipeOp.getSrc(), newSliceOp.getResult()}, attrs.getAttrs());
 
   rewriter.replaceOp(sliceOp, newFixpipeOp);
-  rewriter.eraseOp(fixpipeOp);
+  if (fixpipeOp->use_empty())
+    rewriter.eraseOp(fixpipeOp);
 
   return success();
 }
