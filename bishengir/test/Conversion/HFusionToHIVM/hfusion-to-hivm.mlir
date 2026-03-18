@@ -16,6 +16,10 @@ func.func @test_elemwise_unary_ops(
   linalg.elemwise_unary {fun = #linalg.unary_fn<log>}
     ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
+  //     CHECK: hivm.hir.vmul
+  linalg.elemwise_unary {fun = #linalg.unary_fn<negf>}
+    ins(%src : memref<6x6xf32>)
+    outs(%dst : memref<6x6xf32>)
   return
 }
 

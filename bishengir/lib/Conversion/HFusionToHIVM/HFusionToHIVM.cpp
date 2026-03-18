@@ -104,6 +104,9 @@ public:
     return hivmOp;
   }
 
+  OpBuilder &getBuilder() { return b; }
+  Operation *getOp() { return op; }
+
   ~ElemwiseOpConvertor() {}
 
 private:
@@ -189,6 +192,23 @@ Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
                                  roundMode, casting);
 }
 
+Operation *convertNegfToMulOp(ElemwiseOpConvertor &b) {
+  auto elemwiseOp = cast<linalg::ElemwiseUnaryOp>(b.getOp());
+  auto input = elemwiseOp.getDpsInputs()[0];
+  auto elementType = getElementTypeOrSelf(input);
+  
+  OpBuilder &builder = b.getBuilder();
+  Value negOne = builder.create<arith::ConstantOp>(
+      elemwiseOp->getLoc(), elementType, builder.getFloatAttr(elementType, -1.0));
+  
+  auto operation = cast<DestinationStyleOpInterface>(b.getOp());
+  Location location = operation->getLoc();
+  auto resultTypes = operation->getResultTypes();
+  auto inits = operation.getDpsInits();
+  
+  return builder.create<hivm::VMulOp>(location, resultTypes, ValueRange{input, negOne}, inits);
+}
+
 Operation *convertUnaryLinalgOp(ElemwiseOpConvertor &b, linalg::UnaryFn kind) {
   switch (kind) {
   case linalg::UnaryFn::exp:
@@ -197,6 +217,8 @@ Operation *convertUnaryLinalgOp(ElemwiseOpConvertor &b, linalg::UnaryFn kind) {
     return b.create<hivm::VLnOp>();
   case linalg::UnaryFn::abs:
     return b.create<hivm::VAbsOp>();
+  case linalg::UnaryFn::negf:
+    return convertNegfToMulOp(b);
   default:
     llvm_unreachable("unsupported linalg unary operation kind");
   }
