@@ -749,10 +749,11 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_dst_mode,
                       FixpipePreQuantModeAttr pre_quant,
-                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
+                      Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
         dma_mode, dual_dst_mode, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ ArrayAttr{});
+        /*unit_flag_mode*/ ArrayAttr{}, quant_scale);
 }
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -760,10 +761,11 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_dst_mode,
                       FixpipePreQuantModeAttr pre_quant,
-                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
+                      Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
         dma_mode, dual_dst_mode, pre_quant, pre_relu, channel_split,
-        /*unit_flag_mode*/ ArrayAttr{});
+        /*unit_flag_mode*/ ArrayAttr{}, quant_scale);
 }
 
 void FixpipeOp::getEffects(

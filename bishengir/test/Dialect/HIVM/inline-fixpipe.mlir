@@ -1247,3 +1247,37 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
   hivm.hir.store ins(%casted : tensor<256x256xf32>) outs(%dst : memref<256x256xf32>)
   return
 }
+
+// -----
+
+// CHECK: func.func @only_inline_quant_scale_fixpipe_vmul_store(%[[SRC:.*]]: tensor<?x64xf32>, %[[_:.*]]: tensor<?x64xf32>, %[[QUANT_SCALE:.*]]: f32, %[[_:.*]], %[[STORE_DST:.*]]: memref<2x64xf32, strided<[256, 1], offset: ?>>)
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice %[[SRC]][0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
+// CHECK-NEXT: return
+module {
+  func.func @only_inline_quant_scale_fixpipe_vmul_store(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: tensor<?x64xf32>, %arg5: memref<2x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg2 : tensor<?x64xf32>, f32) outs(%arg3 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %extracted_slice = tensor.extract_slice %1[0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
+    hivm.hir.store ins(%extracted_slice : tensor<2x64xf32>) outs(%arg5 : memref<2x64xf32, strided<[256, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// CHECK: func.func @dont_inline_quant_scale_fixpipe_with_vmul_vmul(
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: quant_scale
+// CHECK: hivm.hir.vmul
+// CHECK: hivm.hir.vmul
+// CHECK: return
+module {
+  func.func @dont_inline_quant_scale_fixpipe_with_vmul_vmul(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: f32, %arg5: tensor<?x64xf32>, %arg6: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg2 : tensor<?x64xf32>, f32) outs(%arg3 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %2 = hivm.hir.vmul ins(%1, %arg4 : tensor<?x64xf32>, f32) outs(%arg5 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    hivm.hir.store ins(%2 : tensor<?x64xf32>) outs(%arg6 : memref<?x64xf32, strided<[256, 1], offset: ?>>)
+    return
+  }
+}

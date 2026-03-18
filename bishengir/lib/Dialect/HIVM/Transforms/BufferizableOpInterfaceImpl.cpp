@@ -122,8 +122,13 @@ struct FixpipeOpInterface
     // Set insertion point now that potential alloc/dealloc are introduced.
     rewriter.setInsertionPoint(op);
     // Clone the op, but use the new operands.
-    auto newOp = cast<DestinationStyleOpInterface>(clone(
-        rewriter, op, /*newResultTypes=*/TypeRange{}, {*buffer, dstOp->get()}));
+    auto fixPipeOp = static_cast<FixpipeOp>(op);
+    SmallVector<Value> opr{*buffer, dstOp->get()};
+    if (fixPipeOp.getQuantScale())
+      opr.push_back(fixPipeOp.getQuantScale());
+    auto newOp = cast<DestinationStyleOpInterface>(
+        clone(rewriter, op, /*newResultTypes=*/TypeRange{}, opr));
+
     // We need to manually replace the old op because it has memory effects
     // and won't be deleted automatically.
     rewriter.replaceOp(op, newOp);

@@ -1029,11 +1029,12 @@ public:
       auto dualAttr =
           hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
       rewriter.setInsertionPoint(op);
-      NamedAttrList attrs(op->getAttrs());
-      attrs.set(op.getDualDstModeAttrName(), dualAttr);
+      SmallVector<Value> oprs({op.getSrc(), newAlloc});
+      if (auto quantScale = op.getQuantScale())
+        oprs.push_back(quantScale);
       auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-          op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newAlloc},
-          attrs.getAttrs());
+          op.getLoc(), TypeRange{}, oprs, op->getAttrs());
+      newFixpipeOp.setDualDstModeAttr(dualAttr);
 
       rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
       rewriter.replaceOp(op, newFixpipeOp->getResults());

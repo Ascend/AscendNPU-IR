@@ -269,18 +269,10 @@ public:
         createUBAllocation(rewriter, loc, resultType);
 
     // Create new fixpipe writing to UB memref (returns void)
-    rewriter.create<FixpipeOp>(
-        loc,
-        /*resultType=*/Type{},
-        /*src=*/fixpipeOp.getSrc(),
-        /*dst=*/ubMemref,
-        /*unitFlagCond=*/fixpipeOp.getUnitFlagCond(),
-        /*dmaMode=*/fixpipeOp.getDmaModeAttr(),
-        /*dualDstMode=*/fixpipeOp.getDualDstModeAttr(),
-        /*preQuant=*/fixpipeOp.getPreQuantAttr(),
-        /*preRelu=*/fixpipeOp.getPreReluAttr(),
-        /*channelSplit=*/fixpipeOp.getChannelSplitAttr(),
-        /*unitFlagMode=*/fixpipeOp.getUnitFlagModeAttr());
+    SmallVector<Value> oprs({fixpipeOp.getSrc(), ubMemref});
+    if (auto quantScale = fixpipeOp.getQuantScale())
+      oprs.push_back(quantScale);
+    rewriter.create<FixpipeOp>(loc, TypeRange{}, oprs, fixpipeOp->getAttrs());
 
     // Convert memref back to tensor for users
     auto toTensor = rewriter.create<bufferization::ToTensorOp>(
