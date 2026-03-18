@@ -54,7 +54,7 @@ chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
 ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
 ```
 
-1. 设置环境变量：
+3. 设置环境变量：
 
 ```bash
 # 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh

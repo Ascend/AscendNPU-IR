@@ -14,24 +14,24 @@
 
 AscendNPU-IR端到端运行依赖CANN环境。
 
-1. 下载 CANN 包：需下载 toolkit 包及与硬件对应的 ops 包，可从 [昇腾社区 CANN 下载页](https://www.hiascend.com/developer/download/community/result?module=cann) 获取。
+1. 下载 CANN 包：需下载 toolkit 包及与硬件对应的 ops 包，可从 [昇腾社区 CANN 下载页](https://www.hiascend.com/cann/download) 获取。
 
 2. 安装CANN包：
 
 ```bash
-# 以x86系统A3环境，{version}为CANN版本，如8.5.0
-chmod +x Ascend-cann-toolkit_{version}_linux-x86_64.run
+# 以x86系统A3环境，{version}为CANN版本，如9.0.0
+chmod +x Ascend-cann_{version}_linux-x86_64.run
 chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-./Ascend-cann-toolkit_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
 ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
 # 安装CANN的python依赖
 pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
 ```
 
-1. 设置环境变量：
+3. 设置环境变量：
 
 ```bash
-# 若版本是8.5.0之前的，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
+# 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
 source ${PATH-TO-CANN}/cann/set_env.sh
 ```
 
