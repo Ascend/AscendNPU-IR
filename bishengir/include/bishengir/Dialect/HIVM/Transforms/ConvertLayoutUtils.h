@@ -16,6 +16,10 @@ namespace mlir::hivm {
 constexpr int32_t kFractalDims = 4;
 using FractalSize = std::pair<int32_t, int32_t>;
 
+struct PropagateConvertLayoutInternalOptions {
+  bool allowAgnosticOps{false};
+};
+
 FailureOr<SmallVector<OpFoldResult>> computeMixedNDToFractalShape(
     ArrayRef<OpFoldResult> currentShape,
     DataLayoutAttr srcLayout,
@@ -127,6 +131,25 @@ FailureOr<SmallVector<OpFoldResult>> computeTargetLayoutOffset(
     DataLayoutAttr dstLayout,
     PatternRewriter &rewriter,
     Location loc);
+
+void populateConvertLayoutElementwise(RewritePatternSet &patterns,
+                                      MLIRContext *context,
+                  const PropagateConvertLayoutInternalOptions &options);
+
+void populateConvertLayoutScfIf(RewritePatternSet &patterns,
+                                      MLIRContext *context);
+
+void populateConvertLayoutScfFor(RewritePatternSet &patterns,
+                                      MLIRContext *context);
+
+void populateConvertLayoutScfWhile(RewritePatternSet &patterns,
+                                      MLIRContext *context);
+
+void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
+                                       MLIRContext *context);
+
+void populateHoistConvertLayout(RewritePatternSet &patterns,
+                                MLIRContext *context);
 } // namespace mlir
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_CONVERTLAYOUTUTILS_H

@@ -223,6 +223,7 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
   ];
 
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 
 def PointerCastOp : HIVM_Op<"pointer_cast",

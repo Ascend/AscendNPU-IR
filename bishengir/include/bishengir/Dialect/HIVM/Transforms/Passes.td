@@ -761,4 +761,16 @@ def ConvertNonContiguousReshapeToCopy : Pass<"convert-non-contiguous-reshape-to-
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
+def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
+  let summary = "Propagate convert layout for matmul operations";
+  let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+
+  let options = [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
+                        /*default=*/"false",
+                        "Enable allow agnostic ops propagate reshape."
+                        "Currently disabled because other passes has not supported"
+                        "fractal-layout operations.">];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD
