@@ -258,6 +258,26 @@ func.func @transpose_2d_outlined_vf_1(%arg0: memref<512x16xf16, #hivm.address_sp
   return
 }
 
+// -----
+// Normalize vector.transfer_read with permutation_map not into vector.gather
+// CHECK-LABEL: func.func @not_gather
+func.func @not_gather(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0 : i8
+  %c1 = arith.constant 1 : index
+  %c16 = arith.constant 16 : index
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [16, 1] : vector<128x1xi1>
+  %1 = vector.constant_mask [1, 16] : vector<1x128xi1>
+  scf.for %arg2 = %c0 to %c16 step %c1 {
+    %subview = memref.subview %arg0[0, %arg2] [16, 1] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xi8, #hivm.address_space<ub>> to memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK-NOT: vector.gather
+    %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x128xi8>
+    vector.transfer_write %2, %subview_0[%c0, %c0], %1 {in_bounds = [true, true]} : vector<1x128xi8>, memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
 // CHECK-LABEL: func.func @triton_max_1d_dim0
 func.func @triton_max_1d_dim0(%arg0: memref<2xi32, #hivm.address_space<ub>>, %arg1: memref<i32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
   %c0_i32 = arith.constant 0 : i32
