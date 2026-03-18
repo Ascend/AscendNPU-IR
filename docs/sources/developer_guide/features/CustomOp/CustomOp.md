@@ -4,7 +4,7 @@
 
 AscendNPU-IR already supports a rich operator set for upstream models. However, in certain scenarios, there are needs to define their own operators to perform custom computations:
 
-- Supported operaters' combination couldn't fulfill desired computations.
+- Supported operators' combination couldn't fulfill desired computations.
 - Vendor wants the custom operator to be private.
 - Combining multiple operators could not reach optimal performance.
 
@@ -12,7 +12,19 @@ Custom operator allows users to freely use the interfaces provided by AscendNPU-
 
 ---
 
-## Interface
+### Hardware Background
+
+N/A
+
+---
+
+### Algorithm Principle
+
+N/A
+
+---
+
+### Interface Description
 
 Generic interface for custom op as following:
 - name : unique op name.
@@ -21,7 +33,7 @@ Generic interface for custom op as following:
                 Compiler will link these builtins to self-contained template library,
                 which comes together within bishengir-compile.
 
-                For normal names/cases, user needs to specify implementation location/compilation commands (TODO),
+                For normal names/cases, user needs to specify implementation location/compilation commands,
                 and all ther necessary informations.
 
          Available builtin names :
@@ -32,7 +44,7 @@ Generic interface for custom op as following:
             of the operation or the init locations to which the results of the op will be written.
 
 In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
-to retreive necessary information, required informations are:
+to retrieve necessary information:
 - CoreType : which core type to execute on, refer to TCoreTypeAttr.
 - Pipe     : which pipe to execute on, refer to PipeAttr.
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
@@ -40,10 +52,11 @@ to retreive necessary information, required informations are:
 
              Note : for builtins, user could specify these informations or not,
                     compiler will help to check the correctness and canonicalize.
+- Symbol   : Implementation function name
 
 TODO:
-- Impl : user provided implementation and linking process.
-- Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
+- Implementation linkage       : user provided implementation and linking process.
+- Multi-Pipes (Macro CustomOp) : custom op that uses multiple pipes, which is a MacroOp in HIVM's context.
 
 ---
 
@@ -61,7 +74,7 @@ TODO:
 │  ───────────────────────────────────────────────────────────────│
 │  • Builtins                                                     │
 │    -> call to builtins libraries                                │
-│  • User provided implementations (WIP) ->                       │
+│  • User provided implementations ->                             │
 |    -> call to user provided function name                       |
 |      -> bishengir-compile link with user provided link commands |
 └─────────────────────────────────────────────────────────────────┘
@@ -71,25 +84,25 @@ TODO:
 ```
 ---
 
-## Capability & Limitation
+### Constraints and Capabilities
 
-### ✅ Capabilities
+#### ✅ Capabilities
 
 | Feature                         | Description                                                  |
 | ------------------------------- | ------------------------------------------------------------ |
 | **CoreType**                    | Custom op execution core.                                    |
 | **Pipe**                        | Custom op execution pipe.                                    |
 | **VFMode**                      | Custom op running mode on vector core, SIMT/SIMD/MIX.        |
+| **Symbol**                      | User provided implementation function name                   |
 | **Buitlins**                    | Set of builtins (name reserved).                             |
 
-### ⚠️ Limitations
+#### ⚠️ Limitations
 
 | Limitation                   | Description                                               | Status                                                                 |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | **User implementations**     | Custom op lowered to user provided implementations:       | Work in progress.
-|                              | - HIVM IR link to user provided sources/bitcodes/objects  |
-|                              | - User implementations registeration                      |
-|                              | - Spcific link commands registeration to bisheng-compile  |
+|                              | - HIVM IR link to user provided sources/objects           |
+|                              | - Specific commands registration to bishengir-compile     |
 | **Passes interactions**      | Transformation passes that adapt to custom op:            | NA, work in progress.
 |                              | - Flatten optimization                                    |
 |                              | - Alignment adjustment                                    |
@@ -99,9 +112,9 @@ TODO:
 
 ---
 
-## MLIR Example
+### MLIR Example
 
-### Builtin
+#### Builtin
 
 ```mlir
 %0 = hivm.hir.custom
@@ -112,11 +125,12 @@ TODO:
 
 ```
 
-### Custom
+#### Custom
 
 ```mlir
 %0 = hivm.hir.custom
-      { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD> }
+      { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
+        symbol = "my_custom" }
       "my_custom_op"
       ins(%arg0, %arg1, %c4_i64, %c0_i32, %c2_i64, %c1_i64, %c2_i32, %c2_i32, %c0_i32, %c0_i32
           : memref<?xf32>, tensor<3x3xi64>, i64, i32, i64, i64, i32, i32, i32, i32)
@@ -125,7 +139,7 @@ TODO:
 
 ---
 
-## TRITON CustomOp Lowering Example
+#### TRITON CustomOp Lowering Example
 ```python
 # For more detail of Triton custom op design, please refer to
 # https://gitcode.com/Ascend/triton-ascend/pull/988 for more details
