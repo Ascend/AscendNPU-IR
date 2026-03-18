@@ -3,9 +3,9 @@
 // -----
 
 // CHECK-LABEL: func.func @outlined_vf
-// CHECK-NOT: hivm.hir.load
+// CHECK-NOT: hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
 func.func @outlined_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -37,7 +37,7 @@ func.func @guarded_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {
   %c0 = arith.constant 0 : index
   %subview = memref.subview %arg1[%c0] [1] [1] : memref<16xf32> to memref<1xf32, strided<[1], offset: ?>>
   vector.transfer_write %cst, %subview[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -67,7 +67,7 @@ func.func @subview_load_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attribu
   %c0 = arith.constant 0 : index
   %src = memref.subview %arg0[%c0] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
   %dst = memref.subview %arg1[%c0] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
-  hivm.hir.load ins(%src : memref<4xf32, strided<[1], offset: ?>>) outs(%dst : memref<4xf32, strided<[1], offset: ?>>) left_padding_num = %c0 : index eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%src : memref<4xf32, strided<[1], offset: ?>>) outs(%dst : memref<4xf32, strided<[1], offset: ?>>)
   return
 }
 
@@ -81,7 +81,7 @@ func.func @subview_load_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attribu
 // CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
 func.func @unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   "test.unknown_write"(%arg1) : (memref<16xf32>) -> ()
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -111,7 +111,7 @@ func.func @recursive_unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf3
   scf.if %flag {
     "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
   }
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -141,7 +141,7 @@ func.func @unknown_region_capture_dst_vf(%arg0: memref<16xf32>, %arg1: memref<16
   "test.unknown_region"() ({
     "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
   }) : () -> ()
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -171,7 +171,7 @@ func.func @unknown_region_capture_src_vf(%arg0: memref<16xf32>, %arg1: memref<16
   "test.unknown_region"() ({
     "test.unknown_nested_write"(%arg0) : (memref<16xf32>) -> ()
   }) : () -> ()
-  hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+  hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
   return
 }
 
@@ -184,5 +184,27 @@ func.func @unknown_region_capture_src_caller() {
   %src = memref.alloc() : memref<16xf32>
   %dst = memref.alloc() : memref<16xf32>
   func.call @unknown_region_capture_src_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xf32>, memref<16xf32>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @large_copy_vf
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[C1000:.*]] = arith.constant 1000 : index
+// CHECK: %[[C64:.*]] = arith.constant 64 : index
+// CHECK: scf.for %[[IV:.*]] = %{{.*}} to %[[C1000]] step %[[C64]] {
+// CHECK:   %[[REMAINING:.*]] = arith.subi %[[C1000]], %[[IV]] : index
+// CHECK:   %[[CMP:.*]] = arith.cmpi slt, %[[REMAINING]], %[[C64]] : index
+// CHECK:   %[[CHUNK:.*]] = arith.select %[[CMP]], %[[REMAINING]], %[[C64]] : index
+// CHECK:   %[[MASK:.*]] = vector.create_mask %[[CHUNK]] : vector<64xi1>
+// CHECK:   %[[READ:.*]] = vector.transfer_read %arg0[%[[IV]]], %{{.*}}, %[[MASK]] : memref<1000xf32>, vector<64xf32>
+// CHECK:   vector.transfer_write %[[READ]], %arg1[%[[IV]]], %[[MASK]] : vector<64xf32>, memref<1000xf32>
+func.func @large_copy_vf(%arg0: memref<1000xf32>, %arg1: memref<1000xf32>) attributes {hivm.vector_function, no_inline} {
+  %init = arith.constant dense<0.000000e+00> : vector<1xf32>
+  %c0 = arith.constant 0 : index
+  %subview = memref.subview %arg1[%c0] [1] [1] : memref<1000xf32> to memref<1xf32, strided<[1], offset: ?>>
+  vector.transfer_write %init, %subview[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
+  hivm.hir.copy ins(%arg0 : memref<1000xf32>) outs(%arg1 : memref<1000xf32>)
   return
 }

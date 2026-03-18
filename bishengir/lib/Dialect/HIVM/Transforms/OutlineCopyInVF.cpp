@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -36,8 +37,8 @@ public:
   void runOnOperation() override;
 };
 
-struct OutlinedLoadInfo {
-  hivm::LoadOp loadOp;
+struct OutlinedCopyInfo {
+  hivm::CopyOp copyOp;
   unsigned srcArgNumber;
   unsigned dstArgNumber;
 };
@@ -77,12 +78,12 @@ static bool mayWriteFuncArgOrAlias(Operation *op, Value funcArg) {
   return false;
 }
 
-static bool hasModificationBefore(hivm::LoadOp loadOp, Value funcArg) {
-  if (loadOp->getBlock() != &loadOp->getParentRegion()->front())
+static bool hasModificationBefore(hivm::CopyOp copyOp, Value funcArg) {
+  if (copyOp->getBlock() != &copyOp->getParentRegion()->front())
     return true;
 
-  for (Operation &op : *loadOp->getBlock()) {
-    if (&op == loadOp.getOperation())
+  for (Operation &op : *copyOp->getBlock()) {
+    if (&op == copyOp.getOperation())
       break;
     if (mayWriteFuncArgOrAlias(&op, funcArg))
       return true;
@@ -94,24 +95,20 @@ static bool isSubviewValue(Value value) {
   return isa_and_nonnull<memref::SubViewOp>(value.getDefiningOp());
 }
 
-static bool canLowerToTransferPair(hivm::LoadOp loadOp) {
-  // Only lower memref DMA with no result tensor. The transfer pair must be a
-  // semantic replacement for the original load, not an approximation.
-  // `eviction_policy` is intentionally ignored here because the vector
-  // transfer pair has no equivalent cache hint encoding.
-  if (loadOp.getNumResults() != 0)
+static bool canLowerToTransferPair(hivm::CopyOp copyOp) {
+  // Only lower plain memref copies with no result tensor. The transfer pair
+  // must be a semantic replacement for the original copy, not an
+  // approximation.
+  if (copyOp.getNumResults() != 0)
     return false;
-  if (loadOp.getPadMode() || loadOp.getPadValue() || loadOp.getRightPaddingNum())
-    return false;
-  if (loadOp.getLeftPaddingNum() &&
-      !isConstantIntValue(OpFoldResult(loadOp.getLeftPaddingNum()), 0))
-    return false;
-  if (loadOp.getInitOutBuffer() || loadOp.getInitCondition())
+  if (copyOp.getPadMode() || copyOp.getPadValue())
     return false;
 
-  auto srcType = dyn_cast<MemRefType>(loadOp.getSource().getType());
-  auto dstType = dyn_cast<MemRefType>(loadOp.getDst().getType());
+  auto srcType = dyn_cast<MemRefType>(copyOp.getSource().getType());
+  auto dstType = dyn_cast<MemRefType>(copyOp.getDst().getType());
   if (!srcType || !dstType || !srcType.hasStaticShape() || !dstType.hasStaticShape())
+    return false;
+  if (srcType.getRank() != 1 || dstType.getRank() != 1)
     return false;
   if (srcType.getShape() != dstType.getShape() ||
       srcType.getElementType() != dstType.getElementType())
@@ -119,31 +116,63 @@ static bool canLowerToTransferPair(hivm::LoadOp loadOp) {
   return true;
 }
 
-static LogicalResult lowerLoadToTransferPair(hivm::LoadOp loadOp,
+static LogicalResult lowerCopyToTransferPair(hivm::CopyOp copyOp,
                                              IRRewriter &rewriter) {
-  if (!canLowerToTransferPair(loadOp))
+  if (!canLowerToTransferPair(copyOp))
     return failure();
 
-  rewriter.setInsertionPoint(loadOp);
-  auto srcType = cast<MemRefType>(loadOp.getSource().getType());
-  Location loc = loadOp.getLoc();
-  int64_t rank = srcType.getRank();
-  SmallVector<Value> indices(rank, rewriter.create<arith::ConstantIndexOp>(loc, 0));
-  SmallVector<bool> inBounds(rank, true);
-  auto vecType = VectorType::get(srcType.getShape(), srcType.getElementType());
-  auto map = rewriter.getMultiDimIdentityMap(rank);
+  rewriter.setInsertionPoint(copyOp);
+  auto srcType = cast<MemRefType>(copyOp.getSource().getType());
+  Location loc = copyOp.getLoc();
+  int64_t numElems = srcType.getShape().front();
+  int64_t maxElemsPerTransfer = utils::getNumPerRepeat(srcType.getElementType());
+  if (maxElemsPerTransfer <= 0)
+    return failure();
+
+  Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   Value padding =
       rewriter.create<arith::ConstantOp>(loc, srcType.getElementType(),
                                          rewriter.getZeroAttr(srcType.getElementType()));
+
+  if (numElems <= maxElemsPerTransfer) {
+    SmallVector<Value> indices{c0};
+    SmallVector<bool> inBounds(1, true);
+    auto vecType = VectorType::get(srcType.getShape(), srcType.getElementType());
+    auto map = rewriter.getMultiDimIdentityMap(/*rank=*/1);
+    Value read = rewriter.create<vector::TransferReadOp>(
+        loc, vecType, copyOp.getSource(), indices, map, padding,
+        /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
+    auto write = rewriter.create<vector::TransferWriteOp>(
+        loc, copyOp->getResultTypes(), read, copyOp.getDst(), indices, map,
+        /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
+    if (copyOp.getNumResults() == 1 && write->getNumResults() == 1)
+      rewriter.replaceAllUsesWith(copyOp.getResult(0), write.getResult());
+    rewriter.eraseOp(copyOp);
+    return success();
+  }
+
+  Value cTotal = rewriter.create<arith::ConstantIndexOp>(loc, numElems);
+  Value cStep = rewriter.create<arith::ConstantIndexOp>(loc, maxElemsPerTransfer);
+  auto vecType = VectorType::get({maxElemsPerTransfer}, srcType.getElementType());
+  auto maskType = VectorType::get({maxElemsPerTransfer}, rewriter.getI1Type());
+  auto map = rewriter.getMultiDimIdentityMap(/*rank=*/1);
+  auto inBounds = rewriter.getBoolArrayAttr({false});
+  auto forOp = rewriter.create<scf::ForOp>(loc, c0, cTotal, cStep);
+  rewriter.setInsertionPointToStart(forOp.getBody());
+  Value iv = forOp.getInductionVar();
+  Value remaining = rewriter.create<arith::SubIOp>(loc, cTotal, iv);
+  Value needsTailMask =
+      rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, remaining, cStep);
+  Value chunkSize = rewriter.create<arith::SelectOp>(loc, needsTailMask, remaining, cStep);
+  Value mask = rewriter.create<vector::CreateMaskOp>(loc, maskType, chunkSize);
+  SmallVector<Value> indices{iv};
   Value read = rewriter.create<vector::TransferReadOp>(
-      loc, vecType, loadOp.getSource(), indices, map, padding,
-      /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
-  auto write = rewriter.create<vector::TransferWriteOp>(
-      loc, loadOp->getResultTypes(), read, loadOp.getDst(), indices, map,
-      /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
-  if (loadOp.getNumResults() == 1 && write->getNumResults() == 1)
-    rewriter.replaceAllUsesWith(loadOp.getResult(0), write.getResult());
-  rewriter.eraseOp(loadOp);
+      loc, vecType, copyOp.getSource(), indices, map, padding, mask, inBounds);
+  rewriter.create<vector::TransferWriteOp>(
+      loc, copyOp->getResultTypes(), read, copyOp.getDst(), indices, map, mask,
+      inBounds);
+  rewriter.setInsertionPointAfter(forOp);
+  rewriter.eraseOp(copyOp);
   return success();
 }
 
@@ -151,17 +180,17 @@ static LogicalResult lowerLoadToTransferPair(hivm::LoadOp loadOp,
 
 /// Temporary workaround for DTS2026030645981.
 ///
-/// This pass runs on the module and scans all `hivm.hir.load` ops in each VF
+/// This pass runs on the module and scans all `hivm.hir.copy` ops in each VF
 /// function body.
 ///
 /// It handles three cases:
-/// 1. Safe VF-entry argument-to-argument loads are outlined to caller-side
+/// 1. Safe VF-entry argument-to-argument copies are outlined to caller-side
 ///    `hivm.hir.copy`.
-/// 2. Copy-style loads that must stay in the callee, such as subview-based
-///    loads or argument loads after earlier writes, are normalized to
+/// 2. Copy-style ops that must stay in the callee, such as subview-based
+///    copies or argument copies after earlier writes, are normalized to
 ///    `vector.transfer_read` + `vector.transfer_write` when that pair is
-///    semantically identical to the original load.
-/// 3. All other loads are left unchanged.
+///    semantically identical to the original copy.
+/// 3. All other copies are left unchanged.
 ///
 /// The outline rewrite is limited to pure entry DMA with no prior writes to
 /// either side.
@@ -169,8 +198,8 @@ static LogicalResult lowerLoadToTransferPair(hivm::LoadOp loadOp,
 /// Before:
 ///   func.func @vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>)
 ///       attributes {hivm.vector_function, no_inline} {
-///     hivm.hir.load ins(%arg0 : memref<16xf32>)
-///                   outs(%arg1 : memref<16xf32>) eviction_policy = <EvictFirst>
+///     hivm.hir.copy ins(%arg0 : memref<16xf32>)
+///                   outs(%arg1 : memref<16xf32>)
 ///     ...
 ///   }
 ///   func.func @caller(%src: memref<16xf32>, %dst: memref<16xf32>) {
@@ -189,13 +218,13 @@ static LogicalResult lowerLoadToTransferPair(hivm::LoadOp loadOp,
 ///     ...
 ///   }
 ///
-/// If the load cannot be outlined, but still behaves exactly like a plain copy,
+/// If the copy cannot be outlined, but still behaves exactly like a plain copy,
 /// it may be rewritten in place as:
 ///   %vec = vector.transfer_read %src[%c0, %c0], %padding
 ///   vector.transfer_write %vec, %dst[%c0, %c0]
 ///
 /// The pass is intentionally conservative. If either argument has already been
-/// written before the load, the load cannot be moved to the caller because that
+/// written before the copy, the copy cannot be moved to the caller because that
 /// would change the ordering relative to the earlier write.
 void OutlineCopyInVFPass::runOnOperation() {
   auto moduleOp = getOperation();
@@ -205,39 +234,39 @@ void OutlineCopyInVFPass::runOnOperation() {
     if (!hivm::isVF(funcOp))
       return;
 
-    SmallVector<OutlinedLoadInfo> outlinedLoads;
-    SmallVector<hivm::LoadOp> loadsToLower;
+    SmallVector<OutlinedCopyInfo> outlinedCopies;
+    SmallVector<hivm::CopyOp> copiesToLower;
 
-    funcOp.walk([&](hivm::LoadOp loadOp) {
-      auto srcArgNumber = getFuncArgNumber(loadOp.getSource(), funcOp);
-      auto dstArgNumber = getFuncArgNumber(loadOp.getDst(), funcOp);
+    funcOp.walk([&](hivm::CopyOp copyOp) {
+      auto srcArgNumber = getFuncArgNumber(copyOp.getSource(), funcOp);
+      auto dstArgNumber = getFuncArgNumber(copyOp.getDst(), funcOp);
       bool operandsAreFuncArgs =
           srcArgNumber.has_value() && dstArgNumber.has_value();
       bool operandsFromSubviews =
-          isSubviewValue(loadOp.getSource()) || isSubviewValue(loadOp.getDst());
+          isSubviewValue(copyOp.getSource()) || isSubviewValue(copyOp.getDst());
 
       // Only outline direct function-argument copies that still behave like a
-      // pure entry DMA. Other argument/subview loads stay in the VF and are
+      // pure entry DMA. Other argument/subview copies stay in the VF and are
       // only normalized to vector transfers when the replacement is exactly
-      // equivalent to the original hivm.hir.load.
+      // equivalent to the original hivm.hir.copy.
       if (operandsAreFuncArgs &&
-          loadOp->getBlock() == &funcOp.getFunctionBody().front() &&
-          !hasModificationBefore(loadOp, loadOp.getSource()) &&
-          !hasModificationBefore(loadOp, loadOp.getDst())) {
-        outlinedLoads.push_back({loadOp, *srcArgNumber, *dstArgNumber});
+          copyOp->getBlock() == &funcOp.getFunctionBody().front() &&
+          !hasModificationBefore(copyOp, copyOp.getSource()) &&
+          !hasModificationBefore(copyOp, copyOp.getDst())) {
+        outlinedCopies.push_back({copyOp, *srcArgNumber, *dstArgNumber});
         return;
       }
 
       if (operandsAreFuncArgs || operandsFromSubviews)
-        loadsToLower.push_back(loadOp);
+        copiesToLower.push_back(copyOp);
     });
 
-    for (hivm::LoadOp loadOp : loadsToLower) {
-      if (!loadOp || failed(lowerLoadToTransferPair(loadOp, rewriter)))
+    for (hivm::CopyOp copyOp : copiesToLower) {
+      if (!copyOp || failed(lowerCopyToTransferPair(copyOp, rewriter)))
         continue;
     }
 
-    if (outlinedLoads.empty())
+    if (outlinedCopies.empty())
       return;
 
     auto callSites = funcOp.getSymbolUses(moduleOp);
@@ -251,18 +280,18 @@ void OutlineCopyInVFPass::runOnOperation() {
       if (!callOp)
         continue;
       rewriter.setInsertionPoint(callOp);
-      for (const auto &outlinedLoad : outlinedLoads) {
+      for (const auto &outlinedCopy : outlinedCopies) {
         // Materialize the data movement at each call site so the VF body no
         // longer contains entry DMA between its argument buffers.
         rewriter.create<hivm::CopyOp>(
             callOp.getLoc(), TypeRange(),
-            callOp.getOperand(outlinedLoad.srcArgNumber),
-            callOp.getOperand(outlinedLoad.dstArgNumber));
+            callOp.getOperand(outlinedCopy.srcArgNumber),
+            callOp.getOperand(outlinedCopy.dstArgNumber));
       }
     }
 
-    for (const auto &outlinedLoad : outlinedLoads)
-      rewriter.eraseOp(outlinedLoad.loadOp);
+    for (const auto &outlinedCopy : outlinedCopies)
+      rewriter.eraseOp(outlinedCopy.copyOp);
   });
 }
 

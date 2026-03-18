@@ -237,7 +237,7 @@ func.func @memref_copy_dyn_offset_non_const(%arg2: memref<?xf32>, %offset0: inde
 // -----
 // CHECK-LABEL: @do_not_capture_loop_subview_offset
 // CHECK: %[[ALLOC:.*]] = memref.alloc
-// CHECK: hivm.hir.load ins(%arg0 : memref<16xf32>) outs(%[[ALLOC]] : memref<16xf32>) eviction_policy = <EvictFirst>
+// CHECK: hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%[[ALLOC]] : memref<16xf32>)
 // CHECK-NOT: left_padding_num
 func.func @do_not_capture_loop_subview_offset(%arg0: memref<16xf32>) attributes {hivm.vector_function} {
   %c0 = arith.constant 0 : index
