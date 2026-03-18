@@ -15,11 +15,12 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-#include "bishengir/Tools/bishengir-hivm-compile/PassPipeline.h"
 #include "bishengir/Transforms/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToEmitC/ArithToEmitCPass.h"
@@ -100,6 +101,65 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
 }
 
+void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
+                              const BiShengIRCompileMainConfig &config) {
+  hivmPipelineOptions.enableTritonKernelCompile = config.shouldCompileTriton();
+  hivmPipelineOptions.enableLayoutOptimization =
+      config.shouldEnableLayoutOptimization();
+  hivmPipelineOptions.enableDotScaledCompile = config.shouldcompileDotScaled();
+  hivmPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
+  hivmPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
+  hivmPipelineOptions.enableAutoBlockifyLoop = config.shouldAutoBlockifyLoop();
+  hivmPipelineOptions.enableAutoMultiBuffer =
+      config.shouldEnableAutoMultiBuffer();
+  hivmPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer =
+      config.shouldLimitAutoMultiBufferForLocalBuffer();
+  hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer =
+      config.getLimitAutoMultiBufferBufferOfLocalBuffer();
+  hivmPipelineOptions.limitMixAutoMultiBufferBuffer =
+      config.getLimitAutoMultiBufferBuffer();
+  hivmPipelineOptions.enableAutoBindSubBlock =
+      config.shouldEnableAutoBindSubBlock();
+  hivmPipelineOptions.enableAutoStorageAlign =
+      config.shouldEnableAutoStorageAlign();
+  hivmPipelineOptions.enableGlobalWorkspaceReuse =
+      config.shouldEnableGlobalWorkspaceReuse();
+  hivmPipelineOptions.enableHIVMInjectBarrierAllSync =
+      config.shouldInjectBarrierAllSync();
+  hivmPipelineOptions.workspaceMultiBufferNum =
+      config.getWorkspaceMultiBufferNum();
+  hivmPipelineOptions.enableAutoCVBalance = config.shouldAutoCVBalance();
+  hivmPipelineOptions.enableInjectBlockAllSync =
+      config.shouldInjectBlockAllSync();
+  hivmPipelineOptions.disableAutoInjectBlockSync =
+      config.shouldDisableAutoInjectBlockSync();
+  hivmPipelineOptions.enableHIVMGraphSyncSolver = 
+      config.shouldEnableHIVMGraphSyncSolver();
+  hivmPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
+  hivmPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
+  hivmPipelineOptions.target =
+      hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
+  hivmPipelineOptions.enableVfMergeLevel = config.enableVfMergeLevel();
+  hivmPipelineOptions.enableDirectHIVMLowering =
+      config.enableDirectHIVMLowering();
+  hivmPipelineOptions.enableND2NZOnVector = config.shouldEnableND2NZOnVector();
+  hivmPipelineOptions.enableFusedMultiplyAdd = config.shouldEnableFusedMultiplyAdd();
+  hivmPipelineOptions.enablePrintMemoryAllocatedSize =
+      config.shouldenablePrintMemoryAllocatedSize();
+  hivmPipelineOptions.maxReductionSplitNum =
+      config.getMaxReductionSplitNum();
+  hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
+}
+
+void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
+                             const BiShengIRCompileMainConfig &config) {
+  if (config.shouldCompileHIVM()) {
+    hivm::HIVMPipelineOptions hivmPipelineOptions;
+    setupHIVMPipelineOptions(hivmPipelineOptions, config);
+    hivm::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
+  }
+}
+
 #if BISHENGIR_ENABLE_TRITON_COMPILE
 // Helper function to set up LowerTritonPipelineOptions
 void setupLowerTritonPipelineOptions(
@@ -163,6 +223,10 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   }
 #endif
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  buildBiShengTTIRPipeline(pm, config);
+#endif
+
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   if (config.shouldCompileHFusion()) {
     setupHFusionPipelineOptions(hfusionPipelineOptions, config);
@@ -178,12 +242,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
         config.shouldAutoBlockifyLoop();
     convertToHIVMOptions.enableRegBaseHIVMPipe =
         hacc::utils::isRegBasedArch(config.getTargetBackend());
+    hivm::HIVMPipelineOptions hivmPipelineOptions;
+    setupHIVMPipelineOptions(hivmPipelineOptions, config);
     hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
+    hivm::buildHIVMTensorOptimizations(pm, hivmPipelineOptions);
     if (config.shouldEnableMixedCV()) {
-      // Build lower HIVM to LLVM IR pipeline.
-      hivm::HIVMPipelineOptions hivmPipelineOptions;
-      setupHIVMPipelineOptions(hivmPipelineOptions, config);
-      hivm::buildHIVMTensorOptimizations(pm, hivmPipelineOptions);
       HIVMAggregatedDecomposeOpOptions decomposeOption;
       decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
       pm.nest<func::FuncOp>().addPass(

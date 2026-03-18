@@ -25,4 +25,8 @@ add_bishengir_library(MLIRBiShengIRCompileLib
   BiShengIRPass
   BishengIRTransform
   ${triton_libs}
+
+  LINK_COMPONENTS
+  Object
+  Support
 )

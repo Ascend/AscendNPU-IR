@@ -34,7 +34,6 @@
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
-#include "bishengir/Tools/bishengir-hivm-compile/PassPipeline.h"
 #include "bishengir/Transforms/Passes.h"
 
 #ifdef BISHENGIR_ENABLE_EXECUTION_ENGINE
@@ -93,7 +92,6 @@ inline void registerAllPasses() {
 
   // Dialect pipelines
   bishengir::registerBiShengIRCompilePass();
-  bishengir::registerBiShengIRHIVMCompilePass();
   mlir::hivm::registerLowerHIVMPipelines();
   mlir::hivm::registerConvertToHIVMPipelines();
   mlir::hfusion::registerLowerHFusionPipelines();

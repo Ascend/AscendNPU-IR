@@ -19,7 +19,6 @@ llvm_canonicalize_cmake_booleans(
 set(BISHENGIR_TEST_DEPENDS
   FileCheck count not
   bishengir-compile
-  bishengir-hivm-compile
   bishengir-opt
   bishengir-target-spec-tblgen
   bishengir-capi-ir-test

@@ -3,7 +3,6 @@ add_llvm_executable(bishengir-npu-hivm-vec-add
 
   DEPENDS
   bishengir-compile
-  bishengir-hivm-compile
 )
 
 set(ASCEND_HOME_PATH $ENV{ASCEND_HOME_PATH})

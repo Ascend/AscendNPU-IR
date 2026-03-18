@@ -22,23 +22,42 @@ using namespace llvm;
 using namespace mlir;
 
 namespace {
+
+static std::vector<std::string>
+skipOptions(const std::vector<std::string> &options,
+            const std::set<std::string> &skip) {
+  std::vector<std::string> result;
+  for (const std::string &arg : options) {
+    StringRef argRef = arg;
+    SmallVector<StringRef> parts;
+    argRef.split(parts, '=');
+    if (parts.empty()) {
+      continue;
+    }
+    std::string trimArg = parts[0].trim().ltrim('-').str();
+    if (skip.count(trimArg) != 0) {
+      continue;
+    }
+    result.push_back(arg);
+  }
+  return result;
+}
+
 llvm::LogicalResult
-runExternalHIVMPipeline(ModuleOp &module,
-                        const bishengir::BiShengIRCompileMainConfig &config) {
+runExternalHIVMC(ModuleOp &module,
+                 const bishengir::BiShengIRCompileMainConfig &config) {
   TempDirectoriesStore tempDirsStore;
-  std::string inputFile = "module.hivm.mlir";
-  std::string outputFile = "module.hivm.opt.mlir";
+  std::string inputFile = "module.hivm.opt.mlir";
+  std::string outputFile = config.outputFile();
+
   auto inputFileHandler = getTempFile(inputFile, tempDirsStore);
-  auto outputFileHandler = getTempFile(outputFile, tempDirsStore);
-  if (!inputFileHandler || !outputFileHandler) {
+  if (!inputFileHandler) {
     llvm::dbgs()
-        << "[ERROR] Failed to create temporary input/output files needed "
-           "to run hivm pipeline.\n";
+        << "[ERROR] Failed to create temporary input file needed to run "
+           "hivmc compile.\n";
     return failure();
   }
-
   inputFile = inputFileHandler->outputFilename();
-  outputFile = outputFileHandler->outputFilename();
 
   module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
                                            config.shouldEnableSanitizer() ||
@@ -56,33 +75,18 @@ runExternalHIVMPipeline(ModuleOp &module,
                 });
 
   arguments.push_back("-o");
-  arguments.push_back(config.outputFile());
-  arguments.push_back("--only-run-hivm-pipeline=true");
+  arguments.push_back(outputFile);
+  arguments.push_back("--only-run-hivm-pipeline=false");
 
-  SmallVector<StringRef> argumentsRef(arguments.begin(), arguments.end());
-  if (failed(execute(getBiShengIRHIVMCompilerName(),
+  std::set<std::string> blacklist = {"inject-ir-from-file"};
+  auto skippedArgs = skipOptions(arguments, blacklist);
+
+  SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
+  if (failed(execute(getHIVMCName(),
                      getBiShengIRHIVMCompileInstallPath(), argumentsRef))) {
     return failure();
   }
 
-  std::string errorMessage;
-  auto file = mlir::openInputFile(outputFile, &errorMessage);
-  if (!file) {
-    llvm::errs() << "[ERROR] Failed to open: " << outputFile
-                 << " error message: " << errorMessage << '\n';
-    return failure();
-  }
-
-  llvm::SourceMgr sourceMgr;
-  sourceMgr.AddNewSourceBuffer(std::move(file), mlir::SMLoc());
-  mlir::OwningOpRef<mlir::ModuleOp> moduleRef =
-      mlir::parseSourceFile<mlir::ModuleOp>(sourceMgr, module->getContext());
-  if (!moduleRef) {
-    llvm::errs() << "[ERROR] Failed to open: " << outputFile << '\n';
-    return failure();
-  }
-
-  module = moduleRef->clone();
   return success();
 }
 
@@ -104,40 +108,40 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     collectedDiagnostics.emplace_back(std::move(diag));
   });
 
-  bool hlResult = false;
-  bool compileSuccess = false;
+  bool hirCompileSuccess = false;
   int tryTimes = config.isTuning() ? 1 : 5;
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.maxBufferCountTuning());
     ModuleOp hirCompileMode = mod.clone();
+    // simt-simd mixed pipeline
+    bool success = true;
     if (config.shouldEnableSimdSimtMixCompile()) {
-      // simt-simd mixed pipeline
-      hlResult = succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
-
+        success &= succeeded(runPipeline(
+            hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
       for (auto simtMod : simtMods) {
-        hlResult &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
-                                              config, "BiShengTTIR"));
+        success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
+                                         config, "BiShengTTIR"));
       }
-
-      hlResult &= succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BiShengHIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRFinishPipeline,
+                                         config, "BishengHIR"));
+      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines,
+                                         config, "buildFinalHIVMPipelines"));
     } else if (config.shouldCompileTritonDialect()) {
-      // simt-only pipeline(The input is ttir).
-      hlResult = succeeded(runPipeline(
+      success = succeeded(runPipeline(
           hirCompileMode, buildBiShengTTIRPipeline, config, "BiShengTTIR"));
     } else {
-      hlResult = succeeded(runPipeline(
+      success = succeeded(runPipeline(
           hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
+                                         config, "buildFinalHIVMPipelines"));
     }
 
-    compileSuccess =
-        hlResult && succeeded(runExternalHIVMPipeline(hirCompileMode, config));
-    if (compileSuccess) {
+    if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
+      hirCompileSuccess = true;
       mod = hirCompileMode.clone();
       break;
     }
@@ -149,7 +153,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);
 
-  if (!compileSuccess) {
+  if (!hirCompileSuccess) {
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
       diagEngine.emit(std::move(diag));
     }

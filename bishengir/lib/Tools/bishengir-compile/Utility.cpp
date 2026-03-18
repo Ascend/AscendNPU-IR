@@ -24,10 +24,10 @@ using namespace bishengir;
 using namespace llvm;
 using namespace mlir;
 
-/// Get the BiSheng Compiler binary name.
-StringRef getBiShengIRHIVMCompilerName() {
-  const char *kBiShengIRHIVMBinaryName = "bishengir-hivm-compile";
-  return kBiShengIRHIVMBinaryName;
+/// Get the HIVMC binary name.
+StringRef getHIVMCName() {
+  const char *kHIVMCBinaryName = "hivmc";
+  return kHIVMCBinaryName;
 }
 
 std::string getBiShengIRHIVMCompileInstallPath() {
@@ -196,6 +196,10 @@ MixedModules getMixedModules(ModuleOp topMod) {
     res.first = topMod;
  
   return res;
+}
+ 
+bool hasSplitModules(ModuleOp topMod) {
+  return !topMod.getOps<ModuleOp>().empty();
 }
 
 llvm::LogicalResult
