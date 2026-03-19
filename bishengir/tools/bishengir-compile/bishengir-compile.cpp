@@ -35,8 +35,38 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
+
+/// Check if any argv is --target=VALUE or -target=VALUE where VALUE matches
+/// Ascend910_95* (Ascend910_950z, Ascend910_9579, ...) or Ascend950*.
+static bool hasAscend910_95Target(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i) {
+    llvm::StringRef arg(argv[i]);
+    llvm::StringRef target;
+    if (arg.starts_with("--target="))
+      target = arg.drop_front(9);
+    else if (arg.starts_with("-target="))
+      target = arg.drop_front(8);
+    else
+      continue;
+    if (target.starts_with("Ascend910_95") || target.starts_with("Ascend950"))
+      return true;
+  }
+  return false;
+}
+
+static int runBishengirCompile91095(int argc, char **argv) {
+  llvm::SmallVector<llvm::StringRef> arguments;
+  arguments.push_back(""); // placeholder, replaced by execute with full path
+  for (int i = 1; i < argc; ++i)
+    arguments.push_back(argv[i]);
+  if (failed(bishengir::execute("bishengir-compile-a5",
+                                bishengir::getBiShengInstallPath(), arguments)))
+    return EXIT_FAILURE;
+  return EXIT_SUCCESS;
+}
 
 static void printVersion(llvm::raw_ostream &os) {
   os << bishengir::getBiShengIRToolFullVersion("bishengir-compile") << '\n';
@@ -60,6 +90,13 @@ void registerAndParseCLIOptions(int argc, char **argv) {
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
 
+  // If --target=Ascend910_95* or --target=Ascend950* is specified, delegate to
+  // bishengir-compile-91095.
+  // TODO: this will be removed after bihengir-compile and bishengir-compile-a5
+  // are merged.
+  if (hasAscend910_95Target(argc, argv))
+    return runBishengirCompile91095(argc, argv);
+
   // Register dialects.
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
@@ -79,8 +116,8 @@ int main(int argc, char **argv) {
   // Create config from command line options.
   bishengir::BiShengIRCompileMainConfig config =
       bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
-  config.setExecutablePath(bishengir::getExecutablePath(
-      argv[0], reinterpret_cast<void *>(main)));
+  config.setExecutablePath(
+      bishengir::getExecutablePath(argv[0], reinterpret_cast<void *>(main)));
   // Check the validity of intput/output options
   if (failed(checkInOutOptionsValidity(config))) {
     return EXIT_FAILURE;
