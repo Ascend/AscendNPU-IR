@@ -176,32 +176,7 @@ ninja -j32
 
 ### Binary Installation
 
-#### With CANN Package
-
-AscendNPU IR binaries are installed with the CANN toolkit; see "1.2.1 CANN package installation" above.
-
-#### Standalone AscendNPU IR Package
-
-A standalone AscendNPU IR installer is available.
-
-1. Download the AscendNPU IR installer for your version.
-
-2. Install:
-
-```bash
-# Example: x86, AscendNPU IR 1.0.0
-chmod +x ascendnpu-ir_1.0.0_linux-x86.run
-./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
-```
-
-### Environment Variables
-
-Add the directory containing `bishengir-compile` to your PATH:
-
-```bash
-# Add bishengir-compile directory to PATH
-export PATH=${PATH-TO-ASCENDNPU-IR}/tools/bishengir/bin:$PATH
-```
+AscendNPU IR binaries are installed with the CANN toolkit; see [CANN Package Installation](#cann-package-installation) above.
 
 ## Running Tests
 
