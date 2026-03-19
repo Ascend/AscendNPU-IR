@@ -50,7 +50,8 @@ struct MarkRealCoreTypePass
   bool isOpTypeToBeMarked(Operation *op) const {
     // scalar-pipe operations.
     if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp>(op)) {
+            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
+            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
       return true;
     }
     if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {

@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
@@ -294,24 +295,50 @@ void SyncBlockIRTranslator::UpdateYieldOpInform(scf::YieldOp yieldOp) {
   }
 }
 
+bool SyncBlockIRTranslator::isVectorOpResult(Value value) {
+  if (auto resultVal = dyn_cast<OpResult>(value)) {
+    if (auto op = dyn_cast<CoreTypeInterface>(resultVal.getDefiningOp())) {
+      if (auto coreType = op.getCoreType()) {
+        if (coreType.value() == TCoreType::VECTOR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 std::optional<hivm::PIPE> SyncBlockIRTranslator::getInferredPipe(
     Operation *op, TCoreType coreType,
     const SmallVector<const BaseMemInfo *> &defVec) {
-  if (!isa<hivm::CopyOp, hivm::VBrcOp>(op) ||
-      coreType == TCoreType::CUBE_OR_VECTOR || defVec.empty()) {
+  if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
+      coreType == TCoreType::CUBE_OR_VECTOR) {
+    return {};
+  }
+  if (coreType == TCoreType::VECTOR) {
+    if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      if (isVectorOpResult(insertSliceOp.getDest())) {
+        return PIPE::PIPE_V;
+      }
+    }
+  }
+  if (defVec.empty()) {
     return {};
   }
   std::optional<hivm::PIPE> pipe;
   for (auto &memInfo : defVec) {
     auto addressSpace = memInfo->addressSpace;
     std::optional<hivm::PIPE> curPipe;
-    if (isa<hivm::CopyOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
+    if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
+      curPipe = PIPE::PIPE_MTE2;
+    }
+    if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::L1)) {
       curPipe = PIPE::PIPE_MTE3;
     }
-    if (isa<hivm::VBrcOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
-      curPipe = PIPE::PIPE_MTE2;
+    if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::UB)) {
+      curPipe = PIPE::PIPE_V;
     }
     if (curPipe.has_value()) {
       if (pipe.has_value() && curPipe != pipe.value()) {
@@ -337,7 +364,7 @@ void SyncBlockIRTranslator::UpdateDestinationStyleOpInform(
   UpdateDefUseVec(dstStyleOp.getDpsInputs(), useVec);
 
   auto pipe = hivm::PIPE::PIPE_UNASSIGNED;
-  if (isa<hivm::CopyOp, hivm::VBrcOp>(op)) {
+  if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op)) {
     if (auto pipeOpt = getInferredPipe(op, coreType.value(), defVec)) {
       pipe = pipeOpt.value();
     } else {

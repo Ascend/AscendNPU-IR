@@ -350,11 +350,34 @@ IRTranslator::getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
   return outerScopeOp;
 }
 
+bool IRTranslator::isVectorOpResult(Value value) {
+  if (auto resultVal = dyn_cast<OpResult>(value)) {
+    if (auto op = dyn_cast<CoreTypeInterface>(resultVal.getDefiningOp())) {
+      if (auto coreType = op.getCoreType()) {
+        if (coreType.value() == TCoreType::VECTOR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 std::optional<hivm::PIPE>
 IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
                               const llvm::SmallVector<Value> &writeMemInfo) {
-  if (!isa<hivm::CopyOp, hivm::VBrcOp>(op) ||
-      coreType == TCoreType::CUBE_OR_VECTOR || writeMemInfo.empty()) {
+  if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
+      coreType == TCoreType::CUBE_OR_VECTOR) {
+    return {};
+  }
+  if (coreType == TCoreType::VECTOR) {
+    if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      if (isVectorOpResult(insertSliceOp.getDest())) {
+        return PIPE::PIPE_V;
+      }
+    }
+  }
+  if (writeMemInfo.empty()) {
     return {};
   }
   std::optional<hivm::PIPE> pipe;
@@ -365,13 +388,16 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
     }
     auto addressSpace = addressSpaceOpt.value().getAddressSpace();
     std::optional<hivm::PIPE> curPipe;
-    if (isa<hivm::CopyOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
+    if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
+      curPipe = PIPE::PIPE_MTE2;
+    }
+    if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::L1)) {
       curPipe = PIPE::PIPE_MTE3;
     }
-    if (isa<hivm::VBrcOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
-      curPipe = PIPE::PIPE_MTE2;
+    if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::UB)) {
+      curPipe = PIPE::PIPE_V;
     }
     if (curPipe.has_value()) {
       if (pipe.has_value() && curPipe != pipe.value()) {
@@ -384,24 +410,24 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
 }
 
 std::unique_ptr<OperationBase>
-IRTranslator::getPipeInterfaceOp(hivm::OpPipeInterface op,
-                                 OperationBase *parentOp) {
+IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
+                                             OperationBase *parentOp) {
   if (options.decomposeMmadl1Op) {
-    if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op.getOperation())) {
+    if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op)) {
       return getDecomposedMmadl1(mmadl1Op, parentOp);
     }
   }
   auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
   if (options.isCrossCoreMode()) {
-    auto coreType = hivm::getCoreType(op.getOperation());
+    auto coreType = hivm::getCoreType(op);
     assert(llvm::succeeded(coreType));
     assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
     coreTypeVal = coreType.value();
   }
-  auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op.getOperation());
+  auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op);
   std::optional<hivm::PIPE> pipe;
   if (options.isCrossCoreMode()) {
-    if (isa<hivm::CopyOp, hivm::VBrcOp>(op)) {
+    if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op)) {
       if (auto pipeOpt = getInferredPipe(op, coreTypeVal, writeMemOps)) {
         pipe = pipeOpt.value();
       } else {
@@ -413,16 +439,16 @@ IRTranslator::getPipeInterfaceOp(hivm::OpPipeInterface op,
   if (pipe.has_value()) {
     pipeRead = pipe.value();
     pipeWrite = pipe.value();
-  } else {
-    pipeRead = op.isSinglePipeOp() ? op.getPipe() : op.getInPipe();
-    pipeWrite = op.isSinglePipeOp() ? op.getPipe() : op.getOutPipe();
+  } else if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
+    pipeRead = pipeOp.isSinglePipeOp() ? pipeOp.getPipe() : pipeOp.getInPipe();
+    pipeWrite =
+        pipeOp.isSinglePipeOp() ? pipeOp.getPipe() : pipeOp.getOutPipe();
   }
   assert(pipeRead != hivm::PIPE::PIPE_UNASSIGNED &&
          pipeWrite != hivm::PIPE::PIPE_UNASSIGNED);
-  auto rwOp = std::make_unique<RWOperation>(op.getOperation(), parentOp,
-                                            coreTypeVal, pipeRead, pipeWrite,
-                                            readMemOps, writeMemOps);
-  if (isa<UnitFlagEnabledInterface>(op.getOperation())) {
+  auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
+                                            pipeWrite, readMemOps, writeMemOps);
+  if (isa<UnitFlagEnabledInterface>(op)) {
     rwOp->hasUnitFlagFeat = true;
     unitFlagFeaturedOps.insert(rwOp.get());
   }
@@ -660,8 +686,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         continue;
       }
 
-      if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
-        if (auto rwOp = getPipeInterfaceOp(pipeOp, parScope)) {
+      if (auto dstOp = dyn_cast<DestinationStyleOpInterface>(op)) {
+        if (auto rwOp = getDestinationStyleInterfaceOp(dstOp, parScope)) {
           parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
