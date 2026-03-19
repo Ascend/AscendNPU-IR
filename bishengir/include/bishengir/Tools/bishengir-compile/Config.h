@@ -97,6 +97,12 @@ public:
   }
   bool shouldDisableFFTS() const { return disableFFTSFlag; }
 
+  BiShengIRCompileMainConfig &setDisableFMA(bool flag) {
+    disableFMAFlag = flag;
+    return *this;
+  }
+  bool shouldDisableFMA() const { return disableFMAFlag; }
+
   BiShengIRCompileMainConfig &compileTriton(bool compile) {
     enableTritonKernelCompileFlag = compile;
     return *this;
@@ -735,6 +741,9 @@ protected:
 
   /// Force enable FFTS for cube kernels
   bool disableFFTSFlag{false};
+
+  /// Force enable FMA for simt kernels
+  bool disableFMAFlag{false};
 
   /// Enable Triton kernel compile.
   bool enableTritonKernelCompileFlag{false};
