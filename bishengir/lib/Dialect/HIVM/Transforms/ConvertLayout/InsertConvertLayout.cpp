@@ -49,6 +49,7 @@ struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
 
     llvm::SmallDenseMap<Value, DataLayoutAttr> currentLayoutMap =
         opWithLayout.getOperandsCurrentLayout();
+    LDBG("Checking " << op);
     llvm::SmallDenseMap<Value, DataLayoutAttr> targetLayoutMap =
         opWithLayout.getOperandsTargetFractalLayout();
 

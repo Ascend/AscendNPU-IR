@@ -71,7 +71,6 @@ bool isLayoutAgnosticOp(Operation *op) {
   // TODO: When propagating is fixed, can remove this following line
   if (!op)
     return false;
-  return isa<hivm::VCastOp>(op);
   if (auto vbrcOp = dyn_cast<VBrcOp>(op)) {
     return isScalarLike(vbrcOp.getSrc().getType());
   }

@@ -9,14 +9,11 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "hivm-propagate-convert-layout"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -31,22 +28,12 @@ namespace {
 // Helper Functions
 //===----------------------------------------------------------------------===//
 
-/// Verify that both source and result of convertOp are shaped types.
-LogicalResult verifyShapedTypes(ConvertLayoutOp convertOp,
-                                PatternRewriter &rewriter) {
-  auto sourceType = dyn_cast<ShapedType>(convertOp.getSource().getType());
-  auto resultType = dyn_cast<ShapedType>(convertOp.getResult().getType());
-  if (!sourceType || !resultType)
-    return rewriter.notifyMatchFailure(
-        convertOp, "source or result is not a shaped type");
-  return success();
-}
 
 /// Create a new scf.for with modified init arg at the specified index.
 /// Removes the automatically created yield op from the new for loop.
 scf::ForOp createForOpWithModifiedInit(PatternRewriter &rewriter,
                                        scf::ForOp forOp,
-                                       unsigned modifiedIdx,
+                                       uint32_t modifiedIdx,
                                        Value newInitValue) {
   SmallVector<Value> newInitArgs(forOp.getInitArgs());
   newInitArgs[modifiedIdx] = newInitValue;
@@ -71,7 +58,7 @@ void setupForOpIRMapping(IRMapping &mapping,
                          scf::ForOp oldForOp,
                          scf::ForOp newForOp) {
   mapping.map(oldForOp.getInductionVar(), newForOp.getInductionVar());
-  for (unsigned i = 0; i < oldForOp.getNumRegionIterArgs(); ++i) {
+  for (uint32_t i = 0; i < oldForOp.getNumRegionIterArgs(); ++i) {
     mapping.map(oldForOp.getRegionIterArg(i), newForOp.getRegionIterArg(i));
   }
 }
@@ -96,7 +83,7 @@ SmallVector<Value> buildYieldOperands(scf::YieldOp oldYield,
                                       int overrideIdx,
                                       Value overrideValue) {
   SmallVector<Value> newYieldOperands;
-  for (unsigned i = 0; i < oldYield.getNumOperands(); ++i) {
+  for (uint32_t i = 0; i < oldYield.getNumOperands(); ++i) {
     if (static_cast<int>(i) == overrideIdx && overrideValue) {
       newYieldOperands.push_back(overrideValue);
     } else {
@@ -112,7 +99,7 @@ SmallVector<Value> buildYieldOperands(scf::YieldOp oldYield,
 void replaceForOpResults(PatternRewriter &rewriter,
                          scf::ForOp oldForOp,
                          scf::ForOp newForOp,
-                         unsigned overrideIdx,
+                         uint32_t overrideIdx,
                          Value overrideValue) {
   SmallVector<Value> replacements(newForOp.getResults());
   replacements[overrideIdx] = overrideValue;
@@ -168,11 +155,6 @@ struct PropagateConvertLayoutScfForIterArgs
     auto iterArgIdx = llvm::find(forOp.getRegionIterArgs(), blockArg) -
                       forOp.getRegionIterArgs().begin();
 
-    // Verify shapes are compatible
-    if (auto verifyResult = verifyShapedTypes(convertOp, rewriter); failed(
-        verifyResult))
-      return verifyResult;
-    LDBG("ShapedType is verified");
     // Get corresponding init and yield values
     Value initArg = forOp.getInitArgs()[iterArgIdx];
     auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
@@ -220,6 +202,179 @@ struct PropagateConvertLayoutScfForIterArgs
     // Replace old forOp results
     replaceForOpResults(rewriter, forOp, newForOp, iterArgIdx, collapsedResult);
 
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Propagate UP from scf.for Result
+//===----------------------------------------------------------------------===//
+
+/// Pattern:
+///   %r = scf.for ... iter_args(... %init_k ...) -> (..., Tk, ...)
+///   %r_up = hivm.hir.convert_layout %r#k {up}
+///
+/// =>
+///   %init_up = convert_layout_like(%init_k, up)
+///   %r_new = scf.for ... iter_args(... %init_up ...) -> (..., Tk_up, ...) {
+///     %arg_orig = convert_layout_opposite(%arg_up, down)
+///     ...
+///     %y_up = convert_layout_like(%y_orig, up)
+///     scf.yield ..., %y_up, ...
+///   }
+///   %r_orig = convert_layout_opposite(%r_new#k, down)
+///
+/// Replacements:
+///   - old for result #k users -> %r_orig
+///   - old convert op users    -> %r_new#k
+struct PropagateConvertLayoutScfForResultUp
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp convertOp,
+                                PatternRewriter &rewriter) const override {
+    if (!isPropagatingUp(convertOp))
+      return rewriter.notifyMatchFailure(convertOp, "not propagating-up");
+
+    auto forResult = dyn_cast<OpResult>(convertOp.getSource());
+    if (!forResult)
+      return rewriter.notifyMatchFailure(convertOp, "source is not OpResult");
+
+    auto forOp = dyn_cast<scf::ForOp>(forResult.getOwner());
+    if (!forOp)
+      return rewriter.notifyMatchFailure(convertOp,
+                                         "source is not scf.for result");
+
+    uint32_t k = forResult.getResultNumber();
+
+    auto oldYield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    Value oldInitK = forOp.getInitArgs()[k];
+
+    // %init_up
+    rewriter.setInsertionPoint(forOp);
+    Value initUp = createConvertLayoutLike(rewriter, convertOp, oldInitK);
+
+    // new for with modified init[k]
+    auto newForOp = createForOpWithModifiedInit(rewriter, forOp, k, initUp);
+
+    IRMapping mapping;
+    setupForOpIRMapping(mapping, forOp, newForOp);
+
+    // In new body: %arg_orig = down(%arg_up)
+    rewriter.setInsertionPointToStart(newForOp.getBody());
+    Value argOrig = createInverseConvertLayout(
+        rewriter, convertOp, newForOp.getRegionIterArg(k));
+    mapping.map(forOp.getRegionIterArg(k), argOrig);
+
+    // Clone whole body
+    cloneForBodyOperations(rewriter, forOp, mapping, /*skipOp=*/nullptr);
+
+    // Yield[k] => up(mapped old yield[k])
+    Value mappedYieldK = mapping.lookupOrDefault(oldYield.getOperand(k));
+    Value yieldUp = createConvertLayoutLike(rewriter, convertOp, mappedYieldK);
+    auto newYieldOperands = buildYieldOperands(oldYield, mapping, k, yieldUp);
+    rewriter.create<scf::YieldOp>(oldYield.getLoc(), newYieldOperands);
+
+    // After loop: %r_orig = down(%r_new#k)
+    rewriter.setInsertionPointAfter(newForOp);
+    Value rOrig =
+        createInverseConvertLayout(rewriter, convertOp, newForOp.getResult(k));
+
+    // Replace old for results (k overridden by rOrig)
+    replaceForOpResults(rewriter, forOp, newForOp, k, rOrig);
+
+    // Replace old convert op with %r_new#k
+    rewriter.replaceOp(convertOp, newForOp.getResult(k));
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Propagate DOWN from scf.for Init Arg
+//===----------------------------------------------------------------------===//
+
+/// Pattern:
+///   %init_down = convert_layout %init {down}
+///   %r = scf.for ... iter_args(... %init_down ...) -> (..., Tk_down, ...) {
+///     ...
+///     scf.yield ..., %y_down, ...
+///   }
+///
+/// =>
+///   %r_new = scf.for ... iter_args(... %init ...) -> (..., Tk_up, ...) {
+///     %arg_down = convert_layout_like(%arg_up, down)
+///     ...
+///     %y_up = convert_layout_opposite(%y_down, up)
+///     scf.yield ..., %y_up, ...
+///   }
+///   %r_down = convert_layout_like(%r_new#k, down)
+struct PropagateConvertLayoutScfForInitDown
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp convertOp,
+                                PatternRewriter &rewriter) const override {
+    if (isPropagatingUp(convertOp))
+      return rewriter.notifyMatchFailure(convertOp, "not propagating-down");
+
+    if (!convertOp.getResult().hasOneUse())
+      return rewriter.notifyMatchFailure(convertOp,
+                                         "converted init has multiple uses");
+
+    auto forOp = dyn_cast<scf::ForOp>(*convertOp.getResult().user_begin());
+    if (!forOp)
+      return rewriter.notifyMatchFailure(convertOp,
+                                         "result is not used by scf.for");
+
+    // Find init operand index k where init[k] == convertOp.result
+    std::optional<uint32_t> kOpt;
+    for (uint32_t i = 0; i < forOp.getInitArgs().size(); ++i) {
+      if (forOp.getInitArgs()[i] == convertOp.getResult()) {
+        kOpt = i;
+        break;
+      }
+    }
+    if (!kOpt)
+      return rewriter.
+          notifyMatchFailure(convertOp, "not used as iter init arg");
+    uint32_t k = *kOpt;
+
+    auto oldYield = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    Value initOrig = convertOp.getSource();
+
+    // New for with original (pre-down) init at k.
+    rewriter.setInsertionPoint(forOp);
+    auto newForOp = createForOpWithModifiedInit(rewriter, forOp, k, initOrig);
+
+    IRMapping mapping;
+    setupForOpIRMapping(mapping, forOp, newForOp);
+
+    // In new body: old iter arg expected "down", so synthesize it.
+    rewriter.setInsertionPointToStart(newForOp.getBody());
+    Value argDown =
+        createConvertLayoutLike(rewriter, convertOp,
+                                newForOp.getRegionIterArg(k));
+    mapping.map(forOp.getRegionIterArg(k), argDown);
+
+    // Clone original body
+    cloneForBodyOperations(rewriter, forOp, mapping, /*skipOp=*/nullptr);
+
+    // Yield[k] originally down; convert opposite (up) before new yield.
+    Value mappedYieldK = mapping.lookupOrDefault(oldYield.getOperand(k));
+    Value yieldUp =
+        createInverseConvertLayout(rewriter, convertOp, mappedYieldK);
+    auto newYieldOperands = buildYieldOperands(oldYield, mapping, k, yieldUp);
+    rewriter.create<scf::YieldOp>(oldYield.getLoc(), newYieldOperands);
+
+    // After loop: cast back down for old users of result[k].
+    rewriter.setInsertionPointAfter(newForOp);
+    Value resultDown =
+        createConvertLayoutLike(rewriter, convertOp, newForOp.getResult(k));
+
+    replaceForOpResults(rewriter, forOp, newForOp, k, resultDown);
+
+    // Old init convert should now be dead.
+    rewriter.eraseOp(convertOp);
     return success();
   }
 };
@@ -276,17 +431,14 @@ struct PropagateConvertLayoutScfForYield
 
     auto forOp = cast<scf::ForOp>(yieldOp->getParentOp());
 
-    // Verify shapes are compatible
-    if (failed(verifyShapedTypes(convertOp, rewriter)))
-      return failure();
-
     // Get corresponding init value
     Value initArg = forOp.getInitArgs()[yieldOperandIdx];
 
     // Create converted init before the loop
     rewriter.setInsertionPoint(forOp);
+
     Value convertedInit =
-        createConvertLayoutLike(rewriter, convertOp, initArg);
+        createInverseConvertLayout(rewriter, convertOp, initArg);
 
     // Create new ForOp with converted init
     auto newForOp = createForOpWithModifiedInit(rewriter, forOp,
@@ -298,7 +450,7 @@ struct PropagateConvertLayoutScfForYield
 
     // At the start, add inverse conversion for the modified iter_arg
     rewriter.setInsertionPointToStart(newForOp.getBody());
-    Value inverseIterArg = createInverseConvertLayout(
+    Value inverseIterArg = createConvertLayoutLike(
         rewriter, convertOp, newForOp.getRegionIterArg(yieldOperandIdx));
 
     // Old iter_arg maps to inverse-converted value (original layout)
@@ -315,7 +467,7 @@ struct PropagateConvertLayoutScfForYield
 
     // After loop, add inverse conversion for the result
     rewriter.setInsertionPointAfter(newForOp);
-    Value inverseResult = createInverseConvertLayout(
+    Value inverseResult = createConvertLayoutLike(
         rewriter, convertOp, newForOp.getResult(yieldOperandIdx));
 
     // Replace old forOp results
@@ -330,6 +482,10 @@ struct PropagateConvertLayoutScfForYield
 
 void mlir::hivm::populateConvertLayoutScfFor(RewritePatternSet &patterns,
                                              MLIRContext *context) {
-  patterns.add<PropagateConvertLayoutScfForIterArgs>(context);
-  // patterns.add<PropagateConvertLayoutScfForYield>(context);
+  patterns.add<
+    PropagateConvertLayoutScfForResultUp,
+    PropagateConvertLayoutScfForInitDown,
+    PropagateConvertLayoutScfForIterArgs,
+    PropagateConvertLayoutScfForYield
+  >(context);
 }

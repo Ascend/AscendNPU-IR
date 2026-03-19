@@ -40,14 +40,20 @@ struct PropagateConvertLayoutPass
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-
+    // PropagateConvertLayoutInternalOptions class is defined in `ConvertLayoutUtils.h`
+    // and is different with PropagateConvertLayoutOptions from the `HIVM/Transforms/Passes.td`
+    PropagateConvertLayoutInternalOptions options;
+    options.allowAgnosticOps = allowAgnosticOps;
     populateConvertLayoutExtractSlice(patterns, context);
-    // Enable this only for vca
-    populateConvertLayoutElementwise(patterns, context);
+    // Enable this only for vcast
+    populateConvertLayoutElementwise(patterns, context, options);
+    populateConvertLayoutScfIf(patterns, context);
     populateConvertLayoutScfFor(patterns, context);
+    populateConvertLayoutScfWhile(patterns, context);
+    populateHoistConvertLayout(patterns, context);
     ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
     GreedyRewriteConfig config;
-    config.strictMode = GreedyRewriteStrictness::ExistingOps;
+    config.strictMode = GreedyRewriteStrictness::ExistingAndNewOps;
 
     if (failed(applyPatternsGreedily(module, std::move(patterns))))
       signalPassFailure();

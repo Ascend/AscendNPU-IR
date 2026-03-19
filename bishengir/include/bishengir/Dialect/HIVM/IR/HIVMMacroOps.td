@@ -151,7 +151,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
 
 def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
   NoMaxRankTrait,
-  OpLayoutInterface,
+  DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>
 ]> {
   let summary = [{
@@ -168,9 +168,6 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandBLayout();
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetFractalLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
   }];
 }
 

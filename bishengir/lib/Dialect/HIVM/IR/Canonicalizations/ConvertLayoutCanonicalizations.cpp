@@ -85,66 +85,6 @@ struct FoldEmptyConvertLayoutPattern : public OpRewritePattern<ConvertLayoutOp> 
 };
 
 //===----------------------------------------------------------------------===//
-// Move ConvertLayout Adjacent to Source Definition
-//===----------------------------------------------------------------------===//
-
-/// Pattern to move convert_layout operations right after their source definition.
-/// This improves code locality and can enable other canonicalization patterns.
-struct MoveConvertLayoutToSourcePattern : public OpRewritePattern<
-      ConvertLayoutOp> {
-  MoveConvertLayoutToSourcePattern(MLIRContext *context)
-    : OpRewritePattern(context, /*benefit=*/1) {
-  } // Lower benefit than folding patterns
-
-  LogicalResult matchAndRewrite(ConvertLayoutOp op,
-                                PatternRewriter &rewriter) const override {
-    Value source = op.getSource();
-    Operation *sourceOp = source.getDefiningOp();
-
-    // If source is a block argument, move to the head of the owning block
-    if (!sourceOp) {
-      auto blockArg = cast<BlockArgument>(source);
-      Block *ownerBlock = blockArg.getOwner();
-
-      // Check if already at the head of the block
-      if (op->getBlock() == ownerBlock && &ownerBlock->front() == op)
-        return rewriter.notifyMatchFailure(op, "already at block head");
-
-      LDBG("Moving convert_layout to head of block for block argument");
-
-      rewriter.modifyOpInPlace(op, [&]() {
-        op->moveBefore(ownerBlock, ownerBlock->begin());
-      });
-
-      return success();
-    }
-
-    // Check if the convert_layout is already right after the source
-    // getPrevNode() returns nullptr if op is first in block, which is safe
-    auto previousNode = op->getPrevNode();
-    bool validConvertLayoutPosition = previousNode == sourceOp;
-    if (previousNode != nullptr) {
-      auto previousNodeConvertLayout = dyn_cast<ConvertLayoutOp>(previousNode);
-      if (previousNodeConvertLayout) {
-        validConvertLayoutPosition |= previousNodeConvertLayout.getSource() ==
-          source;
-      }
-    }
-    if (validConvertLayoutPosition)
-      return rewriter.notifyMatchFailure(op, "already adjacent to source");
-
-    LDBG("Moving convert_layout after source: " << *sourceOp);
-
-    // Move the convert_layout right after the source operation
-    rewriter.modifyOpInPlace(op, [&]() {
-      op->moveAfter(sourceOp);
-    });
-
-    return success();
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // Fold tensor.cast + ConvertLayout into ConvertLayout
 //===----------------------------------------------------------------------===//
 
@@ -195,6 +135,9 @@ struct PropagateConvertLayoutDownIf : public OpRewritePattern<ConvertLayoutOp> {
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op.hasPureTensorSemantics()) {
+      return rewriter.notifyMatchFailure(op, "is a pure tensor semantics");
+    }
     if (!op->hasOneUse())
       return rewriter.notifyMatchFailure(op, "More than one user");
 
@@ -252,7 +195,6 @@ void ConvertLayoutOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
   results.add<EliminateRedundantConversionPattern>(context);
   results.add<FoldEmptyConvertLayoutPattern>(context);
-  // results.add<MoveConvertLayoutToSourcePattern>(context);
   results.add<FoldCastConvertLayoutPattern>(context);
   results.add<PropagateConvertLayoutDownIf>(context);
 }

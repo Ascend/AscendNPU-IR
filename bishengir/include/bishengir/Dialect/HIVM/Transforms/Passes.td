@@ -772,6 +772,12 @@ def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp
   let summary = "Propagate convert layout for matmul operations";
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
+
+  let options = [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
+                        /*default=*/"false",
+                        "Enable allow agnostic ops propagate reshape."
+                        "Currently disabled because other passes has not supported"
+                        "fractal-layout operations.">];
 }
 
 def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {
