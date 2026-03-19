@@ -6,8 +6,8 @@ We welcome developers to try and contribute to this project. Before contributing
 
 You must sign the Ascend Community Contributor License Agreement (CLA) before contributing:
 
-- **Individual contributors**: Choose "Sign Individual CLA".
-- **Corporations**: Choose "Sign Entity CLA".
+- **Individual contributors**: Choose "Sign Individual CLA", fill in your name and email, then submit your application.
+- **Corporations**: Choose "Sign Entity CLA", fill in the corporate information, and submit. The company will then receive a document from the community for signing the entity CLA, follow the instructions in the email to complete the signing.
 - **Corporate employees**: Choose "Entity Contributor Registration"; after signing you will receive an email with subject "Signing CLA on project of xx". Contact the Corporation Managers mentioned in the email for approval.
 
 ## Developer contributions

@@ -243,7 +243,9 @@ _HFusion Fuse operations on tensors_
 
 _Hoist tensor empty to func parameters and merge into one parameter_
 
-This pass merge all tensor.empty to one func parameter### `-hfusion-infer-func-fusion-kind`
+This pass merge all tensor.empty to one func parameter.
+
+### `-hfusion-infer-func-fusion-kind`
 
 _Infer function for fusion kind_
 
