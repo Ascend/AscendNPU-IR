@@ -326,6 +326,10 @@ static void hivmPostBufferizationOptimizationPipeline(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
   pm.nest<func::FuncOp>().addPass(createReduceRankSubviewPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
+  decomposeOption.decomposePhase =
+      bishengir::DecomposePhase::AFTER_LIFT_LOWEST_STRIDE;
+  pm.nest<func::FuncOp>().addPass(
+      createHIVMAggregatedDecomposeOpPass(decomposeOption));
   pm.nest<func::FuncOp>().addPass(createAllocExtraBufferPass());
   // Infer memory scope for newly allocated extra buffer
   pm.addPass(createInferHIVMMemScopePass());
