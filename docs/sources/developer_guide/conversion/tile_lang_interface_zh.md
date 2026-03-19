@@ -49,12 +49,28 @@ git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 
 运行安装脚本：
 
+> 注意: 如果环境中有gtest头文件但没有gtest的库文件，编译过程可能会引发异常。
+> 可以通过临时移除环境中的gtest头文件或者添加库文件，或者tvm联合gtest一同编译来进行解决。
+
 ```shell
 cd tilelang-ascend
 # 在 3rdparty 中构建 AscendNPU-IR
 bash install_npuir.sh
 # 使用本地 AscendNPU-IR 的替代构建方式
 bash install_npuir.sh --bishengir-path=/path/to/bishengir-compile
+```
+
+然后需要做下面任何一步来使能tilelang的环境设置
+```shell
+source ~/.bashrc
+
+or
+
+export PYTHONPATH=/path/to/tilelang-ascend/:$PYTHONPATH
+
+or
+
+open a new terminal
 ```
 
 安装 torch_npu：
@@ -70,112 +86,119 @@ pip install pybind11 torch_npu
 ### TileLang 内核（向量加法）
 
 ```python
-# Copyright (c) Tile-AI Corporation.
-# Licensed under the MIT License.
+# test_tilelang.py
 
 import os
 
 import tilelang
-import tilelang.language as T  # 导入 TileLang DSL 用于内核定义
+import tilelang.language as T  # Import TileLang DSL for kernel definition
 
 import torch
-import torch_npu  # 导入 NPU（神经网络处理器）PyTorch 后端支持
+import torch_npu  # Import NPU (Neural Processing Unit) backend support for PyTorch
 
-# 清除之前缓存的编译内核，确保干净运行
+# Clear any previously cached compiled kernels to ensure a clean run
 tilelang.cache.clear_cache()
 
-# 定义向量加法的数据类型和序列长度
+# Define data type and sequence length for the vector addition
 dtype = "float32"
-seq_len = 4096  # 待相加向量的长度
+seq_len = 4096  # Length of the vectors to be added
 
 def vec_add(N, block_N, dtype="float32"):
     """
-    使用 TileLang 定义向量加法内核。
-
-    参数：
-    - N: 向量总长度。
-    - block_N: 每个内核线程/块处理的元素数量。
-    - dtype: 张量的数据类型（默认："float32"）。
-
-    返回：
-    - 表示向量加法内核的 TileLang prim_func。
+    Define a vector addition kernel using TileLang.
+    
+    Parameters:
+    - N: Total length of the vectors.
+    - block_N: Number of elements processed per kernel thread/block.
+    - dtype: Data type of the tensors (default: "float32").
+    
+    Returns:
+    - A TileLang prim_func representing the vector addition kernel.
     """
-    n_num = N // block_N  # 块数量（每块处理 `block_N` 个元素）
+    n_num = N // block_N  # Number of blocks (each block processes `block_N` elements)
 
     @T.prim_func
     def main(
-        A: T.Tensor((N), dtype),  # 输入张量 A
-        B: T.Tensor((N), dtype),  # 输入张量 B
-        C: T.Tensor((N), dtype),  # 输出张量 C = A + B
-        shape: T.int32,           # 实际大小（用于处理 N 不能被 block_N 整除的尾部情况）
+        A: T.Tensor((N), dtype),  # Input tensor A
+        B: T.Tensor((N), dtype),  # Input tensor B
+        C: T.Tensor((N), dtype),  # Output tensor C = A + B
+        shape: T.int32,           # Actual size (used for handling tail cases if N is not divisible by block_N)
     ):
-        # 在 NPU 上以 `n_num` 个并行线程启动内核
+        # Launch kernel with `n_num` parallel threads on the NPU
         with T.Kernel(n_num, is_npu=True) as (cid, _):
-            # 分配片上统一缓冲区（UB）用于本地计算
+            # Allocate on-chip Unified Buffer (UB) for local computation
             A_VEC = T.alloc_ub((block_N), dtype)
             B_VEC = T.alloc_ub((block_N), dtype)
             C_VEC = T.alloc_ub((block_N), dtype)
 
-            # 计算当前线程的起始索引
+            # Calculate the starting index for this thread
             start_idx = cid * block_N
-            # 计算从该起始索引到张量末尾的剩余元素数
+            # Compute remaining elements from this start index to the end of the tensor
             remaining = shape - start_idx
-            # 确定当前线程实际应处理的元素数（处理尾部情况）
+            # Determine how many elements this thread should actually process (handles tail)
             tail_size = T.min(block_N, remaining)
 
-            # 将数据从全局内存（A、B）复制到片上缓冲区（A_VEC、B_VEC）
-            T.copy(A[start_idx], A_VEC, [tail_size])
-            T.copy(B[start_idx], B_VEC, [tail_size])
+            # Copy data from global memory (A, B) into on-chip buffers (A_VEC, B_VEC)
+            T.copy(A[start_idx], A_VEC[:tail_size])
+            T.copy(B[start_idx], B_VEC[:tail_size])
 
-            # 使用低级 NPU IR 指令在 NPU 上执行向量加法
+            # Perform vector addition on the NPU using low-level NPU IR instruction
             T.npuir_add(A_VEC, B_VEC, C_VEC)
 
-            # 将结果从片上缓冲区（C_VEC）写回全局内存（C）
-            T.copy(C_VEC, C[start_idx], [tail_size])
+            # Write the result back from on-chip buffer (C_VEC) to global memory (C)
+            T.copy(C_VEC[:tail_size], C[start_idx])
 
     return main
 
 def test_vec_add():
     """
-    验证向量加法内核的测试函数。
-    将自定义 TileLang 内核的结果与 PyTorch 原生加法进行比较。
+    Test function to validate the vector addition kernel.
+    Compares the result of the custom TileLang kernel against PyTorch's native addition.
     """
-    # 设置目标 NPU 设备
+    # Set the target NPU device (device ID 6 in this case)
     torch.npu.set_device(0)
 
-    # 为完整序列长度实例化向量加法内核（单块）
+    # Instantiate the vector addition kernel for the full sequence length (single block)
     func = vec_add(seq_len, seq_len)
 
-    # 将 TileLang 函数编译为 NPU IR 以在 NPU 上执行
+    # Compile the TileLang function to NPU IR for execution on the NPU
     compiled_kernel = tilelang.compile(func, target="npuir")
 
-    # 在 NPU 上创建随机输入张量
+    # Create random input tensors on the NPU
     v1 = torch.randn(size=[seq_len], dtype=eval("torch." + dtype)).npu()
     v2 = torch.randn(size=[seq_len], dtype=eval("torch." + dtype)).npu()
-    v3 = torch.zeros(size=[seq_len], dtype=eval("torch." + dtype)).npu()  # 输出缓冲区
+    v3 = torch.zeros(size=[seq_len], dtype=eval("torch." + dtype)).npu()  # Output buffer
 
-    # 使用 PyTorch 原生加法计算参考结果（在 NPU 上）
-    y_ref = v1 + v2
+    # Compute reference result using PyTorch's native addition (on NPU)
+    y_ref = v1.cpu() + v2.cpu()
 
-    # 启动已编译的 TileLang 内核
+    # Launch the compiled TileLang kernel
     compiled_kernel(v1, v2, v3, seq_len)
 
-    # 打印两个结果进行对比（应基本相同）
-    print("参考结果（PyTorch）：")
+    # Print both results for visual comparison (should be nearly identical)
+    print("Reference result (PyTorch):")
     print(y_ref)
-    print("TileLang 内核结果：")
-    print(v3)
+    print("TileLang kernel result:")
+    print(v3.cpu())
 
 if __name__ == "__main__":
     test_vec_add()
-  ```
+```
+
+运行 `python3 test_tilelang.py`, 我们可以看到执行成功的结果
+```shell
+Reference result (PyTorch):
+tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
+TileLang kernel result:
+tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
+```
 
 ### AscendNPU-IR（向量加法）
 
-以上内核生成如下 AscendNPU-IR：
+当开启打印选项`export TILELANG_DUMP_IR=1`后，会将TVM IR与AscendNPU IR都打印出来，其中AscendNPU IR部分如下：
 
-  ```mlir
-  module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
+```mlir
+module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
   func.func @main(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xf32, #hivm.address_space<gm>>, %arg4: memref<?xf32, #hivm.address_space<gm>>, %arg5: memref<?xf32, #hivm.address_space<gm>>, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
     hivm.hir.set_ffts_base_addr %arg0
     %c1_i32 = arith.constant 1 : i32
@@ -189,22 +212,19 @@ if __name__ == "__main__":
     %alloc_2 = memref.alloc() : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>
     %alloc_3 = memref.alloc() : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>
     %c4096_i32 = arith.constant 4096 : i32
-    %3 = arith.muli %2, %c4096_i32 : i32
-    %4 = arith.subi %arg6, %3 : i32
-    %5 = arith.minsi %c4096_i32, %4 : i32
-    %6 = arith.index_cast %3 : i32 to index
-    %7 = arith.index_cast %5 : i32 to index
-    %subview = memref.subview %reinterpret_cast[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    %subview_4 = memref.subview %alloc[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    memref.copy %subview, %subview_4 : memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    %subview_5 = memref.subview %reinterpret_cast_1[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    %subview_6 = memref.subview %alloc_2[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    memref.copy %subview_5, %subview_6 : memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %3 = arith.minsi %c4096_i32, %arg6 : i32
+    %4 = arith.index_cast %3 : i32 to index
+    %subview = memref.subview %reinterpret_cast[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_4 = memref.subview %alloc[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    memref.copy %subview, %subview_4 : memref<?xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %subview_5 = memref.subview %reinterpret_cast_1[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_6 = memref.subview %alloc_2[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    memref.copy %subview_5, %subview_6 : memref<?xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
     hivm.hir.vadd ins(%alloc, %alloc_2 : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>, memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>) outs(%alloc_3 : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>)
-    %subview_7 = memref.subview %alloc_3[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    %subview_8 = memref.subview %reinterpret_cast_0[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    memref.copy %subview_7, %subview_8 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
+    %subview_7 = memref.subview %alloc_3[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %subview_8 = memref.subview %reinterpret_cast_0[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    memref.copy %subview_7, %subview_8 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
     return
   }
 }
-  ```
+```

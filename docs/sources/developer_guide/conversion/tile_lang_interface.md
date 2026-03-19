@@ -52,6 +52,9 @@ git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 
 Run the installation script
 
+> Note: If you environment has gtest include file but has not gtest lib file, the build process may cause some weird problem. 
+> plese remove the gtest include file or add the lib file or build gtest with tvm.
+
 ```shell
 cd tilelang-ascend
 # build AscendNPU-IR in 3rdparty
@@ -87,8 +90,7 @@ This code implements a vector addition kernel using TileLang, a domain-specific 
 ### TileLang Kernel (vector addition)
 
 ```python
-# Copyright (c) Tile-AI Corporation.
-# Licensed under the MIT License.
+# test_tilelang.py
 
 import os
 
@@ -185,11 +187,19 @@ def test_vec_add():
 
 if __name__ == "__main__":
     test_vec_add()
-  ```
+```
+
+After run `python3 test_tilelang.py`, we can see the result
+```shell
+Reference result (PyTorch):
+tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
+TileLang kernel result:
+tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
+```
 
 ### AscendNPU-IR (vector addition)
 
-The above kernel generates following AscendNPU-IR if `export TILELANG_DUMP_IR=1` is set:
+When `export TILELANG_DUMP_IR=1` is set, TVM IR and AscendNPU IR will be dumped, the AscendNPU IR part is like the following text:
 
 ```mlir
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
