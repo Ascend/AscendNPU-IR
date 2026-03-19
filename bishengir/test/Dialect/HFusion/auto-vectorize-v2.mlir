@@ -187,3 +187,43 @@ func.func @test_hfusion_gatherT(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_t
   %0 = hfusion.gatherT ins(%arg3 : memref<?xf32>, %7 : tensor<2x2xi64>, %c4_i64 : i64, %c0_i32 : i32, [%c2_i64, %c1_i64 : i64, i64], [%c2_i32, %c2_i32 : i32, i32], [%c0_i32, %c0_i32 : i32, i32]) outs(%cst : tensor<2x2xf32>) -> tensor<2x2xf32>
   return
 }
+
+// -----
+
+// Test that memref.copy acts as a barrier preventing fusion of two linalg.generic ops
+// The two linalg.generic ops should be split into two separate outlined functions
+// CHECK-LABEL: func @test_memref_copy_barrier_outlined_vf_0
+// CHECK: scf.for
+// CHECK-LABEL: func @test_memref_copy_barrier_outlined_vf_1  
+// CHECK: scf.for
+// CHECK-LABEL: func @test_memref_copy_barrier
+// CHECK: call @test_memref_copy_barrier_outlined_vf_0
+// CHECK: memref.copy
+// CHECK: call @test_memref_copy_barrier_outlined_vf_1
+#map1 = affine_map<(d0) -> (d0)>
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_957c">} {
+  func.func @test_memref_copy_barrier(%arg0: memref<2048xi32>, %arg1: tensor<2048xi1>, %arg2: tensor<2048xi32>) -> tensor<2048xi32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %c0_i32 = arith.constant 0 : i32
+    %0 = tensor.empty() : tensor<2048xi32>
+    // First linalg.generic
+    %1 = linalg.generic {indexing_maps = [#map1, #map1, #map1, #map1], iterator_types = ["parallel"]} ins(%arg1, %arg2, %0 : tensor<2048xi1>, tensor<2048xi32>, tensor<2048xi32>) outs(%0 : tensor<2048xi32>) {
+    ^bb0(%in: i1, %in_4: i32, %in_5: i32, %out: i32):
+      %sel = arith.select %in, %in_4, %in_5 : i32
+      linalg.yield %sel : i32
+    } -> tensor<2048xi32>
+    // Materialize to memref
+    bufferization.materialize_in_destination %1 in writable %arg0 : (tensor<2048xi32>, memref<2048xi32>) -> ()
+    // memref.copy acts as barrier - should prevent fusion
+    %alloc = memref.alloc() : memref<2048xi32>
+    memref.copy %arg0, %alloc : memref<2048xi32> to memref<2048xi32>
+    // Read back from memref
+    %2 = bufferization.to_tensor %alloc restrict writable : memref<2048xi32>
+    // Second linalg.generic - should NOT be fused with first due to memref.copy barrier
+    %3 = linalg.generic {indexing_maps = [#map1, #map1, #map1], iterator_types = ["parallel"]} ins(%arg1, %2 : tensor<2048xi1>, tensor<2048xi32>) outs(%0 : tensor<2048xi32>) {
+    ^bb0(%in: i1, %in_4: i32, %out: i32):
+      %sel = arith.select %in, %in_4, %c0_i32 : i32
+      linalg.yield %sel : i32
+    } -> tensor<2048xi32>
+    return %3 : tensor<2048xi32>
+  }
+}

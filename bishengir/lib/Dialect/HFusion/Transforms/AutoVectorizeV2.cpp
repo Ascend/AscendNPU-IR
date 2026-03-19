@@ -168,8 +168,9 @@ static bool isNonVectorizableOp(Operation *op) {
              tensor::ExtractSliceOp, tensor::CastOp, tensor::CollapseShapeOp,
              tensor::ExpandShapeOp, tensor::ConcatOp, hivm::CopyOp,
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
-             hivm::BitcastOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::WhileOp,
-             scf::ForOp, scf::IfOp, func::CallOp>(op) ||
+             hivm::BitcastOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+             scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp, memref::CopyOp>(
+             op) ||
          hfusion::isSimtOps(op) || hfusion::isMatmulOps(op) ||
          hfusion::opCanFuseIntoMatmul(op);
 }
@@ -324,6 +325,15 @@ findDownstreamFusableOpOf(Operation *op, Block *block,
   if (visitedOps.contains(op))
     return;
   visitedOps.insert(op);
+  if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
+    Value target = copyOp.getTarget();
+    for (Operation *targetUser : target.getUsers()) {
+      if (isOpInBlock(targetUser, block) && isFusableOp(targetUser))
+        downstreamFusableOps.insert(targetUser);
+      findDownstreamFusableOpOf(targetUser, block, downstreamFusableOps,
+                                visitedOps);
+    }
+  }
   for (Operation *user : op->getUsers()) {
     if (isOpInBlock(user, block) && isFusableOp(user)) {
       downstreamFusableOps.insert(user);
@@ -342,6 +352,19 @@ static void findUpstreamFusableOpOf(Operation *op, Block *block,
   if (visitedOps.contains(op))
     return;
   visitedOps.insert(op);
+  if (auto copyOp = dyn_cast<memref::CopyOp>(op)) {
+    Value source = copyOp.getSource();
+    if (Operation *sourceOp = source.getDefiningOp()) {
+      if (isOpInBlock(sourceOp, block) && isFusableOp(sourceOp))
+        upstreamFusableOps.insert(sourceOp);
+      findUpstreamFusableOpOf(sourceOp, block, upstreamFusableOps, visitedOps);
+    }
+    for (Operation *sourceUser : source.getUsers()) {
+      if (sourceUser != op && isOpInBlock(sourceUser, block))
+        findUpstreamFusableOpOf(sourceUser, block, upstreamFusableOps,
+                                visitedOps);
+    }
+  }
   for (Value operand : op->getOperands()) {
     Operation *operandOp = operand.getDefiningOp();
     if (operandOp) {
