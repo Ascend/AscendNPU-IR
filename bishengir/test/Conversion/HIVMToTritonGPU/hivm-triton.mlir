@@ -1,22 +1,22 @@
 // RUN: bishengir-opt -convert-hivm-to-tritongpu %s -split-input-file -verify-diagnostics | FileCheck %s
 
-// CHECK-LABEL: tt.func @simple_indirect_load_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: !tt.ptr<f32>, %arg3: i32, %arg4: !tt.ptr<f32>)
+// CHECK-LABEL: tt.func @simple_indirect_load_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: index, %arg3: index, %arg4: index, %arg5: !tt.ptr<i64>, %arg6: !tt.ptr<i64>, %arg7: index, %arg8: index, %arg9: index, %arg10: !tt.ptr<f32>, %arg11: !tt.ptr<f32>, %arg12: index, %arg13: index, %arg14: index, %arg15: i32, %arg16: !tt.ptr<f32>, %arg17: !tt.ptr<f32>, %arg18: index, %arg19: index, %arg20: index)
 // CHECK-NEXT: %0 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
 // CHECK-NEXT: %1 = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %3 = tt.load %2 evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
-// CHECK-NEXT: %4 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %4 = tt.splat %arg5 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: tt.store %5, %3 : tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %6 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %7 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %7 = tt.splat %arg5 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %9 = tt.load %8 : tensor<8x!tt.ptr<i64>>
-// CHECK-NEXT: %10 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %10 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %11 = tt.addptr %10, %9 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
 // CHECK-NEXT: %12 = tt.load %11 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %13 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %14 = tt.splat %arg4 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %14 = tt.splat %arg16 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %15 = tt.addptr %14, %13 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
 // CHECK-NEXT: tt.store %15, %12 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
@@ -32,23 +32,23 @@ module {
   }
 }
 
-// CHECK-LABEL: tt.func @simple_indirect_store_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: !tt.ptr<f32>, %arg3: !tt.ptr<f32>, %arg4: i32)
+// CHECK-LABEL: tt.func @simple_indirect_store_kernel_scope_0(%arg0: !tt.ptr<i64>, %arg1: !tt.ptr<i64>, %arg2: index, %arg3: index, %arg4: index, %arg5: !tt.ptr<i64>, %arg6: !tt.ptr<i64>, %arg7: index, %arg8: index, %arg9: index, %arg10: !tt.ptr<f32>, %arg11: !tt.ptr<f32>, %arg12: index, %arg13: index, %arg14: index, %arg15: !tt.ptr<f32>, %arg16: !tt.ptr<f32>, %arg17: index, %arg18: index, %arg19: index, %arg20: i32)
 // CHECK-NEXT: %0 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
 // CHECK-NEXT: %1 = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %3 = tt.load %2 evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
-// CHECK-NEXT: %4 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %4 = tt.splat %arg5 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: tt.store %5, %3 : tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %6 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %7 = tt.splat %arg1 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
+// CHECK-NEXT: %7 = tt.splat %arg5 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %9 = tt.load %8 : tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %10 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %11 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
 // CHECK-NEXT: %13 = tt.load %12 : tensor<8x!tt.ptr<f32>>
-// CHECK-NEXT: %14 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %14 = tt.splat %arg15 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %15 = tt.addptr %14, %9 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
 // CHECK-NEXT: tt.store %15, %13 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
