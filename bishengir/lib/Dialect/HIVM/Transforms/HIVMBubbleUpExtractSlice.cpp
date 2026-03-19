@@ -17,6 +17,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
@@ -78,6 +79,10 @@ public:
           } else {
             return WalkResult::advance();
           }
+        }
+        if (auto whileOp =
+                dyn_cast<scf::WhileOp>((extractSrc.getDefiningOp()))) {
+          return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
