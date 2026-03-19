@@ -526,6 +526,127 @@ def HistogramOp : HFusion_Op<"histogram", [
 }
 
 //===----------------------------------------------------------------------===//
+// GatherLoadOp
+//===----------------------------------------------------------------------===//
+
+def GatherLoadOp : HFusion_Op<"gather_load", [
+    DestinationStyleOpInterface,
+    InferTypeOpAdaptor,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize,
+    AllElementTypesMatch<["base", "dst"]>,
+    AllRanksMatch<["indices", "dst"]>,
+    AllShapesMatch<["indices", "dst"]>,
+    OptionalTypesMatchWith<"base and other have same element type",
+                           "base", "other", "getElementTypeOrSelf($_self)">
+]> {
+  let summary = [{
+    Perform sparse memory loading with optional mask and other
+  }];
+
+  let description = [{
+    This operation takes a source memory buffer and a tensor of offsets,
+    and produces an output tensor by gathering elements from the source
+    at the specified offset positions. The operation supports masking
+    and provides fallback values for masked-out positions.
+    The meanings of the arguments are as follows:
+      - base : base address of the data to be loaded.
+      - indices : indices of the data to be loaded.
+      - burst_len : indicates the continuity of index values on the innermost dim.
+      - mask : (optional) load mask that controls which positions should be
+               actually load and which positions should not be loaded. It
+               is meaningful in call cases except block pointers.
+      - other : (optional) a default/fallback value when the corresponding
+                mask element is false. It is meaningful in call cases except
+                block pointers.
+      - dst : destination buffer/tensor specifying output shape and type.
+      - cache : (optional) a enum hint that controls how the NPU L1 caches the
+                data being loaded from global memory.
+      - evict : (optional) a enum hint that controls the priority of data being
+                removed from NPU cache when cache space is full.
+      - isVolatile : (optional) the load op marked as volatile is not allowed
+                     to be optimized in any way.
+  }];
+  let arguments = (ins AnyMemRef:$base,
+                       RankedTensorOf<[I32, I64]>:$indices,
+                       AnyTypeOf<[I32, I64]>:$burst_len,
+                       Optional<RankedTensorOf<[I1]>>:$mask,
+                       Optional<AnyTypeOf<[AnyInteger, AnyFloat]>>:$other,
+                       TensorOrMemref:$dst,
+                       OptionalAttr<HFusion_CacheModifierAttr>:$cache,
+                       OptionalAttr<HFusion_EvictionPolicyAttr>:$evict,
+                       OptionalAttr<BoolAttr>:$isVolatile);
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $base `:` type($base) `,` $indices `:` type($indices) `,`
+    $burst_len `:` type($burst_len)
+    (`,` $mask `:` type($mask)^)? (`,` $other `:` type($other)^)? `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getDstMutable();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+def ScatterStoreOp : HFusion_Op<"scatter_store", [
+    DestinationStyleOpInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize,
+    AllElementTypesMatch<["base", "data"]>,
+    AllRanksMatch<["indices", "data"]>,
+    AllShapesMatch<["indices", "data"]>
+]> {
+  let summary = [{
+    Performs sparse memory storing with optional mask
+  }];
+
+  let description = [{
+    This operation takes a source tensor and a tensor of offsets from UB,
+    and stores elements from the source into the destination GM buffer
+    at the specified offset positions. The operation supports masking to
+    conditionally control which elements are stored.
+    The meanings of the arguments are the same as these of the gather_load.
+  }];
+  let arguments = (ins RankedTensorOf<[I32, I64]>:$indices,
+                       AnyRankedTensor:$data,
+                       AnyTypeOf<[I32, I64]>:$burst_len,
+                       Optional<RankedTensorOf<[I1]>>:$mask,
+                       TensorOrMemref:$base,
+                       OptionalAttr<HFusion_CacheModifierAttr>:$cache,
+                       OptionalAttr<HFusion_EvictionPolicyAttr>:$evict);
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $indices `:` type($indices) `,`
+    $data `:` type($data) `,` $burst_len `:` type($burst_len)
+    (`,` $mask `:` type($mask)^)? `)`
+    `outs` `(` $base `:` type($base) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getBaseMutable();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // MatMulMxOp
 //===----------------------------------------------------------------------===//
 def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {

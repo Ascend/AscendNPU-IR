@@ -610,6 +610,62 @@ LogicalResult CustomOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// GatherLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult GatherLoadOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    GatherLoadOp::Adaptor adaptor,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  auto dstType = dyn_cast<RankedTensorType>(adaptor.getDst().getType());
+  if (dstType)
+    inferredReturnTypes.push_back(dstType);
+  return success();
+}
+
+LogicalResult GatherLoadOp::verify() {
+  auto indicesType = getIndices().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != indicesType.getShape()) {
+      return emitOpError("mask of hivm::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+  }
+  return success();
+}
+
+void GatherLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ScatterStoreOp::verify() {
+  auto dataType = getData().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != dataType.getShape()) {
+      return emitOpError("mask of hivm::ScatterStoreOp must have the same "
+                         "shape and rank as data");
+    }
+  }
+  return success();
+}
+
+void ScatterStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
 PIPE CustomOp::getPipe() {
   if (auto pipAttr =
           getOperation()->template getAttrOfType<PipeAttr>(PipeAttr::name))
