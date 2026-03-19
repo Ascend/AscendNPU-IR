@@ -48,7 +48,7 @@ apply_patches() {
     cd $THIRD_PARTY_FOLDER/$folder_name
     echo "Applying patches for $submodule_url"
     for patch_file in $PATCH_FOLDER/$folder_name/*.patch; do
-      patch -p1 --merge < "$patch_file"
+      ${PATCH_CMD:-patch} -p1 --merge < "$patch_file"
     done
   done
   echo "Finished applying patches"

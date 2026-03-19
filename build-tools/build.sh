@@ -14,52 +14,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
+set -e  # Exit immediately on error
 
+# On macOS, re-exec with Homebrew Bash if system Bash < 4.2 (Linux/macOS compatible)
+OS_TYPE_early=$(uname -s)
+if [ "$OS_TYPE_early" = "Darwin" ]; then
+  need_reexec=0
+  if [ -z "${BASH_VERSINFO[0]:-}" ]; then need_reexec=1; fi
+  if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then need_reexec=1; fi
+  if [ "${BASH_VERSINFO[0]:-0}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -lt 2 ]; then need_reexec=1; fi
+  if [ "$need_reexec" = "1" ]; then
+    for bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+      if [ -x "$bash_candidate" ]; then
+        exec "$bash_candidate" "$0" "$@"
+      fi
+    done
+  fi
+fi
+
+# Get script directory (macOS-compatible when invoked via symlink)
+get_script_root() {
+    local source="${BASH_SOURCE[0]}"
+    local dir
+    while [[ -L "$source" ]]; do
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        [[ "$source" != /* ]] && source="$dir/$source"
+    done
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    echo "$dir"
+}
+
+if [ -z "${BASH_VERSINFO:-}" ]; then
+    echo "Bash not found " >&2
+    exit 1
+fi
+
+if [ "${BASH_VERSINFO[0]}" -lt 4 ] || \
+   [ "${BASH_VERSINFO[0]}" -eq 4 -a "${BASH_VERSINFO[1]}" -lt 2 ]; then
+    echo "Require Bash version 4.2 or higher version" >&2
+    echo "Current Bash version is ${BASH_VERSION}" >&2
+    exit 1
+fi
+
+OS_TYPE=$(uname -s)
 GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-THIRD_PARTY_FOLDER=$GIT_ROOT/third-party
-SCRIPT_ROOT="$(dirname "$(realpath "$0")")"
-readonly SCRIPT_NAME="$(basename $0)"
+if [ -z "$GIT_ROOT" ]; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+
+THIRD_PARTY_FOLDER="$GIT_ROOT/third-party"
+SCRIPT_ROOT="$(get_script_root)"
+readonly SCRIPT_NAME="$(basename "$0")"
 readonly ENABLE_PROJECTS="mlir"
 
-# Parse command options.
-readonly LONG_OPTS=(
-  "add-cmake-options:"
-  "apply-patches"
-  "bisheng-compiler:"
-  "bishengir-publish:"
-  "build:"
-  "build-bishengir-doc"
-  "build-bishengir-template"
-  "build-test"
-  "build-type:"
-  "build-torch-mlir"
-  "c-compiler:"
-  "cxx-compiler:"
-  "disable-ccache"
-  "enable-assertion"
-  "fast-build"
-  "help"
-  "install-prefix:"
-  "jobs:"
-  "llvm-source-dir:"
-  "python-binding"
-  "rebuild"
-  "safety-options"
-  "safety-ld-options"
-  "skip-rpath"
-  "enable-cpu-runner"
-)
-
-readonly GETOPT_LONGOPTIONS=$(printf "%s," "${LONG_OPTS[@]}")
-# parse the input parameter
-readonly TEMP=$(getopt -o hrj:o:st -l "${GETOPT_LONGOPTIONS}" -n "${SCRIPT_NAME}" -- "$@")
-
+# Initialize variables
 BUILD_TYPE="Release"
-C_COMPILER="clang"
-CXX_COMPILER="clang++"
-THREADS=$(($(grep -c "processor" /proc/cpuinfo) * 3 / 4))
-THREADS=$((${THREADS} > 1 ? ${THREADS} : 1))
+# Default compiler by OS: system clang on macOS to avoid LLD/libc++ conflicts; clang on Linux
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+  if [ -x "/usr/bin/clang" ] && [ -x "/usr/bin/clang++" ]; then
+    C_COMPILER="/usr/bin/clang"
+    CXX_COMPILER="/usr/bin/clang++"
+  else
+    C_COMPILER="clang"
+    CXX_COMPILER="clang++"
+  fi
+else
+  C_COMPILER="clang"
+  CXX_COMPILER="clang++"
+fi
 BUILD_DIR="${GIT_ROOT}/build"
 BUILD_SCRIPTS=(
   "apply_patches.sh"
@@ -67,7 +91,6 @@ BUILD_SCRIPTS=(
   "build.sh"
 )
 BUILD_BISHENGIR_DOC="OFF"
-# We assume that the build script is executed in the build directory.
 LLVM_SOURCE_DIR="$THIRD_PARTY_FOLDER/llvm-project"
 TORCH_MLIR_SOURCE_DIR="$THIRD_PARTY_FOLDER/torch-mlir"
 BISHENGIR_SOURCE_DIR="$GIT_ROOT"
@@ -81,8 +104,24 @@ BISHENGIR_PUBLISH="ON"
 LLVM_BUILD_TARGETS="host"
 BISHENGIR_BUILD_TEMPLATE="OFF"
 BISHENG_COMPILER=""
+APPLY_PATCHES=""
+BUILD_TEST=""
+NO_INSTALL=""
+REBUILD=""
+SKIP_RPATH_OPTION="FALSE"
+CMAKE_OPTIONS=""
+INSTALL_PREFIX=""
 
-# help infomation
+# Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+  NCPU=$(sysctl -n hw.ncpu 2>/dev/null) || NCPU=1
+else
+  NCPU=$(grep -c "processor" /proc/cpuinfo 2>/dev/null) || NCPU=1
+fi
+THREADS=$((NCPU * 3 / 4))
+(( THREADS > 1 )) || THREADS=1
+
+# Help message
 usage() {
   echo -e "${SCRIPT_NAME} - Build the BiShengIR project.
 
@@ -91,7 +130,7 @@ usage() {
                 [--add-cmake-options CMAKE_OPTIONS]
                 [--apply-patches]
                 [--bisheng-compiler BISHENG_COMPILER]
-                [--bishengir-publish]
+                [--bishengir-publish VALUE]
                 [-o | --build PATH]
                 [-t | --build-bishengir-template]
                 [--build-bishengir-doc]
@@ -109,15 +148,15 @@ usage() {
                 [-r | --rebuild]
                 [--safety-options]
                 [--safety-ld-options]
-                [--skip_rpath]
+                [--skip-rpath]
                 [--enable-cpu-runner]
 
     Options:
-      --add-cmake-options CMAKE_OPTIONS    Add options to CMake. (Default: null)
+      --add-cmake-options CMAKE_OPTIONS    Add options to CMake; use quotes for multiple, e.g. --add-cmake-options '-DFOO=ON -DBAR=1'. (Default: null)
       --apply-patches                      Apply patches to third-party submodules. (Default: disabled)
-      --bisheng-compiler BISHENG_COMPILER  Path to bisheng compiler. (Default: null)
-      --bishengir-publish                  Whether to disable features is currently unpublished. (Default: ON)
-      -o, --build BUILD_PATH               Path to directory which CMake will use as the root of build directory
+      --bisheng-compiler BISHENG_COMPILER   Path to bisheng compiler. (Default: null)
+      --bishengir-publish VALUE            Whether to disable features is currently unpublished. (Default: ON)
+      -o, --build PATH                      Path to directory which CMake will use as the root of build directory
                                            (Default: build)
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: disabled)
       -t, --build-bishengir-template       Whether to build BiShengIR template. (Default: disabled)
@@ -143,141 +182,274 @@ usage() {
       "
 }
 
-if [ $? != 0 ]; then
-  echo "Terminating..." >&2
-  exit 1
-fi
-eval set -- "${TEMP}"
+# Parse arguments manually (no getopt dependency)
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --add-cmake-options)
+                if [[ -z "${2+x}" ]]; then
+                    echo "Error: --add-cmake-options requires an argument"
+                    exit 1
+                fi
+                CMAKE_OPTIONS+=" $2"
+                shift 2
+                ;;
+            --add-cmake-options=*)
+                CMAKE_OPTIONS+=" ${1#--add-cmake-options=}"
+                shift
+                ;;
+            --apply-patches)
+                APPLY_PATCHES="1"
+                shift
+                ;;
+            --bisheng-compiler)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --bisheng-compiler requires an argument"
+                    exit 1
+                fi
+                BISHENG_COMPILER="$2"
+                shift 2
+                ;;
+            --bisheng-compiler=*)
+                BISHENG_COMPILER="${1#--bisheng-compiler=}"
+                shift
+                ;;
+            --bishengir-publish)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --bishengir-publish requires an argument"
+                    exit 1
+                fi
+                BISHENGIR_PUBLISH="$2"
+                shift 2
+                ;;
+            --bishengir-publish=*)
+                BISHENGIR_PUBLISH="${1#--bishengir-publish=}"
+                shift
+                ;;
+            -o|--build)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --build requires a path argument"
+                    exit 1
+                fi
+                BUILD_DIR="$2"
+                shift 2
+                ;;
+            --build=*)
+                BUILD_DIR="${1#--build=}"
+                shift
+                ;;
+            -t|--build-bishengir-template)
+                BISHENGIR_BUILD_TEMPLATE="ON"
+                shift
+                ;;
+            --build-bishengir-template=*)
+                BISHENGIR_BUILD_TEMPLATE="${1#--build-bishengir-template=}"
+                shift
+                ;;
+            --build-bishengir-doc)
+                BUILD_BISHENGIR_DOC="ON"
+                shift
+                ;;
+            --build-test)
+                BUILD_TEST="1"
+                shift
+                ;;
+            --build-type)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --build-type requires an argument"
+                    exit 1
+                fi
+                BUILD_TYPE="$2"
+                shift 2
+                ;;
+            --build-type=*)
+                BUILD_TYPE="${1#--build-type=}"
+                shift
+                ;;
+            --build-torch-mlir)
+                BUILD_TORCH_MLIR="ON"
+                shift
+                ;;
+            --c-compiler)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --c-compiler requires an argument"
+                    exit 1
+                fi
+                C_COMPILER="$2"
+                shift 2
+                ;;
+            --c-compiler=*)
+                C_COMPILER="${1#--c-compiler=}"
+                shift
+                ;;
+            --cxx-compiler)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --cxx-compiler requires an argument"
+                    exit 1
+                fi
+                CXX_COMPILER="$2"
+                shift 2
+                ;;
+            --cxx-compiler=*)
+                CXX_COMPILER="${1#--cxx-compiler=}"
+                shift
+                ;;
+            --disable-ccache)
+                CCACHE_BUILD="OFF"
+                shift
+                ;;
+            --enable-assertion)
+                ENABLE_ASSERTION="ON"
+                shift
+                ;;
+            --fast-build)
+                NO_INSTALL="1"
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --install-prefix)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --install-prefix requires an argument"
+                    exit 1
+                fi
+                INSTALL_PREFIX="$2"
+                shift 2
+                ;;
+            --install-prefix=*)
+                INSTALL_PREFIX="${1#--install-prefix=}"
+                shift
+                ;;
+            -j|--jobs)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --jobs requires an argument"
+                    exit 1
+                fi
+                THREADS="$2"
+                shift 2
+                ;;
+            --jobs=*)
+                THREADS="${1#--jobs=}"
+                shift
+                ;;
+            --llvm-source-dir)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --llvm-source-dir requires an argument"
+                    exit 1
+                fi
+                LLVM_SOURCE_DIR="$2"
+                shift 2
+                ;;
+            --llvm-source-dir=*)
+                LLVM_SOURCE_DIR="${1#--llvm-source-dir=}"
+                shift
+                ;;
+            --python-binding)
+                PYTHON_BINDING="ON"
+                shift
+                ;;
+            -r|--rebuild)
+                REBUILD="1"
+                shift
+                ;;
+            --safety-options)
+                SAFETY_OPTIONS="-fPIC -fstack-protector-strong"
+                shift
+                ;;
+            --safety-ld-options)
+                SAFETY_LD_OPTIONS="-Wl,-z,relro,-z,now"
+                shift
+                ;;
+            --skip-rpath)
+                SKIP_RPATH_OPTION="TRUE"
+                shift
+                ;;
+            --torch-mlir-source-dir)
+                if [[ -z "$2" || "$2" == -* ]]; then
+                    echo "Error: --torch-mlir-source-dir requires an argument"
+                    exit 1
+                fi
+                TORCH_MLIR_SOURCE_DIR="$2"
+                shift 2
+                ;;
+            --torch-mlir-source-dir=*)
+                TORCH_MLIR_SOURCE_DIR="${1#--torch-mlir-source-dir=}"
+                shift
+                ;;
+            --enable-cpu-runner)
+                LLVM_BUILD_TARGETS+=";Native"
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                echo "Error: Unknown option: $1"
+                usage
+                exit 1
+                ;;
+            *)
+                echo "Error: Unexpected argument: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+}
 
-while true; do
-  case "$1" in
-  --add-cmake-options)
-    CMAKE_OPTIONS+=" $2"
-    shift 2
-    ;;
-  --apply-patches)
-    readonly APPLY_PATCHES=""
-    shift
-    ;;
-  --bisheng-compiler)
-    BISHENG_COMPILER="$2"
-    shift 2
-    ;;
-  --bishengir-publish)
-    BISHENGIR_PUBLISH="$2"
-    shift 2
-    ;;
-  -o | --build)
-    BUILD_DIR="$(realpath "$2")"
-    shift 2
-    ;;
-  -t | --build-bishengir-template)
-    BISHENGIR_BUILD_TEMPLATE="ON"
-    shift
-    ;;
-  --build-bishengir-doc)
-    BUILD_BISHENGIR_DOC="ON"
-    shift
-    ;;
-  --build-test)
-    readonly BUILD_TEST=""
-    shift
-    ;;
-  --build-type)
-    BUILD_TYPE="$2"
-    shift 2
-    ;;
-  --build-torch-mlir)
-    BUILD_TORCH_MLIR="ON"
-    shift
-    ;;
-  --c-compiler)
-    C_COMPILER="$2"
-    shift 2
-    ;;
-  --cxx-compiler)
-    CXX_COMPILER="$2"
-    shift 2
-    ;;
-  --disable-ccache)
-    CCACHE_BUILD="OFF"
-    shift
-    ;;
-  --enable-assertion)
-    ENABLE_ASSERTION="ON"
-    shift
-    ;;
-  --fast-build)
-    readonly NO_INSTALL=""
-    shift
-    ;;
-  -h | --help)
-    usage
-    exit 0
-    ;;
-  --install-prefix)
-    readonly INSTALL_PREFIX="$(realpath "$2")"
-    shift 2
-    ;;
-  -j | --jobs)
-    THREADS="$2"
-    shift 2
-    ;;
-  --llvm-source-dir)
-    LLVM_SOURCE_DIR="$(realpath "$2")"
-    shift 2
-    ;;
-  --python-binding)
-    PYTHON_BINDING="ON"
-    shift
-    ;;
-  -r | --rebuild)
-    readonly REBUILD=""
-    shift
-    ;;
-  --safety-options)
-    SAFETY_OPTIONS="-fPIC -fstack-protector-strong"
-    shift
-    ;;
-  --safety-ld-options)
-    SAFETY_LD_OPTIONS="-Wl,-z,relro,-z,now"
-    shift
-    ;;
-  --skip-rpath)
-    SKIP_RPATH_OPTION="TRUE"
-    shift
-    ;;
-  --torch-mlir-source-dir)
-    TORCH_MLIR_SOURCE_DIR="$(realpath "$2")"
-    shift 2
-    ;;
-  --enable-cpu-runner)
-    LLVM_BUILD_TARGETS+=";Native"
-    shift
-    ;;
-  --)
-    shift
-    break
-    ;;
-  *)
-    break
-    ;;
-  esac
-done
+parse_arguments "$@"
+
+# Check required tools and environment
+check_dependencies() {
+    echo "Checking dependencies..."
+    
+    if ! command -v cmake >/dev/null 2>&1; then
+        echo "CMake not found. Please install CMake >= 3.28"
+        exit 1
+    fi
+    
+    if ! command -v ninja >/dev/null 2>&1; then
+        echo "Ninja not found. Please install Ninja"
+        exit 1
+    fi
+    
+    if [ "$OS_TYPE" = "Darwin" ]; then
+        if ! xcode-select -p >/dev/null 2>&1; then
+            echo "Xcode Command Line Tools not found. Please install with: xcode-select --install"
+            exit 1
+        fi
+        
+        # GNU patch (gpatch) needed for --merge on macOS
+        if [[ -n "$APPLY_PATCHES" ]] && ! command -v gpatch >/dev/null 2>&1; then
+            echo "Warning: gpatch not found. If applying patches fails, install with: brew install gpatch"
+        fi
+    fi
+    
+    if [ "$OS_TYPE" = "Linux" ]; then
+        if ! command -v g++ >/dev/null 2>&1; then
+            echo "build-essential not found. Please install with: sudo apt install build-essential"
+            exit 1
+        fi
+    fi
+
+    echo "All dependencies satisfied."
+}
 
 clean_build_dir() {
   if [[ "${BUILD_DIR}" = "${SCRIPT_ROOT}" ]]; then
-    # If the build directory is "build-tools", then the build script should be preserved.
     find "${BUILD_DIR}" -mindepth 1 -maxdepth 1 \
-      $(printf -- "-not -name %s " ${BUILD_SCRIPTS[@]}) \
+      $(printf -- "-not -name %s " "${BUILD_SCRIPTS[@]}") \
       -exec rm -rf {} +
   else
-    [[ -n "${BUILD_DIR}" ]] && rm -rf ${BUILD_DIR}/CMake*
+    [[ -n "${BUILD_DIR}" ]] && rm -rf "${BUILD_DIR}"/CMake*
     mkdir -p "${BUILD_DIR}"
   fi
 }
 
-if [[ -z "${INSTALL_PREFIX+x}" ]]; then
+if [[ -z "${INSTALL_PREFIX}" ]]; then
   readonly INSTALL_PREFIX="${BUILD_DIR}/install"
 fi
 
@@ -301,7 +473,6 @@ cmake_generate() {
                       -DTORCH_MLIR_ENABLE_TOSA=OFF\
                       -DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS=ON\
                       -DLLVM_EXTERNAL_TORCH_MLIR_SOURCE_DIR=${TORCH_MLIR_SOURCE_DIR}"
-
   fi
 
   # set the default for CCACHE_BUILD to off if ccache is not installed
@@ -316,34 +487,71 @@ cmake_generate() {
   local build_skip_rpath_option=""
   if [ "${SKIP_RPATH_OPTION}" = "TRUE" ] && [ "${PYTHON_BINDING}" = "ON" ]; then
     echo "Currently python binding requires rpath. Overriding --skip_rpath to FALSE."
-   build_skip_rpath_option="FALSE"
+    build_skip_rpath_option="FALSE"
   elif [ "${SKIP_RPATH_OPTION}" = "TRUE" ]; then
     build_skip_rpath_option="TRUE"
   else
     build_skip_rpath_option="FALSE"
   fi
 
-  COMMON_FLAGS="\
-  -fno-common \
-  -fvisibility=hidden \
-  -fno-strict-aliasing \
-  -pipe \
-  -Wformat=2 \
-  -Wdate-time \
-  -Wfloat-equal \
-  -Wswitch-default \
-  -Wcast-align \
-  -Wvla \
-  -Wunused \
-  -Wundef \
-  -Wframe-larger-than=8192"
+  # Base compile flags
+  COMMON_FLAGS="-fno-common -fvisibility=hidden -fno-strict-aliasing -pipe"
+  COMMON_FLAGS+=" -Wformat=2 -Wfloat-equal -Wswitch-default -Wcast-align -Wvla -Wunused -Wundef"
+
+  # OS-specific flags
+  if [[ "$OS_TYPE" == "Darwin" ]]; then
+    COMMON_FLAGS+=" -Wno-deprecated-declarations"
+  else
+    COMMON_FLAGS+=" -Wdate-time -Wframe-larger-than=8192"
+  fi
 
   C_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wstrict-prototypes"
   CXX_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wnon-virtual-dtor -Wno-unknown-warning-option"
-  LD_FLAGS="${SAFETY_LD_OPTIONS} -Wl,-Bsymbolic-functions -rdynamic"
 
-  cmake $LLVM_SOURCE_DIR/llvm -G Ninja \
+  # Linker flags by OS
+  if [[ "$OS_TYPE" == "Darwin" ]]; then
+    LD_FLAGS="${SAFETY_LD_OPTIONS}"
+    # Add Homebrew libc++ only when using Homebrew LLVM explicitly (avoid undefined symbols with system clang)
+    if [[ -d "/opt/homebrew/opt/llvm/lib" ]] && [[ "${CXX_COMPILER}" == *"opt/llvm"* || "${CXX_COMPILER}" == *"homebrew"* ]]; then
+      HOMEBREW_PREFIX="/opt/homebrew"
+      LLVM_PATH="${HOMEBREW_PREFIX}/opt/llvm"
+      LLVM_LIBCXX_PATH="${LLVM_PATH}/lib/c++"
+      if [[ -d "$LLVM_LIBCXX_PATH" ]]; then
+        LD_FLAGS="${LD_FLAGS} -L${LLVM_LIBCXX_PATH} -L${LLVM_PATH}/lib -Wl,-rpath,${LLVM_LIBCXX_PATH} -Wl,-rpath,${LLVM_PATH}/lib -lc++"
+      else
+        LD_FLAGS="${LD_FLAGS} -L${LLVM_PATH}/lib -Wl,-rpath,${LLVM_PATH}/lib -lc++"
+      fi
+    fi
+    LD_FLAGS="${LD_FLAGS} -Wl,-dead_strip"
+    LD_FLAGS=${LD_FLAGS//-Wl,-z,relro,-z,now/}
+    LD_FLAGS=${LD_FLAGS//-Wl,-Bsymbolic-functions/}
+    LD_FLAGS=${LD_FLAGS//-rdynamic/}
+  else
+    LD_FLAGS="${SAFETY_LD_OPTIONS} -Wl,-Bsymbolic-functions -rdynamic"
+  fi
+
+  # Python binding options (e.g. framework search on macOS)
+  PYTHON_OPTIONS=""
+  if [[ "${PYTHON_BINDING}" == "ON" ]] && [[ "$OS_TYPE" == "Darwin" ]]; then
+    PYTHON_OPTIONS="-DPython3_FIND_FRAMEWORK=LAST"
+  fi
+
+  # Use system ld on macOS with system clang to avoid LLD/libc++ symbol issues
+  CMAKE_LINKER_OPT=""
+  if [[ "$OS_TYPE" == "Darwin" ]] && [[ "${CXX_COMPILER}" != *"opt/llvm"* && "${CXX_COMPILER}" != *"homebrew"* ]]; then
+    if [[ -x "/usr/bin/ld" ]]; then
+      CMAKE_LINKER_OPT="-DCMAKE_LINKER=/usr/bin/ld"
+    fi
+  fi
+
+  echo "Running CMake configuration..."
+  echo "Build directory: ${BUILD_DIR}"
+  echo "LLVM source: ${LLVM_SOURCE_DIR}/llvm"
+
+  cmake "${LLVM_SOURCE_DIR}/llvm" -G Ninja \
+    ${CMAKE_LINKER_OPT} \
     "-B${BUILD_DIR}" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DCMAKE_C_COMPILER="${C_COMPILER}" \
     -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
@@ -352,6 +560,7 @@ cmake_generate() {
     -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR="${BISHENGIR_SOURCE_DIR}" \
     -DLLVM_TARGETS_TO_BUILD="${LLVM_BUILD_TARGETS}" \
     ${torch_mlir_option} \
+    ${PYTHON_OPTIONS} \
     -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \
     -DMLIR_ENABLE_BINDINGS_PYTHON="${PYTHON_BINDING}" \
     -DLLVM_CCACHE_BUILD="${build_ccache_build}" \
@@ -371,51 +580,65 @@ cmake_generate() {
 }
 
 cmake_build() {
-  cd ${BUILD_DIR}
   local targets="check-mlir;check-bishengir"
-
-  if [[ -v BUILD_TEST ]]; then
-    LIT_OPTS="--timeout=30" cmake --build . -j "${THREADS}" --target "${targets}" || exit 1
+  echo "Building with ${THREADS} threads..."
+  if [[ -n "$BUILD_TEST" ]]; then
+    ( cd "${BUILD_DIR}" && LIT_OPTS="--timeout=30" cmake --build . -j "${THREADS}" --target "${targets}" ) || exit 1
   else
-    ninja -j "${THREADS}" || exit 1
+    ( cd "${BUILD_DIR}" && ninja -j "${THREADS}" ) || exit 1
   fi
-
-  if [ "${BUILD_BISHENGIR_DOC}" = "ON" ]; then
-    cmake --build . -j "${THREADS}" --target "bishengir-doc" || exit 1
+  if [[ "${BUILD_BISHENGIR_DOC}" == "ON" ]]; then
+    ( cd "${BUILD_DIR}" && cmake --build . -j "${THREADS}" --target "bishengir-doc" ) || exit 1
   fi
-  cd -
 }
 
 cmake_install() {
-  cd ${BUILD_DIR}
-  if [ "${BISHENGIR_PUBLISH}" = "ON" ]; then
-    cmake --build . --target install-bishengir-publish-products
-  else
-    cmake --install "${BUILD_DIR}"
-  fi
-  cd -
+  ( cd "${BUILD_DIR}" && \
+    if [[ "${BISHENGIR_PUBLISH}" == "ON" ]]; then
+      cmake --build . --target install-bishengir-publish-products
+    else
+      cmake --install .
+    fi
+  )
 }
 
 main() {
-  if [[ -v APPLY_PATCHES ]]; then
-    source ${SCRIPT_ROOT}/apply_patches.sh
+  echo "Starting BiShengIR build process..."
+  echo "OS: $OS_TYPE"
+  echo "Build directory: $BUILD_DIR"
+  echo "C compiler: $C_COMPILER | CXX compiler: $CXX_COMPILER"
+
+  check_dependencies
+
+  if [[ -n "$APPLY_PATCHES" ]]; then
+    echo "Applying patches..."
+    if [[ -f "${SCRIPT_ROOT}/apply_patches.sh" ]]; then
+      if [[ "$OS_TYPE" == "Darwin" ]] && command -v gpatch >/dev/null 2>&1; then
+        export PATCH_CMD="gpatch"
+        echo "Using gpatch for patching"
+      fi
+      # Invoke in subshell so apply_patches.sh does not receive build.sh arguments
+      bash "${SCRIPT_ROOT}/apply_patches.sh"
+    else
+      echo "Warning: apply_patches.sh not found at ${SCRIPT_ROOT}/apply_patches.sh"
+    fi
+  else
+    echo "APPLY_PATCHES is not set, skipping patches"
   fi
 
-  # Rebuild.
-  if [[ -v REBUILD ]]; then
+  if [[ -n "$REBUILD" ]]; then
+    echo "Cleaning build directory for rebuild..."
     clean_build_dir
     cmake_generate
   elif [[ ! -f "${BUILD_DIR}/CMakeCache.txt" ]]; then
-    mkdir -p ${BUILD_DIR}
-    # First build.
+    echo "First build, generating CMake configuration..."
+    mkdir -p "${BUILD_DIR}"
     cmake_generate
   fi
 
-  # Build.
   cmake_build
 
-  # Install.
-  if [ ! -v BUILD_TEST ] && [ -z "${NO_INSTALL+x}" ]; then
+  if [[ -z "$BUILD_TEST" ]] && [[ -z "$NO_INSTALL" ]]; then
     cmake_install
   fi
 
