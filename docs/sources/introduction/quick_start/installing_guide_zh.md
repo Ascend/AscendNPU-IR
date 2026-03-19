@@ -176,36 +176,7 @@ ninja -j32
 
 ### 二进制安装
 
-#### 随 CANN 包安装
-
-AscendNPU-IR二进制会随CANN toolkit包一起安装，参见上文「1.2.1 CANN 包安装」。
-
-#### AscendNPU-IR 包单独安装
-
-AscendNPU-IR有独立安装包以供使用。
-
-1. 下载AscendNPU-IR安装包
-
-```bash
-# 下载对应版本的AscendNPU-IR安装包
-```
-
-1. 安装AscendNPU-IR
-
-```bash
-# 以x86系统环境，AscendNPU-IR 1.0.0版本为例
-chmod +x ascendnpu-ir_1.0.0_linux-x86.run
-./ascendnpu-ir_1.0.0_linux-x86.run --install [--install-path=${PATH-TO-ASCENDNPU-IR}]
-```
-
-### 环境变量设置
-
-要使用AscendNPU-IR，需要将bishengir-compile可执行文件所在的路径加入到PATH环境变量中。
-
-```bash
-# 将bishengir-compile所在目录${PATH-TO-BISHENGIR-COMPILE}加入到PATH环境变量中
-export PATH=${PATH-TO-ASCENDNPU-IR}/tools/bishengir/bin:$PATH
-```
+AscendNPU-IR二进制会随CANN toolkit包一起安装，参见上文 [CANN 包安装](#cann包安装)。
 
 ## 运行测试
 
