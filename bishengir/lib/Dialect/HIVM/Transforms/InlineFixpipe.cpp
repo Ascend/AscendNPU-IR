@@ -563,7 +563,6 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
-  patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
 
 void InlineFixpipe::runOnOperation() {
@@ -571,6 +570,12 @@ void InlineFixpipe::runOnOperation() {
   populateInlineFixpipePatterns(patterns);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+  }
+  RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
+  MLIRContext *ctx = insertFixpipeForDevicePrintPattern.getContext();
+  insertFixpipeForDevicePrintPattern.add<InsertFixpipeForDevicePrint>(ctx);
+  if (failed(applyPatternsGreedily(getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
     signalPassFailure();
   }
 }
