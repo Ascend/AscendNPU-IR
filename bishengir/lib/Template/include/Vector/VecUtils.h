@@ -376,10 +376,17 @@ view_as(memref_t<__ubuf__ SRCTYPE, Dim> *src_buf,
 template <typename SRCTYPE, typename DSTTYPE, int Dim>
 __aiv__ __attribute__((always_inline)) void
 bitwise_view_as(memref_t<__ubuf__ SRCTYPE, Dim> *src_buf,
-        memref_t<__ubuf__ DSTTYPE, Dim> *dst_buf) {
+                memref_t<__ubuf__ DSTTYPE, Dim> *dst_buf) {
   dst_buf->allocated = (__ubuf__ DSTTYPE *)src_buf->allocated;
   dst_buf->aligned = (__ubuf__ DSTTYPE *)src_buf->aligned;
   dst_buf->offset = src_buf->offset;
+  if constexpr (bitwidthOf<SRCTYPE>() < bitwidthOf<DSTTYPE>()) {
+    auto bits_factor = bitwidthOf<DSTTYPE>() / bitwidthOf<SRCTYPE>();
+    dst_buf->offset = src_buf->offset / bits_factor;
+  } else if constexpr (bitwidthOf<SRCTYPE>() > bitwidthOf<DSTTYPE>()) {
+    auto bits_factor = bitwidthOf<SRCTYPE>() / bitwidthOf<DSTTYPE>();
+    dst_buf->offset = src_buf->offset * bits_factor;
+  }
   for (int i = 0; i < Dim; ++i) {
     dst_buf->sizes[i] = src_buf->sizes[i];
     dst_buf->strides[i] = src_buf->strides[i];
