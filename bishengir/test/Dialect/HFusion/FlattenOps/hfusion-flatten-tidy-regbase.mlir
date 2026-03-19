@@ -863,8 +863,8 @@ func.func @test_subview_static_shape_lower1( %arg0: memref<4x12x10xf32, strided<
 
 //-----
 // CHECK-LABEL: @test_subview_static_shape_lower2(
-// CHECK: %[[VAL_0:.*]] = memref.collapse_shape %[[VAL_1:.*]] {{\[}}{{\[}}0], {{\[}}1, 2]] : memref<4x12x10xf32, strided<[120, 10, 1]>> into memref<4x120xf32, strided<[120, 1]>>
-// CHECK: %[[VAL_2:.*]] = memref.subview %[[VAL_0]][0, 0] [1, 20] [1, 2] : memref<4x120xf32, strided<[120, 1]>> to memref<20xf32, strided<[2]>>
+// CHECK: %[[VAL_0:.*]] = memref.collapse_shape %[[VAL_1:.*]] {{\[}}{{\[}}0, 1, 2]] : memref<4x12x10xf32, strided<[120, 10, 1]>> into memref<480xf32, strided<[1]>>
+// CHECK: %[[VAL_2:.*]] = memref.subview %[[VAL_0]][0] [20] [2] : memref<480xf32, strided<[1]>> to memref<20xf32, strided<[2]>>
 func.func @test_subview_static_shape_lower2( %arg0: memref<4x12x10xf32, strided<[120, 10, 1]>>) -> tensor<4x5xf32> {
 %1 = memref.subview %arg0[0, 0, 0] [1, 4, 5] [1, 1, 2] : memref<4x12x10xf32, strided<[120, 10, 1]>> to memref<4x5xf32, strided<[10, 2]>>
   %2 = bufferization.to_tensor %1 : memref<4x5xf32, strided<[10, 2]>>
@@ -1305,4 +1305,50 @@ func.func @while_loop_yield_mismatch(%arg0: tensor<128xi1>, %arg1: i1) -> tensor
     scf.yield %arg2_do, %60 : tensor<128xi1>, i1
   }
   return %res : tensor<128xi1>
+}
+
+// -----
+// CHECK-LABEL: insert_slice_rank_reduced1
+// CHECK: tensor<3000xf32>
+func.func @insert_slice_rank_reduced1(
+    %arg3: tensor<3x2x250xf32>
+) -> tensor<3x1x1x2x250x2xf32> {
+  %empty = tensor.empty() : tensor<3x1x1x2x250x2xf32>
+  %1 = tensor.insert_slice %arg3 into %empty[0, 0, 0, 0, 0, 0] [3, 1, 1, 2, 250, 1] [1, 1, 1, 1, 1, 2]
+    : tensor<3x2x250xf32> into tensor<3x1x1x2x250x2xf32>
+ 
+  return %1 : tensor<3x1x1x2x250x2xf32>
+}
+
+// -----
+// CHECK-LABEL: insert_slice_rank_reduced2
+// CHECK: tensor<672xf32>
+func.func @insert_slice_rank_reduced2(
+    %arg3: tensor<16x3xf32>
+) -> tensor<16x3x7x2xf32> {
+  %empty = tensor.empty() : tensor<16x3x7x2xf32>
+  %1 = tensor.insert_slice %arg3 into %empty[0, 0, 0, 0] [16, 3, 1, 1] [1, 1, 1, 1]
+    : tensor<16x3xf32> into tensor<16x3x7x2xf32>
+  return %1 : tensor<16x3x7x2xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @extract_slice_rank_reduced(
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice {{.*}}[0] [20] [2] : tensor<480xf32> to tensor<20xf32>
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %extracted_slice {{\[}}[0, 1]] output_shape [4, 5] : tensor<20xf32> into tensor<4x5xf32>
+func.func @extract_slice_rank_reduced() -> tensor<4x5xf32> {
+    %0 = tensor.empty() : tensor<4x12x10xf32>
+    %extracted_slice = tensor.extract_slice %0[0, 0, 0] [1, 4, 5] [1, 1, 2] : tensor<4x12x10xf32> to tensor<4x5xf32>
+    return %extracted_slice :  tensor<4x5xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @extract_slice_rank_reduced2(
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice {{.*}}[0] [768] [16] : tensor<12288xf32> to tensor<768xf32>
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %extracted_slice {{\[}}[0, 1, 2]] output_shape [4, 12, 16] : tensor<768xf32> into tensor<4x12x16xf32>
+func.func @extract_slice_rank_reduced2() -> tensor<4x12x16xf32> {
+    %0 = tensor.empty() : tensor<4x12x1x1x16x16xf32>
+    %extracted_slice = tensor.extract_slice %0[0, 0, 0, 0, 0, 0] [4, 12, 1, 1, 16, 1] [1, 1, 1, 1, 1, 16]
+      : tensor<4x12x1x1x16x16xf32> to tensor<4x12x16xf32>
+    return %extracted_slice :  tensor<4x12x16xf32>
 }

@@ -305,6 +305,22 @@ DimensionAnalyzerBase::processDecreasingDimensions(ArrayRef<int64_t> inputArgs,
   SmallVector<int64_t> sortedDimensions = {dimensions.begin(),
                                            dimensions.end()};
   llvm::sort(sortedDimensions);
+
+  int64_t inputRank = static_cast<int64_t>(inputArgs.size());
+  std::vector<bool> isReduced(inputRank, false);
+  for (int64_t dim : dimensions) {
+    if (dim >= 0 && dim < inputRank) {
+      isReduced[dim] = true;
+    }
+  }
+
+  for (int64_t i = 0; i < inputRank - 1; ++i) {
+    if (isReduced[i] != isReduced[i + 1]) {
+      disconnect(inputArgs[i], inputArgs[i + 1]);
+      LDBG("Disconnected boundary via bit-vector: " << i << " - " << (i + 1));
+    }
+  }
+
   const auto *dimPtr = sortedDimensions.begin();
   for (int64_t i = 0; i < static_cast<int64_t>(inputArgs.size()); ++i) {
     if (dimPtr != sortedDimensions.end() && *dimPtr == i) {
@@ -335,6 +351,21 @@ size_t DimensionAnalyzerBase::processPermutation(ArrayRef<int64_t> inputArgs,
     outputArgs[i] = inputArgs[perm[i]];
   }
   argumentsRef_.push_back(std::move(outputArgs));
+
+  std::vector<int> invPerm(perm.size());
+  for (int i = 0; i < static_cast<int>(perm.size()); ++i) {
+    invPerm[perm[i]] = i;
+  }
+
+  for (int j = 0; j < static_cast<int>(inputArgs.size()) - 1; ++j) {
+    int posCurr = invPerm[j];
+    int posNext = invPerm[j + 1];
+
+    if (posNext != posCurr + 1) {
+      disconnect(inputArgs[j], inputArgs[j + 1]);
+      LDBG("Disconnected original neighbors: " << j << " and " << (j + 1));
+    }
+  }
   return argumentsRef_.size() - 1;
 }
 
@@ -504,13 +535,14 @@ void DimensionAnalyzerBase::processSlicingOp(T slicingOp) {
 
     for (size_t axis = 1; axis < rank; ++axis) {
       //  superview should be continuous for dropped dim
+      int64_t staticRes;
       if (droppedDims[axis]) {
         LDBG("droppedDims " << droppedDims[axis]);
-        ret[axis] = false;
-        continue;
+        staticRes = 1;
+      } else {
+        staticRes = getConstantIntValue(subviewShape[axis])
+                        .value_or(ShapedType::kDynamic);
       }
-      auto staticRes = getConstantIntValue(subviewShape[axis])
-                           .value_or(ShapedType::kDynamic);
       auto staticSrc = getConstantIntValue(superviewShape[axis])
                            .value_or(ShapedType::kDynamic);
       // If it's dynamic its undeterminable

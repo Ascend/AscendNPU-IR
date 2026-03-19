@@ -85,6 +85,9 @@ DimensionAnalyzerBase::allocateArguments(int rank,
     if (i + 1 < rank)
       isConnected_[currentIndex].rightConnected = true;
   }
+  // barrier
+  isConnected_[startingIdx + rank].leftConnected = false;
+  isConnected_[startingIdx + rank].rightConnected = false;
   dimensionAllocation_++;
 
   return startingIdx;
