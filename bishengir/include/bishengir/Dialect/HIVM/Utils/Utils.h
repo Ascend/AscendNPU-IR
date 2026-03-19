@@ -386,6 +386,9 @@ bool isFromFunctionArg(mlir::Value v);
 bool isGuaranteedCollapsibleStrictly(
     MemRefType srcType, ArrayRef<ReassociationIndices> reassociation);
 
+bool isGuaranteedCollapsibleUnStrictly(
+    MemRefType srcType, ArrayRef<ReassociationIndices> reassociation);
+
 /// Return the MemRefTypes
 SmallVector<MemRefType> getMemRefTypes(TypeRange types);
 
