@@ -9,7 +9,8 @@ _Convert tensor encoding to bind_symbolic_shape._
 
 _Erase symbols._
 
-Erase symbols.
+Remove symbols from the function, used to clean up symbolic shape annotations when symbol analysis is not needed
+
 ### `-propagate-symbol`
 
 _Propagate symbols through operations._

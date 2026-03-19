@@ -280,7 +280,9 @@ Try to remove unnecessary address return.### `-hivm-opt-single-point`
 
 _Optimize single point hivm op by scalar operation._
 
-This pass optimize the single point hivm op by scalar operation.### `-hivm-plan-memory`
+This pass optimize the single point hivm op by scalar operation.
+
+### `-hivm-plan-memory`
 
 _Plan memory for HIVM Ops_
 
