@@ -15257,10 +15257,10 @@ index 053ea7935260..eea7a6fafd1a 100644
    }
  
 diff --git a/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp b/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
-index 975bfb4d41e0..d3d753a9ff90 100644
+index 975bfb4d41e0..1b83870ec788 100644
 --- a/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
 +++ b/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
-@@ -43,18 +43,27 @@
+@@ -43,18 +43,28 @@
  #include <optional>
  #include <random>
  
@@ -15274,6 +15274,7 @@ index 975bfb4d41e0..d3d753a9ff90 100644
  #include "mlir/Dialect/MemRef/IR/MemRef.h"
 +#include "mlir/Dialect/SCF/IR/SCF.h"
 +#include "mlir/Dialect/Tensor/IR/Tensor.h"
++#include "mlir/Dialect/Utils/StaticValueUtils.h"
 +#include "mlir/IR/AffineExpr.h"
  #include "mlir/IR/AsmState.h"
 +#include "mlir/IR/Attributes.h"
@@ -15288,7 +15289,7 @@ index 975bfb4d41e0..d3d753a9ff90 100644
  #include "mlir/Interfaces/SubsetOpInterface.h"
  #include "llvm/ADT/DenseSet.h"
  #include "llvm/ADT/SetVector.h"
-@@ -293,6 +302,191 @@ static bool isReachable(Block *from, Block *to, ArrayRef<Block *> except) {
+@@ -293,6 +303,366 @@ static bool isReachable(Block *from, Block *to, ArrayRef<Block *> except) {
    return false;
  }
  
@@ -15306,63 +15307,231 @@ index 975bfb4d41e0..d3d753a9ff90 100644
 +  return nullptr;
 +}
 +
-+static bool isStepGreaterThanSlice(SmallVector<Value> steps,
-+                                   SmallVector<OpFoldResult> tensorSizes) {
-+  // Check that each offset/loop step is greater than or equal to the size of
-+  // slice
-+  for (size_t i = 0; i < steps.size(); ++i) {
-+    // Only handles static steps for now
-+    arith::ConstantOp cstStep =
-+        dyn_cast<arith::ConstantOp>(steps[i].getDefiningOp());
++struct LoopProgression {
++  scf::ForOp loop;
++  int64_t coefficient = 0;
++  int64_t divisor = 1;
++};
 +
-+    if (!cstStep) {
-+      return false;
-+    }
++static affine::AffineApplyOp getSingleResultAffineApply(Value value);
 +
-+    // First check if the size is also static, and we can perform a direct
-+    // comparison
-+    Attribute cstSize = tensorSizes[i].dyn_cast<Attribute>();
-+    if (cstSize) {
-+      if (cast<IntegerAttr>(cstSize).getInt() <=
-+          cast<IntegerAttr>(cstStep.getValue()).getInt()) {
-+        continue;
-+      }
-+      return false;
-+    }
++static FailureOr<LoopProgression>
++matchLoopProgressionExpr(AffineExpr expr, ValueRange operands, unsigned numDims,
++                         ArrayRef<scf::ForOp> loops);
 +
-+    // Dynamic size case
-+    Value dynTensorSize = tensorSizes[i].dyn_cast<Value>();
-+    if (dynTensorSize) {
-+      // If the size is the same value as the loop step
-+      if (dynTensorSize == steps[i]) {
-+        continue;
-+      }
++static Value getAffineExprOperand(AffineExpr expr, ValueRange operands,
++                                  unsigned numDims) {
++  if (auto dimExpr = dyn_cast<AffineDimExpr>(expr))
++    return operands[dimExpr.getPosition()];
++  auto symbolExpr = cast<AffineSymbolExpr>(expr);
++  return operands[numDims + symbolExpr.getPosition()];
++}
 +
-+      // Otherwise, we try to see if the size is defined by an affine operation
-+      // in order to get a lower bound
-+      if (steps[i].getDefiningOp() && dynTensorSize.getDefiningOp()) {
-+        if (affine::AffineMinOp min =
-+                dyn_cast<affine::AffineMinOp>(dynTensorSize.getDefiningOp())) {
-+          AffineMap minMap = min.getAffineMap();
-+          AffineConstantExpr cstExpr;
-+          for (AffineExpr expr : minMap.getResults()) {
-+            cstExpr = dyn_cast<AffineConstantExpr>(expr);
-+            if (cstExpr) {
-+              break;
-+            }
-+          }
-+          if (cstExpr) {
-+            if (cstExpr.getValue() <=
-+                cast<IntegerAttr>(cstStep.getValue()).getInt()) {
-+              continue;
-+            }
-+          }
-+        }
-+      }
-+    }
-+    return false;
++static FailureOr<LoopProgression>
++matchLoopProgressionOperand(Value operand, ArrayRef<scf::ForOp> loops) {
++  for (scf::ForOp loop : loops) {
++    if (operand == loop.getInductionVar())
++      return LoopProgression{loop, 1};
 +  }
-+  return true;
++
++  // Recursively follow affine.apply chains such as:
++  //   %a = affine.apply ()[%iv] -> (%iv floordiv 2)
++  //   %b = affine.apply ()[%a] -> (%a + 4)
++  //   tensor.extract_slice ... [%b] ...
++  // This is still a progression of the same enclosing loop IV.
++  //
++  // Do not recurse through affine.min here. Unlike sizes, offsets need a
++  // monotone loop progression, and affine.min often produces piecewise values
++  // that should be handled conservatively.
++  if (auto applyOp = getSingleResultAffineApply(operand)) {
++    auto progression = matchLoopProgressionExpr(
++        applyOp.getAffineMap().getResult(0), applyOp.getMapOperands(),
++        applyOp.getAffineMap().getNumDims(), loops);
++    if (succeeded(progression) && (*progression).loop &&
++        (*progression).coefficient > 0 && (*progression).divisor > 0)
++      return progression;
++  }
++
++  return failure();
++}
++
++static FailureOr<LoopProgression>
++combineLoopProgressions(const LoopProgression &lhs,
++                        const LoopProgression &rhs) {
++  if (!lhs.loop)
++    return rhs;
++  if (!rhs.loop)
++    return lhs;
++  if (lhs.loop != rhs.loop || lhs.divisor != rhs.divisor)
++    return failure();
++  return LoopProgression{lhs.loop, lhs.coefficient + rhs.coefficient,
++                         lhs.divisor};
++}
++
++static FailureOr<LoopProgression>
++matchLoopProgressionExpr(AffineExpr expr, ValueRange operands, unsigned numDims,
++                         ArrayRef<scf::ForOp> loops) {
++  if (isa<AffineConstantExpr>(expr))
++    return LoopProgression{};
++
++  if (isa<AffineDimExpr, AffineSymbolExpr>(expr))
++    return matchLoopProgressionOperand(
++        getAffineExprOperand(expr, operands, numDims), loops);
++
++  if (auto binaryExpr = dyn_cast<AffineBinaryOpExpr>(expr)) {
++    if (binaryExpr.getKind() == AffineExprKind::Mul) {
++      auto lhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getLHS());
++      auto rhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
++      if (lhsConst || rhsConst) {
++        auto nested = matchLoopProgressionExpr(lhsConst ? binaryExpr.getRHS()
++                                                        : binaryExpr.getLHS(),
++                                               operands, numDims, loops);
++        if (failed(nested))
++          return failure();
++        (*nested).coefficient *=
++            lhsConst ? lhsConst.getValue() : rhsConst.getValue();
++        return nested;
++      }
++      return failure();
++    }
++
++    if (binaryExpr.getKind() == AffineExprKind::FloorDiv) {
++      auto rhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
++      if (!rhsConst || rhsConst.getValue() <= 0)
++        return failure();
++      auto nested = matchLoopProgressionExpr(binaryExpr.getLHS(), operands,
++                                             numDims, loops);
++      if (failed(nested))
++        return failure();
++      (*nested).divisor *= rhsConst.getValue();
++      return nested;
++    }
++
++    if (binaryExpr.getKind() == AffineExprKind::Add) {
++      auto lhs = matchLoopProgressionExpr(binaryExpr.getLHS(), operands,
++                                          numDims, loops);
++      auto rhs = matchLoopProgressionExpr(binaryExpr.getRHS(), operands,
++                                          numDims, loops);
++      if (failed(lhs) || failed(rhs))
++        return failure();
++      return combineLoopProgressions(*lhs, *rhs);
++    }
++  }
++
++  return failure();
++}
++
++static affine::AffineApplyOp getSingleResultAffineApply(Value value) {
++  auto applyOp = dyn_cast_or_null<affine::AffineApplyOp>(value.getDefiningOp());
++  if (!applyOp || applyOp.getAffineMap().getNumResults() != 1)
++    return {};
++  return applyOp;
++}
++
++static FailureOr<LoopProgression>
++matchLoopProgression(Value offset, ArrayRef<scf::ForOp> loops) {
++  return matchLoopProgressionOperand(offset, loops);
++}
++
++static std::optional<int64_t> getUpperBoundOfAffineExpr(AffineExpr expr,
++                                                        ValueRange operands,
++                                                        unsigned numDims);
++
++// Example:
++// %sz = affine.apply ()[%n] -> (%n floordiv 2)
++// This tries to derive an upper bound for %sz from the bound of %n.
++static std::optional<int64_t> getUpperBoundOfValue(Value value) {
++  if (auto cst = getConstantIntValue(getAsOpFoldResult(value)))
++    return cst;
++
++  if (auto applyOp = getSingleResultAffineApply(value))
++    return getUpperBoundOfAffineExpr(applyOp.getAffineMap().getResult(0),
++                                     applyOp.getMapOperands(),
++                                     applyOp.getAffineMap().getNumDims());
++
++  if (auto minOp =
++          dyn_cast_or_null<affine::AffineMinOp>(value.getDefiningOp())) {
++    std::optional<int64_t> upperBound;
++    for (AffineExpr expr : minOp.getAffineMap().getResults()) {
++      auto resultBound = getUpperBoundOfAffineExpr(
++          expr, minOp.getMapOperands(), minOp.getAffineMap().getNumDims());
++      if (!resultBound)
++        continue;
++      upperBound =
++          upperBound ? std::min(*upperBound, *resultBound) : resultBound;
++    }
++    return upperBound;
++  }
++
++  return std::nullopt;
++}
++
++static std::optional<int64_t> getEffectiveStep(LoopProgression &progression) {
++  // Only handles static step
++  arith::ConstantOp cstStep =
++      dyn_cast<arith::ConstantOp>(progression.loop.getStep().getDefiningOp());
++  if (!cstStep)
++    return std::nullopt;
++  auto step = cast<IntegerAttr>(cstStep.getValue()).getInt();
++  int64_t scaledStep = step * progression.coefficient;
++  if (scaledStep % progression.divisor != 0)
++    return std::nullopt;
++  int64_t effectiveStep = scaledStep / progression.divisor;
++  return effectiveStep;
++}
++
++static bool isEffectStepGreaterThanSlice(int64_t step,
++                                         OpFoldResult tensorSize) {
++  Value sizeValue = tensorSize.dyn_cast<Value>();
++  if (sizeValue) {
++    // For dynamic size, infer the upper bound
++    if (auto upperBound = getUpperBoundOfValue(sizeValue))
++      return step >= *upperBound;
++  } else if (auto cstSize = getConstantIntValue(tensorSize)) {
++    return step >= *cstSize;
++  }
++  return false;
++}
++
++static std::optional<int64_t> getUpperBoundOfAffineExpr(AffineExpr expr,
++                                                        ValueRange operands,
++                                                        unsigned numDims) {
++  if (auto cst = llvm::dyn_cast<AffineConstantExpr>(expr))
++    return cst.getValue();
++
++  if (isa<AffineDimExpr, AffineSymbolExpr>(expr))
++    return getUpperBoundOfValue(getAffineExprOperand(expr, operands, numDims));
++
++  auto binaryExpr = dyn_cast<AffineBinaryOpExpr>(expr);
++  if (!binaryExpr)
++    return std::nullopt;
++
++  auto lhs = getUpperBoundOfAffineExpr(binaryExpr.getLHS(), operands, numDims);
++  auto rhs = getUpperBoundOfAffineExpr(binaryExpr.getRHS(), operands, numDims);
++
++  switch (binaryExpr.getKind()) {
++  case AffineExprKind::Add:
++    if (lhs && rhs)
++      return *lhs + *rhs;
++    return std::nullopt;
++  case AffineExprKind::Mul: {
++    auto lhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getLHS());
++    auto rhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
++    if (lhsConst && rhs && lhsConst.getValue() >= 0)
++      return lhsConst.getValue() * *rhs;
++    if (rhsConst && lhs && rhsConst.getValue() >= 0)
++      return rhsConst.getValue() * *lhs;
++    return std::nullopt;
++  }
++  case AffineExprKind::FloorDiv: {
++    auto rhsConst = llvm::dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
++    if (!lhs || !rhsConst || rhsConst.getValue() <= 0)
++      return std::nullopt;
++    return *lhs / rhsConst.getValue();
++  }
++  default:
++    return std::nullopt;
++  }
 +}
 +
 +/// Returns true if RaW conflicts caused by loops can be ruled out, specifically
@@ -15418,9 +15587,17 @@ index 975bfb4d41e0..d3d753a9ff90 100644
 +/// is no RaW. The same logic applies in a multidimensional setting. The below
 +/// function checks for this pattern:
 +///
-+/// 1. The offset in the read/write operation is the loop induction variable
-+/// 2. The step size is larger than or equal to the number of elements accessed
-+/// by the read/write
++/// 1. The offset in the read/write operation is the loop induction variable, or
++///    a simple affine.apply-derived linear function of it
++/// 2. The effective offset delta between adjacent iterations is larger than or
++///    equal to the number of elements accessed by the read/write
++///
++/// Example:
++///   %off = affine.apply ()[%iv] -> (%iv floordiv 2)
++///   %size0 = affine.min (%iv) -> (-%iv + 92, 64)
++///   %size = affine.apply ()[%size0] -> (%size0 floordiv 2)
++/// With loop step 64, the offset delta is 32 and the size upper bound is 32,
++/// so different iterations still access disjoint slices.
 +///
 +static bool canUseOpDominanceDueToLoops(OpOperand *uRead, OpOperand *uWrite,
 +                                        const SetVector<Value> &definitions,
@@ -15448,20 +15625,19 @@ index 975bfb4d41e0..d3d753a9ff90 100644
 +  }
 +  DenseSet<scf::ForOp> usedLoops;
 +  // check that for each non-constant offset, there exists a loop where the
-+  // offset is the induction variable and step >= size
++  // offset is the induction variable, or a simple affine.apply progression of
++  // it, and the per-iteration offset delta is >= slice size
 +  for (auto [offset, size] : llvm::zip(offsets, sizes)) {
 +    if (Value offsetVal = offset.dyn_cast<Value>()) {
-+      scf::ForOp matchingLoop;
-+      for (auto loop : loops) {
-+        if (offsetVal == loop.getInductionVar()) {
-+          matchingLoop = loop;
-+          usedLoops.insert(loop);
-+          break;
-+        }
-+      }
-+      if (!matchingLoop)
++      auto progression = matchLoopProgression(offsetVal, loops);
++      if (failed(progression))
 +        return false;
-+      if (!isStepGreaterThanSlice({matchingLoop.getStep()}, {size})) {
++      usedLoops.insert(progression->loop);
++      auto effectStep = getEffectiveStep(*progression);
++      if (!effectStep)
++        return false;
++
++      if (!isEffectStepGreaterThanSlice(*effectStep, {size})) {
 +        return false;
 +      }
 +    }
@@ -15480,7 +15656,7 @@ index 975bfb4d41e0..d3d753a9ff90 100644
  /// Return `true` if op dominance can be used to rule out a read-after-write
  /// conflicts based on the ordering of ops. Returns `false` if op dominance
  /// cannot be used to due region-based loops.
-@@ -439,8 +633,12 @@ static bool canUseOpDominanceDueToBlocks(OpOperand *uRead, OpOperand *uWrite,
+@@ -439,8 +809,12 @@ static bool canUseOpDominanceDueToBlocks(OpOperand *uRead, OpOperand *uWrite,
  static bool canUseOpDominance(OpOperand *uRead, OpOperand *uWrite,
                                const SetVector<Value> &definitions,
                                AnalysisState &state) {
@@ -31517,4 +31693,3 @@ index 8d4421035387..000000000000
 -	rm -rf __pycache__
 -- 
 2.34.1
-
