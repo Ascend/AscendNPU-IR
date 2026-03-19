@@ -86,10 +86,57 @@ static void removeLabelsForOutlinedLoops(Operation *op) {
   }
 }
 
+static void duplicateReusedValuesForInnerSCFForOp(scf::ForOp loop,
+                                                  OpBuilder &builder) {
+  OpBuilder::InsertionGuard g(builder);
+  DominanceInfo domInfo;
+  auto loc = loop.getLoc();
+  DenseSet<Value> set;
+  loop.getBody()->walk([&](scf::ForOp innerLoop) {
+    for (OpOperand &iterArg : innerLoop.getInitArgsMutable()) {
+      Value src = iterArg.get();
+      if (!src.getDefiningOp())
+        continue;
+      auto srcExtractOp = dyn_cast<tensor::ExtractSliceOp>(src.getDefiningOp());
+      if (srcExtractOp)
+        src = srcExtractOp.getSource();
+      if (!src.getDefiningOp() || !domInfo.properlyDominates(src, loop))
+        continue;
+      if (!set.contains(src)) {
+        auto ty = dyn_cast<RankedTensorType>(src.getType());
+        if (!ty || !ty.hasStaticShape())
+          continue;
+        set.insert(src);
+      } else {
+        builder.setInsertionPoint(loop);
+        auto ty = dyn_cast<RankedTensorType>(src.getType());
+        Value empty = builder.create<tensor::EmptyOp>(loc, ty.getShape(),
+                                                      ty.getElementType());
+        auto copyOp = builder.create<linalg::CopyOp>(loc, src, empty);
+        if (srcExtractOp) {
+          builder.setInsertionPoint(srcExtractOp);
+          auto newSrcExtractOp = builder.create<tensor::ExtractSliceOp>(
+              loc, srcExtractOp.getType(), copyOp.getResult(0),
+              srcExtractOp.getMixedOffsets(), srcExtractOp.getMixedSizes(),
+              srcExtractOp.getMixedStrides());
+          iterArg.assign(newSrcExtractOp.getResult());
+        } else {
+          iterArg.assign(copyOp.getResult(0));
+        }
+      }
+    }
+  });
+}
+
 void OutlineVectorFunctionPass::runOnOperation() {
   ModuleOp module = getOperation();
   OpBuilder builder(module.getContext());
   module.walk([&](func::FuncOp func) {
+    func.walk([&](scf::ForOp forOp) {
+      if (!loopHasOutlinedLoopAttr(forOp))
+        return;
+      duplicateReusedValuesForInnerSCFForOp(forOp, builder);
+    });
     std::string vfNamePrefix = func.getSymName().str() + "_outlined_vf_";
     int vfIdx = -1;
     builder.setInsertionPointAfter(func);
