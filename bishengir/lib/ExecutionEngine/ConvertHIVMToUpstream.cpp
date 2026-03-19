@@ -1350,7 +1350,9 @@ struct ConvertHIVMToUpstream
                                    hfusion::UnaryFn::vnot>>(&ctx);
     patterns.add<RewriteVBitwiseOp<hivm::VAndOp, arith::AndIOp>,
                  RewriteVBitwiseOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>>(&ctx);
+                 RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>,
+                 RewriteVBitwiseOp<hivm::VShLOp, arith::ShLIOp>,
+                 RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
     patterns
         .add<RewriteVCumOp<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
              RewriteVCumOp<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(

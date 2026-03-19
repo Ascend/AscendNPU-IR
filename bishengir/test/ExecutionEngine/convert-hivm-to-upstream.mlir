@@ -166,7 +166,23 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
  
     func.return %1: tensor<5x?x10xf32>
 }
- 
+
+// -----
+
+// CHECK-LABEL: func.func @shift_like_lowering
+func.func @shift_like_lowering(%a: tensor<5x10xi32>, %b: tensor<5x10xi32>, %dst: tensor<5x10xi32>) -> (tensor<5x10xi32>, tensor<5x10xi32>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+
+    // CHECK: linalg.map
+    // CHECK-SAME:  arith.shli
+    %0 = hivm.hir.vshl ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
+
+    // CHECK: linalg.map
+    // CHECK-SAME:  arith.shrsi
+    %1 = hivm.hir.vshr ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
+
+    func.return %0, %1: tensor<5x10xi32>, tensor<5x10xi32>
+}
+
 // -----
  
 func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
