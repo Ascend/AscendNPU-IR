@@ -454,3 +454,20 @@ func.func @should_interleave(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type
   bufferization.materialize_in_destination %inserted_slice_2 in writable %reinterpret_cast_3 : (tensor<3x1x1x2x250x2xf32>, memref<3x1x1x2x250x2xf32, strided<[1000, 1000, 1000, 500, 2, 1], offset: ?>>) -> ()
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @store_with_dropped_dims
+// CHECK: %[[DST:.*]] = tensor.extract_slice {{.*}}[0] [{{.*}}] [1] : tensor<64xf32> to tensor<?xf32>
+// CHECK: hivm.hir.store ins(%[[DST]] : tensor<?xf32>) outs({{.*}} : memref<?xf32, strided<[1], offset: ?>>) atomic = <add>
+func.func @store_with_dropped_dims(%arg0: tensor<1x64xf32>, %arg1: memref<?x?xf32>, %arg2: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %2 = arith.maxsi %c1, %c64 : index
+  %cast_5 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?x?xf32> to memref<1x64xf32, strided<[64, 1], offset: ?>> 
+  %subview = memref.subview %cast_5[0, 0] [%arg2, %2] [1, 1] : memref<1x64xf32, strided<[64, 1], offset: ?>> to memref<?x?xf32, strided<[64, 1], offset: ?>> 
+  %extracted_slice = tensor.extract_slice %arg0[0, 0] [%arg2, %2] [1, 1] : tensor<1x64xf32> to tensor<?x?xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf32, strided<[64, 1], offset: ?>>) atomic = <add>
+  return
+}
