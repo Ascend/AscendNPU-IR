@@ -465,11 +465,10 @@ order参数指定内存中元素的迭代顺序，可以用来实现转置。或
 并从A中加载对应的转置块。加载时，可以使用make_block_ptr从A中加载，但步长设置为导致转置加载的步长？
 或者，更常见的做法是加载一个正常的A块，然后使用tl.trans转置后再存储到B。
 
-- **写法样例**
 ```python
+import torch
 import triton
 import triton.language as tl
-
 
 @triton.jit
 def transpose_kernel(
@@ -515,7 +514,45 @@ def transpose_kernel(
 
     # 存储到输出矩阵
     tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
+
+
+def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
+    """
+    使用 Triton 内核计算矩阵转置。
+    Args:
+        x: torch.Tensor 形状 (M, N)
+        y: 可选输出张量，形状 (N, M)，如果为 None 则自动创建
+        BLOCK_M: 块大小（沿 M 维度）
+        BLOCK_N: 块大小（沿 N 维度）
+    Returns:
+        y: 转置后的张量
+    """
+    M, N = x.shape
+    if y is None:
+        y = torch.empty(N, M, dtype=x.dtype, device=x.device)
+    else:
+        assert y.shape == (N, M), f"y 的形状应为 ({N}, {M})，但得到 {y.shape}"
+
+    # 计算网格大小
+    grid = (triton.cdiv(N, BLOCK_N), triton.cdiv(M, BLOCK_M))
+
+    # 调用内核
+    transpose_kernel[grid](
+        x, y,
+        M, N,
+        x.stride(0), x.stride(1),
+        y.stride(0), y.stride(1),
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N
+    )
+    return y
+
+# 创建一个随机矩阵
+x = torch.randn(512, 1024, device='npu')
+
+# 调用转置函数
+y = transpose(x)
 ```
+执行结束不报错，证明运行成功。
 
 ### 使用mayDiscretememaccess规避UB overflow
 - **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
@@ -542,7 +579,7 @@ tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
-- **样例1**
+- **写法样例1**
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 ```
@@ -554,7 +591,7 @@ b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 tl.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
-- **样例2**
+- **写法样例2**
 ```diff
 import triton
 import triton.language as tl
@@ -840,11 +877,11 @@ test_where_lt_case1()
 
 - 由于Triton前端会将i1转换为i8，如果对其他类型如i16/i32等进行bitwise_mask操作反而会带来性能损耗，因此此功能只支持i8类型的mask
 
----
+
 
 ## CV类
 
----
+
 
 ### 使用tile_cube_loop规避L1越界
 
@@ -882,7 +919,7 @@ pv = tl.dot(p, v)
 tl.compile_hint(pv, "tile_cube_loop", 2)
 ```
 
----
+
 
 ### 参考：编译优化选项
 
@@ -896,7 +933,7 @@ tl.compile_hint(pv, "tile_cube_loop", 2)
 | tile_mix_vector_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前vector的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
 | tile_mix_cube_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前cube的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
 
----
+
 
 ### 算子选项规避超时报错
 
@@ -962,7 +999,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
----
+
 
 ## Triton NPU 编程案例
 Triton NPU 编程请参考：
