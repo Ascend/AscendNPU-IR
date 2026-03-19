@@ -220,37 +220,63 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
         continue;
       }
 
-      Type retVecTy = LLVM::getVectorType(valueElemTy, vec);
+      const size_t maxWordWidth = getMaxWordWidth(valueElemNBits);
+      const size_t totalWidth = valueElemNBits * vec;
+      const size_t width = std::min(totalWidth, maxWordWidth);
+      const size_t nWords = std::max<size_t>(1, totalWidth / width);
+      const size_t wordNElems = width / valueElemNBits;
+      assert(wordNElems * nWords * numVecs == numElems);
 
-      Value falseVal;
-      if (other) {
-        Value v = b.undef(retVecTy);
-        for (size_t s = 0; s < vec; ++s) {
-          Value elem = otherIsSplatConstInt
-                           ? b.int_val(valueElemNBits, splatVal)
-                           : otherElems[vecStart + s];
-          elem = b.bitcast(elem, valueElemTy);
-          Value sVal = createIndexAttrConstant(
-            rewriter, loc, typeConverter->getIndexType(), s);
-          v = b.insert_element(retVecTy, v, elem, sVal);
+      Type retElemTy = rewriter.getIntegerType(width);
+      for (size_t ii = 0; ii < nWords; ++ii) {
+        Value falseVal;
+        if (other) {
+          if (otherIsSplatConstInt) {
+            uint64_t replicatedSplatVal = 0;
+            for (size_t s = 0; s < width; s += valueElemNBits) {
+              replicatedSplatVal |= splatVal << s;
+            }
+            falseVal =
+                b.int_val(width, static_cast<int64_t>(replicatedSplatVal));
+            falseVal = b.bitcast(falseVal, retElemTy);
+          } else {
+            if (wordNElems == 1) {
+              falseVal = b.bitcast(otherElems[vecStart], retElemTy);
+            } else {
+              size_t size = width / valueElemNBits;
+              auto vecTy = LLVM::getVectorType(valueElemTy, size);
+              Value v = b.undef(vecTy);
+              for (size_t s = 0; s < size; ++s) {
+                Value elem = otherElems[vecStart + ii * size + s];
+                elem = b.bitcast(elem, valueElemTy);
+                Value sVal = createIndexAttrConstant(
+                    rewriter, loc, typeConverter->getIndexType(), s);
+                v = b.insert_element(vecTy, v, elem, sVal);
+              }
+              falseVal = b.bitcast(v, IntegerType::get(getContext(), width));
+              falseVal = b.bitcast(falseVal, retElemTy);
+            }
+          }
         }
-        falseVal = v;
-      }
-      Value maskVal = mask ? maskElems[vecStart] : Value();
 
-      Value loadResult = rewriter.create<ascend_dpx::LoadOp>(
-        loc, retVecTy, ptrElems[vecStart], maskVal, falseVal, cachePolicy);
-      
-      if (vec == 1) {
-        Value loaded = b.bitcast(loadResult, valueElemTy);
-        loadedVals.push_back(loaded);
-      } else {
-        for (unsigned i = 0; i < vec; i++) {
-          auto idx = b.i32_val(i);
-          auto elem = b.extract_element(loadResult, idx);
-          loadedVals.push_back(elem);
+        Value loadResult = rewriter.create<ascend_dpx::LoadOp>(
+            loc, retElemTy, ptrElems[vecStart + ii * wordNElems],
+            mask ? maskElems[vecStart + ii * wordNElems] : Value(),
+            mask ? falseVal : Value(), cachePolicy);
+
+        if (wordNElems == 1) {
+          Value loaded = b.bitcast(loadResult, valueElemTy);
+          loadedVals.push_back(loaded);
+        } else {
+          Type vecTy = VectorType::get(wordNElems, valueElemTy);
+          Value loaded = b.bitcast(loadResult, vecTy);
+          for (unsigned i = 0; i < wordNElems; i++) {
+            auto idx = b.i32_val(i);
+            auto elem = b.extract_element(loaded, idx);
+            loadedVals.push_back(elem);
+          }
         }
-      }
+      } // end nWords loop
     } // end vec
 
     Type llvmResultStructTy = typeConverter->convertType(op.getType());
@@ -366,7 +392,8 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
         if (wordNElems == 1) {
           Value elem = valueElems[vecStart + wordIdx];
           elem = b.bitcast(elem, valueElemTy);
-          llWord = b.bitcast(elem, valArgTy);
+          llWord =
+              b.bitcast(elem, valArgTy);
         } else {
           for (size_t elemIdx = 0; elemIdx < wordNElems; ++elemIdx) {
             const size_t elemOffset = vecStart + wordIdx * wordNElems + elemIdx;

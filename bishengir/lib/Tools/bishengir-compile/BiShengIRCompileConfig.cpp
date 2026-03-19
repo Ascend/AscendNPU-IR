@@ -295,7 +295,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             "enable-bishengir-simt-optimization",
             cl::desc("enable bishengir simt optimization"),
             cl::location(enableBishengirSimtOptimizationFlag),
-            cl::init(900001));
+            cl::init(900101));
 
     static cl::opt<std::string> simtStackLimitStr(
         "simt-stack-limit", cl::desc("SIMT stack limit."), cl::value_desc("N"),
@@ -709,7 +709,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
 
     static cl::opt<bool, /*ExternalStorage=*/true> useDPX(
         "use-dpx", cl::desc("Enable SIMT lowering through DPX Dialect."),
-        cl::location(useDPXFlag), cl::init(false));
+        cl::location(useDPXFlag), cl::init(true));
   }
 
   /// Set the callback to get the tiling tuning.

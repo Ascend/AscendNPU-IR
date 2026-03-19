@@ -162,12 +162,12 @@ struct HIVMPipelineOptions
   PassOptions::Option<int> enableBishengirSimtOptimization{
       *this, "enable-bishengir-simt-optimization",
       llvm::cl::desc("Enable bishengir simt optimization"),
-      llvm::cl::init(000)};
+      llvm::cl::init(900101)};
 
   PassOptions::Option<bool> useDPX{
       *this, "use-dpx",
       llvm::cl::desc("Enable simt lowering through the DPX dialect."),
-      llvm::cl::init(false)};
+      llvm::cl::init(true)};
 
   PassOptions::Option<int> disableDecomposeReduction{
       *this, "disable-decompose-reduction",
