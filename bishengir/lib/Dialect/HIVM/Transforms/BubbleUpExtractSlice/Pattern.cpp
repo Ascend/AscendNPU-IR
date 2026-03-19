@@ -1317,13 +1317,15 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
           loc, newType
         );
 
-        for (Operation *userOp : UbAllocOp.getResult().getUsers()){  // deal with the annotation.mark Op
-          if (auto annoMarkOp = dyn_cast<annotation::MarkOp>(userOp)){
-            rewriter.modifyOpInPlace(annoMarkOp, [&](){
-              annoMarkOp->setOperand(0, newUbAllocOp.getResult()); });
+        // deal with the annotation.mark Op
+        for (Operation *userOp :
+             llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
+          if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
+            rewriter.modifyOpInPlace(
+                mark, [&]() { mark->setOperand(0, newUbAllocOp.getResult()); });
           }
         }
-      
+
         rewriter.setInsertionPoint(memorySpaceCastOp);
 
         Value sourceUbmemref = newUbAllocOp.getResult();
@@ -1424,11 +1426,12 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
       );
 
       /// deal with the annotation.mark Op
-      for (Operation *userOp : UbAllocOp.getResult().getUsers()){  
-        if (auto annoMarkOp = dyn_cast<annotation::MarkOp>(userOp)){
-          rewriter.modifyOpInPlace(annoMarkOp, [&](){
-            annoMarkOp->setOperand(0, newUbAllocOp.getResult()); });
-          }
+      for (Operation *userOp :
+           llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
+        if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
+          rewriter.modifyOpInPlace(
+              mark, [&]() { mark->setOperand(0, newUbAllocOp.getResult()); });
+        }
       }
 
       /// create the new Ops with 1:2 shape
