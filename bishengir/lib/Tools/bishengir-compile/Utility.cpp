@@ -26,7 +26,7 @@ using namespace mlir;
 
 /// Get the HIVMC binary name.
 StringRef getHIVMCName() {
-  const char *kHIVMCBinaryName = "hivmc";
+  const char *kHIVMCBinaryName = "hivmc-a5";
   return kHIVMCBinaryName;
 }
 
