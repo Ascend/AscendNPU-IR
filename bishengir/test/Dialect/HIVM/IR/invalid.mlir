@@ -73,11 +73,11 @@ func.func @incorrect_copy_op_padval_type() {
 }
 
 // -----
-// CHECK-LABEL: incorrect_copy_op_tensor_memref_mixed
-func.func @incorrect_copy_op_tensor_memref_mixed() {
+// CHECK-LABEL: correct_copy_op_tensor_memref_mixed
+func.func @correct_copy_op_tensor_memref_mixed() {
 	%src = tensor.empty() : tensor<16x16xf16>
 	%dst = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-  // expected-error@+1 {{'hivm.hir.copy' op dst/src should be memref/memref or tensor/tensor, res should be tensor!}}
+  // enable copy op tensor memref mixed
   hivm.hir.copy ins(%src : tensor<16x16xf16>)
                 outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
 	return

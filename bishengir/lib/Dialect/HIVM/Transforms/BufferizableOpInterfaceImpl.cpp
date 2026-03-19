@@ -179,16 +179,6 @@ struct HIVMCustomOpInterface
   }
 };
 
-struct HIVMCopyOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMCopyOpInterface,
-                                                     hivm::CopyOp> {
-  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
-                          const BufferizationOptions &options) const {
-    return bufferizeDestinationStyleOpInterface(
-        rewriter, cast<DestinationStyleOpInterface>(op), options);
-  }
-};
-
 struct HIVMLoadOpInterface
     : public DstBufferizableOpInterfaceExternalModel<HIVMLoadOpInterface,
                                                      hivm::LoadOp> {
@@ -199,9 +189,10 @@ struct HIVMLoadOpInterface
   }
 };
 
-struct HIVMStoreOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMStoreOpInterface,
-                                                     hivm::StoreOp> {
+template <typename CopyOrStoreOpT>
+struct HIVMCopyOrStoreOpInterface
+    : public DstBufferizableOpInterfaceExternalModel<
+          HIVMCopyOrStoreOpInterface<CopyOrStoreOpT>, CopyOrStoreOpT> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -490,10 +481,10 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
-    CopyOp::attachInterface<HIVMCopyOpInterface>(*ctx);
+    CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
     CustomOp::attachInterface<HIVMCustomOpInterface>(*ctx);
     LoadOp::attachInterface<HIVMLoadOpInterface>(*ctx);
-    StoreOp::attachInterface<HIVMStoreOpInterface>(*ctx);
+    StoreOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::StoreOp>>(*ctx);
     MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);
     MixMatmulOp::attachInterface<HIVMMixMatmulOpInterface>(*ctx);
     MixGroupMatmulOp::attachInterface<HIVMMixGroupMatmulOpInterface>(*ctx);

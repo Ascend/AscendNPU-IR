@@ -463,10 +463,69 @@ static LogicalResult checkCopyOpTensor(CopyOp &op) {
   return success();
 }
 
+static LogicalResult checkCopyOpMixTensorAndMemRef(CopyOp &op) {
+  ShapedType dstOperType = op.getDstOperandType();
+  auto resultTensor = op.getResultTensor();
+  if (resultTensor) {
+    RankedTensorType resTensorType = resultTensor.getType();
+    if (dstOperType.getElementType() != resTensorType.getElementType()) {
+      return op.emitOpError(
+          "element types of dst src and res should be the same!");
+    }
+
+    if (!resTensorType.hasRank()) {
+      return op.emitOpError("res should have a known number of dimensions!");
+    }
+
+    if (resTensorType.getRank() != dstOperType.getRank()) {
+      return op.emitOpError("res and dst should have the same dimensions!");
+    }
+
+    auto resShape = resTensorType.getShape();
+    if (!op.getPadMode() &&
+        failed(verifyCompatibleShape(resShape, dstOperType.getShape()))) {
+      return op.emitOpError(
+          "if pad_mode is not set, res and dst shape should be the same!");
+    }
+  }
+
+  // check dst memref
+  auto dstMemRefType = cast<MemRefType>(op.getDst().getType());
+  auto dstMemSpaceAttr = dstMemRefType.getMemorySpace();
+  // As infer memscope is supported, memscope is not required.
+  // But if memscope exists, only support gm/ub.
+  if (dstMemSpaceAttr) {
+    auto dstAddrSpaceAttr = dyn_cast<AddressSpaceAttr>(dstMemSpaceAttr);
+    if (!dstAddrSpaceAttr) {
+      return success();
+    }
+
+    auto dstAddrSpace = dstAddrSpaceAttr.getAddressSpace();
+
+    static DenseSet<AddressSpace> kCopySupported{
+        AddressSpace::UB,
+        AddressSpace::L1,
+    };
+
+    if (!kCopySupported.count(dstAddrSpace)) {
+      auto dstStr = stringifyAddressSpace(dstAddrSpace).str();
+      return op.emitOpError() << "Unsupported copy to " << dstStr << "!";
+    }
+  }
+
+  return success();
+}
+
 void CopyOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange res, Value src, Value dst) {
   build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
         /*pad_value=*/nullptr, /*collapse_reassociation=*/nullptr);
+}
+
+void CopyOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
 }
 
 LogicalResult CopyOp::verify() {
@@ -527,8 +586,8 @@ LogicalResult CopyOp::verify() {
     return checkCopyOpTensor(*this);
   }
 
-  return emitOpError("dst/src should be memref/memref or tensor/tensor, res "
-                     "should be tensor!");
+  // in case of tensor mix memref
+  return checkCopyOpMixTensorAndMemRef(*this);
 }
 
 SmallVector<ReassociationIndices, 4>

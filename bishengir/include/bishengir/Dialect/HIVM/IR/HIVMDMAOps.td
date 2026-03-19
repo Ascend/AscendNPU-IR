@@ -198,6 +198,7 @@ def StoreOp : HIVM_DmaOp<"store", [
 
 def CopyOp : HIVM_DmaOp<"copy", [
   SinglePipeOpTrait,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>,
   // Will automatically use the default uniform reassociation impl
   UniformReassociationFlattenTrait,
