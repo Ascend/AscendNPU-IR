@@ -41,8 +41,8 @@ constexpr static unsigned kTmpMaxPath = 128;
 using StringTmpPath = llvm::SmallString<kTmpMaxPath>;
 using MixedModules = std::pair<ModuleOp,SmallVector<ModuleOp,2>>;
 
-/// Get the BiSheng HIVM Compiler binary name.
-llvm::StringRef getBiShengIRHIVMCompilerName();
+/// Get the HIVMC binary name.
+llvm::StringRef getHIVMCName();
 
 std::string getBiShengIRHIVMCompileInstallPath();
 
@@ -81,6 +81,8 @@ std::unique_ptr<llvm::ToolOutputFile>
 getTempFile(const std::string &outputFile, TempDirectoriesStore &tempDirsStore);
 
 MixedModules getMixedModules(ModuleOp topMod);
+
+bool hasSplitModules(ModuleOp topMod);
 
 // FIXME: This will be refactored after vectorize is moved to HIVM.
 llvm::LogicalResult inferMixedCV(ModuleOp &module,

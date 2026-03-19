@@ -1,5 +1,4 @@
 add_subdirectory(bishengir-compile)
-add_subdirectory(bishengir-hivm-compile)
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
   add_subdirectory(bishengir-triton-libs)
 endif()
