@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
 ### AscendNPU-IR (vector addition)
 
-The above kernel generates following AscendNPU-IR:
+The above kernel generates following AscendNPU-IR if `export TILELANG_DUMP_IR=1` is set:
 
 ```mlir
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
