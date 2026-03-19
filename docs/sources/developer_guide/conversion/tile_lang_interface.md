@@ -60,6 +60,20 @@ bash install_npuir.sh
 bash install_npuir.sh --bishengir-path=/path/to/bishengir-compile
 ```
 
+Then do one of the following to apply tilelang settings in your environment:
+
+```shell
+source ~/.bashrc
+
+or
+
+export PYTHONPATH=/path/to/tilelang-ascend/:$PYTHONPATH
+
+or
+
+open a new terminal
+```
+
 Install torch_npu
 
 ```shell
@@ -127,14 +141,14 @@ def vec_add(N, block_N, dtype="float32"):
             tail_size = T.min(block_N, remaining)
 
             # Copy data from global memory (A, B) into on-chip buffers (A_VEC, B_VEC)
-            T.copy(A[start_idx], A_VEC, [tail_size])
-            T.copy(B[start_idx], B_VEC, [tail_size])
+            T.copy(A[start_idx], A_VEC[:tail_size])
+            T.copy(B[start_idx], B_VEC[:tail_size])
 
             # Perform vector addition on the NPU using low-level NPU IR instruction
             T.npuir_add(A_VEC, B_VEC, C_VEC)
 
             # Write the result back from on-chip buffer (C_VEC) to global memory (C)
-            T.copy(C_VEC, C[start_idx], [tail_size])
+            T.copy(C_VEC[:tail_size], C[start_idx])
 
     return main
 
@@ -158,7 +172,7 @@ def test_vec_add():
     v3 = torch.zeros(size=[seq_len], dtype=eval("torch." + dtype)).npu()  # Output buffer
 
     # Compute reference result using PyTorch's native addition (on NPU)
-    y_ref = v1 + v2
+    y_ref = v1.cpu() + v2.cpu()
 
     # Launch the compiled TileLang kernel
     compiled_kernel(v1, v2, v3, seq_len)
@@ -167,7 +181,7 @@ def test_vec_add():
     print("Reference result (PyTorch):")
     print(y_ref)
     print("TileLang kernel result:")
-    print(v3)
+    print(v3.cpu())
 
 if __name__ == "__main__":
     test_vec_add()
@@ -175,10 +189,10 @@ if __name__ == "__main__":
 
 ### AscendNPU-IR (vector addition)
 
-The above kernel generates following AscendNPU-IR:
+The above kernel generates following AscendNPU-IR if `export TILELANG_DUMP_IR=1` is set:
 
-  ```mlir
-  module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
+```mlir
+module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {
   func.func @main(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xf32, #hivm.address_space<gm>>, %arg4: memref<?xf32, #hivm.address_space<gm>>, %arg5: memref<?xf32, #hivm.address_space<gm>>, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, mix_mode = "aiv"} {
     hivm.hir.set_ffts_base_addr %arg0
     %c1_i32 = arith.constant 1 : i32
@@ -192,22 +206,19 @@ The above kernel generates following AscendNPU-IR:
     %alloc_2 = memref.alloc() : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>
     %alloc_3 = memref.alloc() : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>
     %c4096_i32 = arith.constant 4096 : i32
-    %3 = arith.muli %2, %c4096_i32 : i32
-    %4 = arith.subi %arg6, %3 : i32
-    %5 = arith.minsi %c4096_i32, %4 : i32
-    %6 = arith.index_cast %3 : i32 to index
-    %7 = arith.index_cast %5 : i32 to index
-    %subview = memref.subview %reinterpret_cast[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    %subview_4 = memref.subview %alloc[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    memref.copy %subview, %subview_4 : memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    %subview_5 = memref.subview %reinterpret_cast_1[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    %subview_6 = memref.subview %alloc_2[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    memref.copy %subview_5, %subview_6 : memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %3 = arith.minsi %c4096_i32, %arg6 : i32
+    %4 = arith.index_cast %3 : i32 to index
+    %subview = memref.subview %reinterpret_cast[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_4 = memref.subview %alloc[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    memref.copy %subview, %subview_4 : memref<?xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %subview_5 = memref.subview %reinterpret_cast_1[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_6 = memref.subview %alloc_2[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    memref.copy %subview_5, %subview_6 : memref<?xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
     hivm.hir.vadd ins(%alloc, %alloc_2 : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>, memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>) outs(%alloc_3 : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>>)
-    %subview_7 = memref.subview %alloc_3[0] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
-    %subview_8 = memref.subview %reinterpret_cast_0[%6] [%7] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
-    memref.copy %subview_7, %subview_8 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
+    %subview_7 = memref.subview %alloc_3[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %subview_8 = memref.subview %reinterpret_cast_0[0] [%4] [1] : memref<4096xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    memref.copy %subview_7, %subview_8 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
     return
   }
 }
-  ```
+```
