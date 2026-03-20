@@ -61,48 +61,43 @@ public:
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<Value> l1values = {op.getA(), op.getB()};
-    bool allInserted = true;
+    bool changed = false;
     for (Value val : l1values) {
       if (!isa<TensorType>(val.getType())) {
         // currently only support tensors
         continue;
       }
       TensorType tensorType = cast<TensorType>(val.getType());
-      if (val.getDefiningOp() == nullptr) {
+      Operation *definingOp = val.getDefiningOp();
+      if (definingOp == nullptr) {
         // currently only support MmadL1Op inputs with defining op
         continue;
       }
-      Operation *definingOp = val.getDefiningOp();
-      bool inserted = false;
+      llvm::SmallVector<hivm::DebugOp> debugUsers;
       for (Operation *user : val.getUsers()) {
-        if (isa<hivm::NZ2NDOp>(user)) {
-          inserted = true;
-          break;
+        if (auto debugOp = dyn_cast<hivm::DebugOp>(user)) {
+          debugUsers.push_back(debugOp);
         }
       }
-      if (inserted) {
+      if (debugUsers.empty())
         continue;
+      rewriter.setInsertionPointAfter(definingOp);
+      Value workSpaceTensor = getLocalWorkSpaceTensor(
+        rewriter, definingOp->getLoc(), tensorType.getShape(),
+        hivm::getTensorDynamicValues(rewriter, definingOp->getLoc(), val),
+        getElementTypeOrSelf(tensorType));
+      auto nz2nd = rewriter.create<hivm::NZ2NDOp>(
+        definingOp->getLoc(), workSpaceTensor.getType(),
+        /*src=*/val, /*dst=*/workSpaceTensor);
+
+      for (auto debugOp : debugUsers) {
+        rewriter.modifyOpInPlace(debugOp, [&]() {
+          debugOp.getArgMutable().assign(nz2nd.getResultTensor());
+        });
       }
-      allInserted = false;
-      for (Operation *user : val.getUsers()) {
-        if (isa<hivm::DebugOp>(user)) {
-          hivm::DebugOp debugOp = cast<hivm::DebugOp>(user);
-          rewriter.setInsertionPointAfter(definingOp);
-          Value workSpaceTensor = getLocalWorkSpaceTensor(
-              rewriter, definingOp->getLoc(), tensorType.getShape(),
-              hivm::getTensorDynamicValues(rewriter, definingOp->getLoc(), val),
-              getElementTypeOrSelf(tensorType));
-          auto res = rewriter.create<hivm::NZ2NDOp>(
-              definingOp->getLoc(), workSpaceTensor.getType(),
-              /*src=*/val, /*dst=*/workSpaceTensor);
-          rewriter.modifyOpInPlace(debugOp, [&]() {
-            OpOperand &arg = debugOp.getArgMutable();
-            arg.assign(res.getResultTensor());
-          });
-        }
-      }
+      changed = true;
     }
-    return allInserted ? failure() : success();
+    return changed ? success() : failure();
   }
 };
 
