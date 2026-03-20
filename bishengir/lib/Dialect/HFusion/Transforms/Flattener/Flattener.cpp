@@ -99,7 +99,8 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
 void Flattener::markBroken(const DimensionIndex &args) {
   int argSize = static_cast<int64_t>(args.size());
   for (int i = 0; i < argSize; ++i) {
-    if (i == 0 || (i > 0 && args[i - 1] != args[i] - 1)) {
+    if ((i == 0 && !options.registerBased) ||
+        (i > 0 && args[i - 1] != args[i] - 1)) {
       LLVM_DEBUG(llvm::dbgs() << "left of " << args[i] << " is disconnected\n");
       isConnected_[args[i]].leftConnected = false;
       if (i >= 1)
@@ -107,7 +108,7 @@ void Flattener::markBroken(const DimensionIndex &args) {
       if (args[i] >= 1)
         isConnected_[args[i] - 1].rightConnected = false;
     }
-    if (i + 1 == static_cast<int>(args.size()) ||
+    if ((i + 1 == static_cast<int>(args.size()) && !options.registerBased) ||
         (i + 1 < static_cast<int>(args.size()) && args[i + 1] != args[i] + 1)) {
       LLVM_DEBUG(llvm::dbgs()
                  << "right of " << args[i] << " is disconnected\n");
