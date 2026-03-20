@@ -240,22 +240,93 @@ for i_w in tl.static_range(W):
 **Example** (transpose kernel with implicit transpose load):
 
 ```python
+import torch
+import triton
+import triton.language as tl
+
 @triton.jit
-def transpose_kernel(x_ptr, y_ptr, M, N,
-                     stride_xm, stride_xn, stride_ym, stride_yn,
-                     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr):
-    """Matrix transpose Y = X^T; X (M,N), Y (N,M). Each block handles a (BLOCK_N, BLOCK_M) block of Y."""
-    pid_n = tl.program_id(0)
-    pid_m = tl.program_id(1)
-    bn = pid_n * BLOCK_N
-    bm = pid_m * BLOCK_M
-    x_ptr_t = tl.make_block_ptr(base=x_ptr, shape=(N, M), strides=(stride_xn, stride_xm),
-                                offsets=(bn, bm), block_shape=(BLOCK_N, BLOCK_M), order=(1, 0))
-    y_ptr_b = tl.make_block_ptr(base=y_ptr, shape=(N, M), strides=(stride_ym, stride_yn),
-                                offsets=(bn, bm), block_shape=(BLOCK_N, BLOCK_M), order=(1, 0))
+def transpose_kernel(
+    x_ptr, y_ptr,
+    M, N,
+    stride_xm, stride_xn,
+    stride_ym, stride_yn,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
+):
+    """
+    Matrix transpose kernel: Y = X^T, where X has shape (M, N) and Y has shape (N, M).
+    Each program block processes a (BLOCK_N, BLOCK_M) tile of Y.
+    Implicit transposed loading is achieved by swapping the strides of the input pointer.
+    """
+    pid_n = tl.program_id(0)  # row block index of output matrix (original column block)
+    pid_m = tl.program_id(1)  # column block index of output matrix (original row block)
+
+    bn = pid_n * BLOCK_N  # row start of output = original column start
+    bm = pid_m * BLOCK_M  # column start of output = original row start
+
+    # Build input pointer: use swapped strides, shape (N, M) to match transposed access
+    x_ptr_t = tl.make_block_ptr(
+        base=x_ptr,
+        shape=(N, M),
+        strides=(stride_xn, stride_xm),
+        offsets=(bn, bm),
+        block_shape=(BLOCK_N, BLOCK_M),
+        order=(1, 0)
+    )
+
+    # Build output pointer: normal row-major strides, shape (N, M)
+    y_ptr_b = tl.make_block_ptr(
+        base=y_ptr,
+        shape=(N, M),
+        strides=(stride_ym, stride_yn),
+        offsets=(bn, bm),
+        block_shape=(BLOCK_N, BLOCK_M),
+        order=(1, 0)
+    )
+
+    # Load input tile (already implicitly transposed), with boundary checks
     x_tile = tl.load(x_ptr_t, boundary_check=(0, 1))
+
+    # Store to output matrix
     tl.store(y_ptr_b, x_tile, boundary_check=(0, 1))
+
+
+def transpose(x, y=None, BLOCK_M=64, BLOCK_N=32):
+    """
+    Compute matrix transpose using Triton kernel.
+    Args:
+        x: torch.Tensor of shape (M, N)
+        y: optional output tensor of shape (N, M); if None, it will be created automatically
+        BLOCK_M: block size along M dimension
+        BLOCK_N: block size along N dimension
+    Returns:
+        y: transposed tensor
+    """
+    M, N = x.shape
+    if y is None:
+        y = torch.empty(N, M, dtype=x.dtype, device=x.device)
+    else:
+        assert y.shape == (N, M), f"y should have shape ({N}, {M}), but got {y.shape}"
+
+    # Compute grid size
+    grid = (triton.cdiv(N, BLOCK_N), triton.cdiv(M, BLOCK_M))
+
+    # Launch kernel
+    transpose_kernel[grid](
+        x, y,
+        M, N,
+        x.stride(0), x.stride(1),
+        y.stride(0), y.stride(1),
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N
+    )
+    return y
+
+# Create a random matrix
+x = torch.randn(512, 1024, device='npu')
+
+# Call transpose function
+y = transpose(x)
 ```
+no error after executing means it works correctly
 
 ### Use mayDiscretememaccess to avoid UB overflow
 
@@ -282,14 +353,199 @@ tl.compile_hint(b_x, "mayDiscretememaccess")
 
 - **Example 2** (column-major to row-major with Ascend extension):
 
-```python
-import triton.language.extra.cann.extension as extension
-a = tl.load(A_block_ptr, boundary_check=(0, 1))
-extension.compile_hint(a, "mayDiscretememaccess")
-tl.store(B_block_ptr, a, boundary_check=(0, 1))
+```diff
+import triton
+import triton.language as tl
++ import triton.language.extra.cann.extension as extension
+
+@triton.jit
+def copy_column_major_to_row_major(
+    A_ptr, B_ptr,
+    M, N,
+    BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr,
+):
+    # Get program IDs
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+
+    # Compute block start positions
+    start_m = pid_m * BLOCK_SIZE_M
+    start_n = pid_n * BLOCK_SIZE_N
+
+    # Create block pointer for A (column-major: strides=(1, M)), the last dimension is non-contiguous, automatically expanded
+    A_block_ptr = tl.make_block_ptr(
+        base=A_ptr,
+        shape=(M, N),
+        strides=(1, M),
+        offsets=(start_m, start_n),
+        block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
+        order=(0, 1),  # Innermost dimension is row (index 0) because column-major
+    )
+
+    # Create block pointer for B (row-major: strides=(N, 1))
+    B_block_ptr = tl.make_block_ptr(
+        base=B_ptr,
+        shape=(M, N),
+        strides=(N, 1),
+        offsets=(start_m, start_n),
+        block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
+        order=(1, 0),  # Innermost dimension is column (index 1) because row-major
+    )
+
+    # Load block from A with boundary checks (out-of-bound is filled with 0)
+    a = tl.load(A_block_ptr, boundary_check=(0, 1))
++   # npu
++   extension.compile_hint(a, "mayDiscretememaccess")
+
+    # Store to B
+    tl.store(B_block_ptr, a, boundary_check=(0, 1))
 ```
 
+- **Comparison of IR before and after using compile hint in Example 2**
+
 Before the hint, the IR uses tensor load/store and `linalg.transpose`; after the hint, it is lowered to scalar loops (e.g. `scf.for` with `tensor.extract`/`tensor.insert` and `DiscreteMemAccess` / `ExtractedLoadOrStore`).
+
+```mlir
+// before using tl.compile_hint(a, "mayDiscretememaccess")
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @copy_column_major_to_row_major(%arg0: memref<?xi8> , %arg1: memref<?xi8> , %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32} , %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32} , %arg4: i32 {tt.divisibility = 16 : i32} , %arg5: i32 {tt.divisibility = 16 : i32} , %arg6: i32 , %arg7: i32 , %arg8: i32 , %arg9: i32 , %arg10: i32 , %arg11: i32 ) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+    %c64 = arith.constant 64 : index 
+    %c0 = arith.constant 0 : index 
+    %c0_i32 = arith.constant 0 : i32 
+    %c64_i32 = arith.constant 64 : i32 
+    %0 = arith.muli %arg9, %c64_i32 : i32 
+    %1 = arith.muli %arg10, %c64_i32 : i32 
+    %2 = arith.maxsi %0, %c0_i32 : i32 
+    %3 = arith.index_cast %2 : i32 to index 
+    %4 = arith.maxsi %1, %c0_i32 : i32 
+    %5 = arith.index_cast %4 : i32 to index 
+    %6 = arith.index_cast %arg5 : i32 to index 
+    %7 = arith.muli %3, %6 : index 
+    %8 = arith.index_cast %arg4 : i32 to index 
+    %9 = arith.addi %7, %5 : index 
+    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [%9], sizes: [64, 64], strides: [%6, 1] : memref<?xf32> to memref<64x64xf32, strided<[?, 1], offset: ?>> 
+    %10 = arith.muli %5, %8 : index 
+    %11 = arith.addi %10, %3 : index 
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg2 to offset: [%11], sizes: [64, 64], strides: [%8, 1] : memref<?xf32> to memref<64x64xf32, strided<[?, 1], offset: ?>> 
+    %alloc = memref.alloc() : memref<64x64xf32> 
+    %12 = arith.divsi %11, %8 : index 
+    %13 = arith.subi %6, %12 : index 
+    %14 = arith.maxsi %13, %c0 : index 
+    %15 = arith.minsi %14, %c64 : index 
+    %16 = arith.remsi %11, %8 : index 
+    %17 = arith.subi %8, %16 : index 
+    %18 = arith.maxsi %17, %c0 : index 
+    %19 = arith.minsi %18, %c64 : index 
+    %20 = arith.subi %c0_i32, %1 : i32 
+    %21 = arith.maxsi %20, %c0_i32 : i32 
+    %22 = arith.index_cast %21 : i32 to index 
+    %23 = arith.minsi %22, %15 : index 
+    %24 = arith.subi %15, %23 : index 
+    %25 = arith.subi %c0_i32, %0 : i32 
+    %26 = arith.maxsi %25, %c0_i32 : i32 
+    %27 = arith.index_cast %26 : i32 to index 
+    %28 = arith.minsi %27, %19 : index 
+    %29 = arith.subi %19, %28 : index 
+    %subview = memref.subview %reinterpret_cast_0[0, 0] [%24, %29] [1, 1] : memref<64x64xf32, strided<[?, 1], offset: ?>> to memref<?x?xf32, strided<[?, 1], offset: ?>> 
+    %subview_1 = memref.subview %alloc[%23, %28] [%24, %29] [1, 1] : memref<64x64xf32> to memref<?x?xf32, strided<[64, 1], offset: ?>> 
+    memref.copy %subview, %subview_1 : memref<?x?xf32, strided<[?, 1], offset: ?>> to memref<?x?xf32, strided<[64, 1], offset: ?>> 
+    %30 = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32> 
+    %31 = tensor.empty() : tensor<64x64xf32> 
+    %transposed = linalg.transpose ins(%30 : tensor<64x64xf32>) outs(%31 : tensor<64x64xf32>) permutation = [1, 0]  
+    %32 = arith.divsi %9, %6 : index 
+    %33 = arith.subi %8, %32 : index 
+    %34 = arith.maxsi %33, %c0 : index 
+    %35 = arith.minsi %34, %c64 : index 
+    %36 = arith.remsi %9, %6 : index 
+    %37 = arith.subi %6, %36 : index 
+    %38 = arith.maxsi %37, %c0 : index 
+    %39 = arith.minsi %38, %c64 : index 
+    %40 = arith.minsi %27, %35 : index 
+    %41 = arith.subi %35, %40 : index 
+    %42 = arith.minsi %22, %39 : index 
+    %43 = arith.subi %39, %42 : index 
+    %extracted_slice = tensor.extract_slice %transposed[%40, %42] [%41, %43] [1, 1] : tensor<64x64xf32> to tensor<?x?xf32> 
+    %subview_2 = memref.subview %reinterpret_cast[0, 0] [%41, %43] [1, 1] : memref<64x64xf32, strided<[?, 1], offset: ?>> to memref<?x?xf32, strided<[?, 1], offset: ?>> 
+    bufferization.materialize_in_destination %extracted_slice in writable %subview_2 : (tensor<?x?xf32>, memref<?x?xf32, strided<[?, 1], offset: ?>>) -> () 
+    return 
+  } 
+} 
+```
+
+```mlir
+// after using tl.compile_hint(a, "mayDiscretememaccess")
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @copy_column_major_to_row_major(%arg0: memref<?xi8> , %arg1: memref<?xi8> , %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32} , %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32} , %arg4: i32 {tt.divisibility = 16 : i32} , %arg5: i32 {tt.divisibility = 16 : i32} , %arg6: i32 , %arg7: i32 , %arg8: i32 , %arg9: i32 , %arg10: i32 , %arg11: i32 ) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+    %c0_i32 = arith.constant 0 : i32
+    %c64 = arith.constant 64 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c64_i32 = arith.constant 64 : i32
+    %0 = arith.muli %arg9, %c64_i32 : i32
+    %1 = arith.muli %arg10, %c64_i32 : i32
+    %2 = arith.extsi %arg5 : i32 to i64
+    %3 = arith.maxsi %1, %c0_i32 : i32
+    %4 = arith.index_cast %3 : i32 to index
+    %5 = arith.maxsi %0, %c0_i32 : i32
+    %6 = arith.index_cast %5 : i32 to index
+    %7 = arith.index_cast %arg4 : i32 to index
+    %8 = arith.muli %4, %7 : index
+    %9 = arith.index_cast %arg5 : i32 to index
+    %10 = arith.addi %8, %6 : index
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%10], sizes: [64, 64], strides: [%7, 1] : memref<?xf32> to memref<64x64xf32, strided<[?, 1], offset: ?>>
+    %alloc = memref.alloc() : memref<64x64xf32>
+    %11 = arith.divsi %10, %7 : index
+    %12 = arith.subi %9, %11 : index
+    %13 = arith.maxsi %12, %c0 : index
+    %14 = arith.minsi %13, %c64 : index
+    %15 = arith.remsi %10, %7 : index
+    %16 = arith.subi %7, %15 : index
+    %17 = arith.maxsi %16, %c0 : index
+    %18 = arith.minsi %17, %c64 : index
+    %19 = arith.subi %c0_i32, %1 : i32
+    %20 = arith.maxsi %19, %c0_i32 : i32
+    %21 = arith.index_cast %20 : i32 to index
+    %22 = arith.minsi %21, %14 : index
+    %23 = arith.subi %14, %22 : index
+    %24 = arith.subi %c0_i32, %0 : i32
+    %25 = arith.maxsi %24, %c0_i32 : i32
+    %26 = arith.index_cast %25 : i32 to index
+    %27 = arith.minsi %26, %18 : index
+    %28 = arith.subi %18, %27 : index
+    %subview = memref.subview %reinterpret_cast[0, 0] [%23, %28] [1, 1] : memref<64x64xf32, strided<[?, 1], offset: ?>> to memref<?x?xf32, strided<[?, 1], offset: ?>>
+    %subview_0 = memref.subview %alloc[%22, %27] [%23, %28] [1, 1] : memref<64x64xf32> to memref<?x?xf32, strided<[64, 1], offset: ?>>
+    memref.copy %subview, %subview_0 : memref<?x?xf32, strided<[?, 1], offset: ?>> to memref<?x?xf32, strided<[64, 1], offset: ?>>
+    %29 = bufferization.to_tensor %alloc restrict writable : memref<64x64xf32>
+    %30 = tensor.empty() : tensor<64x64xf32>
+    %transposed = linalg.transpose ins(%29 : tensor<64x64xf32>) outs(%30 : tensor<64x64xf32>) permutation = [1, 0] 
+    %31 = arith.index_cast %arg4 : i32 to index
+    %32 = arith.minsi %31, %c64 : index
+    scf.for %arg12 = %c0 to %32 step %c1 {
+      %33 = arith.index_cast %arg5 : i32 to index
+      %34 = arith.minsi %33, %c64 : index
+      scf.for %arg13 = %c0 to %34 step %c1 {
+        %35 = arith.index_cast %arg12 : index to i64
+        %36 = arith.extsi %0 : i32 to i64
+        %37 = arith.muli %2, %36 : i64
+        %38 = arith.muli %2, %35 : i64
+        %39 = arith.addi %37, %38 : i64
+        %40 = arith.index_cast %arg13 : index to i64
+        %41 = arith.extsi %1 : i32 to i64
+        %42 = arith.addi %39, %41 : i64
+        %43 = arith.addi %42, %40 : i64
+        %44 = arith.index_cast %43 : i64 to index
+        %extracted = tensor.extract %transposed[%arg12, %arg13] {DiscreteMemAccess} : tensor<64x64xf32>
+        %45 = tensor.empty() : tensor<1xf32>
+        %inserted = tensor.insert %extracted into %45[%c0] : tensor<1xf32>
+        %reinterpret_cast_1 = memref.reinterpret_cast %arg3 to offset: [%44], sizes: [1], strides: [1] : memref<?xf32> to memref<1xf32, strided<[1], offset: ?>>
+        bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_1 : (tensor<1xf32>, memref<1xf32, strided<[1], offset: ?>>) -> ()
+      } {ExtractedLoadOrStore}
+    } {ExtractedLoadOrStore}
+    return
+  }
+}
+
+```
 
 ---
 
