@@ -422,6 +422,25 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_fixpipe_extract(
+  func.func @test_fixpipe_extract(%src : tensor<16x16xf32>) -> f16 {
+    %dst_init = tensor.empty() : tensor<16x16xf16>
+    // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+    // CHECK: hivm.hir.fixpipe {{.*}} ins({{.*}} : tensor<16x16xf32>) outs(%[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>>
+    // CHECK: %[[TOT:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16x16xf16>
+    // CHECK: %[[RES:.*]] = tensor.extract %[[TOT]]
+    %fix_res = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+               ins(%src : tensor<16x16xf32>)
+               outs(%dst_init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %c0 = arith.constant 0 : index
+    %val = tensor.extract %fix_res[%c0, %c0] : tensor<16x16xf16>
+    return %val : f16
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: func.func @test_connect_point_with_if(
   func.func @test_connect_point_with_if() -> tensor<16x16xf32> {
     %c0_i32 = arith.constant 0 : i32

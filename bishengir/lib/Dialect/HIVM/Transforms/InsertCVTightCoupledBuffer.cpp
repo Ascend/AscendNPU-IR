@@ -355,6 +355,10 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
 /// convert into memref.alloc + memref.memory_space_cast + fixpipe op +
 /// bufferization.to_tensor + vector/vf
 ///
+/// pattern2 : fixpipe op + tensor.extract
+/// convert into memref.alloc + memref.memory_space_cast + fixpipe op +
+/// bufferization.to_tensor + tensor.extract
+///
 /// Extra:
 /// If a vector input which match the pattern can be traced to a allocOp,
 /// and do InsertOpHelper success, the alloc will add hivm.address_space<ub>
@@ -367,7 +371,15 @@ struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
     Operation *rawOp = op.getOperation();
     bool isStructured = isa<hivm::HIVMStructuredOp>(rawOp);
     bool isVF = isVFCall(rawOp);
-    if (!isStructured && !isVF) {
+    bool isExtract = false;
+    if (isa<tensor::ExtractOp>(rawOp)) {
+      if (rawOp->hasAttr(
+              "DuplicateTensorExtractForCube::newExtractLabel")) {
+        return failure();
+      }
+      isExtract = true;
+    }
+    if (!isStructured && !isVF && !isExtract) {
       return failure();
     }
 
@@ -517,6 +529,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
 }
 
 void InsertCVTightCoupledBufferPass::runOnOperation() {
