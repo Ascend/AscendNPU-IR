@@ -258,63 +258,78 @@ static void computeNumLoopsAndShapeAndMaxElemBitWidth(Operation *op,
 }
 
 static void
+estimateTileSizeForOpInFusedNode(
+    Operation *fusedOp, std::shared_ptr<FusedNode> fusedNode,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
+    int64_t vectorLength, SmallVectorImpl<int64_t> &tileSize,
+    SmallVectorImpl<int64_t> *tileInterchange = nullptr) {
+  unsigned maxElemBitWidthInFusedNode = 1;
+  for (Operation *nodeOp : fusedNode->fusedOps) {
+    maxElemBitWidthInFusedNode =
+        std::max(maxElemBitWidthInFusedNode,
+                 fusableOpInfoMap[nodeOp].maxElemBitWidth);
+  }
+
+  bool shouldMultiAxisVectorize = false;
+  for (Operation *fusedLeafNode : fusedNode->fusedLeafNodes) {
+    if (isVsstbPatternTransposeOp(fusedLeafNode)) {
+      shouldMultiAxisVectorize = true;
+      break;
+    }
+  }
+
+  FusableOpInfo &opInfo = fusableOpInfoMap[fusedOp];
+  tileSize.assign(opInfo.numLoops, 1);
+  if (shouldMultiAxisVectorize && opInfo.numLoops > 2) {
+    int64_t maxElemByteWidthInFusedNode =
+        maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE;
+    int64_t remainBytes = vectorLength;
+    int64_t allocAxisNum = 0;
+    for (int64_t i = opInfo.numLoops - 1; i >= 0; --i) {
+      allocAxisNum++;
+      if (allocAxisNum == 2) {
+        tileSize[i] = remainBytes / maxElemByteWidthInFusedNode;
+        break;
+      } else {
+        tileSize[i] =
+            std::min(opInfo.shape[i], remainBytes / maxElemByteWidthInFusedNode);
+        remainBytes /= tileSize[i];
+      }
+    }
+    if (tileInterchange && isVsstbPatternTransposeOp(fusedOp)) {
+      auto transpose = dyn_cast<linalg::TransposeOp>(fusedOp);
+      tileInterchange->clear();
+      SmallVector<int64_t> transposeTileSize;
+      for (int64_t idx : transpose.getPermutation()) {
+        transposeTileSize.push_back(tileSize[idx]);
+        tileInterchange->push_back(idx);
+      }
+      tileSize = transposeTileSize;
+    }
+    return;
+  }
+
+  tileSize[opInfo.numLoops - 1] =
+      maxElemBitWidthInFusedNode == 1
+          ? vectorLength
+          : vectorLength /
+                (maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE);
+}
+
+static void
 computeTileSize(llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
                 SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
                 int64_t vectorLength) {
   for (auto fusedNode : fusedNodes) {
-    unsigned maxElemBitWidthInFusedNode = 1;
-    for (Operation *fusedOp : fusedNode->fusedOps) {
-      maxElemBitWidthInFusedNode =
-          std::max(maxElemBitWidthInFusedNode,
-                   fusableOpInfoMap[fusedOp].maxElemBitWidth);
-    }
-    bool shouldMultiAxisVectorize = false;
-    for (Operation *fusedLeafNode : fusedNode->fusedLeafNodes) {
-      if (isVsstbPatternTransposeOp(fusedLeafNode)) {
-        shouldMultiAxisVectorize = true;
-        break;
-      }
-    }
     for (Operation *fusedOp : fusedNode->fusedOps) {
       FusableOpInfo &opInfo = fusableOpInfoMap[fusedOp];
-      SmallVector<int64_t> tileSize(opInfo.numLoops, 1);
-      if (shouldMultiAxisVectorize && opInfo.numLoops > 2) {
-        int64_t maxElemByteWidthInFusedNode =
-            maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE;
-        int64_t remainBytes = vectorLength;
-        int64_t allocAxisNum = 0;
-        for (int64_t i = opInfo.numLoops - 1; i >= 0; --i) {
-          allocAxisNum++;
-          // max vectorize axis is 2
-          if (allocAxisNum == 2) {
-            tileSize[i] = remainBytes / maxElemByteWidthInFusedNode;
-            break;
-          } else {
-            tileSize[i] = std::min(opInfo.shape[i],
-                                   remainBytes / maxElemByteWidthInFusedNode);
-            remainBytes /= tileSize[i];
-          }
-        }
-        if (isVsstbPatternTransposeOp(fusedOp)) {
-          auto transpose = dyn_cast<linalg::TransposeOp>(fusedOp);
-          SmallVector<int64_t> transposeTileSize;
-          SmallVector<int64_t> transposeTileInterchange;
-          for (int64_t idx : transpose.getPermutation()) {
-            transposeTileSize.push_back(tileSize[idx]);
-            transposeTileInterchange.push_back(idx);
-          }
-          opInfo.tileSize = transposeTileSize;
-          opInfo.tileInterchange = transposeTileInterchange;
-          continue;
-        }
-      } else {
-        tileSize[opInfo.numLoops - 1] =
-            maxElemBitWidthInFusedNode == 1
-                ? vectorLength
-                : vectorLength /
-                      (maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE);
-      }
+      SmallVector<int64_t> tileSize;
+      SmallVector<int64_t> tileInterchange;
+      estimateTileSizeForOpInFusedNode(fusedOp, fusedNode, fusableOpInfoMap,
+                                       vectorLength, tileSize,
+                                       &tileInterchange);
       opInfo.tileSize = tileSize;
+      opInfo.tileInterchange = tileInterchange;
     }
   }
 }
@@ -648,6 +663,122 @@ static bool hasFusionOpportunity(
   return consumerLabels.size() == 1;
 }
 
+static bool becomesTileLocalInFusedNode(
+    const FusableOpInfo &producerInfo, std::shared_ptr<FusedNode> fusedNode,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
+    int64_t vectorLength, SmallVectorImpl<int64_t> &estimatedTileSize) {
+  if (!fusedNode || producerInfo.shape.empty())
+    return false;
+  Operation *producer = nullptr;
+  for (auto &[op, info] : fusableOpInfoMap) {
+    if (&info == &producerInfo) {
+      producer = op;
+      break;
+    }
+  }
+  if (!producer)
+    return false;
+  SmallVector<int64_t> ignoredInterchange;
+  estimateTileSizeForOpInFusedNode(producer, fusedNode, fusableOpInfoMap,
+                                   vectorLength, estimatedTileSize,
+                                   &ignoredInterchange);
+
+  if (producerInfo.shape.size() != estimatedTileSize.size())
+    return false;
+  for (auto [shapeDim, tileDim] :
+       llvm::zip_equal(producerInfo.shape, estimatedTileSize)) {
+    if (ShapedType::isDynamic(shapeDim) || shapeDim <= 0 || tileDim <= 0)
+      return false;
+    if (tileDim < shapeDim)
+      return true;
+  }
+  return false;
+}
+
+static bool canLegallySplitReductionConsumer(
+    Operation *producer, linalg::LinalgOp reductionConsumer) {
+  if (!producer || !reductionConsumer ||
+      reductionConsumer.getNumReductionLoops() == 0)
+    return false;
+
+  // Reuse the pass' own reduction-tiling legality gate so this predicate stays
+  // aligned with the actual lowering path that produces partial accumulation
+  // plus final vector reduction.
+  if (!hfusion::shouldUseTileReductionUsingForV2(reductionConsumer))
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  reductionConsumer.getReductionDims(reductionDims);
+
+  OpOperand *producerUse = nullptr;
+  for (OpOperand &use : reductionConsumer->getOpOperands()) {
+    if (use.get().getDefiningOp() == producer) {
+      producerUse = &use;
+      break;
+    }
+  }
+  if (!producerUse)
+    return false;
+
+  AffineMap indexingMap = reductionConsumer.getMatchingIndexingMap(producerUse);
+  return indexingMap.isIdentity();
+}
+
+static bool reductionConsumerNeedsFullProducerDomain(
+    Operation *producer, std::shared_ptr<FusedNode> fusedNode,
+    ArrayRef<int64_t> estimatedTileSize) {
+  if (!producer || !fusedNode)
+    return false;
+  SmallVector<linalg::LinalgOp> reductionConsumers;
+  for (Operation *user : producer->getUsers()) {
+    if (!fusedNode->fusedOps.contains(user))
+      continue;
+
+    auto linalgUser = dyn_cast<linalg::LinalgOp>(user);
+    if (!linalgUser || linalgUser.getNumReductionLoops() == 0)
+      continue;
+    reductionConsumers.push_back(linalgUser);
+  }
+
+  for (linalg::LinalgOp linalgUser : reductionConsumers) {
+    SmallVector<unsigned> reductionDims;
+    linalgUser.getReductionDims(reductionDims);
+    if (reductionConsumers.size() == 1 &&
+        canLegallySplitReductionConsumer(producer, linalgUser)) {
+      continue;
+    }
+
+    OpOperand *producerUse = nullptr;
+    for (OpOperand &use : linalgUser->getOpOperands()) {
+      if (use.get().getDefiningOp() == producer) {
+        producerUse = &use;
+        break;
+      }
+    }
+    if (!producerUse)
+      return true;
+
+    AffineMap indexingMap = linalgUser.getMatchingIndexingMap(producerUse);
+    DenseSet<unsigned> reductionDimSet(reductionDims.begin(),
+                                       reductionDims.end());
+
+    for (auto [producerDim, expr] : llvm::enumerate(indexingMap.getResults())) {
+      auto dimExpr = dyn_cast<AffineDimExpr>(expr);
+      if (!dimExpr)
+        continue;
+      unsigned consumerLoopDim = dimExpr.getPosition();
+      if (!reductionDimSet.contains(consumerLoopDim))
+        continue;
+      if (producerDim >= estimatedTileSize.size())
+        return true;
+      if (estimatedTileSize[producerDim] <
+          cast<ShapedType>(producer->getResult(0).getType()).getShape()[producerDim])
+        return true;
+    }
+  }
+  return false;
+}
+
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
@@ -658,7 +789,7 @@ static bool hasFusionOpportunity(
 static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     Block *block, Operation *producer,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    unsigned maxFusedOps) {
+    unsigned maxFusedOps, int64_t vectorLength) {
   // here we do not fuse FillOp and put FillOp into a single VF, see issue:
   // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
   if (mlir::hfusion::isFillOp(producer))
@@ -694,6 +825,13 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (bestFusedNode->fusedOps.size() > maxFusedOps)
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
+  SmallVector<int64_t> estimatedTileSize;
+  if (becomesTileLocalInFusedNode(producerInfo, bestFusedNode,
+                                  fusableOpInfoMap, vectorLength,
+                                  estimatedTileSize) &&
+      reductionConsumerNeedsFullProducerDomain(producer, bestFusedNode,
+                                               estimatedTileSize))
+    return nullptr;
   // If the closest fuseNode is conflict with the producer, give up fusing.
   if (llvm::any_of(bestFusedNode->fusedOps, [&](Operation *fusedOp) {
         return producerInfo.conflictList.contains(fusedOp);
@@ -1074,7 +1212,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   std::shared_ptr<FusedNode> bestFusedNode = findBestFusedNodeForProducer(
-      block, producer, fusableOpInfoMap, maxFusedOps);
+      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength);
   if (bestFusedNode) {
     producersToBeFusedInto.push_back(producer);
     bestFusedNode->fusedOps.insert(producer);
