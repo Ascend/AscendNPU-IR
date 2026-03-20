@@ -101,6 +101,9 @@ private:
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
 
+  void insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
+                     BarrierOp *barrierOp, bool insertAfterOp);
+
   void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                        BarrierOp *barrierOp, bool insertAfterOp);
 

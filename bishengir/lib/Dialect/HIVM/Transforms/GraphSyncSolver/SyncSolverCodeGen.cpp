@@ -138,12 +138,48 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
   return opBase->op->getLoc();
 }
 
+void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
+                                  BarrierOp *barrierOp, bool insertAfterOp) {
+  assert(opBase != nullptr && barrierOp != nullptr);
+  if (barrierOp->pipe != PIPE::PIPE_ALL) {
+    llvm_unreachable("barriers in cross-core sync are expected to be of type "
+                     "barrier-all only.");
+  }
+
+  PatternRewriter::InsertionGuard guard(rewriter);
+  setProperInsertionPoint(rewriter, opBase, insertAfterOp);
+
+  auto *ctx = funcOp->getContext();
+  Location loc = getProperLoc(opBase);
+  auto cubeCoreAttr = hivm::TCoreTypeAttr::get(ctx, TCoreType::CUBE);
+  auto vectorCoreAttr = hivm::TCoreTypeAttr::get(ctx, TCoreType::VECTOR);
+
+  const auto intraBlockSyncFlagIdAttr1 =
+      rewriter.getI64IntegerAttr(blockAllIntraSyncFlagId1);
+  const auto intraBlockSyncFlagIdAttr2 =
+      rewriter.getI64IntegerAttr(blockAllIntraSyncFlagId2);
+
+  auto pipeSAttr = PipeAttr::get(ctx, PIPE::PIPE_S);
+  auto pipeAllAttr = PipeAttr::get(ctx, PIPE::PIPE_ALL);
+
+  rewriter.create<PipeBarrierOp>(loc, pipeAllAttr);
+  rewriter.create<hivm::SyncBlockSetOp>(loc, vectorCoreAttr, pipeSAttr,
+                                        pipeSAttr, intraBlockSyncFlagIdAttr1);
+  rewriter.create<hivm::SyncBlockWaitOp>(loc, cubeCoreAttr, pipeSAttr,
+                                         pipeSAttr, intraBlockSyncFlagIdAttr1);
+  rewriter.create<hivm::SyncBlockSetOp>(loc, cubeCoreAttr, pipeSAttr, pipeSAttr,
+                                        intraBlockSyncFlagIdAttr2);
+  rewriter.create<hivm::SyncBlockWaitOp>(loc, vectorCoreAttr, pipeSAttr,
+                                         pipeSAttr, intraBlockSyncFlagIdAttr2);
+}
+
 // Insert a PipeBarrierOp at the resolved insertion point and location.
 void CodeGenerator::insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                                     BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (options.isCrossCoreMode()) {
-    llvm_unreachable("barriers are not supported in cross-core sync.");
+    insertBlockOp(rewriter, opBase, barrierOp, insertAfterOp);
+    return;
   }
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
   Location loc = getProperLoc(opBase);

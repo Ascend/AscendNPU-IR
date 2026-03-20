@@ -278,6 +278,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedIntraCoreEventIdNum;
     auto it = reservedEventIdNum.find({setPipe, waitPipe});
     if (it != reservedEventIdNum.end()) {
       eventIdNum -= it->second;
@@ -285,6 +286,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
     return eventIdNum;
   } else if (syncMode == SyncMode::CROSS_CORE_SYNC) {
     int64_t eventIdNum = CROSS_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedCrossCoreEventIdNum;
     return eventIdNum;
   } else if (syncMode == SyncMode::TEST_INTRA_CORE_MODE) {
     int64_t eventIdNum = TEST_INTRA_CORE_EVENT_ID_NUM;
@@ -308,6 +310,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedIntraCoreEventIdNum;
     auto it = reservedEventIdNum.find({setPipe, waitPipe});
     if (it != reservedEventIdNum.end()) {
       eventIdNum -= it->second;
@@ -318,6 +321,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
     return hwAvailableEventIds;
   } else if (syncMode == SyncMode::CROSS_CORE_SYNC) {
     int64_t eventIdNum = CROSS_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedCrossCoreEventIdNum;
     SmallVector<int64_t> hwAvailableEventIds(eventIdNum);
     std::iota(hwAvailableEventIds.begin(), hwAvailableEventIds.end(),
               static_cast<int64_t>(0));

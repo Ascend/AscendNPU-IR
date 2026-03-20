@@ -37,6 +37,13 @@
 #define TEST_INTRA_CORE_EVENT_ID_NUM (int64_t)8
 #define TEST_CROSS_CORE_EVENT_ID_NUM (int64_t)999
 
+namespace mlir::hivm::syncsolver {
+const int64_t blockAllIntraSyncFlagId1 = 15;
+const int64_t blockAllIntraSyncFlagId2 = 14;
+const int64_t reservedCrossCoreEventIdNum = 2;
+const int64_t reservedIntraCoreEventIdNum = 0;
+} // namespace mlir::hivm::syncsolver
+
 using SyncMap = llvm::MapVector<
     mlir::hivm::syncsolver::OperationBase *,
     std::deque<std::unique_ptr<mlir::hivm::syncsolver::SyncOp>>>;
