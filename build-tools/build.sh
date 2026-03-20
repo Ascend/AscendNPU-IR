@@ -359,7 +359,7 @@ parse_arguments() {
                 shift
                 ;;
             --safety-ld-options)
-                SAFETY_LD_OPTIONS="-Wl,-z,relro,-z,now"
+                SAFETY_LD_OPTIONS="-s -Wl,-z,relro,-z,now"
                 shift
                 ;;
             --skip-rpath)
