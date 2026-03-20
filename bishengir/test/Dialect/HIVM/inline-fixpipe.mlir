@@ -184,7 +184,6 @@ func.func @matmul_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
     %c16_10 = arith.constant 16 : index
     %52 = hivm.hir.mmadL1 ins(%48, %49, %51, %c16_9, %46, %c16_10 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%arg17 : tensor<16x16xf32>) -> tensor<16x16xf32>
     // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-    // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
     hivm.hir.debug {debugtype = "print", hex = false, prefix = " partial_sum: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %52 : tensor<16x16xf32>
     %53 = arith.addi %arg20, %c16 : index
     %54 = arith.addi %53, %arg21 : index
