@@ -427,6 +427,11 @@ def LegalizeBoolPass : Pass<"hfusion-legalize-bool", "ModuleOp"> {
   let summary = "cast int8 to int1 for input and int1 to int8 for output.";
   let constructor = "mlir::hfusion::createLegalizeBoolPass()";
   let dependentDialects = ["arith::ArithDialect", "hfusion::HFusionDialect", "annotation::AnnotationDialect"];
+  
+  let options = [
+    Option<"enableClamp", "enable-clamp", "bool", /*default=*/"false",
+           "Enable clamp pseudo boolean arithmetic pattern">
+  ];
 }
 
 def ReorderOpsByBFS : Pass<"hfusion-reorder-ops", "func::FuncOp"> {
