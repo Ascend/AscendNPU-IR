@@ -124,6 +124,56 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   
   return success();
 }
+
+LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
+                            PatternRewriter &rewriter, Operation *definingOp) {
+  auto subviewOp = cast<memref::SubViewOp>(definingOp);
+  auto offsets = subviewOp.getMixedOffsets();
+  auto sizes = subviewOp.getMixedSizes();
+  auto strides = subviewOp.getMixedStrides();
+  SmallVector<OpFoldResult> newOffsets;
+  SmallVector<OpFoldResult> newSizes;
+  SmallVector<OpFoldResult> newStrides;
+  auto inputShape = subviewOp.getSourceType().getShape();
+  auto targetShape = expandOp.getStaticOutputShape();
+  SmallVector<int64_t> newShape;
+  auto reassociation = expandOp.getReassociationIndices();
+  // only handle the [1, d] -> [d] case
+  for (auto [i, indices] : llvm::enumerate(reassociation)) {
+    bool isHandled = false;
+    for (auto idx : indices) {
+      if (targetShape[idx] != 1) {
+        if (isHandled) {
+          // not trivial conversion
+          return failure();
+        }
+        isHandled = true;
+        newOffsets.push_back(offsets[i]);
+        newSizes.push_back(sizes[i]);
+        newStrides.push_back(strides[i]);
+        newShape.push_back(inputShape[i]);
+      } else {
+        newOffsets.push_back(rewriter.getIndexAttr(0));
+        newSizes.push_back(rewriter.getIndexAttr(1));
+        newStrides.push_back(rewriter.getIndexAttr(1));
+        newShape.push_back(1);
+      }
+    }
+    if (!isHandled) {
+      newOffsets.back() = offsets[i];
+      newSizes.back() = sizes[i];
+      newStrides.back() = strides[i];
+      newShape.back() = inputShape[i];
+    }
+  }
+  rewriter.setInsertionPoint(expandOp);
+  auto newExpand = rewriter.create<memref::ExpandShapeOp>(expandOp.getLoc(), newShape, subviewOp.getSource(), reassociation);
+  auto newSubView = rewriter.create<memref::SubViewOp>(
+      subviewOp.getLoc(), newExpand, newOffsets, newSizes,
+      newStrides);
+  rewriter.replaceOp(expandOp, newSubView);
+  return success();
+}
 } // namespace
 
 LogicalResult
@@ -145,6 +195,10 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
   if (isa<memref::ReinterpretCastOp>(definingOp)) {
     LDBG("Ok in here");
     return handleReinterpretCast(expandOp, rewriter, definingOp);
+  }
+  if (isa<memref::SubViewOp>(definingOp)) {
+    LDBG("Ok in here");
+    return handleSubView(expandOp, rewriter, definingOp);
   }
   return failure();
 }

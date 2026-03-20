@@ -132,11 +132,11 @@ module {
 }
 
 // -----
-// CHECK-LABEL: func.func @test_trivial_subview
-// CHECK: memref.reinterpret_cast {{.*}} to offset: [%arg0], sizes: [128], strides: [8]
-// CHECK: memref.subview {{.*}}[0] [%arg1] [1] : memref<128xf32
-// CHECK: memref.expand_shape {{.*}}{{\[}}[0, 1]{{\]}}{{.*}}into memref<?x1xf32
-// CHECK: hivm.hir.load ins({{.*}} : memref<?x1xf32{{.*}}) outs({{.*}}) may_implicit_transpose_with_last_axis = false
+// CHECK-LABEL: @test_trivial_subview
+// CHECK: %[[CAST:.*]] = memref.reinterpret_cast %[[ARG2:.*]] to offset: {{\[}}%[[ARG0:.*]]], sizes: [128, 1], strides: [8, 8] : memref<?xf32> to memref<128x1xf32, strided<[8, 8], offset: ?>>
+// CHECK: %[[SUBVIEW_1:.*]] = memref.subview %[[CAST]][0, 0] {{\[}}%[[ARG1:.*]], 1] [1, 1] : memref<128x1xf32, strided<[8, 8], offset: ?>> to memref<?x1xf32, strided<[8, 8], offset: ?>>
+// CHECK: %[[SUBVIEW_2:.*]] = memref.subview %[[ALLOC:.*]][0, 0] {{\[}}%[[ARG1]], 1] [1, 1] : memref<128x1xf32> to memref<?x1xf32, strided<[1, 1]>>
+// CHECK: hivm.hir.load ins(%[[SUBVIEW_1]] : memref<?x1xf32, strided<[8, 8], offset: ?>>) outs(%[[SUBVIEW_2]] : memref<?x1xf32, strided<[1, 1]>>)
 func.func @test_trivial_subview(%arg0: index, %arg1: index, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}) -> tensor<128x1xf32> {
   %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%arg0], sizes: [128], strides: [8] : memref<?xf32> to memref<128xf32, strided<[8], offset: ?>>
   %alloc = memref.alloc() : memref<128x1xf32>
