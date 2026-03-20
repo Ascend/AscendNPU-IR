@@ -110,7 +110,7 @@ public:
       // Track if we've seen a precision decrease
       bool hasDecreased = false;
 
-      for (size_t i = 0; i < chain.size(); ++i) {
+      for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
         Type inType = getElementTypeOrSelf(chain[i].getInputs()[0].getType());
         Type outType = getElementTypeOrSelf(chain[i].getOutputs()[0].getType());
 
