@@ -120,22 +120,25 @@ bool isStaticShapeSame(Operation *op, const Value &genBuffer,
 /// Get allocOp and CVMixId from markOp. If failed, it will return std::nullopt.
 std::optional<memref::AllocOp>
 GetCVMixIdAndAllocOpFromMarkOp(annotation::MarkOp markOp, int32_t &cvMixId) {
-  // get allocOp
-  if (!isa<MemRefType>(markOp.getSrc().getType())) {
-    return std::nullopt;
-  }
-  auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
-  if (!maybeAlloc.has_value()) {
+  if (!markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
     return std::nullopt;
   }
   // get cvMixId
-  auto attr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+  auto attr = dyn_cast<hivm::HIVMTightlyCoupledBufferAttr>(
       markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
   if (!attr || !attr.getId().has_value()) {
     LDBG("MarkOp for : " << markOp.getSrc());
     LDBG("  Parse tightly_coupled_buffer attribute failed. No input or input "
          "fromat error. Correct format should be: hivm.tightly_coupled_buffer"
          " = #hivm.tightly_coupled_buffer<$id>\n");
+    return std::nullopt;
+  }
+  // get allocOp
+  if (!isa<MemRefType>(markOp.getSrc().getType())) {
+    return std::nullopt;
+  }
+  auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
+  if (!maybeAlloc.has_value()) {
     return std::nullopt;
   }
   cvMixId = attr.getId().value();
@@ -214,7 +217,7 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
                         /*hasCond=*/true, /*isIgnoreInplace=*/true);
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
-      ProcessMarkOp(markOp, curOpInfo);
+      ProcessMarkOp(markOp, live, curOpInfo);
     } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(op)) {
       UpdateConditionOpBufferAlias(conditionOp);
     } else if (auto condBrOp = dyn_cast<cf::CondBranchOp>(op)) {
@@ -459,7 +462,7 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
 }
 
 void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
-                                        OpInfo *curOpInfo) {
+                                        Liveness live, OpInfo *curOpInfo) {
   // get allocOp
   if (!isa<MemRefType>(markOp.getSrc().getType())) {
     return;
@@ -473,6 +476,7 @@ void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
   if (ProcessMarkOpForTightlyCoupledCV(markOp, maybeAlloc.value())) {
     UpdateOpGenInfo(curOpInfo, maybeAlloc.value()->getResults());
   }
+  OpKillHandle(curOpInfo, live, markOp->getBlock());
 }
 
 bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(

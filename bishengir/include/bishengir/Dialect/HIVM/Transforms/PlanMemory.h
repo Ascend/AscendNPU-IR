@@ -382,7 +382,8 @@ private:
 
   /// Update multi buffer, unique memory and tightly coupled information. If
   /// necessary, we will run UpdateOpGenInfo manually
-  void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo);
+  void ProcessMarkOp(annotation::MarkOp markOp, Liveness live,
+                     OpInfo *curOpInfo);
 
   /// Process AllocOp that don't need to plan memory and if return allocOp, we
   /// need to run UpdateOpGenInfo manually.

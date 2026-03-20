@@ -1709,3 +1709,21 @@ module {
       return
   }
 }
+
+// -----
+
+// expected-error@+1 {{ub overflow, requires 2097152 bits while 1572864 bits available!}}
+func.func @test_mark_op_kill_handle(%arg0: memref<4096x8xf32, #hivm.address_space<gm>>,
+                                    %arg1: memref<4096x8xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %alloc = memref.alloc() : memref<4096x8xf32, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg0 : memref<4096x8xf32, #hivm.address_space<gm>>) outs(%alloc : memref<4096x8xf32, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%alloc : memref<4096x8xf32, #hivm.address_space<ub>>) outs(%arg0 : memref<4096x8xf32, #hivm.address_space<gm>>)
+  %alloc_1 = memref.alloc() : memref<4096x8xf32, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg1 : memref<4096x8xf32, #hivm.address_space<gm>>) outs(%alloc_1 : memref<4096x8xf32, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%alloc_1 : memref<4096x8xf32, #hivm.address_space<ub>>) outs(%arg1 : memref<4096x8xf32, #hivm.address_space<gm>>)
+  annotation.mark %alloc : memref<4096x8xf32, #hivm.address_space<ub>>
+  return 
+}
