@@ -907,7 +907,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     }
     if (op->hasAttr(tileAndSliceFailure)) {
       op->removeAttr(tileAndSliceFailure);
-      if (op->hasAttr(hivm::AtomicKindAttr::name)) {
+      if (auto storeOp = dyn_cast<hivm::StoreOp>(op);
+          storeOp && storeOp.isAtomic()) {
         isFailed = true;
         return WalkResult::interrupt();
       }
