@@ -1057,6 +1057,48 @@ bool VTransposeBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sli
     return isVTranspose;
 }
 
+bool VarangeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp){
+    return false;
+  }
+  bool isVarangeOp = dyn_cast<hivm::VArangeOp>(sourceOp);
+  return isVarangeOp;
+}
+ 
+LogicalResult 
+VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                            PatternRewriter &rewriter) const {
+  auto varangeOp = dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
+  if (!varangeOp){
+    return failure();
+  }
+ 
+  auto loc = varangeOp.getLoc();
+ 
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+ 
+  rewriter.setInsertionPoint(varangeOp);
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+    loc, varangeOp.getDst(), offsets, sizes, strides);
+ 
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+ 
+  rewriter.setInsertionPointAfter(varangeOp);
+  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
+    loc, sliceOp.getType(), newSliceOp.getResult()
+  );
+ 
+  rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
+  rewriter.eraseOp(varangeOp);
+ 
+  return success();
+}
+
 LogicalResult
 VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                      PatternRewriter &rewriter) const {
