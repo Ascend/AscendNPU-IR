@@ -300,15 +300,19 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     if (copyOp->getParentOfType<scf::ForallOp>() != nullptr) {
       return failure();
     }
+    bool isInVectorFunction = false;
+    if (auto funcOp = copyOp->getParentOfType<func::FuncOp>()) {
+      isInVectorFunction = funcOp->hasAttr("hivm.vector_function");
+    }
 
     Value src = copyOp.getSource();
-    bool convertToLoad = isFromGMSpace(src);
+    bool convertToLoad = !isInVectorFunction && isFromGMSpace(src);
     if (convertToLoad) {
       return replaceMemCopyByHIVMLoadOp(copyOp, rewriter);
     }
 
     Value dst = copyOp.getTarget();
-    bool convertToStore = isFromGMSpace(dst);
+    bool convertToStore = !isInVectorFunction && isFromGMSpace(dst);
     if (convertToStore) {
       rewriter.replaceOpWithNewOp<hivm::StoreOp>(copyOp, TypeRange(), src, dst);
       return success();

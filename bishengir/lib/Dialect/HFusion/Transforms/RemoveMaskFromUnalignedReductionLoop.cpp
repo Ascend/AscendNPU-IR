@@ -147,11 +147,36 @@ static void removeMaskForReadOrWriteOp(IRRewriter& rewriter, vector::MaskOp mask
 ///     %reduction = arith.addf %select, %rhs {isReductionOp}
 ///     %write = vector.transfer_write %reduction, %arg
 ///     scf.yield %write
+/// If the reductionLoop loops only once, this loop will be optimized away, then the reductionOp
+/// will not be enclosed by a reductionLoop. In such scenarios, we can also remove redundant
+/// transfer_read and transfer_write by arith.select.
+/// Before:
+///   %cst = arith.constant dense<0.000000e+00> : vector<1x64xf32>
+///   %init = vector.transfer_write %cst
+///   %extracted_slice = tensor.extract_slice %init
+///   %mask = vector.create_mask
+///   %lhs = vector.mask %mask { vector.transfer_read }
+///   %rhs = vector.mask %mask { vector.transfer_read %extract_slice }
+///   %reduction = arith.addf %lhs, %rhs {isReductionOp}
+///   %write = vector.mask %mask { vector.transfer_write %reduction, %extract_slice }
+///   %inserted_slice = tensor.insert_slice %write into %init
+///   %read_vcadd = vector.transfer_read %inserted_slice
+///   %read_acc = vector.transfer_read
+///   %multi_reduction = vector.multi_reduction <add>, %read_vcadd, %read_acc {withoutInitMergeOp}
+/// After:
+///   %cst = arith.constant dense<0.000000e+00> : vector<1x64xf32>
+///   %mask = vector.create_mask
+///   %lhs = vector.mask %mask { vector.transfer_read }
+///   %select = arith.select %mask, %lhs, %cst
+///   %reduction = arith.addf %select, %cst {isReductionOp}
+///   %read_acc = vector.transfer_read
+///   %multi_reduction = vector.multi_reduction <add>, %reduction, %read_acc {withoutInitMergeOp}
 void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
   func::FuncOp func = getOperation();
   if (!func->hasAttr(hivm::VectorFunctionAttr::name))
     return;
   IRRewriter rewriter(func.getContext());
+  // handle those reductionOp enclosed by reductionLoop
   func.walk([&](scf::ForOp forOp) {
     if (!forOp->hasAttr("reductionLoop"))
       return;
@@ -171,6 +196,72 @@ void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
     });
     for (vector::MaskOp maskOp : maskOps) {
       removeMaskForReadOrWriteOp(rewriter, maskOp, forOp);
+    }
+  });
+  // handle those reductionOp not enclosed by reductionLoop
+  func.walk([&](Operation *reductionOp) {
+    if (!reductionOp->hasAttr("reductionOp"))
+      return;
+    if (reductionOp->getParentOp()->hasAttr("reductionLoop"))
+      return;
+    Value lhs = reductionOp->getOperand(0);
+    Value rhs = reductionOp->getOperand(1);
+    if (auto lhsMaskOp = dyn_cast_or_null<vector::MaskOp>(lhs.getDefiningOp())) {
+      Operation *lhsMaskedOp = lhsMaskOp.getMaskableOp();
+      Value selectMask = lhsMaskOp.getMask();
+      if (auto lhsReadOp = dyn_cast_or_null<vector::TransferReadOp>(lhsMaskedOp)) {
+        if (auto lhsExtractSliceOp = dyn_cast_or_null<tensor::ExtractSliceOp>(
+                lhsReadOp.getSource().getDefiningOp())) {
+          if (auto lhsWriteOp = dyn_cast_or_null<vector::TransferWriteOp>(
+                  lhsExtractSliceOp.getSource().getDefiningOp())) {
+            if (isa<arith::ConstantOp>(lhsWriteOp.getVector().getDefiningOp())) {
+              rewriter.setInsertionPoint(reductionOp);
+              Value select = rewriter.create<arith::SelectOp>(
+                  reductionOp->getLoc(), selectMask, rhs, lhsWriteOp.getVector());
+              reductionOp->setOperand(0, lhsWriteOp.getVector());
+              reductionOp->setOperand(1, select);
+            }
+          }
+        }
+      }
+    }
+    if (auto rhsMaskOp = dyn_cast_or_null<vector::MaskOp>(rhs.getDefiningOp())) {
+      Operation *rhsMaskedOp = rhsMaskOp.getMaskableOp();
+      Value selectMask = rhsMaskOp.getMask();
+      if (auto rhsReadOp = dyn_cast_or_null<vector::TransferReadOp>(rhsMaskedOp)) {
+        if (auto rhsExtractSliceOp = dyn_cast_or_null<tensor::ExtractSliceOp>(
+                rhsReadOp.getSource().getDefiningOp())) {
+          if (auto rhsWriteOp = dyn_cast_or_null<vector::TransferWriteOp>(
+                  rhsExtractSliceOp.getSource().getDefiningOp())) {
+            if (isa<arith::ConstantOp>(rhsWriteOp.getVector().getDefiningOp())) {
+              rewriter.setInsertionPoint(reductionOp);
+              Value select = rewriter.create<arith::SelectOp>(
+                  reductionOp->getLoc(), selectMask, lhs, rhsWriteOp.getVector());
+              reductionOp->setOperand(1, rhsWriteOp.getVector());
+              reductionOp->setOperand(0, select);
+            }
+          }
+        }
+      }
+    }
+    Operation *user = *reductionOp->getUsers().begin();
+    if (auto userWriteOp = dyn_cast_or_null<vector::TransferWriteOp>(user)) {
+      if (userWriteOp.isMasked()) {
+        user = *userWriteOp.getMaskingOp()->getUsers().begin();
+        if (isa<tensor::InsertSliceOp>(user)) {
+          user = *user->getUsers().begin();
+          if (isa<vector::TransferReadOp>(user)) {
+            for (OpOperand &useOperand : user->getResult(0).getUses()) {
+              user = useOperand.getOwner();
+              if (user->hasAttr("withoutInitMergeOp")) {
+                user->setOperand(useOperand.getOperandNumber(),
+                                 reductionOp->getResult(0));
+                break;
+              }
+            }
+          }
+        }
+      }
     }
   });
 }
