@@ -62,4 +62,5 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRViewLikeInterface
   BiShengIRDialectUtils
   BiShengIRHACCDialect
+  BiShengIRHACCUtils
 )

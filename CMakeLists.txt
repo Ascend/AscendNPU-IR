@@ -29,6 +29,11 @@ if(LLVM_MAJOR_VERSION_22_COMPATIBLE)
   add_definitions(-D__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
 endif()
 
+option(LLVM_MAJOR_VERSION_20_COMPATIBLE "NPUIR build with LLVM 20" OFF)
+if(LLVM_MAJOR_VERSION_20_COMPATIBLE)
+  message(STATUS "Building with LLVM 20 or later")
+  add_definitions(-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
+endif()
 # -------------------------------------------------------------------------------
 # Handle Option
 # -------------------------------------------------------------------------------
@@ -216,6 +221,8 @@ if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   # TODO: Math and Utils should be added in STANDALONE_IR_BUILD_DIALECT
   add_subdirectory(bishengir/include/bishengir/Dialect/MathExt)
   add_subdirectory(bishengir/lib/Dialect/HIVM/Utils)
+  add_subdirectory(bishengir/lib/Dialect/HACC/Transforms)
+  add_subdirectory(bishengir/lib/Dialect/HACC/Utils)
   add_subdirectory(bishengir/lib/Dialect/Math)
   add_subdirectory(bishengir/lib/Dialect/Utils)
 else()
