@@ -1073,6 +1073,7 @@ std::string InferMaxRankExternalModel<CustomOp>::getOpLibraryCallName(
     Operation *op, std::optional<bool> isOpsAligned) const {
   auto concreteOp = cast<CustomOp>(op);
 
+  // TODO: add support for built-in template library
   using InferBuiltinMaxRankFuncTy =
       std::function<std::string(std::optional<bool>)>;
   static const DenseMap<StringRef, InferBuiltinMaxRankFuncTy>

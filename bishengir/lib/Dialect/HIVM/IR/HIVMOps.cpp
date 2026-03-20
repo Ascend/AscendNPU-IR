@@ -628,6 +628,7 @@ std::string CustomOp::getSymbol() {
   if (auto attr =
           getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
     return attr.str();
+  emitOpError() << "Missing implementation function name";
   return "";
 }
 
