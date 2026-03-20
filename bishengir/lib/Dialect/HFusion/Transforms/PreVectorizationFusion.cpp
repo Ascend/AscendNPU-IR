@@ -17,6 +17,7 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include <algorithm>
 
 namespace mlir {
 #define GEN_PASS_DEF_PREVECTORIZATIONFUSION
@@ -146,14 +147,14 @@ struct HFusionGeneralizationPatterns
         hfusion::isMatmulOps(op) || isa<hfusion::ReduceWithIndexOp>(op) ||
         hfusion::opCanFuseIntoMatmul(op) || isa<linalg::TransposeOp>(op))
       return failure();
-    if (hfusion::isSingleElementLinalgOp(op) && isa<linalg::FillOp>(op)){
+    if (hfusion::isSingleElementLinalgOp(op) && isa<linalg::FillOp>(op)) {
       Type elemType = op.getDpsInputs()[0].getType();
-      // For the FP8 data type, we need to preserve the path from linalg.fill to linalg.generic, so that in AutoVectorizeV2 we can lower
-      // arith.constant 0.000000e+00 : f8E4M3FN
-      // into
-      // arith.constant dense<0.000000e+00> : vector<256xf8E4M3FN>.
-      // This allows us to use bitcast to avoid generating FP8 constants, which are not accepted in the LLVM IR received in CCEC.
-      if(!elemType.isFloat8E4M3FN() && !elemType.isFloat8E5M2())
+      // For the FP8 data type, we need to preserve the path from linalg.fill to
+      // linalg.generic, so that in AutoVectorizeV2 we can lower arith.constant
+      // 0.000000e+00 : f8E4M3FN into arith.constant dense<0.000000e+00> :
+      // vector<256xf8E4M3FN>. This allows us to use bitcast to avoid generating
+      // FP8 constants, which are not accepted in the LLVM IR received in CCEC.
+      if (!elemType.isFloat8E4M3FN() && !elemType.isFloat8E5M2())
         return failure();
     }
     // Handle broadcastOp to be expand + linalg.generic when
@@ -188,7 +189,17 @@ bool isYieldGeneric(linalg::GenericOp &operandOp, OpOperand *operand) {
   return true;
 }
 
-bool ElemwiseOpFuseControlFn(OpOperand *operand) {
+static unsigned getElementwiseFusionSize(linalg::GenericOp genericOp) {
+  unsigned size = 0;
+  for (Operation &op : genericOp.getBody()->without_terminator()) {
+    // Count scalar compute ops in the region as a proxy for fused op count.
+    if (!isa<linalg::YieldOp>(op))
+      ++size;
+  }
+  return std::max(1u, size);
+}
+
+bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
   // Scenerio 1: Add folding with reshape by expansion patterns.
   auto producerOp = operand->get().getDefiningOp();
   if (!producerOp)
@@ -221,6 +232,12 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand) {
   auto consumerGen = llvm::dyn_cast_or_null<linalg::GenericOp>(consumerOp);
   if (consumerGen == nullptr)
     return true;
+  if (maxFusedElementwiseOps > 0) {
+    unsigned fusedSize = getElementwiseFusionSize(producerGen) +
+                         getElementwiseFusionSize(consumerGen);
+    if (fusedSize > static_cast<unsigned>(maxFusedElementwiseOps))
+      return false;
+  }
   // 2. current vstu/vldu are not support 1bit type, skip combination
   // may bring error instructions
   // TODO: this restriction may remove in future.
@@ -240,10 +257,14 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand) {
   return consumerFor->isAncestor(producerOp);
 }
 
-static void populateFusionPatterns(RewritePatternSet &patterns) {
+static void populateFusionPatterns(RewritePatternSet &patterns,
+                                   int maxFusedElementwiseOps) {
+  linalg::ControlFusionFn controlFn =
+      [maxFusedElementwiseOps](OpOperand *operand) {
+        return ElemwiseOpFuseControlFn(operand, maxFusedElementwiseOps);
+      };
   // Add elementwise op fusion patterns.
-  linalg::populateElementwiseOpsFusionPatterns(patterns,
-                                               ElemwiseOpFuseControlFn);
+  linalg::populateElementwiseOpsFusionPatterns(patterns, controlFn);
 }
 
 template <typename OpTy>
@@ -531,7 +552,8 @@ static void populateMatmulPatterns(RewritePatternSet &patterns) {
 ///   "%70 = linalg.generic {indexing_maps = [affine_map<(d0) -> (d0)>],
 ///   iterator_types = ["parallel"]} outs(%69 : tensor<1xi32>)
 /// ```
-struct ZeroDimToOneDimGenericPattern : public OpRewritePattern<linalg::GenericOp> {
+struct ZeroDimToOneDimGenericPattern
+    : public OpRewritePattern<linalg::GenericOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::GenericOp op,
@@ -582,14 +604,14 @@ struct ZeroDimToOneDimGenericPattern : public OpRewritePattern<linalg::GenericOp
   }
 };
 
-static void
-populatePreVectorizationFusionPatterns(RewritePatternSet &patterns) {
+static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
+                                                   int maxFusedElementwiseOps) {
   patterns.add<HFusionGeneralizationPatterns>(patterns.getContext());
   patterns.add<ExtractInlinePattern>(patterns.getContext());
   patterns.add<ExpandShapeToImplicitBrcInGenericPattern>(patterns.getContext());
   patterns.add<ZeroDimToOneDimGenericPattern>(patterns.getContext());
   populateMatmulPatterns(patterns);
-  populateFusionPatterns(patterns);
+  populateFusionPatterns(patterns, maxFusedElementwiseOps);
   annotation::MarkOp::getCanonicalizationPatterns(patterns,
                                                   patterns.getContext());
   patterns.getContext()
@@ -704,7 +726,7 @@ void PreVectorizationFusionPass::runOnOperation() {
     EmptifyReduceInit(op, rewriter);
   }
 
-  populatePreVectorizationFusionPatterns(patterns);
+  populatePreVectorizationFusionPatterns(patterns, maxFusedElementwiseOps);
   // Use TopDownTraversal for compile time reasons
   GreedyRewriteConfig grc;
   grc.useTopDownTraversal = true;

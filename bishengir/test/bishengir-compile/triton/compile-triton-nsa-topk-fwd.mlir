@@ -1,4 +1,4 @@
-// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1
+// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 #map = affine_map<(d0) -> (d0)>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @forward_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg9: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg10: i32, %arg11: i32, %arg12: i32 {tt.divisibility = 16 : i32}, %arg13: f32, %arg14: i32 {tt.divisibility = 16 : i32}, %arg15: i32 {tt.divisibility = 16 : i32}, %arg16: i32 {tt.divisibility = 16 : i32}, %arg17: i32 {tt.divisibility = 16 : i32}, %arg18: i32 {tt.divisibility = 16 : i32}, %arg19: i32 {tt.divisibility = 16 : i32}, %arg20: i32, %arg21: i32, %arg22: i32 {tt.divisibility = 16 : i32}, %arg23: i32 {tt.divisibility = 16 : i32}, %arg24: i32, %arg25: i32 {tt.divisibility = 16 : i32}, %arg26: i32, %arg27: i32, %arg28: i32, %arg29: i32, %arg30: i32, %arg31: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "mix", parallel_mode = "simd"} {
@@ -98,7 +98,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
         %60 = arith.select %59, %13, %12 : tensor<8xi1>, tensor<8xi32>
         %61 = bufferization.alloc_tensor() : tensor<i32>
         %62 = linalg.fill ins(%c0_i32 : i32) outs(%61 : tensor<i32>) -> tensor<i32>
-        %reduced = linalg.reduce ins(%60 : tensor<8xi32>) outs(%62 : tensor<i32>) dimensions = [0] 
+        %reduced = linalg.reduce ins(%60 : tensor<8xi32>) outs(%62 : tensor<i32>) dimensions = [0]
           (%in: i32, %init: i32) {
             %108 = arith.addi %in, %init : i32
             linalg.yield %108 : i32
@@ -161,7 +161,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
           memref.copy %subview_21, %subview_22 : memref<?x?xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[128, 1]>>
           %126 = bufferization.to_tensor %alloc_20 restrict writable : memref<64x128xf16>
           %127 = tensor.empty() : tensor<128x64xf16>
-          %transposed = linalg.transpose ins(%126 : tensor<64x128xf16>) outs(%127 : tensor<128x64xf16>) permutation = [1, 0] 
+          %transposed = linalg.transpose ins(%126 : tensor<64x128xf16>) outs(%127 : tensor<128x64xf16>) permutation = [1, 0]
           %128 = linalg.fill ins(%111 : i32) outs(%44 : tensor<64xi32>) -> tensor<64xi32>
           %129 = arith.addi %128, %45 : tensor<64xi32>
           %130 = arith.cmpi sge, %81, %129 : tensor<64xi32>
@@ -169,28 +169,28 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
           %131 = arith.select %expanded, %6, %5 : tensor<1x64xi1>, tensor<1x64xf32>
           %132 = arith.addf %131, %6 : tensor<1x64xf32>
           %collapsed = tensor.collapse_shape %132 [[0, 1]] : tensor<1x64xf32> into tensor<64xf32>
-          %broadcasted_23 = linalg.broadcast ins(%collapsed : tensor<64xf32>) outs(%2 : tensor<16x64xf32>) dimensions = [0] 
+          %broadcasted_23 = linalg.broadcast ins(%collapsed : tensor<64xf32>) outs(%2 : tensor<16x64xf32>) dimensions = [0]
           %133 = linalg.matmul {input_precison = "ieee"} ins(%80, %transposed : tensor<16x128xf16>, tensor<128x64xf16>) outs(%3 : tensor<16x64xf32>) -> tensor<16x64xf32>
           %134 = arith.mulf %133, %46 : tensor<16x64xf32>
           %135 = arith.addf %broadcasted_23, %134 : tensor<16x64xf32>
-          %reduced_24 = linalg.reduce ins(%135 : tensor<16x64xf32>) outs(%10 : tensor<16xf32>) dimensions = [1] 
+          %reduced_24 = linalg.reduce ins(%135 : tensor<16x64xf32>) outs(%10 : tensor<16xf32>) dimensions = [1]
             (%in: f32, %init: f32) {
               %164 = arith.maxnumf %in, %init : f32
               linalg.yield %164 : f32
             }
           %136 = arith.maxnumf %arg35, %reduced_24 : tensor<16xf32>
-          %broadcasted_25 = linalg.broadcast ins(%136 : tensor<16xf32>) outs(%2 : tensor<16x64xf32>) dimensions = [1] 
+          %broadcasted_25 = linalg.broadcast ins(%136 : tensor<16xf32>) outs(%2 : tensor<16x64xf32>) dimensions = [1]
           %137 = arith.subf %135, %broadcasted_25 : tensor<16x64xf32>
           %138 = math.exp2 %137 : tensor<16x64xf32>
           %139 = linalg.fill ins(%cst_1 : f32) outs(%9 : tensor<16xf32>) -> tensor<16xf32>
-          %reduced_26 = linalg.reduce ins(%138 : tensor<16x64xf32>) outs(%139 : tensor<16xf32>) dimensions = [1] 
+          %reduced_26 = linalg.reduce ins(%138 : tensor<16x64xf32>) outs(%139 : tensor<16xf32>) dimensions = [1]
             (%in: f32, %init: f32) {
               %164 = arith.addf %in, %init : f32
               linalg.yield %164 : f32
             }
           %140 = arith.subf %arg35, %136 : tensor<16xf32>
           %141 = math.exp2 %140 : tensor<16xf32>
-          %broadcasted_27 = linalg.broadcast ins(%141 : tensor<16xf32>) outs(%7 : tensor<16x128xf32>) dimensions = [1] 
+          %broadcasted_27 = linalg.broadcast ins(%141 : tensor<16xf32>) outs(%7 : tensor<16x128xf32>) dimensions = [1]
           %142 = arith.mulf %arg34, %broadcasted_27 : tensor<16x128xf32>
           %143 = arith.muli %112, %43 : index
           %144 = arith.addi %143, %42 : index
@@ -225,7 +225,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
         }
         %83 = arith.subf %82#1, %82#2 : tensor<16xf32>
         %84 = math.exp2 %83 : tensor<16xf32>
-        %broadcasted = linalg.broadcast ins(%84 : tensor<16xf32>) outs(%7 : tensor<16x128xf32>) dimensions = [1] 
+        %broadcasted = linalg.broadcast ins(%84 : tensor<16xf32>) outs(%7 : tensor<16x128xf32>) dimensions = [1]
         %85 = arith.mulf %82#0, %broadcasted : tensor<16x128xf32>
         %86 = arith.muli %49, %arg22 : i32
         %87 = arith.index_cast %86 : i32 to index

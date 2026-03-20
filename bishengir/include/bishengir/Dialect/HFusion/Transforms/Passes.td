@@ -121,6 +121,8 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
   let options = [
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
     Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
+    Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
+           "Maximum number of ops allowed in one fused node.">,
   ];
 }
 
@@ -586,8 +588,12 @@ def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::Fun
   let summary = "Perform elemwise op fusion and generalization before vectorization";
   let constructor = "::mlir::hfusion::createPreVectorizationFusionPass()";
   let dependentDialects = ["linalg::LinalgDialect", "annotation::AnnotationDialect"];
-  let options = [Option<"enableTritonCompile", "enable-triton-compile",
-                        "bool", "false", "Enable Triton compile.">
+  let options = [
+    Option<"enableTritonCompile", "enable-triton-compile",
+           "bool", "false", "Enable Triton compile.">,
+    Option<"maxFusedElementwiseOps", "max-fused-elementwise-ops", "int", "-1",
+           "Maximum number of elementwise ops to combine into one fused "
+           "linalg.generic (-1 means unlimited).">
   ];
 }
 

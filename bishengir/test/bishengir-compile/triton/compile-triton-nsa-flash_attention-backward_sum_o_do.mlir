@@ -1,4 +1,4 @@
-// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1
+// RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @backward_sum_o_do(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32, %arg6: i32 {tt.divisibility = 16 : i32}, %arg7: i32 {tt.divisibility = 16 : i32}, %arg8: i32 {tt.divisibility = 16 : i32}, %arg9: i32 {tt.divisibility = 16 : i32}, %arg10: i32 {tt.divisibility = 16 : i32}, %arg11: i32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32, %arg16: i32, %arg17: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
     %cst = arith.constant 0.000000e+00 : f32
@@ -54,7 +54,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
     %29 = arith.mulf %21, %28 : tensor<128x128xf32>
     %30 = tensor.empty() : tensor<128xf32>
     %31 = linalg.fill ins(%cst : f32) outs(%30 : tensor<128xf32>) -> tensor<128xf32>
-    %reduced = linalg.reduce ins(%29 : tensor<128x128xf32>) outs(%31 : tensor<128xf32>) dimensions = [1] 
+    %reduced = linalg.reduce ins(%29 : tensor<128x128xf32>) outs(%31 : tensor<128xf32>) dimensions = [1]
       (%in: f32, %init: f32) {
         %35 = arith.addf %in, %init : f32
         linalg.yield %35 : f32

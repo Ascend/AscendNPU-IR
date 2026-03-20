@@ -121,6 +121,16 @@ struct HFusionPipelineOptions
       *this, "max-horizontal-fusion-size",
       llvm::cl::desc("Maximum horizontal fusion size (-1 for unlimited)"),
       llvm::cl::init(-1)};
+  PassOptions::Option<int32_t> maxFusedElementwiseOps{
+      *this, "max-fused-elementwise-ops",
+      llvm::cl::desc("Maximum number of elementwise ops to fuse in "
+                     "PreVectorizationFusion (-1 for unlimited)"),
+      llvm::cl::init(-1)};
+  PassOptions::Option<int32_t> maxFusedOpsInAutoVectorizeV2{
+      *this, "max-fused-ops-in-auto-vectorize-v2",
+      llvm::cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "
+                     "(-1 uses pass default)"),
+      llvm::cl::init(-1)};
 
   PassOptions::Option<int64_t> maxBufferCntTuning{
       *this, "max-buffer-count-tuning",
@@ -141,8 +151,9 @@ struct HFusionPipelineOptions
 
   PassOptions::Option<std::string> injectIrFromFile{
       *this, "inject-ir-from-file",
-      llvm::cl::desc("Path to IR file for inject-ir pass; when set, matching "
-                     "functions are replaced with those from the file for debug"),
+      llvm::cl::desc(
+          "Path to IR file for inject-ir pass; when set, matching "
+          "functions are replaced with those from the file for debug"),
       llvm::cl::init("")};
 
   /// TODO : remove it after add platform info

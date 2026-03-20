@@ -1,4 +1,4 @@
-// RUN: rm -rf %t.dir && mkdir -p %t.dir && cd %t.dir && bishengir-compile -enable-hfusion-compile=true -target=Ascend910_9589 -enable-triton-kernel-compile=true %s
+// RUN: rm -rf %t.dir && mkdir -p %t.dir && cd %t.dir && bishengir-compile -enable-hfusion-compile=true -target=Ascend910_9589 -enable-triton-kernel-compile=true %s -o %t
 
 // CHECK: LLVMDialectModule
 module {
@@ -11,7 +11,7 @@ module {
     %1 = math.absi %0 : tensor<7x1x3xi64>
     %2 = tensor.empty() : tensor<7x1xi64>
     %3 = linalg.fill ins(%c0_i64 : i64) outs(%2 : tensor<7x1xi64>) -> tensor<7x1xi64>
-    %reduced = linalg.reduce ins(%1 : tensor<7x1x3xi64>) outs(%3 : tensor<7x1xi64>) dimensions = [2] 
+    %reduced = linalg.reduce ins(%1 : tensor<7x1x3xi64>) outs(%3 : tensor<7x1xi64>) dimensions = [2]
       (%in: i64 , %init: i64 ) {
         %5 = arith.addi %in, %init : i64
         linalg.yield %5 : i64

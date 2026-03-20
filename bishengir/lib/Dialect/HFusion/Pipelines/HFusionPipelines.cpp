@@ -344,13 +344,16 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     canonicalizationPipeline(pm, hfusionOptions);
   }
   PreVectorizationFusionOptions options;
-  options.enableTritonCompile =
-        hfusionOptions.enableTritonKernelCompile;
+  options.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
+  options.maxFusedElementwiseOps = hfusionOptions.maxFusedElementwiseOps;
   pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(options));
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    if (hfusionOptions.maxFusedOpsInAutoVectorizeV2 >= 0)
+      vecOptions.maxFusedOps =
+          static_cast<unsigned>(hfusionOptions.maxFusedOpsInAutoVectorizeV2);
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {

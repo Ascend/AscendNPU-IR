@@ -75,6 +75,8 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.blockDim = config.blockDim();
   hfusionPipelineOptions.maxHorizontalFusionSize =
       config.maxHorizontalFusionSize();
+  hfusionPipelineOptions.maxFusedElementwiseOps =
+      config.maxFusedElementwiseOps();
   hfusionPipelineOptions.enableDropUnitDims = config.shouldEnableDropUnitDims();
   hfusionPipelineOptions.enableFlatten = config.shouldEnableFlatten();
   hfusionPipelineOptions.enableAutoMultiBuffer =
@@ -88,6 +90,8 @@ void setupHFusionPipelineOptions(
       config.shouldEnableSymbolAnalysis();
   hfusionPipelineOptions.enableAutoVectorizeV2 =
       config.shouldEnableAutoVectorizeV2();
+  hfusionPipelineOptions.maxFusedOpsInAutoVectorizeV2 =
+      config.maxFusedOpsInAutoVectorizeV2();
   hfusionPipelineOptions.enableVFFusion = config.shouldEnableVFFusion();
   hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
   hfusionPipelineOptions.skipScope = config.shouldSkipScope();
@@ -303,6 +307,7 @@ public:
     saveLinkedIR = pass.saveLinkedIR;
     enableSymbolAnalysis = pass.enableSymbolAnalysis;
     enableAutoVectorizeV2 = pass.enableAutoVectorizeV2;
+    maxFusedOpsInAutoVectorizeV2 = pass.maxFusedOpsInAutoVectorizeV2;
     enableVFFusion = pass.enableVFFusion;
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
     ensureNoImplicitBroadcast = pass.ensureNoImplicitBroadcast;
@@ -325,6 +330,7 @@ public:
     enableTuningMode = pass.enableTuningMode;
     blockDim = pass.blockDim;
     maxHorizontalFusionSize = pass.maxHorizontalFusionSize;
+    maxFusedElementwiseOps = pass.maxFusedElementwiseOps;
     enableMultiKernel = pass.enableMultiKernel;
     enableCountBufferDmaOpt = pass.enableCountBufferDmaOpt;
     maxBufferCntTuning = pass.maxBufferCntTuning;
@@ -369,6 +375,7 @@ public:
         .setSaveLinkedIR(saveLinkedIR)
         .symbolAnalysis(enableSymbolAnalysis)
         .autoVectorizeV2(enableAutoVectorizeV2)
+        .setMaxFusedOpsInAutoVectorizeV2(maxFusedOpsInAutoVectorizeV2)
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
         .noImplicitBroadcast(ensureNoImplicitBroadcast)
 #endif
@@ -407,6 +414,7 @@ public:
 
     // HFusion optimization control options
     config.setMaxHorizontalFusionSize(maxHorizontalFusionSize)
+        .setMaxFusedElementwiseOps(maxFusedElementwiseOps)
         .setMaxBufferCountTuning(maxBufferCntTuning)
         .optimizeCountBufferForDma(enableCountBufferDmaOpt)
         .setCubeTilingTuningParams(cubeTilingTuning);
@@ -498,6 +506,11 @@ protected:
   Pass::Option<bool> enableAutoVectorizeV2{
       *this, "enable-auto-vectorize-v2",
       llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
+  Pass::Option<int> maxFusedOpsInAutoVectorizeV2{
+      *this, "hfusion-max-fused-ops-in-auto-vectorize-v2",
+      llvm::cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "
+                     "(Default: pass default)"),
+      llvm::cl::init(-1)};
   Pass::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
                                     llvm::cl::desc("Enable vf fusion"),
                                     llvm::cl::init(false)};
@@ -632,6 +645,11 @@ protected:
       *this, "hfusion-max-horizontal-fusion-size",
       llvm::cl::desc(
           "Number of horizontal fusion attempt (Default: unlimited)"),
+      llvm::cl::init(-1)};
+  Pass::Option<int> maxFusedElementwiseOps{
+      *this, "hfusion-max-fused-elementwise-ops",
+      llvm::cl::desc("Maximum number of elementwise ops to fuse in "
+                     "PreVectorizationFusion (Default: unlimited)"),
       llvm::cl::init(-1)};
   Pass::Option<bool> enableCountBufferDmaOpt{
       *this, "enable-hfusion-count-buffer-dma-opt",

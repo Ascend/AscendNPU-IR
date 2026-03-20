@@ -330,6 +330,7 @@ if [[ -z "${INSTALL_PREFIX+x}" ]]; then
 fi
 
 cmake_generate() {
+  mkdir -p ${BUILD_DIR}
   cd ${BUILD_DIR}
   local torch_mlir_option=""
   local enable_external_projects="bishengir"

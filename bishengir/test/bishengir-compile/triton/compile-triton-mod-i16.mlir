@@ -1,4 +1,4 @@
-// RUN: rm -rf %t.dir && mkdir -p %t.dir && cd %t.dir && bishengir-compile -enable-hfusion-compile=true -target=Ascend910_9589 -enable-triton-kernel-compile=true %s
+// RUN: rm -rf %t.dir && mkdir -p %t.dir && cd %t.dir && bishengir-compile -enable-hfusion-compile=true -target=Ascend910_9589 -enable-triton-kernel-compile=true %s -o %t
 
 // CHECK: LLVMDialectModule
 module {
