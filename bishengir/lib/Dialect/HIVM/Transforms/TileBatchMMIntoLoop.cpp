@@ -8,6 +8,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -333,6 +334,11 @@ public:
     rewriter.setInsertionPointAfter(originFixpipe);
     auto nestFor = createNestedLoops(rewriter, batchmmOp.getLoc(), matrixC,
                                      loopDims, buildLoopBody, 0, forInitArgs);
+    // Set the batch_matmul attribute on the outer loop
+    rewriter.modifyOpInPlace(nestFor[0], [&]() -> void {
+      nestFor[0]->setAttr(hivm::batchMatmulAttr,
+                          UnitAttr::get(rewriter.getContext()));
+    });
 
     assert(nestFor.size() == 1);
     if (isa<TensorType>(originFixpipe.getDst().getType())) {

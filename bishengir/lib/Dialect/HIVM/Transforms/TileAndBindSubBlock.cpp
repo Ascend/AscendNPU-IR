@@ -1158,19 +1158,57 @@ void TileAndBindSubBlockPass::runOnOperation() {
   uint64_t tiledFunctionCount = 0;
 #endif
 
-  // Collect functions to process (can't modify while iterating)
-  SmallVector<func::FuncOp> functionsToProcess;
-  moduleOp->walk(
-      [&](func::FuncOp funcOp) { functionsToProcess.push_back(funcOp); });
+  // Collect AIC and AIV functions to process (can't modify while iterating)
+  SmallVector<func::FuncOp> aicFunctions;
+  SmallVector<func::FuncOp> aivFunctions;
+  moduleOp.walk([&](func::FuncOp func) {
+    auto funcCoreType = queryFuncCoreType(func);
+    if (funcCoreType.has_value() &&
+        func->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name)) {
+      if (funcCoreType.value() == TFuncCoreType::AIC) {
+        aicFunctions.push_back(func);
+      } else if (funcCoreType.value() == TFuncCoreType::AIV) {
+        aivFunctions.push_back(func);
+      }
+    }
+  });
+
+  // Check BatchMatmul loop
+  bool batchMatmul = false;
+  for (func::FuncOp aicFunc : aicFunctions) {
+    auto walkResult = aicFunc.walk([&](scf::ForOp loop) {
+      if (loop->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)) {
+        LLVM_DEBUG(DBGS() << "Skip tiling for BatchMatmul: "
+                          << aicFunc.getSymNameAttr().str() << "\n");
+        return WalkResult::interrupt();
+      } else {
+        return WalkResult::advance();
+      }
+    });
+    if (walkResult.wasInterrupted()) {
+      batchMatmul = true;
+      break;
+    }
+  }
+  // limitUniqueSubBlockToStore vector function and skip this pass if
+  // BatchMatmul is found
+  if (batchMatmul) {
+    for (func::FuncOp aivFunc : aivFunctions) {
+      auto symNameStr = aivFunc.getSymNameAttr().str();
+      if (failed(limitUniqueSubBlockToStore(aivFunc))) {
+        LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
+                          << "\n");
+        signalPassFailure();
+      }
+    }
+    return;
+  }
+
+  // Tile AIV functions
   bool aivSuccessFlag = false;
-  for (func::FuncOp originalFunc : functionsToProcess) {
+  for (func::FuncOp originalFunc : aivFunctions) {
     // Only process vector functions
     auto symNameStr = originalFunc.getSymNameAttr().str();
-    auto funcCoreType = queryFuncCoreType(originalFunc);
-    if (!funcCoreType.has_value() ||
-        funcCoreType.value() != TFuncCoreType::AIV ||
-        !originalFunc->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name))
-      continue;
     // Clone the function for safe transformation
     OpBuilder builder(originalFunc);
     // Attempt transformation on the clone
@@ -1210,16 +1248,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
     }
   }
 
-  SmallVector<func::FuncOp> aicFunctions;
-  moduleOp.walk([&](func::FuncOp func) {
-    auto funcCoreType = queryFuncCoreType(func);
-    if (funcCoreType.has_value() &&
-        funcCoreType.value() == TFuncCoreType::AIC &&
-        func->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name)) {
-      aicFunctions.push_back(func);
-    }
-  });
-
+  // Tile AIC functions for Ascend 950
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
   if (aivSuccessFlag && archIs950) {
     for (func::FuncOp originalFunc : aicFunctions) {
