@@ -256,8 +256,10 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 ```bash
 // RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
 ```
+
 其中，`bishengir-opt`和`FileCheck`均为编译生成的二进制可执行文件，路径再`path-to-ascendnpuir\build\bin`下。上述命令中的`%s`替换成对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
 输出的mlir会匹配测试文件中的`CHECK:`部分，测试后没有任何`CHECK failed`的报错即执行成功。
+
 ---
 
 ## 4. 约束能力
