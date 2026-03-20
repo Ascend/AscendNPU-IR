@@ -45,7 +45,12 @@ class TritonGPUReorderInstructionsPass
     : public impl::TritonGPUReorderInstructionsBase<
           TritonGPUReorderInstructionsPass> {
 public:
+#if BSPRIV_DAVINCI_BISHENGIR
+  explicit TritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options)
+    : TritonGPUReorderInstructionsBase(options) {}
+#else
   TritonGPUReorderInstructionsPass() = default;
+#endif
 
   Operation *getFirstUse(Operation *op) {
     std::vector<Operation *> users;
@@ -63,8 +68,10 @@ public:
   void runOnOperation() override {
     ModuleOp m = getOperation();
 #if BSPRIV_DAVINCI_BISHENGIR
-    ReorderInstructionsImpl impl;
-    impl.commonInstructionReorder(m, &getContext());
+    if (enableSimtReorderInstruction) {
+      ReorderInstructionsImpl impl;
+      impl.commonInstructionReorder(m, &getContext());
+    }
 #endif
     mlir::DominanceInfo dom(m);
     // sink conversion after the last dealloc
@@ -145,3 +152,10 @@ public:
 } // namespace gpu
 } // namespace triton
 } // namespace mlir
+
+#if BSPRIV_DAVINCI_BISHENGIR
+std::unique_ptr<::mlir::Pass> mlir::triton::gpu::createTritonGPUReorderInstructionsPass(
+  const TritonGPUReorderInstructionsOptions &options) {
+  return std::make_unique<TritonGPUReorderInstructionsPass>(options);
+}
+#endif

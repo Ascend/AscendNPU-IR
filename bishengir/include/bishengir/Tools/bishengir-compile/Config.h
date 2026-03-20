@@ -446,6 +446,14 @@ public:
     return disableReorderInstructionFlag;
   }
 
+  BiShengIRCompileMainConfig &enableSimtReorderInstruction(bool enable) {
+    enableSimtReorderInstructionFlag = enable;
+    return *this;
+  }
+  bool getEnableSimtReorderInstruction() const {
+    return enableSimtReorderInstructionFlag;
+  }
+
   BiShengIRCompileMainConfig &simtStackLimit(int32_t limit) {
     simtStackLimitFlag = limit;
     return *this;
@@ -989,6 +997,9 @@ protected:
 
   /// Disable reorder instruction
   bool disableReorderInstructionFlag{false};
+
+  /// Enable SIMT reorder instruction pattern
+  bool enableSimtReorderInstructionFlag{false};
 
   // -------------------------------------------------------------------------//
   //                            proton options                                //

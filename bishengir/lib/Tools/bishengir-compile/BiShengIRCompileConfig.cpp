@@ -323,6 +323,12 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(disableReorderInstructionFlag), cl::init(false),
         cl::cat(simtOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableSimtReorderInstruction(
+        "enable-simt-reorder-instruction",
+        cl::desc("Enable SIMT reorder instruction pass"),
+        cl::location(enableSimtReorderInstructionFlag), cl::init(false),
+        cl::cat(simtOptCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true>
         limitAutoMultiBufferOnlyForLocalBuffer(
             "limit-auto-multi-buffer-only-for-local-buffer",

@@ -320,12 +320,23 @@ def TritonGPUOptimizeThreadLocality : Pass<"tritongpu-optimize-thread-locality",
 def TritonGPUReorderInstructions: Pass<"tritongpu-reorder-instructions", "mlir::ModuleOp"> {
   let summary = "Reorder instructions";
 
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+  let constructor = "mlir::triton::gpu::createTritonGPUReorderInstructionsPass()";
+#endif
+
   let description = "This pass reorder instructions so as to (1) decrease register pressure (e.g., by moving "
                     "conversions from shared memory before their first use) and (2) promote LLVM instruction "
                     "order more friendly to `ptxas`.";
 
   let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
                            "mlir::triton::TritonDialect"];
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+  let options = [
+    Option<"enableSimtReorderInstruction", "enable-simt-reorder-instruction",
+           "bool", /*default*/"false",
+           "enable reorder instruction pattern">
+  ];
+#endif
 }
 
 def TritonGPUReduceDataDuplication: Pass<"tritongpu-reduce-data-duplication", "mlir::ModuleOp"> {

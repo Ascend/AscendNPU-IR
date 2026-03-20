@@ -184,6 +184,7 @@ void setupLowerTritonPipelineOptions(
   // encode our own compile optimization
   options.enableBishengirSimtOptimization =
       config.getEnableBishengirSimtOptimize();
+  options.enableSimtReorderInstruction = config.getEnableSimtReorderInstruction();
 #endif
   options.protonGPUCompileConfig = config.getProtonGPUCompileConfig();
 }

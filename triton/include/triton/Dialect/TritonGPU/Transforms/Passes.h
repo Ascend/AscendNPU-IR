@@ -13,6 +13,11 @@ namespace gpu {
 #define GEN_PASS_DECL
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h.inc"
 
+#if BSPRIV_DAVINCI_BISHENGIR
+std::unique_ptr<mlir::Pass>
+createTritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options = {});
+#endif
+
 /// Generate the code for registering passes.
 #define GEN_PASS_REGISTRATION
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h.inc"

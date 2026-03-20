@@ -65,8 +65,15 @@ void buildTritonGPUOptimizationPipeline(
   pm.addPass(mlir::triton::createTritonLoopAwareCSE());
   pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mlir::triton::gpu::createTritonGPUReduceDataDuplication());
-  if (!tritonOptions.disableReorderInstruction)
-    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructions());
+  if (!tritonOptions.disableReorderInstruction) {
+#if BSPRIV_DAVINCI_BISHENGIR
+    mlir::triton::gpu::TritonGPUReorderInstructionsOptions reorderInstructionsOptions;
+    reorderInstructionsOptions.enableSimtReorderInstruction = tritonOptions.enableSimtReorderInstruction;
+    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass(reorderInstructionsOptions));
+#else
+    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass());
+#endif
+  }
   if (!tritonOptions.disableDecomposeReduction)
     pm.addPass(bishengir::triton::createDecomposeReductionPass());
   pm.addPass(bishengir::triton::createOptimizeLayoutsPass());
