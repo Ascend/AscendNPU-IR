@@ -199,6 +199,32 @@ static unsigned getElementwiseFusionSize(linalg::GenericOp genericOp) {
   return std::max(1u, size);
 }
 
+// issue 1174
+static bool flowsToCubeCopy(mlir::Operation *startOp, int maxDepth = 6) {
+  llvm::SmallVector<std::pair<mlir::Operation *, int>, 8> worklist;
+  worklist.push_back({startOp, 0});
+  llvm::SmallPtrSet<mlir::Operation *, 16> visited;
+
+  while (!worklist.empty()) {
+    auto [curr, depth] = worklist.pop_back_val();
+    if (depth >= maxDepth || !visited.insert(curr).second) {
+      continue;
+    }
+
+    for (auto user : curr->getUsers()) {
+      if (llvm::isa<hivm::CopyOp>(user)) {
+        return true;
+      }
+
+      if (llvm::isa<linalg::LinalgOp, tensor::ExpandShapeOp,
+                    tensor::CollapseShapeOp, linalg::TransposeOp>(user)) {
+        worklist.push_back({user, depth + 1});
+      }
+    }
+  }
+  return false;
+}
+
 bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
   // Scenerio 1: Add folding with reshape by expansion patterns.
   auto producerOp = operand->get().getDefiningOp();
@@ -254,6 +280,33 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
   auto consumerFor = consumerOp->getParentOfType<scf::ForOp>();
   if (!consumerFor)
     return true;
+  // 5. prevent fusion across synchronization boundaries.
+  if (producerOp->getBlock() == consumerOp->getBlock()) {
+    // Determine the scanning range: instructions located between producer and consumer.
+    Operation *start = producerOp;
+    Operation *end = consumerOp;
+
+    // Ensure the scanning order is correct for the iterator.
+    if (end->isBeforeInBlock(start))
+      std::swap(start, end);
+
+    // Traverse all instructions between start and end ops.
+    bool hasSyncBarrier = false;
+    for (auto it = start->getNextNode(); it != end; it = it->getNextNode()) {
+      // If a synchronization barrier is found, prohibit fusion to avoid data races.
+      if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(it)) {
+        hasSyncBarrier = true;
+        break;
+      }
+    }
+
+    if (hasSyncBarrier) {
+      if (!flowsToCubeCopy(consumerOp)) {
+        return false;
+      }
+    }
+  }
+
   return consumerFor->isAncestor(producerOp);
 }
 
