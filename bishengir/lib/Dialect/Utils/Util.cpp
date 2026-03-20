@@ -64,7 +64,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
     }
     if (auto whileOp =
             dyn_cast<scf::WhileOp>(arg.getParentRegion()->getParentOp())) {
-      result.emplace_back(whileOp.getTiedLoopInit(arg)->get());
+      if (auto *tiedLoopInit = whileOp.getTiedLoopInit(arg)) {
+        result.emplace_back(tiedLoopInit->get());
+      }
     }
   }
 
