@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -36,6 +37,21 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
+static bool isBitwiseSelect(Operation *op) {
+  SmallVector<Operation *> worklist = {op};
+  while (!worklist.empty()) {
+    auto workitem = worklist.pop_back_val();
+    for (auto user : workitem->getUsers()) {
+      if (isa<hfusion::CastOp>(user))
+        worklist.push_back(user);
+      else if (isa<annotation::MarkOp>(user) &&
+               user->getAttrDictionary().contains("bitwise_mask"))
+        return true;
+    }
+  }
+  return false;
+}
+
 // Currently enumerate all possible Ops
 // TODO: generalize inlinable Op.
 // An Op is consider inlinable if its operand shape can be easily
@@ -45,8 +61,7 @@ static bool isInlinableOp(Operation *op) {
          isa<linalg::ElemwiseUnaryOp>(op) ||
          isa<hfusion::ElemwiseBinaryOp>(op) ||
          isa<hfusion::ElemwiseUnaryOp>(op) ||
-         isa<hfusion::SelectOp>(op) ||
-         isa<linalg::SelectOp>(op);
+         (isa<hfusion::SelectOp, linalg::SelectOp>(op) && !isBitwiseSelect(op));
 }
 
 // TODO : add platform information
