@@ -59,17 +59,26 @@ void GraphSolver::addConflictPair(ConflictPair *conflictPair) {
   });
   if (conflictPair->isBarrier() &&
       conflictPair->setCorePipeInfo.pipe == hivm::PIPE::PIPE_ALL) {
-    for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
-      auto coreSrc = conflictPair->setCorePipeInfo.coreType;
-      auto setPipe = static_cast<hivm::PIPE>(i);
-      auto coreDst = conflictPair->waitCorePipeInfo.coreType;
-      auto waitPipe = hivm::PIPE::PIPE_ALL;
-      assert(coreSrc == coreDst);
-      int startIndex = conflictPair->startIndex;
-      int endIndex = conflictPair->endIndex;
-      assert(startIndex == endIndex);
-      addPair(conflictPair, CorePipeInfo(coreSrc, setPipe),
-              CorePipeInfo(coreDst, waitPipe), startIndex, endIndex);
+    llvm::SmallVector<std::pair<hivm::TCoreType, hivm::TCoreType>> srcDstCores;
+    if (options.isCrossCoreMode()) {
+      srcDstCores.push_back(
+          std::make_pair(hivm::TCoreType::CUBE, hivm::TCoreType::VECTOR));
+      srcDstCores.push_back(
+          std::make_pair(hivm::TCoreType::VECTOR, hivm::TCoreType::CUBE));
+    } else {
+      srcDstCores.push_back(std::make_pair(hivm::TCoreType::CUBE_OR_VECTOR,
+                                           hivm::TCoreType::CUBE_OR_VECTOR));
+    }
+    for (auto [srcCore, dstCore] : srcDstCores) {
+      for (int i = 0; i < static_cast<int>(hivm::PIPE::PIPE_NUM); i++) {
+        auto setPipe = static_cast<hivm::PIPE>(i);
+        auto waitPipe = hivm::PIPE::PIPE_ALL;
+        int startIndex = conflictPair->startIndex;
+        int endIndex = conflictPair->endIndex;
+        assert(startIndex == endIndex);
+        addPair(conflictPair, CorePipeInfo(srcCore, setPipe),
+                CorePipeInfo(dstCore, waitPipe), startIndex, endIndex);
+      }
     }
   } else if (!conflictPair->isBarrier() &&
              conflictPair->waitCorePipeInfo.pipe == hivm::PIPE::PIPE_S) {
