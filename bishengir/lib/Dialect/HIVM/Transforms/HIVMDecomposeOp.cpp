@@ -676,12 +676,28 @@ struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
       return failure();
     }
     
-    // [[Guard 1]] Quit if vsel uses something other than il for the condition argument.
-    Value condUB = op->getOperand(0);
-    Type condUBType = condUB.getType();
-    auto condUBTypeValue = getElementTypeOrSelf(condUBType);
-    if (!condUBTypeValue.isInteger(1)) {
-      return failure();
+    // [[Guard 1]] Quit if vsel has wrongly typed arguments.
+    Value condUB = nullptr;
+    {
+      // [[Guard 1.0]] Quit if vsel uses something other than il for the condition argument.
+      condUB = op->getOperand(0);
+      Type condUBType = condUB.getType();
+      auto condUBTypeValue = getElementTypeOrSelf(condUBType);
+      if (!condUBTypeValue.isInteger(1)) {
+        return failure();
+      }
+      // [[Guard 1.1]] Quit if vsel's first argument is a scalar.
+      Value lhs = op->getOperand(1);
+      Type lhsType = lhs.getType();
+      if (lhsType.isIntOrFloat()) {
+        return failure();
+      }
+      // [[Guard 1.2]] Quit if vsel's second argument is a scalar.
+      Value rhs = op->getOperand(2);
+      Type rhsType = rhs.getType();
+      if (rhsType.isIntOrFloat()) {
+        return failure();
+      }
     }
 
     // [[Guard 2]] Quit if the output type of the vsel is something other than int64.
