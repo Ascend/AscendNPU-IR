@@ -4,34 +4,36 @@ Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts
 
 ---
 
-## AICore Architecture
+## Hardware Background
+
+### AICore Architecture
 
 <https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
 
 ---
 
-## HIVM Synchronization Operations (MLIR)
+### HIVM Synchronization Operations
 
 Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below they are described in terms of **MLIR usage** (operands/attributes), not assembly syntax.
 
-### Intra-Core-Sync (Normal-Sync)
+#### Intra-Core-Sync (Normal-Sync)
 
 - **`hivm.set_flag`**  
   Operands/attributes: `set_pipe`, `wait_pipe` and `flag_id`  
-  Executes on `set_pipe` after all previous instructions on that pipe finishes.  
+  Executes on `set_pipe` after all previous instructions on that pipe have finished.
   Triggers `flag_id` on execution  
 
 - **`hivm.wait_flag`**  
   Operands/attributes: `set_pipe`, `wait_pipe` and `flag_id`  
   Executes on `wait_pipe`  
-  Blocks all following instructions until `flag_id` get triggered
+  Blocks all following instructions until `flag_id` is triggered
 
 - **`hivm.pipe_barrier`**  
   Operands/attributes: `pipe`  
   Barrier across a given pipe.  
-  Block all following instructions on `pipe` until all previous instructions finishes.
+  Block all following instructions on `pipe` until all previous instructions finish.
 
-### Cross-Core-Sync (Block-Sync) (Intra-Block)
+#### Cross-Core-Sync (Block-Sync) (Intra-Block)
 
 - **`hivm.sync_block_set`**  
   Operands/attributes:  
@@ -40,7 +42,7 @@ Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below the
   - `sync_instr_mode` (default `INTRA_BLOCK_SYNCHRONIZATION`)  
   - `event_id`  
 
-  Executes on `tpipe` (set_pipe) on the `tcore_type` core after all previous instructions on the same core.pipe finishes.
+  Executes on `tpipe` (set_pipe) on the `tcore_type` core after all previous instructions on the same core.pipe finish.
   Sets `event_id`
 
 - **`hivm.sync_block_wait`**  
@@ -51,27 +53,27 @@ Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below the
   - `event_id`  
 
   Executes on `pipe` (pipe_wait) on the `tcore_type`  
-  Block all following instructions on `pipe` on the `tcore_type` core until all previous instructions finishes.
+  Block all following instructions on `pipe` on the `tcore_type` core until all previous instructions finish.
 
 ---
 
-## Auto-Sync Solutions Overview
+## Algorithm principles
+
+### AutoSync solutions overview
 
 The codebase provides **two** auto-sync solutions:  
 
-### **`Inject-Sync/Inject-Block-Sync`**  
+- **`Inject-Sync/Inject-Block-Sync`** Passes  
 
-  Uses multiple passe to insert needed sync operations, remove redundant ones, and allocate flag-ids/event-ids using liveliness analysis.  
-  It is the primary solution enabled by default.  
+  Uses multiple passes to insert needed sync operations, remove redundant ones, and allocate flag IDs/event IDs using liveliness analysis. It is the primary solution enabled by default.
 
-### **`Graph-Sync-Solver/Cross-Core-GSS`**  
+- **`Graph-Sync-Solver/Cross-Core-GSS`** Passes  
 
-  Uses graph-based algorithms to analyze the input code structure and inserts needed sync operations.  
-  Still an optional feature that can be enabled by `-hivm-enable-graph-sync-solver=true` command line option, or sync_solver=True triton-ascend option.
+  Uses graph-based algorithms to analyze the input code structure and insert needed sync operations. It remains optional and can be enabled via `-hivm-enable-graph-sync-solver=true` (or `sync_solver=True` in Triton-Ascend).
 
 ---
 
-## InjectSync (Primary Intra-Core Auto-Sync Pass)
+### InjectSync
 
 ![alt text](0.png)
 
@@ -99,7 +101,7 @@ The codebase provides **two** auto-sync solutions:
 
 ---
 
-## InjectBlockSync (Block-Level Sync Pass)
+### InjectBlockSync
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
 
@@ -115,11 +117,11 @@ The codebase provides **two** auto-sync solutions:
 
 ---
 
-## GraphSyncSolver (Solver-Based Intra-Core Pass)
+### GraphSyncSolver
 
 ![alt text](1.png)
 
-**Purpose:** Alternative to Inject-Sync solution, uses graph-based algorithms decide when to insert pairs of set/wait operations and assign event IDs (often with better reuse than InjectSync).
+**Purpose:** Alternative to the Inject-Sync solution; it uses graph-based algorithms to decide when to insert pairs of set/wait operations and assign event IDs.
 
 **Source:**  
 
@@ -137,7 +139,7 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 
 ---
 
-## CrossCoreGSS (Cross-Core Synchronization)
+### CrossCoreGSS
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
 
@@ -145,33 +147,74 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 
 **How it works:**
 
-- Same as intra-core GSS pass, but handles cross-core memory operations.
+- Same as the intra-core GSS pass, but it handles cross-core memory operations.
 
 ---
 
-## Pass Options and CLI Flags
+## Interface description
 
-### Global CLI flags (compile tool)
+### Command Line Options
 
 These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`); see `Passes.td` and tools under `bishengir/lib/Tools/` for exact mapping.
 
-| Flag | Type | Default | Description |
-| ---- | ---- | ------- | ----------- |
-| `--disable-auto-inject-block-sync` | bool | false | Disable automatic block-level set/wait insertion (InjectBlockSync / CrossCoreGSS). |
-| `--disable-hivm-auto-inject-sync` | bool | false | Disable InjectSync (Intra-Core sync). |
-| `--enable-hivm-inject-barrier-all-sync` | bool | false | Make InjectSync inserts barrier(all) instructions (useful auto-sync fails) |
-| `--enable-hivm-inject-block-all-sync` | bool | false | Make InjectBlockSync inserts block(all) instructions (useful auto-sync fails) |
-| `--enable-hivm-unit-flag-sync` | bool | false | Enable unit-flag sync feature. |
-| `--enable-hivm-graph-sync-solver` | bool | false | Use GraphSyncSolver/CrossCoreGSS instead of InjectSync/InjectBlockSync for Intra-Core/Cross-Core auto-sync. |
+<table>
+  <thead>
+    <tr>
+      <th style="white-space: nowrap;">Flag</th>
+      <th>Type</th>
+      <th>Default</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="white-space: nowrap;">`--disable-auto-inject-block-sync`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Disable automatic block-level set/wait insertion (InjectBlockSync / CrossCoreGSS).</td>
+    </tr>
+    <tr>
+      <td style="white-space: nowrap;">`--disable-hivm-auto-inject-sync`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Disable InjectSync (Intra-Core sync).</td>
+    </tr>
+    <tr>
+      <td style="white-space: nowrap;">`--enable-hivm-inject-barrier-all-sync`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Make InjectSync inserts barrier(all) instructions (useful auto-sync fails)</td>
+    </tr>
+    <tr>
+      <td style="white-space: nowrap;">`--enable-hivm-inject-block-all-sync`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Make InjectBlockSync inserts block(all) instructions (useful auto-sync fails)</td>
+    </tr>
+    <tr>
+      <td style="white-space: nowrap;">`--enable-hivm-unit-flag-sync`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Enable unit-flag sync feature.</td>
+    </tr>
+    <tr>
+      <td style="white-space: nowrap;">`--enable-hivm-graph-sync-solver`</td>
+      <td>bool</td>
+      <td>false</td>
+      <td>Use GraphSyncSolver/CrossCoreGSS instead of InjectSync/InjectBlockSync for Intra-Core/Cross-Core auto-sync.</td>
+    </tr>
+  </tbody>
+</table>
 
 ---
 
-## Extending and Debugging
+## Constraints and capabilities
 
-- **InjectSync:** Start from `InjectSync.cpp`; follow analysis → allocation → codegen → move → remove. Memory and sync decisions: `MemoryDependentAnalyzer`, `SyncAnalysis`; event IDs: `SyncEventIdAllocation`; emission: `SyncCodegen`, `IRTranslator`; cleanup: `MoveSyncState`, `RemoveRedundantSync`. Use `SyncDebug` for logging.
-- **InjectBlockSync:** Entry in `InjectBlockSync.cpp`; block IR is built by `SyncBlockIRTranslator`; rest of pipeline shared with InjectSync in BLOCKSYNC mode.
-- **GraphSyncSolver / CrossCoreGSS:** Entry in `GraphSyncSolver.cpp` and `CrossCoreGSS.cpp`. Inspect `IRTranslator` (sync IR build), `Solver` (conflict selection), `SyncSolverCodeGen` (MLIR emission). Cross-core behavior is gated by `SyncMode::CROSS_CORE_SYNC` in translator, solver, and codegen (block set/wait, no barrier).
+- **Hardware ordering model:** Auto-sync orders execution by inserting HIVM synchronization ops (`hivm.set_flag` / `hivm.wait_flag`, `hivm.pipe_barrier`, and (when applicable) `hivm.sync_block_set` / `hivm.sync_block_wait`). The ordering is expressed in terms of **cores** and **pipes**, plus event/flag ids.
+- **Correctness via feasibility checking:** For the solver-based flow (Graph Sync Solver), candidate sync constraints are accepted only if they remain feasible under a graph-based reachability/ordering model (avoids deadlock or over-constraining schedules).
+- **Kernel coverage (block-level sync):** Block-level cross-core sync (`sync_block_set` / `sync_block_wait`) is intended for **MIX** kernels (cube/vector handoff). InjectBlockSync/CrossCoreGSS will not apply to non-MIX flows (host or pure AIC/AIV).
+- **Optional feature modes:** Unit-flag sync can be enabled as an alternative pattern for supported operations, and the graph-based solver can be selected instead of InjectSync/InjectBlockSync via compiler options.
 
-**Verification:** Check that emitted ops satisfy dialect verification; set and wait must share the same event/flag ID and compatible pipes.
+- **Verification requirements:** Check that emitted ops satisfy dialect verification; `set_flag` / `wait_flag` must share the same event/flag id and compatible core/pipe endpoints.
 
 ---
