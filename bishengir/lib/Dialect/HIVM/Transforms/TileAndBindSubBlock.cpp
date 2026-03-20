@@ -697,20 +697,20 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   }
 
   bool isFailed = true;
- 	   auto walkResult = func->walk([&isFailed](hivm::StoreOp op) {
- 	     if (op->hasAttr(tileAndSliceFailure)) {
- 	       op->removeAttr(tileAndSliceFailure);
- 	       if (op->hasAttr(hivm::AtomicKindAttr::name)) {
- 	         isFailed = true;
- 	         return WalkResult::interrupt();
- 	       }
- 	     } else {
- 	       isFailed = false;
- 	     }
- 	     return WalkResult::advance();
- 	   });
- 	   if (isFailed)
- 	     return failure();
+  auto walkResult = func->walk([&isFailed](hivm::StoreOp op) {
+    if (op->hasAttr(tileAndSliceFailure)) {
+      op->removeAttr(tileAndSliceFailure);
+      if (op.isAtomic()) {
+        isFailed = true;
+        return WalkResult::interrupt();
+      }
+    } else {
+      isFailed = false;
+    }
+    return WalkResult::advance();
+  });
+  if (isFailed)
+    return failure();
   return success();
 }
 
