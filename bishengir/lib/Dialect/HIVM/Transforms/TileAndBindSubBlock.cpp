@@ -768,8 +768,8 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
                                                     bool strictMode) {
   HIVMBubbleUpExtractSliceOptions options;
   options.strictMode = strictMode;
-  pm.addPass(createHIVMBubbleUpExtractSlicePass(options));
   pm.addPass(createCanonicalizerPass());
+  pm.addPass(createHIVMBubbleUpExtractSlicePass(options));
   pm.addPass(createCSEPass());
 }
 
