@@ -599,6 +599,55 @@ static void moveLeafNodesAndTheirUsers(SmallVector<Operation *> &leafNodeGroup,
   }
 }
 
+/// Returns true if an op's results are used by "many" distinct users.
+/// We count distinct owning operations across all result values.
+static bool hasManyUsers(Operation *op, unsigned threshold = 2) {
+  if (!op)
+    return false;
+
+  DenseSet<Operation *> users;
+  for (Value res : op->getResults()) {
+    for (OpOperand &use : res.getUses())
+      users.insert(use.getOwner());
+  }
+  return users.size() >= threshold;
+}
+
+/// Pre validation for fusion opportunity of Linalg's tileAndFuseFirstExtractUse.
+/// 
+/// Returns true if all consumers of the producer will fuse into a single loop.
+/// When consumers fuse into different loops (different fusedNode labels), the
+/// producer has no valid fusion opportunity and should remain a standalone op.
+static bool hasFusionOpportunity(
+    Operation *producer,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
+  if (!producer)
+    return false;
+
+  auto tileableProducer = dyn_cast<TilingInterface>(producer);
+  if (!tileableProducer)
+    return false;
+
+  if (llvm::any_of(tileableProducer->getUsers(), [&](Operation *user) {
+        return !fusableOpInfoMap.contains(user) ||
+               !fusableOpInfoMap[user].fusedNode;
+      })) {
+    // Sanity check for nullptr
+    return false;
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "======== FusionOpportunity ========\n");
+  LLVM_DEBUG(llvm::dbgs() << "producer: " << *producer << "\n");
+  // If all consumers share the same fusedNode (loop), producer can fuse there.
+  std::set<std::string> consumerLabels;
+  llvm::for_each(tileableProducer->getUsers(), [&](Operation *user) {
+    std::string fusedNodeLabel = fusableOpInfoMap[user].fusedNode->loopLabel;
+    LLVM_DEBUG(llvm::dbgs() << "fusedNodeLabel: " << fusedNodeLabel << "\n");
+    consumerLabels.insert(fusedNodeLabel);
+  });
+  return consumerLabels.size() == 1;
+}
+
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
@@ -624,6 +673,11 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   // transpose op into op2
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
+
+  if (hasManyUsers(producer) &&
+      !hasFusionOpportunity(producer, fusableOpInfoMap)) {
+    return nullptr;
+  }
 
   Operation *closestUser = nullptr;
   for (auto user : producer->getUsers()) {
