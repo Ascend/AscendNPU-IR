@@ -615,7 +615,8 @@ def HFusionFoldUnitDims : Pass<"hfusion-fold-unit-dims", "func::FuncOp"> {
   let dependentDialects = [
     "bufferization::BufferizationDialect",
     "linalg::LinalgDialect",
-    "memref::MemRefDialect"
+    "memref::MemRefDialect",
+    "hfusion::HFusionDialect"
   ];
 }
 
