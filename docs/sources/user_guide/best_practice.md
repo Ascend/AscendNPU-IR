@@ -549,12 +549,6 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ---
 
-## Baseline (compute)
-
-- **TODO**: TRITON_INTERPRET mode (compute), GPU-specific logic (compute), to be added.
-
----
-
 ## Scenario-based debugging
 
 This section gives guidance on Triton NPU kernel performance tuning.

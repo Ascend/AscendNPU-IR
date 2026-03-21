@@ -782,13 +782,6 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 }
 
 ```
-<hr>
-
-## baseline(计算)
-### TO DO 	 
-### TRITON_INTERPRET模式(计算)	 
-### GPU特有运算逻辑(计算)	 
-### 待补充
 
 ## 场景化调试举例	 
 
