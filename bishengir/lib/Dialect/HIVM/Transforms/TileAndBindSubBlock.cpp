@@ -1154,6 +1154,9 @@ static LogicalResult tileAndSliceOpAIC(func::FuncOp func) {
 /// unique block to store.
 void TileAndBindSubBlockPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
+  if (moduleOp->hasAttr("hivm.disable_auto_tile_and_bind_subblock")) {
+    return;
+  }
 #ifndef NDEBUG
   uint64_t tiledFunctionCount = 0;
 #endif
@@ -1173,6 +1176,14 @@ void TileAndBindSubBlockPass::runOnOperation() {
     }
   });
 
+  if (!this->enableTile) {
+    for (func::FuncOp aivFunc : aivFunctions) {
+      if (failed(limitUniqueSubBlockToStore(aivFunc))) {
+        signalPassFailure();
+      }
+    }
+    return;
+  }
   // Check BatchMatmul loop
   bool batchMatmul = false;
   for (func::FuncOp aicFunc : aicFunctions) {
@@ -1281,6 +1292,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 #endif
 }
 
-std::unique_ptr<Pass> mlir::hivm::createTileAndBindSubBlockPass() {
-  return std::make_unique<TileAndBindSubBlockPass>();
+std::unique_ptr<Pass> mlir::hivm::createTileAndBindSubBlockPass(
+    const TileAndBindSubBlockOptions &options) {
+  return std::make_unique<TileAndBindSubBlockPass>(options);
 }
