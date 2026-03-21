@@ -195,4 +195,80 @@ def Ascend910_958b_Spec : Ascend910_95_BaseSpec<"Ascend910_958b">{}
 
 def Ascend910_9599_Spec : Ascend910_95_BaseSpec<"Ascend910_9599">{}
 
+//===----------------------------------------------------------------------===//
+// Ascend950PR
+//===----------------------------------------------------------------------===//
+
+class Ascend950PR_BaseSpec <string name> : TargetSpec<name> {
+  let UbSize = -1;
+  let L1Size = -1;
+  let L0aSize = -1;
+  let L0bSize = -1;
+  let L0cSize = -1;
+  let UbAlignSize = -1;
+  let L1AlignSize = -1;
+  let L0cAlignSize = -1;
+  let AiCoreCount = -1;
+  let CubeCoreCount = -1;
+  let VectorCoreCount = -1;
+}
+
+def Ascend950PR_950z_Spec : Ascend950PR_BaseSpec<"Ascend950PR_950z">{}
+def Ascend950PR_9579_Spec : Ascend950PR_BaseSpec<"Ascend950PR_9579">{}
+def Ascend950PR_957a_Spec : Ascend950PR_BaseSpec<"Ascend950PR_957a">{}
+def Ascend950PR_957b_Spec : Ascend950PR_BaseSpec<"Ascend950PR_957b">{}
+def Ascend950PR_957c_Spec : Ascend950PR_BaseSpec<"Ascend950PR_957c">{}
+def Ascend950PR_957d_Spec : Ascend950PR_BaseSpec<"Ascend950PR_957d">{}
+def Ascend950PR_9589_Spec : Ascend950PR_BaseSpec<"Ascend950PR_9589">{}
+def Ascend950PR_958a_Spec : Ascend950PR_BaseSpec<"Ascend950PR_958a">{}
+def Ascend950PR_958b_Spec : Ascend950PR_BaseSpec<"Ascend950PR_958b">{}
+def Ascend950PR_958c_Spec : Ascend950PR_BaseSpec<"Ascend950PR_958c">{}
+def Ascend950PR_958d_Spec : Ascend950PR_BaseSpec<"Ascend950PR_958d">{}
+def Ascend950PR_9599_Spec : Ascend950PR_BaseSpec<"Ascend950PR_9599">{}
+def Ascend950PR_959a_Spec : Ascend950PR_BaseSpec<"Ascend950PR_959a">{}
+def Ascend950PR_959b_Spec : Ascend950PR_BaseSpec<"Ascend950PR_959b">{}
+
+//===----------------------------------------------------------------------===//
+// Ascend950DT
+//===----------------------------------------------------------------------===//
+
+class Ascend950DT_BaseSpec <string name> : TargetSpec<name> {
+  let UbSize = -1;
+  let L1Size = -1;
+  let L0aSize = -1;
+  let L0bSize = -1;
+  let L0cSize = -1;
+  let UbAlignSize = -1;
+  let L1AlignSize = -1;
+  let L0cAlignSize = -1;
+  let AiCoreCount = -1;
+  let CubeCoreCount = -1;
+  let VectorCoreCount = -1;
+}
+
+def Ascend950DT_950x_Spec : Ascend950DT_BaseSpec<"Ascend950DT_950x">{}
+def Ascend950DT_950y_Spec : Ascend950DT_BaseSpec<"Ascend950DT_950y">{}
+def Ascend950DT_9571_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9571">{}
+def Ascend950DT_9572_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9572">{}
+def Ascend950DT_9573_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9573">{}
+def Ascend950DT_9574_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9574">{}
+def Ascend950DT_9575_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9575">{}
+def Ascend950DT_9576_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9576">{}
+def Ascend950DT_9577_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9577">{}
+def Ascend950DT_9578_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9578">{}
+def Ascend950DT_9581_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9581">{}
+def Ascend950DT_9582_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9582">{}
+def Ascend950DT_9583_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9583">{}
+def Ascend950DT_9584_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9584">{}
+def Ascend950DT_9585_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9585">{}
+def Ascend950DT_9586_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9586">{}
+def Ascend950DT_9587_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9587">{}
+def Ascend950DT_9588_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9588">{}
+def Ascend950DT_9591_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9591">{}
+def Ascend950DT_9592_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9592">{}
+def Ascend950DT_9595_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9595">{}
+def Ascend950DT_9596_Spec : Ascend950DT_BaseSpec<"Ascend950DT_9596">{}
+def Ascend950DT_95A1_Spec : Ascend950DT_BaseSpec<"Ascend950DT_95A1">{}
+def Ascend950DT_95A2_Spec : Ascend950DT_BaseSpec<"Ascend950DT_95A2">{}
+
 #endif // BISHENGIR_DIALECT_HACC_TARGETS_NPUTARGETSPEC_TD
