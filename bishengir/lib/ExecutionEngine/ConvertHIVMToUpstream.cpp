@@ -1364,9 +1364,11 @@ struct ConvertHIVMToUpstream
                  RewriteVModOp<hivm::VModOp, arith::RemSIOp>>(&ctx);
 
     for (func::FuncOp func : functions) {
+      if (func.getBody().empty())
+        continue;
       if (failed(applyPatternsGreedily(func, std::move(patterns)))) {
         signalPassFailure();
-      break;
+        break;
       }
     }
   }

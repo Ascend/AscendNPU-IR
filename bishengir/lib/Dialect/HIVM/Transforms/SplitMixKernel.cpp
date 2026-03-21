@@ -95,7 +95,7 @@ SmallVector<unsigned> traceWriteOpArgId(func::CallOp callOp) {
     if (maybeWriteOp.has_value()) {
       auto write = cast<vector::TransferWriteOp>(maybeWriteOp.value());
       auto arg = traceToArg(write.getSource());
-      assert(arg!=nullptr);
+      assert(arg != nullptr);
       writeOpArgIds.push_back(arg->getArgNumber());
     }
   }
@@ -189,16 +189,22 @@ static SmallVector<Value> getOutOperands(Operation *op) {
       for (auto i : traceWriteOpArgId(callOp)) {
         outOperands.push_back(op->getOperand(i));
       }
-    } else {
-#ifndef NDEBUG
-      auto funcArgAttrs = funcOp.getArgAttrsAttr();
-      assert(funcArgAttrs && "called func must has arg attr");
-#endif
+    } else if (funcOp.getArgAttrsAttr()) {
       auto funcParamSize = funcOp.getNumArguments();
       for (size_t i = 0; i < funcParamSize; i++) {
         if (funcOp.isKernelArg(i, hacc::KernelArgType::kOutput) ||
             funcOp.isKernelArg(i, hacc::KernelArgType::kInputAndOutput))
           outOperands.push_back(op->getOperand(i));
+      }
+    } else {
+      // FIXME: Unify the logic to handle func.callOp, with the calling
+      // convention of output operands as inputs
+      OpBuilder localBuilder(op->getContext());
+      localBuilder.setInsertionPoint(op);
+      for (auto result : op->getResults()) {
+        Value stub =
+            createZeroOrEmptyStub(localBuilder, op->getLoc(), result.getType());
+        outOperands.push_back(stub);
       }
     }
     return outOperands;
@@ -223,8 +229,8 @@ static SmallVector<Value> getOutOperands(Operation *op) {
         // Insert stub immediately before the scope op so it is visible to
         // all users of the scope result after the scope is erased.
         OpBuilder localBuilder(op->getBlock(), Block::iterator(op));
-        Value stub =
-            createZeroOrEmptyStub(localBuilder, scopeOp.getLoc(), result.getType());
+        Value stub = createZeroOrEmptyStub(localBuilder, scopeOp.getLoc(),
+                                           result.getType());
         if (!stub)
           scopeOp.emitError()
               << "Failed to create replacement stub for scope result #" << index
@@ -305,10 +311,10 @@ struct SplitMixKernelPass
 
 struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
   using OpRewritePattern<tensor::ExtractOp>::OpRewritePattern;
- 
+
   constexpr static llvm::StringRef visitedLabel =
       "PostCubeReplacement::visitedLabel";
- 
+
   LogicalResult matchAndRewrite(tensor::ExtractOp extractOp,
                                 PatternRewriter &rewriter) const override {
     // check if it has already been visited
@@ -317,7 +323,7 @@ struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
     }
     extractOp.getOperation()->setAttr(visitedLabel,
                                       rewriter.getI32IntegerAttr(1));
- 
+
     // do replacements
     for (Operation *userOp : extractOp.getResult().getUsers()) {
       if (annotation::MarkOp markOp = dyn_cast<annotation::MarkOp>(userOp)) {
@@ -333,7 +339,7 @@ struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
     return success();
   }
 };
- 
+
 template <typename OpType>
 void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
   func.walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -344,7 +350,7 @@ void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
     }
   });
 }
- 
+
 void postProcessCubeFunc(func::FuncOp func) {
   RewritePatternSet patterns(func.getOperation()->getContext());
   patterns.insert<PostCubeReplacement>(patterns.getContext());
@@ -358,7 +364,7 @@ void postProcessCubeFunc(func::FuncOp func) {
   removeOpWithAttrFromFunc<memref::AllocOp>(
       "DuplicateTensorExtractForCube::cubeErasureLabel", func);
 }
- 
+
 void postProcessVectorFunc(func::FuncOp func) {
   removeOpWithAttrFromFunc<annotation::MarkOp>(
       "DuplicateTensorExtractForCube::replacementLabel", func);
