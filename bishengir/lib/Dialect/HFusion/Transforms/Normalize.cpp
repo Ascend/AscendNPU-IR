@@ -5182,6 +5182,130 @@ private:
   }
 };
 
+/// Before conversion:
+/// ```mlir
+///    %26 = bufferization.alloc_tensor() : tensor<i1>
+///    %27 = linalg.fill ins(%false : i1) outs(%26 : tensor<i1>) -> tensor<i1>
+///      %reduced = linalg.reduce ins(%25 : tensor<8xi1>) outs(%27 : tensor<i1>)
+///      dimensions = [0]
+///       (%in: i1, %init: i1) {
+///          %30 = arith.addi %in, %init : i1
+///          linalg.yield %30 : i1
+///        }
+/// ```
+/// After conversion:
+/// ```mlir
+///        %27 = tensor.empty() : tensor<8xi16>
+///        %28 = hfusion.select ins(%25, %cst_0, %cst : tensor<8xi1>,
+///        tensor<8xi16>, tensor<8xi16>) outs(%27 : tensor<8xi16>) ->
+///        tensor<8xi16> %29 = bufferization.alloc_tensor() : tensor<i16> %30 =
+///        linalg.fill ins(%c0_i16 : i16) outs(%29 : tensor<i16>) -> tensor<i16>
+///        %reduced = linalg.reduce ins(%28 : tensor<8xi16>) outs(%30 :
+///        tensor<i16>) dimensions = [0]
+///          (%in: i16, %init: i16) {
+///            %35 = arith.maxsi %in, %init : i16
+///            linalg.yield %35 : i16
+///          }
+///        %31 = tensor.empty() : tensor<1xi1>
+///        %32 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
+///        ins(%reduced, %c0_i16 : tensor<i16>, i16) outs(%31 : tensor<1xi1>) ->
+///        tensor<1xi1>
+/// ```
+struct ReduceI1AddToSelectMaxCompare
+    : public OpRewritePattern<linalg::ReduceOp> {
+public:
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp reduceOp,
+                                PatternRewriter &rewriter) const override {
+    if (!reduceOp.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> inputs = reduceOp.getInputs();
+    SmallVector<Value> inits = reduceOp.getInits();
+    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
+      return failure();
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (!isa<arith::AddIOp>(bodyOp))
+      return failure();
+    auto dimensions = reduceOp.getDimensions();
+    if (dimensions.size() != 1 || dimensions[0] != 0)
+      return failure();
+    Value input = reduceOp.getInputs()[0];
+    Value init = reduceOp.getInits()[0];
+
+    auto inputType = input.getType().dyn_cast<RankedTensorType>();
+    auto initType = init.getType().dyn_cast<RankedTensorType>();
+    if (!inputType || !initType)
+      return failure();
+    if (!inputType.getElementType().isInteger(1) ||
+        !initType.getElementType().isInteger(1))
+      return failure();
+
+    if (initType.getRank() != 0)
+      return failure();
+    Location loc = reduceOp.getLoc();
+    MLIRContext *ctx = rewriter.getContext();
+
+    auto shape = inputType.getShape();
+    Type i16 = rewriter.getI16Type();
+    auto tensorI16Type = RankedTensorType::get(shape, i16);
+    auto oneAttr =
+        DenseElementsAttr::get(tensorI16Type, rewriter.getI16IntegerAttr(1));
+    auto zeroAttr =
+        DenseElementsAttr::get(tensorI16Type, rewriter.getI16IntegerAttr(0));
+    Value cstOneTensor =
+        rewriter.create<arith::ConstantOp>(loc, tensorI16Type, oneAttr);
+    Value cstZeroTensor =
+        rewriter.create<arith::ConstantOp>(loc, tensorI16Type, zeroAttr);
+    Value selectOut = rewriter.create<tensor::EmptyOp>(loc, shape, i16);
+    auto selectResult = rewriter.create<hfusion::SelectOp>(
+        loc, tensorI16Type, ValueRange{input, cstOneTensor, cstZeroTensor},
+        ValueRange{selectOut});
+    auto scalarI16Tensor = RankedTensorType::get({}, i16);
+    auto zeroScalarAttr =
+        DenseElementsAttr::get(scalarI16Tensor, rewriter.getI16IntegerAttr(0));
+    Value zeroScalar = rewriter.create<arith::ConstantOp>(loc, scalarI16Tensor,
+                                                          zeroScalarAttr);
+
+    Value cst0 = rewriter.create<arith::ConstantOp>(
+        loc, i16, rewriter.getI16IntegerAttr(0));
+    auto allocOp = rewriter.create<bufferization::AllocTensorOp>(
+        loc, scalarI16Tensor, ValueRange{});
+    Value allocTensor = allocOp.getResult();
+    auto fillOp = rewriter.create<linalg::FillOp>(loc, cst0, allocTensor);
+    Value fillResult = fillOp.getResult(0);
+
+    auto newReduce = rewriter.create<linalg::ReduceOp>(
+        loc, ValueRange{selectResult.getResult(0)}, ValueRange{fillResult},
+        dimensions, [&](OpBuilder &builder, Location loc, ValueRange operands) {
+          Value max = {
+              builder.create<arith::MaxSIOp>(loc, operands[0], operands[1])};
+          builder.create<linalg::YieldOp>(loc, ValueRange{max});
+        });
+    Value reducedTensor = newReduce.getResult(0);
+    Type scalarI1Tensor = RankedTensorType::get({1}, rewriter.getI1Type());
+    Value compareOut = rewriter.create<tensor::EmptyOp>(
+        loc, ArrayRef<int64_t>{1}, rewriter.getI1Type());
+    auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hfusion::CompareFn::vne);
+    auto compareResult = rewriter.create<hfusion::CompareOp>(
+        loc, scalarI1Tensor, ValueRange{reducedTensor, zeroScalar},
+        ValueRange{compareOut}, cmpFnAttr);
+
+    Value zeroIdx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value extracted = rewriter.create<tensor::ExtractOp>(
+        loc, compareResult.getResult(0), zeroIdx);
+    Type extractedScalarI1Tensor =
+        RankedTensorType::get({}, rewriter.getI1Type());
+    Value scalarResult = rewriter.create<tensor::FromElementsOp>(
+        loc, extractedScalarI1Tensor, extracted);
+    rewriter.replaceOp(reduceOp, scalarResult);
+    return success();
+  }
+};
+
 template <>
 struct NormalizeToTargetType<bool, tensor::ConcatOp>
     : public OpRewritePattern<tensor::ConcatOp> {
@@ -8028,6 +8152,8 @@ void populateNormalizeScalarLikeHFusionPatterns(RewritePatternSet &patterns) {
 
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
+  if (archisAscend950)
+    patterns.add<ReduceI1AddToSelectMaxCompare>(ctx);
   patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
