@@ -206,3 +206,4 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 - The device_print buffer size is currently fixed at 16K.
 - Triton sanitizer and device_print cannot be enabled at the same time.
 - Supported data types for printing: bool, int8, uint8, int16, uint16, int32, uint32, int64, bfloat16, half, float32.
+- When using device_print, it is recommended to print a single tensor and place the print statement immediately next to the tensor being printed, to prevent exceptions caused by changes in the tensor's lifetime.
