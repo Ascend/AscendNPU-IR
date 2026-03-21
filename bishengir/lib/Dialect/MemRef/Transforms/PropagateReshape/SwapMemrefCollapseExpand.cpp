@@ -33,6 +33,58 @@ namespace mlir {
 namespace memref {
 using namespace mlir::utils::debugger;
 
+bool checkDimIdx(memref::CollapseShapeOp collapseOp, memref::DimOp dimOp, size_t idx) {
+  auto src = dimOp.getSource();
+  auto indexOp = dimOp.getIndex().getDefiningOp<arith::ConstantIndexOp>();
+  if (!indexOp)
+    return false;
+  if (src == collapseOp.getSrc()) {
+    return indexOp.value() == idx;
+  } else if (src == collapseOp.getResult()) {
+    auto srcType = collapseOp.getSrcType();
+    auto reassociation = collapseOp.getReassociationIndices()[indexOp.value()];
+    bool idxFound = false;
+    for (auto ridx : reassociation) {
+      if (ridx == idx) {
+        idxFound = true;
+      } else if (srcType.getDimSize(ridx) != 1) {
+        return false;
+      }
+    }
+    return idxFound;
+  }
+  return false;
+}
+
+bool cancelOutCollapseExpand(
+    memref::CollapseShapeOp collapseOp,
+    memref::ExpandShapeOp expandOp,
+    PatternRewriter &rewriter) {
+  if (collapseOp.getReassociationIndices() != expandOp.getReassociationIndices())
+    return false;
+  LLVM_DEBUG(llvm::dbgs() << "Trying to cancel out\n" << collapseOp << "\n" << expandOp << "\n";);
+  auto src = collapseOp.getSrc();
+  auto srcShape = utils::getShape(src.getType());
+  auto outputShape = expandOp.getStaticOutputShape();
+  auto dynamicShapeIter = expandOp.getOutputShape().begin();
+  for (size_t i = 0; i < outputShape.size(); i++) {
+    if (outputShape[i] != srcShape[i]) {
+      LLVM_DEBUG(llvm::dbgs() << "shape mismatch in dim " << i << "\n");
+      return false;
+    }
+    if (ShapedType::isDynamic(srcShape[i])) {
+      auto dimOp = (*dynamicShapeIter).getDefiningOp<memref::DimOp>();
+      if (!dimOp)
+        return false;
+      ++dynamicShapeIter;
+      if (!checkDimIdx(collapseOp, dimOp, i))
+        return false;
+    }
+  }
+  rewriter.replaceOp(expandOp, src);
+  return true;
+}
+
 // %b = collapse %a
 // <AxBxCxDxExFxG> -> <AxBCDxExFG>
 // [[0], [1, 2, 3], [4], [5, 6]]
@@ -64,6 +116,9 @@ SwapMemrefCollapseExpand::matchAndRewrite(memref::ExpandShapeOp expandOp,
     return failure();
   }
   LLVM_DEBUG(llvm::dbgs() << "Trying to swap collapse expand here\n";);
+  if (cancelOutCollapseExpand(collapseOp, expandOp, rewriter)) {
+    return success();
+  }
   auto collapseReassoc = collapseOp.getReassociationIndices();
   auto expandReassoc = expandOp.getReassociationIndices();
   SmallVector<ReassociationIndices> newReassociationExpand;

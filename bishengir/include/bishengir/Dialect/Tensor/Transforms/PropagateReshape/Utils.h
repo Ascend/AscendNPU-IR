@@ -254,6 +254,22 @@ bool isNonUnitExpandOrEmptyReassoc(ArrayRef<int64_t> expandedShape,
 
 } // namespace reshape_utils
 } // namespace tensor
+
+Operation *createNewExpandOpFromExpandOp(tensor::ExpandShapeOp expandOp,
+                                         PatternRewriter &rewriter,
+                                         Location loc, Value operand);
+
+Operation *createNewExpandOpFromCollapseOp(Operation *collapseOp,
+                                           PatternRewriter &rewriter,
+                                           Location loc, Value operand);
+
+SmallVector<Value> getNewOperands(Operation *collapseOp,
+                                  PatternRewriter &rewriter, Operation *userOp,
+                                  int64_t targetRank);
+
+Value tryExpandOperand(Operation *collapseOp, PatternRewriter &rewriter,
+                       Value operand, int64_t targetRank);
+
 } // namespace mlir
 
 #endif // BISHENGIR_DIALECT_TENSOR_TRANSFORMS_PROPAGATERESHAPE_UTILS_H

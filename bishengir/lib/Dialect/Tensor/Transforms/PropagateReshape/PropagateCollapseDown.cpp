@@ -82,38 +82,6 @@ StridedLayoutAttr calcStridedLayout(MLIRContext *context,
   return StridedLayoutAttr::get(context, offset, outputStrides);
 }
 
-Operation *createNewExpandOpFromCollapseOp(Operation *collapseOp,
-                                           PatternRewriter &rewriter,
-                                           Location loc, Value operand) {
-  PatternRewriter::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointAfterValue(operand);
-  // Extract common properties regardless of collapse op type
-  SmallVector<ReassociationIndices> reassociation;
-  SmallVector<int64_t> currentShape;
-  if (auto memrefCollapse = dyn_cast<memref::CollapseShapeOp>(collapseOp)) {
-    reassociation = memrefCollapse.getReassociationIndices();
-    currentShape = utils::getShape(memrefCollapse.getSrc().getType());
-  } else if (auto tensorCollapse = dyn_cast<tensor::CollapseShapeOp>(collapseOp)) {
-    reassociation = tensorCollapse.getReassociationIndices();
-    currentShape = utils::getShape(tensorCollapse.getSrc().getType());
-  } else {
-    llvm::report_fatal_error("Expected memref::CollapseShapeOp or tensor::CollapseShapeOp");
-  }
-  // Create expand op based on operand type
-  if (auto operandType = dyn_cast<MemRefType>(operand.getType())) {
-    auto resultType = memref::ExpandShapeOp::computeExpandedType(
-        operandType, currentShape, reassociation);
-    if (failed(resultType))
-      llvm::report_fatal_error("cannot create new expand from this collapse");
-    return rewriter.create<memref::ExpandShapeOp>(loc, resultType.value(),
-                                                  operand, reassociation);
-  }
-  auto resultType =
-      RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
-  return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
-                                                reassociation);
-}
-
 // %a = collapse_shape %arg0
 // %b = elemwise_binary(%a, %arg1), outs(%c);
 //

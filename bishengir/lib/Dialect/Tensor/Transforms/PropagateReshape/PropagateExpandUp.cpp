@@ -53,19 +53,6 @@ using namespace mlir::utils::debugger;
 
 namespace {
 
-// Given the old expand op, this will create a new expand op based on the
-// shape of the final result
-Operation *createNewExpandOpFromExpandOp(tensor::ExpandShapeOp expandOp,
-                                         PatternRewriter &rewriter,
-                                         Location loc, Value operand) {
-  auto reassociation = expandOp.getReassociationIndices();
-  auto currentShape = utils::getShape(expandOp.getResult().getType());
-  auto resultType =
-      RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
-  return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
-                                                reassociation);
-}
-
 // %c = elemwise %a, %b
 // %d = expand %c
 // Folds into
