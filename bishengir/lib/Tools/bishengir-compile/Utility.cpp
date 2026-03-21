@@ -251,10 +251,9 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
 
 llvm::LogicalResult
 inferDotScale(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
-  module.walk([&](func::FuncOp funcOp) {
-    if (funcOp->hasAttr("IsDotScaleKernel")) {
-      config.compileDotScaled(true);
-    }
+  module.walk([&](hfusion::MatMulMxOp op) {
+    config.compileDotScaled(true);
+    return WalkResult::interrupt();
   });
   return success();
 }
