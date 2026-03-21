@@ -215,3 +215,4 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 - 当前device_print打印的大小固定为16k
 - 目前triton侧sanitizer和device_print不支持同时开启
 - 打印支持如下数据类型:bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
+- device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印, 防止因为打印的tensor生命周期变化而引起异常
