@@ -27,6 +27,8 @@
 
 #include "llvm/Support/FormatVariadic.h"
 
+#include <unordered_set>
+
 #define DEBUG_TYPE "bishengir-hacc-utils"
 
 namespace {
@@ -207,16 +209,38 @@ std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
   return std::nullopt;
 }
 
+// use unordered_set to speedup because this func is frequently called
 bool isAscend910_95(TargetDevice targetDevice) {
-  return targetDevice == TargetDevice::Ascend910_950z ||
-         targetDevice == TargetDevice::Ascend910_9579 ||
-         targetDevice == TargetDevice::Ascend910_957b ||
-         targetDevice == TargetDevice::Ascend910_957d ||
-         targetDevice == TargetDevice::Ascend910_9581 ||
-         targetDevice == TargetDevice::Ascend910_9589 ||
-         targetDevice == TargetDevice::Ascend910_958a ||
-         targetDevice == TargetDevice::Ascend910_958b ||
-         targetDevice == TargetDevice::Ascend910_9599;
+  static const std::unordered_set<TargetDevice> ascend910_95Devices = {
+      // Ascend910_95 series
+      TargetDevice::Ascend910_950z, TargetDevice::Ascend910_9579,
+      TargetDevice::Ascend910_957b, TargetDevice::Ascend910_957d,
+      TargetDevice::Ascend910_9581, TargetDevice::Ascend910_9589,
+      TargetDevice::Ascend910_958a, TargetDevice::Ascend910_958b,
+      TargetDevice::Ascend910_9599,
+      // Ascend950PR series
+      TargetDevice::Ascend950PR_950z, TargetDevice::Ascend950PR_9579,
+      TargetDevice::Ascend950PR_957a, TargetDevice::Ascend950PR_957b,
+      TargetDevice::Ascend950PR_957c, TargetDevice::Ascend950PR_957d,
+      TargetDevice::Ascend950PR_9589, TargetDevice::Ascend950PR_958a,
+      TargetDevice::Ascend950PR_958b, TargetDevice::Ascend950PR_958c,
+      TargetDevice::Ascend950PR_958d, TargetDevice::Ascend950PR_9599,
+      TargetDevice::Ascend950PR_959a, TargetDevice::Ascend950PR_959b,
+      // Ascend950DT series
+      TargetDevice::Ascend950DT_950x, TargetDevice::Ascend950DT_950y,
+      TargetDevice::Ascend950DT_9571, TargetDevice::Ascend950DT_9572,
+      TargetDevice::Ascend950DT_9573, TargetDevice::Ascend950DT_9574,
+      TargetDevice::Ascend950DT_9575, TargetDevice::Ascend950DT_9576,
+      TargetDevice::Ascend950DT_9577, TargetDevice::Ascend950DT_9578,
+      TargetDevice::Ascend950DT_9581, TargetDevice::Ascend950DT_9582,
+      TargetDevice::Ascend950DT_9583, TargetDevice::Ascend950DT_9584,
+      TargetDevice::Ascend950DT_9585, TargetDevice::Ascend950DT_9586,
+      TargetDevice::Ascend950DT_9587, TargetDevice::Ascend950DT_9588,
+      TargetDevice::Ascend950DT_9591, TargetDevice::Ascend950DT_9592,
+      TargetDevice::Ascend950DT_9595, TargetDevice::Ascend950DT_9596,
+      TargetDevice::Ascend950DT_95A1, TargetDevice::Ascend950DT_95A2};
+
+  return ascend910_95Devices.find(targetDevice) != ascend910_95Devices.end();
 }
 
 bool isAscend910_95(ModuleOp op) {
