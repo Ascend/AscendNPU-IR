@@ -32,6 +32,14 @@ HIVM (Hybrid ISA Virtual Machine): Abstracts computation, data movement, synchro
 
 3. **Intra-core execution unit mapping**: Aware of the NPU intra-core multi-stage pipeline execution units, it automatically inserts pipeline synchronization so that different pipelines execute in order while enabling parallel pipeline optimization; aware of NPU instruction details, it automatically completes strategy-based instruction mapping and enables efficient NPU SIMD instructions.
 
+## Features of the A5 Chip and Support Optimization for AscendNPU-IR
+
+The A5 chip inherits the RegBase (`Register-based`) programming model from the `310B` chip. Compared with the `Memory-based` programming model of the A2 and A3 chips, it adds a register layer at the hardware level; a data path is added between the Cube and Vector cores, providing more optimization opportunity for CV fusion; components such as the `Warp Scheduler` are added to introduce `SIMT` capability; in addition, new hardware instructions such as `ND-DMA` are also introduced.
+
+AscendNPU IR provides support for the new hardware features in the HIVM dialect, including support for compute and reduction OPs in the `Arith` and `Vector` dialects. For `SIMD` compilation, optimizations including VF fusion, vectorization, mask optimization, and Combine optimization are added. `SIMT` compilation support is newly added on A5 and lower the community `TritonGPU` dialect to HIVM. Ascend-friendly optimization algorithms for Layout optimization, shared memory allocation, and core instruction mapping are constructed. AscendNPU IR for A5 supports not only pure `SIMD` and pure `SIMT` compilation, but also hybrid `SIMD/SIMT` compilation.
+
+![AscendNPU-IR architecture for A5](../../images/introduction/architecture_A5.png)
+
 ## Code architecture
 
 AscendNPU IR is built on the MLIR ecosystem; MLIR upstream community code is introduced as third-party. The code structure is as follows: the bishengir (i.e. AscendNPU IR) directory contains AscendNPU IR–related implementation, and the build-tools directory contains scripts and patches required to build AscendNPU IR. Enhancements to MLIR upstream by AscendNPU IR are preferably placed under bishengir/Dialect in separate dialect directories; capability is extended by adding files in these directories to avoid invasive changes to the community code. Modifications that cannot be isolated are applied via separate patch files; each patch has its own commit information for future integration with the MLIR community.
