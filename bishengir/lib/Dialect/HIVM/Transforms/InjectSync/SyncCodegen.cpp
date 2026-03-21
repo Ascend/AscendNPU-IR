@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/Attributes.h"
@@ -207,9 +208,11 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
   if (checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op) &&
       checkAllParentLoopsAreForLoops(mmadL1Op)) {
-    if (auto KLoopDBCond =
+    if (auto KLoopDBCondIndex =
             createNestedIndexForOp(rewriter, mmadL1Op.getOperation())) {
-      mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCond;
+      Value KLoopDBCondIdx = rewriter.create<arith::IndexCastOp>(
+          KLoopDBCondIndex.getLoc(), rewriter.getI64Type(), KLoopDBCondIndex);
+      mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCondIdx;
     }
   }
 }
@@ -529,8 +532,8 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 Operation *op,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
-  if (sync->eventIds.size() > 2) {
-    llvm_unreachable("Sync supports up to 2 buffers! ");
+  if (sync->eventIds.size() == 1) {
+    llvm_unreachable("Sync supports up to multi buffers! ");
   }
   Value bufferSelected = GetBufferSelected(rewriter, op, sync);
   if (NeedLowerSyncToTemplate(rewriter, op, sync, bufferSelected)) {
@@ -572,24 +575,50 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
     LoopLikeOpInterface parentLoop =
         defineOp->getParentOfType<LoopLikeOpInterface>();
     Value counter;
-    auto iter = loop2BufferCounter.find(parentLoop);
+    unsigned eventIdCount = sync->eventIds.size();
+    // Use map structure: loop2BufferCounter[loop, eventIdCount]
+    std::pair<LoopLikeOpInterface, unsigned> counterKey = std::make_pair(parentLoop, eventIdCount);
+    auto iter = loop2BufferCounter.find(counterKey);
     if (iter != loop2BufferCounter.end()) {
-      counter = iter->second;
+        counter = iter->second;
     } else {
-      // Construct a ternary expression for select.
-      counter = createNestedIndexModular(rewriter, defineOp);
-      loop2BufferCounter[parentLoop] = counter;
+        // Construct a modular expression for select using the eventIdCount as modular
+        Value modularIndex = createNestedIndexModular(rewriter, defineOp, eventIdCount);
+        counter = rewriter.create<arith::IndexCastOp>(modularIndex.getLoc(), rewriter.getI64Type(), modularIndex);
+        loop2BufferCounter[counterKey] = counter;
     }
     // Insert selector after the defined value.
     assert(counter.getDefiningOp()!=nullptr);
     rewriter.setInsertionPointAfter(counter.getDefiningOp());
     Location locDefineOp = counter.getDefiningOp()->getLoc();
-    Value firstID = rewriter.create<arith::ConstantIntOp>(
-        locDefineOp, rewriter.getI64Type(), sync->eventIds[0]);
-    Value secondID = rewriter.create<arith::ConstantIntOp>(
-        locDefineOp, rewriter.getI64Type(), sync->eventIds[1]);
-    bufferSelected = rewriter.create<arith::SelectOp>(
-        locDefineOp, rewriter.getI64Type(), counter, firstID, secondID);
+
+    // Support multi-buffer selection for arbitrary buffer counts (>=2)
+    if (eventIdCount >= 2) {
+      // For multi buffers selection, create array of event IDs and use the counter variable directly
+      // Create constants for each event ID
+      SmallVector<Value> eventValues;
+      for (int eventId : sync->eventIds) {
+        eventValues.push_back(rewriter.create<arith::ConstantIntOp>(
+            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(eventId)));
+      }
+
+      // Build selections using the reused counter variable
+      // selected = eventValues[0];
+      // for i in 1..3:
+      //   if (counter == i) selected = eventValues[i] else keep previous
+      Value selectedValue = eventValues[0];
+      for (unsigned i = 1; i < eventValues.size(); ++i) {
+        Value iVal = rewriter.create<arith::ConstantIntOp>(
+            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(i));
+        Value cond = rewriter.create<arith::CmpIOp>(
+            locDefineOp, arith::CmpIPredicate::eq, counter, iVal);
+        selectedValue = rewriter.create<arith::SelectOp>(
+            locDefineOp, eventValues[0].getType(), cond, eventValues[i], selectedValue);
+      }
+      bufferSelected = selectedValue;
+    } else {
+      llvm_unreachable("Should not reach here!!");
+    }
     SyncIndex2SelectBuffer[sync->GetSyncIndex()] = bufferSelected;
   }
   return bufferSelected;

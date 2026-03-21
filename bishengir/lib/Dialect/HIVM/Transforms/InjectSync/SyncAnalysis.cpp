@@ -1081,7 +1081,6 @@ void SyncAnalyzer::UpdateBackSyncMultiBufferInfo(
 int SyncAnalyzer::GetEventIdNum(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   int singleBufferNum = 1;
-  int doubleBufferNum = 2;
   SmallVector<int> multiBufferNums;
   for (auto &depBaseMemInfos : depBaseMemInfosVec) {
     assert(depBaseMemInfos.first != nullptr &&
@@ -1107,19 +1106,27 @@ int SyncAnalyzer::GetEventIdNum(
     multiBufferNums.push_back(aBaseAddressesSize);
   }
 
+  // Check if all buffer sizes are the same and within supported range (>1)
   for (auto num : multiBufferNums) {
-    if (num != 2) {
-      // TODO:: Currently only processing 2buffer
+    if (num == 1) {
       return singleBufferNum;
     }
   }
-  return doubleBufferNum;
+
+  // Verify that all memory infos have the same buffer count
+  int baseNum = multiBufferNums[0];
+  for (auto num : multiBufferNums) {
+    if (num != baseNum) {
+      return singleBufferNum;
+    }
+  }
+
+  return baseNum;
 }
 
 Value SyncAnalyzer::GetLowestCommonAncestorBuffer(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec, int eventIdNum) {
-  if (eventIdNum != 2) {
-    // Not a 2buffer, just return directly.
+  if (eventIdNum == 1) {
     return nullptr;
   }
   // All touch dep buffers.
@@ -1159,8 +1166,7 @@ Value SyncAnalyzer::GetLowestCommonAncestorBuffer(
 
 std::optional<std::pair<Value, scf::ForOp>> SyncAnalyzer::GetCommonParentLoop(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec, int eventIdNum) {
-  if (eventIdNum != 2) {
-    // Not a 2buffer, just return directly.
+  if (eventIdNum == 1) {
     return {};
   }
 

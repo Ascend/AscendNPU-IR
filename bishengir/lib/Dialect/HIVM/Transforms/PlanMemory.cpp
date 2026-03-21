@@ -1244,16 +1244,20 @@ void MemPlan::UpdateBuffer2Offsets() {
 }
 
 void MemPlan::UpdateMultiBufferReuseExtraOffset() {
-  if (pingEntry2RelationPongEntry.empty()) {
+  if (firstBufferEntry2RelationOtherBufferEntry.empty()) {
     return;
   }
 
-  for (auto &relationEntry : pingEntry2RelationPongEntry) {
-    for (Value &buffer : relationEntry.second->inplaceBuffers) {
-      // MultiBuffer can cause multiple addrs.
-      buffer2Offsets[buffer].push_back(
-          (relationEntry.second->bitsOffset + utils::kBitsToByte - 1) /
-          utils::kBitsToByte);
+  for (auto &relationEntry : firstBufferEntry2RelationOtherBufferEntry) {
+    for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
+         relationEntry.second) {
+      if (!otherBufferEntry)
+        continue;
+      for (Value &buffer : otherBufferEntry->inplaceBuffers) {
+        buffer2Offsets[buffer].push_back(
+            (otherBufferEntry->bitsOffset + utils::kBitsToByte - 1) /
+            utils::kBitsToByte);
+      }
     }
   }
 }
@@ -1388,15 +1392,18 @@ void MemPlan::ExpandMultiBufferStorageEntry() {
   size_t size = StorageEntryVec.size();
   for (size_t i = 0; i < size; i++) {
     if (StorageEntryVec[i]->multiBufferNum > 1) {
-      std::unique_ptr<StorageEntry> entry = std::make_unique<StorageEntry>();
-      entry->bufInfo = StorageEntryVec[i]->bufInfo;
-      entry->bufferLifeVec = StorageEntryVec[i]->bufferLifeVec;
-      entry->alignedConstBits = StorageEntryVec[i]->alignedConstBits;
-      entry->inplaceBuffers = StorageEntryVec[i]->inplaceBuffers;
-      entry->multiBufferNum = StorageEntryVec[i]->multiBufferNum;
-      // Ping saves information related to Pong.
-      StorageEntryVec[i]->relationPongEntry = entry.get();
-      StorageEntryVec.push_back(std::move(entry));
+      // Create multiBufferNum - 1 additional entries
+      for (uint32_t j = 1; j < StorageEntryVec[i]->multiBufferNum; j++) {
+        std::unique_ptr<StorageEntry> entry = std::make_unique<StorageEntry>();
+        entry->bufInfo = StorageEntryVec[i]->bufInfo;
+        entry->bufferLifeVec = StorageEntryVec[i]->bufferLifeVec;
+        entry->alignedConstBits = StorageEntryVec[i]->alignedConstBits;
+        entry->inplaceBuffers = StorageEntryVec[i]->inplaceBuffers;
+        entry->multiBufferNum = StorageEntryVec[i]->multiBufferNum;
+        // Store the entry pointer
+        StorageEntryVec[i]->otherBufferRelationEntries.push_back(entry.get());
+        StorageEntryVec.push_back(std::move(entry));
+      }
     }
   }
 }
@@ -1630,6 +1637,9 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
   SmallVector<StorageEntry *> touchPipeScalarStorageEntryVec;
   SmallVector<StorageEntry *> otherStorageEntryVec;
   for (auto &storageEntry : origStorageEntryVec) {
+    if(!storageEntry) {
+      continue;
+    }
     bool recorded =
         llvm::any_of(storageEntry->inplaceBuffers, [&](Value &buffer) {
           auto it = bufferInfos.find(buffer);
@@ -1667,8 +1677,9 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
                                   touchPipeScalarStorageEntryVec.begin(),
                                   touchPipeScalarStorageEntryVec.end());
 
-  // Ensure that ping pong is continuously plan mem in the multi buffer.
-  ReorderContinuousPingPongEntry(reorderedStorageEntryVec);
+  // Ensure that firstbuffer and otherbuffer are continuously plan mem in the
+  // multi buffer.
+  ReorderContinuousFirstBufferOtherBufferEntry(reorderedStorageEntryVec);
   StorageEntry *reorderedRootStorageEntry = reorderedStorageEntryVec[0];
   reorderedRootStorageEntry->mergedChildren.clear();
   for (size_t j = 1; j < reorderedStorageEntryVec.size(); ++j) {
@@ -1678,7 +1689,7 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
   return reorderedRootStorageEntry;
 }
 
-void MemPlan::ReorderContinuousPingPongEntry(
+void MemPlan::ReorderContinuousFirstBufferOtherBufferEntry(
     SmallVector<StorageEntry *> &storageEntryVec) {
   SmallVector<StorageEntry *> reorderedStorageEntryVec;
   for (auto &storageEntry : storageEntryVec) {
@@ -1686,10 +1697,17 @@ void MemPlan::ReorderContinuousPingPongEntry(
                         reorderedStorageEntryVec.end(), storageEntry);
     if (it == reorderedStorageEntryVec.end()) {
       reorderedStorageEntryVec.push_back(storageEntry);
-      if (storageEntry->multiBufferNum == 2 &&
-          storageEntry->relationPongEntry) {
-        // Ping Pong continuous save.
-        reorderedStorageEntryVec.push_back(storageEntry->relationPongEntry);
+        // Add all relation entries for otherbuffer
+        for (StorageEntry *relationEntry : storageEntry->otherBufferRelationEntries) {
+          if(!relationEntry) {
+            continue;
+          }
+          auto relationIt = std::find(reorderedStorageEntryVec.begin(),
+                                      reorderedStorageEntryVec.end(),
+                                      relationEntry);
+          if (relationIt == reorderedStorageEntryVec.end()) {
+            reorderedStorageEntryVec.push_back(relationEntry);
+          }
       }
     }
   }
@@ -1772,13 +1790,13 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
       if (size < e->alignedConstBits) {
         continue;
       }
-      // If SPEC_LEVEL_1, then the address of pong Offset address needs to be
+      // If SPEC_LEVEL_1, then the address of otherbuffer offset needs to be
       // allocated.
-      uint64_t pongOffset{0};
+      SmallVector<uint64_t, 3> otherBufferOffsets;
       if (localLevel == SPEC_LEVEL_1 &&
           VerifyConflictStage1(outline, his, e,
                                OutlineSectionInfo(start, end, size, false),
-                               pongOffset)) {
+                               otherBufferOffsets)) {
         break;
       }
 
@@ -1791,9 +1809,12 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
 
       if (localLevel == SPEC_LEVEL_1) {
         // There is no conflict with the historical plan of buffer life, and
-        // the address of the Pong can be assigned.
-        PlanRelationPongEntryAddress(pongOffset, e);
-        SpecAllocRelationPongEntry(outline, his, e, pongOffset);
+        // the address of the otherbuffer can be assigned.
+        assert(!otherBufferOffsets.empty() &&
+               "otherBufferOffsets should not be empty at SPEC_LEVEL_1");
+        PlanRelationOtherBufferEntryAddress(otherBufferOffsets, e);
+        for (uint64_t otherBufferOffset : otherBufferOffsets)
+          SpecAllocRelationOtherBufferEntry(outline, his, e, otherBufferOffset);
       }
       LDBG("APPLY_SPEC_LEVEL:  " << localLevel << "\n");
       RecordAllocatedEntry(e);
@@ -1830,7 +1851,7 @@ MemPlan::GetBufferParentLoop(const SmallVector<Value> &buffers) {
 bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
                                    StorageEntry *e,
                                    const OutlineSectionInfo &outlineInfo,
-                                   uint64_t &pongOffset) {
+                                   SmallVectorImpl<uint64_t> &otherBufferOffsets) {
   if (outlineInfo.mem_start != outlineInfo.mem_end) {
     return true;
   }
@@ -1840,60 +1861,97 @@ bool MemPlan::VerifyConflictStage1(MemBoundList &outline, PlanRecHis &his,
     return true;
   }
 
-  StorageEntry *multiRelationPongEntry =
-      GetMultiRelationPongEntry(reuseBoundStorageEntry);
-  if (multiRelationPongEntry) {
-    if (e->multiBufferNum == 1 ||
-        (e->multiBufferNum == 2 && e->relationPongEntry &&
-         (e->relationPongEntry->bitsOffset != 0))) {
-      auto parentLoop1 = GetBufferParentLoop(e->inplaceBuffers);
-      auto parentLoop2 =
-          GetBufferParentLoop(reuseBoundStorageEntry->inplaceBuffers);
-      if (!(parentLoop1 != nullptr && parentLoop2 != nullptr &&
-            parentLoop1 == parentLoop2)) {
-        // Cannot be reused under the same loop.
-        return true;
+  // Collect all available otherbuffer entries for the current reuse bound
+  // storage entry. In the multi-buffer case, there may be multiple otherbuffer
+  // entries (stored in otherBufferRelationEntries).
+  SmallVector<StorageEntry *> otherBufferEntries;
+  if (reuseBoundStorageEntry->multiBufferNum > 1) {
+    for (StorageEntry *relationEntry :
+         reuseBoundStorageEntry->otherBufferRelationEntries) {
+      if (relationEntry && relationEntry->bitsOffset != 0) {
+        otherBufferEntries.push_back(relationEntry);
       }
-      // There are two situations:
-      // 1. Single reuse DB.
-      // 2. DB reuse DB.
-      pongOffset = multiRelationPongEntry->bitsOffset;
-      bool conflict = std::any_of(
-          his.begin(), his.end(), [pongOffset, e, this](PlanRecord &r) {
-            return this->IsBufferLifeVecConflict(r, pongOffset, e);
-          });
-      if (!conflict) {
-        return false;
+    }
+  } else {
+    auto iter =
+        firstBufferEntry2RelationOtherBufferEntry.find(reuseBoundStorageEntry);
+    if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+      for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
+           iter->second) {
+        if (otherBufferEntry && otherBufferEntry->bitsOffset != 0)
+          otherBufferEntries.push_back(otherBufferEntry.get());
       }
     }
   }
-  return true;
+
+  if (otherBufferEntries.empty()) {
+    // No valid otherbuffer entry has been allocated on this reuse bound
+    // storage entry, SPEC_LEVEL_1 reuse is not applicable.
+    return true;
+  }
+
+  // The buffer to be planned and the reuse bound storage entry must belong to
+  // the same loop, otherwise they cannot participate in firstbuffer-otherbuffer
+  // reuse.
+  auto parentLoop1 = GetBufferParentLoop(e->inplaceBuffers);
+  auto parentLoop2 =
+      GetBufferParentLoop(reuseBoundStorageEntry->inplaceBuffers);
+  if (!(parentLoop1 != nullptr && parentLoop2 != nullptr &&
+        parentLoop1 == parentLoop2)) {
+    // Cannot be reused under the same loop.
+    return true;
+  }
+
+  // Two situations:
+  // Single buffer reuse multi buffer
+  // Multi-buffer reuse multi buffer
+
+  // Multi-buffer case: require enough multibuffer entries for all buffer
+  // instances.
+  if (e->multiBufferNum > 1 &&
+      otherBufferEntries.size() < e->multiBufferNum) {
+    // Not enough historical multibuffer entries to match current multi-buffer
+    // requirement.
+    return true;
+  }
+
+  // Check each required multibuffer entry one by one. If any multibuffer
+  // entry conflicts with historical records at its offset, the whole
+  // multi-buffer reuse fails. Only when all required multibuffer entries are
+  // conflict-free can we reuse (return false).
+  for (uint32_t i = 0; i < e->multiBufferNum; ++i) {
+    StorageEntry *multiRelationMultiBufferEntry = otherBufferEntries[i];
+    if (!multiRelationMultiBufferEntry) {
+      return true;
+    }
+    uint64_t multiBufferOffset = multiRelationMultiBufferEntry->bitsOffset;
+    bool conflict = std::any_of(
+        his.begin(), his.end(),
+        [multiBufferOffset, e, this](PlanRecord &r) {
+          return this->IsBufferLifeVecConflict(r, multiBufferOffset, e);
+        });
+    if (!conflict) {
+      otherBufferOffsets.push_back(multiBufferOffset);
+    } else {
+      // As long as one instance conflicts, the whole multi-buffer reuse fails.
+      otherBufferOffsets.clear();
+      return true;
+    }
+  }
+
+  // All required multibuffer entries are conflict-free; otherBufferOffsets was
+  // already filled in the loop above.
+  return false;
 }
 
-StorageEntry *
-MemPlan::GetMultiRelationPongEntry(const StorageEntry *reuseBoundStorageEntry) {
-  if (reuseBoundStorageEntry->multiBufferNum == 2 &&
-      reuseBoundStorageEntry->relationPongEntry &&
-      (reuseBoundStorageEntry->relationPongEntry->bitsOffset != 0)) {
-    // If the reuseBoundStorageEntry itself requires db, directly match and
-    // return relationPongEntry.
-    return reuseBoundStorageEntry->relationPongEntry;
-  }
-  auto iter = pingEntry2RelationPongEntry.find(reuseBoundStorageEntry);
-  if (iter != pingEntry2RelationPongEntry.end()) {
-    // If the reuseBoundStorageEntry itself is single, but has already been
-    // reused with db and has an extra pong StorageEntry is added.
-    return iter->second.get();
-  }
-  return nullptr;
-}
-
-void MemPlan::SpecAllocRelationPongEntry(MemBoundList &outline, PlanRecHis &his,
-                                         StorageEntry *e, uint64_t offset) {
+void MemPlan::SpecAllocRelationOtherBufferEntry(MemBoundList &outline,
+                                                PlanRecHis &his,
+                                                StorageEntry *e,
+                                                uint64_t offset) {
   for (MemBoundListConstIter start = outline.begin(); start != outline.end();
        ++start) {
     uint64_t size = 0;
-    // Find the MemBound corresponding to the Pong offset.
+    // Find the MemBound corresponding to the multibuffer offset.
     if ((*start)->offset != offset) {
       continue;
     }
@@ -1903,16 +1961,28 @@ void MemPlan::SpecAllocRelationPongEntry(MemBoundList &outline, PlanRecHis &his,
       if (size < e->alignedConstBits) {
         continue;
       }
-      StorageEntry *pongStorageEntry = nullptr;
-      auto iter = pingEntry2RelationPongEntry.find(e);
-      if (iter != pingEntry2RelationPongEntry.end()) {
-        pongStorageEntry = iter->second.get();
+      StorageEntry *otherBufferStorageEntry = nullptr;
+      auto iter = firstBufferEntry2RelationOtherBufferEntry.find(e);
+      if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+        for (const std::unique_ptr<StorageEntry> &otherBufferEntry :
+             iter->second) {
+          if (otherBufferEntry && otherBufferEntry->bitsOffset == offset) {
+            otherBufferStorageEntry = otherBufferEntry.get();
+            break;
+          }
+        }
       }
-      if (e->multiBufferNum == 2 && e->relationPongEntry) {
-        pongStorageEntry = e->relationPongEntry;
+      if (!otherBufferStorageEntry && e->multiBufferNum > 1) {
+        for (StorageEntry *relationEntry : e->otherBufferRelationEntries) {
+          if (relationEntry && relationEntry->bitsOffset == offset) {
+            otherBufferStorageEntry = relationEntry;
+            break;
+          }
+        }
       }
-      assert(pongStorageEntry && "PongStorage Entry not found!");
-      UpdateOutline(outline, his, pongStorageEntry,
+      assert(otherBufferStorageEntry &&
+             "otherBuffer Storage Entry not found!");
+      UpdateOutline(outline, his, otherBufferStorageEntry,
                     OutlineSectionInfo(start, end, size, true), SPEC_LEVEL_1);
       return;
     }
@@ -1930,20 +2000,33 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
   return false;
 }
 
-void MemPlan::PlanRelationPongEntryAddress(uint64_t offset, StorageEntry *e) {
+void MemPlan::PlanRelationOtherBufferEntryAddress(
+    llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e) {
   if (e->multiBufferNum == 1) {
-    std::unique_ptr<StorageEntry> entry = std::make_unique<StorageEntry>();
-    entry->bufInfo = e->bufInfo;
-    entry->bufferLifeVec = e->bufferLifeVec;
-    entry->alignedConstBits = e->alignedConstBits;
-    entry->inplaceBuffers = e->inplaceBuffers;
-    entry->multiBufferNum = e->multiBufferNum;
-    entry->bitsOffset = offset;
-    pingEntry2RelationPongEntry[e] = std::move(entry);
-  } else if (e->multiBufferNum == 2) {
-    e->relationPongEntry->bitsOffset = offset;
-  } else {
-    llvm_unreachable("Does not support multi buffer num greater than 2 !");
+    // Single-buffer entry expanded to use multibuffer. Create
+    // one extra StorageEntry per multibuffer offset and store in
+    // firstBufferEntry2RelationOtherBufferEntry as a vector.
+    auto &vec = firstBufferEntry2RelationOtherBufferEntry[e];
+    vec.clear();
+    vec.reserve(otherBufferOffsets.size());
+    for (uint64_t offset : otherBufferOffsets) {
+      auto entry = std::make_unique<StorageEntry>();
+      entry->bufInfo = e->bufInfo;
+      entry->bufferLifeVec = e->bufferLifeVec;
+      entry->alignedConstBits = e->alignedConstBits;
+      entry->inplaceBuffers = e->inplaceBuffers;
+      entry->multiBufferNum = e->multiBufferNum;
+      entry->bitsOffset = offset;
+      vec.push_back(std::move(entry));
+    }
+  } else if (e->multiBufferNum > 1 && !e->otherBufferRelationEntries.empty()) {
+    // Multi-buffer entry: assign each relation entry its multibuffer offset
+    // from otherBufferOffsets.
+    for (size_t i = 0;
+         i < e->otherBufferRelationEntries.size() && i < otherBufferOffsets.size(); ++i) {
+      if (StorageEntry *re = e->otherBufferRelationEntries[i])
+        re->bitsOffset = otherBufferOffsets[i];
+    }
   }
 }
 
@@ -2368,12 +2451,13 @@ void MemPlan::RollBackForAllocFailInner(StatusWrapper &statusWrapper,
   while (!statusWrapper.history.empty()) {
     PlanRecord r =
         RollbackOutline(statusWrapper.history, statusWrapper.outline);
-    auto iter = pingEntry2RelationPongEntry.find(r.entry);
-    if (iter != pingEntry2RelationPongEntry.end()) {
-      pingEntry2RelationPongEntry.erase(iter);
+    auto iter =
+        firstBufferEntry2RelationOtherBufferEntry.find(r.entry);
+    if (iter != firstBufferEntry2RelationOtherBufferEntry.end()) {
+      firstBufferEntry2RelationOtherBufferEntry.erase(iter);
     }
     if (r.isDirectlyRollback ||
-        (r.entry->multiBufferNum == 2 && !r.entry->relationPongEntry)) {
+        (r.entry->multiBufferNum > 1 && r.entry->otherBufferRelationEntries.empty())) {
       continue;
     }
     si->childIdx = r.childIdx;
