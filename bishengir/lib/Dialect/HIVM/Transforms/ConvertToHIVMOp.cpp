@@ -59,6 +59,10 @@ getPadValueForSingleValue(std::optional<Operation *> allocOpAlias) {
     if (llvm::isa_and_nonnull<hivm::VBrcOp>(user) &&
         user->getOperand(0).getType().isIntOrFloat()) {
       return user->getOperand(0);
+    } else if (llvm::isa_and_nonnull<memref::CollapseShapeOp>(user)) {
+      auto maybePadValue = getPadValueForSingleValue(user);
+      if (maybePadValue.has_value())
+        return maybePadValue;
     }
   }
   return std::nullopt;

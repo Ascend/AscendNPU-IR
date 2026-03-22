@@ -845,4 +845,118 @@ bool isNonUnitExpandOrEmptyReassoc(
 
 } // namespace reshape_utils
 } // namespace tensor
+
+Operation *createNewExpandOpFromExpandOp(tensor::ExpandShapeOp expandOp,
+                                         PatternRewriter &rewriter,
+                                         Location loc, Value operand) {
+  auto reassociation = expandOp.getReassociationIndices();
+  auto currentShape = utils::getShape(expandOp.getResult().getType());
+  auto resultType =
+      RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
+  return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
+                                                reassociation);
+}
+
+Operation *createNewExpandOpFromCollapseOp(Operation *collapseOp,
+                                           PatternRewriter &rewriter,
+                                           Location loc, Value operand) {
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfterValue(operand);
+  // Extract common properties regardless of collapse op type
+  SmallVector<ReassociationIndices> reassociation;
+  SmallVector<int64_t> currentShape;
+  if (auto memrefCollapse = dyn_cast<memref::CollapseShapeOp>(collapseOp)) {
+    reassociation = memrefCollapse.getReassociationIndices();
+    currentShape = utils::getShape(memrefCollapse.getSrc().getType());
+  } else if (auto tensorCollapse =
+                 dyn_cast<tensor::CollapseShapeOp>(collapseOp)) {
+    reassociation = tensorCollapse.getReassociationIndices();
+    currentShape = utils::getShape(tensorCollapse.getSrc().getType());
+  } else {
+    llvm::report_fatal_error(
+        "Expected memref::CollapseShapeOp or tensor::CollapseShapeOp");
+  }
+  // Create expand op based on operand type
+  if (auto operandType = dyn_cast<MemRefType>(operand.getType())) {
+    auto resultType = memref::ExpandShapeOp::computeExpandedType(
+        operandType, currentShape, reassociation);
+    if (failed(resultType))
+      llvm::report_fatal_error("cannot create new expand from this collapse");
+    return rewriter.create<memref::ExpandShapeOp>(loc, resultType.value(),
+                                                  operand, reassociation);
+  }
+  auto resultType =
+      RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
+  return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
+                                                reassociation);
+}
+
+/// @brief Attempts to expand an operand to match a target rank by creating an
+/// expand operation.
+///
+/// This function checks if the given operand's rank matches the target rank. If
+/// it does, it creates a new expand operation from the provided collapse
+/// operation to expand the operand. If the ranks don't match (e.g., scalar
+/// element-wise cases), the original operand is returned unchanged.
+///
+/// @param collapseOp The `memref::CollapseShapeOp` used as a template for
+/// creating the expand operation
+/// @param rewriter The pattern rewriter used to create new operations
+/// @param operand The value to potentially expand
+/// @param targetRank The desired rank for the expanded operand
+///
+/// @return The expanded operand if ranks match, otherwise the original operand
+/// unchanged
+Value tryExpandOperand(Operation *collapseOp, PatternRewriter &rewriter,
+                       Value operand, int64_t targetRank) {
+  auto shapeRank = utils::getShapeRank(operand);
+  // Only expand if ranks match (skip scalar elemwise cases)
+  if (!shapeRank.has_value() ||
+      static_cast<int64_t>(*shapeRank) != targetRank) {
+    LLVM_DEBUG(llvm::dbgs() << "Can't expand inequal rank " << shapeRank
+                            << " : " << targetRank << "\n");
+    return operand;
+  }
+  rewriter.setInsertionPointAfterValue(operand);
+  Operation *expandedOp;
+  if (auto memrefCollapse = dyn_cast<memref::CollapseShapeOp>(collapseOp)) {
+    expandedOp = createNewExpandOpFromCollapseOp(memrefCollapse, rewriter,
+                                                 operand.getLoc(), operand);
+  } else if (auto tensorCollapse =
+                 dyn_cast<tensor::CollapseShapeOp>(collapseOp)) {
+    expandedOp = createNewExpandOpFromCollapseOp(tensorCollapse, rewriter,
+                                                 operand.getLoc(), operand);
+  } else {
+    return operand;
+  }
+  return expandedOp->getResult(0);
+}
+
+/// @brief Transforms all operands of a user operation by potentially expanding
+/// them to a target rank.
+///
+/// This function iterates through all operands of the given user operation and
+/// attempts to expand each one to match the specified target rank using
+/// `tryExpandOperand()`. Operands that don't match the target rank are left
+/// unchanged.
+///
+/// @param collapseOp The `memref::CollapseShapeOp` used as a template for
+/// creating expand operations
+/// @param rewriter The pattern rewriter used to create new operations
+/// @param userOp The operation whose operands should be processed
+/// @param targetRank The desired rank for expanded operands
+///
+/// @return A vector containing the transformed operands (expanded or original)
+SmallVector<Value> getNewOperands(Operation *collapseOp,
+                                  PatternRewriter &rewriter, Operation *userOp,
+                                  int64_t targetRank) {
+  SmallVector<Value> newOperands;
+  for (Value operand : userOp->getOperands()) {
+    Value newOperand =
+        tryExpandOperand(collapseOp, rewriter, operand, targetRank);
+    newOperands.push_back(newOperand);
+  }
+  return newOperands;
+}
+
 } // namespace mlir
