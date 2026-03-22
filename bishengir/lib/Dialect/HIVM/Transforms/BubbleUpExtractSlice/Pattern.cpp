@@ -1206,8 +1206,7 @@ LogicalResult BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp slic
     // Pattern 2: This deals with the pattern: memref.alloc() ->
     // bufferization.to_tensor, with Subview Op + Load Op
     if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
-      if (!subViewOp->hasOneUse() || !subViewOp.hasZeroOffset() ||
-          !subViewOp.hasUnitStride())
+      if (!subViewOp->hasOneUse())
         continue;
       auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
       if (!loadOp)

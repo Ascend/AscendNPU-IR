@@ -370,9 +370,7 @@ private:
         storeOp.getSrc().getDefiningOp<OffsetSizeAndStrideOpInterface>();
     auto dstOp =
         storeOp.getDst().getDefiningOp<OffsetSizeAndStrideOpInterface>();
-    if (srcShape != dstShape || ShapedType::isDynamicShape(srcShape) ||
-        !srcOp.hasZeroOffset() || !srcOp.hasUnitStride() ||
-        !dstOp.hasZeroOffset() || !dstOp.hasUnitStride())
+    if (srcShape != dstShape || ShapedType::isDynamicShape(srcShape))
       return modifyFailure();
     if (failed(modifyStoreOp(storeOp, tilingDim, srcOpr, dstOpr, containingLoop,
                              rewriter)))
