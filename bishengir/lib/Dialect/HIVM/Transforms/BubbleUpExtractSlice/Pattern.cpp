@@ -1141,7 +1141,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         });
 
         rewriter.replaceOp(sliceOp, newToTensorOp);
-        rewriter.eraseOp(toTensorOp);
+        rewriter.replaceOp(toTensorOp, newToTensorOp);
         rewriter.eraseOp(subviewOp);
       }
       return success();
