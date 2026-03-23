@@ -109,8 +109,7 @@ struct PullExtractInsertSliceIntoVectorFunction
   }
 
 private:
-  // True if slice is "passthrough": stride 1, no shape change (skip this
-  // pattern).
+
   bool isStandardStride(tensor::ExtractSliceOp op) const {
     auto src = op.getSource();
     auto srcShape = cast<RankedTensorType>(src.getType()).getShape();
@@ -121,10 +120,14 @@ private:
     if (!llvm::all_of(op.getStaticStrides(),
                       [](int64_t stride) { return stride == 1; }))
       return false;
-    // If ranks differ (e.g. rank-reduce slice), it's not a passthrough.
+    for (int64_t off : op.getStaticOffsets()) {
+      if (!ShapedType::isDynamic(off) && off != 0)
+        return false;
+    }
     if (resShape.size() != srcShape.size())
       return false;
-    // Same rank: compare dimensions (skip first for stride-1 subview identity).
+    if (srcShape.size() == 1)
+      return srcShape[0] == resShape[0];
     for (auto [srcDim, resDim] :
          llvm::drop_begin(llvm::zip_equal(srcShape, resShape))) {
       if (srcDim != resDim)
