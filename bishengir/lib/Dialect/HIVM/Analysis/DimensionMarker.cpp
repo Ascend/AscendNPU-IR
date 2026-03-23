@@ -560,28 +560,7 @@ void DimensionAnalyzer::markDimensionKind() {
     } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
       auto srcRef = getArgumentRef(vtransposeOp.getSrc());
       for (auto[dimIdx, parentIdx] : llvm::enumerate(srcRef)) {
-        transposedDimMap[solverShapeElem_->find(parentIdx)] = dimIdx;
-      }
-    } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
-      auto expandShapeOp =
-          markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
-      auto tilingDimMapping = markOp->getAttrOfType<DictionaryAttr>(
-          kTilingDimMappingAttrName);
-      auto src = expandShapeOp.getSrc();
-      auto res = expandShapeOp.getResult();
-
-      auto srcArgs = getArgumentRef(src);
-      auto resArgs = getArgumentRef(res);
-      for (auto dimMappingAttr : tilingDimMapping) {
-        int srcDim;
-        int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
-        llvm::to_integer(dimMappingAttr.getName(), srcDim);
-        srcDim = solverShapeElem_->find(srcArgs[srcDim]);
-        resDim = solverShapeElem_->find(resArgs[resDim]);
-        if (auto it = transposedDimMap.find(srcDim);
-            it != transposedDimMap.end())
-            transposedDimMap[resDim] = it->second;
+        transposedDimMap[solverCollapserElem_->find(parentIdx)] = dimIdx;
       }
     }
   });

@@ -48,10 +48,10 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     tilingDim_[value] = -1;
 
   if (isVectorOp) {
-    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
+    isBroadcastAxisCase |= computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
+    isBroadcastAxisCase |= computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
   } else {
-    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
+    isBroadcastAxisCase |= computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
 
   DenseMap<int64_t, int> selectedTilingParIdxMap;
@@ -66,13 +66,13 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
           auto storeRef = getArgumentRef(store);
           int64_t curDim = tilingDim_[store];
           auto dim = cDim;
-          auto solverIndex = solverShapeElem_->find(storeRef[dim]);
+          auto solverIndex = solverCollapserElem_->find(storeRef[dim]);
           if (transposedDimMap.contains(solverIndex)) {
-            LDBG("Found transposed mapping(" << solverIndex << "): " << dim << " to " << transposedDimMap.at(solverIndex));
+            LDBG("Found transposed mapping: " << dim << " to " << transposedDimMap.at(solverIndex));
             dim = transposedDimMap.at(solverIndex);
           }
           if (curDim != -1) {
-            solverIndex = solverShapeElem_->find(storeRef[curDim]);
+            solverIndex = solverCollapserElem_->find(storeRef[curDim]);
             if (transposedDimMap.contains(solverIndex))
               curDim = transposedDimMap.at(solverIndex);
           }
@@ -91,10 +91,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     }
   }
   LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
-  for (auto[_, parIdx] : selectedTilingParIdxMap) {
+  for (auto[_, parIdx] : selectedTilingParIdxMap)
     selectedTilingParIdx.insert(parIdx);
-    isBroadcastAxisCase |= broadcastAxisCaseCandidate.contains(parIdx);
-  }
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
   return isBroadcastAxisCase;
 }
@@ -103,31 +101,19 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   if (!argumentsRefPointer_.contains(v))
     return -1;
   auto rank = utils::getShapeRank(v.getType()).value_or(0);
-  int64_t tilingDim = -1;
-  int order = -1;
-  auto args = getArgumentRef(v);
   for (size_t i = 0; i < rank; i++) {
-    auto parentIndex = solverCollapserElem_->find(args[i]);
-    if (selectedTilingParIdx.contains(parentIndex)) {
-      auto solverIndex = solverShapeElem_->find(args[i]);
-      int candOrder = i;
-      if (auto it = transposedDimMap.find(solverIndex);
-          it != transposedDimMap.end()) {
-        candOrder = it->second;
-      }
-      if (tilingDim == -1 || order > candOrder) {
-        tilingDim = i;
-        order = candOrder;
-      }
-    }
+    auto parentIndex = solverCollapserElem_->find(getArgumentRef(v)[i]);
+    if (selectedTilingParIdx.contains(parentIndex))
+      return i;
   }
-  return tilingDim;
+  return -1;
 }
 
 template <typename StoreOpTy>
-void DimensionAnalyzer::computeTilingDimImpl(
+bool DimensionAnalyzer::computeTilingDimImpl(
     DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
+  bool isBroadcastAxisCase = false;
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
     auto src = op.getSrc();
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
@@ -158,11 +144,12 @@ void DimensionAnalyzer::computeTilingDimImpl(
           op->emitWarning() << "Detected dimensions are in the same group in one "
                                "storeOp. It is recommended to try with "
                                "strict-mode=false if TileAndBindSubBlock fails";
-          broadcastAxisCaseCandidate.insert(parentIndex);
+          isBroadcastAxisCase = true;
         }
       }
     }
   });
+  return isBroadcastAxisCase;
 }
 
 } // namespace detail

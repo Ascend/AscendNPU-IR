@@ -126,7 +126,7 @@ protected:
   void markDimensionKind();
 
   template <typename StoreOpTy>
-  void computeTilingDimImpl(
+  bool computeTilingDimImpl(
       DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMaps,
       DenseMap<int64_t, int> &numStoreOps);
 
@@ -136,7 +136,6 @@ protected:
   llvm::SmallDenseSet<int> selectedTilingParIdx;
  	std::unique_ptr<mlir::detail::SimpleUnionFind> solverGroup_;
   DenseMap<int64_t, int64_t> transposedDimMap;
-  llvm::SmallDenseSet<int64_t> broadcastAxisCaseCandidate;
 };
 
 } // namespace detail
