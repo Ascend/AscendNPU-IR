@@ -1433,6 +1433,68 @@ struct RankReducedInsertSliceOp : public OpRewritePattern<InsertOpTy> {
     return success();
   }
 };
+
+struct RepairMemRefCastPattern : public OpRewritePattern<memref::CastOp> {
+  using OpRewritePattern<memref::CastOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(memref::CastOp op,
+                  PatternRewriter &rewriter) const override {
+    auto srcType = cast<MemRefType>(op.getSource().getType());
+    auto resType = cast<MemRefType>(op.getResult().getType());
+
+    if (memref::CastOp::areCastCompatible(srcType, resType))
+      return failure();
+
+    SmallVector<int64_t> srcStrides, resStrides;
+    int64_t srcOffset, resOffset;
+    if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)) ||
+        failed(getStridesAndOffset(resType, resStrides, resOffset)))
+      return failure();
+
+    auto newLayout =
+        StridedLayoutAttr::get(op->getContext(), resOffset, srcStrides);
+    auto newResType =
+        MemRefType::get(srcType.getShape(), srcType.getElementType(),
+                        newLayout, srcType.getMemorySpace());
+
+    if (!memref::CastOp::areCastCompatible(srcType, newResType))
+      return failure();
+
+    rewriter.modifyOpInPlace(op, [&]() { op.getResult().setType(newResType); });
+    return success();
+  }
+};
+
+struct RepairMemorySpaceCastPattern
+    : public OpRewritePattern<memref::MemorySpaceCastOp> {
+  using OpRewritePattern<memref::MemorySpaceCastOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(memref::MemorySpaceCastOp op,
+                  PatternRewriter &rewriter) const override {
+    auto srcType = cast<MemRefType>(op.getSource().getType());
+    auto resType = cast<MemRefType>(op.getResult().getType());
+
+    if (srcType.getShape() == resType.getShape()) {
+      SmallVector<int64_t> srcStrides, resStrides;
+      int64_t srcOffset, resOffset;
+      if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
+          succeeded(getStridesAndOffset(resType, resStrides, resOffset)) &&
+          srcStrides == resStrides && srcOffset == resOffset)
+        return failure();
+    }
+
+    auto newResType =
+        MemRefType::get(srcType.getShape(), srcType.getElementType(),
+                        srcType.getLayout(), resType.getMemorySpace());
+
+    rewriter.modifyOpInPlace(op,
+                             [&]() { op.getResult().setType(newResType); });
+    return success();
+  }
+};
+
 } // namespace
 
 void HFusionFoldUnitDimsPass::runOnOperation() {
@@ -1494,6 +1556,8 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
     patterns.insert<
         FilteredPattern<DropUnitDimsInsertSlicePattern, tensor::InsertSliceOp>>(
         context, shouldSkip);
+    patterns.insert<RepairMemRefCastPattern>(context);
+    patterns.insert<RepairMemorySpaceCastPattern>(context);
     memref::CollapseShapeOp::getCanonicalizationPatterns(patterns,
                                                          patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
