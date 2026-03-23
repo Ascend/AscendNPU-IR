@@ -112,14 +112,6 @@ bool DimensionAnalyzer::computeTilingDimImpl(
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim) && shape[i] != 1) {
-        if (ShapedType::isDynamic(shape[i])) {
-          if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>();
-              extractSliceOp && extractSliceOp.getSourceType().getDimSize(i) == 1)
-              continue;
-          if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>();
-              subviewOp && subviewOp.getSourceType().getDimSize(i) == 1)
-              continue;
-        }
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
           parallelDimMap[srcRef][parentIndex].push_back(dim);
