@@ -57,30 +57,14 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, int> selectedTilingParIdxMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     auto numStoreOp = numStoreOps.at(groupIndex);
-    LDBG("Group " << groupIndex << " has " << numStoreOp << " operations");
     for (const auto &[parentIndex, candidate] : parallelDimMap) {
       if (static_cast<int64_t>(candidate.size()) == numStoreOp) {
         int64_t higherDimCnt = 0;
-        SmallVector<int64_t> candidateDims;
-        for (auto [store, cDim] : candidate) {
-          auto storeRef = getArgumentRef(store);
-          int64_t curDim = tilingDim_[store];
-          auto dim = cDim;
-          auto solverIndex = solverCollapserElem_->find(storeRef[dim]);
-          if (transposedDimMap.contains(solverIndex)) {
-            LDBG("Found transposed mapping: " << dim << " to " << transposedDimMap.at(solverIndex));
-            dim = transposedDimMap.at(solverIndex);
-          }
-          if (curDim != -1) {
-            solverIndex = solverCollapserElem_->find(storeRef[curDim]);
-            if (transposedDimMap.contains(solverIndex))
-              curDim = transposedDimMap.at(solverIndex);
-          }
-          candidateDims.push_back(dim);
+        for (auto [store, dim] : candidate) {
+          int64_t &curDim = tilingDim_[store];
           if (curDim == -1 || curDim > dim)
             higherDimCnt++;
         }
-        LDBG("Candidate of " << parentIndex << " in group " << groupIndex << " is " << utils::debugger::to_string(candidateDims));
         // try to find majority of dimension is higher
         if (2 * higherDimCnt >= numStoreOp) {
           selectedTilingParIdxMap[groupIndex] = parentIndex;
@@ -120,15 +104,14 @@ bool DimensionAnalyzer::computeTilingDimImpl(
     auto args = getArgumentRefOrCreateDummy(src);
     auto srcRef = solverGroup_->find(argumentsRefPointer_.at(src));
     numStoreOps[srcRef]++;
-    LDBG("Checking operation: " << op << " in group " << srcRef);
     if (rank == 0)
       return;
     auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
+    LDBG("Checking operation: " << op);
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim) && shape[i] != 1) {
-        LDBG("Dim " << i << " is selected in group " << srcRef);
         if (ShapedType::isDynamic(shape[i])) {
           if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>();
               extractSliceOp && extractSliceOp.getSourceType().getDimSize(i) == 1)

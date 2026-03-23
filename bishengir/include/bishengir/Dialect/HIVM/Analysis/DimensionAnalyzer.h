@@ -22,6 +22,7 @@ public:
     Parallel,
     RankReduced,
     Reduce,
+    Transposed,
   };
   explicit DimensionAnalyzer(Operation *op);
   LogicalResult initialize() override;
@@ -135,7 +136,6 @@ protected:
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMap;
   llvm::SmallDenseSet<int> selectedTilingParIdx;
  	std::unique_ptr<mlir::detail::SimpleUnionFind> solverGroup_;
-  DenseMap<int64_t, int64_t> transposedDimMap;
 };
 
 } // namespace detail

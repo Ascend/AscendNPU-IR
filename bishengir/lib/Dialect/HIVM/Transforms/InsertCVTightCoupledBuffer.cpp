@@ -306,12 +306,6 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
-    if (N1 > 1) {
-      auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
-      auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
-          NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
-      markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    }
     auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());

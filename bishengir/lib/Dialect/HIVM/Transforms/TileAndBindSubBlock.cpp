@@ -777,7 +777,6 @@ tileAndSliceOp(func::FuncOp func,
                DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
                bool &isBroadcastAxisCase) {
   hivm::detail::DimensionAnalyzer analyzer(func);
-  LDBG("Before analyzer: " << func);
   if (failed(analyzer.initialize()))
     return failure();
 
