@@ -306,12 +306,6 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
     auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, dstTy, origTensor, reassociation);
-    if (N1 > 1) {
-      auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
-      auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
-          NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
-      markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    }
     auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
     auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
         loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
@@ -323,12 +317,10 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
     auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, nzTy, transposed->getResult(0), nzReassoc);
-    if (M1 > 1) {
-      auto markOp = rewriter.create<annotation::MarkOp>(loc, nzOp);
-      auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
-          NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
-      markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    }
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, nzOp);
+    auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
+        NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
+    markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
     auto l1SpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
     auto l1MemrefType = mlir::MemRefType::get(nzTy.getShape(),
                                               nzTy.getElementType(),

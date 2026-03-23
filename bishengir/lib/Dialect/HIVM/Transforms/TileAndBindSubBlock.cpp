@@ -20,7 +20,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Transforms.h"
 
@@ -239,8 +238,12 @@ public:
         Op->template hasAttrOfType<UnitAttr>(tileAndSliceFailure))
       return failure();
 
-    int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
+    /// TO DO: The below is a temporary settting to replace
+    /// analyzer.getTilingDim(storeOp.getSrc()), will be enhanced in
+    /// generalization version
+    int64_t tilingDim = -1;
     if (std::is_same_v<hivm::CopyOp, OpType>){
+      tilingDim = 1;
       if (!Op.getResults().empty()){  // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
@@ -251,6 +254,7 @@ public:
       }
       LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
+      tilingDim = 0;
       LLVM_DEBUG(DBGS() << "The store op tiling dim is: "<<tilingDim<<"\n");
     }
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
@@ -769,16 +773,12 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
 
 static LogicalResult
 tileAndSliceOp(func::FuncOp func,
-               DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
-               bool &isBroadcastAxisCase) {
+               DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   hivm::detail::DimensionAnalyzer analyzer(func);
-  LDBG("Before analyzer: " << func);
   if (failed(analyzer.initialize()))
     return failure();
 
-  if (analyzer.computeTilingDim()) {
-    isBroadcastAxisCase = true;
-  }
+  analyzer.computeTilingDim();
 
   func->walk([&](annotation::MarkOp markOp) {
     if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
@@ -883,19 +883,9 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
-  bool isBroadcastAxisCase = false;
-  
-  PassManager pm(newFunc->getContext());
-  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
-
-  if (failed(pm.run(newFunc)) ||
-      failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim, isBroadcastAxisCase))) {
+  if (failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim))) {
     failAndRevert(newFunc);
     return failure();
-  }
-
-  if (isBroadcastAxisCase) {
-    strictMode = false;
   }
 
   // If all the pattern fails due to the tilingDim=-1
@@ -932,10 +922,11 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     return failure();
   }
 
-  PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2, strictMode);
+  PassManager pm(newFunc->getContext());
+  bool strictMode = false;
+  populateBindSubBlockBubbleUpPassManager(pm, strictMode);
 
-  LogicalResult bubbleUpResult = pm2.run(newFunc);
+  LogicalResult bubbleUpResult = pm.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
       newFunc.verifyBody().failed() || newFunc.verifyRegions().failed()) {
     failAndRevert(newFunc);
@@ -1000,16 +991,14 @@ public:
     if (!attr || !attr.getId().has_value())
       return failure();
 
-    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
-    if (!tilingDimAttr)
-      return failure();
-    int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
-    auto rank = allocOp.getType().getRank();
-    if (tilingDim == -1 || (tilingDim != rank - 2 && tilingDim != rank - 1))
-      return failure();
-    auto splitMode = tilingDim == rank - 2
-                         ? hivm::FixpipeDualDstMode::ROW_SPLIT
-                         : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
+    // TODO: Determine splitMode automaticly
+    auto splitMode = hivm::FixpipeDualDstMode::ROW_SPLIT;
+    // auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
+    // if (!tilingDimAttr)
+    //   return failure();
+    // int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+    // if(tilingDim == -1 || (tilingDim != 0 && tilingDim != 1)) return failure();
+    // auto splitMode = tilingDim == 0? hivm::FixpipeDualDstMode::ROW_SPLIT : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
     auto verifyShape = [](ArrayRef<int64_t> shape) -> bool {

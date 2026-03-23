@@ -113,14 +113,6 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
-class VarangeBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
- 
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
 class BufferizationBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;

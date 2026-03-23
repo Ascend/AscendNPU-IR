@@ -76,25 +76,21 @@ void DimensionAnalyzer::processBFS() {
     Value current = bfsQueue.front();
     bfsQueue.pop();
 
-    for (auto &use : current.getUses()) {
-      auto *user = use.getOwner();
+    for (Operation *user : current.getUsers()) {
       processOperation(user, current);
       if (isa<ShapedType>(current.getType())) {
         createDummyRefIfNotExist({current});
         auto curRef = argumentsRefPointer_.at(current);
-        if (auto forOp = dyn_cast<scf::ForOp>(user)) {
-          auto regionArg = forOp.getTiedLoopRegionIterArg(&use);
-          auto res = forOp.getTiedLoopResult(&use);
-          createDummyRefIfNotExist({regionArg, res});
-          solverGroup_->join(curRef, argumentsRefPointer_.at(regionArg));
-          solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-        } else {
-          for (auto res : user->getResults()) {
-            if (isa<ShapedType>(res.getType())) {
-              createDummyRefIfNotExist({res});
-              solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-              LDBG(res << " is mapped to " << utils::debugger::to_string(getArgumentRef(res)));
-            }
+        for (auto res : user->getResults()) {
+          if (isa<ShapedType>(res.getType())) {
+            createDummyRefIfNotExist({res});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+          }
+        }
+        for (auto opr : user->getOperands()) {
+          if (isa<ShapedType>(opr.getType())) {
+            createDummyRefIfNotExist({opr});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
           }
         }
       }
@@ -411,7 +407,6 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
 
 void DimensionAnalyzer::processTilingDimMapping(
     tensor::ExpandShapeOp expandShapeOp, DictionaryAttr tilingDimMapping) {
-  LDBG("Processing Tiling dim mapping " << expandShapeOp);
   auto src = expandShapeOp.getSrc();
   auto res = expandShapeOp.getResult();
   createDummyRefIfNotExist({src, res});
@@ -559,29 +554,9 @@ void DimensionAnalyzer::markDimensionKind() {
       }
     } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
       auto srcRef = getArgumentRef(vtransposeOp.getSrc());
-      for (auto[dimIdx, parentIdx] : llvm::enumerate(srcRef)) {
-        transposedDimMap[solverShapeElem_->find(parentIdx)] = dimIdx;
-      }
-    } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
-      auto expandShapeOp =
-          markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
-      auto tilingDimMapping = markOp->getAttrOfType<DictionaryAttr>(
-          kTilingDimMappingAttrName);
-      auto src = expandShapeOp.getSrc();
-      auto res = expandShapeOp.getResult();
-
-      auto srcArgs = getArgumentRef(src);
-      auto resArgs = getArgumentRef(res);
-      for (auto dimMappingAttr : tilingDimMapping) {
-        int srcDim;
-        int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
-        llvm::to_integer(dimMappingAttr.getName(), srcDim);
-        srcDim = solverShapeElem_->find(srcArgs[srcDim]);
-        resDim = solverShapeElem_->find(resArgs[resDim]);
-        if (auto it = transposedDimMap.find(srcDim);
-            it != transposedDimMap.end())
-            transposedDimMap[resDim] = it->second;
+      for (auto idx : llvm::drop_begin(srcRef)) {
+        tilingDimKindMap[solverCollapserElem_->find(idx)] =
+          TilingDimensionKind::Transposed;
       }
     }
   });
