@@ -2,7 +2,7 @@
 ========
 
 .. toctree::
-   :maxdepth: 1
+   :titlesonly:
 
    AutoBlockify/AutoBlockify_zh
    AutoFlatten/AutoFlatten_zh

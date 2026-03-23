@@ -2,7 +2,7 @@ Features
 ========
 
 .. toctree::
-   :maxdepth: 1
+   :titlesonly:
 
    AutoBlockify/AutoBlockify
    AutoFlatten/AutoFlatten

@@ -2,7 +2,7 @@ Dialects
 ========
 
 .. toctree::
-   :maxdepth: 1
+   :titlesonly:
 
    HFusionDialect
    HIVMDialect

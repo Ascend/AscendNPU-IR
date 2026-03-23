@@ -2,7 +2,7 @@
 ========
 
 .. toctree::
-   :maxdepth: 2
+   :titlesonly:
 
    interface_api_zh
    triton_interface_zh

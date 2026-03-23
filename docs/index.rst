@@ -1,5 +1,4 @@
 .. AscendNPU IR documentation master file (English).
-   Keep the root toctree for sidebar navigation.
 
 Welcome to AscendNPU IR Docs
 ============================
@@ -8,87 +7,92 @@ Welcome to AscendNPU IR Docs
 
 .. raw:: html
 
-    <p><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitCode</a></p>
-    <p><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitHub</a></p>
-    <p><a href="https://ascendnpu-ir.gitcode.com" target="_blank">Documentation on GitCode</a></p>
+    <ul>
+    <li><a href="https://gitcode.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitCode</a></li>
+    <li><a href="https://github.com/Ascend/AscendNPU-IR" target="_blank">AscendNPU-IR on GitHub</a></li>
+    <li><a href="https://ascendnpu-ir.gitcode.com" target="_blank">Documentation on GitCode</a></li>
+    </ul>
 
 Getting Started
 ---------------
 
-- :doc:`Install and build <sources/introduction/quick_start/installing_guide>` — Environment and build steps
-- :doc:`Quick start <sources/introduction/quick_start/index>` — Setup and examples
-- :doc:`Introduction and architecture <sources/introduction/architecture>` — Architecture and layout
+- :doc:`Install and Build <sources/introduction/quick_start/installing_guide>` — Environment requirements and build steps
+- :doc:`Quick start <sources/introduction/quick_start/index>` — Setup instructions and examples
+- :doc:`Architecture Design <sources/introduction/architecture>` — Logical architecture and code structure
 
 User Guide
 ----------
 
-- :doc:`Compile options <sources/user_guide/compile_option>`
-- :doc:`Debug and tune <sources/user_guide/debug_option>`
-- :doc:`Best practices <sources/user_guide/best_practice>`
+- :doc:`Compile Options <sources/user_guide/compile_option>` — Compilation options and features
+- :doc:`Debug and Tune <sources/user_guide/debug_option>` — Debugging methods and tuning
+- :doc:`Best Practices <sources/user_guide/best_practice>` — Programming cases and operator rewriting
 
 Developer Guide
 ---------------
 
-- :doc:`IR integration <sources/developer_guide/conversion/interface_api>` — Ecosystem and APIs
+- :doc:`IR integration <sources/developer_guide/conversion/interface_api>` — Ecosystem integration and APIs
 - :doc:`Dialects <sources/developer_guide/dialects/index>` — Dialect reference
-- :doc:`Passes <sources/developer_guide/passes/index>` — Passes and transforms
-- :doc:`Features <sources/developer_guide/features/index>` — Key features
+- :doc:`Passes <sources/developer_guide/passes/index>` — Transforms and passes
+- :doc:`Key Features <sources/developer_guide/features/index>` — Features and implementation details
 
 About
 -----
 
 - :doc:`Contributing <sources/contributing_guide/contribute>`
 - :doc:`FAQ <sources/faq/faq>`
-- :doc:`Related projects <sources/reference/thanks>`
-- :doc:`Talks and courses <sources/reference/talk_and_course>`
+- :doc:`Related Projects and Acknowledgments <sources/reference/thanks>`
+- :doc:`Talks and Courses <sources/reference/talk_and_course>`
+
+
+.. Keep the root toctree for sidebar navigation.
 
 .. toctree::
-   :maxdepth: 2
    :hidden:
+   :titlesonly:
    :caption: Introduction
 
-   sources/introduction/introduction
-   sources/introduction/quick_start/index
-   sources/introduction/architecture
+   Project Overview <sources/introduction/introduction>
+   Quick Start <sources/introduction/quick_start/index>
+   Architecture Design <sources/introduction/architecture>
 
 .. toctree::
-   :maxdepth: 2
    :hidden:
+   :titlesonly:
    :caption: User Guide
 
-   sources/user_guide/compile_option
-   sources/user_guide/debug_option
-   sources/user_guide/best_practice
+   Compile Options <sources/user_guide/compile_option>
+   Debug and Tune <sources/user_guide/debug_option>
+   Best Practices <sources/user_guide/best_practice>   
 
 .. toctree::
-   :maxdepth: 2
    :hidden:
+   :titlesonly:
    :caption: Developer Guide
 
-   sources/developer_guide/conversion/index
-   sources/developer_guide/dialects/index
-   sources/developer_guide/passes/index
-   sources/developer_guide/features/index
+   Conversion Guide <sources/developer_guide/conversion/index>
+   Dialects <sources/developer_guide/dialects/index>
+   Passes <sources/developer_guide/passes/index>
+   Key Features <sources/developer_guide/features/index>
 
 .. toctree::
-   :maxdepth: 2
    :hidden:
+   :titlesonly:
    :caption: Contributing
 
-   sources/contributing_guide/contribute
-   sources/user_of_npuir/users
+   Contributing Guide <sources/contributing_guide/contribute>
+   AscendNPU IR Users <sources/user_of_npuir/users>
 
 .. toctree::
-   :maxdepth: 1
    :hidden:
+   :titlesonly:
    :caption: FAQ
 
-   sources/FAQ/FAQ
+   FAQ <sources/FAQ/FAQ>
 
-
-
+.. toctree::
    :hidden:
+   :titlesonly:
    :caption: Reference
 
-   sources/reference/thanks
-   sources/reference/talk_and_course
+   Related Projects and Acknowledgments <sources/reference/thanks>
+   Talks and Courses <sources/reference/talk_and_course>

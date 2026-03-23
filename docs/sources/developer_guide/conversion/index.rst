@@ -2,7 +2,7 @@ Integration Guide
 =================
 
 .. toctree::
-   :maxdepth: 2
+   :titlesonly:
 
    interface_api
    triton_interface
