@@ -60,7 +60,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   // recommended to do this in canonicalization pass
 
   if (hacc::utils::isAscend950(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) && 
+          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) &&
       !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     if (hivmPipelineOptions.enableLayoutOptimization) {
@@ -68,7 +68,8 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     } else {
       pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     }
-    pm.nest<func::FuncOp>().addPass(mlir::hivm::createInsertLoadStoreForScalarPass());
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForMixCVPass());
@@ -218,7 +219,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  if (!hacc::utils::isAscend950(hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) ||
+  if (!hacc::utils::isAscend950(
+          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) ||
       hivmPipelineOptions.enableDotScaledCompile) {
     pm.addPass(createInsertWorkSpaceForMixCVPass());
   }
@@ -249,8 +251,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   ADD_CANONICALIZER_PASS;
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
   if (hivmPipelineOptions.enableMixedCV) {
-    pm.nest<func::FuncOp>().addPass(
-        mlir::hivm::createSplitMixedIfConditionalsPass());
+    if (hivmPipelineOptions.workspaceMultiBufferNum > 1) {
+      pm.nest<func::FuncOp>().addPass(
+          mlir::hivm::createSplitMixedIfConditionalsPass());
+    }
     // Software pipelining Cube and Vector operations
     CVPipeliningOptions pipelineOptions;
     pipelineOptions.pipelineDepth = hivmPipelineOptions.workspaceMultiBufferNum;
@@ -433,9 +437,10 @@ static void hivmPostBufferizationOptimizationPipeline(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
     NormalizeVectorOptions normalizeVectorOptions;
-    normalizeVectorOptions.enableDotScaledCompile = 
+    normalizeVectorOptions.enableDotScaledCompile =
         hivmPipelineOptions.enableDotScaledCompile;
-    pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass(normalizeVectorOptions));
+    pm.nest<func::FuncOp>().addPass(
+        vector::createNormalizeVectorPass(normalizeVectorOptions));
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }
