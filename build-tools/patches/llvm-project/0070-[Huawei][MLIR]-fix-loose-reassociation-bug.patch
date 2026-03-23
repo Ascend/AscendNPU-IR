@@ -1,0 +1,27 @@
+diff --git a/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp b/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
+index baa41237fe..1c5d762500 100644
+--- a/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
++++ b/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
+@@ -503,6 +503,10 @@ void mlir::renumberReassoc(
+   }
+ }
+
++static bool isAllOnes(const SmallVector<int64_t> &shape) {
++  return llvm::all_of(shape, [](auto x) { return x == 1; });
++}
++
+ bool mlir::areLooseReassociationsCompatible(
+     SmallVector<ReassociationIndices> &supposedExpand,
+     SmallVector<ReassociationIndices> &supposedCollapse,
+@@ -512,7 +516,10 @@ bool mlir::areLooseReassociationsCompatible(
+   uint64_t topPointer = 0;
+   uint64_t bottomPointer = 0;
+   if (sourceShape.empty()) {
+-    return llvm::all_of(resultShape, [](auto x) { return x == 1; });
++    return isAllOnes(resultShape);
++  }
++  if (resultShape.empty()) {
++    return isAllOnes(sourceShape);
+   }
+   supposedExpand.assign(sourceShape.size(), {});
+   supposedCollapse.assign(resultShape.size(), {});
