@@ -623,9 +623,144 @@ test_where_lt_case1()
 ```
 If it finishes execution without errors, it proves the run was successful.
 
-Because bitwise mask packs 8 i8 booleans into one i8, the mask assembly logic must be updated accordingly (e.g. expand byte to 8 bits when comparing with torch reference). See the Chinese version for the full test_where_lt_case1 example.
+#### Tiling
 
+The bitmask is highly related to the tiling logic, and the kernel itself has different tiling logic under different scenarios, including but not limited to (1) enabling 1:2 optimization, (2) tensor axes fusion, (3) broadcast, (4) unsupported data types in hardware, (5) non-1 grid triton kernel, etc. Since the tiling logic varies across different scenarios, we have a generalized example of creating a benchmark mask (deriving an i1 benchmark mask from an i8 bitmask) for your reference. This mask creation logic does not consider specific scenarios; it is derived from the errors in the bitmask results.
 
+Let's say this is the original mask creation logic:
+```
+for i in range(numel // 8):
+    byte_value = flatten_cond_i8[i]
+    for bit in range(8):
+        flatten_cond_i1[..., i*8 + bit] = (byte_value & (1 << bit)) != 0
+```
+
+Assume that in a specific scenario, when the shape is (2, X, X, X), the vimdiff result is
+![image](figs/performance/bitmask1.png)
+
+And in the same scenario, when the shape is (3, X, X, X), the vimdiff result is
+![image](figs/performance/bitmask2.png)
+
+From this, it can be seen that when the shape is (A, X, X, X), the tiling logic in the above scenario processes according to the first axis (i.e., `A`). The incorrect mask creation results in only the first tile along the first axis having aligned accuracy, while the remaining (A-1)/A of the data has deviations. Therefore, the benchmark mask creation logic for accuracy verification needs to take A into account, as shown in the following code:
+
+```python
+for sub_A in range(A):
+    # The offset calculation depends on the logic of the kernel
+    offset_sub_A = D * B * sub_A
+    for i in range(min(numel, B * D) // 8):
+        byte_value = flatten_cond_i8[offset_sub_A + i]
+        for bit in range(8):
+            flatten_cond_i1[..., offset_sub_A + i*8 + bit] = (byte_value & (1 << bit)) != 0
+```
+
+Through the above mask creation example, the bitmask function can be correctly implemented using a highly generalized approach.
+
+In addition, the following also provides the logic for multiple tiling mask creation for reference:
+
+```python
+import triton
+import triton.language as tl
+import torch
+import torch_npu
+import pytest
+import test_common
+from itertools import product
+
+def torch_where_lt_case1(x0, x1, cond):
+    res = torch.where(cond, x0, x1)
+    return res
+
+@triton.jit
+def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
+                          X_BLOCK_SIZE: tl.constexpr, Y_BLOCK_SIZE: tl.constexpr, Z_BLOCK_SIZE: tl.constexpr,
+                          X_STRIDE: tl.constexpr, Y_STRIDE: tl.constexpr, Z_STRIDE: tl.constexpr):
+    # Calculate the offset according to the grid
+    xoffset = tl.program_id(0) * X_BLOCK_SIZE
+    yoffset = tl.program_id(1) * Y_BLOCK_SIZE
+    zoffset = tl.program_id(2) * Z_BLOCK_SIZE
+    xindex = X_STRIDE * (xoffset + tl.arange(0, X_BLOCK_SIZE))[:, None, None]
+    yindex = Y_STRIDE * (yoffset + tl.arange(0, Y_BLOCK_SIZE))[None, :, None]
+    zindex = Z_STRIDE * (zoffset + tl.arange(0, Z_BLOCK_SIZE))[None, None, :]
+    offset = xindex + yindex + zindex
+    # Load in0 and in1
+    in0 = tl.load(in_ptr0 + offset)
+    in1 = tl.load(in_ptr1 + offset)
+    cond = tl.load(cond_ptr + offset)
+    # bitwise where and store
+    mask = tl.where(cond, in0, in1)
+    tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    tl.store(out_ptr0 + offset, mask)
+
+@pytest.mark.parametrize('param_list',
+                         [
+                            ['float32', (16, 16, 32), (2, 2, 2)],
+                            ['int32', (16, 32, 16), (2, 2, 2)],
+                            ['int16', (32, 16, 16), (2, 2, 2)],
+                            ['float16', (8, 8, 64), (8, 8, 8)],
+                            ['float32', (8, 8, 24), (4, 4, 3)],
+                            ['int32', (1, 1, 1024), (1, 1, 16)],
+                            ['int16', (1, 1, 16), (1, 1, 2)],
+                            ['float16', (8, 80, 16), (1, 80, 2)],
+                         ]
+                        )
+def test_where_lt_case1(param_list):
+    # Checking and constant value creation
+    dtype, shape, grid = param_list
+    if shape[0] % shape[0] != 0 or \
+       shape[1] % shape[1] != 0 or \
+       shape[2] % shape[2] != 0 :
+        raise ValueError("Shape is not divisible by grid")
+
+    x_block_size = shape[0] // grid[0]
+    y_block_size = shape[1] // grid[1]
+    z_block_size = shape[2] // grid[2]
+    if z_block_size%8 != 0:
+        raise ValueError("The last dimension should be a multiple of 8")
+
+    if grid[-1] == 1:
+        raise ValueError("Please tile the last dim")
+
+    if(dtype in ["bool", "int8", "uint8", "int64"]):
+        raise ValueError(f"The torch mask tiling logic is not applicable with {dtype} type")
+
+    x_stride = shape[-1] * shape[-2]
+    y_stride = shape[-1]
+    z_stride = 1
+
+    # Run triton with i8 bitwise mask
+    x0 = test_common.generate_tensor(shape, dtype).npu()
+    x1 = test_common.generate_tensor(shape, dtype).npu()
+    cond_i8 = test_common.generate_tensor(shape, 'uint8').npu()
+    y_cal = test_common.generate_tensor(shape, dtype).npu()
+    triton_bitmask[grid](x0, x1, cond_i8, y_cal, x_block_size, y_block_size, z_block_size, x_stride, y_stride, z_stride)
+
+    # Run torch with i1 mask
+    flatten_cond_bool = torch.zeros(cond_i8.flatten().shape, dtype=torch.bool).npu()
+    for x_block_id, y_block_id, z_block_id in product(range(grid[0]), range(grid[1]), range(grid[2])):
+        flatten_subview_cond_i8 = cond_i8[x_block_id * x_block_size: (x_block_id+1) * x_block_size,
+                                  y_block_id * y_block_size: (y_block_id+1) * y_block_size,
+                                  z_block_id * z_block_size: (z_block_id+1) * z_block_size].flatten()
+        for i in range(flatten_subview_cond_i8.shape[-1]// 8):
+            # Get the corresponding i8 value
+            i8_z_block_offset = i % (z_block_size // 8)
+            i8_y_block_offset = i // (z_block_size // 8) % y_block_size * z_block_size
+            i8_x_block_offset = i // (z_block_size // 8) // y_block_size * y_block_size * z_block_size
+            i8_offset = i8_z_block_offset + i8_y_block_offset + i8_x_block_offset
+            byte_value = flatten_subview_cond_i8[i8_offset]
+            # Set the corresponding i1 value
+            i1_z_block_offset = (z_block_id * z_block_size + (i * 8) % z_block_size) * z_stride
+            i1_y_block_offset = (y_block_id * y_block_size + (i * 8) // z_block_size % y_block_size) * y_stride
+            i1_x_block_offset = (x_block_id * x_block_size + (i * 8) // z_block_size // y_block_size) * x_stride
+            i1_offset = i1_x_block_offset + i1_y_block_offset + i1_z_block_offset
+            for bit in range(8):
+                flatten_cond_bool[..., i1_offset + bit] = (byte_value & (1 << bit)) != 0
+    cond_bool = flatten_cond_bool.view(shape)
+    y_ref = torch_where_lt_case1(x0, x1, cond_bool)
+    # Precision test
+    print("y_cal: ", y_cal)
+    print("y_ref: ", y_ref)
+    test_common.validate_cmp(dtype, y_cal, y_ref)
+```
 
 #### Limit
 

@@ -866,6 +866,145 @@ test_where_lt_case1()
 ```
 执行结束不报错，证明运行成功。
 
+#### 切分逻辑
+
+bitmask和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于 (1) CV场景下使能1:2性能优化 (2) 融轴 (3) broadcast场景 (4)非硬件支撑的数据类型 (5) triton算子输入非1的grid切块 等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组mask例子(由i8 bitmask组出i1的标杆mask)供你参考，这个组mask逻辑不考虑场景，是从bitmask结果的误差推导组mask逻辑的
+
+假设这是本来的组mask逻辑
+```
+for i in range(numel // 8):
+    byte_value = flatten_cond_i8[i]
+    for bit in range(8):
+        flatten_cond_i1[..., i*8 + bit] = (byte_value & (1 << bit)) != 0
+```
+
+假设在某个场景下，shape为(2，X，X，X)时，vimdiff结果为
+![image](figs/performance/bitmask1.png)
+
+而在同一场景下，shape为(3，X，X，X)时，vimdiff结果为
+![image](figs/performance/bitmask2.png)
+
+由此感知，当shape为(A, X, X, X)时，上述场景的切分逻辑是按首轴(即`A`)处理，错误的组mask逻辑导致只有首轴的首个切分精度对齐，而剩下的有(A-1)/A的数据则有偏差，如此，精度验证的标杆组mask逻辑就需要考虑A了，见以下代码：
+
+```python
+for sub_A in range(A):
+    # The offset calculation depends on the logic of the kernel
+    offset_sub_A = D * B * sub_A
+    for i in range(min(numel, B * D) // 8):
+        byte_value = flatten_cond_i8[offset_sub_A + i]
+        for bit in range(8):
+            flatten_cond_i1[..., offset_sub_A + i*8 + bit] = (byte_value & (1 << bit)) != 0
+```
+
+通过上述的最佳实践，bitmask功能即可通过高度泛化的方法正确实现。
+
+此外，以下亦提供多重切分的逻辑供参考：
+
+```python
+import triton
+import triton.language as tl
+import torch
+import torch_npu
+import pytest
+import test_common
+from itertools import product
+
+def torch_where_lt_case1(x0, x1, cond):
+    res = torch.where(cond, x0, x1)
+    return res
+
+@triton.jit
+def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
+                          X_BLOCK_SIZE: tl.constexpr, Y_BLOCK_SIZE: tl.constexpr, Z_BLOCK_SIZE: tl.constexpr,
+                          X_STRIDE: tl.constexpr, Y_STRIDE: tl.constexpr, Z_STRIDE: tl.constexpr):
+    # Calculate the offset according to the grid
+    xoffset = tl.program_id(0) * X_BLOCK_SIZE
+    yoffset = tl.program_id(1) * Y_BLOCK_SIZE
+    zoffset = tl.program_id(2) * Z_BLOCK_SIZE
+    xindex = X_STRIDE * (xoffset + tl.arange(0, X_BLOCK_SIZE))[:, None, None]
+    yindex = Y_STRIDE * (yoffset + tl.arange(0, Y_BLOCK_SIZE))[None, :, None]
+    zindex = Z_STRIDE * (zoffset + tl.arange(0, Z_BLOCK_SIZE))[None, None, :]
+    offset = xindex + yindex + zindex
+    # Load in0 and in1
+    in0 = tl.load(in_ptr0 + offset)
+    in1 = tl.load(in_ptr1 + offset)
+    cond = tl.load(cond_ptr + offset)
+    # bitwise where and store
+    mask = tl.where(cond, in0, in1)
+    tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    tl.store(out_ptr0 + offset, mask)
+
+@pytest.mark.parametrize('param_list',
+                         [
+                            ['float32', (16, 16, 32), (2, 2, 2)],
+                            ['int32', (16, 32, 16), (2, 2, 2)],
+                            ['int16', (32, 16, 16), (2, 2, 2)],
+                            ['float16', (8, 8, 64), (8, 8, 8)],
+                            ['float32', (8, 8, 24), (4, 4, 3)],
+                            ['int32', (1, 1, 1024), (1, 1, 16)],
+                            ['int16', (1, 1, 16), (1, 1, 2)],
+                            ['float16', (8, 80, 16), (1, 80, 2)],
+                         ]
+                        )
+def test_where_lt_case1(param_list):
+    # Checking and constant value creation
+    dtype, shape, grid = param_list
+    if shape[0] % shape[0] != 0 or \
+       shape[1] % shape[1] != 0 or \
+       shape[2] % shape[2] != 0 :
+        raise ValueError("Shape is not divisible by grid")
+
+    x_block_size = shape[0] // grid[0]
+    y_block_size = shape[1] // grid[1]
+    z_block_size = shape[2] // grid[2]
+    if z_block_size%8 != 0:
+        raise ValueError("The last dimension should be a multiple of 8")
+
+    if grid[-1] == 1:
+        raise ValueError("Please tile the last dim")
+
+    if(dtype in ["bool", "int8", "uint8", "int64"]):
+        raise ValueError(f"The torch mask tiling logic is not applicable with {dtype} type")
+
+    x_stride = shape[-1] * shape[-2]
+    y_stride = shape[-1]
+    z_stride = 1
+
+    # Run triton with i8 bitwise mask
+    x0 = test_common.generate_tensor(shape, dtype).npu()
+    x1 = test_common.generate_tensor(shape, dtype).npu()
+    cond_i8 = test_common.generate_tensor(shape, 'uint8').npu()
+    y_cal = test_common.generate_tensor(shape, dtype).npu()
+    triton_bitmask[grid](x0, x1, cond_i8, y_cal, x_block_size, y_block_size, z_block_size, x_stride, y_stride, z_stride)
+
+    # Run torch with i1 mask
+    flatten_cond_bool = torch.zeros(cond_i8.flatten().shape, dtype=torch.bool).npu()
+    for x_block_id, y_block_id, z_block_id in product(range(grid[0]), range(grid[1]), range(grid[2])):
+        flatten_subview_cond_i8 = cond_i8[x_block_id * x_block_size: (x_block_id+1) * x_block_size,
+                                  y_block_id * y_block_size: (y_block_id+1) * y_block_size,
+                                  z_block_id * z_block_size: (z_block_id+1) * z_block_size].flatten()
+        for i in range(flatten_subview_cond_i8.shape[-1]// 8):
+            # Get the corresponding i8 value
+            i8_z_block_offset = i % (z_block_size // 8)
+            i8_y_block_offset = i // (z_block_size // 8) % y_block_size * z_block_size
+            i8_x_block_offset = i // (z_block_size // 8) // y_block_size * y_block_size * z_block_size
+            i8_offset = i8_z_block_offset + i8_y_block_offset + i8_x_block_offset
+            byte_value = flatten_subview_cond_i8[i8_offset]
+            # Set the corresponding i1 value
+            i1_z_block_offset = (z_block_id * z_block_size + (i * 8) % z_block_size) * z_stride
+            i1_y_block_offset = (y_block_id * y_block_size + (i * 8) // z_block_size % y_block_size) * y_stride
+            i1_x_block_offset = (x_block_id * x_block_size + (i * 8) // z_block_size // y_block_size) * x_stride
+            i1_offset = i1_x_block_offset + i1_y_block_offset + i1_z_block_offset
+            for bit in range(8):
+                flatten_cond_bool[..., i1_offset + bit] = (byte_value & (1 << bit)) != 0
+    cond_bool = flatten_cond_bool.view(shape)
+    y_ref = torch_where_lt_case1(x0, x1, cond_bool)
+    # Precision test
+    print("y_cal: ", y_cal)
+    print("y_ref: ", y_ref)
+    test_common.validate_cmp(dtype, y_cal, y_ref)
+```
+
 #### 限制
 
 - 由于Triton前端会将i1转换为i8，如果对其他类型如i16/i32等进行bitwise_mask操作反而会带来性能损耗，因此此功能只支持i8类型的mask
