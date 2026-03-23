@@ -87,6 +87,10 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     static cl::opt<bool, /*ExternalStorage=*/true> disableFFTS(
         "disable-ffts", cl::desc("Force disabling FFTS."),
         cl::location(disableFFTSFlag), cl::init(false));
+    
+    static cl::opt<bool, /*ExternalStorage=*/true> disableFMA(
+        "disable-fma", cl::desc("Force disabling FMA."),
+        cl::location(disableFMAFlag), cl::init(false));
 
     static cl::opt<bool, /*ExternalStorage=*/true> disableHFusionVectorize(
         "disable-hfusion-vectorize",
