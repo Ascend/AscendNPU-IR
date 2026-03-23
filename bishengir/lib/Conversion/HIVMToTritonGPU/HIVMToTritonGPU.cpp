@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToArith.h"
+#include "bishengir/Conversion/HIVMToTritonGPU/HIVMToMath.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
@@ -77,6 +78,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
 
   // TODO: Add more HIVMToXXPatterns
   populateHIVMToArithConversionPatterns(stage1Patterns);
+  populateHIVMToMathConversionPatterns(stage1Patterns);
   populateHIVMToTensorPatterns(stage1Patterns);
   populateBufferizationToTritonPatterns(stage1Patterns);
   populateReinterpretCastToUnrealizedCastPatterns(stage1Patterns);

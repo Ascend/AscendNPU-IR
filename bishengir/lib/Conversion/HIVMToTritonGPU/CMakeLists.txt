@@ -12,6 +12,7 @@ add_bishengir_conversion_library(BiShengIRHIVMToTritonGPU
   HIVMToTriton.cpp
   HIVMToArith.cpp
   HIVMToTensor.cpp
+  HIVMToMath.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Conversion/HIVMToTritonGPU
