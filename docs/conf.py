@@ -94,16 +94,10 @@ source_suffix = {
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-# html_theme = 'alabaster'
-# html_theme = 'pydata_sphinx_theme'
-# html_theme = 'shibuya'
-# html_theme = 'nvidia_sphinx_theme'
-# html_theme = 'furo'
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'furo'
 html_static_path = ['_static']
-
-# 加载自定义CSS文件
-html_css_files = ['custom.css']
+pygments_style = "friendly"
+html_last_updated_fmt = "%b %d, %Y"
 
 def setup(app):
     """Register Pygments lexer aliases; for zh build copy index_zh.html to index.html (RTD + local)."""
