@@ -65,6 +65,43 @@ sync_block_unlock(memref_t<__gm__ int64_t, 1> *lock_var) {
 #endif
 }
 
+/// sync_block_lock_with_subblock: same as sync_block_lock but with block_idx
+/// computed as get_block_idx() * get_subblockdim() + get_subblockid().
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+#else
+  int64_t block_idx = INTRINSIC_NO_ARGS(get_block_idx) *
+                          INTRINSIC_NO_ARGS(get_subblockdim) +
+                      INTRINSIC_NO_ARGS(get_subblockid);
+  volatile __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
+  INTRINSIC(dcci, lock_var_ptr, 1);
+  int64_t lock_val = *lock_var_ptr;
+  while (lock_val != block_idx) {
+    INTRINSIC(dcci, lock_var_ptr, 1);
+    lock_val = *lock_var_ptr;
+    continue;
+  }
+#endif
+}
+
+/// sync_block_unlock_with_subblock: same as sync_block_unlock but with
+/// block_idx computed as get_block_idx() * get_subblockdim() + get_subblockid().
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+#else
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  int64_t block_idx = INTRINSIC_NO_ARGS(get_block_idx) *
+                          INTRINSIC_NO_ARGS(get_subblockdim) +
+                      INTRINSIC_NO_ARGS(get_subblockid);
+  __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
+  int64_t new_lock_val = block_idx + 1;
+  *lock_var_ptr = new_lock_val;
+  INTRINSIC(dcci, lock_var_ptr, 1);
+#endif
+}
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // sync_block_lock
@@ -75,4 +112,16 @@ REGISTE_SYNCBLOCKLOCK();
 // sync_block_unlock
 //===-------------------------------------------------------------------===//
 REGISTE_SYNCBLOCKUNLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_with_subblock (block_idx = get_block_idx * get_subblockdim
+// + get_subblockid)
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKLOCK_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_with_subblock (block_idx = get_block_idx *
+// get_subblockdim + get_subblockid)
+//===-------------------------------------------------------------------===//
+REGISTE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK();
 }

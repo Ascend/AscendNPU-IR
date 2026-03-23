@@ -1722,12 +1722,17 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
 template <typename SyncBlockOp>
 class SyncBlockOpToLibraryCallPattern : public OpRewritePattern<SyncBlockOp> {
 public:
+  static constexpr llvm::StringLiteral kSyncBlockLockWithSubblockAttr =
+      "sync_block_lock_with_subblock";
+
   using OpRewritePattern<SyncBlockOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SyncBlockOp op,
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
+    if (op->hasAttr(kSyncBlockLockWithSubblockAttr))
+      libCallName += "_with_subblock";
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
     return success();
