@@ -23,6 +23,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Visitors.h"
@@ -42,6 +43,18 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+/// Strip _mix_aiv or _mix_aic suffix from func name to get the original kernel
+/// name. This ensures host callback func names are consistent when the kernel
+/// has been split by SplitMixKernel (e.g., kernel -> kernel_mix_aiv/kernel_mix_aic).
+static std::string getBaseKernelNameForHostFunc(StringRef funcName) {
+  std::string name = funcName.str();
+  constexpr size_t kMixSuffixLen = 8; // length of "_mix_aiv" or "_mix_aic"
+  if ((funcName.ends_with("_mix_aiv") || funcName.ends_with("_mix_aic")) &&
+      funcName.size() >= kMixSuffixLen)
+    name.resize(name.size() - kMixSuffixLen);
+  return name;
+}
+
 SmallVector<Operation *> collectCreateSyncBlockLockOp(func::FuncOp funcOp) {
   SmallVector<Operation *> candidate;
   funcOp.walk([&](hivm::CreateSyncBlockLockOp op) { candidate.push_back(op); });
@@ -73,9 +86,15 @@ func::FuncOp insertInferSyncBlockLockNumFuncImpl(func::FuncOp funcOp,
 
 void insertInferSyncBlockLockNumFunc(func::FuncOp funcOp,
                                      int64_t syncBlockLockNum) {
+  std::string baseKernelName =
+      getBaseKernelNameForHostFunc(funcOp.getSymName());
   std::string callbackFuncName = hacc::constructHostFunctionName(
-      funcOp.getSymName().str(),
-      hacc::HostFuncType::kInferSyncBlockLockNumFunction);
+      baseKernelName, hacc::HostFuncType::kInferSyncBlockLockNumFunction);
+  ModuleOp module = funcOp->getParentOfType<ModuleOp>();
+  if (module.lookupSymbol(
+          StringAttr::get(funcOp.getContext(), callbackFuncName)))
+    return; // Already inserted by sibling (e.g., kernel_mix_aic when processing
+            // kernel_mix_aiv)
   func::FuncOp callbackFunc = insertInferSyncBlockLockNumFuncImpl(
       funcOp, callbackFuncName, syncBlockLockNum);
   hacc::utils::setHost(callbackFunc);
@@ -107,9 +126,15 @@ func::FuncOp insertInferSyncBlockLockInitFuncImpl(func::FuncOp funcOp,
 
 void insertInferSyncBlockLockInitFunc(func::FuncOp funcOp,
                                       int64_t syncBlockLockInit) {
+  std::string baseKernelName =
+      getBaseKernelNameForHostFunc(funcOp.getSymName());
   std::string callbackFuncName = hacc::constructHostFunctionName(
-      funcOp.getSymName().str(),
-      hacc::HostFuncType::kInferSyncBlockLockInitFunction);
+      baseKernelName, hacc::HostFuncType::kInferSyncBlockLockInitFunction);
+  ModuleOp module = funcOp->getParentOfType<ModuleOp>();
+  if (module.lookupSymbol(
+          StringAttr::get(funcOp.getContext(), callbackFuncName)))
+    return; // Already inserted by sibling (e.g., kernel_mix_aic when processing
+            // kernel_mix_aiv)
   func::FuncOp callbackFunc = insertInferSyncBlockLockInitFuncImpl(
       funcOp, callbackFuncName, syncBlockLockInit);
   hacc::utils::setHost(callbackFunc);
