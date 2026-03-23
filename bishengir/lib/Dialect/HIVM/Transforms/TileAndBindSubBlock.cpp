@@ -239,8 +239,12 @@ public:
         Op->template hasAttrOfType<UnitAttr>(tileAndSliceFailure))
       return failure();
 
-    int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
+    /// TO DO: The below is a temporary settting to replace
+    /// analyzer.getTilingDim(storeOp.getSrc()), will be enhanced in
+    /// generalization version
+    int64_t tilingDim = -1;
     if (std::is_same_v<hivm::CopyOp, OpType>){
+      tilingDim = 1;
       if (!Op.getResults().empty()){  // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
@@ -251,6 +255,7 @@ public:
       }
       LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
+      tilingDim = 0;
       LLVM_DEBUG(DBGS() << "The store op tiling dim is: "<<tilingDim<<"\n");
     }
     auto maybeContainingLoop = findContainingSubblockLoop(Op);
@@ -1000,16 +1005,14 @@ public:
     if (!attr || !attr.getId().has_value())
       return failure();
 
-    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
-    if (!tilingDimAttr)
-      return failure();
-    int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
-    auto rank = allocOp.getType().getRank();
-    if (tilingDim == -1 || (tilingDim != rank - 2 && tilingDim != rank - 1))
-      return failure();
-    auto splitMode = tilingDim == rank - 2
-                         ? hivm::FixpipeDualDstMode::ROW_SPLIT
-                         : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
+    // TODO: Determine splitMode automaticly
+    auto splitMode = hivm::FixpipeDualDstMode::ROW_SPLIT;
+    // auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
+    // if (!tilingDimAttr)
+    //   return failure();
+    // int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+    // if(tilingDim == -1 || (tilingDim != 0 && tilingDim != 1)) return failure();
+    // auto splitMode = tilingDim == 0? hivm::FixpipeDualDstMode::ROW_SPLIT : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
     auto verifyShape = [](ArrayRef<int64_t> shape) -> bool {
