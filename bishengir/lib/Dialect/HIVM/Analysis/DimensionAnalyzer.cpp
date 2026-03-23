@@ -39,19 +39,18 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
 /// the dimension that appears most frequently as a parallel dimension.
 /// Uses a heuristic where if the majority of stores have a higher dimension
 /// available, that dimension is chosen for tiling.
-bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
+void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> parallelDimMaps;
   DenseMap<int64_t, int> numStoreOps;
   DenseMap<int64_t, SmallVector<Dimension>> parallelDimMap;
-  bool isBroadcastAxisCase = false;
   for (auto [value, _] : argumentsRefPointer_)
     tilingDim_[value] = -1;
 
   if (isVectorOp) {
-    isBroadcastAxisCase |= computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
-    isBroadcastAxisCase |= computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
   } else {
-    isBroadcastAxisCase |= computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
 
   DenseMap<int64_t, int> selectedTilingParIdxMap;
@@ -78,7 +77,6 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   for (auto[_, parIdx] : selectedTilingParIdxMap)
     selectedTilingParIdx.insert(parIdx);
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
-  return isBroadcastAxisCase;
 }
 
 int64_t DimensionAnalyzer::getTilingDim(Value v) {
@@ -94,10 +92,9 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
 }
 
 template <typename StoreOpTy>
-bool DimensionAnalyzer::computeTilingDimImpl(
+void DimensionAnalyzer::computeTilingDimImpl(
     DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
-  bool isBroadcastAxisCase = false;
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
     auto src = op.getSrc();
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
@@ -107,24 +104,15 @@ bool DimensionAnalyzer::computeTilingDimImpl(
     if (rank == 0)
       return;
     auto shape = utils::getShape(src.getType());
-    DenseSet<int> usedParentIdx;
     LDBG("Checking operation: " << op);
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim) && shape[i] != 1) {
         auto parentIndex = solverCollapserElem_->find(args[i]);
-        if (usedParentIdx.insert(parentIndex).second) {
-          parallelDimMap[srcRef][parentIndex].push_back(dim);
-        } else {
-          op->emitWarning() << "Detected dimensions are in the same group in one "
-                               "storeOp. It is recommended to try with "
-                               "strict-mode=false if TileAndBindSubBlock fails";
-          isBroadcastAxisCase = true;
-        }
+        parallelDimMap[srcRef][parentIndex].push_back(dim);
       }
     }
   });
-  return isBroadcastAxisCase;
 }
 
 } // namespace detail
