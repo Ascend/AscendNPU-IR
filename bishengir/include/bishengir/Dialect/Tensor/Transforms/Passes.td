@@ -187,13 +187,4 @@ def OptimizeDpsOpWithYieldedInsertSlice :
   ];
 }
 
-def ReplicateOutEmptyTensor
-    : Pass<"replicate-out-empty-tensor", "func::FuncOp"> {
-  let summary = "Clone tensor empty for destination style interface";
-  let constructor = "mlir::tensor::createReplicateOutEmptyTensorPass()";
-  let dependentDialects = [
-    "tensor::TensorDialect",
-  ];
-}
-
 #endif // BISHENGIR_DIALECT_TENSOR_TRANSFORMS_PASSES_TD
