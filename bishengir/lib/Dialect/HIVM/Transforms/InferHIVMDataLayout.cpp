@@ -568,6 +568,23 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
           Value result = op.getTiedLoopResult(&user);
           updateLayout({arg, result}, info, changed);
         })
+        .Case<scf::YieldOp>([&](scf::YieldOp op) {
+          auto it = llvm::find(op->getOpOperands(), user);
+          auto dist = std::distance(op->getOpOperands().begin(), it);
+          if (auto loopOp = dyn_cast_if_present<LoopLikeOpInterface>(op->getParentOp())) {
+            Value result = (*(loopOp.getLoopResults()))[dist];
+            updateLayout({result}, info, changed);
+          } else if (auto ifOp = dyn_cast_if_present<scf::IfOp>(op->getParentOp())) {
+            if (ifOp->getRegions().size() > 1) {
+              Value result = (ifOp.getResults())[dist];
+              updateLayout({result}, info, changed);
+            } else {
+              op->emitWarning("Unsupported yield op in single region if op.");
+            }
+          } else {
+            op->emitWarning("Unsupported yield op parent.");
+          }
+        })
         .Case<ViewLikeOpInterface>([&](ViewLikeOpInterface op) {
           updateLayout(op->getResults(), info, changed);
         })
