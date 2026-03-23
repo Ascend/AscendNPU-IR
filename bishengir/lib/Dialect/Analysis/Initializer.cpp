@@ -104,7 +104,7 @@ bool DimensionAnalyzerBase::isHeadOperation(Operation *op) {
   if (options.registerBased) {
     return reshape_utils::isReshapingOp(op) || reshape_utils::isInitOp(op) ||
            isa_and_present<memref::AllocaOp, memref::AllocOp,
-                           memref::ReinterpretCastOp, memref::CastOp,
+                           memref::ReinterpretCastOp,
                            arith::ConstantOp, memref::ExpandShapeOp,
                            memref::CollapseShapeOp>(op);
   }

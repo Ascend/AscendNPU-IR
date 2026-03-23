@@ -727,6 +727,15 @@ void Flattener::calculateStrides(memref::SubViewOp slicingOp,
   bool isContinuous = true;
   int64_t lastGroupIdx = collapseGroup.size() - 1;
 
+  ArrayRef<int64_t> srcShape = srcMemRefType.getShape();
+  int64_t groupSize = collapseGroup.size();
+  SmallVector<int64_t> cumSize(groupSize);
+  int64_t curSize = 1;
+  for (int64_t j = groupSize - 1; j >= 0; --j) {
+    cumSize[j] = curSize;
+    curSize *= srcShape[collapseGroup[j]];
+  }
+
   // Traverse collapseGroup from back to front.
   for (int64_t i = lastGroupIdx; i >= 0; --i) {
     auto idx = collapseGroup[i];
@@ -749,12 +758,12 @@ void Flattener::calculateStrides(memref::SubViewOp slicingOp,
       return;
     }
 
-    // Non-contiguous dim merging
-    // Design for @test_subview_static_shape_unit in
-    // bishengir/test/Dialect/HFusion/FlattenOps/hfusion-flatten-tidy-regbase.mlir
+    // Non-contiguous dim merging: use cumSize within the group rather than
+    // the full srcStride, because after collapsing, the stride of the
+    // collapsed dim only covers dims inside this group.
     if (i != lastGroupIdx && !isContinuous) {
       newMixedStrides.push_back(builder.getI64IntegerAttr(
-          strideInt.value() * srcStride.value()[idx]));
+          strideInt.value() * cumSize[i]));
       return;
     }
 
@@ -1004,6 +1013,38 @@ void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
   op.getMemref().setType(newType);
 }
 
+void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
+  auto srcType = cast<MemRefType>(castOp.getSource().getType());
+  auto oldResType = cast<MemRefType>(castOp.getResult().getType());
+
+  if (srcType == oldResType ||
+      memref::CastOp::areCastCompatible(srcType, oldResType)) {
+    updatePreviousType(castOp.getResult());
+    return;
+  }
+
+  LDBG("[adjustCastOp] source type changed, repairing: " << *castOp);
+
+  SmallVector<int64_t> srcStrides, oldResStrides;
+  int64_t srcOffset, oldResOffset;
+
+  MemRefType newResType;
+  if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
+      succeeded(getStridesAndOffset(oldResType, oldResStrides, oldResOffset))) {
+    auto newLayout = StridedLayoutAttr::get(
+        castOp->getContext(), oldResOffset, srcStrides);
+    newResType =
+        MemRefType::get(srcType.getShape(), srcType.getElementType(),
+                        newLayout, srcType.getMemorySpace());
+  } else {
+    newResType = srcType;
+  }
+
+  updatePreviousType(castOp.getResult());
+  castOp.getResult().setType(newResType);
+  LDBG("[adjustCastOp] result: " << *castOp);
+}
+
 void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
                                mlir::OpBuilder &builder) {
   auto init = arangeOp.getInit();
@@ -1248,6 +1289,11 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
     return success();
   }
 
+  if (auto memrefCastOp = dyn_cast<memref::CastOp>(op)) {
+    adjustCastOp(memrefCastOp, builder);
+    return success();
+  }
+
   if (auto castOp = dyn_cast<memref::MemorySpaceCastOp>(op)) {
     LDBG("Before adjustResultTypeFromOperand: castOp = " << *castOp);
     auto dst = castOp.getDest();
@@ -1403,9 +1449,17 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
         return failure();
       targetMixedStrides.push_back(builder.getIndexAttr(stride));
     }
+    OpFoldResult offsetFold;
+    if (ShapedType::isDynamic(targetOffset)) {
+      auto extractOp = builder.create<memref::ExtractStridedMetadataOp>(
+          tensorOutOp.getLoc(), expandOp.getResult());
+      offsetFold = extractOp.getOffset();
+    } else {
+      offsetFold = builder.getIndexAttr(targetOffset);
+    }
     auto reinterpreted = builder.create<memref::ReinterpretCastOp>(
         tensorOutOp.getLoc(), cast<MemRefType>(expandedType),
-        expandOp.getResult(), builder.getIndexAttr(targetOffset), targetSizes,
+        expandOp.getResult(), offsetFold, targetSizes,
         targetMixedStrides);
     return reinterpreted.getOperation();
   }

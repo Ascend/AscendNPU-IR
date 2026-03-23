@@ -60,6 +60,12 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           [&](auto toTensorOp) { processToTensorOp(toTensorOp); })
       .Case<bufferization::ToMemrefOp>(
           [&](auto toMemrefOp) { processToMemrefOp(toMemrefOp); })
+      .Case<memref::CastOp>([&](memref::CastOp castOp) {
+        auto src = castOp.getSource();
+        auto res = castOp.getResult();
+        createDummyRefIfNotExist({src, res});
+        processValue(src, res);
+      })
       .Case<memref::SubViewOp>(
           [&](auto subviewOp) { processSubviewOp(subviewOp); })
       .Case<hfusion::GatherOp>(

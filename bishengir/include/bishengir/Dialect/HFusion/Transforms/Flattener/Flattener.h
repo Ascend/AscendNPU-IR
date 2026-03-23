@@ -157,6 +157,8 @@ private:
   void adjustToMemrefOp(bufferization::ToMemrefOp toMemrefOp,
                         OpBuilder &builder);
 
+  void adjustCastOp(memref::CastOp castOp, OpBuilder &builder);
+
   void adjustEmbeddingGatherOp(hfusion::EmbeddingGatherOp embeddingGatherOp,
                                OpBuilder &builder);
 
