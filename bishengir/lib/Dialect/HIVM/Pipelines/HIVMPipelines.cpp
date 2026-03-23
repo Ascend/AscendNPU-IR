@@ -378,6 +378,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.addPass(annotation::createAnnotationLoweringPass());
   pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
   pm.nest<func::FuncOp>().addPass(createMarkDisableLoadPass());
+  pm.addPass(createMarkSyncBlockLockWithSubblockPass());
   pm.addPass(createConvertHIVMToStandardPass());
 }
 

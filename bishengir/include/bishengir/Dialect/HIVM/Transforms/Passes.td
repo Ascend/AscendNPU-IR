@@ -700,6 +700,22 @@ def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
+def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subblock",
+                                         "ModuleOp"> {
+  let summary = "Mark sync_block_lock and sync_block_unlock ops with "
+                "sync_block_lock_with_subblock tag when they are not inside "
+                "limit_sub_block_id0 if op in mix module";
+  let description = [{
+    When the module is mix type, this pass marks sync_block_lock and
+    sync_block_unlock ops that are NOT inside an scf.if op with
+    limit_sub_block_id0 attribute. The marked ops get a sync_block_lock_with_subblock
+    attribute to indicate they should use subblockid-based block_idx calculation
+    (get_block_idx * get_subblocknum + get_subblockid).
+  }];
+  let constructor = "mlir::hivm::createMarkSyncBlockLockWithSubblockPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
+}
+
 def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
   let summary = "insert nz2nd for debug";
   let constructor = "mlir::hivm::createInsertNZ2NDForDebugPass()";

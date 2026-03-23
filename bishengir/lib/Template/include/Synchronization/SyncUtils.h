@@ -26,6 +26,14 @@ sync_block_lock(memref_t<__gm__ int64_t, 1> *lock_var);
 __aiv__ __attribute__((always_inline)) void
 sync_block_unlock(memref_t<__gm__ int64_t, 1> *lock_var);
 
+/// sync_block_lock_with_subblock / sync_block_unlock_with_subblock: use
+/// block_idx = get_block_idx() * get_subblockdim() + get_subblockid()
+__aiv__ __attribute__((always_inline)) void
+sync_block_lock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
+
+__aiv__ __attribute__((always_inline)) void
+sync_block_unlock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
+
 #define DECLARE_SYNCBLOCKLOCK()                                                \
   __aiv__ __attribute__((always_inline)) void _mlir_ciface_sync_block_lock(    \
       memref_t<__gm__ int64_t, 1> *lock_var)
@@ -40,6 +48,26 @@ sync_block_unlock(memref_t<__gm__ int64_t, 1> *lock_var);
 #define REGISTE_SYNCBLOCKUNLOCK()                                              \
   DECLARE_SYNCBLOCKUNLOCK() { sync_block_unlock(lock_var); }
 
+#define DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK()                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_sync_block_lock_with_subblock(                              \
+          memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKLOCK_WITH_SUBBLOCK()                                  \
+  DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK() {                                      \
+    sync_block_lock_with_subblock(lock_var);                                   \
+  }
+
+#define DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK()                                \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_sync_block_unlock_with_subblock(                           \
+          memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK()                                \
+  DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK() {                                    \
+    sync_block_unlock_with_subblock(lock_var);                                 \
+  }
+
 extern "C" {
 //===-------------------------------------------------------------------===//
 // sync_block_lock
@@ -50,5 +78,15 @@ DECLARE_SYNCBLOCKLOCK();
 // sync_block_unlock
 //===-------------------------------------------------------------------===//
 DECLARE_SYNCBLOCKUNLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_lock_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// sync_block_unlock_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK();
 }
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_SYNC_UTILS_H

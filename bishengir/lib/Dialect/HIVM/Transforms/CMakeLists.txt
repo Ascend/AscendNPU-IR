@@ -69,6 +69,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LowerCreateSyncBlockLock.cpp
   MarkDisableLoad.cpp
   MarkMultiBuffer.cpp
+  MarkSyncBlockLockWithSubblock.cpp
   MarkRealCoreType.cpp
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
