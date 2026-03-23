@@ -460,6 +460,12 @@ def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
   "false"
 >;
 
+def EnablePreload : HIVMOptimizationControlOptions<
+  "Enable preload.",
+  "bool",
+  "false"
+>;
+
 def EnableHIVMAutoStorageAlign : HIVMOptimizationControlOptions<
   "Enable mark/enable storage align.",
   "bool",

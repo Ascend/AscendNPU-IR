@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -81,6 +82,8 @@ struct WorkItem {
   scf::ForOp forOp;
   // Reconstructed original induction variable
   Value reconstructedIV;
+  // ScopeOp for single cube or vector
+  scope::ScopeOp scopeOp;
 #ifndef NDEBUG
   int id;
 #endif
@@ -116,6 +119,8 @@ private:
 
   IRMapping irMap_;
 
+  DenseMap<Value, Value> localOuputsToRedurnRes_;
+
   // Clear all data structures
   void init();
 
@@ -138,9 +143,13 @@ private:
                                    SmallVector<Value, 4> &innerForIterArgs,
                                    scf::ForOp forOp);
 
+  void constructPipelineScope(OpBuilder &builder, WorkItem *item, int32_t preloadNum);
+
   void constructPipelineLoop(OpBuilder &builder, WorkItem *item);
 
   void migrateOps(OpBuilder &builder);
+
+  void migrateOpsForPreload(OpBuilder &builder);
 
   void printWorkItem(WorkItem *item);
   void printWorkList(ArrayRef<std::shared_ptr<WorkItem>> worklist);
@@ -403,8 +412,10 @@ static std::optional<int> getMultibufferCount(Block *blk) {
 }
 
 /// Expand workspace by taking original workspace, and adding a multibuffer dim
-/// in front: if multibuffer is 2, original workspace is <16x16xf16>, then new
+/// enable cvpipelining: if multibuffer is 2, original workspace is <16x16xf16>, then new
 /// expanded workspace is <2x16x16xf16>
+/// enable preload: if work item num is 4, original workspace is <16x16xf16>, then new
+/// expanded workspace is <4x16x16xf16>
 void CVPipeliningPass::expandWorkspace(OpBuilder &builder) {
   OpBuilder::InsertionGuard g(builder);
   for (auto [alloc, info] : workspaceAllocs_) {
@@ -413,12 +424,17 @@ void CVPipeliningPass::expandWorkspace(OpBuilder &builder) {
     Location loc = alloc.getLoc();
     MemRefType origType = alloc.getType();
     ArrayRef<int64_t> origShape = origType.getShape();
-    SmallVector<int64_t> newShape = {info.multibuffer};
+
+    // if enable preload, workspace size depends on work item num
+    int64_t expandSize = this->enableAutoPreload.getValue() ? 
+                          worklist_.size() : info.multibuffer;
+    SmallVector<int64_t> newShape = {expandSize};
     newShape.append(origShape.begin(), origShape.end());
     auto newType = MemRefType::get(newShape, origType.getElementType());
     auto newAlloc = builder.create<AllocWorkspaceOp>(
         loc, newType, alloc.getWorkspaceArg(), alloc.getDynamicSize(),
         alloc.getOffset());
+
     // Here we replace the tensor with a memref, this is to avoid further
     // complications with the extract->use->insert->yield pattern
     expandedWorkspaceMap_[alloc] = newAlloc;
@@ -526,8 +542,13 @@ void CVPipeliningPass::constructInnerForOpIterArgs(
   }
 }
 
+static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
+  auto markedOp = markedVal.getDefiningOp();
+  markedOp->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
+}
+
 static Value createSubview(OpBuilder &builder, Location loc, Value from,
-                           Value iv) {
+                           Value iv, bool isPreload = false) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -552,6 +573,8 @@ static Value createSubview(OpBuilder &builder, Location loc, Value from,
   // we reduce it manually
   auto subview =
       builder.create<memref::SubViewOp>(loc, from, offsets, sizes, strides);
+  if (isPreload)
+    createAttrForPreloadWS(builder, subview);
   SmallVector<ReassociationIndices> reass{{0, 1}};
   for (unsigned i = 2; i < subview.getType().getRank(); ++i)
     reass.push_back({i});
@@ -621,6 +644,78 @@ static Value reconstructIV(OpBuilder &builder, Location loc,
         builder.create<arith::IndexCastOp>(loc, parentTy, reconstructedIV);
   }
   return reconstructedIV;
+}
+
+void CVPipeliningPass::constructPipelineScope(OpBuilder &builder,
+                                              WorkItem *item, int32_t preloadNum) {
+  LLVM_DEBUG(dbgs() << "Creating scope for work item #" << item->id << '\n');
+  scf::ForOp parentFor = item->parentFor;
+  Location loc = parentFor->getLoc();
+
+  SmallVector<Value> returnTensors{};
+  llvm::append_range(returnTensors, item->localOutputs);
+  llvm::append_range(returnTensors, item->yieldedOutputs);
+  if (returnTensors.empty() && item->workspaceOutputs.empty()) 
+    return;
+
+  builder.setInsertionPoint(parentFor.getBody()->getTerminator());
+  auto newScopeOp = builder.create<scope::ScopeOp>(
+        loc, TypeRange(returnTensors));
+  newScopeOp.setNoInline(true);
+  newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
+                      TCoreTypeAttr::get(&getContext(), item->core));
+  newScopeOp->setAttr(
+      hivm::PreloadNumAttr::name,
+      IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
+                       preloadNum));
+  // TODO: add a new pass to analyze max preload num
+  newScopeOp->setAttr(
+      hivm::MaxPreloadNumAttr::name,
+      IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
+                       worklist_.size()));
+  
+  Region &region = newScopeOp.getRegion();
+  Block *bodyBlock = builder.createBlock(&region);
+  builder.setInsertionPointToEnd(bodyBlock);
+  IRMapping loopMap(irMap_);
+
+  for (Operation &op : item->parentFor.getBody()->getOperations()) {
+    if (!item->ops.contains(&op) && !llvm::is_contained(item->workspaceOutputs, &op))
+      continue;
+    
+    builder.clone(op, loopMap);
+    toErase_.insert(&op);
+  }
+  
+  irMap_ = loopMap;
+  builder.setInsertionPointToEnd(bodyBlock);
+  SmallVector<Value> newReturnTensors;
+  
+  for (auto returnTensor : returnTensors) {
+    if (loopMap.contains(returnTensor)) {
+      Value newReturnTensor = loopMap.lookup(returnTensor);
+      newReturnTensors.push_back(newReturnTensor);
+    }
+  }
+  builder.create<scope::ReturnOp>(loc, ValueRange(newReturnTensors));
+
+  for (auto [returnTensor, ScopeRes] :
+         llvm::zip(returnTensors, newScopeOp->getResults())) {
+    if (llvm::is_contained(item->yieldedOutputs, returnTensor)) {
+      parentFor.getBody()->getTerminator()->replaceUsesOfWith(
+        returnTensor, ScopeRes);
+    }
+  }
+
+  for (auto [idx, returnTensor] : llvm::enumerate(returnTensors)) {
+    if (llvm::is_contained(item->localOutputs, returnTensor)) {
+      Value newVal = newScopeOp->getResults()[idx];
+      localOuputsToRedurnRes_.insert({returnTensor, newVal});
+    }
+  }
+
+  item->scopeOp = newScopeOp;
+  return;
 }
 
 /// Special unroll tranformation, which instead of unrolling the loop body,
@@ -712,11 +807,14 @@ Value CVPipeliningPass::unrollOuterLoop(OpBuilder &builder, scf::ForOp forOp,
   Value newStep = builder.create<affine::AffineApplyOp>(
       loc, AffineMap::get(1, 0, newStepExpr), step);
 
-  if (!isIndex)
-    forOp.setStep(
-        builder.create<arith::IndexCastOp>(loc, originalType, newStep));
-  else
-    forOp.setStep(newStep);
+  if (!this->enableAutoPreload.getValue()) {
+    // if not enable preload, update step for outer loop
+    if (!isIndex)
+      forOp.setStep(
+          builder.create<arith::IndexCastOp>(loc, originalType, newStep));
+    else
+      forOp.setStep(newStep);
+  }
 
   // Calculate upper bound for inner "rerolled" loops:
   // (min(iv + newStep, outerUB) - iv) / step
@@ -1565,6 +1663,69 @@ static void cloneOps(OpBuilder &builder, WorkItem *item, IRMapping &loopMap,
   }
 }
 
+/// Migrate all ops from block into scope for each work item
+void CVPipeliningPass::migrateOpsForPreload(OpBuilder &builder) {
+  for (auto &item : worklist_) {
+    LLVM_DEBUG(dbgs() << "\n\nMigrating ops for work item #" << item->id
+                      << "\n");
+    for (Value origOutput : item->localOutputs) {
+      if (localOuputsToRedurnRes_.count(origOutput) == 0)
+        continue;
+      LLVM_DEBUG(dbgs() << "\n\nMigrating localOutputs #" << origOutput
+                        << "\n");
+
+      Value newOutput = irMap_.lookup(origOutput);
+      Value returnOutput = localOuputsToRedurnRes_[origOutput];
+      for (OpOperand &operand : newOutput.getUses()) {
+        operand.set(returnOutput);
+      }
+    }
+    for (Operation *output : item->workspaceOutputs) {
+      auto dpsOp = cast<DestinationStyleOpInterface>(output);
+      Value wsAlloc = getAllocWorkspace(dpsOp.getDpsInitOperand(0)->get());
+      if (!wsAlloc) {
+        continue;
+      }
+      LLVM_DEBUG(dbgs() << "\n\nMigrating workspaceOutputs #" << wsAlloc
+                        << "\n");
+
+      Location loc = output->getLoc();
+      auto newWsAlloc = expandedWorkspaceMap_[wsAlloc];
+      Operation *storeLikeOp = irMap_.lookupOrDefault(output);
+      builder.setInsertionPoint(storeLikeOp);
+      auto sliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
+      Value newDst =
+        createSubview(builder, loc, newWsAlloc, sliceIdx, true);
+      
+      if (auto storeOp = dyn_cast<StoreOp>(storeLikeOp)) {
+        builder.create<StoreOp>(loc, TypeRange{}, storeOp.getSrc(), newDst);
+      } else if (auto fixpipe = dyn_cast<FixpipeOp>(storeLikeOp)) {
+        builder.create<FixpipeOp>(
+          loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
+          fixpipe.getDualDstModeAttr(), fixpipe.getPreQuantAttr(),
+          fixpipe.getPreReluAttr(), fixpipe.getChannelSplitAttr());
+      }
+
+      builder.setInsertionPointAfter(item->scopeOp);
+      auto workspaceOp = builder.create<bufferization::ToTensorOp>(loc, newWsAlloc, /*restrict*/ true);
+      for (OpOperand &operand : storeLikeOp->getUses()) {
+        Operation *userOp = operand.getOwner();
+        if (auto loadOp = dyn_cast<LoadOp>(userOp)) {
+          builder.setInsertionPoint(loadOp);
+          auto sliceIdx1 = builder.create<arith::ConstantIndexOp>(loc, 0);
+          Value sliceOp = createExtractSlice(builder, loc, workspaceOp,
+                                             operand.get().getType(), sliceIdx1);
+          createAttrForPreloadWS(builder, sliceOp);
+          operand.set(sliceOp);
+        }
+        
+      }
+      storeLikeOp->erase();
+    }
+  }
+
+}
+
 /// Migrate all ops from block into loops for each work item
 void CVPipeliningPass::migrateOps(OpBuilder &builder) {
   SmallVector<Value> yieldValues;
@@ -1665,12 +1826,24 @@ void CVPipeliningPass::runOnOperation() {
   expandWorkspace(builder);
 
   // Step 3: construct the loop around each work item.
-  for (auto &item : worklist_)
+  int32_t preloadNum = static_cast<int32_t>(worklist_.size()) - 1;
+  for (auto &item : worklist_) {
+    if (this->enableAutoPreload.getValue()) {
+      // construct scope around each work item when enabling preload
+      constructPipelineScope(builder, item.get(), preloadNum);
+      preloadNum--;
+      continue;
+    }
     constructPipelineLoop(builder, item.get());
+  }
 
   // Step 4: Move work items into respective loops, while updating their
   // input/outputs to match expanded workspace
-  migrateOps(builder);
+  if (this->enableAutoPreload.getValue())
+    // migrate ops to scope when enabling preload
+    migrateOpsForPreload(builder);
+  else
+    migrateOps(builder);
 
   // Clean up
   Operation *eraseOp = *toErase_.begin();

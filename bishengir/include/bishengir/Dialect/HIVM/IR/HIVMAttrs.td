@@ -1058,7 +1058,28 @@ def HIVM_DisableAutoInjectBlockSyncAttr
 def HIVM_TileMixCubeNumAttr
     : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
   let description = [{
-    Specifies the number of cube loops will be tiled in mix kernel
+    Specifies the number of cube loops will be tiled in mix kernel.
+  }];
+}
+
+def HIVM_PreloadNumAttr
+    : HIVM_Attr<"PreloadNum", "preload_num"> {
+  let description = [{
+    Specifies the preload number of scope op.
+  }];
+}
+
+def HIVM_MaxPreloadNumAttr
+    : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
+  let description = [{
+    Specifies the max preload number of scope op.
+  }];
+}
+
+def HIVM_PreloadWorkspaceAttr
+    : HIVM_Attr<"PreloadWorkspace", "preload_workspace"> {
+  let description = [{
+    Specifies that related op is preload workspace.
   }];
 }
 

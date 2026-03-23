@@ -713,11 +713,16 @@ def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
 def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
-  let options = [Option<
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect", "mlir::scope::ScopeDialect"];
+  let options = [
+      Option<
       "enableAutoBalance", "enable-auto-balance", "bool",
       /*default=*/"true",
-      "Enable balancing of vector subtasks during pipelining.">];
+      "Enable balancing of vector subtasks during pipelining.">,
+      Option<
+      "enableAutoPreload", "enable-auto-preload", "bool",
+      /*default=*/"false",
+      "Enable preload optimization.">];
 }
 
 def AutoBlockifyParallelLoop
