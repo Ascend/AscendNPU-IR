@@ -21,6 +21,9 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 using namespace mlir;
 using namespace hfusion;
@@ -134,6 +137,212 @@ struct TransposeDecomposeInterface
     return bishengir::DecomposePhase::AFTER_HFUSION_FLATTEN;
   }
 };
+
+// SortDecomposeInterface implements the decomposition logic for hfusion.sort.
+// It lowers the high-level sort operation into nested loops (scf.for) using 
+// a bubble sort algorithm specifically targeting the last axis of the tensor.
+struct SortDecomposeInterface
+    : public bishengir::BiShengIRAggregatedOpInterface::ExternalModel<
+          SortDecomposeInterface, hfusion::SortOp> {
+private:
+  // Implements sorting logic on the innermost dimension using nested scf.for loops.
+  Value emitSortOnLastAxis(OpBuilder &rewriter, Location loc, Value tensor,
+                           ArrayRef<Value> outerIndices, int64_t innerDim,
+                           Type elemTy, bool descending) const {
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value innerBoundMinus1 =
+        rewriter.create<arith::ConstantIndexOp>(loc, innerDim - 1);
+
+    // Bubble sort outer pass loop (n-1 passes).
+    auto passFor = rewriter.create<scf::ForOp>(
+        loc, c0, innerBoundMinus1, c1, ValueRange{tensor});
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(passFor.getBody());
+
+      Value passTensor = passFor.getRegionIterArgs()[0];
+
+      // Generate loop to compare and swap adjacent elements.
+      auto innerFor = rewriter.create<scf::ForOp>(
+          loc, c0, innerBoundMinus1, c1, ValueRange{passTensor});
+
+      {
+        OpBuilder::InsertionGuard guard2(rewriter);
+        rewriter.setInsertionPointToStart(innerFor.getBody());
+
+        Value j = innerFor.getInductionVar();
+        Value curTensor = innerFor.getRegionIterArgs()[0];
+        Value jNext = rewriter.create<arith::AddIOp>(loc, j, c1);
+
+        // Build full indices for the two elements to be compared.
+        SmallVector<Value> lhsIndices(outerIndices.begin(), outerIndices.end());
+        lhsIndices.push_back(j);
+
+        SmallVector<Value> rhsIndices(outerIndices.begin(), outerIndices.end());
+        rhsIndices.push_back(jNext);
+
+        Value lhs =
+            rewriter.create<tensor::ExtractOp>(loc, curTensor, lhsIndices);
+        Value rhs =
+            rewriter.create<tensor::ExtractOp>(loc, curTensor, rhsIndices);
+
+        // Generate comparison based on element type and sort direction.
+        Value needSwap;
+        if (mlir::isa<FloatType>(elemTy)) {
+          // Use Unordered predicates (ULT/UGT) to ensure NaN values are 
+          // consistently pushed to the end of the sequence.
+          needSwap = descending
+                         ? rewriter.create<arith::CmpFOp>(
+                               loc, arith::CmpFPredicate::ULT, lhs, rhs)
+                         : rewriter.create<arith::CmpFOp>(
+                               loc, arith::CmpFPredicate::UGT, lhs, rhs);
+        } else {
+          // Standard signed comparison for integers.
+          needSwap = descending
+                         ? rewriter.create<arith::CmpIOp>(
+                               loc, arith::CmpIPredicate::slt, lhs, rhs)
+                         : rewriter.create<arith::CmpIOp>(
+                               loc, arith::CmpIPredicate::sgt, lhs, rhs);
+        }
+
+        // Conditionally swap elements based on the comparison result.
+        auto ifOp = rewriter.create<scf::IfOp>(
+            loc, TypeRange{curTensor.getType()}, needSwap,
+            /*withElseRegion=*/true);
+
+        // Then block: Swap elements and update tensor state.
+        {
+          Block *thenBlock = &ifOp.getThenRegion().front();
+          OpBuilder thenBuilder = OpBuilder::atBlockBegin(thenBlock);
+
+          Value t0 = thenBuilder.create<tensor::InsertOp>(loc, rhs, curTensor,
+                                                          lhsIndices);
+          Value t1 = thenBuilder.create<tensor::InsertOp>(loc, lhs, t0,
+                                                          rhsIndices);
+          thenBuilder.create<scf::YieldOp>(loc, t1);
+        }
+
+        // Else block: Maintain original tensor state.
+        {
+          Block *elseBlock = &ifOp.getElseRegion().front();
+          OpBuilder elseBuilder = OpBuilder::atBlockBegin(elseBlock);
+          elseBuilder.create<scf::YieldOp>(loc, curTensor);
+        }
+
+        rewriter.create<scf::YieldOp>(loc, ifOp.getResults());
+      }
+
+      rewriter.setInsertionPointAfter(innerFor);
+      rewriter.create<scf::YieldOp>(loc, innerFor.getResults());
+    }
+
+    return passFor.getResult(0);
+  }
+
+  // Recursively build loops to traverse other dimensions.
+  Value emitOuterLoops(OpBuilder &rewriter, Location loc, Value tensor,
+                       ArrayRef<int64_t> shape, Type elemTy, bool descending,
+                       int64_t dim, SmallVector<Value> &outerIndices) const {
+    int64_t rank = static_cast<int64_t>(shape.size());
+
+    // Base case: Sort along the last axis when all outer loops are built.
+    if (dim == rank - 1)
+      return emitSortOnLastAxis(rewriter, loc, tensor, outerIndices,
+                                shape.back(), elemTy, descending);
+                                
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value upper = rewriter.create<arith::ConstantIndexOp>(loc, shape[dim]);
+
+    // Create a loop for the current dimension.
+    auto outerFor = rewriter.create<scf::ForOp>(loc, c0, upper, c1,
+                                                ValueRange{tensor});
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(outerFor.getBody());
+
+      Value iv = outerFor.getInductionVar();
+      Value curTensor = outerFor.getRegionIterArgs()[0];
+
+      // Store induction variable to maintain the coordinate stack.
+      outerIndices.push_back(iv);
+      Value updated = emitOuterLoops(rewriter, loc, curTensor, shape, elemTy,
+                                     descending, dim + 1, outerIndices);
+      outerIndices.pop_back();
+
+      rewriter.create<scf::YieldOp>(loc, updated);
+    }
+
+    return outerFor.getResult(0);
+  }
+
+public:
+  // Main entry for Sort operator decomposition.
+  FailureOr<SmallVector<Value>> decomposeOperation(Operation *op,
+                                                   OpBuilder &rewriter) const {
+    auto sortOp = dyn_cast<hfusion::SortOp>(op);
+    if (!sortOp)
+      return failure();
+
+    Location loc = op->getLoc();
+    Value src = sortOp.getSrc();
+
+    auto srcTy = dyn_cast<RankedTensorType>(src.getType());
+    if (!srcTy)
+      return failure();
+
+    if (sortOp->getNumResults() != 1)
+      return failure();
+
+    int64_t rank = srcTy.getRank();
+    if (rank <= 0)
+      return failure();
+
+    int64_t axis = sortOp.getSignedSortAxis();
+    bool descending = sortOp.getDescending();
+
+    // Constraint: Currently only support sorting on the last axis.
+    if (axis < 0 || axis != rank - 1)
+      return failure();
+
+    ArrayRef<int64_t> shape = srcTy.getShape();
+
+    // Verify static shapes and valid element types.
+    for (int64_t d : shape) {
+      if (d == ShapedType::kDynamic)
+        return failure();
+    }
+
+    int64_t innerDim = shape.back();
+    if (innerDim <= 0)
+      return failure();
+
+    Type elemTy = srcTy.getElementType();
+    if (!mlir::isa<FloatType>(elemTy) && !mlir::isa<IntegerType>(elemTy))
+      return failure();
+
+    // Handle length-1 dimension as a no-op.
+    if (innerDim == 1)
+      return SmallVector<Value>{src};
+
+    // Start recursive loop generation.
+    SmallVector<Value> outerIndices;
+    Value result =
+        emitOuterLoops(rewriter, loc, src, shape, elemTy, descending,
+                       /*dim=*/0, outerIndices);
+
+    return SmallVector<Value>{result};
+  }
+
+  bishengir::DecomposePhase getDecomposePhase(Operation *op) const {
+    return bishengir::DecomposePhase::BEFORE_LOWER_TO_LOOPS;
+  }
+};
+
+
 } // namespace
 
 void mlir::hfusion::registerDecomposeInterfaceExternalModels(
@@ -141,4 +350,8 @@ void mlir::hfusion::registerDecomposeInterfaceExternalModels(
   registry.addExtension(+[](MLIRContext *ctx, linalg::LinalgDialect *dialect) {
     linalg::TransposeOp::attachInterface<TransposeDecomposeInterface>(*ctx);
   });
+  registry.addExtension(+[](MLIRContext *ctx, hfusion::HFusionDialect *dialect) {
+    hfusion::SortOp::attachInterface<SortDecomposeInterface>(*ctx);
+  });
+
 }
