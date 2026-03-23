@@ -166,8 +166,12 @@ Through it, developers can apply a specific pass individually and compare the IR
 **Basic syntax:**
 `bishengir-opt xx.mlir --{pass name}`
 
-**Example**
+**Usage example**
+
+`bishengir-opt test.mlir --hfusion-normalize-ops`
+
 test.mlir
+
 ```c++
 // before hfusion-normalize-ops
 func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2xi32> {
@@ -176,8 +180,9 @@ func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2x
     return %1 : tensor<1x2xi32>
 }
 ```
-Execute the hfusion-normalize-ops pass alone:
-`bishengir-opt test.mlir --hfusion-normalize-ops`
+
+after executing the single hfusion-normalize-ops pass:
+
 ```c++
 // after hfusion-normalize-ops
 module {
