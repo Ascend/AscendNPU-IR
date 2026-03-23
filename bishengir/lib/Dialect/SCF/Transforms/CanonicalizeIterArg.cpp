@@ -377,6 +377,7 @@ public:
           }
           b.create<scf::YieldOp>(loc, newYieldOperands);
         });
+    newFor->setAttrs(forOp->getAttrs());
     SmallVector<Value, 4> newResults(newFor.getResults().begin(),
                                      newFor.getResults().end());
     unsigned newIdx = 0;
