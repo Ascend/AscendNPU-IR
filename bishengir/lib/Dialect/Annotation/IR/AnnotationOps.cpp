@@ -64,7 +64,8 @@ LogicalResult MarkOp::fold(FoldAdaptor adaptor,
   return foldBufferSizeAnnotationToAlloc(*this);
 }
 
-struct FoldUselessBufferSizeMarkOp : public OpRewritePattern<annotation::MarkOp> {
+struct FoldUselessBufferSizeMarkOp
+    : public OpRewritePattern<annotation::MarkOp> {
   using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,
@@ -109,9 +110,39 @@ struct FoldUselessBufferSizeMarkOp : public OpRewritePattern<annotation::MarkOp>
   }
 };
 
+struct FoldRedundantMarkOp : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp markOp,
+                                PatternRewriter &rewriter) const override {
+    // Condition 1: The MarkOp does not have any attributes
+    if (markOp.getAttrNum() != 0) {
+      return failure();
+    }
+
+    // Condition 2: The Source of MarkOp has other users
+    // Find the source of MarkOp
+    bool hasOtherUsers = false;
+    auto srcVal = markOp.getSrc();
+    for (Operation *user : srcVal.getUsers()) {
+      if (user != markOp) {
+        hasOtherUsers = true;
+        break;
+      }
+    }
+    if (!hasOtherUsers) { // If it does not have other users, cannot erase
+      return failure();
+    }
+
+    rewriter.eraseOp(markOp);
+    return success();
+  }
+};
+
 void MarkOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                          MLIRContext *context) {
   results.add<FoldUselessBufferSizeMarkOp>(context);
+  results.add<FoldRedundantMarkOp>(context);
 }
 
 bool MarkOp::isAnnotatedBy(StringRef key) {
@@ -183,9 +214,17 @@ static Container filterNonIgnoredAttr(const Container &container,
 
 int64_t MarkOp::getAttrNum() {
   // if the annotation only has the default attribute, it can be ignored.
-  return filterNonIgnoredAttr(
-             DenseSet<NamedAttribute>((*this)->getAttrs().begin(),
-                                      (*this)->getAttrs().end()),
-             (*this).getEffectsAttrName())
-      .size();
+  int64_t attrNum = 0;
+  for (auto effect : getEffectsAttr()) {
+    auto stringEffect = mlir::cast<StringAttr>(effect).getValue();
+    if (stringEffect == stringifyEffectMode(EffectMode::Read)) {
+      attrNum += 1;
+    }
+  }
+  attrNum +=
+      filterNonIgnoredAttr(DenseSet<NamedAttribute>((*this)->getAttrs().begin(),
+                                                    (*this)->getAttrs().end()),
+                           (*this).getEffectsAttrName())
+          .size();
+  return attrNum;
 }
