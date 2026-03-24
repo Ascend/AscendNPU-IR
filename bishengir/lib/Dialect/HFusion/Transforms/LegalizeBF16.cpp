@@ -58,9 +58,10 @@ static bool shouldLegalizeBF16Op(Operation *op) {
   return !(isa<hfusion::CastOp>(op) || isa<linalg::FillOp>(op) ||
            isa<linalg::CopyOp>(op) || !isBF16ElemType(op) ||
            isa<linalg::MatmulOp>(op) || isa<linalg::BatchMatmulOp>(op) ||
-           isa<linalg::TransposeOp>(op) || isa<hfusion::LoadOp>(op) ||
-           isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op) ||
-           isa<hfusion::SelectOp>(op) || isa<hfusion::Conv1DOp>(op));
+           isa<linalg::TransposeOp>(op) || isa<linalg::BroadcastOp>(op) ||
+           isa<hfusion::LoadOp>(op) || isa<hfusion::StoreOp>(op) ||
+           isa<hfusion::BitcastOp>(op) || isa<hfusion::SelectOp>(op) ||
+           isa<hfusion::Conv1DOp>(op));
 }
 
 template <typename Op>
