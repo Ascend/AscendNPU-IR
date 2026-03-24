@@ -61,11 +61,45 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
   return std::nullopt;
 }
 
-bool needYieldOut(Operation *user) {
+// ifOp except the case
+// %if = if %condition {
+//  %mmad1 =
+//  yield %mmad1
+// } else {
+//  %mmad2 =
+//  yield %mmad2
+// }
+// %fixpipe = hivm.hir.fixpipe(%if)
+// other cases are expected that fixpipe is inserted inside if body. Hence, the
+// function will return true
+bool isMixKernel(scf::IfOp ifOp, Value val) {
+  if (ifOp.getElseRegion().empty())
+    return true;
+
+  if (auto idx =
+          findIdx(llvm::to_vector(ifOp.thenYield().getOperands()), val)) {
+    if (idx.has_value()) {
+      auto elseValue = ifOp.elseYield().getOperands()[idx.value()];
+      return traceDefOp<hivm::MmadL1Op>(elseValue).has_value() ? false : true;
+    }
+  }
+
+  if (auto idx =
+          findIdx(llvm::to_vector(ifOp.elseYield().getOperands()), val)) {
+    if (idx.has_value()) {
+      auto thenValue = ifOp.thenYield().getOperands()[idx.value()];
+      return traceDefOp<hivm::MmadL1Op>(thenValue).has_value() ? false : true;
+    }
+  }
+
+  return true;
+}
+
+bool needYieldOut(Operation *user, Value val) {
   if (isa<scf::ForOp>(user->getParentOp()))
     return true;
   if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp()))
-    return !needsSplit(ifOp);
+    return !isMixKernel(ifOp, val);
 
   return false;
 }
@@ -81,7 +115,8 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
     // judge
     if (!isa<hivm::DebugOp>(user))
       count++;
-    if (!isa<scf::YieldOp>(user) || !needYieldOut(user)) {
+    if (!isa<scf::YieldOp>(user) ||
+        !needYieldOut(user, op->getResult(resultIndx))) {
       continue;
     } else {
       yieldOperands.emplace(user);
@@ -583,8 +618,8 @@ void InlineFixpipe::runOnOperation() {
   RewritePatternSet devicePrintPatterns(&getContext());
   populateDevicePrintPatterns(devicePrintPatterns);
 
-  if (failed(
-          applyPatternsAndFoldGreedily(getOperation(), std::move(devicePrintPatterns)))) {
+  if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                          std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }
 }
