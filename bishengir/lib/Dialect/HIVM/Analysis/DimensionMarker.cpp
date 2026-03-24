@@ -293,8 +293,10 @@ void DimensionAnalyzer::processVTransposeOp(hivm::VTransposeOp op) {
   Value output = op.getDst();
   auto perm = op.getPermutation();
   const auto &inputArgs = getArgumentRefOrCreateDummy(input);
-  auto newValRef = processPermutation(inputArgs, perm, output);
-  initCollapseOrVerify(output, newValRef);
+  auto outputArgs = getArgumentRefOrCreateDummy(output);
+  for (int i = 0; i < static_cast<int>(inputArgs.size()); ++i) {
+    joinCollapser(outputArgs[i], inputArgs[perm[i]]);
+  }
   for (Value result : op->getResults()) {
     processValue(result, output);
   }
@@ -559,8 +561,19 @@ void DimensionAnalyzer::markDimensionKind() {
       }
     } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
       auto srcRef = getArgumentRef(vtransposeOp.getSrc());
-      for (auto[dimIdx, parentIdx] : llvm::enumerate(srcRef)) {
-        transposedDimMap[solverShapeElem_->find(parentIdx)] = dimIdx;
+      auto dstRef = getArgumentRef(vtransposeOp.getDst());
+      auto perm = vtransposeOp.getPermutation();
+      for (auto[dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
+        auto srcSolverIdx = solverShapeElem_->find(srcRef[perm[dimIdx]]);
+        auto dstSolverIdx = solverShapeElem_->find(parentIdx);
+        if (auto it = transposedDimMap.find(srcSolverIdx);
+            it != transposedDimMap.end()) {
+          LDBG("Successfully moved");
+          transposedDimMap[dstSolverIdx] = it->second;
+        } else {
+          transposedDimMap[dstSolverIdx] = perm[dimIdx];
+        }
+        LDBG(dstSolverIdx << " is now transposed dim(" << transposedDimMap[dstSolverIdx] << ")");
       }
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
         markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
@@ -579,9 +592,12 @@ void DimensionAnalyzer::markDimensionKind() {
         llvm::to_integer(dimMappingAttr.getName(), srcDim);
         srcDim = solverShapeElem_->find(srcArgs[srcDim]);
         resDim = solverShapeElem_->find(resArgs[resDim]);
+        LDBG("Checking if transposed dim of " << srcDim << " is moved to " << resDim);
         if (auto it = transposedDimMap.find(srcDim);
-            it != transposedDimMap.end())
-            transposedDimMap[resDim] = it->second;
+            it != transposedDimMap.end()) {
+          LDBG("Successfully moved");
+          transposedDimMap[resDim] = it->second;
+        }
       }
     }
   });
