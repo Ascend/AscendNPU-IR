@@ -890,6 +890,23 @@ class TransferReadToGatheringLoadPattern
       }
     }
 
+    // if transpose dim with 1 mask value
+    // no need to change transfer_read to gather
+    bool permDimWithOneMask = true;
+    if (!constantMaskBounds.empty()) {
+    for(unsigned int i = 0; i < permMap.getNumResults(); i++) {
+      unsigned int targetDim = permMap.getDimPosition(i);
+      if (i != targetDim) {
+        if (constantMaskBounds[i] != 1 || constantMaskBounds[targetDim] != 1) {
+          permDimWithOneMask = false;
+          break;
+        }
+      }
+    }
+    if (permDimWithOneMask)
+      return failure();
+  }
+
     return success();
   }
 
@@ -900,7 +917,7 @@ class TransferReadToGatheringLoadPattern
       SmallVector<APInt, 0> &gatherIndices, SmallVector<bool, 0> &gatherMasks,
       int64_t &firstEnabledBit, int64_t &lastEnabledBit,
       int64_t &firstDisabledBit, int64_t &lastDisabledBit,
-      int64_t &totalDestSize) const {
+      int64_t &totalDestSize, bool &indexOverflow) const {
     // try to find all gather indices
     // we need to look at the result vector type to find the range
     // for all the source dimensions
@@ -961,6 +978,10 @@ class TransferReadToGatheringLoadPattern
         gatherIndices.push_back(APInt(16, index));
       } else {
         gatherIndices.push_back(APInt(elementBitWidth, index));
+      }
+      if (elementBitWidth == 8 || elementBitWidth == 16) {
+        if (index > (int64_t)APInt::getMaxValue(16).getZExtValue())
+          indexOverflow = true;
       }
     }
     if (!isFullMask && lastDisabledBit == -1)
@@ -1093,10 +1114,21 @@ class TransferReadToGatheringLoadPattern
     int64_t firstEnabledBit{-1}, lastEnabledBit{-1}, firstDisabledBit{-1},
         lastDisabledBit{-1};
     int64_t totalDestSize = 1;
+    bool indexOverflow = false;
     computeGatherIndicesAndMasks(
         readop, permMap, memrefType, destType, strides, isFullMask,
         constantMaskBounds, gatherIndices, gatherMasks, firstEnabledBit,
-        lastEnabledBit, firstDisabledBit, lastDisabledBit, totalDestSize);
+        lastEnabledBit, firstDisabledBit, lastDisabledBit,
+        totalDestSize, indexOverflow);
+    // Not support gather index overflow.
+    // Such as, gather B8/B16 type date with 65537 index.
+    // Todo: Use template lib to extend scenarios.
+    if (indexOverflow)
+      return failure();
+    // Not support gather B8 with data size not equal 256
+    // Todo: createIndexVector need enhance.
+    if (memrefType.getElementTypeBitWidth() == 8 && totalDestSize != 256)
+      return failure();
 
     auto indexVecValues = createIndexVector(readop, rewriter, memrefType,
                                             gatherIndices, totalDestSize);
