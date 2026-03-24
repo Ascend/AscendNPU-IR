@@ -105,6 +105,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createLegalizeF16ForTritonPass());
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createEnableAscendDPXMMAPass());
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
   {

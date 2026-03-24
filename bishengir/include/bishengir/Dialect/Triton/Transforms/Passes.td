@@ -36,6 +36,14 @@ def AdaptTritonIRKernel
   ];
 }
 
+def EnableAscendDPXMMA
+   : Pass<"enable-ascend-dpx-mma", "mlir::triton::FuncOp"> {
+  let constructor = "bishengir::triton::createEnableAscendDPXMMAPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+  ];
+}
+
 def OptimizeLoads
    : Pass<"optimize-loads", "mlir::ModuleOp"> {
   let constructor = "bishengir::triton::createOptimizeLoadsPass()";
