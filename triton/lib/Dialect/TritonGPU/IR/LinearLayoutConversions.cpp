@@ -273,6 +273,59 @@ LinearLayout getCoreMatrixLinearLayout(NVMMASharedEncodingAttr shared,
 
 } // namespace
 
+LinearLayout fractalzNSharedToLinearLayout(ArrayRef<int64_t> shape,
+                                           FractalzNSharedEncodingAttr fractal) {
+  MLIRContext *ctx = fractal.getContext();
+  auto shapePerCTA = getShapePerCTA(fractal, shape);
+  int rank = shape.size();
+  assert(rank >= 2);
+
+  auto outDimNames = standardOutDimNames(ctx, rank);
+
+  int mDim = rank - 2; // most-major of the two fractal dims (row / M)
+  int nDim = rank - 1; // most-minor (column / N)
+
+  StringAttr mName = outDimNames[mDim];
+  StringAttr nName = outDimNames[nDim];
+
+  // int64_t fM = fractal.getFractalM0();  // e.g. 16
+  // int64_t fN = fractal.getFractalN0();  // e.g. 16
+  int64_t fM = 16;
+  int64_t fN = 16;
+
+  int64_t outerM = shapePerCTA[mDim] / fM;
+  int64_t outerN = shapePerCTA[nDim] / fN;
+
+  // Build a flat list of (Δdim0, Δdim1) basis vectors with output dims
+  // {mName, nName} only, matching the pattern of swizzledSharedToLinearLayout.
+  std::vector<std::vector<int>> bases2D;
+
+  // Inner Z-shape: columns first (fastest varying), then rows.
+  for (int c = 1; c < fN; c *= 2)
+    bases2D.push_back({0, c});
+  for (int r = 1; r < fM; r *= 2)
+    bases2D.push_back({r, 0});
+
+  // Outer N-shape: M-blocks (row direction) first so that M varies fastest across
+  // block boundaries (column-major block ordering), then N-blocks.
+  for (int bm = 1; bm < outerM; bm *= 2)
+    bases2D.push_back({static_cast<int>(bm * fM), 0});
+  for (int bn = 1; bn < outerN; bn *= 2)
+    bases2D.push_back({0, static_cast<int>(bn * fN)});
+
+  LinearLayout ctaLayout =
+      LinearLayout({{S("offset"), bases2D}}, {mName, nName});
+
+  // Higher dimensions (batch, etc.) as identity.
+  for (int i = 0; i < rank - 2; ++i) {
+    if (shapePerCTA[i] > 1)
+      ctaLayout *=
+          LinearLayout::identity1D(shapePerCTA[i], S("offset"), outDimNames[i]);
+  }
+
+  return combineCtaCgaWithShape(ctaLayout, fractal.getCTALayout(), shape);
+}
+
 LinearLayout nvmmaSharedToLinearLayout(ArrayRef<int64_t> shape,
                                        NVMMASharedEncodingAttr shared,
                                        bool disableSwizzle) {
@@ -1296,6 +1349,8 @@ LinearLayout TritonGPUDialect::toLinearLayout(ArrayRef<int64_t> shape,
            "shape must be a postive power of 2");
     if (auto shared = dyn_cast<SwizzledSharedEncodingAttr>(layout)) {
       result = swizzledSharedToLinearLayout(shape, shared);
+    } else if (auto shared = dyn_cast<FractalzNSharedEncodingAttr>(layout)) {
+      result = fractalzNSharedToLinearLayout(shape, shared);
     } else if (auto shared = dyn_cast<NVMMASharedEncodingAttr>(layout)) {
       result = nvmmaSharedToLinearLayout(shape, shared);
     } else if (auto sbl = dyn_cast<AMDRotatingSharedEncodingAttr>(layout)) {

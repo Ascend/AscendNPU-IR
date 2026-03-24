@@ -3,6 +3,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
   list(APPEND BS_FEAT_SOURCES
     AdaptTritonIRKernel.cpp
     DecomposeReduction.cpp
+    DumpFractalLayout.cpp
     FixFusedCatPass.cpp
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
@@ -24,6 +25,7 @@ add_bishengir_dialect_library(BiShengIRTritonTransforms
   MLIRLLVMPassIncGen
 
   LINK_LIBS PUBLIC
+  TritonGPUIR
   BiShengIRDialectUtils
   BiShengIRSCFTransformOps
   MLIRAscendDPXDialect

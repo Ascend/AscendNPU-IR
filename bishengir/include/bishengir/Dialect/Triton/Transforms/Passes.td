@@ -77,6 +77,33 @@ def OptimizeLayouts
   ];
 }
 
+def DumpFractalLayout : Pass<"dump-fractal-layout", "mlir::ModuleOp"> {
+  let summary = "Print the zN fractal shared memory layout for a given shape and offset";
+  let description = [{
+    Computes the fractal zN linear layout for the given tensor shape and
+    fractal block sizes, then prints the logical coordinate (dim0, dim1)
+    that corresponds to a probed element offset.  Useful for verifying
+    fractalzNSharedToLinearLayout in LIT / FileCheck tests.
+
+    Example:
+      bishengir-opt --dump-fractal-layout="shape=64,64 probe-offset=1536" %s
+    Output:
+      fractal-layout: offset=1536 -> dim0=32 dim1=16
+  }];
+  let constructor = "bishengir::triton::createDumpFractalLayoutPass()";
+  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect"];
+  let options = [
+    Option<"shapeStr", "shape", "std::string", "\"64,64\"",
+           "Tensor shape as comma-separated integers, e.g. '64,64'">,
+    Option<"fractalM0", "fractal-m0", "int64_t", /*default*/"16",
+           "Fractal block height (M dimension)">,
+    Option<"fractalN0", "fractal-n0", "int64_t", /*default*/"16",
+           "Fractal block width (N dimension)">,
+    Option<"probeOffset", "probe-offset", "int64_t", /*default*/"0",
+           "Element offset to probe (not byte offset)">,
+  ];
+}
+
 def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
     let summary = "fix fused cat kernels";
     let constructor = "bishengir::triton::createFixFusedCatPass()";
