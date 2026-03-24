@@ -117,8 +117,8 @@ This section covers common function or precision issues.
 
 | Compile option | Value | Description |
 |----------------|-------|-------------|
-| **inject_barrier_all** | false (default). Set to true; if the hang disappears, intra-core sync is likely the cause. Applies to mix/aic/aiv kernels. |
-| **inject_block_all**  | false (default). Set to true; if the hang disappears, inter-core sync is likely the cause. Applies to mix kernels. |
+| **inject_barrier_all** | false (default). | Set to true; if the hang disappears, intra-core sync is likely the cause. Applies to mix/aic/aiv kernels. |
+| **inject_block_all**  | false (default). | Set to true; if the hang disappears, inter-core sync is likely the cause. Applies to mix kernels. |
 
 Example: for the GDN network’s `chunk_gated_delta_rule_fwd_kernel_h_blockdim64` kernel, original invocation:
 
@@ -799,11 +799,11 @@ Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can 
 
 ## Cube–Vector (CV)
 
-### Use tile_cube_loop to avoid L1 overflow
+### Use hivm.tile_mix_cube_num to avoid L1 overflow
 
 #### Problem
 
-The compiler currently analyzes tiling for a single matmul and does not consider the lifetime of other matmuls. When matmuls are triggered multiple times (e.g. `cube -> vector -> cube`), overlapping lifetimes can cause L1 overflow at runtime. Until lifetime analysis is improved, use the `tile_cube_loop` compile hint so the compiler can apply sub-tiling to the relevant matmul.
+The compiler currently analyzes tiling for a single matmul and does not consider the lifetime of other matmuls. When matmuls are triggered multiple times (e.g. `cube -> vector -> cube`), overlapping lifetimes can cause L1 overflow at runtime. Until lifetime analysis is improved, use the `hivm.tile_mix_cube_num` compile hint so the compiler can apply sub-tiling to the relevant matmul.
 
 #### Usage
 
@@ -811,17 +811,28 @@ Add the hint on the result of the dot that needs sub-tiling:
 
 ```python
 res = tl.dot(lhs, rhs)
-tl.compile_hint(res, "tile_cube_loop", 2)
+tl.compile_hint(res, "hivm.tile_mix_cube_num", 2)
 ```
 
-Example (Flash Attention–style): first dot `qk = tl.dot(q, trans_k)`, then vector ops (e.g. softmax), then `pv = tl.dot(p, v)`. The second dot should be hinted so that cube tiling accounts for L1:
+Take the _attn_fwd_inner operator of Flash Attention as an example. The logic for QKV matrix multiplication in the original code is roughly as follows:
 
 ```python
 qk = tl.dot(q, trans_k)
-# softmax, etc.
+# softmax calculation in between
+qk = ...
 p = tl.math.exp(qk)
 pv = tl.dot(p, v)
-tl.compile_hint(pv, "tile_cube_loop", 2)
+```
+
+Referring to the above code, `qk` is a cube operation, while computations such as softmax are vector operations. The results computed by the vector operations are then fed into a second cube operation to perform matrix multiplication. In this scenario, the compiler cannot monitor the tiling logic within the second cube operation, and the code may cause out-of-bounds access in the L1 cache. Therefore, it is necessary to add a `hivm.tile_mix_cube_num` compilation hint to the result of the second dot operation, instructing the compiler to perform sub-tiling on this operation, as shown in the following code snippet:
+
+```python
+qk = tl.dot(q, trans_k)
+# softmax calculation in between
+qk = ...
+p = tl.math.exp(qk)
+pv = tl.dot(p, v)
+tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 ```
 
 ### Compile options (reference)
@@ -854,22 +865,50 @@ multibuffer = False  # disable ping-pong
 
 #### Example (GDN)
 
-Original call:
+Take the chunk_gated_delta_rule_fwd_kernel_h_blockdim64 operator in the GDN network as an example; the original code calls it as:
 
 ```python
-chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](k=k, v=u, w=w, v_new=v_new, g=g, gk=gk, h=h,
-    h0=initial_state, ht=final_state, cu_seqlens=cu_seqlens, chunk_offsets=chunk_offsets,
-    T=T, H=H, K=K, V=V, BT=BT)
+chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
+    k=k,
+    v=u,
+    w=w,
+    v_new=v_new,
+    g=g,
+    gk=gk,
+    h=h,
+    h0=initial_state,
+    ht=final_state,
+    cu_seqlens=cu_seqlens,
+    chunk_offsets=chunk_offsets,
+    T=T,
+    H=H,
+    K=K,
+    V=V,
+    BT=BT,
+)
 ```
 
 With CV pipeline in GM disabled to avoid hang:
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
-    k=k, v=u, w=w, v_new=v_new, g=g, gk=gk, h=h,
-    h0=initial_state, ht=final_state, cu_seqlens=cu_seqlens, chunk_offsets=chunk_offsets,
-    T=T, H=H, K=K, V=V, BT=BT,
-    limit_auto_multi_buffer_only_for_local_buffer=True,
+    k=k,
+    v=u,
+    w=w,
+    v_new=v_new,
+    g=g,
+    gk=gk,
+    h=h,
+    h0=initial_state,
+    ht=final_state,
+    cu_seqlens=cu_seqlens,
+    chunk_offsets=chunk_offsets,
+    T=T,
+    H=H,
+    K=K,
+    V=V,
+    BT=BT,
+    limit_auto_multi_buffer_only_for_local_buffer = True,
 )
 ```
 

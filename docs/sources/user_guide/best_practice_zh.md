@@ -1021,19 +1021,19 @@ def test_where_lt_case1(param_list):
 
 
 
-### 使用tile_cube_loop规避L1越界
+### 使用hivm.tile_mix_cube_num规避L1越界
 
 #### 问题描述
 
-由于编译器目前只能对单个matmul进行切分需求分析，并不考虑其他matmul的生命周期，因此当matmul被多次触发时（例如执行逻辑为`cube -> vector -> cube`时），若上一个matmul的生命周期和当前的matmul生命周期有所重叠，算子运行时可能会导致L1越界。后续编译器会对切分的生命周期分析进行增强，目前则需通过加上 `tile_cubloop` 编译提示，令编译器可以感知是否需要对相关的matmul操作进行sub tiling。
+由于编译器目前只能对单个matmul进行切分需求分析，并不考虑其他matmul的生命周期，因此当matmul被多次触发时（例如执行逻辑为`cube -> vector -> cube`时），若上一个matmul的生命周期和当前的matmul生命周期有所重叠，算子运行时可能会导致L1越界。后续编译器会对切分的生命周期分析进行增强，目前则需通过加上 `hivm.tile_mix_cube_num` 编译提示，令编译器可以感知是否需要对相关的matmul操作进行sub tiling。
 
 #### 算子示例
 
-改寫算子時，只需为dot操作结果加上`tile_cube_loop`的编译提示即可，參考一下代碼段：
+改寫算子時，只需为dot操作结果加上`hivm.tile_mix_cube_num`的编译提示即可，參考一下代碼段：
 
 ```python
 res = tl.dot(lhs, rhs)
-tl.compile_hint(res, "tile_cube_loop", 2)
+tl.compile_hint(res, "hivm.tile_mix_cube_num", 2)
 ```
 
 以Flash Attention的`_attn_fwd_inner`算子为例，原代码的QKV矩阵乘法逻辑大致为
@@ -1046,7 +1046,7 @@ p = tl.math.exp(qk)
 pv = tl.dot(p, v)
 ```
 
-参考以上代码，`qk`是cube操作，而softmax等计算属于vector操作，最后vector计算出的结果又再导入到第二次的cube操作中执行矩阵乘法。在以上场景下，编译器无法监控第二次cube操作中的切分逻辑，代码或许会在L1缓存中越界。因此，需要为第二次的dot操作结果加上`tile_cube_loop`的编译提示，令编译器对该操作进行sub tiling，见以下代码段：
+参考以上代码，`qk`是cube操作，而softmax等计算属于vector操作，最后vector计算出的结果又再导入到第二次的cube操作中执行矩阵乘法。在以上场景下，编译器无法监控第二次cube操作中的切分逻辑，代码或许会在L1缓存中越界。因此，需要为第二次的dot操作结果加上`tile_mix_cube_num`的编译提示，令编译器对该操作进行sub tiling，见以下代码段：
 
 ```python
 qk = tl.dot(q, trans_k)
@@ -1054,7 +1054,7 @@ qk = tl.dot(q, trans_k)
 qk = ...
 p = tl.math.exp(qk)
 pv = tl.dot(p, v)
-tl.compile_hint(pv, "tile_cube_loop", 2)
+tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 ```
 
 
