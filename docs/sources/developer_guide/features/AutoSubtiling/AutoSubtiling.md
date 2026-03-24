@@ -69,8 +69,6 @@ Behavior is controlled by:
 
 If subtiling or an intermediate transformation fails, the compiler automatically falls back to 1:1 to preserve correctness.
 
-![](./5.png)
-
 Common reasons for falling back to 1:1:
 
 1. Axis selection fails (no valid parallel axis for splitting).
