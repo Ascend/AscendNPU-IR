@@ -275,8 +275,8 @@ The specific run commands are provided at the top of each test file. For example
 Here, `bishengir-opt` and `FileCheck` are binary executable files generated during compilation, located in `path-to-ascendnpuir\build\bin`. In the above command, `%s` should be replaced with the corresponding test file, such as `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
 
 The output MLIR will match the `CHECK:` part in the test file. The execution is successful if no `CHECK failed` errors are reported after testing.
----
 
+---
 
 ## 4. Constriants
 - The createPlanMemoryPass handles the space size for data interaction points. Since the total required space size is dynamically returned, there is no limitation on the size.
