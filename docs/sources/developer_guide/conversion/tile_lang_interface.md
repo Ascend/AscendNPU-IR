@@ -60,7 +60,9 @@ cd tilelang-ascend
 # build AscendNPU-IR in 3rdparty
 bash install_npuir.sh
 # Alternative way of building with local AscendNPU-IR
-bash install_npuir.sh --bishengir-path=/path/to/bishengir-compile
+bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
+# For example, --bishengir-path=./3rdparty/AscendNPU-IR/build/install
+# Assuming that current directory is tilelang-ascend
 ```
 
 Then do one of the following to apply tilelang settings in your environment:
