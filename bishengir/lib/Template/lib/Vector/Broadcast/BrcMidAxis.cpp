@@ -111,6 +111,10 @@ template <typename T, typename = typename std::enable_if<
 __aiv__ __attribute__((always_inline)) void
 brc_mid_axis_3d_vcopy(memref_t<__ubuf__ T, 3> *src,
                       memref_t<__ubuf__ T, 3> *dst) {
+  if (!is_offset_aligned(src)) {
+    vector_broadcast_middle_axis_by_scalar(src, dst);
+    return;
+  }
   // brc middle align support b8/b64
   if constexpr (sizeof(T) == BYTES_B8 || sizeof(T) == BYTES_B64) {
     memref_t<__ubuf__ T, 2> src_2d;
