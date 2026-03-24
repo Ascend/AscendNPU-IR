@@ -272,11 +272,16 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     // TODO: Consider encapsulating it as an nd2dz function
     int64_t M = tensorType.getDimSize(0);
     int64_t N = tensorType.getDimSize(1);
+    int32_t alignM = 16;
+    int32_t alignN = 32;
     auto elemType = tensorType.getElementType();
 
-    if (M != ShapedType::kDynamic && (M % 16) ) {
-      int64_t newM = ((M + 15) / 16) * 16;
-      auto paddedType = RankedTensorType::get({newM, N}, elemType);
+    uint64_t elemTypeSize = getElemBytesForAlign(elemType);
+    int64_t newN = (((elemTypeSize * N + (alignN - 1)) / alignN) * alignN) / elemTypeSize;
+
+    if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
+      int64_t newM = ((M + alignM - 1) / alignM) * alignM;
+      auto paddedType = RankedTensorType::get({newM, newN}, elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
 
       Value emptyForVbrc = rewriter.create<tensor::EmptyOp>(
@@ -291,7 +296,9 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
               loc, origTensor, initializedMatrix, offsets, sizes, strides);
       tensorType = origTensor.getType().cast<RankedTensorType>();
       M = newM;
+      N = newN;
     }
+
     SmallVector<ReassociationIndices> reassociation = {{0}, {1,2}};
     auto blkOr = getBlockElemsFor32BAlign(elemType);
     if (failed(blkOr)) {
@@ -300,7 +307,8 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
              << elemType;
     }
     int64_t blk = (int64_t)*blkOr;
-    int64_t M1 = M / 16;
+    
+    int64_t M1 = M / alignM;
     // TODO: enhance UB alignment
     int64_t N1 = N / blk;
     auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);

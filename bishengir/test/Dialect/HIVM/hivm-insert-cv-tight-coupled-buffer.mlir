@@ -485,3 +485,45 @@ module {
     return %2#1 : tensor<16x16xf32>
   }
 }
+
+// -----
+module {
+  // CHECK-LABEL: func.func @triton_dot_2(
+  func.func @triton_dot_2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, false, false, false]> : vector<8xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %0 = arith.muli %arg5, %arg6 : i32
+    %1 = arith.muli %0, %arg7 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xi8> to memref<16x16xi8, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xi8>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xi8, strided<[16, 1]>>) outs(%alloc : memref<16x16xi8>) eviction_policy = <EvictFirst>
+    %2 = bufferization.to_tensor %alloc restrict writable : memref<16x16xi8>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xi8> to memref<16x16xi8, strided<[16, 1]>>
+    %alloc_1 = memref.alloc() : memref<16x16xi8>
+    hivm.hir.load ins(%reinterpret_cast_0 : memref<16x16xi8, strided<[16, 1]>>) outs(%alloc_1 : memref<16x16xi8>) eviction_policy = <EvictFirst>
+    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<16x16xi8>
+    %4 = tensor.empty() : tensor<16x16xi8>
+    %5 = hivm.hir.vadd ins(%2, %3 : tensor<16x16xi8>, tensor<16x16xi8>) outs(%4 : tensor<16x16xi8>) -> tensor<16x16xi8>
+    %6 = tensor.empty() : tensor<16x16xi32>
+    
+    // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x32xi8>
+    // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : i8) outs(%[[EMPTY]] : tensor<16x32xi8>) -> tensor<16x32xi8>
+    // CHECK: %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %[[VBRC]][0, 0] [16, 16] [1, 1] : tensor<16x16xi8> into tensor<16x32xi8>
+    // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[INSERTED]] {{\[\[}}0], [1, 2]] output_shape [16, 1, 32] : tensor<16x32xi8> into tensor<16x1x32xi8>
+    // CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<1x16x32xi8>
+    // CHECK: %[[VTRANS:.*]] = hivm.hir.vtranspose ins(%[[EXPANDED]] : tensor<16x1x32xi8>) outs(%[[EMPTY_1]] : tensor<1x16x32xi8>) permutation = [1, 0, 2] -> tensor<1x16x32xi8>
+    // CHECK: %[[EXPANDED_2:.*]] = tensor.expand_shape %[[VTRANS]] {{\[\[}}0], [1, 2], [3]] output_shape [1, 1, 16, 32] : tensor<1x16x32xi8> into tensor<1x1x16x32xi8>
+    // CHECK: annotation.mark %[[EXPANDED_2]] {tiling_dim_mapping = {"1" = 1 : index}} : tensor<1x1x16x32xi8>
+    // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x32xi8, #hivm.address_space<cbuf>>
+    // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x32xi8, #hivm.address_space<cbuf>> to memref<1x1x16x32xi8>
+    // CHECK: %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x32xi8>
+    // CHECK: hivm.hir.copy ins(%[[EXPANDED_2]] : tensor<1x1x16x32xi8>) outs(%[[CAST]] : memref<1x1x16x32xi8>)
+
+
+    %7 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%5, %3, %true, %c16, %c16, %c16 : tensor<16x16xi8>, tensor<16x16xi8>, i1, index, index, index) outs(%6 : tensor<16x16xi32>) -> tensor<16x16xi32>
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xi32> to memref<16x16xi32, strided<[16, 1]>>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%7 : tensor<16x16xi32>) outs(%reinterpret_cast_2 : memref<16x16xi32, strided<[16, 1]>>)
+    return
+  }
+}
