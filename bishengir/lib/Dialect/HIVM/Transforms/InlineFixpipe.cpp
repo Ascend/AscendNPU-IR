@@ -76,7 +76,8 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   for (auto *user : users) {
     // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser to
     // judge
-    if (!isa<scf::YieldOp>(user) || !isa<scf::ForOp>(user->getParentOp())) {
+    auto forOp = user->getParentOfType<scf::ForOp>();
+    if (!isa<scf::YieldOp>(user) || !forOp) {
       continue;
     } else {
       yieldOperands.emplace(user);
@@ -102,22 +103,45 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
 }
 
 bool isAccumulation(Operation *op) {
-  // TODO: make this check more accurate
-  auto mmadL1Op = dyn_cast_if_present<hivm::MmadL1Op>(op);
-  if (!mmadL1Op) {
+  auto mmadOp = dyn_cast_if_present<hivm::MmadL1Op>(op);
+  if (!mmadOp)
+    return false;
+
+  auto forOp = mmadOp->getParentOfType<scf::ForOp>();
+  if (!forOp)
+    return false;
+
+  auto cArg = dyn_cast<BlockArgument>(mmadOp.getC());
+  if (!cArg || cArg.getOwner() != forOp.getBody() ||
+      cArg.getArgNumber() < forOp.getNumInductionVars()) {
     return false;
   }
-  auto scfForOp = dyn_cast_if_present<scf::ForOp>(mmadL1Op->getParentOp());
-  if (!scfForOp) {
-    return false;
+
+  unsigned iterIdx = cArg.getArgNumber() - forOp.getNumInductionVars();
+
+  Value val = mmadOp.getResultTensors()[0];
+  while (val) {
+    if (val == forOp.getBody()->getTerminator()->getOperand(iterIdx)) {
+      return true;
+    }
+
+    if (!val.hasOneUse()) {
+      return false;
+    }
+
+    auto yieldOp = dyn_cast<scf::YieldOp>(*val.user_begin());
+    if (!yieldOp) {
+      return false;
+    }
+
+    if (auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp())) {
+      unsigned operandIdx = val.use_begin()->getOperandNumber();
+      val = ifOp.getResult(operandIdx);
+    } else {
+      return false;
+    }
   }
-  Value c = mmadL1Op.getC();
-  Value r = mmadL1Op.getResultTensors()[0];
-  if (isa<BlockArgument>(c)) {
-    return traceSingleChainUser(r, [](Operation *op, Value val) {
-             return isa<scf::YieldOp>(op);
-           });
-  }
+
   return false;
 }
 
