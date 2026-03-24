@@ -26,6 +26,10 @@ This document describes the **TileCubeVectorLoop** pass in HIVM. It optimizes CV
 
 ---
 
+## Hardware background
+
+Current Ascend AI accelerator chips adopt a decoupled architecture for AIC and AIV cores. Data exchange between AIC and AIV cores is performed through Global Memory. When data dependencies exist between the AIC and AIV cores, inter-core synchronization instructions are required to ensure data correctness. However, frequent inter-core synchronization leads to performance degradation. Therefore, to improve operator execution performance, the synchronization frequency between AIC and AIV cores should be minimized as much as possible.
+
 ## Algorithm
 
 The pass walks the IR, finds CopyOut ops for Cube and Vector loops, uses them as anchors to split their producers, and fuses the split into the loop.
