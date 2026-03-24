@@ -34,7 +34,7 @@ __aicore__ __attribute__((always_inline)) void set_hf32_ctrl() {
 __aicore__ __attribute__((always_inline)) void set_hf32_ctrl_none() {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
-  INTRINSIC(set_ctrl, (get_ctrl() & (uint64_t)(0xFFFFDFFFFFFFFFFF)));
+  INTRINSIC(set_ctrl, (get_ctrl() & (uint64_t)(0xFFFDFFFFFFFFFFFF)));
 #endif
 }
 
