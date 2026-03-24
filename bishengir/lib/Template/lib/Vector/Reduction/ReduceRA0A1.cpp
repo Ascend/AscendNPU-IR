@@ -87,7 +87,7 @@ reduce_ra0a1_by_scalar(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *d
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 reduce_ra0a1_core(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
-                  memref_t<__ubuf__ T, 1> *tmp_buf) {
+                  memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
   const int64_t size0 = src0->sizes[0];
   const int64_t size1 = src0->sizes[1];
   const int64_t size2 = src0->sizes[2];
@@ -120,6 +120,44 @@ reduce_ra0a1_core(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
     INTRINSIC(pipe_barrier, PIPE_V);
     vector_eltwise_vv_2d<VECOP, T>(&subview_src0, &dst_2d, &dst_2d, tmp_buf);
   }
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+reduce_ra0a1_core<ReduceOpTy::REDUCE_OR, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  reduce_ra0a1_core<ReduceOpTy::REDUCE_OR, int16_t>(
+      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+reduce_ra0a1_core<ReduceOpTy::REDUCE_AND, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  reduce_ra0a1_core<ReduceOpTy::REDUCE_AND, int16_t>(
+      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
 }
 
 /// Reduce src (r, a0, a1) with stride [n0, n1, 1] to dst (1, a0, a1) with
@@ -180,7 +218,7 @@ reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
   // 2. src0_stride2 & dst_stride2 must equal with 1
   // 3. The addresses of (aligned + offset) of src0 & dst 32-byte alignment must be met.
   if (is_last_axis_contiguous && is_stride_aligned && is_offset_aligned) [[likely]] {
-    reduce_ra0a1_core<OP, T>(src0, dst, tmp_buf);
+    reduce_ra0a1_core<OP, T>(src0, dst, tmp_buf, initvalue);
     return;
   }
 
@@ -208,50 +246,12 @@ reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
                                     {size0, size1, size2 - elements_calc_by_scalar},
                                     {dst_stride0, dst_stride1, dst_stride2}};
 
-    reduce_ra0a1_core<OP, T>(&new_src0, &new_dst, tmp_buf);
+    reduce_ra0a1_core<OP, T>(&new_src0, &new_dst, tmp_buf, initvalue);
     return;
   }
 
   // In the remaining cases, reduction can only be performed through scalar operations.
   reduce_ra0a1_by_scalar<OP, T>(src0, dst, size2);
-}
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-reduce_ra0a1<ReduceOpTy::REDUCE_OR, uint8_t>(
-    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
-    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
-  // convert uint8_t memref to int16 memref
-  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
-  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
-  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
-  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
-  // process.
-  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
-  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
-  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
-
-  reduce_ra0a1<ReduceOpTy::REDUCE_OR, int16_t>(
-      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
-}
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-reduce_ra0a1<ReduceOpTy::REDUCE_AND, uint8_t>(
-    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
-    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
-  // convert uint8_t memref to int16 memref
-  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
-  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
-  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
-  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
-  // process.
-  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
-  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
-  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
-
-  reduce_ra0a1<ReduceOpTy::REDUCE_AND, int16_t>(
-      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
 }
 
 extern "C" {

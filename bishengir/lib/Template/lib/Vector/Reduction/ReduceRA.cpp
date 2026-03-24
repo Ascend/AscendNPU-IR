@@ -176,6 +176,44 @@ vector_reduce_ra(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   }
 }
 
+template <>
+__aiv__ __attribute__((always_inline)) void
+vector_reduce_ra<ReduceOpTy::REDUCE_OR, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 2> *src0, memref_t<__ubuf__ uint8_t, 2> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 2> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 2> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 2>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 2>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  vector_reduce_ra<ReduceOpTy::REDUCE_OR, int16_t>(&src0_as_int16, &dst_as_int16,
+                                                   &tmp_as_int16, (int16_t)initvalue);
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+vector_reduce_ra<ReduceOpTy::REDUCE_AND, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 2> *src0, memref_t<__ubuf__ uint8_t, 2> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 2> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 2> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 2>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 2>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  vector_reduce_ra<ReduceOpTy::REDUCE_AND, int16_t>(&src0_as_int16, &dst_as_int16,
+                                                    &tmp_as_int16, (int16_t)initvalue);
+}
+
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) T
 get_scalar_operation_init_value(memref_t<__ubuf__ T, 2> *src,
@@ -308,44 +346,6 @@ reduce_ra(memref_t<__ubuf__ T, 2> *src0,
 
   // The stride sizes of source and dest are not aligned.
   scalar_reduce_ra<OP>(src0, dst);
-}
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-reduce_ra<ReduceOpTy::REDUCE_OR, uint8_t>(
-    memref_t<__ubuf__ uint8_t, 2> *src0, memref_t<__ubuf__ uint8_t, 2> *dst,
-    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
-  // convert uint8_t memref to int16 memref
-  memref_t<__ubuf__ int16_t, 2> src0_as_int16;
-  memref_t<__ubuf__ int16_t, 2> dst_as_int16;
-  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
-  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
-  // process.
-  view_as<uint8_t, int16_t, 2>(src0, &src0_as_int16);
-  view_as<uint8_t, int16_t, 2>(dst, &dst_as_int16);
-  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
-
-  reduce_ra<ReduceOpTy::REDUCE_OR, int16_t>(&src0_as_int16, &dst_as_int16,
-                                            &tmp_as_int16, (int16_t)initvalue);
-}
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-reduce_ra<ReduceOpTy::REDUCE_AND, uint8_t>(
-    memref_t<__ubuf__ uint8_t, 2> *src0, memref_t<__ubuf__ uint8_t, 2> *dst,
-    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
-  // convert uint8_t memref to int16 memref
-  memref_t<__ubuf__ int16_t, 2> src0_as_int16;
-  memref_t<__ubuf__ int16_t, 2> dst_as_int16;
-  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
-  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
-  // process.
-  view_as<uint8_t, int16_t, 2>(src0, &src0_as_int16);
-  view_as<uint8_t, int16_t, 2>(dst, &dst_as_int16);
-  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
-
-  reduce_ra<ReduceOpTy::REDUCE_AND, int16_t>(&src0_as_int16, &dst_as_int16,
-                                             &tmp_as_int16, (int16_t)initvalue);
 }
 
 extern "C" {
