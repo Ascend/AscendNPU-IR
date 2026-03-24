@@ -1,0 +1,23 @@
+diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
+index 56636d946619..cc3c2158d3aa 100644
+--- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
++++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
+@@ -383,8 +383,18 @@ public:
+ 
+   // Build the unary functions defined by OpDSL.
+   Value buildUnaryFn(UnaryFn unaryFn, Value arg) {
++#ifdef BSPRIV_DAVINCI_BISHENGIR
++    if (!isFloatingPoint(arg))
++      switch (unaryFn) {
++      case UnaryFn::abs:
++          return builder.create<math::AbsIOp>(arg.getLoc(), arg);
++        default:
++          llvm_unreachable("unsupported non numeric type");
++      }
++#else
+     if (!isFloatingPoint(arg))
+       llvm_unreachable("unsupported non numeric type");
++#endif
+     OpBuilder::InsertionGuard g(builder);
+     builder.setInsertionPointToEnd(&block);
+     switch (unaryFn) {
