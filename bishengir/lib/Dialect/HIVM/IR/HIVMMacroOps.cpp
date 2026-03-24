@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -18,6 +19,7 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -26,6 +28,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
@@ -477,6 +480,9 @@ static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
         getElementTypeOrSelf(castOp.getSingleDst().getType()).isF32())
       src = castOp.getSingleSrc();
 
+  if (auto expandShapeOp = src.getDefiningOp<tensor::ExpandShapeOp>())
+    src = extractMmadBiasFromPotentialUnitDimExpand(src);
+
   // If hookOp is defined, it means that IR order of current candidate bias
   // tensor may be not declared before matmul, which would cause dominance
   // confusion. Here is to verify.
@@ -498,29 +504,51 @@ static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
   return brcDims.size() == 1 && brcDims[0] == 0;
 }
 
-static bool isPerChannelPattern(OpOperand &mmOut) {
-  auto defOp = traceDefOp<hivm::VBrcOp>(mmOut.get());
-  if (defOp.has_value()) {
-    auto brcOp = cast<hivm::VBrcOp>(defOp.value());
+static bool isPerChannelPattern(OpOperand &mmOut, OpOperand &mmInitCond) {
+  // matmul init condition must be false.
+  Value v = mmInitCond.get();
+  if (!matchPattern(v, m_Zero()))
+    return false;
+
+  auto vbrcOp = mmOut.get().getDefiningOp<hivm::VBrcOp>();
+  if (vbrcOp) {
     // For normal perChannel pattern, bias user has acted as outC of matmulOp,
     // and there's no need to verify order of bias
-    if (isSatisfiedBrcForPerChannel(brcOp))
+    if (isSatisfiedBrcForPerChannel(vbrcOp))
       return true;
   }
 
   return false;
 }
 
-static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
+static bool isPostPerChannelSplitKPattern(OpOperand &mmOut,
+                                          OpOperand &mmInitCond) {
+  Value v = mmInitCond.get();
+  auto cmpOp = v.getDefiningOp<arith::CmpIOp>();
+  if (!cmpOp)
+    return false;
+  Value cmpLhs = cmpOp.getLhs();
+  Value cmpRhs = cmpOp.getRhs();
+
   Operation *localMatmulOp = mmOut.getOwner();
   if (auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get())) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
             blockArg.getOwner()->getParentOp())) {
+      if (!(((cmpLhs == scfForOp.getLowerBound()) &&
+             (cmpRhs == scfForOp.getInductionVar())) ||
+            ((cmpLhs == scfForOp.getInductionVar()) &&
+             (cmpRhs == scfForOp.getLowerBound()))))
+        return false;
       auto correspondForRes = scfForOp.getTiedLoopResult(blockArg);
+      auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
       if (!(localMatmulOp->getResults()[0].hasOneUse() &&
-            isa<scf::YieldOp>(*(localMatmulOp->getResults()[0].user_begin())) &&
+            (localMatmulOp->getResults()[0] == yieldValue->get()) &&
             correspondForRes.hasOneUse() &&
             isa<hivm::VAddOp>(*(correspondForRes.user_begin()))))
+        return false;
+      auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
+      auto emptyOp = forInitArg->get().getDefiningOp<tensor::EmptyOp>();
+      if (!emptyOp)
         return false;
       auto vaddOp = dyn_cast<hivm::VAddOp>(*(correspondForRes.user_begin()));
       assert(vaddOp.getSrc().size() == 2);
@@ -531,6 +559,31 @@ static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
         if (vbrcOp && isSatisfiedBrcForPerChannel(vbrcOp, scfForOp))
           return true;
       }
+    }
+  }
+
+  return false;
+}
+
+static bool isMMInitPerChannelSplitKPattern(OpOperand &mmOut,
+                                            OpOperand &mmInitCond) {
+  // matmul init condition must be false.
+  Value v = mmInitCond.get();
+  if (!matchPattern(v, m_Zero()))
+    return false;
+
+  Operation *localMatmulOp = mmOut.getOwner();
+  if (auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get())) {
+    if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
+      auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
+      if (!(localMatmulOp->getResults()[0].hasOneUse() &&
+            (localMatmulOp->getResults()[0] == yieldValue->get())))
+        return false;
+      auto vbrcOp = forInitArg->get().getDefiningOp<hivm::VBrcOp>();
+      if (vbrcOp && isSatisfiedBrcForPerChannel(vbrcOp, scfForOp))
+        return true;
     }
   }
 
@@ -548,7 +601,7 @@ static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
 /// %1 = vbrc src: (1, n) dst :(m, n)
 /// mmadL1 dst(%1)
 
-/// PerChannelAddWithSplitK
+/// PostPerChannelAddWithSplitK
 /// %init = tensor.empty()
 /// %mat = for split k (%iterator = %init) {
 ///   %acc_mad = mmadL1 dst(%iterator)
@@ -561,19 +614,35 @@ static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
 /// %1 = ops // not 0 const
 /// mmadL1 dst(%1)
 
+/// MMInitPerChannelAddWithSplitK
+/// %alloc = memref.alloc()
+/// %32 = bufferization.to_tensor %alloc
+/// %33 = tensor.empty()
+/// %34 = hivm.hir.vcast ins(%32) outs(%33)
+/// %35 = tensor.empty()
+/// %expanded = tensor.expand_shape %34
+/// %36 = vbrc %expanded: (1, n) %35 :(m, n)
+/// %mat = for split k (%iterator = %36) {
+///   %acc_mad = mmadL1 dst(%iterator)
+///   yield %acc_mad
+/// }
+
 /// Well, both per-channel modes are optimization and related pattern is a
 /// little customized, whatever ElementwiseAdd mode will be final standby for
 /// all adding bias scenario
 template <typename LocalMmadTy>
 MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   OpOperand &matmulOutput = localMatmulOp.getCMutable();
-
+  OpOperand &matmulInitCond = localMatmulOp.getInitConditionMutable();
   // Here just traces forward to find satisfied first axis VBrcOp
-  if (isPerChannelPattern(matmulOutput))
+  if (isPerChannelPattern(matmulOutput, matmulInitCond))
     return MatmulBiasMode::PerChannelAdd;
 
-  if (isPerChannelSplitKPattern(matmulOutput))
-    return MatmulBiasMode::PerChannelAddWithSplitK;
+  if (isPostPerChannelSplitKPattern(matmulOutput, matmulInitCond))
+    return MatmulBiasMode::PostPerChannelAddWithSplitK;
+
+  if (isMMInitPerChannelSplitKPattern(matmulOutput, matmulInitCond))
+    return MatmulBiasMode::MMInitPerChannelAddWithSplitK;
 
   // When all traced allocs of the mmadL1 init are in the same L0C memory
   // space, it means that the user is explicitly controlling buffer reuse on
