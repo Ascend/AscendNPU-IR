@@ -77,7 +77,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 
 ### triton接入说明
 
-有多种生态编程语言对接AscendNPU IR，当前仅以Triton为例进行介绍，剩余还有TileLang/FlagTree/DLCompiler/TLE 方式类试可以参考Triton进行对接
+有多种生态编程语言对接AscendNPU IR，当前仅以Triton为例进行介绍，剩余还有TileLang、FlagTree、DLCompiler与TLE等方式，可以参考Triton进行对接
 
 目前与调试调测相关的triton op主要有如下四类：
 
