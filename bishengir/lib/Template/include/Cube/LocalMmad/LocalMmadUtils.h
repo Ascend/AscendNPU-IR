@@ -18,7 +18,7 @@
 #define HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
 #include "Utils.h"
 
-constexpr uint32_t HF32_CTRL_REGISTER_BIT = 46;
+constexpr uint32_t HF32_CTRL_REGISTER_BIT = 49;
 
 enum class Load2DTransposeMode : uint8_t {
   ADDADDR = 0,
