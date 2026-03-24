@@ -102,7 +102,7 @@ In the original GPU flow, i64/i32 compare operations cannot use the vector unit 
 +   xbar = tl.where(cols_cmp < N, x - mean, 0.0)
 ```
 
----
+
 
 ## Function and precision cases
 
@@ -148,7 +148,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 For varlen-style kernels that randomly sample indices in seqlen, ensure indices are valid: strictly increasing and in the range [0, seqlen].
 
----
+
 
 ## UB overflow
 
@@ -206,7 +206,7 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : ...) outs(%3 : ...) te
 
 - **Summary**: PlanMemory accounts for temp_buffer that is not used in the final computation, which can cause false UB overflow. The temp_buffer allocation rule needs to be adjusted before PlanMemory (e.g. do not reserve UB for temp_buffer that is later removed).
 
----
+
 
 ## D-cache
 
@@ -229,7 +229,7 @@ for i_w in tl.static_range(-W+1, 1):
 for i_w in tl.static_range(W):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
 ```
----
+
 
 ## Memory access
 
@@ -330,17 +330,29 @@ no error after executing means it works correctly
 
 ### Use mayDiscretememaccess to avoid UB overflow
 
-- **Symptom**: UB overflow can be caused by large tensor size (e.g. beyond 192 KB UB) or by non-contiguous access that expands the last axis (e.g. `<Nx1xf32>` becomes `<Nx8xf32>` for 32B alignment). Adding the `mayDiscretememaccess` compile hint degenerates the tensor op to scalar access and can avoid UB overflow.
+- **Symptom**: The causes of UB overflow vary. Apart from the tensor data type being too large, exceeding the 192KB UB limit, another possible reason is non-contiguous memory access leading to axis expansion within the UB. Taking the <Nx1xf32> data type as an example, because the hardware requires 32-byte alignment for the last axis, and 1xf32 is only 4 bytes in size, the actual size of <Nx1xf32> on the hardware is expanded to <Nx8xf32> to ensure 32-byte alignment. Regardless of the cause of UB overflow, adding the mayDiscretememaccess compilation hint can degrade tensor operations to scalar operations, thereby avoiding UB overflow.
 
-- **Usage**: Add the hint on the value used in load/store:
+- **Usage**: When rewriting operators, simply add the compile_hint to the data involved in load/store operations. Refer to the following code snippet:
 
+For versions prior to triton-adaptor 3.2.0:
 ```python
-# For load: add hint on the loaded value
+# For load operations, compile_hint should be added to the loaded value
 value = tl.load(pointer)
 tl.compile_hint(value, "mayDiscretememaccess")
 
-# For store: add hint on the value being stored
+# For store operations, compile_hint should be added to the value being stored
 tl.compile_hint(value, "mayDiscretememaccess")
+tl.store(pointer, value)
+```
+
+For versions after triton-adaptor 3.4.0, the following modification is required:
+```python
+# For load operations, compile_hint should be added to the loaded value
+value = tl.load(pointer)
+tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
+
+# For store operations, compile_hint should be added to the value being stored
+tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
@@ -348,7 +360,13 @@ tl.store(pointer, value)
 
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
-tl.compile_hint(b_x, "mayDiscretememaccess")
+```
+
+By adding a compilation hint, tensor memory access is degraded to scalar memory access to avoid UB overflow. Refer to the following code snippet:
+
+```python
+b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
+tl.extra.cann.extension.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
 - **Example 2** (column-major to row-major with Ascend extension):
@@ -547,7 +565,6 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ```
 
----
 
 ## Scenario-based debugging
 
@@ -766,7 +783,7 @@ def test_where_lt_case1(param_list):
 
 Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
 
----
+
 
 ## Cube–Vector (CV)
 
@@ -844,7 +861,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
----
+
 
 ## Triton NPU programming tutorials
 
