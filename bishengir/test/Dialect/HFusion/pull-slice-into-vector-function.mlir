@@ -113,3 +113,69 @@ module {
     return %4 : tensor<2x64xf32>
   }
 }
+
+// -----
+
+// Test: stride-1 extract_slice at non-zero static offset.
+module {
+  // CHECK-LABEL: func @vf_nonzero_offset(
+  // CHECK-SAME: tensor<12x64xf16>
+  // CHECK: tensor.extract_slice
+  // CHECK: return
+  func.func @vf_nonzero_offset(%arg0: tensor<4x64xf16>) -> tensor<4x64xf16>
+      attributes {hivm.vector_function} {
+    %0 = tensor.empty() : tensor<4x64xf16>
+    %1 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+        ins(%arg0 : tensor<4x64xf16>) outs(%0 : tensor<4x64xf16>) -> tensor<4x64xf16>
+    return %1 : tensor<4x64xf16>
+  }
+
+  // CHECK-LABEL: func @test_nonzero_static_offset(
+  // CHECK-NOT: tensor.extract_slice{{.*}}[1, 0]{{.*}}tensor<12x64xf16>
+  // CHECK: call @vf_nonzero_offset(%arg0
+  // CHECK-SAME: {hivm.vector_function}
+  func.func @test_nonzero_static_offset(%arg0: tensor<12x64xf16>) -> tensor<12x64xf16> {
+    %slice = tensor.extract_slice %arg0[1, 0] [4, 64] [1, 1]
+        : tensor<12x64xf16> to tensor<4x64xf16>
+    %x = func.call @vf_nonzero_offset(%slice) {hivm.vector_function}
+        : (tensor<4x64xf16>) -> tensor<4x64xf16>
+    %r = tensor.insert_slice %x into %arg0[1, 0] [4, 64] [1, 1]
+        : tensor<4x64xf16> into tensor<12x64xf16>
+    return %r : tensor<12x64xf16>
+  }
+}
+
+// -----
+
+// Test: 1D extract_slice with size change (tensor<128xbf16> → tensor<32xbf16>).
+// The old drop_begin left an empty range for rank-1, silently accepting all
+// 1-D size changes as "standard".
+module {
+  // CHECK-LABEL: func @vf_1d_slice(
+  // CHECK-SAME: tensor<128xbf16>
+  // CHECK: tensor.extract_slice
+  // CHECK: return
+  func.func @vf_1d_slice(%arg0: tensor<32xbf16>) -> tensor<32xbf16>
+      attributes {hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : bf16
+    %c0 = arith.constant 0 : index
+    %0 = vector.transfer_read %arg0[%c0], %cst
+        : tensor<32xbf16>, vector<32xbf16>
+    %1 = vector.transfer_write %0, %arg0[%c0]
+        : vector<32xbf16>, tensor<32xbf16>
+    return %1 : tensor<32xbf16>
+  }
+
+  // CHECK-LABEL: func @test_1d_size_change(
+  // CHECK-NOT: tensor.extract_slice{{.*}}tensor<128xbf16> to tensor<32xbf16>
+  // CHECK: call @vf_1d_slice(%arg0
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: tensor<128xbf16>
+  func.func @test_1d_size_change(%arg0: tensor<128xbf16>) {
+    %slice = tensor.extract_slice %arg0[0] [32] [1]
+        : tensor<128xbf16> to tensor<32xbf16>
+    %x = func.call @vf_1d_slice(%slice) {hivm.vector_function}
+        : (tensor<32xbf16>) -> tensor<32xbf16>
+    return
+  }
+}
