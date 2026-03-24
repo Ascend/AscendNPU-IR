@@ -579,6 +579,7 @@ tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.extra.cann.extension.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
+
 - **写法样例1**
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
@@ -588,7 +589,7 @@ b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
-tl.compile_hint(b_x, "mayDiscretememaccess")
+tl.extra.cann.extension.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
 - **写法样例2**
