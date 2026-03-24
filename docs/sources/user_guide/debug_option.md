@@ -74,7 +74,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 
 ### Triton integration
 
-Multiple frontends integrate with AscendNPU IR; here we describe Triton. Others (TileLang, FlagTree, DLCompiler, TLE, etc.) can follow a similar pattern.
+Multiple frontends integrate with AscendNPU IR; here we describe Triton. The other methods include TileLang, FlagTree, DLCompiler, and TLE, can also follow Triton's pattern.
 
 Triton debug-related ops:
 

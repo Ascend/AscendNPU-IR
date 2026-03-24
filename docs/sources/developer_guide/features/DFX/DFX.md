@@ -112,9 +112,15 @@ device_print only supports printing data on UB/GM. Therefore when printing L1 da
 %14 = arith.index_cast %5 : i32 to index
 %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [%14], sizes: [4, 1], strides: [%13, 1] : memref<?xf32> to memref<4x1xf32, strided<[?, 1], offset: ?>>
 %alloc_1 = memref.alloc() : memref<4x1xf32>
-hivm.hir.load ins(%reinterpret_cast_0 : ...) outs(%alloc_1 : memref<4x1xf32>) ...
+hivm.hir.load ins(%reinterpret_cast_0 : memref<4x1xf32, strided<[?, 1], offset: ?>>) outs(%alloc_1 : memref<4x1xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
 %15 = bufferization.to_tensor %alloc_1 restrict writable : memref<4x1xf32>
-...
+%16 = arith.muli %8, %arg8 : i32
+%17 = arith.index_cast %16 : i32 to index
+%18 = arith.addi %17, %14 : index
+%19 = tensor.empty() : tensor<1x1xf32>
+%c1 = arith.constant 1 : index
+%c4 = arith.constant 4 : index
+%c1_2 = arith.constant 1 : index
 %20 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%12, %15, %true, %c1, %c4, %c1_2 : tensor<1x4xf32>, tensor<4x1xf32>, i1, index, index, index) outs(%19 : tensor<1x1xf32>) -> tensor<1x1xf32>
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %12 : tensor<1x4xf32>
 
@@ -127,9 +133,12 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretyp
 %17 = arith.index_cast %5 : i32 to index
 %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [%17], sizes: [4, 1], strides: [%16, 1] : memref<?xf32> to memref<4x1xf32, strided<[?, 1], offset: ?>>
 %alloc_1 = memref.alloc() : memref<4x1xf32>
-hivm.hir.load ins(%reinterpret_cast_0 : ...) outs(%alloc_1 : memref<4x1xf32>) ...
+hivm.hir.load ins(%reinterpret_cast_0 : memref<4x1xf32, strided<[?, 1], offset: ?>>) outs(%alloc_1 : memref<4x1xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
 %18 = bufferization.to_tensor %alloc_1 restrict writable : memref<4x1xf32>
-...
+%19 = arith.muli %8, %arg8 : i32
+%20 = arith.index_cast %19 : i32 to index
+%21 = arith.addi %20, %17 : index
+%22 = tensor.empty() : tensor<1x1xf32>
 %23 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%12, %18, %true, %c1, %c4, %c1 : tensor<1x4xf32>, tensor<4x1xf32>, i1, index, index, index) outs(%22 : tensor<1x1xf32>) -> tensor<1x1xf32>
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %15 : tensor<1x4xf32>
 ```
