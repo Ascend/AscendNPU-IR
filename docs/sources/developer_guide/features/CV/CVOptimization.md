@@ -198,22 +198,24 @@ func.func @bind_workspace_arg(
 - **Goal**: On a given workspace base, assign offsets by liveness and inplace rules to maximize reuse and minimize total workspace size.
 - **Typical transforms**: Multiple alloc_workspace mapped to different offsets in the same workspace; conflicting buffers get different offsets.
 
-Before:
-
-```mlir
-func.func @bind_workspace_arg(..., %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+Before：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
   memref_ext.alloc_workspace() from %arg1 : memref<100xi32>
   return
 }
 ```
-
-After:
-
-```mlir
-func.func @bind_workspace_arg(..., %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
+After：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
   memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
   return
 }
+
 ```
 
 ### 2.8 createSplitMixKernelPass
@@ -222,10 +224,12 @@ func.func @bind_workspace_arg(..., %arg1: memref<?xi8> {hacc.arg_type = #hacc.ar
 - **Goal**: The backend can schedule AIC/AIV to Cube/Vector cores separately for pipelining and sync.
 - **Typical transforms**: Traverse IR by core type; put Cube code in AIC and Vector in AIV; use `annotation.mark` for tensors passed across cores.
 
-Before:
-
-```mlir
-func.func @bind_workspace_arg(..., hivm.func_core_type = #hivm.func_core_type<MIX>){
+before：
+```
+func.func @bind_workspace_arg(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<MIX>){
   mmadl1
   memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
   fixpipe
@@ -233,16 +237,20 @@ func.func @bind_workspace_arg(..., hivm.func_core_type = #hivm.func_core_type<MI
   vadd
 }
 ```
-
-After:
-
-```mlir
-func.func @bind_workspace_arg_aic(..., hivm.func_core_type = #hivm.func_core_type<AIC>){
+after：
+```
+func.func @bind_workspace_arg_aic(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<AIC>){
   mmadl1
   memref_ext.alloc_workspace() from %arg1 offset=[0] : memref<100xi32>
   fixpipe
 }
-func.func @bind_workspace_arg_aiv(..., hivm.func_core_type = #hivm.func_core_type<AIV>){
+func.func @bind_workspace_arg_aiv(
+              %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
+              %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+			  hivm.func_core_type = #hivm.func_core_type<AIV>){
   load
   vadd
 }
