@@ -17,6 +17,8 @@
 #include "Test/TestPasses.h"
 
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -63,18 +65,20 @@ struct TestHIVMDimensionAnalyzerPass
 
     llvm::outs() << succeedFunc << " succeedFunc - Function analyzed count\n";
 
-    moduleOp.walk([&](hivm::FixpipeOp fixpipeOp) {
-      auto forOp = cast<scf::ForOp>(fixpipeOp->getParentOp());
-      hivm::detail::DimensionAnalyzer analyzer(forOp);
+    moduleOp.walk([&](hivm::HIVMStructuredOp op) {
+      if (!isa<hivm::FixpipeOp, hivm::StoreOp>(op.getOperation()))
+        return;
+      auto *parentOp = op->getParentOp();
+      hivm::detail::DimensionAnalyzer analyzer(parentOp);
       auto res = analyzer.initialize();
       if (failed(res)) {
         LDBG("Failed initializing res");
         llvm::report_fatal_error("Analyzer failed");
       }
-      analyzer.computeTilingDim(/*isVectorOp=*/false);
-      llvm::outs() << "Tiling dim for " << fixpipeOp << " is "
-                   << analyzer.getTilingDim(fixpipeOp.getSrc()) << '\n';
-      forOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+      analyzer.computeTilingDim(isa<hivm::StoreOp>(op.getOperation()));
+      llvm::outs() << "Tiling dim for " << op << " is "
+                   << analyzer.getTilingDim(op.getDpsInputs()[0]) << '\n';
+      parentOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
         for (auto res : op->getResults()) {
           LDBG(res << '\n' << analyzer.getTilingDim(res));
         }

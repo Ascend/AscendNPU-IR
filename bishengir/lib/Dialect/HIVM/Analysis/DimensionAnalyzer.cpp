@@ -50,15 +50,17 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
 void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> parallelDimMaps;
   DenseMap<int64_t, int> numStoreOps;
-  for (auto [value, _] : argumentsRefPointer_)
-    tilingDim_[value] = -1;
 
   isVectorOp ? computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps)
              : computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
 
+  for (auto [value, _] : argumentsRefPointer_)
+    tilingDim_[value] = -1;
+
   DenseMap<int64_t, int> selectedTilingParIdxMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     auto numStoreOp = numStoreOps.at(groupIndex);
+    LDBG("Group " << groupIndex << " has " << numStoreOp << " operations");
     for (const auto &[parentIndex, candidate] : parallelDimMap) {
       if (static_cast<int64_t>(candidate.size()) == numStoreOp) {
         int64_t higherDimCnt = 0;
@@ -106,10 +108,20 @@ void DimensionAnalyzer::computeTilingDimImpl(
     auto args = getArgumentRefOrCreateDummy(src);
     auto srcRef = argumentsRefPointer_.at(src);
     numStoreOps[srcRef]++;
+    auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
-      if (isParallelDim(dim)) {
+      if (isParallelDim(dim) && shape[i] != 1) {
+        if (ShapedType::isDynamic(shape[i])) {
+          if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>();
+              extractSliceOp && extractSliceOp.getSourceType().getDimSize(i) == 1)
+              continue;
+          if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>();
+              subviewOp && subviewOp.getSourceType().getDimSize(i) == 1)
+              continue;
+        }
+        LDBG("Dim " << i << " is selected in group " << srcRef);
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
           parallelDimMap[srcRef][parentIndex].push_back(dim);
