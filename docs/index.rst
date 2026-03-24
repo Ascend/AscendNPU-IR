@@ -87,7 +87,7 @@ About
    :titlesonly:
    :caption: FAQ
 
-   FAQ <sources/FAQ/FAQ>
+   FAQ <sources/faq/faq>
 
 .. toctree::
    :hidden:
