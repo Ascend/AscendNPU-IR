@@ -54,7 +54,8 @@ cd tilelang-ascend
 # 在 3rdparty 中构建 AscendNPU-IR
 bash install_npuir.sh
 # 使用本地 AscendNPU-IR 的替代构建方式
-bash install_npuir.sh --bishengir-path=/path/to/bishengir-compile
+bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
+# 假定当前目录是tilelang-ascend，选项可以是：--bishengir-path=./3rdparty/AscendNPU-IR/build/install
 ```
 
 安装 torch_npu：
