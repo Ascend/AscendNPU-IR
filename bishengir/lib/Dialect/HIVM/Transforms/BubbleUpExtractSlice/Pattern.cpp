@@ -428,7 +428,7 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   auto inputRank = expandOp.getSrcType().getRank();
   // Compute the input offsets and sizes
-  SmallVector<OpFoldResult> inputOffsets(inputRank),
+  SmallVector<OpFoldResult> inputOffsets(inputRank, rewriter.getIndexAttr(0)),
       inputSizes(inputRank, rewriter.getIndexAttr(1)),
       inputStrides(inputRank, rewriter.getIndexAttr(1));
 
