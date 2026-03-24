@@ -133,9 +133,24 @@ public:
       return false;
     };
 
+    // Helper to check if a cast is precision upcast (safe, no precision loss)
+    auto isPrecisionUpcast = [&](CastOp op) -> bool {
+      Type inType = getElementTypeOrSelf(op.getInputs()[0].getType());
+      Type outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
+      int inRank = getPrecisionRank(inType);
+      int outRank = getPrecisionRank(outType);
+      // Precision upcast means output has higher or equal precision
+      return inRank >= 0 && outRank >= 0 && outRank >= inRank;
+    };
+
     // Helper to check if all casts in chain have fastmath contract
+    // Precision upcasts are allowed without fastmath contract since they are
+    // safe and don't cause precision loss
     auto allHaveFastMathContract = [&](SmallVector<CastOp> &chain) -> bool {
       for (CastOp op : chain) {
+        // Skip precision upcasts - they are safe
+        if (isPrecisionUpcast(op))
+          continue;
         if (!hasFastMathContract(op))
           return false;
       }
