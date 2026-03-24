@@ -335,7 +335,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 mlir代码如下：
 
-```javascript
+```mlir
 %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [256, 9, 11], strides: [99, 11, 1] : memref<?xi8, #hivm.address_space<gm>> to memref<256x9x11xi8, strided<[99, 11, 1]>, #hivm.address_space<gm>>
 %2 = hivm.hir.pointer_cast(%c0_i64) : memref<256x32x11x1xi8, #hivm.address_space<ub>>
 %subview = memref.subview %2[0, 0, 0, 0] [256, 9, 11, 1] [1, 1, 1, 1] : memref<256x32x11x1xi8, #hivm.address_space<ub>> to memref<256x9x11xi8, strided<[352, 11, 1]>, #hivm.address_space<ub>>
@@ -347,10 +347,15 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 - 分析：
 
     第1行，原始的数据大小为256x9x11xi8，保存在GM中(kernel的参数%arg3)；
+
     第2行，申请一块大小为256x32x11x1xi8的UB空间，用于从GM中COPY数据到UB，这里对第1轴进行了32字节对齐操作，同时尾轴增加一维；
+
     第3行，对第2行申请的UB形状256×32×11×1xi8，通过subview提取256x9x11xi8的子视图；
+
     第4行，通过collapse_shape，对第1行的GM中的视图256x9x11xi8，进行合并维度，变成256x99xi8类型；
+
     第5行，通过collapse_shape，对第3行的UB中的视图256x9x11xi8，进行合并维度，变成256x99xi8类型；
+
     第6行，将第4行的GM中形状为256x99xi8的数据，COPY到第5行的UB中的256x99xi8形状中；
 
 - 总结：
