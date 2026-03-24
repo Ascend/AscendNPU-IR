@@ -1312,6 +1312,206 @@ struct DropUnitDimsLinalgOp
       : OpInterfaceRewritePattern<linalg::LinalgOp>(context, benefit),
         options(std::move(options)), shouldSkip(shouldSkip) {}
 
+  static bool rewriteNoOpReduce(PatternRewriter& rewriter, linalg::LinalgOp op) {
+    auto reduce = dyn_cast<linalg::ReduceOp>(op.getOperation());
+    if (!reduce || !reduce.hasPureTensorSemantics())
+      return false;
+
+    if (reduce.getDimensions().size() != 1)
+      return false;
+
+    Value input0 = reduce.getDpsInputOperand(0)->get();
+    auto input0Ty = dyn_cast<RankedTensorType>(input0.getType());
+    if (!input0Ty || !input0Ty.hasStaticShape())
+      return false;
+
+    auto rank = input0Ty.getRank();
+    if (rank < 2)
+      return false;
+
+    auto redDim = reduce.getDimensions()[0];
+    if (redDim < 0 || redDim >= rank)
+      return false;
+
+    if (input0Ty.getShape()[redDim] != 1)
+      return false;
+
+    auto loc = reduce.getLoc();
+
+    auto dropUnitDim = [&](Value tensor, auto resultTy, auto dimToDrop) -> Value {
+      auto tensorTy = dyn_cast<RankedTensorType>(tensor.getType());
+      if (!tensorTy || tensorTy.getRank() < 2)
+        return {};
+
+      SmallVector<ReassociationIndices> reassociation;
+      reassociation.reserve(tensorTy.getRank() - 1);
+
+      if (dimToDrop == 0) {
+        reassociation.push_back({0, 1});
+        for (auto i = 2; i < tensorTy.getRank(); ++i)
+          reassociation.push_back({i});
+      } else if (dimToDrop == tensorTy.getRank() - 1) {
+        for (auto i = 0; i < tensorTy.getRank() - 2; ++i)
+          reassociation.push_back({i});
+        reassociation.push_back({tensorTy.getRank() - 2, tensorTy.getRank() - 1});
+      } else {
+        for (auto i = 0; i < dimToDrop - 1; ++i)
+          reassociation.push_back({i});
+        reassociation.push_back({dimToDrop - 1, dimToDrop});
+        for (auto i = dimToDrop + 1; i < tensorTy.getRank(); ++i)
+          reassociation.push_back({i});
+      }
+
+      return rewriter.create<tensor::CollapseShapeOp>(loc, resultTy, tensor,
+                                                      reassociation);
+    };
+
+    auto makeZeroTensorLike = [&](auto resultTy) -> Value {
+      SmallVector<Value> dynSizes;
+      dynSizes.reserve(resultTy.getRank());
+
+      for (auto i = 0; i < resultTy.getRank(); ++i) {
+        if (!resultTy.isDynamicDim(i))
+          continue;
+        auto srcDim = i < redDim ? i : i + 1;
+        dynSizes.push_back(rewriter.create<tensor::DimOp>(loc, input0, srcDim));
+      }
+
+      Value empty = rewriter.create<tensor::EmptyOp>(
+          loc, resultTy.getShape(), resultTy.getElementType(), dynSizes);
+
+      Value zero = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getZeroAttr(resultTy.getElementType()));
+
+      return rewriter.create<linalg::FillOp>(loc, zero, empty).getResult(0);
+    };
+
+    auto buildNanNormalizedTensor = [&](Value tensor, auto isMaxLike) -> Value {
+      auto tensorTy = dyn_cast<RankedTensorType>(tensor.getType());
+      if (!tensorTy)
+        return {};
+
+      auto elemTy = dyn_cast<FloatType>(tensorTy.getElementType());
+      if (!elemTy)
+        return tensor;
+
+      auto maskTy = RankedTensorType::get(tensorTy.getShape(), rewriter.getI1Type());
+      Value nanMask = rewriter.create<hfusion::IsNanOp>(loc, maskTy, tensor);
+
+      auto inf = APFloat::getInf(elemTy.getFloatSemantics(),
+                                 /*negative=*/isMaxLike);
+      Value infCst = rewriter.create<arith::ConstantOp>(
+          loc, DenseElementsAttr::get(tensorTy, inf));
+
+      SmallVector<Value> dynSizes;
+      for (auto i = 0; i < tensorTy.getRank(); ++i) {
+        if (tensorTy.isDynamicDim(i))
+          dynSizes.push_back(rewriter.create<tensor::DimOp>(loc, tensor, i));
+      }
+
+      Value out = rewriter.create<tensor::EmptyOp>(
+          loc, tensorTy.getShape(), tensorTy.getElementType(), dynSizes);
+
+      return rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange{tensorTy},
+                                     ValueRange{nanMask, infCst, tensor},
+                                     ValueRange{out})
+          .getResultTensors()[0];
+    };
+
+    enum class ReduceKind {
+      Unknown,
+      MaxNumF,
+      MinNumF,
+      ArgMax,
+      ArgMin,
+    };
+
+    auto detectReduceKind = [&]() {
+      auto &block = reduce.getRegion().front();
+
+      // tt.reduce
+      if (reduce->getNumResults() == 1) {
+        for (auto &nested : block.without_terminator()) {
+          if (isa<arith::MaxNumFOp>(nested))
+            return ReduceKind::MaxNumF;
+          if (isa<arith::MinNumFOp>(nested))
+            return ReduceKind::MinNumF;
+        }
+        return ReduceKind::Unknown;
+      }
+
+      // tt.argmin/argmax
+      if (reduce->getNumResults() == 2) {
+        for (auto &nested : block.without_terminator()) {
+          auto cmp = dyn_cast<arith::CmpFOp>(nested);
+          if (!cmp)
+            continue;
+
+          switch (cmp.getPredicate()) {
+          case arith::CmpFPredicate::OGT:
+          case arith::CmpFPredicate::UGE:
+          case arith::CmpFPredicate::UGT:
+            return ReduceKind::ArgMax;
+          case arith::CmpFPredicate::OLT:
+          case arith::CmpFPredicate::ULE:
+          case arith::CmpFPredicate::ULT:
+            return ReduceKind::ArgMin;
+          default:
+            break;
+          }
+        }
+      }
+
+      return ReduceKind::Unknown;
+    };
+
+    auto kind = detectReduceKind();
+
+    // tt.reduce
+    if (reduce->getNumResults() == 1) {
+      auto resultTy = dyn_cast<RankedTensorType>(reduce->getResult(0).getType());
+      if (!resultTy)
+        return false;
+
+      Value src = input0;
+      if (kind == ReduceKind::MaxNumF)
+        src = buildNanNormalizedTensor(src, /*isMaxLike=*/true);
+      else if (kind == ReduceKind::MinNumF)
+        src = buildNanNormalizedTensor(src, /*isMaxLike=*/false);
+
+      Value collapsed = dropUnitDim(src, resultTy, redDim);
+      if (!collapsed)
+        return false;
+
+      rewriter.replaceOp(reduce, collapsed);
+      return true;
+    }
+
+    // tt.argmax/argmin
+    if (reduce->getNumResults() == 2) {
+      auto valueResultTy =
+          dyn_cast<RankedTensorType>(reduce->getResult(0).getType());
+      auto indexResultTy =
+          dyn_cast<RankedTensorType>(reduce->getResult(1).getType());
+      if (!valueResultTy || !indexResultTy)
+        return false;
+
+      Value values = reduce.getDpsInputOperand(0)->get();
+
+      Value collapsedValues = dropUnitDim(values, valueResultTy, redDim);
+      if (!collapsedValues)
+        return false;
+
+      Value zeroIndices = makeZeroTensorLike(indexResultTy);
+
+      rewriter.replaceOp(reduce, ValueRange{collapsedValues, zeroIndices});
+      return true;
+    }
+
+    return false;
+  }
+
   LogicalResult matchAndRewrite(linalg::LinalgOp linalgOp,
                                 PatternRewriter &rewriter) const override {
     if (isa<linalg::MatmulOp, linalg::QuantizedMatmulOp,
@@ -1340,6 +1540,10 @@ struct DropUnitDimsLinalgOp
       return rewriter.notifyMatchFailure(
           linalgOp,
           "Ops like matmul cannot drop unit-dim (e.g. matmul 5x1 X 1x6)");
+    }
+
+    if (rewriteNoOpReduce(rewriter, linalgOp)) {
+      return success();
     }
 
     if (shouldSkip(linalgOp.getOperation())) {
