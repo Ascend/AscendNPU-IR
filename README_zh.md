@@ -1,4 +1,4 @@
-![AscendNPU IR定位](./docs/pic/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
+![AscendNPU IR定位](./docs/source/images/introduction/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
 
 ## 🎯 项目介绍
 
@@ -37,11 +37,11 @@ AscendNPU IR仓关键目录如下所示：
 
 本项目在 `docs/` 目录下使用基于 Sphinx 的文档工程，通过成对的 Markdown 源文件提供**英文与中文双语文档**。
 
-- **Language / 语言**：完整文档方案请参见 `docs/README.md`（English）与 `docs/README_zh.md`（中文）。
+- **语言**：完整文档方案请参见 `docs/README.md`（英文）与 `docs/README_zh.md`（中文）。
 - **文档组织方案**：
-  - **英文**：默认 `.md` 文件，入口页为 `docs/index.rst`，正文位于 `docs/sources/**/*.md`。
-  - **中文**：`*_zh.md` 文件，入口页为 `docs/index_zh.rst`，正文位于 `docs/sources/**/*_zh.md`。
-- **命名规范**：在 `docs/`（包含 `docs/sources/`）下，**目录名**与**文档文件名**统一采用 **snake_case**，例如：`quick_start/`、`installing_guide.md`、`installing_guide_zh.md`、`user_guide/`、`developer_guide/`、`contributing_guide/`，以保持路径与 URL 风格一致。
+  - **英文**：入口页为 `docs/source/en/index.rst`，正文位于 `docs/source/en` 目录下。
+  - **中文**：入口页为 `docs/source/zh_cn/index.rst`，正文位于 `docs/source/zh_cn` 目录下。
+- **命名规范**：`docs/`（包含 `docs/source/`）下的**目录名**与**文档文件名**统一采用 **snake_case** 小写下划线风格，例如：`quick_start/`、`installing_guide.md`、`user_guide/`，以保持路径与 URL 风格一致。
 
 在仓库根目录下构建文档：
 
@@ -55,11 +55,9 @@ make -C docs html-all  # 中英文均构建
 
 ## ⚡️ 快速上手
 
-快速上手指南请见：[快速上手](./docs/sources/introduction/quick_start/index_zh.md)
+快速上手指南请见：[快速上手](./docs/source/zh_ch/introduction/quick_start/index.rst)
 
-
-
-编译与安装指南请见：[构建安装](./docs/sources/introduction/quick_start/installing_guide_zh.md)
+编译与安装指南请见：[构建安装](./docs/source/zh_ch/introduction/quick_start/installing_guide.md)
 
 构建端到端用例示例请见：[README_zh.md](./bishengir/test/Integration/README_zh.md)
 

@@ -2,7 +2,7 @@
 
 This directory is the Sphinx documentation project for AscendNPU IR. It supports **English and Chinese** via dual source files.
 
-**Language / 语言:** [English](README.md) · [中文](README_zh.md)
+**Language:** [English](README.md) · [Chinese](README_zh.md)
 
 ---
 
@@ -10,16 +10,13 @@ This directory is the Sphinx documentation project for AscendNPU IR. It supports
 
 | Item | Convention |
 |------|------------|
-| **English** | Default `.md` files; entry page `index.rst`. |
-| **Chinese** | `*_zh.md` files; entry page `index_zh.rst`. |
+| **English** | The entry page is `docs/source/en/index.rst`; content under `docs/source/en` directory |
+| **Chinese** | The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_ch` directory. |
 | **Read the Docs** | Main project (en) + Translation project (zh); link in Admin → Translations for language switcher. |
-
-- **English**: `index.rst` and all `sources/**/*.md` (e.g. `introduction.md`, `installing_guide.md`).
-- **Chinese**: `index_zh.rst` and all `sources/**/*_zh.md` (e.g. `introduction_zh.md`). Subdirs have `index_zh.rst` where they have a toctree.
 
 ### Naming convention (snake_case)
 
-Directory names and document file names under `docs/` (including `sources/`) should use **snake_case** by default. Examples: `quick_start/`, `installing_guide.md`, `installing_guide_zh.md`, `user_guide/`, `developer_guide/`, `contributing_guide/`. This keeps URLs and paths consistent and avoids mixed styles (e.g. no camelCase like `installingGuide.md`).
+Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
 
 ---
 
@@ -77,11 +74,11 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
 
 ## Adding a new document
 
-1. Add the **English** file, e.g. `sources/introduction/NewDoc.md`.
-2. Add the **Chinese** file, e.g. `sources/introduction/NewDoc_zh.md`.
+1. Add the **English** file, e.g. `source/en/introduction/new_doc.md`.
+2. Add the **Chinese** file, e.g. `source/zh_cn/introduction/new_doc.md`.
 3. Add the doc to the right toctree:
-   - In **English**: `docs/index.rst` or the relevant subdir `index.rst` (e.g. `sources/introduction/quick_start/index.rst`) with entry `NewDoc` (or path like `section/NewDoc`).
-   - In **Chinese**: `docs/index_zh.rst` or the subdir `index_zh.rst` with entry `NewDoc_zh` (or `section/NewDoc_zh`).
+   - In **English**: `docs/source/en/index.rst` or the relevant subdir `index.rst`(e.g. `source/en/introduction/quick_start/index.rst`) with entry `new_doc` (or path like `section/new_doc`).
+   - In **Chinese**: `docs/source/zh_cn/index.rst` or the subdir `index.rst`(e.g. `source/zh_cn/introduction/quick_start/index.rst`) with entry `new_doc` (or `section/new_doc`).
 4. Optionally append the doc to `_main_doc_order` in `conf.py` if you use it for ordering or tooling.
 
 ---
@@ -90,11 +87,12 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
 
 | Path | Description |
 |------|-------------|
-| **conf.py** | Sphinx config; `language` and `root_doc` from `READTHEDOCS_LANGUAGE`; `_main_doc_order` for canonical order |
-| **index.rst** / **index_zh.rst** | English / Chinese home and toctrees |
-| **sources/**/*.md** | English content |
-| **sources/**/*_zh.md** | Chinese content |
-| **sources/**/index.rst** | English section toctrees |
-| **sources/**/index_zh.rst** | Chinese section toctrees (quick_start, conversion, dialects, passes, features) |
-| **Makefile** | `html` (en), `html-zh` (zh), `html-all` |
-| **requirements.txt** | Sphinx, myst-parser, sphinx-rtd-theme |
+| conf.py | Sphinx config; `language` and `root_doc` from `READTHEDOCS_LANGUAGE`; `_main_doc_order` for canonical order |
+| source/en/index.rst | English home and toctrees |
+| source/zh_cn/index.rst | Chinese home and toctrees |
+| source/en/**/\*.md | English content |
+| source/zh_cn/**/\*.md | Chinese content |
+| source/en/**/index.rst| English section toctrees |
+| source/zh_cn/**/index.rst | Chinese section toctrees |
+| Makefile | `html` (en), `html-zh` (zh), `html-all` |
+| requirements.txt | Sphinx, myst-parser, furo |

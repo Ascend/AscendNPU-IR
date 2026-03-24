@@ -1,4 +1,4 @@
-![AscendNPU IR README](./docs/pic/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
+![AscendNPU IR README](./docs/source/images/introduction/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
 
 ## 🎯 Introduction
 
@@ -37,11 +37,11 @@ Key directories within the AscendNPU IR repository are as follows:
 
 AscendNPU IR uses a Sphinx-based documentation project under `docs/`, with **dual-language support (English & Chinese)** through paired Markdown sources.
 
-- **Language / 语言**: see `docs/README.md` (English) and `docs/README_zh.md` (中文) for full details.
+- **Language**: see `docs/README.md` (English) and `docs/README_zh.md` (Chinese) for full details.
 - **File scheme**:
-  - **English**: default `.md` files, entry page `docs/index.rst`; content under `docs/sources/**/*.md`.
-  - **Chinese**: `*_zh.md` files, entry page `docs/index_zh.rst`; content under `docs/sources/**/*_zh.md`.
-- **Naming convention**: under `docs/` (including `docs/sources/`), directory and file names follow **snake_case**, for example: `quick_start/`, `installing_guide.md`, `installing_guide_zh.md`, `user_guide/`, `developer_guide/`, `contributing_guide/`.
+  - **English**: The entry page is `docs/source/en/index.rst`; content under `docs/source/en` directory.
+  - **Chinese**: The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_ch` directory.
+- **Naming convention**: Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
 
 To build the documentation from the repository root:
 
@@ -55,9 +55,9 @@ For more options (local preview, Read the Docs deployment, adding new documents,
 
 ## ⚡️ Quick Start
 
-Quick Start Guide: [Quick Start](./docs/sources/introduction/quick_start/index.md)
+Quick Start Guide: [Quick Start](./docs/source/en/introduction/quick_start/index.rst)
 
-For build and installation instructions, see: [Build and Installation](./docs/sources/introduction/quick_start/installing_guide.md)
+For build and installation instructions, see: [Build and Installation](./docs/source/en/introduction/quick_start/installing_guide.md)
 
 For an example of building E2E cases, see: [README.md](./bishengir/test/Integration/README.md)
 

@@ -16,12 +16,10 @@ document.addEventListener('DOMContentLoaded', function () {
       // Current is English, build link to Chinese version
       enHref = currentPath;
       zhHref = currentPath.replace('/en/', '/zh_cn/');
-      zhHref = zhHref.replace('.html', '_zh.html');
     } else if (isChinese) {
       // Current is Chinese, build link to English version
       zhHref = currentPath;
       enHref = currentPath.replace('/zh_cn/', '/en/');
-      enHref = enHref.replace('_zh.html', '.html');
     } else {
       // Default to home pages
       enHref = window.location.origin + '/en/index.html';

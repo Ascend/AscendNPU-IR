@@ -2,7 +2,7 @@
 
 本目录为 AscendNPU IR 的 Sphinx 文档工程，通过双语文档源文件支持**英文与中文**。
 
-**Language / 语言:** [English](README.md) · [中文](README_zh.md)
+**语言:** [English](README.md) · [中文](README_zh.md)
 
 ---
 
@@ -10,16 +10,13 @@
 
 | 项 | 约定 |
 |------|------------|
-| **英文** | 默认 `.md` 文件；入口页 `index.rst`。 |
-| **中文** | `*_zh.md` 文件；入口页 `index_zh.rst`。 |
+| **英文** | 入口页为 `docs/source/en/index.rst`，正文位于 `docs/source/en` 目录下 |
+| **中文** | 入口页为 `docs/source/zh_cn/index.rst`，正文位于 `docs/source/zh_cn` 目录下 |
 | **Read the Docs** | 主项目（英文）+ 翻译项目（中文）；在 Admin → Translations 中关联，用于语言切换。 |
-
-- **英文**：`index.rst` 及所有 `sources/**/*.md`（如 `introduction.md`、`installing_guide.md`）。
-- **中文**：`index_zh.rst` 及所有 `sources/**/*_zh.md`（如 `introduction_zh.md`）。含 toctree 的子目录中配有 `index_zh.rst`。
 
 ### 命名规范（snake_case）
 
-`docs/` 下（含 `sources/`）的**目录名**与**文档文件名**默认使用 **snake_case**（单词下划线）。示例：`quick_start/`、`installing_guide.md`、`installing_guide_zh.md`、`user_guide/`、`developer_guide/`、`contributing_guide/`。便于路径与 URL 统一，避免与 camelCase 等混用。
+`docs/`（包含 `docs/source/`）下的**目录名**与**文档文件名**统一采用 **snake_case** 小写下划线风格，例如：`quick_start/`、`installing_guide.md`、`user_guide/`，以保持路径与 URL 风格一致。
 
 ---
 
@@ -77,11 +74,11 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
 
 ## 添加新文档
 
-1. 添加**英文**文件，如 `sources/introduction/NewDoc.md`。
-2. 添加**中文**文件，如 `sources/introduction/NewDoc_zh.md`。
+1. 添加**英文**文件，如 `source/en/introduction/new_doc.md`。
+2. 添加**中文**文件，如 `source/zh_cn/introduction/new_doc.md`。
 3. 将文档加入对应 toctree：
-   - **英文**：在 `docs/index.rst` 或相应子目录的 `index.rst`（如 `sources/introduction/quick_start/index.rst`）中加入 `NewDoc`（或路径如 `section/NewDoc`）。
-   - **中文**：在 `docs/index_zh.rst` 或子目录的 `index_zh.rst` 中加入 `NewDoc_zh`（或 `section/NewDoc_zh`）。
+   - **英文**：在 `docs/source/en/index.rst` 或相应子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或路径如 `section/new_doc`）。
+   - **中文**：在 `docs/source/zh_cn/index.rst` 或子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或 `section/new_doc`）。
 4. 若需参与排序或工具处理，可在 `conf.py` 的 `_main_doc_order` 中追加该文档路径。
 
 ---
@@ -90,11 +87,12 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
 
 | 路径 | 说明 |
 |------|-------------|
-| **conf.py** | Sphinx 配置；`language`、`root_doc` 由 `READTHEDOCS_LANGUAGE` 决定；`_main_doc_order` 用于规范顺序 |
-| **index.rst** / **index_zh.rst** | 英文 / 中文首页及 toctree |
-| **sources/**/*.md** | 英文正文 |
-| **sources/**/*_zh.md** | 中文正文 |
-| **sources/**/index.rst** | 英文各章节 toctree |
-| **sources/**/index_zh.rst** | 中文各章节 toctree（quick_start、conversion、dialects、passes、features） |
-| **Makefile** | `html`（英文）、`html-zh`（中文）、`html-all` |
-| **requirements.txt** | Sphinx、myst-parser、sphinx-rtd-theme |
+| conf.py| Sphinx 配置；`language`、`root_doc` 由 `READTHEDOCS_LANGUAGE` 决定；`_main_doc_order` 用于规范顺序 |
+| source/en/index.rst | 英文首页及 toctree |
+| source/zh_cn/index.rst | 中文首页及 toctree |
+| source/en/**/\*.md | 英文正文 |
+| source/zh_cn/**/\*.md | 中文正文 |
+| source/en/**/index.rst | 英文各章节 toctree |
+| source/zh_cn/**/index.rst | 中文各章节 toctree |
+| Makefile | `html`（英文）、`html-zh`（中文）、`html-all` |
+| requirements.txt | Sphinx、myst-parser、furo |
