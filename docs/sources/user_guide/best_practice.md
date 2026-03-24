@@ -165,7 +165,19 @@ MLIR snippet:
 hivm.hir.load ins(%collapse_shape : ...) outs(%collapse_shape_0 : ...) ...
 ```
 
-- **Analysis**: Line 1: original data size 256x9x11xi8 in GM (kernel arg %arg3). Line 2: UB allocation 256x32x11x1xi8 for copying from GM to UB; the first axis is 32-byte aligned and an extra dimension is added on the last axis. Line 3: subview of the UB shape 256x32x11x1xi8 to get 256x9x11xi8. Lines 4–5: collapse_shape to 256x99xi8. Line 6: copy from GM 256x99xi8 to UB 256x99xi8.
+- **Analysis**: 
+
+    Line 1: The original data has a shape of 256×9×11xi8 and is stored in GM (kernel argument %arg3).
+
+    Line 2: Allocate a UB buffer of size 256×32×11×1xi8 to copy data from GM to UB. The first axis is aligned to 32 bytes, and an additional dimension is appended to the last axis.
+
+    Line 3: From the UB buffer allocated in Line 2 (256×32×11×1xi8), extract a subview of shape 256×9×11xi8.
+
+    Line 4: Apply collapse_shape to the GM view in Line 1 (256×9×11xi8) to merge dimensions, resulting in a shape of 256×99xi8.
+
+    Line 5: Apply collapse_shape to the UB subview in Line 3 (256×9×11xi8) to merge dimensions, resulting in a shape of 256×99xi8.
+
+    Line 6: Copy the data from GM with shape 256×99xi8 (Line 4) to the UB buffer with shape 256×99xi8 (Line 5).
 
 - **Summary**: Original data 256x9x11xi8 is 25344 B; after loading from GM to UB, UB usage (256x32x11x1xi8) is 90112 B, about 3.5× the original size.
 
