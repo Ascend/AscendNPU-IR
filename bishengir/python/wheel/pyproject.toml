@@ -57,4 +57,4 @@ Bug-Tracker = "https://github.com/AscendNPU/AscendNPU-IR/issues"
 packages = ["ascendnpuir"]
 
 [tool.setuptools.package-data]
-ascendnpuir = ["bin/**/*"]
+ascendnpuir = ["bin/**/*", "lib/**/*", "*.bc"]

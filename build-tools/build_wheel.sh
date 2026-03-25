@@ -92,14 +92,14 @@ if [ ! -d "${BUILD_DIR}" ]; then
   exit 1
 fi
 
-# Check for bishengir-compile binary in possible locations
+# Check for bishengir-compile binary in bishengir-output directory
 BINARY_NAME="bishengir-compile"
 POSSIBLE_BINARY_PATHS=(
-  "${BUILD_DIR}/${BINARY_NAME}"
   "${BUILD_DIR}/bin/${BINARY_NAME}"
-  "${BUILD_DIR}/install/bin/${BINARY_NAME}"
+  "${BUILD_DIR}/${BINARY_NAME}"  # Fallback to old structure
 )
 
+# Check if the binary exists
 BINARY_PATH=""
 for path in "${POSSIBLE_BINARY_PATHS[@]}"; do
   if [ -f "${path}" ]; then
@@ -117,6 +117,7 @@ if [ -z "${BINARY_PATH}" ]; then
   exit 1
 fi
 
+# Print found binary
 echo "Found bishengir-compile binary at: ${BINARY_PATH}"
 
 # Navigate to wheel directory

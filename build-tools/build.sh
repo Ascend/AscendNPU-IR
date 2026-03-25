@@ -659,14 +659,14 @@ main() {
     else
       echo "Cloning AscendNPU-IR-Dev repository..."
       if [ ! -d "bishengir-a5-src" ]; then
-        git clone https://gitcode.com/Ascend/AscendNPU-IR-Dev.git bishengir-a5-src || { echo "Failed to clone repository"; exit 1; }
+        git clone https://gitcode.com/Ascend/AscendNPU-IR-Dev.git --depth 1 bishengir-a5-src || { echo "Failed to clone repository"; exit 1; }
       else
         echo "Repository already exists, skipping clone"
       fi
       
       cd bishengir-a5-src || { echo "Failed to enter bishengir-a5-src"; exit 1; }
       echo "Updating submodules..."
-      git submodule update --init --recursive --progress || { echo "Failed to update submodules"; exit 1; }
+      git submodule update --init --recursive --depth 1 --progress || { echo "Failed to update submodules"; exit 1; }
       
       # Clean build directory to ensure fresh build
       rm -rf build-a5 || { echo "Failed to clean build-a5 directory"; exit 1; }
@@ -690,9 +690,14 @@ main() {
     fi
     
     mkdir -p bishengir-output || { echo "Failed to create bishengir-output directory"; exit 1; }
-    
-    cp bishengir-a5-src/build-a5/bin/bishengir-compile bishengir-output/bishengir-compile-a5 || { echo "Failed to copy a5 binary"; exit 1; }
-    cp ${BUILD_DIR}/bin/bishengir-compile bishengir-output/ || { echo "Failed to copy original binary"; exit 1; }
+    mkdir -p bishengir-output/bin || { echo "Failed to create bishengir-output/bin directory"; exit 1; }
+    mkdir -p bishengir-output/lib || { echo "Failed to create bishengir-output/lib directory"; exit 1; }
+
+    cp bishengir-a5-src/build-a5/bin/bishengir-compile bishengir-output/bin/bishengir-compile-a5 || { echo "Failed to copy a5 bishengir compile binary"; exit 1; }
+    cp bishengir-a5-src/build-a5/bin/bishengir-opt bishengir-output/bin/bishengir-opt-a5 || { echo "Failed to copy a5 bishengir opt binary"; exit 1; }
+    cp ${BUILD_DIR}/bin/bishengir-compile bishengir-output/bin/bishengir-compile || { echo "Failed to copy a3 bishengir compile binary"; exit 1; }
+    cp ${BUILD_DIR}/bin/bishengir-opt bishengir-output/bin/bishengir-opt || { echo "Failed to copy a3 bishengir opt binary"; exit 1; }
+    cp ${BUILD_DIR}/lib/*.bc bishengir-output/lib || { echo "Failed to copy a3 bishengir bc files"; exit 1; }
     
     echo "Successfully copied binaries to bishengir-output directory."
   fi

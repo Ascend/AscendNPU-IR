@@ -51,12 +51,16 @@ def _get_compiler_path() -> Path:
     # Get the directory where this package is installed
     package_dir = Path(__file__).parent
     
-    # Determine the binary name 
-        binary_name = "bishengir-compile"
+    # Binary name - only need bishengir-compile
+    binary_name = "bishengir-compile"
     
-    # Look for the binary in the package's bin directory
+    # Look for the binary in the package's bin directory (new structure)
     binary_path = package_dir / "bin" / binary_name
+    if binary_path.exists():
+        return binary_path
     
+    # Fallback to looking directly in the package directory (old structure)
+    binary_path = package_dir / binary_name
     if binary_path.exists():
         return binary_path
     

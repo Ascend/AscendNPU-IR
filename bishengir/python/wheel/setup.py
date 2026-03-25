@@ -14,10 +14,12 @@
 from setuptools import setup, find_packages
 from setuptools.command.build_py import build_py
 from setuptools.command.sdist import sdist
+from wheel.bdist_wheel import bdist_wheel
 import os
 import shutil
 import subprocess
 import sys
+import platform
 from pathlib import Path
 
 
@@ -32,68 +34,55 @@ class CustomBuildPy(build_py):
         self._copy_compiler_binary()
     
     def _copy_compiler_binary(self):
-        """Copy all binaries and subdirectories from the build directory to the package bin directory."""
+        """Copy all files and directories from the bishengir-output directory to the package."""
         # Determine the build directory
         build_dir = os.environ.get('BISHENGIR_BUILD_DIR')
         if not build_dir:
             # Try to find the build directory relative to the wheel directory
             script_dir = Path(__file__).parent
             project_root = script_dir.parent.parent
-            build_dir = project_root / "build"
+            build_dir = project_root / "bishengir-output"  # Default to bishengir-output
         
         build_dir = Path(build_dir)
         
-        # Look for the bin directory in common locations
-        possible_bin_dirs = [
-            build_dir,
-            build_dir / "bin",
-            build_dir / "install" / "bin",
-        ]
-        
-        source_bin_dir = None
-        for bin_dir in possible_bin_dirs:
-            if bin_dir.exists() and bin_dir.is_dir():
-                source_bin_dir = bin_dir
-                break
-        
-        if not source_bin_dir:
-            print(f"Warning: Could not find bin directory in expected locations:")
-            for bin_dir in possible_bin_dirs:
-                print(f"  - {bin_dir}")
+        # Check if build directory exists
+        if not build_dir.exists() or not build_dir.is_dir():
+            print(f"Warning: bishengir-output directory not found at: {build_dir}")
             print("The package will be built without compiler binaries.")
             print("Set BISHENGIR_BUILD_DIR environment variable to specify the build directory.")
             return
         
-        # Create the bin directory in the package
-        package_bin_dir = Path(self.build_lib) / "ascendnpuir" / "bin"
-        package_bin_dir.mkdir(parents=True, exist_ok=True)
+        # Create the destination directory in the package
+        package_dir = Path(self.build_lib) / "ascendnpuir"
         
-        # Copy all files and subdirectories from source_bin_dir to package_bin_dir
-        print(f"Copying all files and subdirectories from {source_bin_dir} to {package_bin_dir}")
+        # Copy all files and subdirectories from build_dir to package_dir
+        print(f"Copying all files and directories from {build_dir} to {package_dir}")
         
-        # First, remove any existing files in the package bin directory
-        for item in package_bin_dir.iterdir():
-            if item.is_file():
-                item.unlink()
-            elif item.is_dir():
-                shutil.rmtree(item)
-        
-        # Copy the entire bin directory structure
-        for item in source_bin_dir.iterdir():
-            dest_path = package_bin_dir / item.name
+        # Copy each top-level item in bishengir-output
+        for item in build_dir.iterdir():
+            dest_path = package_dir / item.name
+            
+            # Remove existing item if it exists
+            if dest_path.exists():
+                if dest_path.is_file():
+                    dest_path.unlink()
+                elif dest_path.is_dir():
+                    shutil.rmtree(dest_path)
+            
+            # Copy the item
             if item.is_file():
                 print(f"  Copying file: {item.name}")
                 shutil.copy2(item, dest_path)
                 # Make the binary executable on Unix-like systems
-                if sys.platform != "win32":
+                if sys.platform != "win32" and item.name.startswith("bishengir-"):
                     os.chmod(dest_path, 0o755)
             elif item.is_dir():
                 print(f"  Copying directory: {item.name}")
                 shutil.copytree(item, dest_path, dirs_exist_ok=True)
-                # Make all files in subdirectories executable on Unix-like systems
+                # Make all executable files in subdirectories executable on Unix-like systems
                 if sys.platform != "win32":
                     for sub_item in dest_path.rglob('*'):
-                        if sub_item.is_file():
+                        if sub_item.is_file() and sub_item.name.startswith("bishengir-"):
                             os.chmod(sub_item, 0o755)
 
 
@@ -135,6 +124,58 @@ Apache License 2.0
         sdist.run(self)
 
 
+class CustomBdistWheel(bdist_wheel):
+    """Custom bdist_wheel command to set platform-specific tags."""
+    
+    def get_platform(self):
+        """Get the platform tag for the wheel."""
+        # Get the platform information
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+        
+        # Map machine names to wheel platform tags
+        machine_map = {
+            'x86_64': 'x86_64',
+            'amd64': 'x86_64',
+            'aarch64': 'aarch64',
+            'arm64': 'aarch64',
+            'armv7l': 'armv7l',
+        }
+        
+        # Get the normalized machine name
+        normalized_machine = machine_map.get(machine, machine)
+        
+        # Build the platform tag based on the OS
+        if system == 'linux':
+            # For Linux, use manylinux tag for better compatibility
+            # We'll use manylinux2014 for glibc 2.17+
+            # Check if we're in a manylinux environment
+            if os.path.exists('/etc/centos-release') or os.path.exists('/etc/redhat-release'):
+                # Assume manylinux2014 compatible
+                platform_tag = f'manylinux2014_{normalized_machine}'
+            else:
+                # Use linux tag with architecture
+                platform_tag = f'linux_{normalized_machine}'
+        elif system == 'darwin':
+            # macOS
+            platform_tag = f'macosx_{platform.mac_ver()[0].replace(".", "_")}_{normalized_machine}'
+        elif system == 'windows':
+            # Windows
+            platform_tag = f'win_{normalized_machine}'
+        else:
+            # Fallback to generic platform
+            platform_tag = f'{system}_{normalized_machine}'
+        
+        return platform_tag
+    
+    def finalize_options(self):
+        bdist_wheel.finalize_options(self)
+        # Set the platform tag
+        self.plat_name = self.get_platform()
+        # Mark this as a platform-specific wheel (not pure Python)
+        self.root_is_pure = False
+
+
 setup(
     name="ascendnpuir",
     version="1.1",
@@ -150,6 +191,7 @@ setup(
     cmdclass={
         'build_py': CustomBuildPy,
         'sdist': CustomSdist,
+        'bdist_wheel': CustomBdistWheel,
     },
     classifiers=[
         "Development Status :: 4 - Beta",
