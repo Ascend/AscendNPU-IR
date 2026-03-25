@@ -1057,6 +1057,20 @@ __aiv__ __attribute__((always_inline)) void move_memref_to_aligned_3d(memref_t<_
   }
 }
 
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool need_broadcast(
+    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
+  for (size_t i = 0; i < DIM; ++i) {
+    int64_t src0_size = src0 == nullptr ? 0 : src0->sizes[i];
+    int64_t src1_size = src1 == nullptr ? 0 : src1->sizes[i];
+    if (src0_size != dst->sizes[i] && src0_size == 1 ||
+      src1_size != dst->sizes[i] && src1_size == 1) {
+      return true;
+    }
+  }
+  return  false;
+}
+
 // Get the number of elements that need to be processed using scalar operations.
 // When the memory alignment of input or output is not suitable for vectorization, 
 // some elements must be handled using scalar operations util the rest element is aligned with 32 bytes.
@@ -1068,6 +1082,11 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
   auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
   auto dst_last_stride = dst->strides[DIM - 1];
 
+  bool broadcast_cond = need_broadcast<T, DIM>(src0, src1, dst);
+  if (broadcast_cond) {
+    return 0;
+  }
+  
   if (src0_last_stride != 1 || src1_last_stride != 1 || dst_last_stride != 1) {
     return dst->sizes[DIM - 1];
   }
