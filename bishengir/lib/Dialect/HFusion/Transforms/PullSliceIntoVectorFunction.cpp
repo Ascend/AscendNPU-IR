@@ -136,9 +136,7 @@ private:
     return true;
   }
 
-  bool isNonStandardStride(tensor::ExtractSliceOp op) const {
-    return !isStandardStride(op);
-  }
+
 
   bool sliceParamsMatch(tensor::ExtractSliceOp extractOp,
                         tensor::InsertSliceOp insertOp) const {
@@ -210,7 +208,7 @@ private:
     auto operands = call.getOperands();
     for (auto [idx, operand] : llvm::enumerate(operands)) {
       auto defOp = operand.getDefiningOp<tensor::ExtractSliceOp>();
-      if (!defOp || !isNonStandardStride(defOp))
+      if (!defOp || isStandardStride(defOp))
         continue;
 
       tensor::ExtractSliceOp extractSlice = defOp;
@@ -352,10 +350,183 @@ private:
   }
 };
 
+/// Swap a rank-preserving extract_slice followed by a unit-dim expand_shape
+/// into expand_shape + extract_slice.  Only handles expand_shape that inserts
+/// unit dims (size 1).
+///
+///   %s = extract_slice %src[2, 0] [4, 64] [1, 1]
+///       : tensor<12x64xf16> to tensor<4x64xf16>
+///   %e = expand_shape %s [[0], [1, 2]] output_shape [4, 1, 64]
+///       : tensor<4x64xf16> into tensor<4x1x64xf16>
+///
+/// becomes:
+///
+///   %x = expand_shape %src [[0], [1, 2]] output_shape [12, 1, 64]
+///       : tensor<12x64xf16> into tensor<12x1x64xf16>
+///   %r = extract_slice %x[2, 0, 0] [4, 1, 64] [1, 1, 1]
+///       : tensor<12x1x64xf16> to tensor<4x1x64xf16>
+///
+/// This exposes the extract_slice as the direct operand of a VF call,
+/// allowing PullExtractInsertSliceIntoVectorFunction to pull it in.
+struct SwapUnitDimExpandShapeOfExtractSlice
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern<tensor::ExpandShapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
+                                PatternRewriter &rewriter) const override {
+    auto extractOp =
+        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractOp)
+      return failure();
+
+    auto srcType =
+        cast<RankedTensorType>(extractOp.getSource().getType());
+    auto sliceType = extractOp.getType();
+    auto expandedType = expandOp.getResultType();
+
+    if (!srcType.hasStaticShape() || !expandedType.hasStaticShape())
+      return failure();
+
+    if (srcType.getRank() != sliceType.getRank())
+      return failure();
+
+    auto reassoc = expandOp.getReassociationIndices();
+
+    // Build expanded source shape.  Verify expand only inserts unit dims.
+    // Within each group, exactly one dim equals sliceDim (the "major" dim)
+    // and the rest must be 1.  The major dim is mapped to srcDim.
+    SmallVector<int64_t> expandedSrcShape;
+    for (auto [groupIdx, group] : llvm::enumerate(reassoc)) {
+      int64_t srcDim = srcType.getShape()[groupIdx];
+      int64_t sliceDim = sliceType.getShape()[groupIdx];
+      for (int64_t resIdx : group) {
+        int64_t resDim = expandedType.getShape()[resIdx];
+        if (resDim == 1) {
+          expandedSrcShape.push_back(1);
+        } else if (resDim == sliceDim) {
+          expandedSrcShape.push_back(srcDim);
+        } else {
+          return failure();
+        }
+      }
+    }
+
+    auto expandedSrcType =
+        RankedTensorType::get(expandedSrcShape, srcType.getElementType());
+
+    SmallVector<OpFoldResult> expandedSrcOutputShape;
+    for (int64_t dim : expandedSrcShape)
+      expandedSrcOutputShape.push_back(rewriter.getIndexAttr(dim));
+
+    auto newExpand = rewriter.create<tensor::ExpandShapeOp>(
+        expandOp.getLoc(), expandedSrcType, extractOp.getSource(),
+        reassoc, expandedSrcOutputShape);
+
+    SmallVector<OpFoldResult> newOffsets, newSizes, newStrides;
+    auto oldOffsets = extractOp.getMixedOffsets();
+    auto oldStrides = extractOp.getMixedStrides();
+
+    // Within each group, assign the original offset/stride to the non-unit
+    // dim; unit dims get offset=0, stride=1.
+    for (auto [groupIdx, group] : llvm::enumerate(reassoc)) {
+      bool assignedOriginal = false;
+      for (int64_t resIdx : group) {
+        int64_t resDim = expandedType.getShape()[resIdx];
+        newSizes.push_back(rewriter.getIndexAttr(resDim));
+        if (resDim != 1 && !assignedOriginal) {
+          newOffsets.push_back(oldOffsets[groupIdx]);
+          newStrides.push_back(oldStrides[groupIdx]);
+          assignedOriginal = true;
+        } else {
+          newOffsets.push_back(rewriter.getIndexAttr(0));
+          newStrides.push_back(rewriter.getIndexAttr(1));
+        }
+      }
+      // If all dims in the group are unit (size 1), assign to the last one.
+      if (!assignedOriginal) {
+        newOffsets.back() = oldOffsets[groupIdx];
+        newStrides.back() = oldStrides[groupIdx];
+      }
+    }
+
+    rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
+        expandOp, expandedType, newExpand, newOffsets, newSizes, newStrides);
+    return success();
+  }
+};
+
+/// Fold a rank-reducing extract_slice followed by an expand_shape back to the
+/// source rank into a single non-rank-reducing extract_slice.
+///
+///   %s = extract_slice %src[1, 0] [1, 64] [1, 1]
+///       : tensor<3x64xf16> to tensor<64xf16>
+///   %e = expand_shape %s [[0, 1]] : tensor<64xf16> into tensor<1x64xf16>
+///
+/// becomes:
+///
+///   %r = extract_slice %src[1, 0] [1, 64] [1, 1]
+///       : tensor<3x64xf16> to tensor<1x64xf16>
+struct FoldRankReducingSliceExpandShape
+    : public OpRewritePattern<tensor::ExpandShapeOp> {
+  using OpRewritePattern<tensor::ExpandShapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
+                                PatternRewriter &rewriter) const override {
+    auto extractOp =
+        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractOp)
+      return failure();
+
+    auto srcType =
+        cast<RankedTensorType>(extractOp.getSource().getType());
+    auto sliceType = extractOp.getType();
+    auto resultType = expandOp.getResultType();
+
+    // Only handle rank-reducing extract_slice (e.g. 3x64 → 64).
+    if (srcType.getRank() <= sliceType.getRank())
+      return failure();
+
+    // The folded result must restore back to the source rank.
+    if (srcType.getRank() != resultType.getRank())
+      return failure();
+
+    // The extract_slice sizes (in source rank) must match the expand result
+    // shape exactly, so we can directly produce a non-rank-reducing
+    // extract_slice with the expand result type.
+    if (ArrayRef<int64_t>(extractOp.getStaticSizes()) !=
+        resultType.getShape())
+      return failure();
+
+    rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
+        expandOp, resultType, extractOp.getSource(),
+        extractOp.getMixedOffsets(), extractOp.getMixedSizes(),
+        extractOp.getMixedStrides());
+    return success();
+  }
+};
+
+/// Pre-process extract_slice + expand_shape patterns generated by the flatten
+/// unit-dims pass.  These patterns block PullSlice from matching the
+/// extract_slice because expand_shape sits between it and the VF call operand.
+/// FoldRankReducingSliceExpandShape handles rank-restore cases (srcRank ==
+/// resRank); SwapUnitDimExpandShapeOfExtractSlice handles rank-increase cases
+/// (srcRank < resRank).
+// TODO: Fix the root cause in the flatten pass so that these pre-process
+// patterns are not needed.
+static void preProcessExpandShapeOfExtractSlice(MLIRContext *ctx,
+                                                Operation *op) {
+  RewritePatternSet patterns(ctx);
+  patterns.add<FoldRankReducingSliceExpandShape,
+               SwapUnitDimExpandShapeOfExtractSlice>(ctx);
+  (void)applyPatternsGreedily(op, std::move(patterns));
+}
+
 struct PullSliceIntoVectorFunction
     : public impl::PullSliceIntoVectorFunctionBase<
           PullSliceIntoVectorFunction> {
   void runOnOperation() override {
+    preProcessExpandShapeOfExtractSlice(&getContext(), getOperation());
+
     RewritePatternSet patterns(&getContext());
     patterns.add<PullExtractInsertSliceIntoVectorFunction>(
         patterns.getContext());

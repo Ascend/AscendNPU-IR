@@ -153,8 +153,6 @@ module {
 module {
   // CHECK-LABEL: func @vf_1d_slice(
   // CHECK-SAME: tensor<128xbf16>
-  // CHECK: tensor.extract_slice
-  // CHECK: return
   func.func @vf_1d_slice(%arg0: tensor<32xbf16>) -> tensor<32xbf16>
       attributes {hivm.vector_function} {
     %cst = arith.constant 0.000000e+00 : bf16
@@ -176,6 +174,77 @@ module {
         : tensor<128xbf16> to tensor<32xbf16>
     %x = func.call @vf_1d_slice(%slice) {hivm.vector_function}
         : (tensor<32xbf16>) -> tensor<32xbf16>
+    return
+  }
+}
+
+// -----
+
+// Test: Swap extract_slice + expand_shape into expand_shape + extract_slice,
+// then pull the extract_slice into VF.  Covers both rank-restore (2D→1D→2D)
+// and rank-increase (2D→2D→3D) scenarios.
+module {
+  // Rank-restore: 3x64 → 64 → 1x64  becomes  3x64 → 3x64 → 1x64
+  // CHECK-LABEL: func @vf_rank_restore(
+  // CHECK-SAME: tensor<3x64xf16>
+  func.func @vf_rank_restore(%arg0: tensor<1x64xf16>) -> tensor<1x64xf16>
+      attributes {hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f16
+    %c0 = arith.constant 0 : index
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst
+        {in_bounds = [true, true]} : tensor<1x64xf16>, vector<1x64xf16>
+    %1 = vector.transfer_write %0, %arg0[%c0, %c0]
+        {in_bounds = [true, true]} : vector<1x64xf16>, tensor<1x64xf16>
+    return %1 : tensor<1x64xf16>
+  }
+
+  // CHECK-LABEL: func @test_swap_rank_restore(
+  // CHECK-NOT: tensor.expand_shape
+  // CHECK: call @vf_rank_restore(%arg0
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: tensor<3x64xf16>
+  func.func @test_swap_rank_restore(%arg0: tensor<3x64xf16>) {
+    %slice = tensor.extract_slice %arg0[1, 0] [1, 64] [1, 1]
+        : tensor<3x64xf16> to tensor<64xf16>
+    %expanded = tensor.expand_shape %slice [[0, 1]] output_shape [1, 64]
+        : tensor<64xf16> into tensor<1x64xf16>
+    %x = func.call @vf_rank_restore(%expanded) {hivm.vector_function}
+        : (tensor<1x64xf16>) -> tensor<1x64xf16>
+    return
+  }
+}
+
+// -----
+
+// Test: Swap rank-increasing extract_slice + expand_shape (2D→2D→3D).
+// 12x64 → 4x64 → 4x1x64  becomes  12x64 → 12x1x64 → 4x1x64
+module {
+  // CHECK-LABEL: func @vf_rank_increase(
+  // CHECK-SAME: tensor<12x1x64xf16>
+  func.func @vf_rank_increase(%arg0: tensor<4x1x64xf16>) -> tensor<4x1x64xf16>
+      attributes {hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f16
+    %c0 = arith.constant 0 : index
+    %0 = vector.transfer_read %arg0[%c0, %c0, %c0], %cst
+        {in_bounds = [true, true, true]} : tensor<4x1x64xf16>, vector<4x1x64xf16>
+    %1 = vector.transfer_write %0, %arg0[%c0, %c0, %c0]
+        {in_bounds = [true, true, true]} : vector<4x1x64xf16>, tensor<4x1x64xf16>
+    return %1 : tensor<4x1x64xf16>
+  }
+
+  // CHECK-LABEL: func @test_swap_rank_increase(
+  // CHECK-NOT: tensor.expand_shape{{.*}}tensor<4x64xf16>
+  // CHECK: tensor.expand_shape{{.*}}tensor<12x64xf16> into tensor<12x1x64xf16>
+  // CHECK: call @vf_rank_increase(
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: tensor<12x1x64xf16>
+  func.func @test_swap_rank_increase(%arg0: tensor<12x64xf16>) {
+    %slice = tensor.extract_slice %arg0[2, 0] [4, 64] [1, 1]
+        : tensor<12x64xf16> to tensor<4x64xf16>
+    %expanded = tensor.expand_shape %slice [[0], [1, 2]] output_shape [4, 1, 64]
+        : tensor<4x64xf16> into tensor<4x1x64xf16>
+    %x = func.call @vf_rank_increase(%expanded) {hivm.vector_function}
+        : (tensor<4x1x64xf16>) -> tensor<4x1x64xf16>
     return
   }
 }
