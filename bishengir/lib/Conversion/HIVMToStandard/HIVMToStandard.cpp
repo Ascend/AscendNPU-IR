@@ -1290,12 +1290,32 @@ public:
     }
 
     if (midAxis) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 0, reduceIdx);
-      reducedRank = reducedRank - reduceIdx;
-      if (reducedRank > 3) {
-        return op.emitError("Unsupported reduce template.");
+      // TODO: enhance inferOpLibraryMaxRank for VReduceOp
+      int originalRank = rank;
+
+      std::set<int> loopIndices;
+      for (int loopIndice = 0; loopIndice < reduceIdx; loopIndice++) {
+        loopIndices.insert(loopIndice);
       }
+
+      int curReducedRank = originalRank - loopIndices.size();
+
+      if (curReducedRank > 3) {
+        int additionalLoopNum = curReducedRank - 3;
+
+        for (int loopIndice = reduceIdx + 1;
+             loopIndice < originalRank && additionalLoopNum > 0; loopIndice++) {
+          if (loopIndices.count(loopIndice) == 0) {
+            loopIndices.insert(loopIndice);
+            additionalLoopNum--;
+          }
+        }
+      }
+
+      convertedVals = reduceMemrefsToNestedForUsingAxes(
+          rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
+
+      reducedRank = originalRank - loopIndices.size();
     } else if (firstAxis && rank > 3) {
       convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
                                                memrefValsMaybe, 1, rank - 2);
