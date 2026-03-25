@@ -627,3 +627,23 @@ func.func @test_minf_fp8e5m2(%src0 : tensor<6x4xf8E5M2>, %src1 : tensor<6x4xf8E5
   %res = hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%src0, %src1 : tensor<6x4xf8E5M2>, tensor<6x4xf8E5M2>) outs(%dst : tensor<6x4xf8E5M2>) -> tensor<6x4xf8E5M2>
   return %res : tensor<6x4xf8E5M2>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_device_print_fp8e5m2
+func.func @test_device_print_fp8e5m2(%src : tensor<8x8xf8E5M2>) {
+  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<8x8xf32>
+  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<8x8xf8E5M2>) outs(%[[VAL_0]] : tensor<8x8xf32>) -> tensor<8x8xf32>
+  hfusion.print " tensor =: " {hex = false} %src : tensor<8x8xf8E5M2>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_device_print_fp8e4m3
+func.func @test_device_print_fp8e4m3(%src : tensor<8x8xf8E4M3FN>) {
+  // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<8x8xf32>
+  // CHECK: %[[VAL_1:.*]] =  hfusion.cast {{.*}} ins(%arg0 : tensor<8x8xf8E4M3FN>) outs(%[[VAL_0]] : tensor<8x8xf32>) -> tensor<8x8xf32>
+  hfusion.print " tensor =: " {hex = false} %src : tensor<8x8xf8E4M3FN>
+  return
+}

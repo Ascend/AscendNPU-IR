@@ -134,6 +134,11 @@ static bool shouldLegalizeFP8Op(Operation *op) {
   if (isa<hfusion::ReduceWithIndexOp>(op)) {
     return true;
   }
+  // TODO: In the future, consider enabling the bisheng compiler to support
+  // printing of fp8 types at the underlying level.
+  if (isa<hfusion::PrintOp>(op)) {
+    return true;
+  }
   return false;
 }
 
@@ -287,7 +292,8 @@ void populateLegalizeFP8Pattern(RewritePatternSet &patterns) {
               mlir::linalg::ReduceOp, mlir::hfusion::CastOp,
               mlir::hfusion::CompareOp, mlir::hfusion::CumsumOp,
               mlir::hfusion::ElemwiseBinaryOp, mlir::hfusion::ElemwiseUnaryOp,
-              mlir::hfusion::ReduceWithIndexOp>(patterns);
+              mlir::hfusion::ReduceWithIndexOp,
+              mlir::hfusion::PrintOp>(patterns);
 }
 
 void LegalizeFP8Pass::runOnOperation() {
