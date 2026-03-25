@@ -11,12 +11,12 @@ AscendNPU IR 向上支持与 Triton、TileLang 等语言或框架的对接，使
 
 | 接入方式 | 说明 |
 |----------|------|
-| [Triton 接入](triton_interface_zh.md) | 使用 Triton 编写高性能内核，通过 Triton Ascend 在昇腾 NPU 上运行。含安装、环境、算子映射及昇腾扩展说明。 |
-| [TileLang 接入](tile_lang_interface_zh.md) | 使用 TileLang Ascend（基于 tile-lang/TVM 的 DSL）开发面向昇腾 NPU 的内核（如 GEMM、向量运算、attention）。含环境、构建与快速开始。 |
+| [Triton 接入](triton_interface.md) | 使用 Triton 编写高性能内核，通过 Triton Ascend 在昇腾 NPU 上运行。含安装、环境、算子映射及昇腾扩展说明。 |
+| [TileLang 接入](tile_lang_interface.md) | 使用 TileLang Ascend（基于 tile-lang/TVM 的 DSL）开发面向昇腾 NPU 的内核（如 GEMM、向量运算、attention）。含环境、构建与快速开始。 |
 
 ## IR 接入方式
 
-AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒度上有所差异（详见 [IR 接入简介 - 多级 IR 抽象架构](interface_api_zh.md#多级ir抽象架构)）：
+AscendNPU IR 支持多层级 IR 接入，不同层级在抽象程度和控制粒度上有所差异（详见 [IR 接入简介 - 多级 IR 抽象架构](interface_api.md#多级ir抽象架构)）：
 
 - **Torch IR**：框架层 ATen 算子，经 Pass 转换为 Linalg/HFusion。
 - **Linalg/HFusion IR**：通用张量代数层与硬件感知融合层，标准 MLIR dialect 表达算子语义，HFusion 自动完成融合、切分和调度。
@@ -182,7 +182,7 @@ Linalg/HFusion IR 接入后，HFusion 编译流程会对符合融合条件的算
 - Transpose
 - Concat
 
-关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅 [HFusion AutoSchedule 自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule_zh.md)。
+关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅 [HFusion AutoSchedule 自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule.md)。
 
 ### HIVM IR 接入
 
@@ -218,4 +218,4 @@ HIVM 层使用 `#hivm.address_space` 标注存储层级：`gm`（全局内存）
 - 命令：`bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o`
 - **预期产物**：Ascend NPU 算子二进制文件（`.o` 格式），可与 CANN runtime 配合在设备端运行。
 
-关于 IR 层概念、公共编译选项及其他接入路径（如 Triton、TileLang），请参阅 [IR 接入简介](interface_api_zh.md)。
+关于 IR 层概念、公共编译选项及其他接入路径（如 Triton、TileLang），请参阅 [IR 接入简介](interface_api.md)。

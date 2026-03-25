@@ -4,7 +4,7 @@
 .. toctree::
    :titlesonly:
 
-   interface_api_zh
-   triton_interface_zh
-   tile_lang_interface_zh
-   framework_interface_zh
+   interface_api
+   triton_interface
+   tile_lang_interface
+   framework_interface

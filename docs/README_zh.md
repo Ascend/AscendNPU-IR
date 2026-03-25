@@ -47,7 +47,7 @@ make html-all
 open docs/_build/en/index.html
 
 # 中文
-open docs/_build/zh_cn/index_zh.html
+open docs/_build/zh_cn/index.html
 
 # 或用 HTTP 服务（例如英文 8080 端口，中文 8081 端口）
 cd docs/_build/en && python3 -m http.server 8080
