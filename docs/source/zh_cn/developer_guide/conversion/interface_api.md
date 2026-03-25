@@ -69,11 +69,11 @@ func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.functi
 
 ## Triton 接入
 
-Triton 是主流的高性能算子开发编程语言。[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/) 将 Triton 算子转换为 MLIR，接入 AscendNPU IR 生态，支持在昇腾 NPU 上运行 Triton 内核。详细的 Triton 接入指南（含安装、环境、算子映射及昇腾扩展）请参考 [Triton 接入](triton_interface_zh.md)。
+Triton 是主流的高性能算子开发编程语言。[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/) 将 Triton 算子转换为 MLIR，接入 AscendNPU IR 生态，支持在昇腾 NPU 上运行 Triton 内核。详细的 Triton 接入指南（含安装、环境、算子映射及昇腾扩展）请参考 [Triton 接入](triton_interface.md)。
 
 ## TileLang 接入
 
-TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 tile-lang 的 Python 语法和 [TVM](https://tvm.apache.org/) 构建，支持 GEMM、向量运算和注意力机制等算子，可将算子编译为 AscendNPU IR（HIVM）在昇腾 NPU 上运行。详细的 TileLang 接入说明请参考 [TileLang 接入](tile_lang_interface_zh.md)。
+TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于 tile-lang 的 Python 语法和 [TVM](https://tvm.apache.org/) 构建，支持 GEMM、向量运算和注意力机制等算子，可将算子编译为 AscendNPU IR（HIVM）在昇腾 NPU 上运行。详细的 TileLang 接入说明请参考 [TileLang 接入](tile_lang_interface.md)。
 
 ## 框架接入
 
@@ -82,6 +82,6 @@ AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方
 - **DSL 接入方式**：如 Triton、TileLang
 - **IR 接入方式**：如 Torch IR、Linalg/HFusion IR、HIVM IR
 
-详细的框架接入说明请参考 [框架接入](framework_interface_zh.md)。
+详细的框架接入说明请参考 [框架接入](framework_interface.md)。
 
 ---

@@ -4,14 +4,14 @@
 .. toctree::
    :titlesonly:
 
-   AutoBlockify/AutoBlockify_zh
-   AutoFlatten/AutoFlatten_zh
-   AutoSchedule/HFusion_AutoSchedule_zh
-   CV/CVOptimization_zh
-   AutoSubtiling/AutoSubtiling_zh
-   AutoSync/AutoSync_zh
-   CV/TileCubeAndVectorLoop_zh
-   CVPipeline/CVPipelining_zh
-   CustomOp/CustomOp_zh
-   DFX/DFX_zh
-   PlanMemory/PlanMemory_zh
+   AutoBlockify/AutoBlockify
+   AutoFlatten/AutoFlatten
+   AutoSchedule/HFusion_AutoSchedule
+   CV/CVOptimization
+   AutoSubtiling/AutoSubtiling
+   AutoSync/AutoSync
+   CV/TileCubeAndVectorLoop
+   CVPipeline/CVPipelining
+   CustomOp/CustomOp
+   DFX/DFX
+   PlanMemory/PlanMemory
