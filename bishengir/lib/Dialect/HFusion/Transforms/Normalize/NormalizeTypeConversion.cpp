@@ -1281,10 +1281,91 @@ public:
   }
 };
 
+template <>
+struct NormalizeToTargetType<bool, hfusion::SelectOp>
+    : public OpRewritePattern<hfusion::SelectOp> {
+public:
+  using OpRewritePattern<hfusion::SelectOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::SelectOp op,
+                                PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> inputs = op.getInputs();
+    SmallVector<Value> outputs = op.getOutputs();
+    assert(inputs.size() == 3);
+
+    if (!allI1ElemType(inputs) && !hasI1ElemType(outputs))
+      return failure();
+
+    Location loc = op.getLoc();
+
+    Value cond = inputs[0];
+    Value trueVal = inputs[1];
+    Value falseVal = inputs[2];
+
+    auto trueType = trueVal.getType().dyn_cast<RankedTensorType>();
+    auto shape = trueType.getShape();
+    Type i16 = rewriter.getI16Type();
+    auto newType = RankedTensorType::get(shape, i16);
+
+    auto oneAttr =
+        DenseElementsAttr::get(newType, rewriter.getI16IntegerAttr(1));
+    auto zeroAttr =
+        DenseElementsAttr::get(newType, rewriter.getI16IntegerAttr(0));
+
+    Value oneTensor = rewriter.create<arith::ConstantOp>(loc, newType, oneAttr);
+    Value zeroTensor =
+        rewriter.create<arith::ConstantOp>(loc, newType, zeroAttr);
+
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, shape, i16);
+
+    auto convertI1TensorToI16 = [&trueType, &newType, &oneTensor, &zeroTensor,
+                                 &empty, &loc, &rewriter](Value v) -> Value {
+      if (!trueType || !trueType.getElementType().isInteger(1))
+        return v;
+
+      auto select = rewriter.create<hfusion::SelectOp>(
+          loc, newType, ValueRange{v, oneTensor, zeroTensor},
+          ValueRange{empty});
+
+      return select.getResult(0);
+    };
+
+    Value newTrue = convertI1TensorToI16(trueVal);
+    Value newFalse = convertI1TensorToI16(falseVal);
+    Operation *newOp = rewriter.create<hfusion::SelectOp>(
+        loc, empty.getType(), ValueRange{cond, newTrue, newFalse},
+        ValueRange{empty});
+
+    Value selectResult = newOp->getResult(0);
+
+    auto i1Type = RankedTensorType::get(shape, rewriter.getI1Type());
+    Value compareOut =
+        rewriter.create<tensor::EmptyOp>(loc, shape, rewriter.getI1Type());
+
+    auto cmpFnAttr = hfusion::CompareFnAttr::get(rewriter.getContext(),
+                                                 hfusion::CompareFn::vne);
+
+    auto compareOp = rewriter.create<hfusion::CompareOp>(
+        loc, i1Type, ValueRange{selectResult, zeroTensor},
+        ValueRange{compareOut}, cmpFnAttr);
+
+    rewriter.replaceOp(op, compareOp.getResult(0));
+
+    return success();
+  }
+};
+
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   if (archisAscend950)
     patterns.add<ReduceI1AddToSelectMaxCompare>(ctx);
+  if (archIsRegbased){
+    patterns.add<NormalizeToTargetType<bool, hfusion::SelectOp>>(ctx);
+  }
   patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);

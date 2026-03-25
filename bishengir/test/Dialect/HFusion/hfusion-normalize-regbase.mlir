@@ -203,3 +203,22 @@ func.func @cast_to_nd_with_overflow(%arg0: memref<?xi8> {hacc.arg_type = #hacc.a
   bufferization.materialize_in_destination %6 in writable %reinterpret_cast_0 : (tensor<300xi8>, memref<300xi8, strided<[1]>>) -> ()
   return
 }
+
+// -----
+// CHECK-LABEL: @test_select_i1_to_i16_compare
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.compare
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
+func.func @test_select_i1_to_i16_compare(
+  %arg0: tensor<8xi1> {hacc.arg_type = #hacc.arg_type<sync_block_lock>},
+  %arg1: tensor<8xi1>,
+  %arg2: tensor<8xi1>) -> tensor<8xi1> {
+  %out = tensor.empty() : tensor<8xi1>
+  %0 = hfusion.select
+      ins(%arg0, %arg1, %arg2 : tensor<8xi1>, tensor<8xi1>, tensor<8xi1>)
+      outs(%out : tensor<8xi1>) -> tensor<8xi1>
+  return %0 : tensor<8xi1>
+}
+}
