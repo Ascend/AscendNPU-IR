@@ -8,7 +8,7 @@
 
 ## 功能介绍
 
-![Effect of using Tile Cube and Vector Loop](TileCubeAndVectorLoop.png)
+![Effect of using Tile Cube and Vector Loop](../../../../images/developer_guide/TileCubeAndVectorLoop.png)
 
 对MIX算子中已经完成软件流水（CV Pipelining）的 Cube 循环和 Vector 循环，再做一次Tiling切分，把原来一次迭代干完的一整块计算，拆成多次迭代、每次处理更小的一块。这样做的目的主要有两点：
 
