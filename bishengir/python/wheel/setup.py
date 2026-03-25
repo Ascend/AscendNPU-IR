@@ -177,8 +177,8 @@ class CustomBdistWheel(bdist_wheel):
 
 
 setup(
-    name="ascendnpuir",
-    version="1.1",
+    name="ascendnpu-ir",
+    version="1.1.0",
     description="AscendNPU IR Compiler - Python bindings for bishengir-compile",
     long_description=open("README.md").read() if os.path.exists("README.md") else "",
     long_description_content_type="text/markdown",
