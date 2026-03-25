@@ -15,8 +15,8 @@
 namespace mlir {
 namespace hivm {
 
-  const int64_t blockAllFlagId1 = 8;
-  const int64_t blockAllFlagId2 = 9;
+const int64_t blockAllFlagId1 = 8;
+const int64_t blockAllFlagId2 = 9;
 
 class InjectBlockSyncAnalysis {
 public:
@@ -72,7 +72,7 @@ public:
                         Buffer2MemInfoMap &buffer2MemInfoMap, func::FuncOp func,
                         SyncAnalysisMode syncAnalysisMode)
       : IRTranslator(syncIR, memDepAnalyzer, buffer2MemInfoMap, func,
-                     syncAnalysisMode){};
+                     syncAnalysisMode) {};
 
   ~SyncBlockIRTranslator() = default;
 
@@ -98,11 +98,12 @@ private:
   void UpdateTensorExtractOpInform(Operation *op, tensor::ExtractOp extractOp);
 
   /// Collect information on load or store op.
-  template <typename OP>
-  void UpdateStoreOrLoadOpInfoBlockSync(OP op);
+  template <typename OP> void UpdateStoreOrLoadOpInfoBlockSync(OP op);
 
   /// Collect information on alloc ops accessed cross-core.
   void UpdateAllocOpMeminfo(memref::AllocOp allocOp);
+
+  bool isVectorOpResult(Value value);
 
   std::optional<hivm::PIPE>
   getInferredPipe(Operation *op, TCoreType coreType,
