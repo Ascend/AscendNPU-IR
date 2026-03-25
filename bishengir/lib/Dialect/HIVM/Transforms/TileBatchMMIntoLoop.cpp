@@ -76,7 +76,7 @@ LogicalResult
 getBatchSingleUseChain(Operation *op, int64_t batchDim,
                        SmallVector<Operation *> &recursiveUseChain,
                        Block *fixedBlock) {
-  if (op->isUsedOutsideOfBlock(fixedBlock))
+  if (op->getBlock() != fixedBlock)
     return failure();
 
   if (isa<hivm::FixpipeOp>(op)) {
