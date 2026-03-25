@@ -19,11 +19,10 @@
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncEventIdAllocation.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "llvm/Support/Casting.h"
+#include "mlir/IR/Builders.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include <type_traits>
@@ -465,41 +464,35 @@ void InjectBlockSyncAnalysis::InjectAllBlockSync() {
       opBuilder.setInsertionPointAfter(op);
     }
 
-    auto flagId1 =
-        opBuilder.getIntegerAttr(opBuilder.getI64Type(), blockAllFlagId1);
-    auto flagId2 =
-        opBuilder.getIntegerAttr(opBuilder.getI64Type(), blockAllFlagId2);
     auto loc = op->getLoc();
     auto pipeAllAttr =
         hivm::PipeAttr::get(opBuilder.getContext(), hivm::PIPE::PIPE_ALL);
+    auto interBlockFlagId1 = opBuilder.getI64IntegerAttr(blockAllFlagId1);
+    auto interBlockFlagId2 = opBuilder.getI64IntegerAttr(blockAllFlagId2);
 
     /*
     barrier-all(pipe_all)
-    sync_block_wait(cube, pipe_mte2, flagId1)
-    sync_block_set(cube, pipe_mte2, flagId2)
-    sync_block_set(cube, pipe_mte2, flagId1)
-    sync_block_wait(cube, pipe_mte2, flagId2)
-    barrier-all(pipe_all)
+    sync_block_set(vector, pipe_s, pipe_s, flagId1)
+    sync_block_wait(cube, pipe_s, pipe_s, flagId1)
+    sync_block_set(cube, pipe_s, pipe_s, flagId2)
+    sync_block_wait(vector, pipe_s, pipe_s, flagId2)
     */
     opBuilder.create<hivm::PipeBarrierOp>(loc, pipeAllAttr);
-    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
-                                      hivm::PIPE::PIPE_MTE2, flagId1);
-    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::CUBE,
-                                     hivm::PIPE::PIPE_MTE2, flagId2);
     generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::VECTOR,
-                                     hivm::PIPE::PIPE_MTE2, flagId1);
+                                     hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
+                                      hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::CUBE,
+                                     hivm::PIPE::PIPE_S, interBlockFlagId2);
     generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::VECTOR,
-                                      hivm::PIPE::PIPE_MTE2, flagId2);
-    opBuilder.create<hivm::PipeBarrierOp>(loc, pipeAllAttr);
+                                      hivm::PIPE::PIPE_S, interBlockFlagId2);
   };
 
   func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
     opBuilder.setInsertionPointAfter(op);
-    if (isa<hivm::MmadL1Op, hivm::LoadOp>(op)) {
-      // insert block-all before op.
+    if (isa<hivm::LoadOp, hivm::MmadL1Op, hivm::FixpipeOp, hivm::StoreOp,
+            hivm::CopyOp, tensor::InsertSliceOp>(op)) {
       insertBlockAll(op, /*insertBefore=*/true);
-    } else if (isa<hivm::FixpipeOp, hivm::StoreOp>(op)) {
-      // insert block-all after op.
       insertBlockAll(op);
     }
   });

@@ -1330,10 +1330,6 @@ struct ConvertHIVMToUpstream
     });
     RewritePatternSet patterns(&ctx);
     patterns
-        .add<EraseOpPattern<hivm::SetMaskNormOp>,
-             EraseOpPattern<hivm::SetFlagOp>, EraseOpPattern<hivm::WaitFlagOp>,
-             EraseOpPattern<hivm::PipeBarrierOp>>(&ctx);
-    patterns
         .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
              RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
