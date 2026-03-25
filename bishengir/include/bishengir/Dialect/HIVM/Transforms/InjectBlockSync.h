@@ -22,6 +22,9 @@
 namespace mlir {
 namespace hivm {
 
+const int64_t blockAllFlagId1 = 8;
+const int64_t blockAllFlagId2 = 9;
+
 class InjectBlockSyncAnalysis {
 public:
   InjectBlockSyncAnalysis(func::FuncOp func) : func_(func) {}

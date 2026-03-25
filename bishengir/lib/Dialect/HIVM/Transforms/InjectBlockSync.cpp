@@ -29,6 +29,8 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Builders.h"
 #include "llvm/Support/Debug.h"
 #include <type_traits>
 
@@ -379,27 +381,45 @@ void SyncBlockIRTranslator::UpdateStoreOrLoadOpInfoBlockSync(OP op) {
 }
 
 void InjectBlockSyncAnalysis::InjectAllBlockSync() {
-  func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    OpBuilder opBuilder(func_);
-    opBuilder.setInsertionPointAfter(op);
-    auto loc = op->getLoc();
-    if (isa<hivm::FixpipeOp>(op)) {
-      auto flagIdForMode0 = generateFlagId(opBuilder);
-      generateSyncBlockOp(opBuilder, loc, flagIdForMode0, TCoreType::CUBE);
-      auto flagIdForMode2 = generateFlagId(opBuilder);
-      generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::CUBE,
-                                       hivm::PIPE::PIPE_FIX, flagIdForMode2);
-      generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::VECTOR,
-                                        hivm::PIPE::PIPE_FIX, flagIdForMode2);
+  OpBuilder opBuilder(func_);
+  auto insertBlockAll = [this, &opBuilder](Operation *op,
+                                           bool insertBefore = false) {
+    if (insertBefore) {
+      opBuilder.setInsertionPoint(op);
+    } else {
+      opBuilder.setInsertionPointAfter(op);
     }
-    if (isa<hivm::StoreOp>(op)) {
-      auto flagIdForMode0 = generateFlagId(opBuilder);
-      generateSyncBlockOp(opBuilder, loc, flagIdForMode0, TCoreType::VECTOR);
-      auto flagIdForMode2 = generateFlagId(opBuilder);
-      generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::VECTOR,
-                                       hivm::PIPE::PIPE_MTE3, flagIdForMode2);
-      generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
-                                        hivm::PIPE::PIPE_MTE3, flagIdForMode2);
+
+    auto loc = op->getLoc();
+    auto pipeAllAttr =
+        hivm::PipeAttr::get(opBuilder.getContext(), hivm::PIPE::PIPE_ALL);
+    auto interBlockFlagId1 = opBuilder.getI64IntegerAttr(blockAllFlagId1);
+    auto interBlockFlagId2 = opBuilder.getI64IntegerAttr(blockAllFlagId2);
+
+    /*
+    barrier-all(pipe_all)
+    sync_block_set(vector, pipe_s, pipe_s, flagId1)
+    sync_block_wait(cube, pipe_s, pipe_s, flagId1)
+    sync_block_set(cube, pipe_s, pipe_s, flagId2)
+    sync_block_wait(vector, pipe_s, pipe_s, flagId2)
+    */
+    opBuilder.create<hivm::PipeBarrierOp>(loc, pipeAllAttr);
+    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::VECTOR,
+                                     hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
+                                      hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::CUBE,
+                                     hivm::PIPE::PIPE_S, interBlockFlagId2);
+    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::VECTOR,
+                                      hivm::PIPE::PIPE_S, interBlockFlagId2);
+  };
+
+  func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    opBuilder.setInsertionPointAfter(op);
+    if (isa<hivm::LoadOp, hivm::MmadL1Op, hivm::FixpipeOp, hivm::StoreOp,
+            hivm::CopyOp, tensor::InsertSliceOp>(op)) {
+      insertBlockAll(op, /*insertBefore=*/true);
+      insertBlockAll(op);
     }
   });
 }
