@@ -562,19 +562,34 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   if (isPerChannelSplitKPattern(matmulOutput))
     return MatmulBiasMode::PerChannelAddWithSplitK;
 
-  // When the inits of the mmadL1 op is an alloc on L0C, it means that the user
-  // is explicitly controlling buffer reuse on L0C. We treat it as NoBias case
-  // because we don't want to decompose it to mmadL1 + add.
-  auto allocOp = traceDefOp<memref::AllocOp>(matmulOutput.get());
-  hivm::AddressSpace addrSpace{hivm::AddressSpace::Zero};
-  if (allocOp.has_value()) {
-    auto alloc = cast<memref::AllocOp>(allocOp.value());
-    if (auto memSpaceAttr = alloc.getType().getMemorySpace()) {
-      addrSpace = dyn_cast<AddressSpaceAttr>(memSpaceAttr).getAddressSpace();
+  // When all traced allocs of the mmadL1 init are in the same L0C memory
+  // space, it means that the user is explicitly controlling buffer reuse on
+  // L0C. We treat it as NoBias case because we don't want to decompose it to
+  // mmadL1 + add.
+  auto allocOps = traceDefOps<memref::AllocOp>(matmulOutput.get(),
+                                              /*isSingleChain=*/false,
+                                              /*isSameTraceResult=*/true);
+  bool isSameSpace = true;
+  std::optional<hivm::AddressSpace> addrSpace;
+  if (!allocOps.empty()) {
+    for (auto allocOp : allocOps) {
+      auto alloc = cast<memref::AllocOp>(allocOp);
+      if (auto curAddrSpace =
+              getOptionalHIVMAddressSpace(alloc.getMemref().getType())) {
+        if (!addrSpace.has_value()) {
+          addrSpace = curAddrSpace.value();
+        } else if (addrSpace.value() != curAddrSpace.value()) {
+          isSameSpace = false;
+          break;
+        }
+      }
     }
   }
-  auto emptyOp = traceDefOp<tensor::EmptyOp>(matmulOutput.get());
-  return (addrSpace == hivm::AddressSpace::L0C || emptyOp.has_value())
+  auto emptyOps = traceDefOps<tensor::EmptyOp>(matmulOutput.get(),
+                                              /*isSingleChain=*/false,
+                                              /*isSameTraceResult=*/true);
+  return ((isSameSpace && addrSpace == hivm::AddressSpace::L0C) ||
+          !emptyOps.empty())
              ? MatmulBiasMode::NoBias
              : MatmulBiasMode::ElementwiseAdd;
 }

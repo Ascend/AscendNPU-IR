@@ -399,3 +399,39 @@ module {
     return
   }
 }
+
+// -----
+module {
+  func.func @dot_used_chain_access_if() -> tensor<16x16xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<16x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+    %c = tensor.empty() : tensor<16x16xf32>
+    %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<16x16xf32>) : i32 {
+      // CHECK: scf.for
+      // CHECK-NEXT: tensor.empty
+      // CHECK-NEXT: hivm.hir.mmadL1
+      // CHECK-NEXT: tensor.empty
+      // CHECK-NEXT: hivm.hir.vadd
+      // CHECK-NEXT: arith.andi
+      %mmadL1 = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%arg1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %and = arith.andi %arg0, %c1_i32 : i32
+      %cond = arith.cmpi ne, %and, %c0_i32 : i32
+      %1 = scf.if %cond -> (tensor<16x16xf32>) {
+        scf.yield %mmadL1 : tensor<16x16xf32>
+      } else {
+        %empty = tensor.empty() : tensor<16x16xf32>
+        %2 = hivm.hir.vadd ins(%mmadL1, %mmadL1 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %2 : tensor<16x16xf32>
+      }
+      scf.yield %1 : tensor<16x16xf32>
+    }
+    return %0 : tensor<16x16xf32>
+  }
+}
