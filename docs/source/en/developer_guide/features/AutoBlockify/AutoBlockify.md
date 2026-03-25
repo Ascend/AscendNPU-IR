@@ -10,7 +10,7 @@ When running a triton kernel (with triton-ascend) **the way to activate the Auto
 
 For AscendNPU-IR user you can add the following flag to bishengir-compile command : `--enable-auto-blockify-loop`
 
-![](./AutoBlockify.jpg)
+![](../../../../images/developer_guide/AutoBlockify.jpg)
 
 ## Algorithm Principle
 
