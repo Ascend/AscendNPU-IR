@@ -199,9 +199,38 @@ hivm.hir.vnot ins(%5 : ...) outs(%5 : ...)
 hivm.hir.vand ins(%5, %4 : ...) outs(%6 : ...)
 ```
 
-- **Analysis**: Input 65536xi8 in GM; copy to UB; allocate more UB; fill -1; then OR, AND, NOT, AND sequence. So a simple Not on input is implemented as (input|(-1)) & (!(input&(-1))), using 5×65536 B of UB.
+- **Analysis**: 
 
-- **Summary**: Prefer an implementation that lowers to a single VNOT where possible.
+    Line 1: The original data has a size of 65536xi8 and is stored in GM (kernel argument %arg3).
+
+    Line 2: Allocate a UB buffer of size 65536xi8.
+    
+    Line 3: Copy the data from GM in Line 1 (65536xi8) to the UB buffer allocated in Line 2 (65536xi8).
+
+    Line 4: Allocate a UB buffer of size 65536xi8.
+
+    Line 5: Fill the UB buffer allocated in Line 4 with -1.
+
+    Line 6: Allocate a UB buffer of size 65536xi8.
+
+    Line 7: Perform a bitwise OR operation between the input data and -1, and store the result in the UB buffer allocated in Line 6.
+
+    Line 8: Allocate a UB buffer of size 65536xi8.
+
+    Line 9: Perform a bitwise AND operation between the input data and -1, and store the result in the UB buffer allocated in Line 8.
+
+    Line 10: Apply a bitwise NOT operation to the result from Line 9, and store the result back into the UB buffer allocated in Line 8.
+
+    Line 11: Allocate a UB buffer of size 65536xi8.
+
+    Line 12: Perform a bitwise AND operation between the results from Line 7 and Line 10, and store the result in the UB buffer allocated in Line 11.
+
+- **Summary**: 
+
+A bitwise NOT operation is applied to the input data input_data. In MLIR, this is lowered to the following expression:
+(input_data | (-1)) & (!(input_data & (-1))).
+
+The original data size is 65536B. To perform the computation (input_data | (-1)) & (!(input_data & (-1))), a total of 5 × 65536B of UB space is allocated.
 
 ### Triton max_dim0 (int64): PlanMemory before HIVMLowerToLoops wastes UB
 
@@ -214,11 +243,19 @@ MLIR snippet:
 hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : ...) outs(%3 : ...) temp_buffer(%4 : ...) reduce_dims = [0]
 ```
 
-- **Analysis**: Line 1: input 2x4912xi64 in UB (from GM). Line 2: output 1x4912xi64 in UB. Line 3: temp_buffer 9824xi64 for vreduce. Line 4: for int64 input, vreduce is later lowered to loop scalar ops and temp_buffer is removed.
+- **Analysis**: 
 
-- **Summary**: PlanMemory accounts for temp_buffer that is not used in the final computation, which can cause false UB overflow. The temp_buffer allocation rule needs to be adjusted before PlanMemory (e.g. do not reserve UB for temp_buffer that is later removed).
+    Line 1: The input data has a shape of 2×4912xi64, allocated in UB, with data sourced from GM.
 
+    Line 2: The output data has a shape of 1×4912xi64, allocated in UB to store the computation result, which is finally written back to GM.
 
+    Line 3: Allocate a UB buffer of size 9824xi64 as a temporary buffer for the vreduce operation.
+
+    Line 4: For int64 inputs, the vreduce operation is later lowered to a loop-based scalar implementation, and the temp_buffer is removed.
+
+- **Summary**: 
+
+Summary: The temp_buffer considered during the PlanMemory phase is not actually used in the final computation, which leads to a false-positive UB overflow. The temporary buffer allocation rule should be adjusted in the pre-PlanMemory allocation step.
 
 ## D-cache
 
