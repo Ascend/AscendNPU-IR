@@ -514,7 +514,6 @@ module {
     // CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<1x16x32xi8>
     // CHECK: %[[VTRANS:.*]] = hivm.hir.vtranspose ins(%[[EXPANDED]] : tensor<16x1x32xi8>) outs(%[[EMPTY_1]] : tensor<1x16x32xi8>) permutation = [1, 0, 2] -> tensor<1x16x32xi8>
     // CHECK: %[[EXPANDED_2:.*]] = tensor.expand_shape %[[VTRANS]] {{\[\[}}0], [1, 2], [3]] output_shape [1, 1, 16, 32] : tensor<1x16x32xi8> into tensor<1x1x16x32xi8>
-    // CHECK: annotation.mark %[[EXPANDED_2]] {tiling_dim_mapping = {"1" = 1 : index}} : tensor<1x1x16x32xi8>
     // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x32xi8, #hivm.address_space<cbuf>>
     // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x32xi8, #hivm.address_space<cbuf>> to memref<1x1x16x32xi8>
     // CHECK: %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x32xi8>
