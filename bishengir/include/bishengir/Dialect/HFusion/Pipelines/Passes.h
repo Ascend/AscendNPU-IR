@@ -63,6 +63,11 @@ struct HFusionPipelineOptions
       *this, "enable-tree-reduce", llvm::cl::desc("Enable tree reduce"),
       llvm::cl::init(false)};
 
+  PassOptions::Option<bool> enableMultipleConsumerFusion{
+      *this, "enable-multiple-consumer-fusion",
+      llvm::cl::desc("Enable multiple consumer fusion in AutoVectorizeV2"),
+      llvm::cl::init(false)};
+
   PassOptions::Option<bool> skipScope{
       *this, "skip-scope",
       llvm::cl::desc("Skip passes like flattenOps when scope exists"),

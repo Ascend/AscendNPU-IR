@@ -788,7 +788,8 @@ static bool reductionConsumerNeedsFullProducerDomain(
 static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     Block *block, Operation *producer,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    unsigned maxFusedOps, int64_t vectorLength) {
+    unsigned maxFusedOps, int64_t vectorLength,
+    bool enableMultipleConsumerFusion) {
   // here we do not fuse FillOp and put FillOp into a single VF, see issue:
   // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
   if (mlir::hfusion::isFillOp(producer))
@@ -804,7 +805,7 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
 
-  if (hasManyUsers(producer) &&
+  if (!enableMultipleConsumerFusion && hasManyUsers(producer) &&
       !hasFusionOpportunity(producer, fusableOpInfoMap)) {
     return nullptr;
   }
@@ -1211,7 +1212,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   std::shared_ptr<FusedNode> bestFusedNode = findBestFusedNodeForProducer(
-      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength);
+      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength,
+      enableMultipleConsumerFusion);
   if (bestFusedNode) {
     producersToBeFusedInto.push_back(producer);
     bestFusedNode->fusedOps.insert(producer);
