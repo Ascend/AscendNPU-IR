@@ -1149,30 +1149,6 @@ func.func @main_collapsedown_empty_reassoc_2(%arg0: tensor<?x4096xf16>, %arg1: t
 // -----
 
 // CHECK: Valid
-// CHECK-LABEL: @main_expandup_reduce(
-func.func @main_expandup_reduce(%arg0: tensor<?x4096xf16>, %arg1: tensor<1xi64>) -> tensor<1xi32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
-  %c0 = arith.constant 0 : index
-  %dim = tensor.dim %arg0, %c0 : tensor<?x4096xf16>
-  %0 = tensor.empty() : tensor<1xf32>
-  %1 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%arg1 : tensor<1xi64>) outs(%0 : tensor<1xf32>) -> tensor<1xf32>
-
-  %2 = tensor.empty(%dim) : tensor<?xf32>
-  %emptyres = tensor.empty() : tensor<f32>
-  %reduced = linalg.reduce ins(%2 : tensor<?xf32>) outs(%emptyres : tensor<f32>) dimensions = [0]
-    (%in: f32, %init: f32) {
-      %4 = arith.addf %in, %init : f32
-      linalg.yield %4 : f32
-    }
-  %expanded = tensor.expand_shape %reduced [] output_shape [1] : tensor<f32> into tensor<1xf32>
-  %lmao = tensor.empty() : tensor<1xi32>
-  %castfence = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%expanded : tensor<1xf32>) outs(%lmao : tensor<1xi32>) -> tensor<1xi32>
-
-  return %castfence : tensor<1xi32>
-}
-
-// -----
-
-// CHECK: Valid
 // CHECK-LABEL: @main_expandup_unary(
 func.func @main_expandup_unary(%arg0: tensor<?x4096xf16>, %arg1: tensor<1xi64>) -> tensor<1xi32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
   %c0 = arith.constant 0 : index
@@ -1188,57 +1164,6 @@ func.func @main_expandup_unary(%arg0: tensor<?x4096xf16>, %arg1: tensor<1xi64>) 
   %castfence = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%expanded : tensor<1xf32>) outs(%lmao : tensor<1xi32>) -> tensor<1xi32>
 
   return %castfence : tensor<1xi32>
-}
-
-// -----
-// CHECK: Valid
-// CHECK-LABEL: @main_expandup_reduce_multi(
-// CHECK: tensor.expand_shape
-// CHECK: %{{.*}} {{\[}}{{\[}}0, 1], [2]] output_shape [1, %{{.*}}, 3]
-// CHECK: reduce
-// CHECK-SAME: dimensions = [1, 2]
-func.func @main_expandup_reduce_multi(%arg0: tensor<?x4096xf16>, %arg1: tensor<1xi64>) -> tensor<1xi32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
-  %c0 = arith.constant 0 : index
-  %dim = tensor.dim %arg0, %c0 : tensor<?x4096xf16>
-  %0 = tensor.empty() : tensor<1xf32>
-  %1 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%arg1 : tensor<1xi64>) outs(%0 : tensor<1xf32>) -> tensor<1xf32>
-
-  %2 = tensor.empty(%dim) : tensor<?x3xf32>
-  %emptyres = tensor.empty() : tensor<f32>
-  %reduced = linalg.reduce ins(%2 : tensor<?x3xf32>) outs(%emptyres : tensor<f32>) dimensions = [0, 1]
-    (%in: f32, %init: f32) {
-      %4 = arith.addf %in, %init : f32
-      linalg.yield %4 : f32
-    }
-  %expanded = tensor.expand_shape %reduced [] output_shape [1] : tensor<f32> into tensor<1xf32>
-  %lmao = tensor.empty() : tensor<1xi32>
-  %castfence = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%expanded : tensor<1xf32>) outs(%lmao : tensor<1xi32>) -> tensor<1xi32>
-
-  return %castfence : tensor<1xi32>
-}
-
-
-// -----
-// CHECK: Valid
-// CHECK-LABEL: @main_expandup_reduce_multi(
-// CHECK: tensor.expand_shape
-// CHECK: {{\[}}{{\[}}0, 1, 2, 3], [4]] output_shape [1, 1, 1, %{{.*}}, 3]
-// CHECK: reduce
-// CHECK-SAME: dimensions = [3, 4]
-func.func @main_expandup_reduce_multi(%arg0: tensor<?x4096xf16>, %arg1: tensor<1xi64>) -> tensor<1x1x1xi32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<LAST_AXIS_PBR>} {
-  %c0 = arith.constant 0 : index
-  %dim = tensor.dim %arg0, %c0 : tensor<?x4096xf16>
-  %0 = tensor.empty(%dim) : tensor<?x3xf32>
-  %1 = tensor.empty() : tensor<f32>
-  %reduced = linalg.reduce ins(%0 : tensor<?x3xf32>) outs(%1 : tensor<f32>) dimensions = [0, 1]
-    (%in: f32, %init: f32) {
-      %4 = arith.addf %in, %init : f32
-      linalg.yield %4 : f32
-    }
-  %expanded = tensor.expand_shape %reduced [] output_shape [1, 1, 1] : tensor<f32> into tensor<1x1x1xf32>
-  %2 = tensor.empty() : tensor<1x1x1xi32>
-  %3 = hfusion.cast {round_mode = #hfusion.round_mode<trunc>} ins(%expanded : tensor<1x1x1xf32>) outs(%2 : tensor<1x1x1xi32>) -> tensor<1x1x1xi32>
-  return %3 : tensor<1x1x1xi32>
 }
 
 // -----

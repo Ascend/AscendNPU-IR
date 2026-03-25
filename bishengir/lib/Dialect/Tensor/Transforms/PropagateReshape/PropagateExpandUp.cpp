@@ -831,6 +831,15 @@ LogicalResult handleReduceLikeOp(tensor::ExpandShapeOp expandOp,
   SmallVector<ReassociationIndices> newReassociation;
   SmallVector<int64_t> newOutputShape; // output: the expanded input of reduce
   SmallVector<int64_t> newDimensions;
+  auto expandedShape =
+      getMixedSizesOrOutputShape(rewriter, expandOp.getResult());
+  auto expandInputRank = expandOp.getSrcType().getRank();
+  // skip add unitdim to rank 0 output of reduce
+  if (isUnitDimReshape(convertToConstantValues(expandedShape),
+                       reassociationIndices) &&
+      expandInputRank == 0) {
+    return failure();
+  }
   // Step 2: obtains dimensions and reassociations
   auto opResult = cast<OpResult>(expandOp.getSrc());
   auto oldReplaceIndex = opResult.getResultNumber();

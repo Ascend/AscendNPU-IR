@@ -534,3 +534,59 @@ func.func @extract_from_collapsed(%arg0: tensor<64x32xf32>) -> tensor<15xf32> {
 
   return %result : tensor<15xf32>
 }
+
+// -----
+// ensure no dead loop
+// CHECK-LABEL: argmax_loop_body
+// CHECK: %reduced = linalg.reduce
+func.func @argmax_loop_body(
+    %arg12: i32,
+    %arg13: tensor<1xf32>,
+    %arg14: tensor<64xf32>,
+    %arg2: memref<?xi8>,
+    %cst_0: f16,
+    %cst_1: f16,
+    %cst: f32
+) -> (tensor<1xf32>, tensor<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv"} {
+    %true = arith.constant true
+    %c0_i32 = arith.constant 0 : i32
+    %c63_i32 = arith.constant 63 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %cst_2 = arith.constant 0xFF800000 : f32
+    %0 = tensor.empty() : tensor<64xf32>
+    %3 = tensor.empty() : tensor<f32>
+    %20 = arith.muli %arg12, %c64_i32 : i32
+    %21 = arith.index_cast %20 : i32 to index
+    %reinterpret_cast_4 = memref.reinterpret_cast %arg2 to offset: [%21], sizes: [64], strides: [1] : memref<?xi8> to memref<64xi8, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<64xi8>
+    %36 = bufferization.to_tensor %alloc restrict writable : memref<64xi8>
+    %38 = tensor.empty() : tensor<64xi32>
+    %39 = tensor.empty() : tensor<64xf16>
+    %40 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%36 : tensor<64xi8>) outs(%39 : tensor<64xf16>) -> tensor<64xf16>
+    %42 = tensor.empty() : tensor<64xi1>
+    %43 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%39, %cst_0 : tensor<64xf16>, f16) outs(%42 : tensor<64xi1>) -> tensor<64xi1>
+    %44 = hfusion.select ins(%43, %cst_1, %40 : tensor<64xi1>, f16, tensor<64xf16>) outs(%39 : tensor<64xf16>) -> tensor<64xf16>
+    %45 = tensor.empty() : tensor<f16>
+    %46 = tensor.empty() : tensor<i32>
+    %47:2 = hfusion.reduce_with_index {already_initialize_init, tie_break_left = true, unsigned_src = false} <max> ins(%44, %38 : tensor<64xf16>, tensor<64xi32>) outs(%45, %46 : tensor<f16>, tensor<i32>) dimensions = [0]  -> tensor<f16>, tensor<i32>
+    %expanded_7 = tensor.expand_shape %47#1 [] output_shape [1] : tensor<i32> into tensor<1xi32>
+    %49 = tensor.empty() : tensor<1xf32>
+    %50 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%arg14, %cst : tensor<64xf32>, f32) outs(%42 : tensor<64xi1>) -> tensor<64xi1>
+    %51 = hfusion.select ins(%50, %cst_2, %arg14 : tensor<64xi1>, f32, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    %reduced = linalg.reduce ins(%51 : tensor<64xf32>) outs(%3 : tensor<f32>) dimensions = [0]
+      (%in: f32, %init: f32) {
+        %63 = arith.maximumf %in, %init : f32
+        linalg.yield %63 : f32
+      }
+    %expanded_9 = tensor.expand_shape %reduced [] output_shape [1] : tensor<f32> into tensor<1xf32>
+    %55 = tensor.empty() : tensor<1xi1>
+    %56 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%expanded_9, %49 : tensor<1xf32>, tensor<1xf32>) outs(%55 : tensor<1xi1>) -> tensor<1xi1>
+    %57 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>} ins(%expanded_7 : tensor<1xi32>) outs(%49 : tensor<1xf32>) -> tensor<1xf32>
+    %58 = hfusion.select ins(%56, %57, %arg13 : tensor<1xi1>, tensor<1xf32>, tensor<1xf32>) outs(%49 : tensor<1xf32>) -> tensor<1xf32>
+    %59 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%40 : tensor<64xf16>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    %60 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%59, %cst : tensor<64xf32>, f32) outs(%42 : tensor<64xi1>) -> tensor<64xi1>
+    %61 = hfusion.select ins(%60, %cst_2, %59 : tensor<64xi1>, f32, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    %62 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%51, %61 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+    return %58, %62 : tensor<1xf32>, tensor<64xf32>
+}
