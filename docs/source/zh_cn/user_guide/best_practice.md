@@ -364,13 +364,13 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
 
 
-### triton op不合理的实现，导致额外占用内存
+### triton not op不合理的实现，导致额外占用内存
 
 Triton Not OP的实现，在NPU-IR中，被转成VOR、VAND、VNOT、VAND等一些列操作来处理，实际上可以只执行VNOT操作：
 
 mlir代码如下：
 
-```javascript
+```mlir
   %2 = hivm.hir.pointer_cast(%c0_i64) : memref<65536xi8, #hivm.address_space<ub>>
   hivm.hir.load ins(%reinterpret_cast : memref<65536xi8, strided<[1]>, #hivm.address_space<gm>>) outs(%2 : memref<65536xi8, #hivm.address_space<ub>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
   %3 = hivm.hir.pointer_cast(%c131072_i64) : memref<65536xi8, #hivm.address_space<ub>>
@@ -387,16 +387,27 @@ mlir代码如下：
 - 分析
 
     第1行，原始的数据大小为65536xi8，保存在GM中(kernel的参数%arg3)；
+
     第2行，申请一块大小为65536xi8的UB空间；
+
     第3行，将第1行的GM中的形状为65536xi8的数据，COPY到第2行的现状为65536xi8的UB空间中；
+    
     第4行，申请一块大小为65536xi8的UB空间；
+
     第5行，将第4行申请的65536xi8的UB空间，全填充-1；
+
     第6行：申请一块大小为65536xi8的UB空间；
+
     第7行：“输入数据”与“-1”做or运算，结果存储到第6行申请的UB空间中；
+
     第8行：申请一块大小为65536xi8的UB空间；
+    
     第9行：“输入数据”与“-1”做and运算，结果存储到第8行申请的UB空间中；
+
     第10行：再对第9行的结果做not运算，将结果存储到第8行申请的UB空间中；
+
     第11行：申请一块大小为65536xi8的UB空间；
+
     第12行：将第7行的结果，与第10行的结果，进行and运算，将结果存储到第11行申请的UB空间中；
 
 - 总结
@@ -418,10 +429,13 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 
 - 分析：
 
-第1行，输入数据大小为2x4912xi64，在ub中分配，数据来源于GM
-第2行，输出数据大小为1x4912xi64，在ub中分配，存储计算结果，最后存储到GM中
-第3行，申请一块大小为9824xi64的ub空间作为vreduce操作的临时节点
-第4行，对于int64的输入，vreduce操作会在后面lower为loop scalar操作，并将temp_buffer删掉
+    第1行，输入数据大小为2x4912xi64，在ub中分配，数据来源于GM
+
+    第2行，输出数据大小为1x4912xi64，在ub中分配，存储计算结果，最后存储到GM中
+
+    第3行，申请一块大小为9824xi64的ub空间作为vreduce操作的临时节点
+
+    第4行，对于int64的输入，vreduce操作会在后面lower为loop scalar操作，并将temp_buffer删掉
 
 - 总结：PlanMemory时考虑的temp_buffer在最后计算时并未使用，导致误报ub overflow，需要在PlanMemory前分配temp_buffer的步骤中修改临时节点分配规则
 
