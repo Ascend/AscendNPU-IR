@@ -290,10 +290,14 @@ struct InsertStoreOpBetweenVectorAndLoad
   LogicalResult matchAndRewrite(hivm::LoadOp op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
-    for (OpOperand &operand : op->getOpOperands()) {
-      if (traceDefOp<OpType>(operand.get()).has_value()) {
-        consumerOperands.push_back(&operand);
-      }
+    OpOperand &srcOperand = op.getSrcMutable();
+
+    if (traceDefOp<OpType>(srcOperand.get()).has_value()) {
+      consumerOperands.push_back(&srcOperand);
+    }
+
+    if (consumerOperands.empty()) {
+      return failure();
     }
     return insertLoadStoreOp(rewriter, op.getLoc(), consumerOperands,
                              InsertMode::StoreOnly);
