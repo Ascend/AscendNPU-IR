@@ -16,7 +16,7 @@
 This package provides Python bindings for the bishengir-compile compiler.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.1"
 __author__ = "Huawei Technologies Co., Ltd."
 
 from .compiler import compile as compile

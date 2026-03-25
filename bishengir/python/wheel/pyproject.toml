@@ -17,7 +17,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ascendnpuir"
-version = "0.1.0"
+version = "1.1"
 description = "AscendNPU IR Compiler - Python bindings for bishengir-compile"
 readme = "README.md"
 license = {text = "Apache-2.0"}

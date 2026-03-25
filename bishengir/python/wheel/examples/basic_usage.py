@@ -1,400 +1,146 @@
 """
 BiShengIR Compiler Python Bindings - Usage Examples
 
-This module demonstrates various usage patterns for the ascendnpuir.compile function,
-based on real MLIR test cases from the BiShengIR project.
-
-All examples output binary kernel files for Ascend NPU.
+This module demonstrates usage patterns for the ascendnpuir.compile function.
 """
 
 from ascendnpuir import compile
 
 
-def example_1_basic_hfusion_compile():
+def example_1_triton_add_lir():
     """
-    Example 1: Basic HFusion compilation
+    Example 1: Triton add operation with LIR compilation
     
-    This example demonstrates compiling a simple element-wise operation
-    with HFusion compilation enabled.
+    This example demonstrates compiling a Triton add kernel to binary
+    kernel file for Ascend NPU.
     
-    Based on: bishengir/test/bishengir-compile/hfusion/compile-pure-elemwise-2d.mlir
-    Output: Binary kernel file
+    Based on: bishengir/test/bishengir-compile/triton/compile-triton-add-lir.mlir
+    Output: triton-add-exp-output.o
     """
-    print("\n=== Example 1: Basic HFusion Compile ===")
+    print("\n=== Example 1: Triton Add LIR Compilation ===")
     
     mlir_code = """
+#map = affine_map<(d0) -> (d0)>
 module {
-  func.func @add_mul_2d(%arg0: tensor<1024x1024xf32>, 
-                        %arg1: tensor<1024x1024xf32>, 
-                        %arg2: tensor<1024x1024xf32>, 
-                        %arg3: tensor<1024x1024xf32>) -> tensor<1024x1024xf32>
-  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<HOST>} {
-    %1 = tensor.empty() : tensor<1024x1024xf32>
-    %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} 
-         ins(%arg0, %arg1 : tensor<1024x1024xf32>, tensor<1024x1024xf32>) 
-         outs(%1 : tensor<1024x1024xf32>) -> tensor<1024x1024xf32>
-    %3 = tensor.empty() : tensor<1024x1024xf32>
-    %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
-         ins(%2, %arg2 : tensor<1024x1024xf32>, tensor<1024x1024xf32>) 
-         outs(%3 : tensor<1024x1024xf32>) -> tensor<1024x1024xf32>
-    return %4 : tensor<1024x1024xf32>
+  func.func @test_basic__kernel0(%arg0: memref<?xf32> {tt.divisibility = 16 : i32}, %arg1: memref<?xf32> {tt.divisibility = 16 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {global_kernel = "local"} {
+    %c256 = arith.constant 256 : index
+    %c256_i32 = arith.constant 256 : i32
+    %0 = arith.muli %arg7, %c256_i32 : i32
+    %1 = arith.index_cast %0 : i32 to index
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%1], sizes: [256], strides: [1] : memref<?xf32> to memref<256xf32, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<256xf32>
+    %2 = arith.index_cast %0 : i32 to index
+    %3 = arith.addi %2, %c256 : index
+    %4 = arith.index_cast %arg3 : i32 to index
+    %5 = arith.maxsi %2, %4 : index
+    %6 = arith.minsi %3, %5 : index
+    %7 = arith.subi %6, %2 : index
+    %subview = memref.subview %reinterpret_cast[0] [%7] [1] : memref<256xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    %subview_0 = memref.subview %alloc[0] [%7] [1] : memref<256xf32> to memref<?xf32, strided<[1]>>
+    memref.copy %subview, %subview_0 : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1]>>
+    %8 = bufferization.to_tensor %alloc restrict writable : memref<256xf32>
+    %9 = arith.index_cast %0 : i32 to index
+    %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [%9], sizes: [256], strides: [1] : memref<?xf32> to memref<256xf32, strided<[1], offset: ?>>
+    %alloc_2 = memref.alloc() : memref<256xf32>
+    %10 = arith.index_cast %0 : i32 to index
+    %11 = arith.addi %10, %c256 : index
+    %12 = arith.index_cast %arg3 : i32 to index
+    %13 = arith.maxsi %10, %12 : index
+    %14 = arith.minsi %11, %13 : index
+    %15 = arith.subi %14, %10 : index
+    %subview_3 = memref.subview %reinterpret_cast_1[0] [%15] [1] : memref<256xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    %subview_4 = memref.subview %alloc_2[0] [%15] [1] : memref<256xf32> to memref<?xf32, strided<[1]>>
+    memref.copy %subview_3, %subview_4 : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1]>>
+    %16 = bufferization.to_tensor %alloc_2 restrict writable : memref<256xf32>
+    %17 = arith.addf %8, %16 : tensor<256xf32>
+    %18 = arith.index_cast %0 : i32 to index
+    %reinterpret_cast_5 = memref.reinterpret_cast %arg2 to offset: [%18], sizes: [256], strides: [1] : memref<?xf32> to memref<256xf32, strided<[1], offset: ?>>
+    %19 = arith.index_cast %0 : i32 to index
+    %20 = arith.addi %19, %c256 : index
+    %21 = arith.index_cast %arg3 : i32 to index
+    %22 = arith.maxsi %19, %21 : index
+    %23 = arith.minsi %20, %22 : index
+    %24 = arith.subi %23, %19 : index
+    %extracted_slice = tensor.extract_slice %17[0] [%24] [1] : tensor<256xf32> to tensor<?xf32>
+    %subview_6 = memref.subview %reinterpret_cast_5[0] [%24] [1] : memref<256xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+    bufferization.materialize_in_destination %extracted_slice in writable %subview_6 : (tensor<?xf32>, memref<?xf32, strided<[1], offset: ?>>) -> ()
+    return
   }
 }
 """
     
-    output_path = "output_basic.o"
+    output_path = "triton-add-exp-output.o"
     options = [
         "-enable-hfusion-compile=true",
-        "-enable-hivm-compile=true",
-        "-enable-lir-compile=false",
-        "-block-dim=20"
+        "-enable-triton-kernel-compile"
     ]
     
     try:
         result = compile(mlir_code, output_path, options)
         if result.returncode == 0:
-            print(f"✓ Compilation successful! Output: {result.output_path}")
-            print(f"  Options: {' '.join(options)}")
+            print(f"✓ Compilation successful!")
+            print(f"  Output: {result.output_path}")
             print(f"  Return code: {result.returncode}")
             if result.stdout:
-                print(f"  Stdout: {result.stdout}")
+                print(f"  Stdout: {result.stdout[:200]}...")
             if result.stderr:
-                print(f"  Stderr: {result.stderr}")
+                print(f"  Stderr: {result.stderr[:200]}...")
         else:
             print(f"✗ Compilation failed with return code: {result.returncode}")
             print(f"  Output path: {result.output_path}")
             if result.stdout:
-                print(f"  Stdout: {result.stdout}")
+                print(f"  Stdout: {result.stdout[:200]}...")
             if result.stderr:
-                print(f"  Stderr: {result.stderr}")
+                print(f"  Stderr: {result.stderr[:200]}...")
+    except FileNotFoundError as e:
+        print(f"✗ Compiler binary not found: {e}")
+    except ValueError as e:
+        print(f"✗ Invalid input: {e}")
     except Exception as e:
         print(f"✗ Compilation raised exception: {e}")
 
 
-def example_2_dynamic_shape_broadcast():
+def example_2_error_handling():
     """
-    Example 2: Dynamic shape with broadcast operations
+    Example 2: Error handling
     
-    This example shows compiling operations with dynamic shapes
-    and broadcast semantics.
-    
-    Based on: bishengir/test/bishengir-compile/hfusion/compile-any-pb-dynamic.mlir
-    Output: Binary kernel file
+    This example demonstrates proper error handling for various
+    error scenarios when using the compile function.
     """
-    print("\n=== Example 2: Dynamic Shape Broadcast ===")
+    print("\n=== Example 2: Error Handling ===")
     
-    mlir_code = """
-module {
-  func.func @test_dynamic_shape(%arg0: tensor<?x1xf16>,
-                                %arg1: tensor<1x?xf16>,
-                                %arg2: tensor<?x?xf16>) -> tensor<?x?xf16>
-  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, 
-              hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %dim = tensor.dim %arg0, %c0 : tensor<?x1xf16>
-    %dim_0 = tensor.dim %arg1, %c1 : tensor<1x?xf16>
-    %0 = tensor.empty(%dim, %dim_0) : tensor<?x?xf16>
-    %collapsed = tensor.collapse_shape %arg0 [[0, 1]] : tensor<?x1xf16> into tensor<?xf16>
-    %broadcasted = linalg.broadcast ins(%collapsed : tensor<?xf16>) 
-                   outs(%0 : tensor<?x?xf16>) dimensions = [1]
-    %collapsed_1 = tensor.collapse_shape %arg1 [[0, 1]] : tensor<1x?xf16> into tensor<?xf16>
-    %broadcasted_2 = linalg.broadcast ins(%collapsed_1 : tensor<?xf16>) 
-                     outs(%0 : tensor<?x?xf16>) dimensions = [0]
-    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
-         ins(%broadcasted, %broadcasted_2 : tensor<?x?xf16>, tensor<?x?xf16>) 
-         outs(%arg2 : tensor<?x?xf16>) -> tensor<?x?xf16>
-    return %1 : tensor<?x?xf16>
-  }
-}
-"""
-    
-    output_path = "output_dynamic.o"
-    options = [
-        "-enable-hfusion-compile=true",
-        "-enable-lir-compile=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: Dynamic shapes, broadcast operations")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_3_hivm_vector_operations():
-    """
-    Example 3: HIVM vector operations with memory hierarchy
-    
-    This example demonstrates HIVM dialect operations with
-    explicit memory hierarchy (GM, UB buffers).
-    
-    Based on: bishengir/test/bishengir-compile/hivm/compile-bisheng-hir-static-ptr-off.mlir
-    Output: Binary kernel file
-    """
-    print("\n=== Example 3: HIVM Vector Operations ===")
-    
-    mlir_code = """
-module {
-  func.func @vector_add_kernel(%valueA: memref<16xf16, #hivm.address_space<gm>>,
-                               %valueB: memref<16xf16, #hivm.address_space<gm>>,
-                               %valueC: memref<16xf16, #hivm.address_space<gm>>)
-  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>) 
-                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
-    
-    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>) 
-                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
-    
-    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%ubA, %ubB: memref<16xf16, #hivm.address_space<ub>>, 
-                           memref<16xf16, #hivm.address_space<ub>>) 
-                  outs(%ubC: memref<16xf16, #hivm.address_space<ub>>)
-    
-    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>) 
-                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
-    return
-  }
-}
-"""
-    
-    output_path = "output_hivm.o"
-    options = [
-        "-enable-lir-compile=false",
-        "-enable-static-bare-ptr=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: HIVM dialect, memory hierarchy (GM/UB)")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_4_matmul_operation():
-    """
-    Example 4: Matrix multiplication with fusion
-    
-    This example shows compiling a matrix multiplication operation
-    with fusion optimizations.
-    
-    Based on: bishengir/test/bishengir-compile/hfusion/compile-bisheng-full.mlir
-    Output: Binary kernel file
-    """
-    print("\n=== Example 4: Matrix Multiplication ===")
-    
-    mlir_code = """
-module {
-  func.func @matmul_fusion(%arg0: tensor<?x?xf32>, 
-                           %arg1: tensor<?x?xf32>) -> tensor<?x?xf32>
-  attributes {hacc.function_kind = #hacc.function_kind<HOST>} {
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %dim0 = tensor.dim %arg0, %c0 : tensor<?x?xf32>
-    %dim1 = tensor.dim %arg1, %c1 : tensor<?x?xf32>
-    %result = tensor.empty(%dim0, %dim1) : tensor<?x?xf32>
-    %matmul_result = linalg.matmul 
-                     ins(%arg0, %arg1 : tensor<?x?xf32>, tensor<?x?xf32>) 
-                     outs(%result : tensor<?x?xf32>) -> tensor<?x?xf32>
-    return %matmul_result : tensor<?x?xf32>
-  }
-}
-"""
-    
-    output_path = "output_matmul.o"
-    options = [
-        "-enable-hfusion-compile=true",
-        "-enable-hivm-compile=true",
-        "-enable-lir-compile=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: Matrix multiplication, fusion optimization")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_5_mixed_core_types():
-    """
-    Example 5: Mixed core types (AIC and AIV)
-    
-    This example demonstrates compiling for mixed core types
-    in the same module.
-    
-    Based on: bishengir/test/bishengir-compile/hivm/compile-bisheng-hir-mix.mlir
-    Output: Binary kernel file
-    """
-    print("\n=== Example 5: Mixed Core Types ===")
-    
-    mlir_code = """
-module @M attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
-  func.func @matmul_aic(%arg0: memref<64x64xf16>,
-                        %arg1: memref<64x64xf16>,
-                        %arg2: memref<64x64xf16>)
-  attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, 
-              hivm.func_core_type = #hivm.func_core_type<AIC>} {
-    hivm.hir.matmul ins(%arg0, %arg1 : memref<64x64xf16>, memref<64x64xf16>)
-                    outs(%arg2 : memref<64x64xf16>)
-    return
-  }
-  
-  func.func @vector_add_aiv(%valueA: memref<16xf16, #hivm.address_space<gm>>,
-                            %valueB: memref<16xf16, #hivm.address_space<gm>>,
-                            %valueC: memref<16xf16, #hivm.address_space<gm>>)
-  attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, 
-              hivm.func_core_type = #hivm.func_core_type<AIV>} {
-    %ubA = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueA : memref<16xf16, #hivm.address_space<gm>>) 
-                  outs(%ubA : memref<16xf16, #hivm.address_space<ub>>)
-    
-    %ubB = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.load ins(%valueB : memref<16xf16, #hivm.address_space<gm>>) 
-                  outs(%ubB : memref<16xf16, #hivm.address_space<ub>>)
-    
-    %ubC = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
-    hivm.hir.vadd ins(%ubA, %ubB: memref<16xf16, #hivm.address_space<ub>>, 
-                           memref<16xf16, #hivm.address_space<ub>>) 
-                  outs(%ubC: memref<16xf16, #hivm.address_space<ub>>)
-    
-    hivm.hir.store ins(%ubC : memref<16xf16, #hivm.address_space<ub>>) 
-                   outs(%valueC : memref<16xf16, #hivm.address_space<gm>>)
-    return
-  }
-}
-"""
-    
-    output_path = "output_mixed.o"
-    options = [
-        "-enable-lir-compile=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: Mixed core types (AIC/AIV)")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_6_unary_operations():
-    """
-    Example 6: Various unary operations
-    
-    This example demonstrates compiling various unary operations
-    like exp, log, sqrt, etc.
-    
-    Based on: bishengir/test/Conversion/HFusionToHIVM/hfusion-to-hivm.mlir
-    Output: Binary kernel file
-    """
-    print("\n=== Example 6: Unary Operations ===")
-    
-    mlir_code = """
-module {
-  func.func @unary_ops(%src: memref<6x6xf32>, %dst: memref<6x6xf32>)
-  attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>} 
-      ins(%src : memref<6x6xf32>) 
-      outs(%dst : memref<6x6xf32>)
-    
-    hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} 
-      ins(%src : memref<6x6xf32>) 
-      outs(%dst : memref<6x6xf32>)
-    
-    hfusion.elemwise_unary {fun = #hfusion.unary_fn<exp>} 
-      ins(%src : memref<6x6xf32>) 
-      outs(%dst : memref<6x6xf32>)
-    
-    return
-  }
-}
-"""
-    
-    output_path = "output_unary.o"
-    options = [
-        "-enable-hfusion-compile=true",
-        "-enable-hivm-compile=true",
-        "-enable-lir-compile=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: Unary operations (relu, sqrt, exp)")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_7_binary_operations():
-    """
-    Example 7: Various binary operations
-    
-    This example demonstrates compiling various binary operations
-    like add, mul, sub, div, etc.
-    
-    Based on: bishengir/test/Conversion/HFusionToHIVM/hfusion-to-hivm.mlir
-    Output: Binary kernel file
-    """
-    print("\n=== Example 7: Binary Operations ===")
-    
-    mlir_code = """
-module {
-  func.func @binary_ops(%src1: memref<6x6xi16>, 
-                        %src2: memref<6x6xi16>, 
-                        %dst: memref<6x6xi16>)
-  attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} 
-      ins(%src1, %src2 : memref<6x6xi16>, memref<6x6xi16>)
-      outs(%dst : memref<6x6xi16>)
-    
-    hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} 
-      ins(%src1, %src2 : memref<6x6xi16>, memref<6x6xi16>)
-      outs(%dst : memref<6x6xi16>)
-    
-    return
-  }
-}
-"""
-    
-    output_path = "output_binary.o"
-    options = [
-        "-enable-hfusion-compile=true",
-        "-enable-hivm-compile=true",
-        "-enable-lir-compile=false"
-    ]
-    
-    try:
-        compile(mlir_code, output_path, options)
-        print(f"✓ Compilation successful! Output: {output_path}")
-        print(f"  Features: Binary operations (or, and)")
-    except Exception as e:
-        print(f"✗ Compilation failed: {e}")
-
-
-def example_8_error_handling():
-    """
-    Example 8: Error handling
-    
-    This example demonstrates proper error handling
-    for invalid MLIR code and missing dependencies.
-    """
-    print("\n=== Example 8: Error Handling ===")
-    
-    # Test with empty input
+    # Test 1: Empty input
     print("\nTest 1: Empty input")
     try:
         compile("", "output.o", [])
         print("✗ Should have raised ValueError")
     except ValueError as e:
-        print(f"✓ Correctly caught error: {e}")
+        print(f"✓ Correctly caught ValueError: {e}")
+    except Exception as e:
+        print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
     
-    # Test with invalid MLIR syntax
-    print("\nTest 2: Invalid MLIR syntax")
+    # Test 2: None input
+    print("\nTest 2: None input")
+    try:
+        compile(None, "output.o", [])
+        print("✗ Should have raised ValueError")
+    except ValueError as e:
+        print(f"✓ Correctly caught ValueError: {e}")
+    except Exception as e:
+        print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
+    
+    # Test 3: Whitespace-only input
+    print("\nTest 3: Whitespace-only input")
+    try:
+        compile("   \n\t  ", "output.o", [])
+        print("✗ Should have raised ValueError")
+    except ValueError as e:
+        print(f"✓ Correctly caught ValueError: {e}")
+    except Exception as e:
+        print(f"✗ Unexpected exception: {type(e).__name__}: {e}")
+    
+    # Test 4: Invalid MLIR syntax
+    print("\nTest 4: Invalid MLIR syntax")
     invalid_mlir = """
 module {
   func.func @test() {
@@ -404,30 +150,32 @@ module {
 }
 """
     try:
-        compile(invalid_mlir, "output.o", [])
-        print("✗ Should have raised RuntimeError")
-    except RuntimeError as e:
-        print(f"✓ Correctly caught error: {type(e).__name__}")
+        result = compile(invalid_mlir, "output_invalid.o", [])
+        if result.returncode != 0:
+            print(f"✓ Compilation correctly failed with return code: {result.returncode}")
+            if result.stderr:
+                print(f"  Error message: {result.stderr[:200]}...")
+        else:
+            print("✗ Invalid MLIR should have failed compilation")
+    except Exception as e:
+        print(f"✓ Correctly caught exception: {type(e).__name__}: {e}")
     
-    # Test with missing hivmc binary
-    print("\nTest 3: Missing hivmc binary")
+    # Test 5: Missing hivmc binary (informational)
+    print("\nTest 5: Missing hivmc binary")
     print("Note: This test requires hivmc to be missing from PATH")
-    print("If hivmc is installed, this test will not trigger the error")
-    # In a real scenario where hivmc is missing, this would raise:
-    # FileNotFoundError: hivmc binary not found in PATH. 
-    # Please install hivmc and ensure it is available in your PATH.
-    print("✓ Error handling for missing hivmc is implemented in compiler.py")
+    print("If hivmc is installed, this test will show successful compilation")
+    print("Error handling for missing hivmc is implemented in compiler.py:")
+    print("  FileNotFoundError: hivmc binary not found in PATH.")
 
 
 def main():
     """Run all examples"""
     print("=" * 70)
     print("BiShengIR Compiler - Python Bindings Examples")
-    print("All examples output binary kernel files for Ascend NPU")
     print("=" * 70)
     
-    example_1_basic_hfusion_compile()
-
+    example_1_triton_add_lir()
+    example_2_error_handling()
     
     print("\n" + "=" * 70)
     print("All examples completed!")
