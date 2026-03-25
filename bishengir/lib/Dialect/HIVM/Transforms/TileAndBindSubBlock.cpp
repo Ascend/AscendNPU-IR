@@ -523,8 +523,9 @@ public:
     if (failed(maybeContainingLoop))
       return failure();
     for (auto res : op->getResults()) {
-      int64_t tilingDim = 0;
-      if (!res.use_empty()){
+      int64_t tilingDim = analyzer.getTilingDim(res);
+      LDBG("TileAndSliceLeaf " << res.getResultNumber() << "th result of\n" << op << "\n Axis " << tilingDim);
+      if (!res.use_empty() || tilingDim == -1){
         continue;
       }
       auto containingLoop = maybeContainingLoop.value();
