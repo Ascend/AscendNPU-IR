@@ -1349,6 +1349,16 @@ half handle_half_operation(half src0_oprand, half src1_oprand, VectorLastAxisMod
     int16_t res_int16 = scalar_operation<OP, int16_t>(*src0_oprand_int16);
     half *res_float16 = (half*)&res_int16;
     return *res_float16;
+  } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+    float src0_oprand_float = static_cast<float>(src0_oprand);
+    float src1_oprand_float = static_cast<float>(src1_oprand);
+    // if one of the operands is NAN, return NAN.
+    if ((src0_oprand_float != src0_oprand_float) || (src1_oprand_float != src1_oprand_float)) {
+      return NAN;
+    }
+    float res_float = scalar_operation<OP, float>(src0_oprand_float, src1_oprand_float);
+    return static_cast<half>(res_float);
   } else {
     float src0_oprand_float = static_cast<float>(src0_oprand);
     float src1_oprand_float = static_cast<float>(src1_oprand);
@@ -1403,6 +1413,13 @@ float handle_float_operation(float src0_oprand, float src1_oprand, VectorLastAxi
     int32_t res_int32 = scalar_operation<OP, int32_t>(*src0_oprand_int32);
     float *res_float32 = (float*)&res_int32;
     return *res_float32;
+  } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+    // if one of the operands is NAN, return NAN.
+    if ((src0_oprand != src0_oprand) || (src1_oprand != src1_oprand)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand, src1_oprand);
   } else {
     if (mode == VectorLastAxisMode::V) {
       return scalar_operation<OP, float>(src0_oprand);
