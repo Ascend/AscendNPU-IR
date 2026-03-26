@@ -508,6 +508,8 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
         consumerOperands.push_back(&operand);
       } else if (toTensorOp->getAttr("gather_load") != nullptr) {
         consumerOperands.push_back(&operand);
+      } else if (toTensorOp->getAttr("index_select_simd") != nullptr) {
+        consumerOperands.push_back(&operand);
       }
     }
     return insertLoadStoreOp(rewriter, op.getLoc(), consumerOperands,
