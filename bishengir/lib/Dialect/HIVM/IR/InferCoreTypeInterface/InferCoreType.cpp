@@ -159,6 +159,19 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
         return res.value();
       }
     }
+    // TODO: In the future, the core type of the debug op will be set through
+    // the infer scope.
+    if (definingOp) {
+      auto srcOp = traceDefOp<HIVMStructuredOp>(definingOp->getResult(0));
+      if (srcOp.has_value()) {
+        auto res = getCoreType(srcOp.value());
+        if (succeeded(res) && (res.value() != TCoreType::CUBE_OR_VECTOR)) {
+          this->setTcoretypeAttr(
+              hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
+          return res.value();
+        }
+      }
+    }
     // finally if we cannot get a definite answer, just use CUBE_OR_VECTOR
     this->setTcoretypeAttr(hivm::TCoreTypeAttr::get(
         this->getContext(), hivm::TCoreType::CUBE_OR_VECTOR));
