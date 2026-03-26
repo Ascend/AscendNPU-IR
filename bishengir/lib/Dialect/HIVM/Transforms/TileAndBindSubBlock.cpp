@@ -57,6 +57,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -960,6 +961,9 @@ public:
 
   LogicalResult matchAndRewrite(hivm::FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr(tileAndSliceFailure)) {
+      return failure();
+    }
     Value dst = op.getDst();
     if (op.getDualDstModeAttr()) {
       return failure();
@@ -1037,6 +1041,7 @@ public:
 
     if (!cvpipeFlag) {
       if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
+        op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
         return failure();
       }
       auto newTy = MemRefType::get(shape, oldTy.getElementType(),
@@ -1068,6 +1073,7 @@ public:
     }
 
     if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
     auto newTy = MemRefType::get(shape, oldTy.getElementType(),
@@ -1145,11 +1151,73 @@ public:
 static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   patterns.add<splitFixpipe>(funcOp.getContext());
-  return applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
+    return failure();
+  }
+  if (funcOp
+          .walk([](hivm::FixpipeOp fixpipeOp) {
+            return fixpipeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted()) {
+    return failure();
+  }
+  return success();
 }
 
 static LogicalResult tileAndSliceOpAIC(func::FuncOp func) {
   return runSplitFixpipe(func);
+}
+
+namespace {
+struct FuncRollbackBackup {
+  std::string originalName;
+  Operation *backupOp = nullptr;
+};
+} // namespace
+
+static void createFuncBackups(ArrayRef<func::FuncOp> funcs,
+                              SmallVectorImpl<FuncRollbackBackup> &backups) {
+  backups.reserve(backups.size() + funcs.size());
+  for (func::FuncOp func : funcs) {
+    backups.push_back({func.getSymNameAttr().str(), func->clone()});
+  }
+}
+
+static void destroyFuncBackups(
+    SmallVectorImpl<FuncRollbackBackup> &backups) {
+  for (auto &entry : backups) {
+    if (entry.backupOp) {
+      entry.backupOp->destroy();
+      entry.backupOp = nullptr;
+    }
+  }
+  backups.clear();
+}
+
+static LogicalResult
+restoreFunctionsFromBackups(ModuleOp moduleOp,
+                            SmallVectorImpl<FuncRollbackBackup> &backups,
+                            bool limitSubBlockToStore) {
+  for (auto &entry : backups) {
+    if (!entry.backupOp) {
+      continue;
+    }
+    if (auto currentFunc =
+            moduleOp.lookupSymbol<func::FuncOp>(entry.originalName)) {
+      currentFunc.erase();
+    }
+    moduleOp.push_back(entry.backupOp);
+    auto restoredFunc = cast<func::FuncOp>(entry.backupOp);
+    restoredFunc.setName(entry.originalName);
+    entry.backupOp = nullptr;
+
+    if (limitSubBlockToStore && failed(limitUniqueSubBlockToStore(restoredFunc)))
+      return failure();
+  }
+  backups.clear();
+  return success();
 }
 
 /// Walks through all functions in the module and attempts to tile and bind
@@ -1221,6 +1289,11 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
+  SmallVector<FuncRollbackBackup> aivRollbackBackups;
+  SmallVector<FuncRollbackBackup> aicRollbackBackups;
+  createFuncBackups(aivFunctions, aivRollbackBackups);
+  createFuncBackups(aicFunctions, aicRollbackBackups);
+
   // Tile AIV functions
   bool aivSuccessFlag = false;
   for (func::FuncOp originalFunc : aivFunctions) {
@@ -1246,6 +1319,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
                           << "\n");
         signalPassFailure();
       }
+      destroyFuncBackups(aivRollbackBackups);
+      destroyFuncBackups(aicRollbackBackups);
       LLVM_DEBUG(DBGS() << "Failed to transform function: " << symNameStr
                         << ", keeping original\n");
       return;
@@ -1267,6 +1342,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // Tile AIC functions for Ascend 950
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
+  bool aicFixpipeSplitSuccess = true;
   if (aivSuccessFlag && archIs950) {
     for (func::FuncOp originalFunc : aicFunctions) {
       originalFunc->walk([&](annotation::MarkOp markOp) {
@@ -1286,10 +1362,26 @@ void TileAndBindSubBlockPass::runOnOperation() {
               IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
         }
       });
-      if (failed(tileAndSliceOpAIC(originalFunc)))
-        signalPassFailure();
+      if (failed(tileAndSliceOpAIC(originalFunc))) {
+        aicFixpipeSplitSuccess = false;
+        break;
+      }
     }
   }
+
+  if (!aicFixpipeSplitSuccess) {
+    if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
+                                           /*limitSubBlockToStore=*/false)) ||
+        failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
+                                           /*limitSubBlockToStore=*/true))) {
+      signalPassFailure();
+    }
+    destroyFuncBackups(aivRollbackBackups);
+    destroyFuncBackups(aicRollbackBackups);
+    return;
+  }
+  destroyFuncBackups(aivRollbackBackups);
+  destroyFuncBackups(aicRollbackBackups);
 
 #ifndef NDEBUG
   LLVM_DEBUG(DBGS() << "TileAndBindSubBlock pass completed. "
