@@ -120,7 +120,6 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
                            "vector::VectorDialect"];
   let options = [
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
-    Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
     Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
            "Maximum number of ops allowed in one fused node.">,
   ];

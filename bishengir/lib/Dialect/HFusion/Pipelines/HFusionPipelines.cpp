@@ -350,7 +350,6 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
-    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
     if (hfusionOptions.maxFusedOpsInAutoVectorizeV2 >= 0)
       vecOptions.maxFusedOps =
           static_cast<unsigned>(hfusionOptions.maxFusedOpsInAutoVectorizeV2);
