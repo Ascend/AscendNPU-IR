@@ -425,7 +425,7 @@ def SinkOpToConsumerInLoop : Pass<"hivm-sink-op-to-consumer-in-loop", "func::Fun
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def AlignAllocSize : Pass<"hivm-align-alloc-size", "func::FuncOp"> {
+def AlignAllocSize : Pass<"hivm-align-alloc-size", "mlir::ModuleOp"> {
   let summary =
       "Automatically align memref.alloc size for special hivm op that "
       "has to access aligned size";
