@@ -782,30 +782,66 @@ bool MemLivenessAnalysis::IsBlockAfter(Block *afterBlock,
     return false;
   }
   assert(afterBlock != nullptr && beforeBlock != nullptr);
-  mlir::Region *region = beforeBlock->getParent();
-  assert(region != nullptr);
-  for (auto it = region->begin(); it != region->end(); ++it) {
-    if (&*it == beforeBlock) {
-      for (++it; it != region->end(); ++it) {
-        if (&*it == afterBlock) {
-          return true;
+  mlir::Region *beforeRegion = beforeBlock->getParent();
+  mlir::Region *afterRegion = afterBlock->getParent();
+  assert(beforeRegion != nullptr && afterRegion != nullptr);
+  if (beforeRegion == afterRegion) {
+    for (auto it = beforeRegion->begin(); it != beforeRegion->end(); ++it) {
+      if (&*it == beforeBlock) {
+        for (++it; it != beforeRegion->end(); ++it) {
+          if (&*it == afterBlock) {
+            return true;
+          }
         }
+        break;
       }
-      break;
     }
+  } else {
+    unsigned beforeIndex = beforeRegion->getRegionNumber();
+    unsigned afterIndex = afterRegion->getRegionNumber();
+    return beforeIndex < afterIndex;
   }
+
   return false;
 }
 
-bool MemLivenessAnalysis::IsDeadAfterBlock(Value value, Block *block) const {
-  for (auto &useOperand : value.getUses()) {
-    Operation *useOp = useOperand.getOwner();
-    assert(useOp != nullptr);
-    Block *useBlock = useOp->getBlock();
-    if (useBlock != block && IsBlockAfter(useBlock, block)) {
-      return false;
+bool MemLivenessAnalysis::IsDeadAfterOp(Value value,
+                                           Operation *operation) const {
+  auto *moduleBlock = utils::getTopLevelModuleOp(operation).getBody();
+  // trace all blocks that contains ifOp until moduleBlock.
+  DenseMap<Block *, Operation *> block2Op;
+  DenseMap<Operation *, Operation *> parentToChild;
+  Operation *childOp = nullptr;
+  for (auto *op = operation; op != nullptr && op->getBlock() != moduleBlock;
+       op = op->getParentOp()) {
+    block2Op.try_emplace(op->getBlock(), op);
+    if (childOp) {
+      parentToChild[op] = childOp;
+    }
+    childOp = op;
+  }
+  for (Operation *user : value.getUsers()) {
+    // trace all blocks that contains user until funcBlock.
+    Operation *userChildOp = nullptr;
+    for (auto *op = user; op != nullptr; op = op->getParentOp()) {
+      auto it = block2Op.find(op->getBlock());
+      // Check whether the block of userOp is same as the block of currentOp
+      if (op->getBlock() != moduleBlock && it != block2Op.end()) {
+        auto *currentOp = it->second;
+        auto currChildIt = parentToChild.find(currentOp);
+        // check whether parent ops are same, ex: if then ... else ...
+        if (currentOp == op && userChildOp != nullptr &&
+            currChildIt != parentToChild.end() &&
+            IsBlockAfter(userChildOp->getBlock(), currChildIt->second->getBlock())) {
+          return false;
+        }
+        // once different parent ops in same block, check the order
+        return !currentOp->isBeforeInBlock(op);
+      }
+      userChildOp = op;
     }
   }
+
   return true;
 }
 
@@ -829,7 +865,7 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
       }
     }
     if (!live.isDeadAfter(aliasBuffer, op) ||
-        !IsDeadAfterBlock(aliasBuffer, op->getBlock())) {
+        !IsDeadAfterOp(aliasBuffer, op)) {
       return false;
     }
   }

@@ -413,8 +413,8 @@ private:
   /// Whether afterBlock is after beforeBlock.
   bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
 
-  /// Whether the value is dead after a certain block.
-  bool IsDeadAfterBlock(Value value, Block *block) const;
+  /// Whether the value is dead after a certain operation.
+  bool IsDeadAfterOp(Value value, Operation *operation) const;
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,

@@ -72,8 +72,8 @@ bool checkUseAfterOverWrite(Operation *WriteDefOp, Value usedYieldValue,
         for (auto *op = user; op != nullptr; op = op->getParentOp()) {
           auto it = block2Op.find(op->getBlock());
           if (op->getBlock() != moduleBlock && it != block2Op.end()) {
-            auto *writeDefOpParentOp = it->second;
-            return writeDefOpParentOp->isBeforeInBlock(op);
+            auto *currentOp = it->second;
+            return currentOp->isBeforeInBlock(op);
           }
         }
         return false;
