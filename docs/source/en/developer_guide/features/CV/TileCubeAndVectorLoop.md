@@ -1,6 +1,6 @@
 # Tile Cube and Vector Loop
 
-This document describes the **TileCubeVectorLoop** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](CVOptimization) for CV terminology.
+This document describes the **TileCubeVectorLoop** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](CVOptimization.md) for CV terminology.
 
 ---
 

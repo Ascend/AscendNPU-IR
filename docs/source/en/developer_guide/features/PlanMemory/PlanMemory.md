@@ -10,7 +10,7 @@ Ascend on-chip memory uses a buffer model. It includes storage for the Cube (mat
 
 For Atlas A2 training/inference products, the hardware layout<sup>[1]</sup> is:
 
-![](../../../../images/developer_guide/HardwareStructure.png)
+![image](../../../../images/developer_guide/HardwareStructure.png)
 
 Buffer alignment requirements:
 
@@ -97,7 +97,7 @@ With double buffering, A and D use two buffers each for DMA. When shared memory 
 
 With Level2, C reuses B; both are Vector ops, so V_PIPE is serial anyway and reuse does not add cross-pipeline dependency.
 
-![](../../../../images/developer_guide/plan_memory_level2.png)
+![image](../../../../images/developer_guide/plan_memory_level2.png)
 
 - Pros: Same-pipeline reuse does not add cross-pipeline dependency; better overall performance.
 - Cons: Smaller reuse space; reuse may fail more often.
@@ -125,7 +125,7 @@ With double buffering, A and D use two buffers each. When shared memory is tight
 
 With Level1, C is upgraded to a double buffer; op1 uses A0 while op3 uses C1 (backed by A1), so op1 does not wait for op3 and the pipeline can overlap.
 
-![](../../../../images/developer_guide/plan_memory_level1.png)
+![image](../../../../images/developer_guide/plan_memory_level1.png)
 
 - Pros: Avoids pipeline stall in double-buffer scenarios.
 - Cons: Extra buffer for the new double buffer; may reduce reuse success rate.
@@ -134,7 +134,7 @@ With Level1, C is upgraded to a double buffer; op1 uses A0 while op3 uses C1 (ba
 
 Level0: any two buffers with non-overlapping lifetimes can share memory.
 
-![](../../../../images/developer_guide/plan_memory_level0.png)
+![image](../../../../images/developer_guide/plan_memory_level0.png)
 
 - Pros: Maximum reuse.
 - Cons: Ignores pipeline structure; bad reuse can hurt performance.
@@ -171,11 +171,12 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 
 ## Constraints
 
-**The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.**
+The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.
 
 > Each buffer is aligned as in [Hardware background](#hardware-background).
 
 Otherwise, PlanMemory fails with a scope overflow error (e.g. `UB overflow`):
+
 ```bash
 loc("/tmp/tmp0h121237/kernel.ttadapter.mlir":2:3): error: ub overflow,
 requires 3219456 bits while 1572864 bits available! (possible reason:

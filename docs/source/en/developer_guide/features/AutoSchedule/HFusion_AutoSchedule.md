@@ -151,6 +151,7 @@ The overall call chain is:
 #### Key data structures
 
 ##### KernelInfo (kernel description)
+
   - Abstracts the structure and constraints of a single fused kernel. Typical information includes:
     - Input/output tensors and their shape/layout.
     - Topology of ops in the fusion graph.
@@ -168,6 +169,7 @@ The overall call chain is:
     - `StmtExprBuilder`: Builds `Expr` from IR shape and constants and generates the host-side tiling function.
 
 ##### ValueHandle
+
   - Uniform wrapper for MLIR `Value`, function arguments, and named values for consistent access and manipulation.
   - Common types include `NamedValueHandle`, `FuncArgHandle`, etc.
 

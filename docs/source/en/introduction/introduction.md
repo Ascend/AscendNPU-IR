@@ -24,6 +24,6 @@
 
 ## Next steps
 
-- [Install and build](quick_start/installing_guide) — Environment and build
-- [Quick start](quick_start/index) — Examples and entry
-- [Architecture](architecture) — Logical and code architecture, compilation flow
+- [Install and build](quick_start/installing_guide.md) — Environment and build
+- [Quick start](quick_start/index.rst) — Examples and entry
+- [Architecture](architecture.md) — Logical and code architecture, compilation flow

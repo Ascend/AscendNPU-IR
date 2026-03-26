@@ -9,7 +9,7 @@
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
 
 以 Atlas A2 训练系列产品 / Atlas A2 推理系列产品 为例，硬件架构图<sup>[1]</sup>如下：
-![](../../../../images/developer_guide/HardwareStructure_zh.png)
+![image](../../../../images/developer_guide/HardwareStructure_zh.png)
 
 各Buffer对齐要求：
 
@@ -57,6 +57,7 @@
 ### 生命区间分析
 
 主流程包含：
+
 1. 通过社区`Liveness`类分析各个节点的活跃性。
 2. **遍历IR**（含 scf.for、scf.if、scf.while），收集每个op的**gen**（生成了哪些Buffer）与 **kill**（哪些Buffer在此处最后一次被读），用于计算每个Buffer的生命区间BufferLife。
 3. 根据gen/kill计算每个Buffer的**lifetime**（从第一次写到最后一次读的区间）。如果两个Buffer的lifetime不重叠，即可共享内存。
@@ -71,6 +72,7 @@
 ##### Inplace复用
 
 Inplace复用条件：
+
 1. Memory Scope相同，例如同为 UB 。
 2. `A = B + C`场景，A的kill节点是C的gen节点。
 3. 符合硬件约束。
@@ -105,7 +107,7 @@ Loop i:
 使用Level2的内存分配策略后，C与B复用内存，两者同为Vector指令，V_PIPE本就只能串行执行，因此Vector指令之间复用对流水无额外影响。
 
 使用Level2前后的流水效果对比如下：
-![](../../../../images/developer_guide/plan_memory_level2.png)
+![image](../../../../images/developer_guide/plan_memory_level2.png)
 
  - 优点：同流水PIPE复用不引入PIPE间额外依赖，整体算子性能更好。
  - 缺点：可复用解空间小，内存复用的成功概率低。
@@ -136,7 +138,7 @@ Loop i:
 使用Level1的内存分配策略后，C复用Double Buffer会自动开启Double Buffer，op1使用A0内存时op3使用的是C1(A1)内存，因此op1无需等待op3，依然可以流水并行。
 
 使用Level1前后的流水效果对比如下：
-![](../../../../images/developer_guide/plan_memory_level1.png)
+![image](../../../../images/developer_guide/plan_memory_level1.png)
 
  - 优点：避免Double Buffer场景下流水被打断，流水性能更好。
  - 缺点：额外开启Double Buffer，需要一片额外的内存，会降低整体内存复用成功的概率。
@@ -146,7 +148,7 @@ Loop i:
 Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用。
 
 使用Level0前后的内存使用情况对比如下：
-![](../../../../images/developer_guide/plan_memory_level0.png)
+![image](../../../../images/developer_guide/plan_memory_level0.png)
 
  - 优点：能够尽可能地复用内存，内存可复用概率高。
  - 缺点：完全无视硬件并行流水，不合理的复用会导致算子性能差。
@@ -162,6 +164,7 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 **文件**：`bishengir/test/Dialect/HIVM/plan-memory.mlir`
 
 **典型 CHECK**：
+
 ```mlir
 // CHECK-NOT: memref.alloc()
 // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
@@ -187,6 +190,7 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 > 【注】每个Buffer的实际占用空间会自动进行字节对齐。对齐大小见 [硬件背景](#硬件背景) 。
 
 反之，PlanMemory pass会编译Fail，并上报对应的Memory Scope overflow的error，比如`UB overflow`。
+
 ```bash
 loc("/tmp/tmp0h121237/kernel.ttadapter.mlir":2:3): error: ub overflow,
 requires 3219456 bits while 1572864 bits available! (possible reason:

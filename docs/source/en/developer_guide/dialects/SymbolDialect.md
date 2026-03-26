@@ -17,12 +17,13 @@ expressions for each dim where the terminals are from the declared
 symbols.
 
 Example:
+
 ```
 symbol.bind_symbolic_shape %arg0, [%0, %1], affine_map<()[s0, s1] -> (s0, s1, 3)> : tensor<?x?x3xf32>
 symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0, s1 * 2 + s2, 3)> : tensor<?x?x3xf32>
 ```
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -42,13 +43,12 @@ symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `operand` | shaped of any type values
 | `shape_symbols` | variadic of index
-
 
 ### `symbol.symbolic_int` (symbol::SymbolicIntOp)
 
@@ -63,6 +63,7 @@ This operation is typically used to represent dynamic dimensions or
 other symbolic integer values that have known constraints.
 
 Example:
+
 ```
 %0 = symbol.symbolic_int @s0 {min_val = 5, max_val = 10} : index
 %1 = symbol.symbolic_int @s1 {min_val = 2, max_val = 20} : index
@@ -75,7 +76,7 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -98,16 +99,14 @@ Effects: `MemoryEffects::Effect{}`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `int_symbols` | variadic of index
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | index
-
-

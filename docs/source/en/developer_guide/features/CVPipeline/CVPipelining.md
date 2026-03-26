@@ -1,6 +1,6 @@
 # Cube–Vector software pipelining
 
-This document describes the **CV Pipelining** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](../CV/CVOptimization) for CV terminology.
+This document describes the **CV Pipelining** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](../CV/CVOptimization.md) for CV terminology.
 
 ---
 

@@ -1,10 +1,11 @@
 # Cube-Vector 软件流水优化
 
-
 本文介绍 HIVM 中的 **CV Pipelining** Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读 [CV Optimization](../CV/CVOptimization.md)，了解CV编译相关术语。
 
 ---
+
 ## 硬件背景
+
 昇腾核心中包括Cube核心（负责矩阵乘相关运算）与Vector核心（负责其他向量运算）。这两个核心可以在没有相互依赖的情况下并行异步运行，提高硬件利用率是性能优化中尤其重要的一部分。
 
 对MIX算子中有多个Cube与Vector指令相互依赖的循环的场景进行优化(例如FlashAttention等算子)。 通过并行Vector与Cube核心, 获得更高的硬件利用率(ILP), 达到更高的性能。
@@ -67,8 +68,6 @@ scf.for 0 to N step 3*S {
 
 ---
 
-
-
 ## 约束能力
 
 1. Pipeline的循环只有scf.for与scf.if op拥有region/block, 并且其region内必须只能有cube或者只有vector指令。
@@ -84,4 +83,3 @@ scf.for iter_args(%arg0 = %init) {
     yield %v1
 }
 ```
-

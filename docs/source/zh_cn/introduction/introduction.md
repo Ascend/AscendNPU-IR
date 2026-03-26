@@ -21,6 +21,6 @@
 
 ## 下一步
 
-- [安装与构建](quick_start/installing_guide) — 环境与编译
-- [快速开始](quick_start/index) — 示例与使用入口
-- [架构设计](architecture) — 逻辑架构、代码架构与编译流程
+- [安装与构建](quick_start/installing_guide.md) — 环境与编译
+- [快速开始](quick_start/index.rst) — 示例与使用入口
+- [架构设计](architecture.md) — 逻辑架构、代码架构与编译流程
