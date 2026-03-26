@@ -1045,34 +1045,33 @@ void CVPipelineImpl::createNewLoops() {
 static Value updateMaskingSubview(OpBuilder &builder, Location loc,
                                   Value expanded, OpOperand *initOperand,
                                   Value iv) {
-  if (auto subview =
-          dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp())) {
-    SmallVector<OpFoldResult> offsets, sizes, strides;
-    Attribute cst1Attr = builder.getI64IntegerAttr(1);
-    offsets.push_back(iv);
-    offsets.append(subview.getMixedOffsets());
-    sizes.push_back(cst1Attr);
-    sizes.append(subview.getMixedSizes());
-    strides.push_back(cst1Attr);
-    strides.append(subview.getMixedStrides());
-    // Set up dynamic stride
-    int64_t offset;
-    auto targetTy = cast<MemRefType>(initOperand->get().getType());
-    SmallVector<int64_t> layoutStrides;
-    if (getStridesAndOffset(targetTy, layoutStrides, offset).failed())
-      llvm_unreachable("Unexpected memref layout");
-    auto layout = StridedLayoutAttr::get(builder.getContext(),
-                                         ShapedType::kDynamic, layoutStrides);
-    auto finalTy = MemRefType::Builder(targetTy).setLayout(layout);
-    auto newSubView = builder.create<memref::SubViewOp>(
-        loc, finalTy, expanded, offsets, sizes, strides);
-    subview->replaceAllUsesWith(newSubView);
-    return newSubView;
-  }
-  Value newInit =
-      createSubview(builder, loc, expanded, initOperand->get().getType(), iv);
-  initOperand->set(newInit);
-  return newInit;
+  auto subview =
+      dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp());
+  if (!subview)
+    return nullptr;
+  assert(isa<memref::AllocOp>(subview.getSource().getDefiningOp()) &&
+         "Expecting subview at this stage to be from alloc");
+  SmallVector<OpFoldResult> offsets, sizes, strides;
+  Attribute cst1Attr = builder.getI64IntegerAttr(1);
+  offsets.push_back(iv);
+  offsets.append(subview.getMixedOffsets());
+  sizes.push_back(cst1Attr);
+  sizes.append(subview.getMixedSizes());
+  strides.push_back(cst1Attr);
+  strides.append(subview.getMixedStrides());
+  // Set up dynamic stride
+  int64_t offset;
+  auto targetTy = cast<MemRefType>(initOperand->get().getType());
+  SmallVector<int64_t> layoutStrides;
+  if (getStridesAndOffset(targetTy, layoutStrides, offset).failed())
+    llvm_unreachable("Unexpected memref layout");
+  auto layout = StridedLayoutAttr::get(builder.getContext(),
+                                       ShapedType::kDynamic, layoutStrides);
+  auto finalTy = MemRefType::Builder(targetTy).setLayout(layout);
+  auto newSubView = builder.create<memref::SubViewOp>(loc, finalTy, expanded,
+                                                      offsets, sizes, strides);
+  subview->replaceAllUsesWith(newSubView);
+  return newSubView;
 }
 
 /// Actually migrate/clone each op for each work item
@@ -1138,16 +1137,29 @@ void CVPipelineImpl::migrateOps() {
         yieldVals.push_back(yieldVal);
       } else if (auto targetTy =
                      dyn_cast<MemRefType>(initOperand->get().getType())) {
-        Value newInit =
-            updateMaskingSubview(builder, loc, expanded, initOperand, iv);
-        // Also update internal users
         Value internalDef = item->irMap.lookup(orig);
-        assert(isa<bufferization::ToTensorOp>(internalDef.getDefiningOp()));
-        builder.setInsertionPointAfter(defining);
-        Value internalResult = createToTensor(builder, loc, newInit);
-        internalDef.replaceUsesWithIf(internalResult, [&](OpOperand &use) {
-          return item->forOp->isAncestor(use.getOwner());
-        });
+        // If there are masking subviews, update those first
+        Value updatedSubview =
+            updateMaskingSubview(builder, loc, expanded, initOperand, iv);
+        // Then replace the toTensor operand if it is not updated
+        auto innerToTensor =
+            dyn_cast<bufferization::ToTensorOp>(internalDef.getDefiningOp());
+        assert(innerToTensor &&
+               "Expecting memref outputs to be passed as tensors");
+        OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
+        if (memrefOperand->get() != updatedSubview) {
+          Value toTensorSubview = nullptr;
+          builder.setInsertionPointToStart(item->forOp.getBody());
+          if (!updatedSubview) {
+            toTensorSubview = createSubview(builder, loc, expanded,
+                                            initOperand->get().getType(), iv);
+            initOperand->set(toTensorSubview);
+          } else {
+            toTensorSubview = createSubview(builder, loc, expanded,
+                                            memrefOperand->get().getType(), iv);
+          }
+          memrefOperand->set(toTensorSubview);
+        }
         builder.setInsertionPointAfter(item->forOp);
         newResult = createToTensor(builder, loc, expanded);
       } else
