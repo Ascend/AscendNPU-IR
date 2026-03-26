@@ -53,7 +53,7 @@ def CoreIdOp : AscendDPX_InfoOp<"core_id">;
 //===----------------------------------------------------------------------===//
 // LoadOp
 //===----------------------------------------------------------------------===//
-def LoadOp : AscendDPX_Op<"load", [AttrSizedOperandSegments]> {
+def LoadOp : AscendDPX_Op<"load", [AttrSizedOperandSegments, MemoryEffects<[MemRead]>]> {
   let summary = "David SIMT load operation";
   let description = [{
     Load operation with masking and cache policy support. If the mask is true, loads from the given pointer.
@@ -78,7 +78,7 @@ def LoadOp : AscendDPX_Op<"load", [AttrSizedOperandSegments]> {
 //===----------------------------------------------------------------------===//
 // StoreOp
 //===----------------------------------------------------------------------===//
-def StoreOp : AscendDPX_Op<"store"> {
+def StoreOp : AscendDPX_Op<"store",[MemoryEffects<[MemWrite]>]> {
   let summary = "David SIMT store operation";
   let description = [{
     Store operation with masking and cache policy support. If the mask is true, stores to the given pointer.
