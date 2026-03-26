@@ -111,6 +111,7 @@ REBUILD=""
 SKIP_RPATH_OPTION="FALSE"
 CMAKE_OPTIONS=""
 INSTALL_PREFIX=""
+BUILD_BISHENGIR_A5="OFF"
 
 # Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
 if [[ "$OS_TYPE" == "Darwin" ]]; then
@@ -150,6 +151,7 @@ usage() {
                 [--safety-ld-options]
                 [--skip-rpath]
                 [--enable-cpu-runner]
+                [--build-bishengir-a5]
 
     Options:
       --add-cmake-options CMAKE_OPTIONS    Add options to CMake; use quotes for multiple, e.g. --add-cmake-options '-DFOO=ON -DBAR=1'. (Default: null)
@@ -179,6 +181,7 @@ usage() {
       --skip-rpath                         Disable the Run-time Search Path option. (Default: disabled)
       --torch-mlir-source-dir DIR          Torch-MLIR project's root directory. (Default: 'third-party/torch-mlir')
       --enable-cpu-runner                  Enable the compilation of CPU runner targets
+      --build-bishengir-a5                 Whether to build bishengir-a5. (Default: disabled)
       "
 }
 
@@ -380,6 +383,10 @@ parse_arguments() {
                 ;;
             --enable-cpu-runner)
                 LLVM_BUILD_TARGETS+=";Native"
+                shift
+                ;;
+            --build-bishengir-a5)
+                BUILD_BISHENGIR_A5="ON"
                 shift
                 ;;
             --)
@@ -643,6 +650,58 @@ main() {
   fi
 
   echo "Build Done!!!"
+
+  # Build bishengir-a5 if enabled
+  if [[ ${BUILD_BISHENGIR_A5} = "ON" ]]; then
+    # Check if bishengir-a5 has already been built
+    if [[ -f "bishengir-a5-src/build-a5/bin/bishengir-compile" ]]; then
+      echo "bishengir-a5 has already been built. Skipping build process."
+    else
+      echo "Cloning AscendNPU-IR-Dev repository..."
+      if [ ! -d "bishengir-a5-src" ]; then
+        git clone https://gitcode.com/Ascend/AscendNPU-IR-Dev.git --depth 1 bishengir-a5-src || { echo "Failed to clone repository"; exit 1; }
+      else
+        echo "Repository already exists, skipping clone"
+      fi
+      
+      cd bishengir-a5-src || { echo "Failed to enter bishengir-a5-src"; exit 1; }
+      echo "Updating submodules..."
+      git submodule update --init --recursive --depth 1 --progress || { echo "Failed to update submodules"; exit 1; }
+      
+      # Clean build directory to ensure fresh build
+      rm -rf build-a5 || { echo "Failed to clean build-a5 directory"; exit 1; }
+      mkdir -p build-a5 || { echo "Failed to create build-a5 directory"; exit 1; }
+      echo "Building bishengir-a5..."
+      ./build-tools/build.sh \
+        --c-compiler clang \
+        --cxx-compiler clang++ \
+        "--add-cmake-options=-DLLVM_ENABLE_LLD=ON" \
+        --build-type Release \
+        --enable-assertion \
+        --disable-werror \
+        --disable-mlir-werror \
+        --disable-bishengir-werror \
+        --build-triton \
+        --build ./build-a5 \
+        --apply-patches \
+        --bishengir-publish || { echo "Failed to build bishengir-a5"; exit 1; }
+      
+      cd .. || exit 1
+    fi
+    
+    mkdir -p bishengir-output || { echo "Failed to create bishengir-output directory"; exit 1; }
+    mkdir -p bishengir-output/bin || { echo "Failed to create bishengir-output/bin directory"; exit 1; }
+    mkdir -p bishengir-output/lib || { echo "Failed to create bishengir-output/lib directory"; exit 1; }
+
+    cp bishengir-a5-src/build-a5/bin/bishengir-compile bishengir-output/bin/bishengir-compile-a5 || { echo "Failed to copy a5 bishengir compile binary"; exit 1; }
+    cp bishengir-a5-src/build-a5/bin/bishengir-opt bishengir-output/bin/bishengir-opt-a5 || { echo "Failed to copy a5 bishengir opt binary"; exit 1; }
+    cp ${BUILD_DIR}/bin/bishengir-compile bishengir-output/bin/bishengir-compile || { echo "Failed to copy a3 bishengir compile binary"; exit 1; }
+    cp ${BUILD_DIR}/bin/bishengir-opt bishengir-output/bin/bishengir-opt || { echo "Failed to copy a3 bishengir opt binary"; exit 1; }
+    cp ${BUILD_DIR}/lib/*.bc bishengir-output/lib || { echo "Failed to copy a3 bishengir bc files"; exit 1; }
+    
+    echo "Successfully copied binaries to bishengir-output directory."
+  fi
+
 }
 
 main "$@"
