@@ -187,7 +187,8 @@ add_subdirectory(lib)
 # TODO: Figure out which target is sufficient to fix errors; triton is
 # apparently not enough. Currently set linking libstdc++fs for all targets
 # to support some old version GCC compilers like 8.3.0.
-if (NOT WIN32 AND NOT APPLE AND NOT BSD)
+# GCC >= 9.0 and clang >= 9.0 don't require linking with stdc++fs.
+if (NOT WIN32 AND NOT APPLE AND NOT BSD AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
   link_libraries(stdc++fs)
 endif()
 
