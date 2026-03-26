@@ -189,6 +189,7 @@ std::unique_ptr<Pass> createLegalizeFP8Pass();
 
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();
+std::unique_ptr<Pass> createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
 
 /// create a pass to reorder hfusion ops by bfs
 std::unique_ptr<Pass> createReorderOpsByBFS();

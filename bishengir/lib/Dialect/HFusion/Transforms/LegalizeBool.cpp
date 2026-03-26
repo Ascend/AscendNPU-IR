@@ -74,6 +74,87 @@ struct DeleteCreatedMarkOp : public OpRewritePattern<annotation::MarkOp> {
   }
 };
 
+// Identify if the input value carries the pseudo boolean attribute
+static bool isPseudoBool(Value val) {
+  if (auto defOp = val.getDefiningOp()) {
+    return defOp->hasAttr("was_bool_to_int8");
+  }
+  return false;
+}
+
+template <typename OpTy>
+struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op, PatternRewriter &rewriter) const override {
+    bool hasPseudoBool = false;
+    for (auto operand : op->getOperands()) {
+      if (isPseudoBool(operand)) {
+        hasPseudoBool = true;
+        break;
+      }
+    }
+
+    if (!hasPseudoBool) {
+      return failure();
+    }
+
+    // Avoid re-applying normalization to already processed operations
+    if (op->hasAttr("is_clamped")) {
+      return failure();
+    }
+
+    if (op->getNumResults() != 1) {
+      return failure();
+    }
+
+    auto tensorType = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!tensorType || !tensorType.getElementType().isInteger(8)) {
+      return failure();
+    }
+
+    Location location = op.getLoc();
+
+    // Clone operation to preserve original metadata
+    OpTy newMathOp = cast<OpTy>(rewriter.clone(*op.getOperation()));
+    newMathOp->setAttr("is_clamped", rewriter.getBoolAttr(true));
+
+    Value unClampedResult = newMathOp->getResult(0);
+
+    // Prepare i32 tensor type for intermediate calculation
+    Type i32Type = rewriter.getI32Type();
+    auto tensorTypeI32 = RankedTensorType::get(tensorType.getShape(), i32Type);
+
+    // Sign extend addition result to i32
+    Value extendedResult = rewriter.create<arith::ExtSIOp>(
+        location, tensorTypeI32, unClampedResult);
+
+    // Construct i32 zero tensor
+    Value zeroScalarI32 = rewriter.create<arith::ConstantOp>(
+        location, rewriter.getI32IntegerAttr(0));
+    Value emptyTensorI32 = rewriter.create<tensor::EmptyOp>(
+        location, tensorTypeI32.getShape(), i32Type);
+    Value zeroTensorI32 = rewriter.create<linalg::FillOp>(
+        location, zeroScalarI32, emptyTensorI32).getResult(0);
+
+    // Compare in i32 precision
+    Value cmpTensor = rewriter.create<arith::CmpIOp>(
+        location, arith::CmpIPredicate::ne, extendedResult, zeroTensorI32);
+
+    // Zero extend boolean result back to i8
+    Value clampedTensor = rewriter.create<arith::ExtUIOp>(
+        location, tensorType, cmpTensor);
+
+    // Propagate semantic marker
+    if (auto extOp = clampedTensor.getDefiningOp()) {
+      extOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
+    }
+
+    rewriter.replaceOp(op, clampedTensor);
+    return success();
+  }
+};
+
 void populateLegalizeBoolFoldPatterns(RewritePatternSet &patterns) {
   patterns.add<CastOpFold>(patterns.getContext());
 }
@@ -82,8 +163,20 @@ void populateLegalizeBoolCleanPatterns(RewritePatternSet &patterns) {
   patterns.add<DeleteCreatedMarkOp>(patterns.getContext());
 }
 
+void populateClampPseudoBoolPatterns(RewritePatternSet &patterns) {
+  MLIRContext *context = patterns.getContext();
+  // Register the template pattern for both Addition and Subtraction
+  patterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
+               ClampPseudoBoolArithOp<arith::SubIOp>>(context);
+}
+
 class LegalizeBoolPass : public impl::LegalizeBoolPassBase<LegalizeBoolPass> {
 public:
+  LegalizeBoolPass() = default;
+  
+  explicit LegalizeBoolPass(const LegalizeBoolPassOptions &options)
+      : impl::LegalizeBoolPassBase<LegalizeBoolPass>(options) {}
+  
   void runOnOperation() override;
 
 private:
@@ -303,6 +396,22 @@ void LegalizeBoolPass::runOnOperation() {
   OpBuilder builder(context);
 
   ModuleOp mod = getOperation();
+  
+  // Conditional Execution Branch
+  if (this->enableClamp) {
+    RewritePatternSet clampPatterns(context);
+    clampPatterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
+                      ClampPseudoBoolArithOp<arith::SubIOp>>(context);
+                      
+    if (failed(applyPatternsGreedily(mod, std::move(clampPatterns)))) {
+      LLVM_DEBUG(llvm::dbgs() << "Legalize Bool Arithmetic Clamp Failed\n");
+    }
+    
+    // Exit early if only clamp is requested
+    return;
+  }
+
+  // Standard LegalizeBool logic executes when enableClamp is false
   SmallVector<func::FuncOp> deviceEntryFuncs;
   mod.walk([&](func::FuncOp func) {
     if (hacc::utils::isDeviceEntry(func)) {
@@ -340,4 +449,8 @@ void LegalizeBoolPass::runOnOperation() {
 
 std::unique_ptr<Pass> hfusion::createLegalizeBoolPass() {
   return std::make_unique<LegalizeBoolPass>();
+}
+
+std::unique_ptr<Pass> hfusion::createLegalizeBoolPass(const LegalizeBoolPassOptions &options) {
+  return std::make_unique<LegalizeBoolPass>(options);
 }

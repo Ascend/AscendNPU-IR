@@ -107,6 +107,9 @@ static void convertAllToHFusion(OpPassManager &pm,
 
 static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
+  LegalizeBoolPassOptions clampOptions;
+  clampOptions.enableClamp = true;
+  pm.addPass(createLegalizeBoolPass(clampOptions));
   if (!options.enableSymbolAnalysis) {
     pm.nest<func::FuncOp>().addPass(symbol::createEraseSymbolPass());
   }
