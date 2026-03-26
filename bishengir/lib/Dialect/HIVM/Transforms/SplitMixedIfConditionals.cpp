@@ -54,6 +54,36 @@ struct SplitMixedIfConditionalsPass
 
 } // anonymous namespace
 
+// Check if an operation is a region operation (if, for, etc.)
+static bool isRegionOperation(Operation *op) { return op->getNumRegions() > 0; }
+
+static std::optional<TCoreType> getRegionOperationCoreType(Operation *op) {
+  if (!isRegionOperation(op)) {
+    return std::nullopt;
+  }
+
+  bool hasC = false, hasV = false;
+  for (Region &region : op->getRegions()) {
+    for (Block &block : region) {
+      auto [blockHasC, blockHasV] = analyzeCoreTypes(&block);
+      hasC = hasC || blockHasC;
+      hasV = hasV || blockHasV;
+    }
+  }
+
+  if (hasC && hasV) {
+    return std::nullopt;
+  }
+
+  if (hasC) {
+    return TCoreType::CUBE;
+  } else if (hasV) {
+    return TCoreType::VECTOR;
+  }
+
+  return std::nullopt;
+}
+
 struct OperationGroup {
   SmallVector<Operation *> coreOps;
   SmallVector<Operation *> nonCoreOps;
@@ -140,9 +170,6 @@ struct FinalIfContext {
   Value elseResult;
 };
 
-// Check if an operation is a region operation (if, for, etc.)
-static bool isRegionOperation(Operation *op) { return op->getNumRegions() > 0; }
-
 // Check if a region has mixed core operations
 static bool regionOpMixedCoreTypes(Operation *op) {
   if (isa<scf::IfOp>(op)) {
@@ -179,7 +206,12 @@ groupOperations(Block *block) {
       continue;
     }
 
-    auto coreType = queryCoreTypeHelper(&op);
+    auto directCoreType = queryCoreTypeHelper(&op);
+    auto coreType = directCoreType;
+
+    if (!coreType.has_value() && isRegionOperation(&op)) {
+      coreType = getRegionOperationCoreType(&op);
+    }
 
     if (coreType.has_value()) {
       // Core-type operation
@@ -195,7 +227,11 @@ groupOperations(Block *block) {
         currentGroup->coreType = coreType;
       }
 
-      currentGroup->coreOps.push_back(&op);
+      if (directCoreType.has_value()) {
+        currentGroup->coreOps.push_back(&op);
+      } else {
+        currentGroup->nonCoreOps.push_back(&op);
+      }
       currentGroup->allOps.push_back(&op);
     } else {
       // Non-core operation
