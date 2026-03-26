@@ -9,7 +9,7 @@
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
 
 以 Atlas A2 训练系列产品 / Atlas A2 推理系列产品 为例，硬件架构图<sup>[1]</sup>如下：
-![](../../../../images/developer_guide/HardwareStructure.png)
+![](../../../../images/developer_guide/HardwareStructure_zh.png)
 
 各Buffer对齐要求：
 
@@ -184,11 +184,12 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 
 **用户需要保证「同一时间所申请的Buffer总大小」小于等于「实际硬件内存空间大小」。**
 
-> 【注】每个Buffer的实际占用空间会自动进行字节对齐。对齐大小见 [1 硬件背景](#1-硬件背景) 。
+> 【注】每个Buffer的实际占用空间会自动进行字节对齐。对齐大小见 [硬件背景](#硬件背景) 。
 
-反之，PlanMemory pass会编译Fail，并上报对应的Memory Scope overflow的error，比如`UB overflow`，如下图所示。
-![](../../../../images/developer_guide/UBOverflowError.png)
-
----
-
-[1] 图片来源：昇腾社区Ascend C算子开发文档(https://www.hiascend.com/doc_center/source/zh/canncommercial/850/opdevg/Ascendcopdevg/figure/zh-cn_image_0000002502735896.png)
+反之，PlanMemory pass会编译Fail，并上报对应的Memory Scope overflow的error，比如`UB overflow`。
+```bash
+loc("/tmp/tmp0h121237/kernel.ttadapter.mlir":2:3): error: ub overflow,
+requires 3219456 bits while 1572864 bits available! (possible reason:
+tiling basic block is too large or block number is more than what user
+expect due to multi-buffer feature is enabled and some ops need extra local buffer.)
+```
