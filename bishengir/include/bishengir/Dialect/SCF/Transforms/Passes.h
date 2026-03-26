@@ -28,6 +28,8 @@ createMapForToForallPass(const MapForToForallOptions &options = {});
 
 std::unique_ptr<Pass> createRemoveRedundantLoopInitPass();
 
+std::unique_ptr<Pass> createCanonicalizeIterArgPass();
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/SCF/Transforms/Passes.h.inc"
 } // namespace scf
