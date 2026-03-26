@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -34,7 +35,10 @@ public:
     // Convert function type which contains parameter types
     // Note: The function can only be simt vf, and no return value.
     SmallVector<Type> newInputTypes;
-    for (auto inputTy : oldFuncTy.getInputs()) {
+    std::optional<int> sharedIdx = std::nullopt;
+    int newArgCounter = 0;
+    static constexpr int FixCount = 3;
+    for (auto [idx, inputTy] : llvm::enumerate(oldFuncTy.getInputs())) {
       if (auto memrefTy = dyn_cast<MemRefType>(inputTy)) {
         // The following conversion logic should be consistent with
         // 'LLVMTypeConverter::convertMemRefType'
@@ -53,8 +57,19 @@ public:
         newInputTypes.push_back(rankArrayTy);
         newInputTypes.push_back(rankArrayTy);
 
+        // Record the index of the shared memory base pointer.
+        if (op.getArgAttr(idx, SharedMemoryAttr::name)) {
+          if (sharedIdx) {
+            llvm::report_fatal_error("Duplicate shared memory base pointer");
+          }
+          sharedIdx = newArgCounter;
+        }
+        newArgCounter += FixCount;
+        newArgCounter += rank;
+        newArgCounter += rank;
       } else {
         newInputTypes.push_back(HIVMToTritonTypeConvert(inputTy));
+        newArgCounter++;
       }
     }
 
@@ -62,6 +77,10 @@ public:
                                       oldFuncTy.getResults());
     auto newFunc =
         rewriter.create<triton::FuncOp>(op.getLoc(), op.getName(), funcType);
+    if (sharedIdx) {
+      newFunc.setArgAttr(*sharedIdx, SharedMemoryAttr::name,
+                         rewriter.getUnitAttr());
+    }
     auto *newEntryBlock = newFunc.addEntryBlock();
 
     rewriter.setInsertionPointToStart(newEntryBlock);
@@ -79,9 +98,7 @@ public:
         /// New args should be repackaged as llvm.struct{ptr, ptr, index, {index}, {index}}.
         argMapper.map(oldArg, dataPtr1);
       } else {
-        auto newArg = newArgs[argIdx];
-        newArg.setType(funcType.getInput(argIdx++));
-        argMapper.map(oldArg, newArg);
+        argMapper.map(oldArg, newArgs[argIdx++]);
       }
     }
 

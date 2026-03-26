@@ -1,6 +1,6 @@
 // RUN: bishengir-opt --insert-alloc-base-placeholder --split-input-file %s | FileCheck %s
 
-// CHECK: func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>, %arg5: memref<1024xi8>)
+// CHECK: func.func @simple_indirect_load_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<?xf32>, %arg3: i32, %arg4: memref<8xf32>, %arg5: memref<1024xi8> {hivm.shared_memory})
 // CHECK: %[[SHARED1:.*]] = memref.alloc() {hivm.shared_memory}
 // CHECK: call @simple_indirect_load_kernel_scope_0(%arg3, %alloc, %arg2, %c1_i32, %alloc_0, %[[SHARED1]])
 module {
@@ -31,7 +31,7 @@ module {
 
 // -----
 
-// CHECK: func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<8xf32>, %arg3: memref<?xf32>, %arg4: i32, %arg5: memref<1024xi8>)
+// CHECK: func.func @simple_indirect_store_kernel_scope_0(%arg0: memref<?xi64>, %arg1: memref<8xi64>, %arg2: memref<8xf32>, %arg3: memref<?xf32>, %arg4: i32, %arg5: memref<1024xi8> {hivm.shared_memory})
 // CHECK: %[[SHARED2:.*]] = memref.alloc() {hivm.shared_memory}
 // CHECK: call @simple_indirect_store_kernel_scope_0(%arg3, %alloc, %alloc_0, %arg2, %c1_i32, %[[SHARED2]])
 module {
