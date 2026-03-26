@@ -79,7 +79,8 @@ runExternalHIVMC(ModuleOp &module,
   arguments.push_back("--only-run-hivm-pipeline=false");
 
   // TODO: Support options in hivmc
-  std::set<std::string> blacklist = {"inject-ir-from-file",
+  std::set<std::string> blacklist = {"inject-ir-from-file", "print-pass-id",
+                                     "inject-ir-before", "inject-ir-after",
                                      "hfusion-enable-multiple-consumer-fusion"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 

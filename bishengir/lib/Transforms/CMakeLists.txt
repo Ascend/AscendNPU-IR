@@ -3,6 +3,7 @@ add_bishengir_library(BishengIRTransform
   DeadFunctionElimination.cpp
   FuseReductionIntoLoop.cpp
   InjectIR.cpp
+  InjectIRInstrumentation.cpp
   LowerToCPUBackend.cpp
   Transforms.cpp
 

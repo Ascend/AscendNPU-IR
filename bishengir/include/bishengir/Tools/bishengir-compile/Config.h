@@ -294,6 +294,24 @@ public:
     return injectIrFromFileFlag;
   }
 
+  BiShengIRCompileMainConfig &setInjectIrBefore(const std::string &path) {
+    injectIrBeforeFlag = path;
+    return *this;
+  }
+  const std::string &getInjectIrBefore() const { return injectIrBeforeFlag; }
+
+  BiShengIRCompileMainConfig &setInjectIrAfter(const std::string &path) {
+    injectIrAfterFlag = path;
+    return *this;
+  }
+  const std::string &getInjectIrAfter() const { return injectIrAfterFlag; }
+
+  BiShengIRCompileMainConfig &setPrintPassId(bool enable) {
+    printPassIdFlag = enable;
+    return *this;
+  }
+  bool shouldPrintPassId() const { return printPassIdFlag; }
+
   // -------------------------------------------------------------------------//
   //                        Output setting options                            //
   // -------------------------------------------------------------------------//
@@ -873,6 +891,11 @@ protected:
   /// Path to IR file for inject-ir pass (debug).
   std::string injectIrFromFileFlag{""};
 
+  /// Path to IR file to inject before a specific pass.
+  std::string injectIrBeforeFlag{""};
+
+  /// Path to IR file to inject after a specific pass.
+  std::string injectIrAfterFlag{""};
   // -------------------------------------------------------------------------//
   //                        Output setting options                            //
   // -------------------------------------------------------------------------//
@@ -888,6 +911,9 @@ protected:
 
   /// Output file path for host module. This is only a temporary file path.
   std::string hostOutputFileFlag{"-"};
+
+  /// Whether to print pass IDs during compilation
+  bool printPassIdFlag{false};
 
   // -------------------------------------------------------------------------//
   //                  General optimization control options                    //
