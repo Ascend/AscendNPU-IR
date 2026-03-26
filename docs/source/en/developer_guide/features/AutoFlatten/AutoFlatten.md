@@ -21,6 +21,7 @@ Modern hardware accelerators often have constraints and performance characterist
 ### Example Scenario
 
 Consider a 5D elementwise operation on shape `[1, 64, 1, 128, 256]`:
+
 - **Before**: 5 nested loops, complex stride calculations
 - **After flattening**: Shape becomes `[64, 128, 256]` or even `[64, 32768]`, enabling more efficient hardware utilization
 
@@ -55,6 +56,7 @@ Each dimension is classified into one of three categories:
 #### Barrier Dimensions
 
 Certain dimensions cannot be collapsed together due to semantic requirements:
+
 - **Reduce dimensions**: Must remain separate to preserve reduction semantics
 - **Broadcast dimensions**: Shape mismatches prevent collapsing
 - **Transpose dimensions**: Permutation requirements constrain grouping
@@ -288,6 +290,7 @@ if (failed(res))
 ### Debugging
 
 Enable debug logging with the `LDBG` macro to trace:
+
 - Reassociation maps at each stage
 - Mask classifications
 - Adjusted target dimensions
@@ -362,11 +365,11 @@ The following scenarios demonstrate how the flatten pass interacts with **stride
 //   dim 1: size=16, stride=2   ← NOT contiguous (would need stride=1)
 ```
 
-**Analysis:**
+**Analysis**:
 
 Cannot merge dims 0 and 1: for contiguity, dim 1's stride must equal 1 (the element stride). Here stride = 2, indicating a non-contiguous "every-other-element" access pattern. Collapsing dimensions $[0, 1]$ into a single dimension would produce a flat index $i \cdot 16 + j$, but the actual memory access pattern is $i \cdot 16 + j \cdot 2$. These are not equivalent — flattening would silently change which memory locations are accessed.
 
-**Output (unchanged):**
+**Output (unchanged)**:
 
 ```mlir
 func.func @strided_brc(%arg0: f32, %arg1: memref<16x16xf32, strided<[16, 2]>>) {
@@ -389,7 +392,7 @@ func.func @strided_brc(%arg0: f32, %arg1: memref<16x16xf32, strided<[16, 2]>>) {
 //   dim 3: size=2,  stride=1   ← innermost, contiguous
 ```
 
-**Contiguity check for adjacent dimension pairs:**
+**Contiguity check for adjacent dimension pairs**:
 
 $$\text{contiguous}(d_i, d_{i+1}) \iff \text{stride}(d_i) = \text{size}(d_{i+1}) \times \text{stride}(d_{i+1})$$
 
@@ -399,7 +402,8 @@ $$\text{contiguous}(d_i, d_{i+1}) \iff \text{stride}(d_i) = \text{size}(d_{i+1})
 | dims 1–2 | $? = 4 \times 2 = 8$ | ❌ Unknown (dynamic) |
 | dims 2–3 | $2 = 2 \times 1 = 2$ | ✅ Yes               |
 
-**Output (dims 2 and 3 collapsed):**
+**Output (dims 2 and 3 collapsed)**:
+
 ```mlir
 func.func @strided_brc_collapse_continuous(
     %arg0: f32, %arg1: memref<8x?x4x2xf32, strided<[?, ?, 2, 1]>>) {
@@ -413,6 +417,7 @@ func.func @strided_brc_collapse_continuous(
 ```
 
 The collapsed result has:
+
 - Dimensions 2 and 3 merged: size $4 \times 2 = 8$, stride $= 1$ (contiguous)
 - Rank reduced from 4 to 3
 
@@ -430,7 +435,7 @@ The collapsed result has:
 //   dim 3: size=?,  stride=1   ← dynamic size!
 ```
 
-**Contiguity check for dims 2–3:**
+**Contiguity check for dims 2–3**:
 
 The compiler **cannot statically prove** that $2 = ?$. If dim 3 has runtime size 2, they would be contiguous; if dim 3 has size 3, they would not. The pass conservatively refuses to collapse.
 
@@ -440,7 +445,7 @@ The compiler **cannot statically prove** that $2 = ?$. If dim 3 has runtime size
 | dims 1–2 | $? = 4 \times 2 = 8$ | ❌ Unknown                             |
 | dims 2–3 | $2 = ? \times 1 = ?$ | ❌ **Unknown** (dim 3 size is dynamic) |
 
-**Output (unchanged):**
+**Output (unchanged)**:
 
 ```mlir
 func.func @scalar_brc_cannot_collapse_continuous(

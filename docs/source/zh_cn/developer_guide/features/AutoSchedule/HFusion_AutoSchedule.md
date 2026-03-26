@@ -158,6 +158,7 @@ AutoSchedule 的整体调用链可以概括为：
 #### 关键数据结构
 
 ##### KernelInfo（内核信息描述）
+
   - 用于抽象单个融合内核的结构与约束，典型信息包括：
     - 输入 / 输出张量及其 shape / layout。
     - 各算子在融合图中的拓扑关系。
@@ -175,6 +176,7 @@ AutoSchedule 的整体调用链可以概括为：
     - `StmtExprBuilder`：负责从 IR 中的 shape 信息、常量等构建 `Expr`，生成 host 侧可执行的 Tiling 函数。
 
 ##### ValueHandle 系列
+
   - 对 MLIR 中的 `Value`、函数参数、命名值等进行统一封装，提供统一接口访问与处理。
   - 常见类型包括 `NamedValueHandle`、`FuncArgHandle` 等。
 

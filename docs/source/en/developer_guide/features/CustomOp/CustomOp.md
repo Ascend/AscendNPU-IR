@@ -27,6 +27,7 @@ N/A
 ### Interface Description
 
 Generic interface for custom op as following:
+
 - name : unique op name.
 
          Note : there are names reserved for builtins, usually starts with "__builtin".
@@ -42,6 +43,7 @@ Generic interface for custom op as following:
 
 In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
 to retrieve necessary information:
+
 - CoreType : which core type to execute on, refer to TCoreTypeAttr.
 - Pipe     : which pipe to execute on, refer to PipeAttr.
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
@@ -52,6 +54,7 @@ to retrieve necessary information:
 - Symbol   : Implementation function name
 
 TODO:
+
 - Implementation linkage       : user provided implementation and linking process.
 - Multi-Pipes (Macro CustomOp) : custom op that uses multiple pipes, which is a MacroOp in HIVM's context.
 
@@ -79,6 +82,7 @@ TODO:
                               ▼
             BiSheng Compiler compiles to objects
 ```
+
 ---
 
 ### Constraints and Capabilities

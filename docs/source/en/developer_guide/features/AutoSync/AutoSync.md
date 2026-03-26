@@ -107,7 +107,7 @@ The codebase provides **two** auto-sync solutions:
 
 **Source:** `InjectBlockSync.cpp` `InjectBlockSync.h`  
 
-**Behavior:**
+**Behavior**:
 
 - Runs only on **MIX** kernels (not host, not pure AIC/AIV).
 - Inserts `SetFFTSBaseAddrOp` when an FFTS base addr kernel argument is present.
@@ -128,7 +128,7 @@ The codebase provides **two** auto-sync solutions:
 - Headers: `include/../GraphSyncSolver/`
 - Implementation: `lib/../GraphSyncSolver/` (`GraphSyncSolver.cpp`, `SyncSolver.cpp`, `SyncSolverIR.cpp`, `SyncSolverIRTranslator.cpp`, `SyncSolverCodeGen.cpp`, `GraphSolver.cpp`, `EventIdSolver.cpp`, `Utility.cpp`, `SyncSolverTest.cpp`, `SyncSolverTester.cpp`).  
 
-**Stages:**
+**Stages**:
 
 1. **IRTranslator**:  
 Build Sync-IR from the input function (function, scopes, loops, conditions, rw-operations).  
@@ -145,7 +145,7 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 
 **Source:** `CrossCoreGSS.h` `CrossCoreGSS.cpp`; reuses `IRTranslator`, `Solver`, and `CodeGenerator` from GraphSyncSolver.
 
-**How it works:**
+**How it works**:
 
 - Same as the intra-core GSS pass, but it handles cross-core memory operations.
 
