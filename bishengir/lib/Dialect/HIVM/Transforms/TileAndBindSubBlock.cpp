@@ -1269,8 +1269,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
   auto hasBatchMatmulLoopInAic = [&aicFunctions]() -> bool {
     return llvm::any_of(aicFunctions, [](func::FuncOp aicFunc) {
       return aicFunc
-          .walk([](scf::ForOp loop) {
-            return loop->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)
+          .walk([](hivm::MmadL1Op mmad) {
+            return mmad->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)
                        ? WalkResult::interrupt()
                        : WalkResult::advance();
           })

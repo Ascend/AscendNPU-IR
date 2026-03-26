@@ -18,7 +18,7 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   // CHECK:   %[[MC:.*]] = tensor.empty() : tensor<256x256xf32>
 
 
-  // CHECK:   %[[RES:.*]] = hivm.hir.mmadL1 ins(%[[EXT_MA]], %[[EXT_MB]]
+  // CHECK:   %[[RES:.*]] = hivm.hir.mmadL1 {batch_matmul} ins(%[[EXT_MA]], %[[EXT_MB]]
   // CHECK-SAME:                            outs(%[[MC]]
   // CHECK:   %[[SUBVIEW_DST:.*]] = memref.subview %[[DST]][%[[ITERATOR]], 0, 0]
   // CHECK:   %[[COLLAPSE_DST:.*]] = memref.collapse_shape %[[SUBVIEW_DST]]
@@ -56,7 +56,7 @@ module {
     // CHECK-SAME: iter_args(%[[ITERATION:.*]] = %[[WORKSPACE_TENSOR]])
     // CHECK: %[[EXT_MA:.*]] = tensor.extract_slice{{.*}}[%[[INDUCTION_VAR]], 0, 0]
     // CHECK: %[[EXT_MB:.*]] = tensor.extract_slice{{.*}}[%[[INDUCTION_VAR]], 0, 0]
-    // CHECK: %[[MATMUL_RES:.*]] = hivm.hir.mmadL1 ins(%[[EXT_MA]], %[[EXT_MB]]
+    // CHECK: %[[MATMUL_RES:.*]] = hivm.hir.mmadL1 {batch_matmul} ins(%[[EXT_MA]], %[[EXT_MB]]
     // CHECK: %[[EXT_WS:.*]] = tensor.extract_slice %[[ITERATION]][%[[INDUCTION_VAR]], 0, 0]
     // CHECK: %[[FIX_RES:.*]] = hivm.hir.fixpipe
     // CHECK-SAME: ins(%[[MATMUL_RES]]
