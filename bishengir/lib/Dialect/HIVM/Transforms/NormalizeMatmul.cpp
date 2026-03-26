@@ -12,9 +12,11 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
@@ -23,6 +25,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
 
@@ -230,8 +233,7 @@ FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
   return mkn;
 }
 
-template <typename T>
-struct SetRealMKNPattern : public OpRewritePattern<T> {
+template <typename T> struct SetRealMKNPattern : public OpRewritePattern<T> {
 public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T mmadLikeOp,
@@ -292,6 +294,61 @@ LogicalResult decomposeMatmulWithElementwiseAdd(PatternRewriter &rewriter,
       ValueRange{addInit});
 
   rewriter.replaceOp(op, addOp.getResult());
+  return success();
+}
+
+/// Input IR:
+///
+/// ```
+/// %arg = ...
+/// %cond = arith.cmpi (...)
+/// %mmad = mmadL1 ins(%A, %B, %cond, ...) outs(%arg)
+///
+/// ```
+///
+/// is converted into:
+/// ```
+/// %arg = ...
+/// %cond = arith.cmpi (...)
+/// %tmp = tensor.empty
+/// %mmad = mmadL1 ins(%A, %B, true, ...) outs(%tmp)
+///
+/// %res = scf.if %cond {
+///   yield %mmad
+/// } else {
+///   %bias = add ins(%arg, %mmad)
+///   yield %bias
+/// }
+/// ```
+template <typename T>
+LogicalResult
+decomposeMatmulWithConditionalElementwiseAdd(PatternRewriter &rewriter, T op) {
+  Location loc = op.getLoc();
+  auto newMmadInit = mlir::utils::createEmptyOp(rewriter, loc, op.getC());
+  auto newMmad = cast<T>(rewriter.clone(*op.getOperation()));
+  newMmad.getCMutable().assign(newMmadInit);
+  Value constTrue = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
+  newMmad.setInitCondition(constTrue);
+
+  auto ifOp = rewriter.create<scf::IfOp>(
+      op->getLoc(), newMmad->getResultTypes(), op.getInitCondition(),
+      /*withElseRegion=*/true);
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    rewriter.create<scf::YieldOp>(op->getLoc(), newMmad->getResults());
+  }
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(ifOp.elseBlock());
+    auto addInit = mlir::utils::createEmptyOp(rewriter, loc, op.getC());
+    auto addOp = rewriter.create<hivm::VAddOp>(
+        loc, TypeRange{newMmad.getResults()[0].getType()},
+        ValueRange{newMmad.getResults()[0], op.getDpsInitOperand(0)->get()},
+        ValueRange{addInit});
+    rewriter.create<scf::YieldOp>(op->getLoc(), addOp->getResults());
+  }
+  rewriter.replaceOp(op, ifOp.getResults());
   return success();
 }
 
@@ -421,8 +478,11 @@ public:
     if (biasMode == MatmulBiasMode::NoBias) {
       return rewriter.notifyMatchFailure(op, "no bias");
     }
-    if (op.shouldDecomposeBiasByElementAdd()) {
-      assert(op.isInitConstant(false));
+    if (op.shouldDecomposeBiasByElementAdd() && op.isInitConstant(true)) {
+      LDBG("no need to decompose matmul with elemwise add since init is true");
+      return failure();
+    }
+    if (op.shouldDecomposeBiasByElementAdd() && op.isInitConstant(false)) {
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
     }
@@ -434,6 +494,11 @@ public:
       LDBG("decompose matmul with per channel add with split k add");
       return decomposeMatmulWithPerChannelAddWithSplitKAdd<T>(rewriter, op);
     }
+    if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant()) {
+      LDBG("decompose matmul with elemwise add and non-const init");
+      return decomposeMatmulWithConditionalElementwiseAdd<T>(rewriter, op);
+    }
+
     return failure();
   }
 };

@@ -103,7 +103,7 @@ public:
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op.getResultTensors()[0];
 
-    if (op.shouldDecomposeBiasByElementAdd()) {
+    if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant(true)) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted
       // now, and fixpipe should be inserted after the decomposition
       return failure();
@@ -485,7 +485,7 @@ void populateDevicePrintPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
-}
+} // namespace
 
 void InlineFixpipeV2::runOnOperation() {
   RewritePatternSet patterns(&getContext());
@@ -500,8 +500,8 @@ void InlineFixpipeV2::runOnOperation() {
   RewritePatternSet devicePrintPatterns(&getContext());
   populateDevicePrintPatterns(devicePrintPatterns);
 
-  if (failed(
-          applyPatternsAndFoldGreedily(getOperation(), std::move(devicePrintPatterns)))) {
+  if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                          std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }
 }

@@ -144,8 +144,7 @@ std::string getLibraryCallNameForGlobalMmadOps(GlobalMmadTy *mmadOp) {
   ss << mmadOp->getOpName().data();
 
   if (mmadOp->getBias()) {
-    ss << "_bias"
-       << "_TBIAS"
+    ss << "_bias" << "_TBIAS"
        << hivm::detail::getTypeName(
               mmadOp->getLoc(), mmadOp->getBias().getType().getElementType());
   } else {
@@ -304,14 +303,17 @@ getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
   return ss.str();
 }
 
-/// @brief Computes the block sizes for a given operand based on its element type.
+/// @brief Computes the block sizes for a given operand based on its element
+/// type.
 ///
 /// Returns a vector containing the fractal block number and the block size,
 /// where the block size is determined by dividing the intrinsic bytes per block
 /// by the byte width of the operand's element type.
 ///
-/// @param oper The MLIR value whose element type is used to compute block sizes.
-/// @return A SmallVector containing two elements: [FRACTAL_BLOCK_NUM, kBlockSize].
+/// @param oper The MLIR value whose element type is used to compute block
+/// sizes.
+/// @return A SmallVector containing two elements: [FRACTAL_BLOCK_NUM,
+/// kBlockSize].
 llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
@@ -332,9 +334,11 @@ llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
 /// set to false, the fractal block number is overridden to 32. Otherwise,
 /// the default `FRACTAL_BLOCK_NUM` is used.
 ///
-/// @param oper         The MLIR value whose element type is used to compute block sizes.
+/// @param oper         The MLIR value whose element type is used to compute
+/// block sizes.
 /// @param isBTranspose Whether the B operand is transposed.
-/// @param isA5         Whether the A5-specific block size logic should be applied.
+/// @param isA5         Whether the A5-specific block size logic should be
+/// applied.
 /// @return A SmallVector containing two elements: [factalBlockNum, kBlockSize].
 llvm::SmallVector<int64_t> getBlockSizesB(mlir::Value oper, bool isBTranspose,
                                           bool isA5) {
@@ -362,16 +366,25 @@ llvm::SmallVector<int64_t> getBlockSizesB(mlir::Value oper, bool isBTranspose,
 template <typename LocalMmadTy>
 bool isInitConstantForLocalMmadOp(LocalMmadTy *localMatmulOp,
                                   std::optional<bool> cst = std::nullopt) {
-  if (!cst.has_value()) {
-    return false;
-  }
   Value initCond = localMatmulOp->getInitCondition();
-  if (llvm::isa<arith::ConstantOp>(initCond.getDefiningOp())) {
-    auto cstOp = cast<arith::ConstantOp>(initCond.getDefiningOp());
-    std::optional<int64_t> cstInt = getConstantIntValue(cstOp.getValue());
-    return (cstInt && ((*cstInt) == cst.value()));
+  if (!llvm::isa<arith::ConstantOp>(initCond.getDefiningOp()))
+    return false;
+
+  auto cstOp = cast<arith::ConstantOp>(initCond.getDefiningOp());
+  std::optional<int64_t> cstInt = getConstantIntValue(cstOp.getValue());
+  if (!cstInt)
+    return false;
+
+  // Fix 1-bit integer case: getConstantIntValue(true : i1) returns -1
+  if (auto intType = dyn_cast<IntegerType>(initCond.getType())) {
+    if (intType.getWidth() == 1)
+      cstInt = (*cstInt != 0) ? 1 : 0;
   }
-  return false;
+
+  if (!cst.has_value())
+    return cstInt.has_value();
+
+  return *cstInt == static_cast<int64_t>(*cst);
 }
 
 Value mlir::hivm::extractMmadBiasFromPotentialUnitDimExpand(Value bias) {
@@ -567,8 +580,8 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   // L0C. We treat it as NoBias case because we don't want to decompose it to
   // mmadL1 + add.
   auto allocOps = traceDefOps<memref::AllocOp>(matmulOutput.get(),
-                                              /*isSingleChain=*/false,
-                                              /*isSameTraceResult=*/true);
+                                               /*isSingleChain=*/false,
+                                               /*isSameTraceResult=*/true);
   bool isSameSpace = true;
   std::optional<hivm::AddressSpace> addrSpace;
   if (!allocOps.empty()) {
@@ -586,15 +599,16 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
     }
   }
   auto emptyOps = traceDefOps<tensor::EmptyOp>(matmulOutput.get(),
-                                              /*isSingleChain=*/false,
-                                              /*isSameTraceResult=*/true);
+                                               /*isSingleChain=*/false,
+                                               /*isSameTraceResult=*/true);
   return ((isSameSpace && addrSpace == hivm::AddressSpace::L0C) ||
           !emptyOps.empty())
              ? MatmulBiasMode::NoBias
              : MatmulBiasMode::ElementwiseAdd;
 }
 
-/// @brief Computes the target data layout for each operand of the MmadL1 operation.
+/// @brief Computes the target data layout for each operand of the MmadL1
+/// operation.
 ///
 /// Constructs a mapping from each operand value to its corresponding
 /// DataLayoutAttr, determining the appropriate layout (nZ or zN) and block
@@ -618,8 +632,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   bool isATranspose = getATranspose().has_value();
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
-      nullptr,
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
@@ -629,8 +642,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
       this->getOperation()->getParentOfType<ModuleOp>());
   auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
   auto mBLayoutAttr = DataLayoutAttr::get(
-      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
-      nullptr,
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
 
@@ -643,8 +655,8 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   valLayoutMap[getC()] = mCLayoutAttr;
 
   if (auto bias = getPerChannelBias()) {
-    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              nullptr, nullptr);
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
     valLayoutMap[bias] = biasLayoutAttr;
   }
   return valLayoutMap;
@@ -658,8 +670,7 @@ MmadL1Op::getOperandsTargetFractalLayout() {
   bool isATranspose = getATranspose().has_value();
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::Fractal,
-      nullptr,
+      getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
@@ -669,8 +680,7 @@ MmadL1Op::getOperandsTargetFractalLayout() {
       this->getOperation()->getParentOfType<ModuleOp>());
   auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
   auto mBLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::Fractal,
-      nullptr,
+      getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
 
@@ -686,8 +696,8 @@ MmadL1Op::getOperandsTargetFractalLayout() {
     llvm::report_fatal_error("Ambiguous target layout mapping on matmul");
   }
   if (auto bias = getPerChannelBias()) {
-    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              nullptr, nullptr);
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
     valLayoutMap[bias] = biasLayoutAttr;
   }
   return valLayoutMap;
@@ -707,8 +717,7 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
-        BoolAttr(),
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -731,8 +740,7 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandBLayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
-        BoolAttr(),
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -840,8 +848,7 @@ MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
 }
 
 bool MmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
-      !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }
@@ -903,8 +910,7 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
-      !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }

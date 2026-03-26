@@ -680,8 +680,6 @@ module {
       %c32_45 = arith.constant 32 : index
       %c64_46 = arith.constant 64 : index
       %80 = hivm.hir.mmadL1 ins(%77, %75, %78, %c128_44, %c32_45, %c64_46 : tensor<128x32xf16>, tensor<32x64xf16>, i1, index, index, index) outs(%79 : tensor<128x64xf32>) -> tensor<128x64xf32>
-      // CHECK: tensor.empty
-      // CHECK: hivm.hir.fixpipe
       %81 = tensor.empty() : tensor<128x64xf32>
       %82 = hivm.hir.vadd ins(%80, %arg20 : tensor<128x64xf32>, tensor<128x64xf32>) outs(%81 : tensor<128x64xf32>) -> tensor<128x64xf32>
       %reinterpret_cast_47 = memref.reinterpret_cast %arg10 to offset: [%67], sizes: [32], strides: [1] : memref<?xf32> to memref<32xf32, strided<[1], offset: ?>>
@@ -706,8 +704,6 @@ module {
       %c32_54 = arith.constant 32 : index
       %c64_55 = arith.constant 64 : index
       %92 = hivm.hir.mmadL1 {b_transpose} ins(%89, %65, %90, %c128_53, %c32_54, %c64_55 : tensor<128x32xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%91 : tensor<128x64xf32>) -> tensor<128x64xf32>
-      // CHECK: tensor.empty
-      // CHECK: hivm.hir.fixpipe
       %93 = tensor.empty() : tensor<128x64xf32>
       %94 = hivm.hir.vadd ins(%92, %arg21 : tensor<128x64xf32>, tensor<128x64xf32>) outs(%93 : tensor<128x64xf32>) -> tensor<128x64xf32>
       %95 = arith.addi %arg22, %c32_i32 : i32
@@ -866,8 +862,6 @@ module {
       %c32_45 = arith.constant 32 : index
       %c64_46 = arith.constant 64 : index
       %80 = hivm.hir.mmadL1 {b_transpose} ins(%77, %65, %78, %c128_44, %c32_45, %c64_46 : tensor<128x32xf16>, tensor<64x32xf16>, i1, index, index, index) outs(%79 : tensor<128x64xf32>) -> tensor<128x64xf32>
-      // CHECK: tensor.empty
-      // CHECK: hivm.hir.fixpipe
       %81 = tensor.empty() : tensor<128x64xf32>
       %82 = hivm.hir.vadd ins(%80, %arg20 : tensor<128x64xf32>, tensor<128x64xf32>) outs(%81 : tensor<128x64xf32>) -> tensor<128x64xf32>
       %83 = arith.addi %arg21, %c32_i32 : i32
@@ -1195,7 +1189,7 @@ func.func @test_mmadL1_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128
                               outs(%mc: tensor<256x256xi32>) -> tensor<256x256xi32>
   // CHECK: hivm.hir.set_atomic kind = <add>[type = i32]
   hivm.hir.store ins(%ret : tensor<256x256xi32>) outs(%dst : memref<256x256xi32>) atomic = <add>
-  // CHECK: hivm.hir.set_atomic kind = <none>[type = i32] 
+  // CHECK: hivm.hir.set_atomic kind = <none>[type = i32]
   return
 }
 

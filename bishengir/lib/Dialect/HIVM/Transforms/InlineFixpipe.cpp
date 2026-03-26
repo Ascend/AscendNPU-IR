@@ -151,8 +151,7 @@ public:
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op.getResultTensors()[0];
-
-    if (op.shouldDecomposeBiasByElementAdd()) {
+    if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant(true)) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted
       // now, and fixpipe should be inserted after the decomposition
       return failure();

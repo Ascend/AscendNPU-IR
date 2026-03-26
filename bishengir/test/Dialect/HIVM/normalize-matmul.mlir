@@ -435,3 +435,50 @@ module {
     return %0 : tensor<16x16xf32>
   }
 }
+
+// -----
+// CHECK-LABEL:   func.func @dot_used_chain_access_if_with_non_const_init(
+// CHECK-SAME:                                                            %[[VAL_0:.*]]: i32) -> tensor<16x16xf32> {
+module {
+  func.func @dot_used_chain_access_if_with_non_const_init(%input : i32) -> tensor<16x16xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    // CHECK:           %[[VAL_3:.*]] = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<16x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+    %c = tensor.empty() : tensor<16x16xf32>
+    %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<16x16xf32>) : i32 {
+    // CHECK:             %[[VAL_14:.*]] = arith.cmpi eq, %[[VAL_0]], %[[VAL_3]] : i32
+    // CHECK:             %[[VAL_15:.*]] = tensor.empty() : tensor<16x16xf32>
+    // CHECK:             %[[VAL_16:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}) outs(%[[VAL_15]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK:             %[[VAL_17:.*]] = scf.if %[[VAL_14]] -> (tensor<16x16xf32>) {
+    // CHECK:               scf.yield %[[VAL_16]] : tensor<16x16xf32>
+    // CHECK:             } else {
+    // CHECK:               %[[VAL_18:.*]] = tensor.empty() : tensor<16x16xf32>
+    // CHECK:               %[[VAL_19:.*]] = hivm.hir.vadd ins(%[[VAL_16]], {{.*}} : tensor<16x16xf32>, tensor<16x16xf32>) outs(%[[VAL_18]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+    // CHECK:               scf.yield %[[VAL_19]] : tensor<16x16xf32>
+    // CHECK:             }
+      %init = arith.cmpi eq, %input, %c0_i32 : i32
+      %mmadL1 = hivm.hir.mmadL1 ins(%a, %b, %init, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%arg1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      %and = arith.andi %arg0, %c1_i32 : i32
+      %cond = arith.cmpi ne, %and, %c0_i32 : i32
+      %1 = scf.if %cond -> (tensor<16x16xf32>) {
+        // CHECK:               scf.yield %[[VAL_17]] : tensor<16x16xf32>
+        scf.yield %mmadL1 : tensor<16x16xf32>
+      } else {
+        // CHECK:               %[[VAL_23:.*]] = tensor.empty() : tensor<16x16xf32>
+        // CHECK:               %[[VAL_24:.*]] = hivm.hir.vadd ins(%[[VAL_17]], %[[VAL_17]] : tensor<16x16xf32>, tensor<16x16xf32>) outs(%[[VAL_23]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+        %empty = tensor.empty() : tensor<16x16xf32>
+        %2 = hivm.hir.vadd ins(%mmadL1, %mmadL1 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+        scf.yield %2 : tensor<16x16xf32>
+      }
+      scf.yield %1 : tensor<16x16xf32>
+    }
+    return %0 : tensor<16x16xf32>
+  }
+}
