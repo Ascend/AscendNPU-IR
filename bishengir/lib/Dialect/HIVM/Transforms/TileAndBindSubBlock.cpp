@@ -1012,24 +1012,31 @@ public:
                          : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
-    auto verifyShape = [](ArrayRef<int64_t> shape) -> bool {
-      // Return true if the shape is valid:
-      return llvm::all_of(
-          shape, [](auto s) { return (s >= 0) || ShapedType::isDynamic(s); });
+    // TODO: support NZ2DN
+    auto splitShape = [](bool cvpipeFlag, hivm::FixpipeDualDstMode splitMode,
+                         SmallVector<int64_t> &shape) -> LogicalResult {
+      int64_t splitIdx = 0;
+      splitIdx += cvpipeFlag;
+      int64_t constraints;
+      if (splitMode == FixpipeDualDstMode::ROW_SPLIT)
+        constraints = 2;
+      else {
+        constraints = 32;
+        ++splitIdx;
+      }
+      auto size = shape[splitIdx];
+      if (ShapedType::isDynamicShape(size)) {
+        return failure();
+      }
+      if ((size % constraints) != 0) {
+        return failure();
+      }
+      shape[splitIdx] = size / 2;
+      return success();
     };
 
     if (!cvpipeFlag) {
-      switch (splitMode) {
-      case hivm::FixpipeDualDstMode::ROW_SPLIT:
-        shape[0] = shape[0] / 2;
-        break;
-      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-        shape[1] = shape[1] / 2;
-        break;
-      default:
-        break;
-      }
-      if (!verifyShape(shape)) {
+      if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
         return failure();
       }
       auto newTy = MemRefType::get(shape, oldTy.getElementType(),
@@ -1060,17 +1067,7 @@ public:
       return success();
     }
 
-    switch (splitMode) {
-    case hivm::FixpipeDualDstMode::ROW_SPLIT:
-      shape[1] = shape[1] / 2;
-      break;
-    case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-      shape[2] = shape[2] / 2;
-      break;
-    default:
-      break;
-    }
-    if (!verifyShape(shape)) {
+    if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
       return failure();
     }
     auto newTy = MemRefType::get(shape, oldTy.getElementType(),
