@@ -131,9 +131,6 @@ struct ConvertTritonAscendGPUToLLVMPass
         kDefaultPatternBenefit);
     triton::ascend::populateAscendReduceOpToLLVMPatterns(
         typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
-    // int benefit = patternBenefitPrioritizeOverLLVMConversions;
-    // mlir::triton::populateReduceOpToLLVMPatterns(typeConverter, patterns,
-    //                                              targetInfo, benefit);
     triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
         typeConverter, patterns, axisInfoAnalysis, targetInfo,
         kDefaultPatternBenefit);
