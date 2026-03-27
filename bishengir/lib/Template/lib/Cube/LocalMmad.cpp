@@ -216,14 +216,13 @@ load_l1_to_l0b(__cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
   auto src_part_offset_b =
       TB ? k_part_idx * k_part * bn : k_part_idx * k_part * mb->sizes[3];
   if (sizeof(SRC_TYPE) == 1) {
-    uint16_t n_ceil =
-        (sizeof(SRC_TYPE) == 1 && n < 32) ? 32 : static_cast<uint16_t>(n);
     if constexpr (TB) {
+      // The function internally handles n_ceil.
       load_l1_to_l0b_with_trans<SRC_TYPE>(l0b_buf, mb, src_part_offset_b,
-                                          k_part_ceil, n_ceil);
+                                          k_part_ceil, n);
     } else {
       // L1: n1, k1, k0, n0, where k0 = 16, n0 = 32
-      // L0B: k1',n1',n0', k0', where n0' = 16, k0' = 32
+      uint16_t n_ceil = CEIL_FACTOR(n, /*32*/ elem_num_per_block);
       load2d_transpose_b8<__cb__ int8_t>(
           reinterpret_cast<__cb__ int8_t *>(l0b_buf),
           reinterpret_cast<__cbuf__ int8_t *>(mb_ptr + src_part_offset_b),
@@ -383,8 +382,14 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     if constexpr (HF32) {
       set_hf32_ctrl();
     }
-    uint16_t n_ceil =
-        (sizeof(SRC_TYPE) == 1 && n < 32) ? 32 : static_cast<uint16_t>(n);
+
+    uint16_t n_ceil = static_cast<uint16_t>(n);
+    if constexpr (sizeof(SRC_TYPE) == 1) {
+      // i8L1(TB):  k1, n1, n0, k0, where n0 = 16, k0 = 32
+      // i8L1    :  n1, k1, k0, n0, where k0 = 16, n0 = 32
+      n_ceil = TB ? CEIL_FACTOR(n_ceil, /*16*/ FRACTAL_BLOCK_NUM) 
+                  : CEIL_FACTOR(n_ceil, /*32*/ elem_num_per_block);
+    }
 
     bool is_outer_k_start = !k_part_idx;
     bool init_c = init && is_outer_k_start;
