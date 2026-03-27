@@ -828,23 +828,26 @@ tl.compile_hint(cond, "bitwise_mask")
 
 ![image](../../images/user_guide/best_practice2.png)
 
+```{note}
+使用 compile_hint 需要注意本地的 TA 版本。
+
+triton-adaptor 3.2.0之前的版本: tl.compile_hint(cond, "bitwise_mask")
+
+triton-adaptor 3.4.0 之后的的版本需要改成: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+
+bitmask 功能 cann9.0 之后的版本才有，因此需要下载 cann.9.0 之后的版本。
+```
+
 #### 算子示例
 
 参考 [Ascend where 算子](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py)进行改写，
-若用户需要输入bitwise的i8掩码作为算子入参，只需为tl.where的结果加上compile_hint即可。这里需要注意本地的TA版本。
-triton-adaptor 3.2.0之前的版本
-```python
-tl.compile_hint(cond, "bitwise_mask")
-```
+若用户需要输入bitwise的i8掩码作为算子入参，只需为tl.where的结果加上compile_hint即可。
 
-triton-adaptor 3.4.0之后的的版本需要改成
-```python
-tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
-```
 其中依赖的代码脚本请下载链接，并将其和测试脚本放在同个目录下执行`python3 test_bitmask.py`。
 [triton testcommon script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
-bitmask功能cann9.0之后的版本才有，因此需要下载cann.9.0之后的版本。
+
 ```python
+# test_bitmask.py
 import triton
 import triton.language as tl
 import torch 
@@ -921,6 +924,7 @@ for sub_A in range(A):
 此外，以下亦提供多重切分的逻辑供参考：
 
 ```python
+# test_bitmask_tile.py
 import triton
 import triton.language as tl
 import torch
@@ -951,7 +955,10 @@ def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
     cond = tl.load(cond_ptr + offset)
     # bitwise where and store
     mask = tl.where(cond, in0, in1)
-    tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    # versions after triton-adaptor 3.4.0
+    # tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    # versions before triton-adaptor 3.2.0
+    tl.compile_hint(mask, "bitwise_mask")
     tl.store(out_ptr0 + offset, mask)
 
 @pytest.mark.parametrize('param_list',
