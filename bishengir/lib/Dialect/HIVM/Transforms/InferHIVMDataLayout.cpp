@@ -949,6 +949,85 @@ DataLayoutInferAndPropagateHelper::rewriteSubViewOp(memref::SubViewOp op) {
   return newSubViewOp;
 }
 
+struct ExpandLoad1D : public OpRewritePattern<hivm::LoadOp> {
+  using OpRewritePattern<hivm::LoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::LoadOp loadOp,
+                                PatternRewriter &rewriter) const override {
+
+    Value src = loadOp.getSrc();
+    Value dst = loadOp.getDst();
+    auto srcType = src.getType().dyn_cast<MemRefType>();
+    auto dstType = dst.getType().dyn_cast<MemRefType>();
+    auto srcSize = srcType.getDimSize(0);
+
+    if (!srcType || !dstType || srcType.getRank() != 1) {
+      LLVM_DEBUG(llvm::dbgs() << "  Match Failed: Not 1D\n");
+      return failure();
+    }
+
+    Location loc = loadOp.getLoc();
+    SmallVector<ReassociationIndices> reassoc = {{0, 1}};
+
+    Value newDst = dst;
+    if (auto allocOp = dst.getDefiningOp<memref::AllocOp>()) {
+      LLVM_DEBUG(llvm::dbgs() << "  Found AllocOp: " << *allocOp << "\n");
+
+      auto newAllocType = MemRefType::get(
+          {1, srcSize}, dstType.getElementType(),
+          MemRefLayoutAttrInterface(),
+          dstType.getMemorySpace());
+
+      rewriter.setInsertionPoint(allocOp);
+      auto newAlloc = rewriter.create<memref::AllocOp>(
+          allocOp.getLoc(), newAllocType, allocOp.getAlignmentAttr());
+
+      LLVM_DEBUG(llvm::dbgs() << "  Created New 2D Alloc: " << newAlloc << "\n");
+
+      for (auto &use : llvm::make_early_inc_range(allocOp.getResult().getUses())) {
+        if (auto expandOp = dyn_cast<memref::ExpandShapeOp>(use.getOwner())) {
+          auto expandResultType = expandOp.getResult().getType().cast<MemRefType>();
+          if (expandResultType.getRank() == 2 && expandResultType.getDimSize(0) == 1) {
+            LLVM_DEBUG(llvm::dbgs() << "  Found Redundant ExpandShape, Replacing: " << *expandOp << "\n");
+            rewriter.replaceOp(expandOp, newAlloc.getResult());
+          }
+        }
+      }
+
+      rewriter.replaceOp(allocOp, newAlloc.getResult());
+      newDst = newAlloc.getResult();
+    } else {
+        return failure();
+    }
+
+    int64_t offset;
+    SmallVector<int64_t, 1> strides;
+    if (failed(getStridesAndOffset(srcType, strides, offset))) {
+        LLVM_DEBUG(llvm::dbgs() << "  Failed to get strides/offset for src.\n");
+        return failure();
+    }
+
+    SmallVector<int64_t, 2> newStrides = {srcSize, strides[0]};
+    auto newSrcLayout = offset ? StridedLayoutAttr::get(getContext(), offset, newStrides) : nullptr;
+    auto newSrcType = MemRefType::get({1, srcSize}, srcType.getElementType(),
+                                      newSrcLayout, srcType.getMemorySpace());
+
+    rewriter.setInsertionPoint(loadOp);
+    Value expSrc = rewriter.create<memref::ExpandShapeOp>(loc, newSrcType, src, reassoc);
+
+    rewriter.setInsertionPoint(loadOp);
+    auto newLoad = rewriter.create<hivm::LoadOp>(
+        loc,
+        TypeRange{},
+        expSrc,
+        newDst
+    );
+    newLoad->setAttrs(loadOp->getAttrs());
+    rewriter.eraseOp(loadOp);
+    return success();
+  }
+};
+
 Operation *DataLayoutInferAndPropagateHelper::rewriteForOp(scf::ForOp op) {
   SmallVector<Value> newOperands;
   SmallVector<DataLayoutAttr> newLayouts;
@@ -1223,6 +1302,13 @@ void InferHIVMDataLayoutPass::runOnOperation() {
   if (!tFuncCoreTypeAttr ||
       tFuncCoreTypeAttr.getFuncCoreType() == hivm::TFuncCoreType::AIV)
     return;
+
+  MLIRContext *ctx = &getContext();
+  RewritePatternSet prePatterns(ctx);
+  prePatterns.add<ExpandLoad1D>(ctx);
+  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(prePatterns)))) {
+    return signalPassFailure();
+  }
 
   // Mask mmad inputs, the rank of which is 4-dim.
   hasConvertlayoutForCube(funcOp);
