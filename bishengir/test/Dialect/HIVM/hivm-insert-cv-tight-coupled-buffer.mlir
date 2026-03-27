@@ -518,6 +518,34 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_collapse_shape_with_annotation(
+  func.func @test_collapse_shape_with_annotation(%arg1 : memref<4x4x16xf16>, 
+                                                %arg2 : tensor<16x64xf16>) -> tensor<16x64xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %b = bufferization.to_tensor %arg1 restrict writable : memref<4x4x16xf16>
+    // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+    // CHECK: %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x16x16xf16>
+    // CHECK: %[[TRANSPOSED:.*]] = hivm.hir.vtranspose ins(%[[EXPANDED]] : tensor<16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
+    // CHECK: %[[EXPANDED_0:.*]] = tensor.expand_shape %[[TRANSPOSED]] {{\[\[0\], \[1, 2\], \[3\]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
+    // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+    // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
+    // CHECK: %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x16xf16>
+    // CHECK: hivm.hir.copy ins(%[[EXPANDED_0]] : tensor<1x1x16x16xf16>) outs(%[[CAST]] : memref<1x1x16x16xf16>)
+    %collapsed = tensor.collapse_shape %b [[0, 1], [2]] : tensor<4x4x16xf16> into tensor<16x16xf16>
+    annotation.mark %collapsed {maybeUnCollapsibleReshape} : tensor<16x16xf16>
+    %out = tensor.empty() : tensor<16x64xf32>
+    %mm = hivm.hir.mmadL1 ins(%collapsed, %arg2, %true, %c16, %c16, %c64 : 
+                                tensor<16x16xf16>, tensor<16x64xf16>, i1, index, index, index)
+                          outs(%out : tensor<16x64xf32>) -> tensor<16x64xf32>
+                          
+    return %mm : tensor<16x64xf32>
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: func.func @triton_dot_2(
   func.func @triton_dot_2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, false, false, false]> : vector<8xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {
     %c16 = arith.constant 16 : index

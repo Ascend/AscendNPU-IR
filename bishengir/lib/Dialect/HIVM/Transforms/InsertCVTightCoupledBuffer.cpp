@@ -58,6 +58,8 @@ using namespace mlir::hivm;
 namespace {
 constexpr static llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
  	     "MayImplicitTransposeWithLastAxis";
+constexpr static llvm::StringLiteral maybeUnCollapsibleReshape =
+       "maybeUnCollapsibleReshape";
 struct InsertCVTightCoupledBufferPass
     : public impl::InsertCVTightCoupledBufferBase<
           InsertCVTightCoupledBufferPass> {
@@ -474,6 +476,13 @@ struct InsertMoveL1BetweenVectorAndCube
           if (!maybeAnnotateOp.has_value())
             continue;
  	      }
+        if constexpr (std::is_same_v<OpType, tensor::CollapseShapeOp>) {
+          auto collapseShapeOp = llvm::cast<tensor::CollapseShapeOp>(producer);
+          auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+              collapseShapeOp.getResult(), maybeUnCollapsibleReshape);
+          if (!maybeAnnotateOp.has_value())
+            continue;
+        }
         matched = true;
         break;
       }
@@ -555,6 +564,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
   patterns.add<InsertMoveL1BetweenVectorAndCube<bufferizationl::ToTensorOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::collapseShapeOp>>(patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
