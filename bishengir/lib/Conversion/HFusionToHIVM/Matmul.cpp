@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,6 +31,8 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/Support/LogicalResult.h"
+#include <type_traits>
 
 using namespace mlir;
 
@@ -266,13 +269,34 @@ bool MmadL1InfoCollector<T, U>::isZeroOrEmptyTensor(Value op) {
   return cstFloat && cstFloat.getValue().isZero();
 }
 
+
 template <typename T, typename U>
 LogicalResult
 MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
                                               PatternRewriter &rewriter) const {
   // Base Case: If current destination value satisfies empty space, return
   if (isZeroOrEmptyTensor(info.currentValue)) {
+    if (info.currentValue.hasOneUse()) {
+      return success();
+    }
+
+    // TODO: add restriction when block argument have several users (even if this users are matmul)
+    // for i iter_arg(%arg0 = ..., % arg1 = ...)
+    // %res0 = mm outs(%arg0)
+    // %res1 = mm outs(%arg0)
+    // scf.yield %res0, %res1
+    for (auto use : info.currentValue.getUsers()) {
+      if (!isa<T>(use)) {
+        return failure();
+      }
+    }
+
     return success();
+  }
+
+  // TODO: to remove the code by doing bmm decomposition before it.
+  if constexpr (std::is_same_v<T, linalg::BatchMatmulOp>) {
+    return failure();
   }
 
   // Case A: L0C is an iteration argument of scf::ForOp
@@ -281,6 +305,13 @@ MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
         dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
     if (!scfForOp) {
       return failure();
+    }
+
+    if (OpOperand* tiedYielded = scfForOp.getTiedLoopYieldedValue(blockArg)) {
+      // TODO: Change to potential definers analysis which returns set of definers to fix if
+      if (!info.initTensorOutermostLoop && !hivm::traceDefOp<T>(tiedYielded->get()).has_value()) {
+        return failure();
+      }
     }
 
     OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
