@@ -157,6 +157,7 @@ private:
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<VInterleaveBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
 
     // Add pattern with strategies

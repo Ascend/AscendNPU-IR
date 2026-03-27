@@ -1070,48 +1070,6 @@ bool VTransposeBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sli
     return isVTranspose;
 }
 
-bool VarangeBubbleUpStrategy::isSupportedOperation(
-    tensor::ExtractSliceOp sliceOp) const {
-  auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  if (!sourceOp){
-    return false;
-  }
-  bool isVarangeOp = dyn_cast<hivm::VArangeOp>(sourceOp);
-  return isVarangeOp;
-}
- 
-LogicalResult 
-VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                                            PatternRewriter &rewriter) const {
-  auto varangeOp = dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
-  if (!varangeOp){
-    return failure();
-  }
- 
-  auto loc = varangeOp.getLoc();
- 
-  // Extract slice parameters
-  auto offsets = sliceOp.getMixedOffsets();
-  auto sizes = sliceOp.getMixedSizes();
-  auto strides = sliceOp.getMixedStrides();
- 
-  rewriter.setInsertionPoint(varangeOp);
-  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
-    loc, varangeOp.getDst(), offsets, sizes, strides);
- 
-  markCreatedExtractSliceOp(rewriter, newSliceOp);
- 
-  rewriter.setInsertionPointAfter(varangeOp);
-  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
-    loc, sliceOp.getType(), newSliceOp.getResult()
-  );
- 
-  rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
-  rewriter.eraseOp(varangeOp);
- 
-  return success();
-}
-
 LogicalResult
 VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                      PatternRewriter &rewriter) const {
@@ -1169,6 +1127,128 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.replaceOp(sliceOp, newVTransOp);
   if (VTransOp->use_empty())
     rewriter.eraseOp(VTransOp);
+
+  return success();
+}
+
+bool VarangeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp){
+    return false;
+  }
+  bool isVarangeOp = dyn_cast<hivm::VArangeOp>(sourceOp);
+  return isVarangeOp;
+}
+ 
+LogicalResult 
+VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                            PatternRewriter &rewriter) const {
+  auto varangeOp = dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
+  if (!varangeOp){
+    return failure();
+  }
+ 
+  auto loc = varangeOp.getLoc();
+ 
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+ 
+  rewriter.setInsertionPoint(varangeOp);
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+    loc, varangeOp.getDst(), offsets, sizes, strides);
+ 
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+ 
+  rewriter.setInsertionPointAfter(varangeOp);
+  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
+    loc, sliceOp.getType(), newSliceOp.getResult()
+  );
+ 
+  rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
+  rewriter.eraseOp(varangeOp);
+ 
+  return success();
+}
+
+bool VInterleaveBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp){
+    return false;
+  }
+  bool isVInterleaveOp = dyn_cast<hivm::VInterleaveOp>(sourceOp);
+  return isVInterleaveOp;
+}
+ 
+LogicalResult 
+VInterleaveBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                            PatternRewriter &rewriter) const {
+  auto vinterleaveOp = dyn_cast<hivm::VInterleaveOp>(sliceOp.getSource().getDefiningOp());
+  if (!vinterleaveOp)
+    return failure();
+
+  // auto outputType = dyn_cast<RankedTensorType>(vinterleaveOp.getResult().getType());
+  // if (!outputType)
+  //   return failure();
+  
+
+  SmallVector<OpFoldResult> sliceOffsets = sliceOp.getMixedOffsets();
+  SmallVector<OpFoldResult> sliceSizes = sliceOp.getMixedSizes();
+  SmallVector<OpFoldResult> sliceStrides = sliceOp.getMixedStrides();
+
+  // int64_t outputRank = outputType.getRank();
+  // if (sliceOffsets.size() != outputRank || sliceSizes.size() != outputRank)
+  //   return failure();
+  
+  // int64_t interleaveNum = vinterleaveOp.getInterleaveChannelNums();
+  // if (outputType.getDimSize(outputRank - 1) != interleaveNum)
+  //   return failure();  // only support interleaveOp with final dimsize=1
+
+
+  SmallVector<OpFoldResult> newSizes(sliceSizes.begin(), sliceSizes.end() - 1);
+  SmallVector<OpFoldResult> newSizesEmpty(sliceSizes.begin(), sliceSizes.end() - 1);
+  newSizes.push_back(rewriter.getIndexAttr(1));
+  newSizesEmpty.push_back(rewriter.getIndexAttr(2));
+
+  // Create the new sliceOp for every input of vinterleaveOp
+  SmallVector<Value> slicedInputs;
+  int64_t count=0;
+  for (Value input : vinterleaveOp.getOperands()){
+    auto inputType = dyn_cast<RankedTensorType>(input.getType());
+
+    rewriter.setInsertionPoint(vinterleaveOp);
+    auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp.getLoc(), input, sliceOffsets, newSizes, sliceStrides
+    );
+
+    markCreatedExtractSliceOp(rewriter, newSliceOp);
+    slicedInputs.push_back(newSliceOp);
+
+    count+=1;
+    if (count>=2){
+      break;
+    }
+  }
+
+  auto interleaveType = dyn_cast<RankedTensorType>(vinterleaveOp.getOperand(0).getType());
+  rewriter.setInsertionPoint(vinterleaveOp);
+  auto newEmptyOp =rewriter.create<tensor::EmptyOp>(
+    sliceOp.getLoc(),
+    newSizesEmpty,
+    interleaveType.getElementType());
+ 
+  rewriter.setInsertionPoint(vinterleaveOp);
+  auto newInterleaveOp = rewriter.create<hivm::VInterleaveOp>(vinterleaveOp.getLoc(), 
+  sliceOp.getResultType(), ValueRange(slicedInputs), newEmptyOp,
+  hfusion::InterleaveOp::getInterLeaveChannelNums());
+  
+  rewriter.replaceOp(sliceOp,newInterleaveOp);
+
+  if (vinterleaveOp->use_empty())
+    rewriter.eraseOp(vinterleaveOp);
 
   return success();
 }
