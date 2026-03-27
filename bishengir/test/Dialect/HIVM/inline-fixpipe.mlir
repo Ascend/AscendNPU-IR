@@ -1279,3 +1279,43 @@ func.func @test_mmadL1_fixpipe_no_atomic(%ma : tensor<256x128xi8>, %mb : tensor<
   hivm.hir.store ins(%ret : tensor<256x256xi32>) outs(%dst : memref<256x256xi32>)
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_mmad_accumulation_merged
+func.func @test_mmad_accumulation_merged(%A: tensor<64x64xf16>, %B: tensor<64x64xf16>, %C_good_init: tensor<64x64xf32>, %C_bad_init: tensor<64x64xf32>, %cond: i1) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c10 = arith.constant 10 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  // CHECK: %[[LOOP_RES:.*]]:2 = scf.for
+  %loop_res:2 = scf.for %i = %c0 to %c10 step %c1 
+    iter_args(%C_good_curr = %C_good_init, %C_bad_curr = %C_bad_init) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    // CHECK: scf.if
+    %if_res:2 = scf.if %cond -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+      // CHECK: %[[MMAD_GOOD:.*]] = hivm.hir.mmadL1
+      // CHECK-SAME: outs(%{{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %mmad_good = hivm.hir.mmadL1 ins(%A, %B, %true, %c64, %c64, %c64 
+        : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) 
+        outs(%C_good_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+      // CHECK: %[[MMAD_BAD:.*]] = hivm.hir.mmadL1
+      // CHECK-SAME: outs(%{{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+      %mmad_bad = hivm.hir.mmadL1 ins(%A, %B, %true, %c64, %c64, %c64 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) 
+        outs(%C_bad_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+      // CHECK-NEXT: %[[EMPTY_BAD:.*]] = tensor.empty() : tensor<64x64xf32>
+      // CHECK-NEXT: %[[FIXPIPE_BAD:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD_BAD]] : tensor<64x64xf32>) outs(%[[EMPTY_BAD]]
+      // CHECK-NEXT: %[[VADD:.*]] = hivm.hir.vadd ins(%[[FIXPIPE_BAD]], %[[FIXPIPE_BAD]]
+      %bad_use = hivm.hir.vadd ins(%mmad_bad, %mmad_bad : tensor<64x64xf32>, tensor<64x64xf32>) 
+        outs(%C_bad_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+      // CHECK: scf.yield %[[MMAD_GOOD]], %[[VADD]]
+      scf.yield %mmad_good, %bad_use : tensor<64x64xf32>, tensor<64x64xf32>
+    } else {
+      scf.yield %C_good_curr, %C_bad_curr : tensor<64x64xf32>, tensor<64x64xf32>
+    }
+    scf.yield %if_res#0, %if_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+  // CHECK: %[[EMPTY_GOOD:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK-NEXT: %[[FIXPIPE_GOOD:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[LOOP_RES]]#0 : tensor<64x64xf32>) outs(%[[EMPTY_GOOD]]
+  // CHECK-NEXT: return %[[FIXPIPE_GOOD]], %[[LOOP_RES]]#1
+  return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+}
