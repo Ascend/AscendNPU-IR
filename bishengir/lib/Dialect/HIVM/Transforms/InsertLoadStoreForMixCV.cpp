@@ -832,8 +832,10 @@ template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::BatchMmadL1Op>,
       InsertStoreOpBetweenVectorAndLoad<OpType>,
       InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::BatchMmadL1Op>,
       InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
       patterns.getContext());
 }
