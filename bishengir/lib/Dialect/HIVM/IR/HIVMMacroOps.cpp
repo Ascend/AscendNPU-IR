@@ -29,6 +29,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/Matchers.h"
@@ -538,7 +539,8 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
+        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
+        /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -1040,7 +1042,8 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
-        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
+        b_transpose, enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{},
+        /*unit_flag_group_id*/ IntegerAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }

@@ -129,7 +129,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                        Arg<OptionalAttr<UnitAttr>, [{
                         Was i4 -> i8 conversion
                        }]>:$enable_I4,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+                       OptionalAttr<I64Attr>:$unit_flag_group_id
                        );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{

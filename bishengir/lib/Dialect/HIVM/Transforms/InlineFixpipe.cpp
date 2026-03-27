@@ -1288,11 +1288,12 @@ private:
 
     rewriter.setInsertionPointAfter(vMulOp);
     auto newFixpipe = rewriter.create<FixpipeOp>(
-        op.getLoc(), dst.getType(), op.getSource(), dst, op.getDmaModeAttr(),
-        op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
+        op.getLoc(), dst.getType(), op.getSource(), dst,
+        op.getUnitFlagCond(), op.getDmaModeAttr(), op.getDualDstModeAttr(),
+        op.getSubBlockIdxAttr(),
         FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
         op.getPreReluAttr(), op.getChannelSplitAttr(), op.getC0PadEnAttr(),
-        quantScale);
+        quantScale, op.getUnitFlagModeAttr(), op.getUnitFlagGroupIdAttr());
     for (Operation *user : llvm::make_early_inc_range(vMulOp->getUsers())) {
       if (isa<annotation::MarkOp>(user)) {
         newFixpipe->setAttr(utils::kInlinedQuantScaleAttr,

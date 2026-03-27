@@ -26,6 +26,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Location.h"
+#include "llvm/ADT/DenseMap.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
@@ -541,6 +542,37 @@ struct MmadL1SyncArgs {
   Value kLoopDBCond;
   Value bwdPipeMPipeMTE1Event0;
   Value bwdPipeMPipeMTE1Event1;
+};
+
+template <typename T> struct UnionFind {
+public:
+  UnionFind() {};
+  ~UnionFind() = default;
+
+private:
+  llvm::DenseMap<T, T> parent;
+
+public:
+  T find(T x) {
+    auto [it, isInserted] = parent.insert({x, x});
+    if (isInserted || it->second == x) {
+      return x;
+    }
+    return it->second = find(it->second);
+  }
+
+  bool join(T a, T b) {
+    a = find(a);
+    b = find(b);
+    if (a == b) {
+      return false;
+    }
+    if (rand() & 1) {
+      std::swap(a, b);
+    }
+    parent[a] = b;
+    return true;
+  }
 };
 
 struct MmadMxL1SyncArgs {

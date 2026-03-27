@@ -25,6 +25,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -2141,6 +2142,17 @@ ConflictPair *SyncSolverBase::handleUnitFlagConflict(
   return newConflictPair;
 }
 
+std::vector<ConflictPair *> SyncSolverBase::getAllChosenConflictPairs() {
+  std::vector<ConflictPair *> conflictPairs;
+  for (auto &conflictPair : chosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  for (auto &conflictPair : persistentChosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  return conflictPairs;
+}
+
 void SyncSolverBase::collectBackwardSyncEventIds() {
   LLVM_DEBUG(llvm::dbgs() << "collectBackwardSyncEventIds\n";);
   for (auto &conflictPair : chosenConflictedPairs) {
@@ -2157,6 +2169,37 @@ void SyncSolverBase::collectBackwardSyncEventIds() {
   }
 }
 
+void SyncSolverBase::collectUnitFlagGroupIds() {
+  auto conflictPairs = getAllChosenConflictPairs();
+  UnionFind<RWOperation *> unionFind;
+  llvm::DenseSet<RWOperation *> unitFlagOps;
+  for (auto *conflictPair : conflictPairs) {
+    if (!conflictPair->replacedWithUnitFlag) {
+      continue;
+    }
+    assert(conflictPair->op1 != nullptr && conflictPair->op2 != nullptr);
+    unitFlagOps.insert(conflictPair->op1);
+    unitFlagOps.insert(conflictPair->op2);
+    auto *op1 = unionFind.find(conflictPair->op1);
+    auto *op2 = unionFind.find(conflictPair->op2);
+    unionFind.join(op1, op2);
+  }
+
+  int64_t globalUnitFlagGroupIndex = 0;
+  for (auto *rwOp : unitFlagOps) {
+    if (unionFind.find(rwOp) == rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId = globalUnitFlagGroupIndex++;
+    }
+  }
+  for (auto *rwOp : unitFlagOps) {
+    auto *parentOp = unionFind.find(rwOp);
+    assert(parentOp->mergedUnitFlagInfo.unitFlagGroupId != -1);
+    if (unionFind.find(rwOp) != rwOp) {
+      rwOp->mergedUnitFlagInfo.unitFlagGroupId =
+          parentOp->mergedUnitFlagInfo.unitFlagGroupId;
+    }
+  }
+}
 std::set<std::pair<int64_t, SetWaitOp *>> &
 SyncSolverBase::getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
                                       int64_t eventId) {
@@ -2440,16 +2483,9 @@ void SyncSolverBase::calcAllEventIds() {
 
 SyncBeforeAfterMap SyncSolverBase::getBeforeAfterSyncMaps() {
   calcAllEventIds();
+  collectUnitFlagGroupIds();
   SyncMap syncMapBefore, syncMapAfter;
-  std::vector<ConflictPair *> conflictPairs;
-  for (auto &conflictPair : chosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-  for (auto &conflictPair : persistentChosenConflictedPairs) {
-    conflictPairs.push_back(conflictPair.get());
-  }
-
-  for (auto *conflictPair : conflictPairs) {
+  for (auto *conflictPair : getAllChosenConflictPairs()) {
     if (conflictPair->isUseless) {
       continue;
     }

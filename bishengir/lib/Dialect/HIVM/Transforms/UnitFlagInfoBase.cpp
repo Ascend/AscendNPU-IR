@@ -17,7 +17,9 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "llvm/Support/raw_ostream.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include <string>
+#include <tuple>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -43,7 +45,7 @@ std::string UnitFlagInfoBase::str() const {
   return unitFlag;
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagLoopAwareArgs(Operation *op,
                                            IRRewriter &rewriter) {
   if (disabled()) {
@@ -93,10 +95,10 @@ UnitFlagInfoBase::getUnitFlagLoopAwareArgs(Operation *op,
     unitFlagConds.push_back(constantTrueValue);
   }
 
-  return std::make_pair(unitFlagModes, unitFlagConds);
+  return UnitFlagArgs(unitFlagModes, unitFlagConds, unitFlagGroupId);
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
                                             IRRewriter &rewriter) {
   if (disabled()) {
@@ -162,10 +164,11 @@ UnitFlagInfoBase::getUnitFlagLinkedLoopArgs(Operation *op,
     unitFlagModes.pop_back();
     unitFlagConds.pop_back();
   }
-  return std::make_pair(unitFlagModes, unitFlagConds);
+
+  return UnitFlagArgs(unitFlagModes, unitFlagConds, unitFlagGroupId);
 }
 
-std::optional<std::pair<SmallVector<UNIT_FLAG>, SmallVector<mlir::Value>>>
+std::optional<UnitFlagArgs>
 UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
   if (disabled()) {
     return {};
@@ -175,7 +178,8 @@ UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
   if (!hasParentLoop && !hasLinkedLoop) {
     auto unitFlagModes = getUnitFlagModesAsSetAsWait(/*compress=*/true);
     assert(unitFlagModes.size() <= 1);
-    return std::make_pair(unitFlagModes, SmallVector<mlir::Value>());
+    return UnitFlagArgs(unitFlagModes, SmallVector<mlir::Value>(),
+                        unitFlagGroupId);
   }
   if (hasParentLoop && !hasLinkedLoop) {
     return getUnitFlagLoopAwareArgs(op, rewriter);

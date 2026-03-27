@@ -473,6 +473,8 @@ protected:
   bool reuseConflictPair(ConflictPair *conflictPair, Occurrence *scopeOcc1,
                          Occurrence *scopeOcc2);
 
+  std::vector<ConflictPair *> getAllChosenConflictPairs();
+
   // Whether conflictPair should raise eventIdRepeatNum so the same flag id is
   // set/waited repeatedly (multibuffer backward case).
   bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
@@ -507,6 +509,7 @@ protected:
 
   // Return a mutable reference to the ordered set/wait index for
   // (pipeSrc, pipeDst, eventId).
+  void collectUnitFlagGroupIds();
   std::set<std::pair<int64_t, SetWaitOp *>> &
   getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
                         int64_t eventId);

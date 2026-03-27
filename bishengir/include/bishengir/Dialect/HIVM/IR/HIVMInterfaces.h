@@ -114,6 +114,9 @@ LogicalResult verifyUnitFlagEnabledInterface(UnitFlagEnabledInterface op);
 Value getUnitFlagModeLibValueImpl(UnitFlagEnabledInterface op,
                                   PatternRewriter &rewriter);
 
+Value getUnitFlagGroupIdValueImpl(UnitFlagEnabledInterface op,
+                                  PatternRewriter &rewriter);
+
 ArrayAttr getIndexingMapsImpl(HIVMStructuredOp op);
 
 ArrayAttr getIndexingMapsElementwiseImpl(HIVMStructuredOp op);

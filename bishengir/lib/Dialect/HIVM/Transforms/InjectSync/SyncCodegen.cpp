@@ -111,7 +111,8 @@ void SyncCodegen::HandleUnitFlagEnabledOp(
     UnitFlagInfo unitFlagInfo) const {
   if (auto unitFlagArgsOpt =
           unitFlagInfo.getUnitFlagArgs(unitFlagEnabledOp, rewriter)) {
-    auto [unitFlagModes, unitFlagConds] = unitFlagArgsOpt.value();
+    auto [unitFlagModes, unitFlagConds, unitFlagGroupId] =
+        unitFlagArgsOpt.value();
     assert(unitFlagModes.size() <= 1 ||
            unitFlagModes.size() == unitFlagConds.size());
     if (!unitFlagModes.empty()) {
