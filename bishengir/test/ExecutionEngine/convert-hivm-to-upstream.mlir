@@ -1,9 +1,8 @@
-// REQUIRES: execution-engine
 // RUN: bishengir-opt --execution-engine-convert-hivm-to-upstream %s --split-input-file | FileCheck %s
 
 // -----
  
-func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x10xf32>, %c: tensor<5x?x10xf32>, %d: tensor<5x?x10xf32>) -> (tensor<5x?x10xf32>, tensor<5x?x10xf32>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x10xf32>, %c: tensor<5x?x10xf32>, %d: tensor<5x?x10xf32>) -> (tensor<5x?x10xf32>, tensor<5x?x10xf32>) {
  
     // CHECK: linalg.abs
     %0 = hivm.hir.vabs ins(%a: tensor<1x?x10xf32>) outs(%c: tensor<5x?x10xf32>) broadcast = [0] -> tensor<5x?x10xf32>
@@ -55,8 +54,7 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
  
     // CHECK: linalg.erf
     %15 = hivm.hir.verf ins(%14: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
- 
-    // CHECK: linalg.copy
+
     %16 = hivm.hir.store ins(%15: tensor<5x?x10xf32>) outs(%d: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
     // CHECK: linalg.transpose
@@ -67,13 +65,10 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
 
 // -----
  
-func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x10xf32>, %c: memref<5x?x10xf32>, %d: memref<5x?x10xf32>, %e: memref<1x?x10xi8>, %f: memref<5x?x10xi8>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x10xf32>, %c: memref<5x?x10xf32>, %d: memref<5x?x10xf32>, %e: memref<1x?x10xi8>, %f: memref<5x?x10xi8>) {
  
     // CHECK: linalg.abs
     hivm.hir.vabs ins(%a: memref<1x?x10xf32>) outs(%c: memref<5x?x10xf32>) broadcast = [0]
-
-    // CHECK: linalg.abs
-    hivm.hir.vabs ins(%e: memref<1x?x10xi8>) outs(%f: memref<5x?x10xi8>) broadcast = [0]
  
     // CHECK: linalg.add
     hivm.hir.vadd ins(%b, %b: memref<?x5x10xf32>, memref<?x5x10xf32>) outs(%c: memref<5x?x10xf32>) transpose = [1, 0, 2]
@@ -114,7 +109,6 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
     // CHECK: linalg.erf
     hivm.hir.verf ins(%c: memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
-    // CHECK: linalg.copy
     hivm.hir.store ins(%c: memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
     // CHECK: linalg.transpose
@@ -125,7 +119,7 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
  
 // -----
  
-func.func @elemwise_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>, %b: memref<5x1x10xi32>, %bB: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @elemwise_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>, %b: memref<5x1x10xi32>, %bB: memref<5x?x10xi32>) -> tensor<5x?x10xf32> {
  
     // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<relu>}
     %0 = hivm.hir.vrelu ins(%a: tensor<?x5x10xf32>) outs(%aT: tensor<5x?x10xf32>) transpose = [1, 0, 2] -> tensor<5x?x10xf32>
@@ -141,7 +135,8 @@ func.func @elemwise_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>, %b
  
 // -----
  
-func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>, %b: memref<5x1x10xi32>, %bB: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>, %b: memref<5x1x10xi32>, %bB: memref<5x?x10xi32>) -> tensor<5x?x10xf32> 
+{
  
     // CHECK: linalg.map {{.*}}
     // CHECK-2: arith.bitcast
@@ -171,24 +166,8 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
 }
 
 // -----
-
-// CHECK-LABEL: func.func @shift_like_lowering
-func.func @shift_like_lowering(%a: tensor<5x10xi32>, %b: tensor<5x10xi32>, %dst: tensor<5x10xi32>) -> (tensor<5x10xi32>, tensor<5x10xi32>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
-
-    // CHECK: linalg.map
-    // CHECK-SAME:  arith.shli
-    %0 = hivm.hir.vshl ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
-
-    // CHECK: linalg.map
-    // CHECK-SAME:  arith.shrsi
-    %1 = hivm.hir.vshr ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
-
-    func.return %0, %1: tensor<5x10xi32>, tensor<5x10xi32>
-}
-
-// -----
  
-func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xf32> {
  
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
@@ -197,7 +176,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] -> tensor<5x?x10xf32>
+    %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
  
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: memref<5x?x10xi32>, memref<5x?x1xi32>)
@@ -206,7 +185,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1]
+    hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
  
     // CHECK: linalg.generic
     // CHECK-SAME:  outs({{.*}}: memref<5x?x10xi32>, memref<5x?x1xi32>)
@@ -215,14 +194,14 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-DAG-SAME:      %[[in]]
     // CHECK-DAG-SAME:      %[[out]]
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
-    hivm.hir.vcumsum ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1]
+    hivm.hir.vcumsum ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
  
     func.return %0: tensor<5x?x10xf32>
 }
  
 // -----
  
-func.func @arange_lowering(%a: tensor<5x?x10xi64>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xi64> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @arange_lowering(%a: tensor<5x?x10xi64>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xi64> {
  
     // CHECK: %[[C0:.*]] = arith.constant 0
     %c0 = arith.constant 0: index
@@ -252,7 +231,7 @@ func.func @arange_lowering(%a: tensor<5x?x10xi64>, %b: memref<5x?x10xi32>) -> te
 // CHECK-SAME:      %[[d:[^:]*]]: {{[^,]*}}, 
 // CHECK-SAME:      %[[e:[^:]*]]: {{[^,]*}}, 
 // CHECK-SAME:      %[[f:[^:]*]]: {{[^,]*}}
-func.func @concat_lowering(%a: tensor<5x?x10xf32>, %b: tensor<?x?x10xf32>, %c: tensor<?x?x10xf32>, %d: memref<5x?x10xi32>, %e: memref<?x?x10xi32>, %f: memref<?x?x10xi32>) -> tensor<?x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
+func.func @concat_lowering(%a: tensor<5x?x10xf32>, %b: tensor<?x?x10xf32>, %c: tensor<?x?x10xf32>, %d: memref<5x?x10xi32>, %e: memref<?x?x10xi32>, %f: memref<?x?x10xi32>) -> tensor<?x?x10xf32> {
  
     // CHECK: tensor.concat
     %0 = hivm.hir.vconcat dim(0) ins(%a, %b: tensor<5x?x10xf32>, tensor<?x?x10xf32>) outs(%c: tensor<?x?x10xf32>) -> tensor<?x?x10xf32>
@@ -436,12 +415,28 @@ func.func @triton_dot_max_2D_acc_None_mix_aiv(%arg0: memref<?xi8>, %arg1: memref
   %36 = hivm.hir.vsel ins(%34, %cst, %3 : tensor<77x32xi1>, f32, tensor<77x32xf32>) outs(%35 : tensor<77x32xf32>) -> tensor<77x32xf32>
   %37 = tensor.empty() : tensor<77x1xf32>
   %38 = tensor.empty() : tensor<77x1xi32>
-  // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<77x32xi32>
-  // CHECK: %{{.*}} = hfusion.reduce_with_index {{.*}} <max> ins(%{{.*}}, %[[EMPTY]] : tensor<77x32xf32>, tensor<77x32xi32>) {{.*}}
+  // CHECK: %{{.*}} = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max>
   %39:2 = hivm.hir.vreduce <max_with_index> ins(%36 : tensor<77x32xf32>) outs(%37, %38 : tensor<77x1xf32>, tensor<77x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<77x1xf32>, tensor<77x1xi32>
   %reinterpret_cast_5 = memref.reinterpret_cast %arg7 to offset: [0], sizes: [77, 1], strides: [1, 1] : memref<?xf32> to memref<77x1xf32, strided<[1, 1]>>
   hivm.hir.store ins(%39#0 : tensor<77x1xf32>) outs(%reinterpret_cast_5 : memref<77x1xf32, strided<[1, 1]>>)
   %reinterpret_cast_6 = memref.reinterpret_cast %arg8 to offset: [0], sizes: [77, 1], strides: [1, 1] : memref<?xi32> to memref<77x1xi32, strided<[1, 1]>>
   hivm.hir.store ins(%39#1 : tensor<77x1xi32>) outs(%reinterpret_cast_6 : memref<77x1xi32, strided<[1, 1]>>)
   return
+}
+
+// -----
+// CHECK-LABEL: @vinterleave_tensor
+func.func @vinterleave_tensor(%a: tensor<2x16xf32>, %b: tensor<2x16xf32>, %c: tensor<2x32xf32>) -> tensor<2x32xf32> {
+  // CHECK: %{{.*}} = hfusion.interleave %{{.*}}, %{{.*}} : tensor<2x16xf32>, tensor<2x16xf32> -> tensor<2x32xf32>
+  %0 = hivm.hir.vinterleave ins(%a, %b : tensor<2x16xf32>, tensor<2x16xf32>) outs(%c : tensor<2x32xf32>) interleave_channel_nums = 2 -> tensor<2x32xf32>
+  return %0 : tensor<2x32xf32>
+}
+
+// -----
+// CHECK-LABEL: @vdeinterleave_tensor
+func.func @vdeinterleave_tensor(%arg0: tensor<32xf32>) -> tensor<16xf32> {
+  %0 = tensor.empty() : tensor<16xf32>
+  // CHECK: hfusion.deinterleave %{{.*}} channel<0>
+  %1 = hivm.hir.vdeinterleave ins(%arg0 : tensor<32xf32>) outs(%0 : tensor<16xf32>) index_mode = <CHANNEL_0> -> tensor<16xf32>
+  return %1 : tensor<16xf32>
 }

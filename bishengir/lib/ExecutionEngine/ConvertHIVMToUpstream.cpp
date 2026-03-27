@@ -1249,6 +1249,62 @@ private:
   }
 };
 
+struct RewriteInterleave : public OpRewritePattern<hivm::VInterleaveOp> {
+  using OpRewritePattern<hivm::VInterleaveOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VInterleaveOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getInterleaveChannelNums() != 2)
+      return failure();
+
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> tensorInputs;
+    tensorInputs.assign(op.getSrc().begin(), op.getSrc().end());
+
+    if (tensorInputs.size() != 2)
+      return failure();
+
+    RankedTensorType outTy =
+        cast<RankedTensorType>(op.getResults().front().getType());
+
+    auto interleave = rewriter.create<hfusion::InterleaveOp>(
+        op.getLoc(), TypeRange(outTy), ValueRange(tensorInputs),
+        llvm::ArrayRef<NamedAttribute>{});
+
+    rewriter.replaceOp(op, interleave.getResult());
+    return success();
+  }
+};
+
+struct RewriteDeinterleave : public OpRewritePattern<hivm::VDeinterleaveOp> {
+  using OpRewritePattern<hivm::VDeinterleaveOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VDeinterleaveOp op,
+                                PatternRewriter &rewriter) const final {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> outTy;
+    outTy.assign(op.getResults().begin(), op.getResults().end());
+    int64_t mode = 1;
+    if (op.getIndexMode() == hivm::DeinterleaveMode::CHANNEL_0) {
+      mode = 0;
+    } else if (op.getIndexMode() == hivm::DeinterleaveMode::CHANNEL_1) {
+      mode = 1;
+    } else {
+      mode = 999;
+    }
+
+    auto deinterleave = rewriter.create<hfusion::DeinterleaveOp>(
+        op.getLoc(), TypeRange(outTy), Value(op.getSrc()), mode);
+
+    rewriter.replaceOp(op, deinterleave.getResults());
+    return success();
+  }
+};
+
 struct ConvertHIVMToUpstream
     : public impl::ExecutionEngineHIVMToUpstreamConversionBase<
           ConvertHIVMToUpstream> {
@@ -1309,11 +1365,6 @@ struct ConvertHIVMToUpstream
     // these issues are commented out instead of being deleted. This branch will
     // only be used by native CV and will not affect other functions.
 
-    // if (failed(applyTypeConversion())) {
-    //   signalPassFailure();
-    //   return;
-    // }
-
     auto *moduleOp = getOperation();
     SmallVector<func::FuncOp> functions;
     moduleOp->walk([&functions](func::FuncOp funcOp) {
@@ -1362,7 +1413,8 @@ struct ConvertHIVMToUpstream
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
                  RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp,
                  RewriteVCmpOp, RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
-                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>>(&ctx);
+                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
+                 RewriteDeinterleave>(&ctx);
 
     for (func::FuncOp func : functions) {
       if (func.getBody().empty())
