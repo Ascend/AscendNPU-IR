@@ -59,20 +59,55 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-bool isBefore(Operation *before, Operation *after) {
-  if (before->getBlock() == after->getBlock()) {
-    return before->isBeforeInBlock(after);
+SmallVector<Block *> collectAncestorBlocks(Operation *op) {
+  assert(op && "Operation cannot be null");
+  Block *currBlock = op->getBlock();
+  assert(currBlock && "Operation must have a block");
+  SmallVector<Block *> blocks;
+  blocks.push_back(currBlock);
+  while (auto *parentOp = op->getParentOp()) {
+    if (auto *parentBlock = parentOp->getBlock()) {
+      blocks.push_back(parentBlock);
+      op = parentOp;
+    } else {
+      break;
+    }
   }
-
-  auto afterParentOp = after->getParentOp();
-  if (afterParentOp == nullptr) {
-    return false;
-  }
-  return isBefore(before, afterParentOp);
+  return blocks;
 }
 
-FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal,
-                                                 Value initVal,
+Block *findFirstCommonBlock(const SmallVector<Block *> &blocks1,
+                            const SmallVector<Block *> &blocks2) {
+  for (Block *b1 : blocks1) {
+    for (Block *b2 : blocks2) {
+      if (b1 == b2)
+        return b1;
+    }
+  }
+  return nullptr;
+}
+
+Operation *getOpInBlock(Operation *op, Block *block) {
+  while (op) {
+    if (op->getBlock() == block)
+      return op;
+    op = op->getParentOp();
+  }
+  return nullptr;
+}
+
+bool isBefore(Operation *before, Operation *after) {
+  SmallVector<Block *> beforeBlocks = collectAncestorBlocks(before);
+  SmallVector<Block *> afterBlocks = collectAncestorBlocks(after);
+  Block *commonBlock = findFirstCommonBlock(beforeBlocks, afterBlocks);
+  assert(commonBlock && "Operations must have a common ancestor block");
+  Operation *beforeInCommon = getOpInBlock(before, commonBlock);
+  Operation *afterInCommon = getOpInBlock(after, commonBlock);
+  assert(beforeInCommon && afterInCommon);
+  return beforeInCommon->isBeforeInBlock(afterInCommon);
+}
+
+FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal, Value initVal,
                                                  LoopLikeOpInterface loopOp) {
   if (auto mbIfOp = traceDefOp<scf::IfOp>(yieldVal)) {
     auto concreteIfOp = cast<scf::IfOp>(*mbIfOp);
@@ -84,9 +119,9 @@ FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal,
       if (thenVal == initVal) {
         return yieldMemoryInitialization(elseVal, initVal, loopOp);
       }
-      
+
       if (elseVal == initVal) {
-        return yieldMemoryInitialization(thenVal, initVal, loopOp);  
+        return yieldMemoryInitialization(thenVal, initVal, loopOp);
       }
     }
   }
