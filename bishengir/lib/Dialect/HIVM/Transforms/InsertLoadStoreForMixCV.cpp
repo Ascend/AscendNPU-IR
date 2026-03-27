@@ -698,6 +698,12 @@ struct DuplicateTensorExtractForCube
     if (!definingOp) {
       return failure();
     }
+
+    // only process cases with cube users
+    if (!findCubeUser(extractOp)) {
+      return failure();
+    }
+
     TensorType tensorType = cast<TensorType>(originTensor.getType());
     TCoreType originCoreType = getCoreType(definingOp).value();
     if (originCoreType != TCoreType::VECTOR) {
@@ -735,11 +741,6 @@ struct DuplicateTensorExtractForCube
       } else {
         return failure();
       }
-    }
-
-    // only process cases with cube users
-    if (!findCubeUser(extractOp)) {
-      return failure();
     }
 
     // prepare for insertion

@@ -44,9 +44,10 @@ func.func @mm_03(%arg0: memref<?xf16>, %arg1: memref<?xf32>, %arg2: memref<?xf32
      %11 = arith.minsi %9, %10 : index
      %12 = arith.subi %11, %7 : index
      %13 = arith.minsi %12, %arg8 : index
-    // CHECK: %[[alloc_1:.*]] = memref.alloc() : memref<1x64xf32>
-    // CHECK: hivm.hir.load ins({{.*}} : memref<1x64xf32, strided<[192, 3]>>) outs(%[[alloc_1:.*]] : memref<1x64xf32>)
-    // CHECK: %[[bias:.*]] = bufferization.to_tensor %[[alloc_1:.*]] restrict writable : memref<1x64xf32>
+    // CHECK: %[[alloc_1:.*]] = memref.alloc() : memref<64xf32>
+    // CHECK: hivm.hir.load ins({{.*}} : memref<64xf32, strided<[3]>>) outs(%[[alloc_1:.*]] : memref<64xf32>)
+    // CHECK: %[[expand:.*]] = memref.expand_shape %[[alloc_1:.*]] {{\[\[0, *1\]\]}} output_shape [1, 64] : memref<64xf32> into memref<1x64xf32> 
+    // CHECK: %[[bias:.*]] = bufferization.to_tensor %[[expand:.*]] restrict writable : memref<1x64xf32>
      %subview = memref.subview %reinterpret_cast_0[0, 0] [%13, 256] [1, 1] : memref<128x256xf16, strided<[256, 1], offset: ?>> to memref<?x256xf16, strided<[256, 1], offset: ?>>
      %subview_2 = memref.subview %alloc_1[0, 0] [%13, 256] [1, 1] : memref<128x256xf16> to memref<?x256xf16, strided<[256, 1]>>
      hivm.hir.load ins(%subview : memref<?x256xf16, strided<[256, 1], offset: ?>>) outs(%subview_2 : memref<?x256xf16, strided<[256, 1]>>) left_padding_num = %arg15 : index
@@ -88,10 +89,33 @@ func.func @unit_expand_shape(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2: 
 // -----
 // CHECK: func.func @reinterpret_dynamic_stride(
 // CHECK: hivm.hir.load
-// CHECK-SAME: %{{.*}} : memref<1x4xf32, strided<[4, 1], offset: ?>>
+// CHECK-SAME: %{{.*}} : memref<2x2xf32, strided<[2, 1], offset: ?>>
 // CHECK: hivm.hir.load
-// CHECK: %{{.*}} : memref<4x1xf32, strided<[?, ?], offset: ?>>
-func.func @reinterpret_dynamic_stride(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: i32, %arg3: index, %arg4: index, %arg5: tensor<1x1xf32>, %arg6: i1, %arg7: index) -> tensor<1x1xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
+// CHECK: %{{.*}} : memref<2x2xf32, strided<[?, ?], offset: ?>>
+func.func @reinterpret_dynamic_stride(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: i32, %arg3: index, %arg4: index, %arg5: tensor<2x2xf32>, %arg6: i1, %arg7: index) -> tensor<2x2xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg3], sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
+  %alloc = memref.alloc() : memref<4xf32>
+  hivm.hir.load ins(%reinterpret_cast : memref<4xf32, strided<[1], offset: ?>>) outs(%alloc : memref<4xf32>) init_out_buffer = false
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<4xf32>
+  %expanded = tensor.expand_shape %0 [[0, 1]] output_shape [2, 2] : tensor<4xf32> into tensor<2x2xf32>
+  %1 = arith.index_cast %arg2 : i32 to index
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg1 to offset: [%arg4], sizes: [4], strides: [%1] : memref<?xf32> to memref<4xf32, strided<[?], offset: ?>>
+  %alloc_1 = memref.alloc() : memref<4xf32>
+  hivm.hir.load ins(%reinterpret_cast_0 : memref<4xf32, strided<[?], offset: ?>>) outs(%alloc_1 : memref<4xf32>) init_out_buffer = false
+  %2 = bufferization.to_tensor %alloc_1 restrict writable : memref<4xf32>
+  %expanded_2 = tensor.expand_shape %2 [[0, 1]] output_shape [2, 2] : tensor<4xf32> into tensor<2x2xf32>
+  hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 5
+  %3 = hivm.hir.mmadL1 ins(%expanded, %expanded_2, %arg6, %arg7, %arg7, %arg7 : tensor<2x2xf32>, tensor<2x2xf32>, i1, index, index, index) outs(%arg5 : tensor<2x2xf32>) -> tensor<2x2xf32>
+  return %3 : tensor<2x2xf32>
+}
+
+// -----
+// CHECK: func.func @alloc_expand_shape_all_one_not_propagate(
+// CHECK: hivm.hir.load
+// CHECK-SAME: %{{.*}} : memref<4xf32, strided<[1], offset: ?>>
+// CHECK: hivm.hir.load
+// CHECK: %{{.*}} : memref<4xf32, strided<[?], offset: ?>>
+func.func @alloc_expand_shape_all_one_not_propagate(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: i32, %arg3: index, %arg4: index, %arg5: tensor<1x1xf32>, %arg6: i1, %arg7: index) -> tensor<1x1xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg3], sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
   %alloc = memref.alloc() : memref<4xf32>
   hivm.hir.load ins(%reinterpret_cast : memref<4xf32, strided<[1], offset: ?>>) outs(%alloc : memref<4xf32>) init_out_buffer = false

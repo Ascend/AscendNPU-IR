@@ -174,6 +174,32 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
   rewriter.replaceOp(expandOp, newSubView);
   return success();
 }
+
+// whether expand shape dims is all 1
+// eg: expand_shape<2x3> [[0][1, 2, 3]] -> <2, 1, 3, 1> true
+// eg: expand_shape<2x?> [[0][1, 2, 3]] -> <2, 1, ?, 1> true
+// eg: expand_shape<2x4> [[0][1, 2, 3]] -> <2, 1, 2, 2> false
+bool isExpandShapeAllOne(memref::ExpandShapeOp expandOp) {
+  auto targetShape = expandOp.getStaticOutputShape();
+  auto reassociation = expandOp.getReassociationIndices();
+  for (auto &indices : reassociation) {
+    // not expand dim: continue
+    if (indices.size() <= 1) {
+      continue;
+    }
+    // expand dim: get number of none one
+    int nonOneCount = 0;
+    for (auto idx : indices) {
+      if (targetShape[idx] != 1) {
+        nonOneCount++;
+      }
+      if (nonOneCount > 1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 } // namespace
 
 LogicalResult
@@ -189,6 +215,10 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
+    // expand shape dims is all 1, not propagate alloc op.
+    if (isExpandShapeAllOne(expandOp)) {
+      return failure();
+    }
     LDBG("Ok in here");
     return handleAllocOp(expandOp, rewriter, definingOp);
   }
