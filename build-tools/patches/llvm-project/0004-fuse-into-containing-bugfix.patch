@@ -1,0 +1,50 @@
+diff --git a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+index 69dff777e4a6..942991162bf0 100644
+--- a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
++++ b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+@@ -1170,6 +1170,16 @@ static void findCommonAncesterForOps(
+   }
+ }
+ 
++static bool hasSameOffset(unsigned i, OpFoldResult offset,
++                          SmallVector<tensor::ExtractSliceOp> extractUserOps) {
++  for (auto extractUserOp : extractUserOps) {
++    SmallVector<OpFoldResult> offsets = extractUserOp.getMixedOffsets();
++    if (offsets[i] != offset)
++      return false;
++  }
++  return true;
++}
++
+ // If there are multiple consumers of producer in containing op, only fuse producer
+ // once into the first extractSliceOp of producer. For example:
+ //   %1 = linalg.generic    // producer op
+@@ -1258,11 +1268,14 @@ static void findAndMergeMultipleExtractUses(transform::TransformRewriter &rewrit
+     SmallVector<OpFoldResult> newOuterOffsets;
+     SmallVector<OpFoldResult> newOuterSizes;
+     IntegerAttr zeroAttr = rewriter.getIntegerAttr(rewriter.getIntegerType(32), 0);
++    SmallVector<bool> hasSameOffsetForAllExtractUserOps(offsets.size(), false);
+     for (unsigned i = 0; i < offsets.size(); i++) {
+       if (inductionVarsOfCommonAncesterForOps.contains(
+-              llvm::dyn_cast_if_present<Value>(offsets[i]))) {
++              llvm::dyn_cast_if_present<Value>(offsets[i])) &&
++          hasSameOffset(i, offsets[i], extractUserOps)) {
+         newOuterOffsets.push_back(offsets[i]);
+         newOuterSizes.push_back(sizes[i]);
++        hasSameOffsetForAllExtractUserOps[i] = true;
+         continue;
+       }
+       newOuterOffsets.push_back(zeroAttr);
+@@ -1291,8 +1304,7 @@ static void findAndMergeMultipleExtractUses(transform::TransformRewriter &rewrit
+       SmallVector<OpFoldResult> newInnerSizes;
+ 
+       for (unsigned i = 0; i < offsets.size(); i++) {
+-        if (inductionVarsOfCommonAncesterForOps.contains(
+-                llvm::dyn_cast_if_present<Value>(offsets[i]))) {
++        if (hasSameOffsetForAllExtractUserOps[i]) {
+           newInnerOffsets.push_back(zeroAttr);
+           newInnerSizes.push_back(sizes[i]);
+           continue;
+-- 
+2.34.1
+
