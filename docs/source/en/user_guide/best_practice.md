@@ -644,14 +644,24 @@ Mask pointer offsets must be computed correctly for the bitmask layout.
 
 ![image](../../images/user_guide/best_practice2.png)
 
+```{note}
+When using compile_hint, please pay attention to the triton-adaptor version.
+
+Before triton-adaptor 3.2.0: tl.compile_hint(cond, "bitwise_mask")
+
+After triton-adaptor 3.4.0: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+
+The bitmask feature is only available in versions after CANN 9.0.
+```
+
 #### Example
 See [Ascend where kernel](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py). For i8 bitwise mask input, add the hint to the result of `tl.where`:
 
 Please download the dependency script from the link below, place it in the same directory as the test script, and run `python3 test_bitmask.py`.
-The bitmask feature is only available in versions after CANN 9.0, so you need to download a version after CANN 9.0.
 
  [related script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
 ```python
+# test_bitmask.py
 import triton
 import triton.language as tl
 import torch 
@@ -728,6 +738,7 @@ Through the above mask creation example, the bitmask function can be correctly i
 In addition, the following also provides the logic for multiple tiling mask creation for reference:
 
 ```python
+# test_bitmask_tile.py
 import triton
 import triton.language as tl
 import torch
@@ -758,7 +769,10 @@ def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
     cond = tl.load(cond_ptr + offset)
     # bitwise where and store
     mask = tl.where(cond, in0, in1)
-    tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    # versions after triton-adaptor 3.4.0
+    # tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
+    # versions before triton-adaptor 3.2.0
+    tl.compile_hint(mask, "bitwise_mask")
     tl.store(out_ptr0 + offset, mask)
 
 @pytest.mark.parametrize('param_list',
