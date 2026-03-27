@@ -685,7 +685,8 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
   pm.addPass(createCSEPass());
 }
 
-static LogicalResult tileAndSliceStore(func::FuncOp func) {
+static LogicalResult tileAndSliceStore(func::FuncOp func,
+                                       bool &isBroadcastAxisCase) {
   IRRewriter rewriter(func.getContext());
   func->walk([&rewriter](Operation *op) {
     if (!isa<tensor::ExtractSliceOp, memref::SubViewOp>(op) ||
@@ -703,7 +704,9 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   if (failed(analyzer.initialize()))
     return failure();
 
-  analyzer.computeTilingDim();
+  if (analyzer.computeTilingDim()) {
+    isBroadcastAxisCase = true;
+  }
 
   // Check there is no dynamic shape store, if there is, we cannot tile it to 2
   // for now.
@@ -754,7 +757,7 @@ static LogicalResult tileAndSliceStore(func::FuncOp func) {
   }
 
   bool isFailed = true;
-  auto walkResult = func->walk([&isFailed](hivm::StoreOp op) {
+  func->walk([&isFailed](hivm::StoreOp op) {
     if (op->hasAttr(tileAndSliceFailure)) {
       op->removeAttr(tileAndSliceFailure);
       if (op.isAtomic()) {
@@ -829,12 +832,22 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // outside of subblock loop body and use as cloned newFunc's terminator.
   bb1->erase();
 
+  bool isBroadcastAxisCase = false;
+
   PassManager pm(newFunc->getContext());
   pm.addPass(tensor::createReplicateOutEmptyTensorPass());
 
-  if (failed(pm.run((newFunc))) || failed(tileAndSliceStore(newFunc))) {
+  if (failed(pm.run((newFunc))) ||
+      failed(tileAndSliceStore(newFunc, isBroadcastAxisCase))) {
     failAndRevert(newFunc);
     return failure();
+  }
+
+  if (isBroadcastAxisCase) {
+    emitRemark(newFunc.getLoc())
+        << "Selected tiling dim might have broadcast two different axis. "
+           "Automatically disables strict mode.";
+    strictMode = false;
   }
 
   LDBG("After tileAndSliceStore: " << newFunc);

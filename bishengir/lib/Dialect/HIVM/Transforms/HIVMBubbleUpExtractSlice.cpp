@@ -76,11 +76,11 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0))) {
+          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0)) &&
+              strictMode) {
             return WalkResult::interrupt();
-          } else {
-            return WalkResult::advance();
           }
+          return WalkResult::advance();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {

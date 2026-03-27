@@ -47,10 +47,10 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
 /// the dimension that appears most frequently as a parallel dimension.
 /// Uses a heuristic where if the majority of stores have a higher dimension
 /// available, that dimension is chosen for tiling.
-void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
+bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> parallelDimMaps;
   DenseMap<int64_t, int> numStoreOps;
-
+  bool isBroadcastAxisCase = false;
   isVectorOp ? computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps)
              : computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
 
@@ -79,9 +79,12 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     }
   }
   LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
-  for (auto[_, parIdx] : selectedTilingParIdxMap)
+  for (auto[_, parIdx] : selectedTilingParIdxMap) {
     selectedTilingParIdx.insert(parIdx);
+    isBroadcastAxisCase |= broadcastAxisCaseCandidate.contains(parIdx);
+  }
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
+  return isBroadcastAxisCase;
 }
 
 int64_t DimensionAnalyzer::getTilingDim(Value v) {
@@ -128,6 +131,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
           op->emitWarning() << "Detected dimensions are in the same group in one "
                                "storeOp. It is recommended to try with "
                                "strict-mode=false if TileAndBindSubBlock fails";
+          broadcastAxisCaseCandidate.insert(parentIndex);
         }
       }
     }
