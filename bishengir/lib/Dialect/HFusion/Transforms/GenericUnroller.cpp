@@ -37,7 +37,7 @@ namespace mlir {
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
 
 static Value buildNest(OpBuilder& builder, Location loc, Value init,
-                       ArrayRef<Value> dims, 
+                       ArrayRef<Value> dims,
                        function_ref<Value(OpBuilder&, Value, ValueRange)> leaf) {
   auto rank = static_cast<int64_t>(dims.size());
   SmallVector<Value, 4> ivs;
@@ -45,7 +45,7 @@ static Value buildNest(OpBuilder& builder, Location loc, Value init,
   Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
   Value c1 = builder.create<arith::ConstantIndexOp>(loc, 1);
 
-  std::function<Value(OpBuilder&, int64_t, Value)> rec = 
+  std::function<Value(OpBuilder&, int64_t, Value)> rec =
     [&leaf, &rank, &ivs, &loc, &c0, &dims, &c1, &rec]
       (OpBuilder& builder, int64_t i, Value acc)-> Value {
         if (i == rank) {
@@ -60,26 +60,173 @@ static Value buildNest(OpBuilder& builder, Location loc, Value init,
               ivs.pop_back();
               builder.create<scf::YieldOp>(loc, inner);
             });
-        
+
         return forOp.getResult(0);
       };
-  
+
   return rec(builder, 0, init);
 }
 
-static Value evalCombiner(OpBuilder& builder, Location loc, 
+static Value evalCombiner(OpBuilder& builder, Location loc,
                           Region& region, ValueRange argValues) {
   auto& body = region.front();
-  IRMapping map;
 
   assert(body.getNumArguments() == argValues.size());
   assert(body.getNumArguments() == 2);
-  for (auto [arg, val] : llvm::zip(body.getArguments(), argValues)) {
-    map.map(arg, val);
-  }                
+
+  auto cloneOriginalBody = [&]() -> Value {
+    IRMapping map;
+    for (auto [arg, val] : llvm::zip(body.getArguments(), argValues)) {
+      map.map(arg, val);
+    }
+
+    for (auto& op : body.without_terminator()) {
+      builder.clone(op, map);
+    }
+
+    auto yield = cast<linalg::YieldOp>(body.getTerminator());
+    return map.lookup(yield.getValues().front());
+  };
+
+  auto getF32Value = [&](Value v) -> Value {
+    auto ty = dyn_cast<FloatType>(v.getType());
+    if (!ty || ty.isF32()) {
+      return v;
+    }
+    assert(!ty.isF64() && "f64 never expected here");
+    return builder.create<arith::ExtFOp>(loc, builder.getF32Type(), v);
+  };
+
+  auto canLegalizeToF32 = [&](Operation& op) -> bool {
+    return isa<arith::AddFOp,
+               arith::SubFOp,
+               arith::MulFOp,
+               arith::DivFOp,
+               arith::RemFOp,
+               arith::NegFOp,
+               arith::MaximumFOp,
+               arith::MinimumFOp,
+               arith::MaxNumFOp,
+               arith::MinNumFOp,
+               arith::CmpFOp,
+               arith::SelectOp>(op);
+  };
+
+  auto regionArgTy = dyn_cast<FloatType>(body.getArgument(0).getType());
+  bool useF32FloatPath = regionArgTy && !regionArgTy.isF32();
+  if (regionArgTy) {
+    assert(!regionArgTy.isF64() && "f64 never expected here");
+  }
+
+  if (!useF32FloatPath) {
+    return cloneOriginalBody();
+  }
 
   for (auto& op : body.without_terminator()) {
-    builder.clone(op, map);
+    if (!canLegalizeToF32(op)) {
+      op.emitWarning("failed to legalize float reduce combiner to f32, cloning body as-is");
+      return cloneOriginalBody();
+    }
+  }
+
+  IRMapping map;
+  for (auto [arg, val] : llvm::zip(body.getArguments(), argValues)) {
+    map.map(arg, getF32Value(val));
+  }
+
+  for (auto& op : body.without_terminator()) {
+    if (auto add = dyn_cast<arith::AddFOp>(op)) {
+      Value lhs = map.lookup(add.getLhs());
+      Value rhs = map.lookup(add.getRhs());
+      map.map(add.getResult(), builder.create<arith::AddFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto sub = dyn_cast<arith::SubFOp>(op)) {
+      Value lhs = map.lookup(sub.getLhs());
+      Value rhs = map.lookup(sub.getRhs());
+      map.map(sub.getResult(), builder.create<arith::SubFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto mul = dyn_cast<arith::MulFOp>(op)) {
+      Value lhs = map.lookup(mul.getLhs());
+      Value rhs = map.lookup(mul.getRhs());
+      map.map(mul.getResult(), builder.create<arith::MulFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto div = dyn_cast<arith::DivFOp>(op)) {
+      Value lhs = map.lookup(div.getLhs());
+      Value rhs = map.lookup(div.getRhs());
+      map.map(div.getResult(), builder.create<arith::DivFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto rem = dyn_cast<arith::RemFOp>(op)) {
+      Value lhs = map.lookup(rem.getLhs());
+      Value rhs = map.lookup(rem.getRhs());
+      map.map(rem.getResult(), builder.create<arith::RemFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto neg = dyn_cast<arith::NegFOp>(op)) {
+      Value operand = map.lookup(neg.getOperand());
+      map.map(neg.getResult(), builder.create<arith::NegFOp>(loc, operand));
+      continue;
+    }
+
+    if (auto maximum = dyn_cast<arith::MaximumFOp>(op)) {
+      Value lhs = map.lookup(maximum.getLhs());
+      Value rhs = map.lookup(maximum.getRhs());
+      map.map(maximum.getResult(),
+              builder.create<arith::MaximumFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto minimum = dyn_cast<arith::MinimumFOp>(op)) {
+      Value lhs = map.lookup(minimum.getLhs());
+      Value rhs = map.lookup(minimum.getRhs());
+      map.map(minimum.getResult(),
+              builder.create<arith::MinimumFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto maxnum = dyn_cast<arith::MaxNumFOp>(op)) {
+      Value lhs = map.lookup(maxnum.getLhs());
+      Value rhs = map.lookup(maxnum.getRhs());
+      map.map(maxnum.getResult(),
+              builder.create<arith::MaxNumFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto minnum = dyn_cast<arith::MinNumFOp>(op)) {
+      Value lhs = map.lookup(minnum.getLhs());
+      Value rhs = map.lookup(minnum.getRhs());
+      map.map(minnum.getResult(),
+              builder.create<arith::MinNumFOp>(loc, lhs, rhs));
+      continue;
+    }
+
+    if (auto cmp = dyn_cast<arith::CmpFOp>(op)) {
+      Value lhs = map.lookup(cmp.getLhs());
+      Value rhs = map.lookup(cmp.getRhs());
+      map.map(cmp.getResult(),
+              builder.create<arith::CmpFOp>(loc, cmp.getPredicate(), lhs, rhs));
+      continue;
+    }
+
+    if (auto select = dyn_cast<arith::SelectOp>(op)) {
+      Value cond = map.lookup(select.getCondition());
+      Value trueValue = map.lookup(select.getTrueValue());
+      Value falseValue = map.lookup(select.getFalseValue());
+      map.map(select.getResult(),
+              builder.create<arith::SelectOp>(loc, cond, trueValue, falseValue));
+      continue;
+    }
+
+    op.emitWarning("unexpected op after float reduce combiner legalization check, cloning body as-is");
+    return cloneOriginalBody();
   }
 
   auto yield = cast<linalg::YieldOp>(body.getTerminator());
@@ -87,7 +234,7 @@ static Value evalCombiner(OpBuilder& builder, Location loc,
 }
 
 static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
-                                 Value input, Value outInit, 
+                                 Value input, Value outInit,
                                  Region& combiner, ArrayRef<int64_t> reduceDims) {
   auto loc = op->getLoc();
   auto inputType = cast<ShapedType>(input.getType());
@@ -95,6 +242,34 @@ static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
 
   auto inputRank = inputType.getRank();
   auto outRank = outType.getRank();
+
+  auto inputElemTy = dyn_cast<FloatType>(inputType.getElementType());
+  bool useF32Accumulation = inputElemTy && !inputElemTy.isF32();
+  if (inputElemTy) {
+    assert(!inputElemTy.isF64() && "f64 never expected here");
+  }
+
+  auto promoteToF32IfNeeded = [&](OpBuilder& builder, Value v) -> Value {
+    if (!useF32Accumulation) {
+      return v;
+    }
+    auto ty = dyn_cast<FloatType>(v.getType());
+    if (!ty || ty.isF32()) {
+      return v;
+    }
+    return builder.create<arith::ExtFOp>(loc, builder.getF32Type(), v);
+  };
+
+  auto convertFromF32IfNeeded = [&](OpBuilder& builder, Value v, Type dstTy) -> Value {
+    if (!useF32Accumulation || v.getType() == dstTy) {
+      return v;
+    }
+    auto dstFloatTy = dyn_cast<FloatType>(dstTy);
+    if (!dstFloatTy) {
+      return v;
+    }
+    return builder.create<arith::TruncFOp>(loc, dstTy, v);
+  };
 
   assert(llvm::is_sorted(reduceDims));
   auto isUnique = [](ArrayRef<int64_t> a) {
@@ -159,7 +334,7 @@ static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
       }
       return idxs;
     };
-  
+
   Value allReduceDimsSizeOne = rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
   Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
@@ -168,22 +343,26 @@ static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
     allReduceDimsSizeOne = rewriter.create<arith::AndIOp>(loc, allReduceDimsSizeOne, is1);
   }
 
-  auto leafOuter = [&reduceDims, &c0, &loc, &input, &makeInputIdxs, 
-                              &allReduceDimsSizeOne, &combiner, &reduceSizes]
+  auto leafOuter = [&reduceDims, &c0, &loc, &input, &makeInputIdxs,
+                              &allReduceDimsSizeOne, &combiner, &reduceSizes,
+                              &promoteToF32IfNeeded, &convertFromF32IfNeeded, &outType]
     (OpBuilder& builder, Value acc, ValueRange outIvs) -> Value {
       SmallVector<Value, 4> reduceZeros(reduceDims.size(), c0);
       Value first = builder.create<tensor::ExtractOp>(loc, input, makeInputIdxs(outIvs, reduceZeros));
+      Value firstAcc = promoteToF32IfNeeded(builder, first);
 
       auto ifOp = builder.create<scf::IfOp>(
-        loc, allReduceDimsSizeOne, 
+        loc, allReduceDimsSizeOne,
         [&first, &acc, &outIvs]
           (OpBuilder& builder, Location loc) {
             Value res = builder.create<tensor::InsertOp>(loc, first, acc, outIvs);
             builder.create<scf::YieldOp>(loc, res);
           },
-        [&c0, &input, &makeInputIdxs, &outIvs, &combiner, &first, &reduceSizes, &acc]
+        [&c0, &input, &makeInputIdxs, &outIvs, &combiner, &firstAcc, &reduceSizes, &acc,
+         &promoteToF32IfNeeded, &convertFromF32IfNeeded, &outType]
           (OpBuilder& builder, Location loc) {
-            auto reduceLeaf = [&loc, &c0, &input, &makeInputIdxs, &outIvs, &combiner]
+            auto reduceLeaf = [&loc, &c0, &input, &makeInputIdxs, &outIvs, &combiner,
+                               &promoteToF32IfNeeded]
               (OpBuilder& builder, Value acc, ValueRange reduceIvs) {
                 Value isFirstElement = builder.create<arith::ConstantIntOp>(loc, 1, 1);
                 for (auto iv : reduceIvs) {
@@ -197,9 +376,11 @@ static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
                     (OpBuilder& builder, Location loc) {
                       builder.create<scf::YieldOp>(loc, acc);
                     },
-                  [&input, &makeInputIdxs, &outIvs, &reduceIvs, &combiner, &acc]
+                  [&input, &makeInputIdxs, &outIvs, &reduceIvs, &combiner, &acc,
+                   &promoteToF32IfNeeded]
                     (OpBuilder& builder, Location loc) {
                       Value in = builder.create<tensor::ExtractOp>(loc, input, makeInputIdxs(outIvs, reduceIvs));
+                      in = promoteToF32IfNeeded(builder, in);
                       Value next = evalCombiner(builder, loc, combiner, ValueRange{in, acc});
                       builder.create<scf::YieldOp>(loc, next);
                     });
@@ -207,7 +388,8 @@ static LogicalResult lowerReduce(PatternRewriter& rewriter, Operation* op,
                 return stepIf.getResult(0);
               };
 
-              Value accFinal = buildNest(builder, loc, first, reduceSizes, reduceLeaf);
+              Value accFinal = buildNest(builder, loc, firstAcc, reduceSizes, reduceLeaf);
+              accFinal = convertFromF32IfNeeded(builder, accFinal, outType.getElementType());
               Value res = builder.create<tensor::InsertOp>(loc, accFinal, acc, outIvs);
               builder.create<scf::YieldOp>(loc, res);
           });
@@ -244,7 +426,7 @@ static SmallVector<Value, 2> buildNest2(OpBuilder& builder, Location loc,
   Value c0 = builder.create<arith::ConstantIndexOp>(loc, 0);
   Value c1 = builder.create<arith::ConstantIndexOp>(loc, 1);
 
-  std::function<SmallVector<Value, 2>(OpBuilder&, int64_t, ValueRange)> rec = 
+  std::function<SmallVector<Value, 2>(OpBuilder&, int64_t, ValueRange)> rec =
     [&ivs, &rec, rank, leaf, loc, c0, dims, c1]
       (OpBuilder& builder, int64_t i, ValueRange accs) {
         if (i == rank) {
@@ -259,19 +441,19 @@ static SmallVector<Value, 2> buildNest2(OpBuilder& builder, Location loc,
               ivs.pop_back();
               builder.create<scf::YieldOp>(loc, inner);
             });
-        
+
         SmallVector<Value, 2> res;
         res.append(forOp.getResults().begin(), forOp.getResults().end());
         return res;
       };
-    
+
   return rec(builder, 0, inits);
 }
 
 static LogicalResult lowerReduceWithIndex(PatternRewriter& rewriter,
                                           hfusion::ReduceWithIndexOp op,
-                                          unsigned dim, 
-                                          bool max, 
+                                          unsigned dim,
+                                          bool max,
                                           bool unsignedCmp) {
   Value values = op.getDpsInputOperand(0)->get();
   Value idxs = op.getDpsInputOperand(1)->get();
@@ -320,8 +502,8 @@ static LogicalResult lowerReduceWithIndex(PatternRewriter& rewriter,
       auto in0 = makeInputIdxs(outIvs, c0);
       Value first = builder.create<tensor::ExtractOp>(loc, values, in0);
       Value firstIdx = builder.create<tensor::ExtractOp>(loc, idxs, in0);
-      
-      auto leaf = builder.create<scf::ForOp>(loc, c1, reduceSize, c1, 
+
+      auto leaf = builder.create<scf::ForOp>(loc, c1, reduceSize, c1,
         ValueRange{first, firstIdx},
         [makeInputIdxs, outIvs, values, max, idxs, unsignedCmp]
           (OpBuilder& builder, Location loc, Value iv, ValueRange iterArgs) {
@@ -339,7 +521,7 @@ static LogicalResult lowerReduceWithIndex(PatternRewriter& rewriter,
 
             builder.create<scf::YieldOp>(loc, ValueRange{next, nextIdx});
           });
-      
+
       Value val = leaf.getResult(0);
       Value idx = leaf.getResult(1);
 
@@ -368,11 +550,11 @@ struct HandleReduceOpPattern : OpRewritePattern<linalg::ReduceOp> {
 
     SmallVector<unsigned, 2> reduceDims;
     op.getReductionDims(reduceDims);
-    return lowerReduce(rewriter, op, 
-      op.getDpsInputOperand(0)->get(), 
-      op.getDpsInitOperand(0)->get(), 
+    return lowerReduce(rewriter, op,
+      op.getDpsInputOperand(0)->get(),
+      op.getDpsInitOperand(0)->get(),
       op.getRegion(),
-      llvm::to_vector_of<int64_t>(reduceDims));    
+      llvm::to_vector_of<int64_t>(reduceDims));
   }
 };
 
@@ -397,7 +579,7 @@ struct HandleReduceWithIndexOpPattern : OpRewritePattern<hfusion::ReduceWithInde
     return lowerReduceWithIndex(
       rewriter,
       op,
-      dim, 
+      dim,
       kind == hfusion::ReduceWithIndexKind::MAX,
       /*unsignedCmp=*/ true);
   }
