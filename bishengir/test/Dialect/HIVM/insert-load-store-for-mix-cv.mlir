@@ -544,3 +544,46 @@ module {
     return %r : tensor<32x32xf32>
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @test_index_select_simd
+func.func @test_index_select_simd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: i32, %arg9: i32, %arg10: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, true, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {
+  %c4 = arith.constant 4 : index
+  %true = arith.constant true
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c0 = arith.constant 0 : index
+  hivm.hir.set_mask_norm
+  %0 = arith.muli %arg8, %arg9 : i32
+  %1 = arith.muli %0, %arg10 : i32
+  annotation.mark %1 {logical_block_num} : i32
+  %reinterpret_cast = memref.reinterpret_cast %arg6 to offset: [0], sizes: [3], strides: [1] : memref<?xi32> to memref<3xi32, strided<[1]>>
+  %alloc = memref.alloc() : memref<3xi32>
+  hivm.hir.load ins(%reinterpret_cast : memref<3xi32, strided<[1]>>) outs(%alloc : memref<3xi32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  // CHECK: hivm.hir.load
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<3xi32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [6, 4], strides: [4, 1] : memref<?xf32> to memref<6x4xf32, strided<[4, 1]>>
+  %alloc_1 = memref.alloc() : memref<3x4xf32>
+  scf.for %arg11 = %c0 to %c3 step %c1 {
+    %extracted = tensor.extract %2[%arg11] : tensor<3xi32>
+    %7 = arith.index_cast %extracted : i32 to index
+    %subview = memref.subview %reinterpret_cast_0[%7, 0] [1, 4] [1, 1] : memref<6x4xf32, strided<[4, 1]>> to memref<1x4xf32, strided<[4, 1], offset: ?>>
+    %subview_5 = memref.subview %alloc_1[%arg11, 0] [1, 4] [1, 1] : memref<3x4xf32> to memref<1x4xf32, strided<[4, 1], offset: ?>>
+    annotation.mark %subview_5 {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x4xf32, strided<[4, 1], offset: ?>>
+    hivm.hir.load ins(%subview : memref<1x4xf32, strided<[4, 1], offset: ?>>) outs(%subview_5 : memref<1x4xf32, strided<[4, 1], offset: ?>>) left_padding_num = %c0 : index init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    // CHECK: hivm.hir.load
+  } {hivm.parallel_loop}
+  %3 = bufferization.to_tensor %alloc_1 restrict writable {index_select_simd} : memref<3x4xf32>
+  // CHECK: hivm.hir.store
+  // CHECK: hivm.hir.load
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [4, 3], strides: [3, 1] : memref<?xf32> to memref<4x3xf32, strided<[3, 1]>>
+  %alloc_3 = memref.alloc() : memref<4x3xf32>
+  hivm.hir.load ins(%reinterpret_cast_2 : memref<4x3xf32, strided<[3, 1]>>) outs(%alloc_3 : memref<4x3xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  // CHECK: hivm.hir.load
+  %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<4x3xf32>
+  %5 = tensor.empty() : tensor<3x3xf32>
+  %6 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%3, %4, %true, %c1, %c4, %c3 : tensor<3x4xf32>, tensor<4x3xf32>, i1, index, index, index) outs(%5 : tensor<3x3xf32>) -> tensor<3x3xf32>
+  %reinterpret_cast_4 = memref.reinterpret_cast %arg7 to offset: [0], sizes: [3, 3], strides: [3, 1] : memref<?xf32> to memref<3x3xf32, strided<[3, 1]>>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%6 : tensor<3x3xf32>) outs(%reinterpret_cast_4 : memref<3x3xf32, strided<[3, 1]>>)
+  return
+}
