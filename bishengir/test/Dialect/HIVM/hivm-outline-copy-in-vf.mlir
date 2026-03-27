@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-outline-copy-in-VF -split-input-file -allow-unregistered-dialect | FileCheck %s
+// RUN: bishengir-opt %s -hivm-outline-copy-in-VF -cse -canonicalize -split-input-file -allow-unregistered-dialect | FileCheck %s
 
 // -----
 
@@ -24,14 +24,9 @@ func.func @caller() {
 // -----
 
 // CHECK-LABEL: func.func @guarded_vf
-// CHECK: %[[CST:.*]] = arith.constant dense<0.000000e+00> : vector<1xf32>
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[SUBVIEW:.*]] = memref.subview %arg1[%[[C0]]] [1] [1] : memref<16xf32> to memref<1xf32, strided<[1], offset: ?>>
-// CHECK: vector.transfer_write %[[CST]], %[[SUBVIEW]][%[[C0]]] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
-// CHECK: %[[C0_LOWERED:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %arg0[%[[C0_LOWERED]]], %[[PAD]] {in_bounds = [true]} : memref<16xf32>, vector<16xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0_LOWERED]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
+// CHECK:      %0 = vector.constant_mask [16] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %arg0[%c0], %cst, %0 : memref<16xf32>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %arg1[%c0], %0 : vector<64xf32>, memref<16xf32>
 func.func @guarded_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   %cst = arith.constant dense<0.000000e+00> : vector<1xf32>
   %c0 = arith.constant 0 : index
@@ -56,13 +51,9 @@ func.func @guarded_caller() {
 // -----
 
 // CHECK-LABEL: func.func @subview_load_vf
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[SRC_SUBVIEW:.*]] = memref.subview %arg0[%[[C0]]] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK: %[[DST_SUBVIEW:.*]] = memref.subview %arg1[%[[C0]]] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK: %[[C0_LOWERED:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %[[SRC_SUBVIEW]][%[[C0_LOWERED]]], %[[PAD]] {in_bounds = [true]} : memref<4xf32, strided<[1], offset: ?>>, vector<4xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %{{.*}}[%[[C0_LOWERED]]] {in_bounds = [true]} : vector<4xf32>, memref<4xf32, strided<[1], offset: ?>>
+// CHECK:      %0 = vector.constant_mask [4] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %subview[%c0], %cst, %0 : memref<4xf32, strided<[1]>>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %subview_0[%c0], %0 : vector<64xf32>, memref<4xf32, strided<[1]>>
 func.func @subview_load_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %src = memref.subview %arg0[%c0] [4] [1] : memref<16xf32> to memref<4xf32, strided<[1], offset: ?>>
@@ -74,11 +65,9 @@ func.func @subview_load_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attribu
 // -----
 
 // CHECK-LABEL: func.func @unknown_write_vf
-// CHECK: "test.unknown_write"(%arg1) : (memref<16xf32>) -> ()
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %arg0[%[[C0]]], %[[PAD]] {in_bounds = [true]} : memref<16xf32>, vector<16xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
+// CHECK:      %0 = vector.constant_mask [16] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %arg0[%c0], %cst, %0 : memref<16xf32>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %arg1[%c0], %0 : vector<64xf32>, memref<16xf32>
 func.func @unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   "test.unknown_write"(%arg1) : (memref<16xf32>) -> ()
   hivm.hir.copy ins(%arg0 : memref<16xf32>) outs(%arg1 : memref<16xf32>)
@@ -100,13 +89,9 @@ func.func @unknown_write_caller() {
 // -----
 
 // CHECK-LABEL: func.func @recursive_unknown_write_vf
-// CHECK: scf.if %{{.*}} {
-// CHECK:   "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
-// CHECK: }
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %arg0[%[[C0]]], %[[PAD]] {in_bounds = [true]} : memref<16xf32>, vector<16xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
+// CHECK:      %0 = vector.constant_mask [16] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %arg0[%c0], %cst, %0 : memref<16xf32>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %arg1[%c0], %0 : vector<64xf32>, memref<16xf32>
 func.func @recursive_unknown_write_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>, %flag: i1) attributes {hivm.vector_function, no_inline} {
   scf.if %flag {
     "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
@@ -130,13 +115,9 @@ func.func @recursive_unknown_write_caller(%flag: i1) {
 // -----
 
 // CHECK-LABEL: func.func @unknown_region_capture_dst_vf
-// CHECK: "test.unknown_region"() ({
-// CHECK:   "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
-// CHECK: }) : () -> ()
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %arg0[%[[C0]]], %[[PAD]] {in_bounds = [true]} : memref<16xf32>, vector<16xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
+// CHECK:      %0 = vector.constant_mask [16] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %arg0[%c0], %cst, %0 : memref<16xf32>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %arg1[%c0], %0 : vector<64xf32>, memref<16xf32>
 func.func @unknown_region_capture_dst_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   "test.unknown_region"() ({
     "test.unknown_nested_write"(%arg1) : (memref<16xf32>) -> ()
@@ -160,13 +141,9 @@ func.func @unknown_region_capture_dst_caller() {
 // -----
 
 // CHECK-LABEL: func.func @unknown_region_capture_src_vf
-// CHECK: "test.unknown_region"() ({
-// CHECK:   "test.unknown_nested_write"(%arg0) : (memref<16xf32>) -> ()
-// CHECK: }) : () -> ()
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK-NEXT: %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT: %[[READ:.*]] = vector.transfer_read %arg0[%[[C0]]], %[[PAD]] {in_bounds = [true]} : memref<16xf32>, vector<16xf32>
-// CHECK-NEXT: vector.transfer_write %[[READ]], %arg1[%[[C0]]] {in_bounds = [true]} : vector<16xf32>, memref<16xf32>
+// CHECK:      %0 = vector.constant_mask [16] : vector<64xi1>
+// CHECK-NEXT: %1 = vector.transfer_read %arg0[%c0], %cst, %0 : memref<16xf32>, vector<64xf32>
+// CHECK-NEXT: vector.transfer_write %1, %arg1[%c0], %0 : vector<64xf32>, memref<16xf32>
 func.func @unknown_region_capture_src_vf(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hivm.vector_function, no_inline} {
   "test.unknown_region"() ({
     "test.unknown_nested_write"(%arg0) : (memref<16xf32>) -> ()
@@ -190,21 +167,39 @@ func.func @unknown_region_capture_src_caller() {
 // -----
 
 // CHECK-LABEL: func.func @large_copy_vf
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[C1000:.*]] = arith.constant 1000 : index
-// CHECK: %[[C64:.*]] = arith.constant 64 : index
-// CHECK: scf.for %[[IV:.*]] = %{{.*}} to %[[C1000]] step %[[C64]] {
-// CHECK:   %[[REMAINING:.*]] = arith.subi %[[C1000]], %[[IV]] : index
-// CHECK:   %[[CMP:.*]] = arith.cmpi slt, %[[REMAINING]], %[[C64]] : index
-// CHECK:   %[[CHUNK:.*]] = arith.select %[[CMP]], %[[REMAINING]], %[[C64]] : index
-// CHECK:   %[[MASK:.*]] = vector.create_mask %[[CHUNK]] : vector<64xi1>
-// CHECK:   %[[READ:.*]] = vector.transfer_read %arg0[%[[IV]]], %{{.*}}, %[[MASK]] : memref<1000xf32>, vector<64xf32>
-// CHECK:   vector.transfer_write %[[READ]], %arg1[%[[IV]]], %[[MASK]] : vector<64xf32>, memref<1000xf32>
+// CHECK:      scf.for %arg2 = %c0 to %c1000 step %c64 {
+// CHECK-NEXT:   %0 = arith.subi %c1000, %arg2 : index
+// CHECK-NEXT:   %1 = arith.cmpi slt, %0, %c64 : index
+// CHECK-NEXT:   %2 = arith.select %1, %0, %c64 : index
+// CHECK-NEXT:   %3 = vector.create_mask %2 : vector<64xi1>
+// CHECK-NEXT:   %4 = vector.transfer_read %arg0[%arg2], %cst, %3 : memref<1000xf32>, vector<64xf32>
+// CHECK-NEXT:   vector.transfer_write %4, %arg1[%arg2], %3 : vector<64xf32>, memref<1000xf32>
+// CHECK-NEXT: }
 func.func @large_copy_vf(%arg0: memref<1000xf32>, %arg1: memref<1000xf32>) attributes {hivm.vector_function, no_inline} {
   %init = arith.constant dense<0.000000e+00> : vector<1xf32>
   %c0 = arith.constant 0 : index
   %subview = memref.subview %arg1[%c0] [1] [1] : memref<1000xf32> to memref<1xf32, strided<[1], offset: ?>>
   vector.transfer_write %init, %subview[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
   hivm.hir.copy ins(%arg0 : memref<1000xf32>) outs(%arg1 : memref<1000xf32>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @large_copy_vf_2_dim
+// CHECK:      scf.for %arg2 = %c0 to %c1000 step %c64 {
+// CHECK-NEXT:   %0 = arith.subi %c1000, %arg2 : index
+// CHECK-NEXT:   %1 = arith.cmpi slt, %0, %c64 : index
+// CHECK-NEXT:   %2 = arith.select %1, %0, %c64 : index
+// CHECK-NEXT:   %3 = vector.create_mask %c1, %2 : vector<1x64xi1>
+// CHECK-NEXT:   %4 = vector.transfer_read %arg0[%c0, %arg2], %cst, %3 {in_bounds = [true, false]} : memref<1x1000xf32>, vector<1x64xf32>
+// CHECK-NEXT:   vector.transfer_write %4, %arg1[%c0, %arg2], %3 {in_bounds = [true, false]} : vector<1x64xf32>, memref<1x1000xf32>
+// CHECK-NEXT: }
+func.func @large_copy_vf_2_dim(%arg0: memref<1x1000xf32>, %arg1: memref<1x1000xf32>) attributes {hivm.vector_function, no_inline} {
+  %init = arith.constant dense<0.000000e+00> : vector<1xf32>
+  %c0 = arith.constant 0 : index
+  %subview = memref.subview %arg1[%c0, %c0] [1, 1] [1, 1] : memref<1x1000xf32> to memref<1xf32, strided<[1], offset: ?>>
+  vector.transfer_write %init, %subview[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>>
+  hivm.hir.copy ins(%arg0 : memref<1x1000xf32>) outs(%arg1 : memref<1x1000xf32>)
   return
 }
