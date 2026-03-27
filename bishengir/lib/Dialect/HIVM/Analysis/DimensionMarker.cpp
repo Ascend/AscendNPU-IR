@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -93,7 +94,8 @@ void DimensionAnalyzer::processBFS() {
             if (isa<ShapedType>(res.getType())) {
               createDummyRefIfNotExist({res});
               solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-              LDBG(res << " is mapped to " << utils::debugger::to_string(getArgumentRef(res)));
+              LDBG(res << " is mapped to "
+                       << utils::debugger::to_string(getArgumentRef(res)));
             }
           }
         }
@@ -371,8 +373,7 @@ void DimensionAnalyzer::processVPadOp(hivm::VPadOp op) {
   mergeValues({input}, outputs, paddedIndices);
 }
 
-template <typename T, typename>
-void DimensionAnalyzer::processVCumOp(T op) {
+template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
   if constexpr (std::is_same_v<T, hivm::VCumsumOp>) {
     LDBG("Processing VCumsumOp " << op);
   } else {
@@ -421,15 +422,14 @@ void DimensionAnalyzer::processTilingDimMapping(
   auto srcArgs = getArgumentRef(src);
   auto resArgs = getArgumentRef(res);
   for (NamedAttribute dimMappingAttr : tilingDimMapping) {
-      int srcDim;
-      int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
-      llvm::to_integer(dimMappingAttr.getName(), srcDim);
-      joinCollapser(srcArgs[srcDim], resArgs[resDim]);
+    int srcDim;
+    int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
+    llvm::to_integer(dimMappingAttr.getName(), srcDim);
+    joinCollapser(srcArgs[srcDim], resArgs[resDim]);
   }
 }
 
-template <typename T, typename>
-void DimensionAnalyzer::processReshapeOp(T op) {
+template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
   if constexpr (std::is_same_v<T, tensor::ExpandShapeOp>) {
     LDBG("Processing ExpandShapeOp " << op);
   } else {
@@ -560,10 +560,26 @@ void DimensionAnalyzer::markDimensionKind() {
         processSlice(extractOp);
       }
     } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
-      auto srcRef = getArgumentRef(vtransposeOp.getSrc());
-      auto dstRef = getArgumentRef(vtransposeOp.getDst());
+      auto src = vtransposeOp.getSrc();
+      auto dst = vtransposeOp.getDst();
+      SmallVector<int64_t> srcNonUnitDims;
+      SmallVector<int64_t> dstNonUnitDims;
+      for (auto dim : utils::getShape(src.getType())) {
+        if (dim != 1)
+          srcNonUnitDims.push_back(dim);
+      }
+      for (auto dim : utils::getShape(dst.getType())) {
+        if (dim != 1)
+          dstNonUnitDims.push_back(dim);
+      }
+      if (srcNonUnitDims == dstNonUnitDims) {
+        return;
+      }
+      auto srcRef = getArgumentRef(src);
+      auto dstRef = getArgumentRef(dst);
+
       auto perm = vtransposeOp.getPermutation();
-      for (auto[dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
+      for (auto [dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
         auto srcSolverIdx = solverShapeElem_->find(srcRef[perm[dimIdx]]);
         auto dstSolverIdx = solverShapeElem_->find(parentIdx);
         if (auto it = transposedDimMap.find(srcSolverIdx);
@@ -573,14 +589,15 @@ void DimensionAnalyzer::markDimensionKind() {
         } else {
           transposedDimMap[dstSolverIdx] = perm[dimIdx];
         }
-        LDBG(dstSolverIdx << " is now transposed dim(" << transposedDimMap[dstSolverIdx] << ")");
+        LDBG(dstSolverIdx << " is now transposed dim("
+                          << transposedDimMap[dstSolverIdx] << ")");
       }
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
+               markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
       auto expandShapeOp =
           markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
-      auto tilingDimMapping = markOp->getAttrOfType<DictionaryAttr>(
-          kTilingDimMappingAttrName);
+      auto tilingDimMapping =
+          markOp->getAttrOfType<DictionaryAttr>(kTilingDimMappingAttrName);
       auto src = expandShapeOp.getSrc();
       auto res = expandShapeOp.getResult();
 
@@ -592,7 +609,8 @@ void DimensionAnalyzer::markDimensionKind() {
         llvm::to_integer(dimMappingAttr.getName(), srcDim);
         srcDim = solverShapeElem_->find(srcArgs[srcDim]);
         resDim = solverShapeElem_->find(resArgs[resDim]);
-        LDBG("Checking if transposed dim of " << srcDim << " is moved to " << resDim);
+        LDBG("Checking if transposed dim of " << srcDim << " is moved to "
+                                              << resDim);
         if (auto it = transposedDimMap.find(srcDim);
             it != transposedDimMap.end()) {
           LDBG("Successfully moved");
