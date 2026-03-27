@@ -346,6 +346,16 @@ private:
                           return rewriter.create<ascend_dpx::PowOp>(loc, elemTy,
                                                                     lhs, rhs);
                         })
+                  .Case("__hmf_powDh",
+                        [&] {
+                          return rewriter.create<ascend_dpx::PowOp>(loc, elemTy,
+                                                                    lhs, rhs);
+                        })
+                  .Case("__hmf_powDb",
+                        [&] {
+                          return rewriter.create<ascend_dpx::PowOp>(loc, elemTy,
+                                                                    lhs, rhs);
+                        })
                   .Case("__hmf_powi",
                         [&] {
                           return rewriter.create<ascend_dpx::PowOp>(loc, elemTy,
