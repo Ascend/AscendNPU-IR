@@ -56,6 +56,8 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+constexpr static llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+ 	     "MayImplicitTransposeWithLastAxis";
 struct InsertCVTightCoupledBufferPass
     : public impl::InsertCVTightCoupledBufferBase<
           InsertCVTightCoupledBufferPass> {
@@ -262,7 +264,8 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
   for (OpOperand *consumerOperand : consumerOperands) {
     Value origTensor = consumerOperand->get();
     // TODO: enhance support for dynamic shape
-    auto tensorType = origTensor.getType().dyn_cast<RankedTensorType>();
+    // auto tensorType = origTensor.getType().dyn_cast<RankedTensorType>();
+    auto tensorType = mlir::dyn_cast<RankedTensorType>(origTensor.getType());
     if (!tensorType)
       continue;
 
@@ -460,6 +463,17 @@ struct InsertMoveL1BetweenVectorAndCube
           if (!maybeSpace.has_value() || maybeSpace.value() != hivm::AddressSpace::UB)
             continue;
         }
+        if constexpr (std::is_same_v<OpType, bufferization::ToTensorOp>) {
+          auto toTensorOp = llvm::cast<bufferization::ToTensorOp>(producer);
+          auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+              toTensorOp.getResult(), kMayImplicitTransposeWithLastAxis);
+          if (!maybeAnnotateOp.has_value()) {
+            maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+                toTensorOp.getMemref(), kMayImplicitTransposeWithLastAxis);
+          }
+          if (!maybeAnnotateOp.has_value())
+            continue;
+ 	      }
         matched = true;
         break;
       }
@@ -502,10 +516,7 @@ struct InsertDataMovementFixpipeToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
       if (!maybeFixpipe)
         continue;
-      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(maybeFixpipe.value());
-
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
-
       LogicalResult ubResult =
           InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
       if (failed(ubResult))
@@ -543,6 +554,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferizationl::ToTensorOp>>(patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
