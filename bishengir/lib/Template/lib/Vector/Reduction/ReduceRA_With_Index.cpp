@@ -324,7 +324,9 @@ __aiv__ __attribute__((always_inline)) void
 scalar_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
                             memref_t<__ubuf__ T, 2> *dst_value,
                             memref_t<__ubuf__ int32_t, 2> *dst_index) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("reduceRA with index");
+#endif
   static_assert(std::is_same<half, T>() ||
                 std::is_same<float, T>(),
                 "T must be half or float.");
