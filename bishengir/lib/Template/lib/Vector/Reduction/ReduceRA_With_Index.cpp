@@ -453,39 +453,14 @@ reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
   bool is_offset_address_aligned = is_offset_address_aligned_to_block<T>(src0, dst_value, dst_index);
   bool is_same_offset_aligned = is_same_element_nums_to_move_offset_aligned(src0, dst_value, dst_index);
 
-  // The stride sizes of source and dest are aligned.
-  if (is_stride_size_aligned) {
-    // The address of source, dest_value and dest_index with the offset is 32-byte aligned.
-    if (is_offset_address_aligned) {
+  // The stride sizes of source and dest are aligned and the address of source, dest_value and dest_index with the offset is 32-byte aligned.
+  if (is_stride_size_aligned && is_offset_address_aligned) [[likely]] {
       vector_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index, tmp_index);
-      return;
-    }
-
-    // The address of source, dest_value and dest_index with the offset is not 32-byte aligned.
-    // After an additional same offset is added, the addresses can be 32-byte aligned.
-    if (is_same_offset_aligned) {
-      // source, dest_value and dest_index. The unaligned part is calculated using the scalar,
-      // and the aligned part is calculated using the vector.
-      int64_t scalar_element_nums = element_nums_to_move_offset_aligned<T>(src0);
-      scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(
-        src0, dst_value, dst_index, scalar_element_nums);
-
-      // If the scalar has processed all data, the vector does not need to be called for processing.
-      auto last_dim_ub_element_nums = src0->sizes[1] * src0->strides[1];
-      if (last_dim_ub_element_nums < scalar_element_nums) {
-        return;
-      }
-      vector_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(
-        src0, dst_value, dst_index, tmp_index, scalar_element_nums);
-      return;
-    }
-    // After an additional same offset is added, the addresses can not be 32-byte aligned.
+  } else [[unlikely]] {
+    // The address or stride is not aligned.
     scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index);
-    return;
-  } 
-  
-  // The stride sizes of source and dest are not aligned.
-  scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index);
+  }
+
 }
 
 /// reduce src (r, a) with stride [n, 1] to dst (r, 1) and return the
