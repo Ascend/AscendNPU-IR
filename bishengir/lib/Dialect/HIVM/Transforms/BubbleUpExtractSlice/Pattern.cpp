@@ -794,12 +794,14 @@ handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
       rewriter, sliceOp.getLoc(), sliceOp.getMixedOffsets()[tilingDim]);
   auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
                                                  sizes[tilingDim]);
-  auto tilingSize = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                    sliceOp.getMixedSizes()[tilingDim]);
-  offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
+  auto tilingSize = getValueOrCreateConstantIndexOp(
+      rewriter, sliceOp.getLoc(), sliceOp.getMixedSizes()[tilingDim]);
+  offsetVal =
+      rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal, sizeVal);
   sizeVal =
       rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-  sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
+  sizeVal =
+      rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal, tilingSize);
   sizes[tilingDim] = sizeVal;
 
   srcExtractOp = rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
@@ -825,7 +827,8 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   // Handle ranked-reduce case.
   if ((parentInsertOp.getResultType().getRank() -
            parentInsertOp.getSource().getType().getRank() >
-       0) && !isDynamicSlice(parentInsertOp)) {
+       0) &&
+      !isDynamicSlice(parentInsertOp)) {
     return handleInsertRankedReduceCase(sliceOp, rewriter);
   }
 
@@ -835,14 +838,18 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
            .empty()) {
     // handling special case
     // ex)
-    // %extracted_slice = tensor.extract_slice %src[0] [%size] [1] : tensor<16xf32> to tensor<?xf32>
-    // %inserted_slice = tensor.insert_slice %extracted_slice into %10[0] [%size] [1] : tensor<?xf32> into tensor<16xf32>
-    // %to_bubble_up = tensor.extract_slice %inserted_slice[%offset] [8] [1] {to_be_bubbled_slice} : tensor<16xf32> to tensor<8xf32>
-    if (auto srcExtractOp = parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+    // %extracted_slice = tensor.extract_slice %src[0] [%size] [1] :
+    // tensor<16xf32> to tensor<?xf32> %inserted_slice = tensor.insert_slice
+    // %extracted_slice into %10[0] [%size] [1] : tensor<?xf32> into
+    // tensor<16xf32> %to_bubble_up = tensor.extract_slice
+    // %inserted_slice[%offset] [8] [1] {to_be_bubbled_slice} : tensor<16xf32>
+    // to tensor<8xf32>
+    if (auto srcExtractOp =
+            parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
         srcExtractOp && srcExtractOp->hasOneUse() &&
         srcExtractOp.getSource().getType() == sliceOp.getSource().getType() &&
         (!sliceOp.hasZeroOffset() || !srcExtractOp.hasZeroOffset() ||
-        !sliceOp.hasUnitStride() || !srcExtractOp.hasUnitStride())) {
+         !sliceOp.hasUnitStride() || !srcExtractOp.hasUnitStride())) {
       return handleExtractInsertExtractSameDimCase(sliceOp, rewriter);
     }
     if (!isDynamicSlice(parentInsertOp))
@@ -870,23 +877,33 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
 
   // Build a map of collapsed dimensions
-  auto inputType = dyn_cast<RankedTensorType>(collapseOp.getSrc().getType());
+  auto inputType = cast<RankedTensorType>(collapseOp.getSrc().getType());
   auto collapseDims = collapseOp.getReassociationIndices();
-  // Get and check the collapse dimensions
-  // We only support bubble up for simple collapse: Ax1 or 1xA -> A
-  if (!inputType || inputType.getRank() > 2 || collapseDims.size() > 1)
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
     return failure();
+  auto tilingDim = *extractDims.begin();
+  int64_t newTilingDim = -1;
+  // Get and check the collapse dimensions
+  for (auto idx : collapseDims[tilingDim]) {
+    auto dimSize = inputType.getDimSize(idx);
+    if (dimSize != 1) {
+      // We only support bubble up for simple collapse: Ax1 or 1xA -> A
+      if (newTilingDim != -1)
+        return failure();
+      newTilingDim = idx;
+    }
+  }
+
+  if (newTilingDim == -1)
+    return failure();
+
+  for (auto [idx, dimSize] : llvm::enumerate(inputType.getShape())) {
+    if (static_cast<int64_t>(idx) != newTilingDim && dimSize != 1)
+      return failure();
+  }
 
   auto inputRank = inputType.getRank();
-  BitVector isCollapseDim(inputRank, false);
-
-  if (inputType.getDimSize(0) == 1) {
-    isCollapseDim[0] = true;
-  } else if (inputType.getDimSize(1) == 1) {
-    isCollapseDim[1] = true;
-  } else {
-    return failure();
-  }
 
   // Get the offsets and sizes from the slice operation
   auto outputOffsets = sliceOp.getMixedOffsets();
@@ -901,7 +918,7 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       tensor::getMixedSizes(rewriter, collapseOp.getLoc(), inputCollapse);
 
   for (unsigned inIdx = 0; inIdx < inputRank; ++inIdx) {
-    if (isCollapseDim[inIdx]) {
+    if (inIdx != newTilingDim) {
       inputOffsets[inIdx] = rewriter.getIndexAttr(0);
       inputSizes[inIdx] =
           (inputType.isDynamicDim(inIdx))
@@ -1046,7 +1063,7 @@ BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   // Extract slice parameters
   auto offsets = sliceOp.getMixedOffsets();
-  auto sizes   = sliceOp.getMixedSizes();
+  auto sizes = sliceOp.getMixedSizes();
   auto strides = sliceOp.getMixedStrides();
 
   // 1. Slice the bitcast source
@@ -1066,12 +1083,12 @@ BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
- bool BufferizationBubbleUpStrategy::isSupportedOperation(
- 	     tensor::ExtractSliceOp sliceOp) const {
- 	   auto *sourceOp = sliceOp.getSource().getDefiningOp();
- 	   return isa_and_nonnull<bufferization::ToTensorOp>(sourceOp) &&
- 	          !isDynamicSlice(sliceOp);
- 	 }
+bool BufferizationBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<bufferization::ToTensorOp>(sourceOp) &&
+         !isDynamicSlice(sliceOp);
+}
 
 LogicalResult
 BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
@@ -1235,21 +1252,24 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return failure();
 }
 
-bool VTransposeBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sliceOp) const {
+bool VTransposeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
   // Check if source is a block argument of a for loop
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
   if (!sourceOp)
     return false;
-  return isa_and_nonnull<hivm::VTransposeOp>(sourceOp) && !isDynamicSlice(sliceOp);
+  return isa_and_nonnull<hivm::VTransposeOp>(sourceOp) &&
+         !isDynamicSlice(sliceOp);
 }
 
 LogicalResult
 VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                                     PatternRewriter &rewriter) const {
-  auto transOp = dyn_cast<hivm::VTransposeOp>(sliceOp.getSource().getDefiningOp());
+                                    PatternRewriter &rewriter) const {
+  auto transOp =
+      dyn_cast<hivm::VTransposeOp>(sliceOp.getSource().getDefiningOp());
   if (!transOp)
     return failure();
-  
+
   auto src = transOp.getSrc();
   auto dst = transOp.getDst();
 
@@ -1258,7 +1278,7 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   auto resultShape = llvm::to_vector(resultType.getShape());
   auto perm = transOp.getPermutation();
-  
+
   rewriter.setInsertionPoint(transOp);
   auto loc = transOp.getLoc();
   auto dstOffsets = sliceOp.getMixedOffsets();
@@ -1267,19 +1287,18 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto srcStrides = sliceOp.getMixedStrides();
 
   // Infer the sizes and offsets of newSliceOp by perm
-  for (int64_t i = 0; i < resultRank; ++i){
+  for (int64_t i = 0; i < resultRank; ++i) {
     srcSizes[perm[i]] = rewriter.getIndexAttr(resultShape[i]);
     srcOffsets[perm[i]] = dstOffsets[i];
   }
 
   rewriter.setInsertionPoint(sliceOp);
   auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
-    sliceOp.getLoc(), transOp.getSrc(),
-    srcOffsets, srcSizes, srcStrides);
+      sliceOp.getLoc(), transOp.getSrc(), srcOffsets, srcSizes, srcStrides);
 
   auto newDst = rewriter.create<tensor::ExtractSliceOp>(
-    sliceOp.getLoc(), transOp.getDst(),
-    dstOffsets, sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+      sliceOp.getLoc(), transOp.getDst(), dstOffsets, sliceOp.getMixedSizes(),
+      sliceOp.getMixedStrides());
 
   markCreatedExtractSliceOp(rewriter, newSrc);
   markCreatedExtractSliceOp(rewriter, newDst);
@@ -1290,12 +1309,10 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     rewriter.eraseOp(newDst);
     return failure();
   }
-  
+
   auto newTransOp = rewriter.create<hivm::VTransposeOp>(
-    sliceOp.getLoc(), sliceOp.getResultType(), 
-    newSrc, newDst, 
-    rewriter.getDenseI64ArrayAttr(perm)
-  );
+      sliceOp.getLoc(), sliceOp.getResultType(), newSrc, newDst,
+      rewriter.getDenseI64ArrayAttr(perm));
 
   rewriter.replaceOp(sliceOp, newTransOp);
   rewriter.eraseOp(transOp);
@@ -1303,26 +1320,26 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
-bool IfBubbleUpStrategy::isSupportedOperation(tensor::ExtractSliceOp sliceOp) const {
+bool IfBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
   auto sourceOp = sliceOp.getSource().getDefiningOp<scf::IfOp>();
   return sourceOp && !isDynamicSlice(sliceOp);
 }
 
-LogicalResult
-IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                            PatternRewriter &rewriter) const {
+LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                          PatternRewriter &rewriter) const {
   auto src = cast<OpResult>(sliceOp.getSource());
   auto ifOp = src.getDefiningOp<scf::IfOp>();
   if (!ifOp)
     return failure();
-  
+
   auto yieldIndex = src.getResultNumber();
   for (auto yieldOp : {ifOp.thenYield(), ifOp.elseYield()}) {
     rewriter.setInsertionPoint(yieldOp);
     auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
-        sliceOp->getLoc(),
-        yieldOp.getResults()[yieldIndex], sliceOp.getMixedOffsets(),
-        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+        sliceOp->getLoc(), yieldOp.getResults()[yieldIndex],
+        sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
+        sliceOp.getMixedStrides());
     markCreatedExtractSliceOp(rewriter, newMovedInSlice);
     rewriter.modifyOpInPlace(yieldOp, [&]() {
       auto &yieldValueOpr = yieldOp->getOpOperand(yieldIndex);

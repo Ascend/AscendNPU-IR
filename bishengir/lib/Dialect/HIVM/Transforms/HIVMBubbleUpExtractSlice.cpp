@@ -85,9 +85,8 @@ public:
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
             return WalkResult::interrupt();
-          } else {
-            extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
           }
+          extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
         }
       }
       return WalkResult::advance();
@@ -156,7 +155,7 @@ private:
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
-    
+
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
 };
