@@ -383,8 +383,8 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
                                      {1}};
 
       copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
-      return;
     }
+    return;
   }
 
   // For src and dst which have aligned high dim stride,
