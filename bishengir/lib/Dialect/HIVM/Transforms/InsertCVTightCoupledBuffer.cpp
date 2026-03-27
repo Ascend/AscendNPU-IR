@@ -266,7 +266,6 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
   for (OpOperand *consumerOperand : consumerOperands) {
     Value origTensor = consumerOperand->get();
     // TODO: enhance support for dynamic shape
-    // auto tensorType = origTensor.getType().dyn_cast<RankedTensorType>();
     auto tensorType = mlir::dyn_cast<RankedTensorType>(origTensor.getType());
     if (!tensorType)
       continue;
@@ -277,15 +276,17 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     // TODO: Consider encapsulating it as an nd2dz function
     int64_t M = tensorType.getDimSize(0);
     int64_t N = tensorType.getDimSize(1);
-    int32_t alignM = 16;
-    int32_t alignN = 32;
+    static constexpr int32_t alignM = 16;
+    static constexpr int32_t alignN = 32;
     auto elemType = tensorType.getElementType();
 
     uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-    int64_t newN = (((elemTypeSize * N + (alignN - 1)) / alignN) * alignN) / elemTypeSize;
+    int64_t newN = (AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
+                            static_cast<uint64_t>(alignN)) / elemTypeSize);
 
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
-      int64_t newM = ((M + alignM - 1) / alignM) * alignM;
+      int64_t newM = static_cast<int64_t>(
+        AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
       auto paddedType = RankedTensorType::get({newM, newN}, elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
 
@@ -493,7 +494,6 @@ struct InsertMoveL1BetweenVectorAndCube
       if (!matched)
         continue;
 
-      Value beforeValue = operand.get();
       auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
       LogicalResult result = InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
@@ -567,8 +567,8 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
-  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferizationl::ToTensorOp>>(patterns.getContext());
-  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::collapseShapeOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferization::ToTensorOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::CollapseShapeOp>>(patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
