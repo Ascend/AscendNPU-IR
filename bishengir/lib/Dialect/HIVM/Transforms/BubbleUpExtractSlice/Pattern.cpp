@@ -888,6 +888,11 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!inputType){
     return failure();
   }
+  auto outputType = dyn_cast<RankedTensorType>(collapseOp.getResult().getType());
+  if (!outputType){
+    return failure();
+  }
+
   auto reassociation = collapseOp.getReassociationIndices();
   
   auto inputRank = inputType.getRank();
@@ -899,9 +904,14 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   for (int64_t groupIdx = 0; groupIdx < static_cast<int64_t>(reassociation.size()); groupIdx++){
     auto subGroup = reassociation[groupIdx];
     if (subGroup.size() != 1){   // the collapse dim must be in the group with size > 1
+      int64_t outputSize = outputType.getDimSize(groupIdx);
       for (int64_t i = 0; i < static_cast<int64_t>(subGroup.size()); i++){
         auto InputIndex = subGroup[i];
-        if (inputType.getDimSize(InputIndex) == 1){
+        int64_t inputSize = inputType.getDimSize(InputIndex);
+        if (inputSize == 1 || inputSize != outputSize){
+          /// We count two cases as collapse dim:
+          /// 1) input size = 1;
+          /// 2) the inputsize != outputSize;
           isCollapseDim[InputIndex] = true;
         }
       }
