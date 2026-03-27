@@ -442,7 +442,11 @@ struct InsertMoveL1BetweenVectorAndCube
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
     bool changed = false;
+    auto inputValues = op.getInputOperands();
     for (OpOperand &operand : op->getOpOperands()) {
+      Value beforeValue = operand.get();
+      if (llvm::find(inputValues, beforeValue) == inputValues.end())
+        continue;
       auto producerOps = traceDefOps<OpType>(operand.get());
       if (producerOps.empty())
         continue;
