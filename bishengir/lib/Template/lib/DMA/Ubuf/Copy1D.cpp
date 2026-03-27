@@ -158,11 +158,8 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
   }
 
   if (!check_1d_ubuf_stride_align(src)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the stride is not "
-                  "block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     store_ubuf_to_gm_1d_by_scalar<T>(src, dst);
     return;
   }
@@ -185,11 +182,8 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
   const int64_t stride0_gm = dst->strides[0];
   auto src_ptr = src->aligned + src->offset;
   if (!isAddress32ByteAligned(src_ptr)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the ub address is "
-                  "not block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     if (stride0_ub != 1) {
       store_ubuf_to_gm_1d_by_scalar<T>(src, dst);
       return;
@@ -204,6 +198,13 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
     // last dimension is contiguous
     store_ubuf_to_gm_1d_core_with_contiguous_last_dim<T>(src, dst);
     set_store_atomic_none(atomic_kind);
+    return;
+  }
+
+  if (stride0_gm > 1 && stride0_ub == 1) {
+    if (!check_atomic_none(atomic_kind))
+      return;
+    store_ubuf_to_gm_1d_by_scalar<T>(src, dst);
     return;
   }
 
