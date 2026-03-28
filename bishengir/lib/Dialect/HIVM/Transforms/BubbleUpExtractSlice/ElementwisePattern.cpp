@@ -6,6 +6,7 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -158,8 +159,8 @@ computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
       AffineMap plusOneMap = AffineMap::inferFromExprList(
                                  {ArrayRef<AffineExpr>{dim0 + 1}}, context)
                                  .front();
-      SmallVector<OpFoldResult> maxIndices = llvm::to_vector(
-          llvm::map_range(ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
+      SmallVector<OpFoldResult> maxIndices = llvm::to_vector(llvm::map_range(
+          ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
             return mlir::affine::makeComposedFoldedAffineApply(
                 rewriter, loc, minusOneMap, {ub});
           }));
@@ -243,29 +244,27 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                                    Value valueToTile,
                                    const SliceParameters &sliceParams) {
   auto shapedType = dyn_cast<ShapedType>(valueToTile.getType());
-  auto *sliceOp = TypeSwitch<ShapedType, Operation *>(shapedType)
-                      .Case([&builder, &loc, &valueToTile,
-                             &sliceParams](MemRefType) {
-                        return builder.create<memref::SubViewOp>(
-                            loc, valueToTile, sliceParams.offsets,
-                            sliceParams.sizes, sliceParams.strides);
-                      })
-                      .Case([&builder, &loc, &valueToTile,
-                             &sliceParams](RankedTensorType) {
-                        if (auto defOp = valueToTile.getDefiningOp()) {
-                          builder.setInsertionPointAfter(
-                              defOp); // Set the sliceOp right after sourceOp
-                        } else {
-                          builder.setInsertionPointToStart(
-                              valueToTile.getParentBlock());
-                        }
-                        return builder.create<tensor::ExtractSliceOp>(
-                            loc, valueToTile, sliceParams.offsets,
-                            sliceParams.sizes, sliceParams.strides);
-                      })
-                      .Default([](ShapedType) -> Operation * {
-                        llvm_unreachable("Unexpected shaped type");
-                      });
+  auto *sliceOp =
+      TypeSwitch<ShapedType, Operation *>(shapedType)
+          .Case([&builder, &loc, &valueToTile, &sliceParams](MemRefType) {
+            return builder.create<memref::SubViewOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Case([&builder, &loc, &valueToTile, &sliceParams](RankedTensorType) {
+            if (auto defOp = valueToTile.getDefiningOp()) {
+              builder.setInsertionPointAfter(
+                  defOp); // Set the sliceOp right after sourceOp
+            } else {
+              builder.setInsertionPointToStart(valueToTile.getParentBlock());
+            }
+            return builder.create<tensor::ExtractSliceOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Default([](ShapedType) -> Operation * {
+            llvm_unreachable("Unexpected shaped type");
+          });
   if (isa<tensor::ExtractSliceOp>(sliceOp)) {
     sliceOp->setAttr(toBeBubbleUpSlice, UnitAttr::get(builder.getContext()));
   }
@@ -366,6 +365,18 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.setInsertionPointAfter(hivmOp);
   Operation *newOp = clone(rewriter, hivmOp, resultTensorTypes, tiledOperands);
   rewriter.replaceOp(sliceOp, newOp->getResults());
+  if (hivmOp->getResults().empty()) {
+    rewriter.eraseOp(hivmOp);
+    return success();
+  }
+  for (Operation *user :
+       llvm::make_early_inc_range(hivmOp->getResult(0).getUsers())) {
+    if (auto mark = dyn_cast<annotation::MarkOp>(user)) {
+      rewriter.modifyOpInPlace(
+          mark, [&]() { mark->setOperand(0, newOp->getResult(0)); });
+    }
+  }
+
   rewriter.eraseOp(hivmOp);
   return success();
 }
