@@ -12,6 +12,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLoads.cpp
     SetBishengirSimtOptAttr.cpp
     LoopRestructureArangeOptimization.cpp
+    EnableAscendDPXMMA.cpp
   )
 endif()
 

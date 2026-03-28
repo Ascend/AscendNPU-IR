@@ -27,6 +27,8 @@ std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
 /// Create a pass to adapt Triton IR kernel.
 std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass();
 
+std::unique_ptr<mlir::Pass> createEnableAscendDPXMMAPass();
+
 /// Create a pass to convert f16 operations to f32 operations
 std::unique_ptr<mlir::Pass> createLegalizeF16ForTritonPass();
 
