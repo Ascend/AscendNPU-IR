@@ -4,8 +4,6 @@
 
 The Auto Flatten pass (`HIVMFlattenOps`) automatically collapses multi-dimensional tensor operations into lower-dimensional equivalents, reducing rank while preserving semantic correctness. This optimization simplifies memory access patterns and improves hardware utilization on the target accelerator.
 
----
-
 ## Hardware Background
 
 Modern hardware accelerators often have constraints and performance characteristics that favor lower-rank tensor operations:
@@ -24,8 +22,6 @@ Consider a 5D elementwise operation on shape `[1, 64, 1, 128, 256]`:
 
 - **Before**: 5 nested loops, complex stride calculations
 - **After flattening**: Shape becomes `[64, 128, 256]` or even `[64, 32768]`, enabling more efficient hardware utilization
-
----
 
 ## Algorithm Principle
 
@@ -153,8 +149,6 @@ Processing:
 Result: [[0, 1, 2], [3], [4, 5, 6]]
 ```
 
----
-
 ## API
 
 ### Pass Registration
@@ -248,8 +242,6 @@ Each operation type implements `adjustTargetDimensions`:
 | `VFlipOp`                  | `flip_axis`                                   |
 | Elementwise                | `iterator_types` (broadcast/transpose arrays) |
 
----
-
 ## Capability & Limitation
 
 ### ✅ Capabilities
@@ -295,8 +287,6 @@ Enable debug logging with the `LDBG` macro to trace:
 - Mask classifications
 - Adjusted target dimensions
 - Composition results
-
----
 
 ## Example Transformation
 
@@ -353,8 +343,6 @@ This means that stepping through all elements of dimension $i{+}1$ and then incr
 
 The following scenarios demonstrate how the flatten pass interacts with **strided memory layouts**, a common situation when working with non-contiguous memory views. These examples use `hivm.hir.vbrc` — a scalar broadcast operation that fills a memref with a scalar value.
 
----
-
 ### Scenario 1 Example: Non-Contiguous Strides Block All Collapsing
 
 **Function:** `@strided_brc`
@@ -377,8 +365,6 @@ func.func @strided_brc(%arg0: f32, %arg1: memref<16x16xf32, strided<[16, 2]>>) {
   return
 }
 ```
-
----
 
 ### Scenario 2 Example: Partially Contiguous Strides Allow Partial Collapsing
 
@@ -420,8 +406,6 @@ The collapsed result has:
 
 - Dimensions 2 and 3 merged: size $4 \times 2 = 8$, stride $= 1$ (contiguous)
 - Rank reduced from 4 to 3
-
----
 
 ### Scenario 3 Example: Dynamic Inner Dimension Prevents Contiguity Verification
 

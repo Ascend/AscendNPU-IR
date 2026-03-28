@@ -2,8 +2,6 @@
 
 **AscendNPU IR**（AscendNPU Intermediate Representation）是基于 MLIR（Multi-Level Intermediate Representation）构建的面向昇腾亲和的算子编译中间表示，提供昇腾完备表达能力，通过编译优化提升昇腾AI处理器计算效率，通过开源社区开放接口，支持生态框架灵活对接，高效使能昇腾AI处理器。
 
----
-
 ## 关键能力
 
 - **多级抽象与易用性**  
@@ -16,8 +14,6 @@
 支持 CV 融合与流水（CVPipeline、AutoSubTiling）、自动内存规划（PlanMemory）与流水同步（AutoSync）、块化与调度（AutoBlockify、AutoFlatten、AutoSchedule），以及自定义算子、DFX、CV 优化等，便于在保持高层语义的前提下获得可移植性能。
 - **生态对接与开放**  
 通过分层接口支持与 PyTorch（Torch-MLIR）、TileLang、Triton 及各类框架的对接，高性能与易用性灵活平衡，高效使能昇腾 AI 处理器。
-
----
 
 ## 下一步
 
