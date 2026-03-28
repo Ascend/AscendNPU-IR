@@ -814,6 +814,12 @@ def SplitSimtModule : Pass<"split-simt-module"> {
   let constructor = "mlir::hivm::createSplitSimtModulePass()";
 }
 
+def StripMemRefAddressSpace : Pass<"hivm-strip-memref-address-space", "ModuleOp"> {
+  let summary = "Strip memory space from memref types in the current module";
+  let constructor = "mlir::hivm::createStripMemRefAddressSpacePass()";
+  let dependentDialects = ["func::FuncDialect", "memref::MemRefDialect"];
+}
+
 def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {
   let summary = "Insert memory semantic for simt vf";
   let constructor = "mlir::hivm::createInsertMemSemanticForSimtVFPass()";

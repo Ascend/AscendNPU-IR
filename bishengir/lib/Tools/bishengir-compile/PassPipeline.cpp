@@ -164,6 +164,9 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
   if (config.shouldCompileHIVM()) {
     hivm::HIVMPipelineOptions hivmPipelineOptions;
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
+    if (config.shouldEnableSimdSimtMixCompile()) {
+      pm.addPass(hivm::createStripMemRefAddressSpacePass());
+    }
     hivm::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
   }
 }
