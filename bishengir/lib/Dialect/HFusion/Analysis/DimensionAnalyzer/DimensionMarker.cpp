@@ -88,9 +88,10 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
         processIndirectStoreOp(indirectStoreOp);
       })
       .Default([&](Operation *op) {
+        // TODO: remove hivm op here, add process of CopyLikeInterface
         bool isParallelRegbased =
             options.registerBased &&
-            isa_and_present<memref::CopyOp, hivm::CopyOp,
+            isa_and_present<memref::CopyOp, hivm::CopyOp, hivm::StoreOp,
                             bufferization::MaterializeInDestinationOp,
                             hfusion::MulExtOp, memref::MemorySpaceCastOp,
                             annotation::MarkOp>(op);
