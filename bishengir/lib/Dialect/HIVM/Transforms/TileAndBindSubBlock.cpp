@@ -57,6 +57,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -960,6 +961,9 @@ public:
 
   LogicalResult matchAndRewrite(hivm::FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr(tileAndSliceFailure)) {
+      return failure();
+    }
     Value dst = op.getDst();
     if (op.getDualDstModeAttr()) {
       return failure();
@@ -1012,24 +1016,32 @@ public:
                          : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
-    auto verifyShape = [](ArrayRef<int64_t> shape) -> bool {
-      // Return true if the shape is valid:
-      return llvm::all_of(
-          shape, [](auto s) { return (s >= 0) || ShapedType::isDynamic(s); });
+    // TODO: support NZ2DN
+    auto splitShape = [](bool cvpipeFlag, hivm::FixpipeDualDstMode splitMode,
+                         SmallVector<int64_t> &shape) -> LogicalResult {
+      int64_t splitIdx = 0;
+      splitIdx += cvpipeFlag;
+      int64_t constraints;
+      if (splitMode == FixpipeDualDstMode::ROW_SPLIT)
+        constraints = 2;
+      else {
+        constraints = 32;
+        ++splitIdx;
+      }
+      auto size = shape[splitIdx];
+      if (ShapedType::isDynamicShape(size)) {
+        return failure();
+      }
+      if ((size % constraints) != 0) {
+        return failure();
+      }
+      shape[splitIdx] = size / 2;
+      return success();
     };
 
     if (!cvpipeFlag) {
-      switch (splitMode) {
-      case hivm::FixpipeDualDstMode::ROW_SPLIT:
-        shape[0] = shape[0] / 2;
-        break;
-      case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-        shape[1] = shape[1] / 2;
-        break;
-      default:
-        break;
-      }
-      if (!verifyShape(shape)) {
+      if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
+        op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
         return failure();
       }
       auto newTy = MemRefType::get(shape, oldTy.getElementType(),
@@ -1060,17 +1072,8 @@ public:
       return success();
     }
 
-    switch (splitMode) {
-    case hivm::FixpipeDualDstMode::ROW_SPLIT:
-      shape[1] = shape[1] / 2;
-      break;
-    case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-      shape[2] = shape[2] / 2;
-      break;
-    default:
-      break;
-    }
-    if (!verifyShape(shape)) {
+    if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
     auto newTy = MemRefType::get(shape, oldTy.getElementType(),
@@ -1148,11 +1151,73 @@ public:
 static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   patterns.add<splitFixpipe>(funcOp.getContext());
-  return applyPatternsAndFoldGreedily(funcOp, std::move(patterns));
+  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
+    return failure();
+  }
+  if (funcOp
+          .walk([](hivm::FixpipeOp fixpipeOp) {
+            return fixpipeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted()) {
+    return failure();
+  }
+  return success();
 }
 
 static LogicalResult tileAndSliceOpAIC(func::FuncOp func) {
   return runSplitFixpipe(func);
+}
+
+namespace {
+struct FuncRollbackBackup {
+  std::string originalName;
+  Operation *backupOp = nullptr;
+};
+} // namespace
+
+static void createFuncBackups(ArrayRef<func::FuncOp> funcs,
+                              SmallVectorImpl<FuncRollbackBackup> &backups) {
+  backups.reserve(backups.size() + funcs.size());
+  for (func::FuncOp func : funcs) {
+    backups.push_back({func.getSymNameAttr().str(), func->clone()});
+  }
+}
+
+static void destroyFuncBackups(SmallVectorImpl<FuncRollbackBackup> &backups) {
+  for (auto &entry : backups) {
+    if (entry.backupOp) {
+      entry.backupOp->destroy();
+      entry.backupOp = nullptr;
+    }
+  }
+  backups.clear();
+}
+
+static LogicalResult
+restoreFunctionsFromBackups(ModuleOp moduleOp,
+                            SmallVectorImpl<FuncRollbackBackup> &backups,
+                            bool limitSubBlockToStore) {
+  for (auto &entry : backups) {
+    if (!entry.backupOp) {
+      continue;
+    }
+    if (auto currentFunc =
+            moduleOp.lookupSymbol<func::FuncOp>(entry.originalName)) {
+      currentFunc.erase();
+    }
+    moduleOp.push_back(entry.backupOp);
+    auto restoredFunc = cast<func::FuncOp>(entry.backupOp);
+    restoredFunc.setName(entry.originalName);
+    entry.backupOp = nullptr;
+
+    if (limitSubBlockToStore &&
+        failed(limitUniqueSubBlockToStore(restoredFunc)))
+      return failure();
+  }
+  backups.clear();
+  return success();
 }
 
 /// Walks through all functions in the module and attempts to tile and bind
@@ -1173,66 +1238,47 @@ void TileAndBindSubBlockPass::runOnOperation() {
   // Collect AIC and AIV functions to process (can't modify while iterating)
   SmallVector<func::FuncOp> aicFunctions;
   SmallVector<func::FuncOp> aivFunctions;
-  moduleOp.walk([&](func::FuncOp func) {
-    auto funcCoreType = queryFuncCoreType(func);
-    if (funcCoreType.has_value() &&
-        func->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name)) {
+  auto collectMixAicAndAivFuncs = [&moduleOp, &aicFunctions, &aivFunctions]() {
+    moduleOp.walk([&aicFunctions, &aivFunctions](func::FuncOp func) {
+      auto funcCoreType = queryFuncCoreType(func);
+      if (!funcCoreType.has_value() ||
+          !func->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name)) {
+        return;
+      }
       if (funcCoreType.value() == TFuncCoreType::AIC) {
         aicFunctions.push_back(func);
       } else if (funcCoreType.value() == TFuncCoreType::AIV) {
         aivFunctions.push_back(func);
       }
-    }
-  });
-
-  if (!this->enableTile) {
-    for (func::FuncOp aivFunc : aivFunctions) {
-      if (failed(limitUniqueSubBlockToStore(aivFunc))) {
-        signalPassFailure();
-      }
-    }
-    return;
-  }
-  // Check BatchMatmul loop
-  bool batchMatmul = false;
-  for (func::FuncOp aicFunc : aicFunctions) {
-    auto walkResult = aicFunc.walk([&](scf::ForOp loop) {
-      if (loop->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)) {
-        LLVM_DEBUG(DBGS() << "Skip tiling for BatchMatmul: "
-                          << aicFunc.getSymNameAttr().str() << "\n");
-        return WalkResult::interrupt();
-      } else {
-        return WalkResult::advance();
-      }
     });
-    if (walkResult.wasInterrupted()) {
-      batchMatmul = true;
-      break;
-    }
-  }
-  // limitUniqueSubBlockToStore vector function and skip this pass if
-  // BatchMatmul is found
-  if (batchMatmul) {
+  };
+
+  auto limitAllAivToSubBlock0 = [this, &aivFunctions]() -> LogicalResult {
     for (func::FuncOp aivFunc : aivFunctions) {
       auto symNameStr = aivFunc.getSymNameAttr().str();
       if (failed(limitUniqueSubBlockToStore(aivFunc))) {
         LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
                           << "\n");
         signalPassFailure();
+        return failure();
       }
     }
-    return;
-  }
+    return success();
+  };
 
-  // Tile AIV functions
-  bool aivSuccessFlag = false;
-  for (func::FuncOp originalFunc : aivFunctions) {
-    // Only process vector functions
-    auto symNameStr = originalFunc.getSymNameAttr().str();
-    // Clone the function for safe transformation
-    OpBuilder builder(originalFunc);
-    // Attempt transformation on the clone
-    FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
+  auto hasBatchMatmulLoopInAic = [&aicFunctions]() -> bool {
+    return llvm::any_of(aicFunctions, [](func::FuncOp aicFunc) {
+      return aicFunc
+          .walk([](scf::ForOp loop) {
+            return loop->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
+    });
+  };
+
+  auto eraseTilingDimMappingMarks = [moduleOp]() {
     SmallVector<Operation *> toBeErased;
     moduleOp->walk([&toBeErased](Operation *op) {
       if (auto markOp = dyn_cast<annotation::MarkOp>(op);
@@ -1243,19 +1289,57 @@ void TileAndBindSubBlockPass::runOnOperation() {
     for (auto *op : toBeErased) {
       op->erase();
     }
-    if (failed(res)) {
-      if (failed(limitUniqueSubBlockToStore(originalFunc))) {
-        LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
-                          << "\n");
-        signalPassFailure();
+  };
+
+  collectMixAicAndAivFuncs();
+
+  if (!this->enableTile) {
+    (void)limitAllAivToSubBlock0();
+    return;
+  }
+
+  // limitUniqueSubBlockToStore vector function and skip this pass if
+  // BatchMatmul is found
+  if (hasBatchMatmulLoopInAic()) {
+    (void)limitAllAivToSubBlock0();
+    return;
+  }
+
+  SmallVector<FuncRollbackBackup> aivRollbackBackups;
+  SmallVector<FuncRollbackBackup> aicRollbackBackups;
+  createFuncBackups(aivFunctions, aivRollbackBackups);
+  createFuncBackups(aicFunctions, aicRollbackBackups);
+  auto destroyAllBackups = [&aivRollbackBackups, &aicRollbackBackups]() {
+    destroyFuncBackups(aivRollbackBackups);
+    destroyFuncBackups(aicRollbackBackups);
+  };
+
+  // Tile AIV functions
+  bool aivSuccessFlag = false;
+  auto tileAivFuncs = [this, &aivFunctions, &eraseTilingDimMappingMarks,
+                       &aivSuccessFlag
+#ifndef NDEBUG
+                       ,
+                       &tiledFunctionCount
+#endif
+  ]() -> LogicalResult {
+    for (func::FuncOp originalFunc : aivFunctions) {
+      auto symNameStr = originalFunc.getSymNameAttr().str();
+      FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
+      eraseTilingDimMappingMarks();
+      if (failed(res)) {
+        if (failed(limitUniqueSubBlockToStore(originalFunc))) {
+          LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
+                            << "\n");
+          signalPassFailure();
+        }
+        LLVM_DEBUG(DBGS() << "Failed to transform function: " << symNameStr
+                          << ", keeping original\n");
+        return failure();
       }
-      LLVM_DEBUG(DBGS() << "Failed to transform function: " << symNameStr
-                        << ", keeping original\n");
-      return;
-    }
-    auto processedFunc = res.value();
-    processedFunc.setName(originalFunc.getName().str() + "_processing");
-    if (succeeded(res)) {
+
+      auto processedFunc = res.value();
+      processedFunc.setName(originalFunc.getName().str() + "_processing");
       aivSuccessFlag = true;
       // Success: Remove original and rename clone
       originalFunc.erase();
@@ -1266,33 +1350,60 @@ void TileAndBindSubBlockPass::runOnOperation() {
                         << tiledFunctionCount << ": " << symNameStr << "\n");
 #endif
     }
+    return success();
+  };
+
+  if (failed(tileAivFuncs())) {
+    destroyAllBackups();
+    return;
   }
 
   // Tile AIC functions for Ascend 950
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  if (aivSuccessFlag && archIs950) {
+  auto tileAicFixpipeFuncs = [this, &aivSuccessFlag, archIs950,
+                              &aicFunctions]() -> LogicalResult {
+    if (!(aivSuccessFlag && archIs950)) {
+      return success();
+    }
+
     for (func::FuncOp originalFunc : aicFunctions) {
-      originalFunc->walk([&](annotation::MarkOp markOp) {
-        if (auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-                hivm::HIVMTightlyCoupledBufferAttr::name)) {
+      originalFunc->walk([this](annotation::MarkOp markOp) {
+        if (auto attr =
+                markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+                    hivm::HIVMTightlyCoupledBufferAttr::name)) {
           auto maybeId = attr.getId();
           if (!maybeId) {
             markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
             return;
           }
           auto id = maybeId.value();
-          auto tilingDim = -1;
-          if (tightlyCoupledBufferToTilingDim.contains(id))
+          int64_t tilingDim = -1;
+          if (tightlyCoupledBufferToTilingDim.contains(id)) {
             tilingDim = tightlyCoupledBufferToTilingDim.at(id);
+          }
           markOp->setAttr(
               "hivm.tiling_dim",
               IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
         }
       });
-      if (failed(tileAndSliceOpAIC(originalFunc)))
-        signalPassFailure();
+      if (failed(tileAndSliceOpAIC(originalFunc))) {
+        return failure();
+      }
     }
+    return success();
+  };
+
+  if (failed(tileAicFixpipeFuncs())) {
+    if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
+                                           /*limitSubBlockToStore=*/false)) ||
+        failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
+                                           /*limitSubBlockToStore=*/true))) {
+      signalPassFailure();
+    }
+    destroyAllBackups();
+    return;
   }
+  destroyAllBackups();
 
 #ifndef NDEBUG
   LLVM_DEBUG(DBGS() << "TileAndBindSubBlock pass completed. "
