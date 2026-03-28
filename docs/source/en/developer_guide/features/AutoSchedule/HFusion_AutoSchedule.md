@@ -9,8 +9,6 @@ HFusion is a high-level framework on Bisheng IR for operator fusion and automati
 - **Performance**: Dynamic shape, multi-core reduce, and related optimizations.
 - **Engineering**: Schedules expressed as reusable, interpretable Transform Dialect sequences.
 
----
-
 ### Hardware Background
 
 The Ascend NPU uses a multi-level memory hierarchy: global memory (GM) has large capacity but high access latency, while on-chip memory (e.g., L1, UB) has lower latency but limited capacity. To leverage on-chip memory bandwidth and reduce global memory traffic:
@@ -20,8 +18,6 @@ The Ascend NPU uses a multi-level memory hierarchy: global memory (GM) has large
 - **Fit Tiling and loop structure**: When generating Tiling and loop nests, stride/size/tile alignment constraints must be respected so that the resulting kernel complies with hardware specifications.
 
 AutoSchedule is designed around these hardware characteristics: it uses automated scheduling and Tiling strategies to maximize on-chip memory utilization while preserving legality.
-
----
 
 ### Algorithm Principle
 
@@ -43,8 +39,6 @@ The core algorithm centers on **large-scale operator fusion + dimension-mapping-
 
 4. **Transform Dialect interpretation**
    - The scheduler does not modify IR directly; it builds a Transform Dialect program. `AutoScheduleInterpreter` translates it into concrete Transform operations and applies them to the target IR so the schedule takes effect.
-
----
 
 ### Interface Description
 
@@ -78,8 +72,6 @@ The core algorithm centers on **large-scale operator fusion + dimension-mapping-
   - `FusionKind::AnyPB` / `FusionKind::LastAxisPBR` / `FusionKind::AnyPBR` → `AnyPBRScheduler`
 - **Main flow**: `runPreScheduleProcedure()` → `runScheduleProcedure()` (including `calculateTilingImpl()`, `createScheduleImpl()`) → `runPostScheduleProcedure()` → Transform Dialect application.
 
----
-
 ### Constraints and Capabilities
 
 AutoSchedule explicitly handles the following constraints during scheduling and Tiling:
@@ -94,8 +86,6 @@ AutoSchedule explicitly handles the following constraints during scheduling and 
 | **Multi-core reduce** | Multi-core parallel reduce only when specific conditions hold         | `analyzeMultiCoreReduceInfo()` |
 
 These constraints are applied uniformly in `KernelInfo::getStrideAlignments()` and scheduler-specific `calculateTilingImpl()` to ensure the generated schedule is valid and hardware-compatible.
-
----
 
 ### Architecture overview
 
@@ -173,8 +163,6 @@ The overall call chain is:
   - Uniform wrapper for MLIR `Value`, function arguments, and named values for consistent access and manipulation.
   - Common types include `NamedValueHandle`, `FuncArgHandle`, etc.
 
----
-
 ### Scheduling strategies
 
 #### PureElemwise scheduling strategy
@@ -197,8 +185,6 @@ The overall call chain is:
     - `analyzeMultiCoreReduceInfo()` determines whether multi-core reduce conditions are met (see §7.3).
   - **Schedule construction**:
     - In `createScheduleImpl()`, for the chosen `TilingKey`, enables concrete scheduling strategies, considering on-chip buffer allocation, axis-specific tiling, loop fuse/coalesce, and multi-core binding.
-
----
 
 ### Main optimizations
 
@@ -237,8 +223,6 @@ This section summarizes **stride-align**, **dynamic shape**, and **multi-core re
 #### Multi-core reduce
 
 - Multi-core reduce is analyzed (e.g. via `analyzeMultiCoreReduceInfo()`) and applied when the kernel and pattern satisfy the required conditions (see dedicated documentation).
-
----
 
 ### Extending AutoSchedule: custom strategy
 
@@ -343,8 +327,6 @@ Inside `createScheduleImpl()`, you can reuse the schedule APIs in `ScheduleOpera
   - See AnyPBR for `getMultiCoreNum` and similar to determine core count configuration.
 
 By combining these primitives, you can implement flexible and efficient schedule strategies for new fusion patterns within the same framework.
-
----
 
 ### Internal mechanisms (brief)
 

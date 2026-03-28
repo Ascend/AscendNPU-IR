@@ -41,8 +41,6 @@ Ascend 910B NPU uses a heterogeneous architecture with:
 
 ![V220 architecture](../../../../images/developer_guide/cvarch.png)
 
----
-
 ## Algorithm overview
 
 ### createNormalizeMatmulPass
@@ -263,8 +261,6 @@ func.func @bind_workspace_arg_aiv(
 }
 ```
 
----
-
 ## Interface
 
 Testing individual passes:
@@ -294,8 +290,6 @@ The specific run commands are provided at the top of each test file. For example
 Here, `bishengir-opt` and `FileCheck` are binary executable files generated during compilation, located in `path-to-ascendnpuir\build\bin`. In the above command, `%s` should be replaced with the corresponding test file, such as `bishengir\test\Dialect\HIVM\normalize-matmul.mlir`.
 
 The output MLIR will match the `CHECK:` part in the test file. The execution is successful if no `CHECK failed` errors are reported after testing.
-
----
 
 ## Constriants
 

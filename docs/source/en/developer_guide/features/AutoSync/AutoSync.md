@@ -2,15 +2,11 @@
 
 Auto-sync is the AscendNPU-IR (HIVM) compiler feature that automatically inserts synchronization operations so producers and consumers of shared data or resources are correctly ordered. Goals: **correctness** (no data races or ordering bugs) and **minimal overhead** (fewest syncs needed, reuse of hardware events when safe).
 
----
-
 ## Hardware Background
 
 ### AICore Architecture
 
 <https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
-
----
 
 ### HIVM Synchronization Operations
 
@@ -55,8 +51,6 @@ Synchronization ops are defined in `HIVMIR/HIVMSynchronizationOps.td`. Below the
   Executes on `pipe` (pipe_wait) on the `tcore_type`  
   Block all following instructions on `pipe` on the `tcore_type` core until all previous instructions finish.
 
----
-
 ## Algorithm principles
 
 ### AutoSync solutions overview
@@ -70,8 +64,6 @@ The codebase provides **two** auto-sync solutions:
 - **`Graph-Sync-Solver/Cross-Core-GSS`** Passes  
 
   Uses graph-based algorithms to analyze the input code structure and insert needed sync operations. It remains optional and can be enabled via `-hivm-enable-graph-sync-solver=true` (or `sync_solver=True` in Triton-Ascend).
-
----
 
 ### InjectSync
 
@@ -99,8 +91,6 @@ The codebase provides **two** auto-sync solutions:
 6. **SyncCodegen**:  
    Emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`
 
----
-
 ### InjectBlockSync
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
@@ -114,8 +104,6 @@ The codebase provides **two** auto-sync solutions:
 - Three modes (controlled by options and fusion kind):
   - **InjectAllBlockSync** — Emit block sync before/after every `LoadOp` and every `StoreOp` (cube/vector handoff).
   - **InjectBlockMixSync** — Full mix: build block sync IR via `SyncBlockIRTranslator`, then run SyncAnalyzer (BLOCKSYNC mode), MoveSyncState, RemoveRedundantSync, SyncEventIdAllocation, SyncCodegen.
-
----
 
 ### GraphSyncSolver
 
@@ -137,8 +125,6 @@ Collect conflict pairs (producer–consumer pairs), run pair selection and order
 3. **CodeGenerator**:  
 Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / `hivm.barrier`
 
----
-
 ### CrossCoreGSS
 
 **Purpose:** Insert block-level (intra-block) (cross-core) synchronization for **MIX** kernels (cube and vector): `sync_block_set`, `sync_block_wait`.
@@ -148,8 +134,6 @@ Translate solver result back to MLIR: emit `hivm.set_flag` / `hivm.wait_flag` / 
 **How it works**:
 
 - Same as the intra-core GSS pass, but it handles cross-core memory operations.
-
----
 
 ## Interface description
 
@@ -206,8 +190,6 @@ These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`)
   </tbody>
 </table>
 
----
-
 ## Constraints and capabilities
 
 - **Hardware ordering model:** Auto-sync orders execution by inserting HIVM synchronization ops (`hivm.set_flag` / `hivm.wait_flag`, `hivm.pipe_barrier`, and (when applicable) `hivm.sync_block_set` / `hivm.sync_block_wait`). The ordering is expressed in terms of **cores** and **pipes**, plus event/flag ids.
@@ -216,5 +198,3 @@ These are typically wired in the compiler driver (e.g. `bishengir-hivm-compile`)
 - **Optional feature modes:** Unit-flag sync can be enabled as an alternative pattern for supported operations, and the graph-based solver can be selected instead of InjectSync/InjectBlockSync via compiler options.
 
 - **Verification requirements:** Check that emitted ops satisfy dialect verification; `set_flag` / `wait_flag` must share the same event/flag id and compatible core/pipe endpoints.
-
----

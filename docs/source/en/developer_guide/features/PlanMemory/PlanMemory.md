@@ -2,8 +2,6 @@
 
 This document describes the **PlanMemory** transformation (`PlanMemoryPass`) in HIVM: hardware context, algorithm, interface, and constraints.
 
----
-
 ## Hardware background
 
 Ascend on-chip memory uses a buffer model. It includes storage for the Cube (matrix) and Vector units. Software must control addresses explicitly and respect alignment.
@@ -24,8 +22,6 @@ Buffer alignment requirements:
 | BT Buffer | 64 bytes | BiasTable for matrix bias |
 | FP Buffer | 64 bytes | Fixpipe: quantization/ReLU parameters, etc. |
 
----
-
 ## Algorithm
 
 ### Software context
@@ -40,8 +36,6 @@ Allocation targets the storage used by Cube (L1, L0A, L0B, L0C, etc.) and Vector
 - **Alias**: Two values that refer to the same underlying data (e.g. before/after `subview`).
 - **Inplace reuse**: An op’s **output** can overwrite an **input** buffer (e.g. `vcast` f16→i16 same width). PlanMemory assigns the same offset to such output under hardware inplace rules.
 - **Address offset / pointer_cast**: After allocation, instead of a separate alloc, PlanMemory emits `hivm.hir.pointer_cast(offset)` (byte offset in that memory space).
-
----
 
 ### Implementation
 
@@ -143,8 +137,6 @@ Level0: any two buffers with non-overlapping lifetimes can share memory.
 
 After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_PLAN) and `memref.alloc` (LOCAL_MEM_PLAN) with `hivm.hir.pointer_cast(offset)`.
 
----
-
 ### Tests
 
 **File**: `bishengir/test/Dialect/HIVM/plan-memory.mlir`
@@ -157,8 +149,6 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
 ```
 
----
-
 ## Interface
 
 | Option | Default | Description |
@@ -166,8 +156,6 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 | `-mem-plan-mode=global-work-space-plan` | false | Use `GLOBAL_WORKSPACE_PLAN` in CV pipeline |
 | `enable-global-workspace-reuse` | false | Reuse buffers inside workspace |
 | `restrict-inplace-as-isa` | false | Restrict inplace to match ISA behavior |
-
----
 
 ## Constraints
 

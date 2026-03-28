@@ -2,8 +2,6 @@
 
 本文介绍 HIVM 中的 **PlanMemory** 变换（`PlanMemoryPass`），包括硬件背景、算法原理、接口说明和约束能力。
 
----
-
 ## 硬件背景
 
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
@@ -23,8 +21,6 @@
 | BT Buffer | 64字节对齐 | BiasTable Buffer，存放矩阵运算中的Bias |
 | FP Buffer | 64字节对齐 | Fixpipe Buffer，存放量化参数、Relu参数等 |
 
----
-
 ## 算法原理
 
 ### 软件背景
@@ -41,8 +37,6 @@
 - **Alias**：当两个数据本质来源于同一个数据的时候，这两个数据就属于alias（别名）关系，如 `subview` 前后的数据。
 - **Inplace复用**：某op的**输出**可以写在**输入**的存储位置上（覆盖写），从而少一次alloc。例如`vcast`从`f16`转到`i16`（等宽），输出可复用输入Buffer。PlanMemory会识别这类op，给输出分配与输入相同的地址偏移（或满足硬件inplace约束的规则）。
 - **地址偏移 / pointer_cast**：内存分配后不再生成「独立alloc」，而是生成 `hivm.hir.pointer_cast(offset)`（offset 为本Buffer在该内存空间上的字节偏移量）。
-
----
 
 ### 实现原理
 
@@ -157,8 +151,6 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 
 计算完成所有Buffer的地址后，将 `memref_ext.alloc_workspace`（GLOBAL_WORKSPACE_PLAN） 和 `memref.alloc`（LOCAL_MEM_PLAN）替换为 `hivm.hir.pointer_cast(offset)`，指示Buffer的内存起始地址。
 
----
-
 ### 测试用例
 
 **文件**：`bishengir/test/Dialect/HIVM/plan-memory.mlir`
@@ -171,8 +163,6 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
 ```
 
----
-
 ## 接口说明
 
 | 选项 | 默认值 | 说明 |
@@ -181,11 +171,9 @@ Level0：如果两块 Buffer 的生命区间不重叠，内存可以直接复用
 | `enable-global-workspace-reuse` | false | 启用 workspace 内 Buffer 复用 |
 | `restrict-inplace-as-isa` | false | 限制 inplace 规则以匹配 ISA 行为 |
 
----
-
 ## 约束能力
 
-**用户需要保证「同一时间所申请的Buffer总大小」小于等于「实际硬件内存空间大小」。**
+用户需要保证「同一时间所申请的Buffer总大小」小于等于「实际硬件内存空间大小」。
 
 > 【注】每个Buffer的实际占用空间会自动进行字节对齐。对齐大小见 [硬件背景](#硬件背景) 。
 

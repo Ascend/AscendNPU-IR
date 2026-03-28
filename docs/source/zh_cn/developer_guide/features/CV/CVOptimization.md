@@ -40,8 +40,6 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 **fixpipe** 是 Cube 与 Vector 之间的数据搬运通道，昇腾芯片的 **Cube**和**Vector**底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说， Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 GM，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。910系列的芯片架构如下
 ![V220架构](../../../../images/developer_guide/cvarch.png)
 
----
-
 ## 算法原理
 
 ### createNormalizeMatmulPass
@@ -163,8 +161,6 @@ after：
 vadd (%5)
 ```
 
----
-
 ### createBindWorkSpaceArgPass
 
 - **作用**：将函数内的 `memref_ext.alloc_workspace` 绑定到函数的 workspace 参数（`hacc.arg_type = #hacc.arg_type<workspace>`）
@@ -263,8 +259,6 @@ func.func @bind_workspace_arg_aiv(
 }
 ```
 
----
-
 ## 接口说明
 
 验证单个 Pass
@@ -293,8 +287,6 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 
 其中，`bishengir-opt`和`FileCheck`均为编译生成的二进制可执行文件，路径再`path-to-ascendnpuir\build\bin`下。上述命令中的`%s`替换成对应的测试文件`bishengir\test\Dialect\HIVM\normalize-matmul.mlir`。
 输出的mlir会匹配测试文件中的`CHECK:`部分，测试后没有任何`CHECK failed`的报错即执行成功。
-
----
 
 ## 约束能力
 
