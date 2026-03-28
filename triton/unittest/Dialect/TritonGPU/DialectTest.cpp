@@ -599,24 +599,20 @@ TEST_F(LinearEncodingTest, DistributedEncodingToLinearEncoding) {
 // Fractal To LinearLayout Tests
 //===----------------------------------------------------------------------===//
 
-TEST(FractalNzTest, FractalNzBasic) {
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+TEST(FractalTest, FractalzNBasicRoundTrip) {
   MLIRContext ctx;
   ctx.loadDialect<mlir::triton::gpu::TritonGPUDialect>();
 
-  SmallVector<int64_t> shape = {32,
-                                64}; // Must be multiple of your fractal size
+  SmallVector<int64_t> shape = {32, 64};
 
-  auto fractalAttr = mlir::triton::gpu::FractalzNSharedEncodingAttr::get(
-      &ctx,
-      /*fractalM0=*/16,
-      /*fractalN0=*/16,
-      /*order=*/{1, 0}, // most common for zN
+  auto fractalAttr = mlir::triton::gpu::FractalSharedEncodingAttr::get(
+      &ctx, /*fractalM0=*/16, /*fractalN0=*/16,
+      FractalLayoutType::zN,
       CTALayoutAttr::getDefault(&ctx, shape.size()));
 
-  LinearLayout layout = fractalzNSharedToLinearLayout(shape, fractalAttr);
+  LinearLayout layout = fractalSharedToLinearLayout(shape, fractalAttr);
 
-  // Shared layouts have input dims "offset" (element within CTA) and "block"
-  // (CTA within cluster), per the LinearLayoutConversions contract.
   ASSERT_EQ(llvm::size(layout.getInDimNames()), 2u);
   ASSERT_EQ(llvm::size(layout.getOutDimNames()), 2u);
 
@@ -635,7 +631,7 @@ TEST(FractalNzTest, FractalNzBasic) {
   }
 }
 
-TEST(FractalNzTest, FractalNzPhysicalToLogical) {
+TEST(FractalTest, FractalzNPhysicalToLogical) {
   MLIRContext ctx;
   ctx.loadDialect<mlir::triton::gpu::TritonGPUDialect>();
 
@@ -645,11 +641,11 @@ TEST(FractalNzTest, FractalNzPhysicalToLogical) {
   const int64_t fractalN0 = 16;
   const int64_t bytesPerElem = 2; // float16
 
-  auto fractalAttr = mlir::triton::gpu::FractalzNSharedEncodingAttr::get(
-      &ctx, fractalM0, fractalN0, {1, 0},
+  auto fractalAttr = mlir::triton::gpu::FractalSharedEncodingAttr::get(
+      &ctx, fractalM0, fractalN0, FractalLayoutType::zN,
       CTALayoutAttr::getDefault(&ctx, shape.size()));
 
-  LinearLayout layout = fractalzNSharedToLinearLayout(shape, fractalAttr);
+  LinearLayout layout = fractalSharedToLinearLayout(shape, fractalAttr);
 
   auto offsetAttr = mlir::StringAttr::get(&ctx, "offset");
   auto blockAttr = mlir::StringAttr::get(&ctx, "block");
@@ -671,6 +667,77 @@ TEST(FractalNzTest, FractalNzPhysicalToLogical) {
   EXPECT_EQ(coords[dim0Attr], 32) << "Expected row=32";
   EXPECT_EQ(coords[dim1Attr], 16) << "Expected col=16";
 }
+
+TEST(FractalTest, FractalnZBasicRoundTrip) {
+  MLIRContext ctx;
+  ctx.loadDialect<mlir::triton::gpu::TritonGPUDialect>();
+
+  SmallVector<int64_t> shape = {32, 64};
+
+  auto fractalAttr = mlir::triton::gpu::FractalSharedEncodingAttr::get(
+      &ctx, /*fractalM0=*/16, /*fractalN0=*/16,
+      FractalLayoutType::nZ,
+      CTALayoutAttr::getDefault(&ctx, shape.size()));
+
+  LinearLayout layout = fractalSharedToLinearLayout(shape, fractalAttr);
+
+  ASSERT_EQ(llvm::size(layout.getInDimNames()), 2u);
+  ASSERT_EQ(llvm::size(layout.getOutDimNames()), 2u);
+
+  auto offsetAttr = mlir::StringAttr::get(&ctx, "offset");
+  auto blockAttr = mlir::StringAttr::get(&ctx, "block");
+  int64_t total = shape[0] * shape[1];
+
+  for (int64_t offset = 0; offset < std::min(total, 2048L); ++offset) {
+    auto logical = layout.apply(
+        {{offsetAttr, static_cast<int32_t>(offset)}, {blockAttr, 0}});
+    auto recovered = layout.invert().apply(logical);
+
+    ASSERT_FALSE(recovered.empty());
+    EXPECT_EQ(recovered[0].second, offset)
+        << "Round-trip failed at offset " << offset;
+  }
+}
+
+TEST(FractalTest, FractalnZPhysicalToLogical) {
+  MLIRContext ctx;
+  ctx.loadDialect<mlir::triton::gpu::TritonGPUDialect>();
+
+  // 64x64 tensor, 16x16 fractal blocks.
+  // nZ layout: inner N-shape (rows first), outer Z-shape (N-blocks first).
+  SmallVector<int64_t> shape = {64, 64};
+  const int64_t fractalM0 = 16;
+  const int64_t fractalN0 = 16;
+
+  auto fractalAttr = mlir::triton::gpu::FractalSharedEncodingAttr::get(
+      &ctx, fractalM0, fractalN0, FractalLayoutType::nZ,
+      CTALayoutAttr::getDefault(&ctx, shape.size()));
+
+  LinearLayout layout = fractalSharedToLinearLayout(shape, fractalAttr);
+
+  auto offsetAttr = mlir::StringAttr::get(&ctx, "offset");
+  auto blockAttr = mlir::StringAttr::get(&ctx, "block");
+  auto dim0Attr = mlir::StringAttr::get(&ctx, "dim0"); // row
+  auto dim1Attr = mlir::StringAttr::get(&ctx, "dim1"); // col
+
+  // For nZ: inner N-shape means rows vary fastest within a 16x16 block.
+  // offset 0 -> row=0, col=0 (first element of block 0)
+  // offset 1 -> row=1, col=0 (next row in same block)
+  // Outer Z-shape: N-blocks vary fastest across block boundaries.
+  // Block size = 16*16 = 256.
+  // offset 256 -> second block. With outer Z (N-blocks first):
+  //   block_col = 256 / 256 % 4 = 1, block_row = 0
+  //   → row=0, col=16
+  {
+    auto logical = layout.apply({{offsetAttr, 256}, {blockAttr, 0}});
+    llvm::SmallDenseMap<StringAttr, int32_t> coords;
+    for (auto [name, val] : logical)
+      coords[name] = val;
+    EXPECT_EQ(coords[dim0Attr], 0) << "Expected row=0";
+    EXPECT_EQ(coords[dim1Attr], 16) << "Expected col=16";
+  }
+}
+#endif // BSPRIV_DAVINCI_BISHENGIR
 
 } // namespace
 } // namespace mlir::triton::gpu

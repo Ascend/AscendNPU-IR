@@ -4,6 +4,11 @@
 #include "mlir/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/TritonGPUInterfaces.h"
 
+#ifndef TRITONGPU_OPSENUMS_H_INC_GUARD
+#define TRITONGPU_OPSENUMS_H_INC_GUARD
+#include "triton/Dialect/TritonGPU/IR/OpsEnums.h.inc"
+#endif
+
 #define GET_ATTRDEF_CLASSES
 #include "triton/Dialect/TritonGPU/IR/AttrDefs.h.inc"
 
