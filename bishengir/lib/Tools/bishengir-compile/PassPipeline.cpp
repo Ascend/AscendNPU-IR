@@ -159,6 +159,28 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
 }
 
+static void buildDelayedHFusionRegBaseVectorizePipeline(
+    mlir::OpPassManager &pm, const BiShengIRCompileMainConfig &config,
+    bool shouldInferFuncCoreType = true) {
+  if (config.shouldDisableHFusionVectorize()) {
+    return;
+  }
+
+  hfusion::HFusionPipelineOptions hfusionPipelineOptions;
+  setupHFusionPipelineOptions(hfusionPipelineOptions, config);
+  pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass());
+  hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
+  if (shouldInferFuncCoreType) {
+    pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
+  }
+
+  ConvertHFusionToHIVMOptions hfs2hivmOptions;
+  hfs2hivmOptions.mmMapMode =
+      config.shouldCompileTriton() ? hfusion::MmMapMode::MacroInstr
+                                   : hfusion::MmMapMode::CoreOp;
+  pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
+}
+
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (config.shouldCompileHIVM()) {
@@ -166,6 +188,9 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
     if (config.shouldEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createStripMemRefAddressSpacePass());
+      // Temporary workaround until reg-based vectorization is lowered to HIVM.
+      buildDelayedHFusionRegBaseVectorizePipeline(
+          pm, config, /*shouldInferFuncCoreType=*/false);
     }
     hivm::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
   }
@@ -238,6 +263,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   if (config.shouldCompileHFusion()) {
     setupHFusionPipelineOptions(hfusionPipelineOptions, config);
+    if (config.shouldEnableSimdSimtMixCompile()) {
+      // Delay reg-based vectorization until SIMT code is split out and we can
+      // re-run it only on the main module.
+      hfusionPipelineOptions.disableHFusionVectorize = true;
+    }
     hfusion::buildHFusionPipelines(pm, hfusionPipelineOptions);
   }
 
@@ -259,18 +289,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
       pm.nest<func::FuncOp>().addPass(
           mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
-      pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass());
-      hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
-      pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
-      // FIXME: we need convert hfusion back to hivm again beacsue rank-1
-      // `linalg.fill` is not  vectorized. It relies one hivm-single-point-opt
-      // pass to convert `memref.store` for performace .thie will be fixed
-      // after vectorize move to hivm.
-      ConvertHFusionToHIVMOptions hfs2hivmOptions;
-      hfs2hivmOptions.mmMapMode = convertToHIVMOptions.enableTritonKernelCompile
-                                      ? hfusion::MmMapMode::MacroInstr
-                                      : hfusion::MmMapMode::CoreOp;
-      pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
+      buildDelayedHFusionRegBaseVectorizePipeline(
+            pm, config, /*shouldInferFuncCoreType=*/true);
     }
     if (config.shouldEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createAutoScopePass());
