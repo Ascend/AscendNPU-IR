@@ -584,7 +584,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_1d_core_by_scalar(memref_t<__ubuf__ T, 1> *src,
                                     memref_t<__ubuf__ T, 1> *dst,
                                     int64_t copy_length) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("copy 1d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -603,7 +605,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_2d_core_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                     memref_t<__ubuf__ T, 2> *dst,
                                     int64_t copy_length) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("copy 2d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -625,7 +629,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_3d_core_by_scalar(memref_t<__ubuf__ T, 3> *src,
                                     memref_t<__ubuf__ T, 3> *dst,
                                     int64_t copy_length) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("copy 3d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -870,7 +876,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
                               memref_t<__gm__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("store 1d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -887,7 +895,9 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
                              memref_t<__ubuf__ T, 1> *dst,
                              int64_t left_padding_num, T pad_value) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("load 1d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {
@@ -914,7 +924,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
                               memref_t<__gm__ T, 2> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("store 2d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -934,7 +946,9 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
                              memref_t<__ubuf__ T, 2> *dst,
                              int64_t left_padding_num, T pad_value) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("load 2d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {
@@ -967,7 +981,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_3d_by_scalar(memref_t<__ubuf__ T, 3> *src,
                               memref_t<__gm__ T, 3> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("store 3d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -990,7 +1006,9 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                              memref_t<__ubuf__ T, 3> *dst,
                              int64_t left_padding_num, T pad_value) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("load 3d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {

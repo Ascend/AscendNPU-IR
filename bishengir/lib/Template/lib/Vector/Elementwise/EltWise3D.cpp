@@ -217,7 +217,9 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_3d(
     memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *src1,
     memref_t<__ubuf__ T, 3> *dst, int size0, int size1, int size2,
     VectorLastAxisMode mode, T scalar) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("eltwise 3d");
+#endif
   auto src0_ptr = src0 == nullptr ? nullptr : src0->aligned + src0->offset;
   auto src1_ptr = src1 == nullptr ? nullptr : src1->aligned + src1->offset;
   auto dst_ptr = dst->aligned + dst->offset;
