@@ -349,6 +349,24 @@ findDownstreamFusableOpOf(Operation *op, Block *block,
                                 visitedOps);
     }
   }
+  if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
+    Value tensor = toTensorOp.getResult();
+    for (Operation *tensorUser : tensor.getUsers()) {
+      if (isOpInBlock(tensorUser, block) && isFusableOp(tensorUser))
+        downstreamFusableOps.insert(tensorUser);
+      findDownstreamFusableOpOf(tensorUser, block, downstreamFusableOps,
+                                visitedOps);
+    }
+  }
+  if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+    Value memref = storeOp.getMemref();
+    for (Operation *memUser : memref.getUsers()) {
+      if (isOpInBlock(memUser, block) && isFusableOp(memUser))
+        downstreamFusableOps.insert(memUser);
+      findDownstreamFusableOpOf(memUser, block, downstreamFusableOps,
+                                visitedOps);
+    }
+  }
   for (Operation *user : op->getUsers()) {
     if (isOpInBlock(user, block) && isFusableOp(user)) {
       downstreamFusableOps.insert(user);
