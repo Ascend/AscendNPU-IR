@@ -332,6 +332,8 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
 
   Value bufferSelected;
   if (syncOp->eventIds.size() == 2) {
+    counter = rewriter.create<arith::IndexCastOp>(
+        counter.getLoc(), rewriter.getI1Type(), counter);
     Value firstID = rewriter.create<arith::ConstantIntOp>(
         loc, rewriter.getI64Type(), syncOp->eventIds[0]);
     Value secondID = rewriter.create<arith::ConstantIntOp>(
@@ -501,7 +503,10 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
   if (loopDBCondMap.contains(parentLoop)) {
     return loopDBCondMap[parentLoop];
   }
-  return loopDBCondMap[parentLoop] = createNestedIndexForOp(rewriter, op);
+  Value moduleIndex = createNestedIndexForOp(rewriter, op);
+  Value moduleIdx = rewriter.create<arith::IndexCastOp>(
+      moduleIndex.getLoc(), rewriter.getI64Type(), moduleIndex);
+  return loopDBCondMap[parentLoop] = moduleIdx;
 }
 
 void CodeGenerator::insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter) {

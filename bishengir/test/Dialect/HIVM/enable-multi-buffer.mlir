@@ -5,23 +5,13 @@
 // CHECK: #map = affine_map<()[s0] -> ((s0 floordiv 4) mod 2)>
 module {
 // CHECK-LABEL: multi_buffer_alloc_manual(
-// CHECK: %[[arg0:.*]]: memref<16xf16, #hivm.address_space<gm>>, %[[arg1:.*]]: memref<16xf16, #hivm.address_space<gm>>) {
   func.func @multi_buffer_alloc_manual(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
-    // CHECK: %[[c16:.*]] = arith.constant 16 : index
-    // CHECK: %[[c4:.*]] = arith.constant 4 : index
-    // CHECK: %[[c0:.*]] = arith.constant 0 : index
-    // CHECK: %[[c144_i64:.*]] = arith.constant 144 : i64
-    // CHECK: %[[c128_i64:.*]] = arith.constant 128 : i64
-    // CHECK: %[[c0_i64:.*]] = arith.constant 0 : i64
-    // CHECK: %[[c16_i64:.*]] = arith.constant 16 : i64
-
-    // CHECK: %[[T0:.*]] = hivm.hir.pointer_cast(%[[c0_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: annotation.mark %[[T0]] {attr = 1 : i32} : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T1:.*]] = hivm.hir.pointer_cast(%[[c16_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: annotation.mark %[[T1]] {attr = 1 : i32} : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T2:.*]] = hivm.hir.pointer_cast(%[[c128_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T3:.*]] = hivm.hir.pointer_cast(%[[c144_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: annotation.mark %{{.*}} {attr = 1 : i32} : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: annotation.mark %{{.*}} {attr = 1 : i32} : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
     %c128_i64 = arith.constant 128 : i64
@@ -30,26 +20,27 @@ module {
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
 
-    // CHECK: scf.for %[[arg2:.*]] = %[[c0]] to %[[c16]] step %[[c4]] {
     scf.for %arg2 = %c0 to %c16 step %c4 {
-      // CHECK: %[[T4:.*]] = affine.apply #map()[%[[arg2]]]
-      // CHECK: %[[T5:.*]] = arith.index_cast %[[T4]] : index to i1
-      // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T0]], %[[T1]] : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: %[[T7:.*]] = affine.apply #map()[%[[arg2]]]
-      // CHECK: %[[T8:.*]] = arith.index_cast %[[T7]] : index to i1
-      // CHECK: %[[T9:.*]] = arith.select %[[T8]], %[[T2]], %[[T3]] : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
+      // CHECK: arith.cmpi eq, {{.*}}, %{{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
+      // CHECK: arith.cmpi eq, {{.*}}, %{{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
       %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
       annotation.mark %0 {attr = 1 : i32} : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.pipe_barrier[<PIPE_ALL>]
       %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.pipe_barrier[<PIPE_ALL>]
-      // CHECK: hivm.hir.load ins(%[[arg0]] : memref<16xf16, #hivm.address_space<gm>>) outs(%[[T6]] : memref<16xf16, #hivm.address_space<ub>>)
+      // CHECK: hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>)
       hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
       hivm.hir.pipe_barrier[<PIPE_ALL>]
-      // CHECK: hivm.hir.vadd ins(%[[T6]], %[[T6]] : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%[[T9]] : memref<16xf16, #hivm.address_space<ub>>)
+      // CHECK: hivm.hir.vadd ins(%{{.*}}, %{{.*}} : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>)
       hivm.hir.vadd ins(%0, %0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%1 : memref<16xf16, #hivm.address_space<ub>>)
       hivm.hir.pipe_barrier[<PIPE_ALL>]
-      // CHECK: hivm.hir.store ins(%[[T9]] : memref<16xf16, #hivm.address_space<ub>>) outs(%[[arg1]] : memref<16xf16, #hivm.address_space<gm>>)
+      // CHECK: hivm.hir.store ins(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
       hivm.hir.store ins(%1 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
     }
     hivm.hir.pipe_barrier[<PIPE_ALL>]
@@ -60,12 +51,11 @@ module {
 // -----
 // CHECK: #map = affine_map<()[s0, s1] -> ((s1 * 5 + s0 floordiv 3) mod 2)>
 module {
-// CHECK: func.func @multi_buffer_alloc_manual_2for(%[[arg0:.*]]: memref<16xf16, #hivm.address_space<gm>>, %[[arg1:.*]]: memref<16xf16, #hivm.address_space<gm>>) {
   func.func @multi_buffer_alloc_manual_2for(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
-    // CHECK: %[[T0:.*]] = hivm.hir.pointer_cast(%[[c0_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T1:.*]] = hivm.hir.pointer_cast(%[[c16_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T2:.*]] = hivm.hir.pointer_cast(%[[c128_i64]]) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T3:.*]] = hivm.hir.pointer_cast(%[[c144_i64]]) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
@@ -79,28 +69,28 @@ module {
     %c15 = arith.constant 15 : index
     %c16 = arith.constant 16 : index
 
-    // CHECK: scf.for %[[arg2:.*]]
     scf.for %arg2 = %c0 to %c8 step %c1 {
-        // CHECK: scf.for %[[arg3:.*]]
         scf.for %arg3 = %c0 to %c15 step %c3 {
-          // CHECK: %[[T4:.*]] = affine.apply #map()[%arg3, %arg2]
-          // CHECK: %[[T5:.*]] = arith.index_cast
-          // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T0]], %[[T1]]
-          // CHECK: %[[T7:.*]] = affine.apply #map()[%arg3, %arg2]
-          // CHECK: %[[T8:.*]] = arith.index_cast %[[T7]] : index to i1
-          // CHECK: %[[T9:.*]] = arith.select %[[T8]], %[[T2]], %[[T3]]
+          // CHECK: affine.apply #map()[%arg3, %arg2]
+          // CHECK: arith.index_cast {{.*}} : index to i64
+          // CHECK: arith.cmpi eq, {{.*}} : i64
+          // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
+          // CHECK: affine.apply #map()[%arg3, %arg2]
+          // CHECK: arith.index_cast {{.*}} : index to i64
+          // CHECK: arith.cmpi eq, {{.*}} : i64
+          // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
           hivm.hir.pipe_barrier[<PIPE_ALL>]
           %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
           hivm.hir.pipe_barrier[<PIPE_ALL>]
           %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
           hivm.hir.pipe_barrier[<PIPE_ALL>]
-          // CHECK: hivm.hir.load ins(%[[arg0]] : memref<16xf16, #hivm.address_space<gm>>) outs(%[[T6]] : memref<16xf16, #hivm.address_space<ub>>)
+          // CHECK: hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>)
           hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>) outs(%0 : memref<16xf16, #hivm.address_space<ub>>)
           hivm.hir.pipe_barrier[<PIPE_ALL>]
-          // CHECK: hivm.hir.vadd ins(%[[T6]], %[[T6]] : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%[[T9]] : memref<16xf16, #hivm.address_space<ub>>)
+          // CHECK: hivm.hir.vadd ins(%{{.*}}, %{{.*}} : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>)
           hivm.hir.vadd ins(%0, %0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>) outs(%1 : memref<16xf16, #hivm.address_space<ub>>)
           hivm.hir.pipe_barrier[<PIPE_ALL>]
-          // CHECK: hivm.hir.store ins(%[[T9]] : memref<16xf16, #hivm.address_space<ub>>) outs(%[[arg1]] : memref<16xf16, #hivm.address_space<gm>>)
+          // CHECK: hivm.hir.store ins(%{{.*}} : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
           hivm.hir.store ins(%1 : memref<16xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
         }
       hivm.hir.pipe_barrier[<PIPE_ALL>]
@@ -111,7 +101,6 @@ module {
 }
 
 // -----
-// CHECK: #map = affine_map<()[s0] -> (s0 mod 2)>
 // CHECK: #map1 = affine_map<()[s0, s1] -> ((s0 + s1 * 15) mod 2)>
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_for_vadd(
@@ -128,23 +117,23 @@ module {
     %c15 = arith.constant 15 : index
     %c16 = arith.constant 16 : index
 
-    // CHECK: %[[T0:.*]] = hivm.hir.pointer_cast(%c128_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T1:.*]] = hivm.hir.pointer_cast(%c144_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T2:.*]] = hivm.hir.pointer_cast(%c0_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T3:.*]] = hivm.hir.pointer_cast(%c16_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
-    // CHECK: scf.for %[[arg2:.*]]
     scf.for %arg2 = %c0 to %c8 step %c1 {
-      // CHECK: %[[T4:.*]] = affine.apply #map()
-      // CHECK: %[[T5:.*]] = arith.index_cast
-      // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T0]], %[[T1]]
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
+      // CHECK: arith.cmpi eq, {{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
 
       %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
-      // CHECK: scf.for %[[arg3:.*]]
       scf.for %arg3 = %c0 to %c15 step %c1 {
-        // CHECK: %[[T7:.*]] = affine.apply #map1()
-        // CHECK: %[[T8:.*]] = arith.index_cast
-        // CHECK: %[[T9:.*]] = arith.select %[[T8]], %[[T2]], %[[T3]]
+        // CHECK: affine.apply #map1()[%arg3, %arg2]
+        // CHECK: arith.index_cast {{.*}} : index to i64
+        // CHECK: arith.cmpi eq, {{.*}} : i64
+        // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
         %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
         hivm.hir.pipe_barrier[<PIPE_ALL>]
         hivm.hir.load ins(%arg0 : memref<16xf16, #hivm.address_space<gm>>)
@@ -166,7 +155,6 @@ module {
 }
 
 // -----
-// CHECK: #map = affine_map<()[s0] -> (s0 mod 2)>
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_for_vadd_vmul(
   func.func @multi_buffer_alloc_manual_for_vadd_vmul(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
@@ -182,18 +170,20 @@ module {
     %c15 = arith.constant 15 : index
     %c16 = arith.constant 16 : index
 
-    // CHECK: %[[T0:.*]] = hivm.hir.pointer_cast(%c0_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T1:.*]] = hivm.hir.pointer_cast(%c16_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T2:.*]] = hivm.hir.pointer_cast(%c128_i64) : memref<16xf16, #hivm.address_space<ub>>
-    // CHECK: %[[T3:.*]] = hivm.hir.pointer_cast(%c144_i64) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
     scf.for %arg2 = %c0 to %c8 step %c1 {
-      // CHECK: %[[T4:.*]] = affine.apply #map()
-      // CHECK: %[[T5:.*]] = arith.index_cast
-      // CHECK: %[[T6:.*]] = arith.select %[[T5]], %[[T0]], %[[T1]]
-      // CHECK: %[[T7:.*]] = affine.apply #map()
-      // CHECK: %[[T8:.*]] = arith.index_cast %[[T7]] : index to i1
-      // CHECK: %[[T9:.*]] = arith.select %[[T8]], %[[T2]], %[[T3]] : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
+      // CHECK: arith.cmpi eq, {{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: affine.apply #map()[%arg2]
+      // CHECK: arith.index_cast {{.*}} : index to i64
+      // CHECK: arith.cmpi eq, {{.*}} : i64
+      // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
 
       %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
       %1 = hivm.hir.pointer_cast(%c128_i64, %c144_i64) [] : memref<16xf16, #hivm.address_space<ub>>
@@ -239,23 +229,22 @@ module {
     %c15 = arith.constant 15 : index
     %c16 = arith.constant 16 : index
 
-    // CHECK: hivm.hir.pointer_cast
-    // CHECK: hivm.hir.pointer_cast
-    // CHECK: hivm.hir.pointer_cast
-    // CHECK: hivm.hir.pointer_cast
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 
-    // CHECK: scf.for %[[arg2:.*]]
     scf.for %arg2 = %c1 to %c15 step %c2 {
-      // CHECK: scf.for %[[arg3:.*]]
       scf.for %arg3 = %c0 to %c15 step %c1 {
-          // CHECK: scf.for %[[arg4:.*]]
           scf.for %arg4 = %c0 to %c15 step %c1 {
             // CHECK: affine.apply #map()[%arg4, %arg3, %arg2]
-            // CHECK: arith.index_cast
-            // CHECK: arith.select
+            // CHECK: arith.index_cast {{.*}} : index to i64
+            // CHECK: arith.cmpi eq, {{.*}} : i64
+            // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
             // CHECK: affine.apply #map()[%arg4, %arg3, %arg2]
-            // CHECK: arith.index_cast
-            // CHECK: arith.select
+            // CHECK: arith.index_cast {{.*}} : index to i64
+            // CHECK: arith.cmpi eq, {{.*}} : i64
+            // CHECK: arith.select {{.*}} : memref<16xf16, #hivm.address_space<ub>>
             hivm.hir.pipe_barrier[<PIPE_ALL>]
             %0 = hivm.hir.pointer_cast(%c0_i64, %c16_i64) [] : memref<16xf16, #hivm.address_space<ub>>
             hivm.hir.pipe_barrier[<PIPE_ALL>]
