@@ -4,7 +4,7 @@
 
 During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
-![](../../../../images/developer_guide/auto_subtiling1.png)
+![](../../../../images/developer_guide/cvarch.png)
 
 In the current ecosystem, neither user-written kernels nor community operators typically implement Ascend Cube–Vector 1:2 sub-block logic. To improve compute efficiency and Ascend affinity, the compiler needs automatic sub-block (subtiling) capability. This feature applies a Cube–Vector 1:2 subtiling strategy and performs the corresponding data splitting.
 
@@ -20,7 +20,26 @@ Effects:
 
 ### Input/output example
 
-![](../../../../images/developer_guide/SuccInOut.png)
+Original Code
+```mlir
+%t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+```
+
+Vector Auto 1:2 Feature Enabled Successfully
+```mlir
+%0 = hivm.hir.get_sub_block_idx -> i64
+%slice_src = tensor.extract_slice %src[%0][32][1] : tensor<64xf16> to tensor<32xf16>
+%t0 = hivm.hir.vexp ins(%slice_src: tensor<32xf16>)
+                     outs(%new_init: tensor<32xf16>) -> tensor<32xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<32xf16>)
+                     outs(%new_init: tensor<32xf16>) -> tensor<32xf16>
+%output_slice = memref.subview %output[%0][32][1] : memref<64xf16> to memref<32xf16>
+hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
+```
 
 ### Implementation idea
 
@@ -76,4 +95,25 @@ Common reasons for falling back to 1:1:
 
 ### Fallback example
 
-![](../../../../images/developer_guide/FailInOut.png)
+Original Code
+```mlir
+%t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+```
+
+Auto 1:2 Enablement Failed, With if condition, only core 0 is operational
+
+```mlir
+%0 = hivm.hir.get_sub_block_idx
+%1 = arith.cmpi eq %0, %c0_cst
+scf.if %1 {
+  %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                       outs(%init: tensor<64xf16>) -> tensor<64xf16>
+  %t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                       outs(%init: tensor<64xf16>) -> tensor<64xf16>
+  hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+}
+```

@@ -173,12 +173,12 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 
 **The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.**
 
-> Each buffer is aligned as in [1. Hardware background](#1-hardware-background).
+> Each buffer is aligned as in [Hardware background](#hardware-background).
 
 Otherwise, PlanMemory fails with a scope overflow error (e.g. `UB overflow`):
-
-![](../../../../images/developer_guide/UBOverflowError.png)
-
----
-
-[1] Image source: Ascend C operator development documentation (https://www.hiascend.com/doc_center/source/zh/canncommercial/850/opdevg/Ascendcopdevg/figure/zh-cn_image_0000002502735896.png)
+```bash
+loc("/tmp/tmp0h121237/kernel.ttadapter.mlir":2:3): error: ub overflow,
+requires 3219456 bits while 1572864 bits available! (possible reason:
+tiling basic block is too large or block number is more than what user
+expect due to multi-buffer feature is enabled and some ops need extra local buffer.)
+```

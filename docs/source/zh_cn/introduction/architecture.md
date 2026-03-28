@@ -3,12 +3,12 @@
 ## 目标定位
 毕昇编译器AscendNPU IR是基于MLIR生态构建的昇腾硬件高层抽象表达，它会自下而上对昇腾硬件底层指令、核内资源、核间资源、SOC资源逐层进行抽象编译优化，多层抽象间分层解耦、开源开放，允许生态编程、三方框架权衡性能与易用性的需求灵活对接，为生态框架提供面向昇腾的统一编译接入层和硬件完备表达优化能力。
 
-![](../../images/introduction/architecture1.png)
+![](../../images/introduction/architecture1_zh.png)
 
 ## 逻辑架构
 AscendNPU IR中自研设计的方言有HFusion、HIVM、HACC、Annotation、Scope，其中HFusion方言负责硬件相对无关的优化，HIVM则负责精细化感知NPU硬件细节将High level的编程语言转换成NPU的底层指令，HACC方言负责异构硬件抽象表达，Annotation和Scope则负责对于特定Operand或者Operation标记compiler hint信息。
 
-![](../../images/introduction/architecture2.png)
+![](../../images/introduction/architecture2_zh.png)
 
 ### HFusion 方言
 
@@ -65,4 +65,4 @@ Conversion中既包括三方生态对接转换（如TorchToHFusion）也包括As
 ## 编译流程
 
 AscendNPU IR对应工具链是bishengir-compile，会负责把高抽象层级的Tile级OP编译成感知NPU 硬件架构的low level op，该工具链输入和输出均是mlir。hivmc工具会负责把low level的mlir转成llvm ir并基于LLVM IR进行底层指令编译优化，最终生成算子二进制。
-![](../../images/introduction/architecture3.png)
+![](../../images/introduction/architecture3_zh.png)

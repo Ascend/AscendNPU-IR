@@ -162,7 +162,11 @@ if __name__ == "__main__":
 
 **Print effect**
 
-![](../../images/user_guide/debug_option2.png)
+```text
+[warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
+BLOCK = 32
+Dumping intermediate results to /root/.triton/dump/KHviKCdUEjStublnqGQietpeng6Sintejlr0t0SujtspD
+```
 
 #### device_assert
 
@@ -407,8 +411,6 @@ msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-
 ```
 
 This creates an OPPROF with a timestamp directory in the current path.
-
-![](../../images/user_guide/debug_option8.png)
 
 Open the `simulator/visualize_data.bin` file in Mind Studio Insight to view the pipeline for the selected core (e.g. core 0), the two types of commonly used performance pipeline diagrams (trace.json/visualize_data.bin) described earlier can both be found in the `./OPPROF_<Timestamp>/simulator` directory.
 

@@ -165,7 +165,11 @@ if __name__ == "__main__":
 
 #### 打印效果
 
-![](../../images/user_guide/debug_option2.png)
+```text
+[warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
+BLOCK = 32
+Dumping intermediate results to /root/.triton/dump/KHviKCdUEjStublnqGQietpeng6Sintejlr0t0SujtspD
+```
 
 #### device_assert
 
@@ -412,7 +416,6 @@ if __name__ == "__main__":
 ```
 
 执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成带着时间戳的OPPROF文件夹
-![](../../images/user_guide/debug_option8.png)
 
-取出simulator底下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图(trace.json/visualize_data.bin)都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
+取出simulator下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图(trace.json/visualize_data.bin)都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
 ![](../../images/user_guide/debug_option9.png)

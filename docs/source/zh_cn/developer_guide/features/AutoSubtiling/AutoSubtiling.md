@@ -6,7 +6,7 @@
 
 当前昇腾AI加速芯片，AIC与AIV分离，核数1:2。
 
-![](../../../../images/developer_guide/auto_subtiling1.png)
+![](../../../../images/developer_guide/cvarch.png)
 
 在现有生态下，无论是用户编写的算法实现还是社区共享的算子，普遍没有昇腾 Cube-Vector 1:2 分核处理逻辑。为优化计算效率并实现昇腾亲和性，编译器需具备自动分核能力。该特性期待自动应用 Cube-Vector 1:2 分核策略，实现数据切分。
 
@@ -22,7 +22,26 @@
 
 ### 输入输出样例
 
-![](../../../../images/developer_guide/SuccInOut.png)
+原始代码
+```mlir
+%t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+```
+
+成功使能Vector自动1:2特性
+```mlir
+%0 = hivm.hir.get_sub_block_idx -> i64
+%slice_src = tensor.extract_slice %src[%0][32][1] : tensor<64xf16> to tensor<32xf16>
+%t0 = hivm.hir.vexp ins(%slice_src: tensor<32xf16>)
+                     outs(%new_init: tensor<32xf16>) -> tensor<32xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<32xf16>)
+                     outs(%new_init: tensor<32xf16>) -> tensor<32xf16>
+%output_slice = memref.subview %output[%0][32][1] : memref<64xf16> to memref<32xf16>
+hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
+```
 
 ### 实现思路
 
@@ -80,4 +99,24 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 
 ### 回退1:1样例
 
-![](../../../../images/developer_guide/FailInOut.png)
+原始代码
+```mlir
+%t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+%t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                     outs(%init: tensor<64xf16>) -> tensor<64xf16>
+hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+```
+
+自动1:2使能失败时，假如 `if` 条件，仅0核工作
+```mlir
+%0 = hivm.hir.get_sub_block_idx
+%1 = arith.cmpi eq %0, %c0_cst
+scf.if %1 {
+  %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
+                       outs(%init: tensor<64xf16>) -> tensor<64xf16>
+  %t1 = hivm.hir.vabs ins(%t0: tensor<64xf16>)
+                       outs(%init: tensor<64xf16>) -> tensor<64xf16>
+  hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
+}
+```

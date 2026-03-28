@@ -1,4 +1,4 @@
-![AscendNPU IR定位](./docs/source/images/introduction/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
+![AscendNPU IR定位](./docs/source/images/introduction/ascendnpu-ir-in-cann_zh.png "ascendnpu-ir-in-cann.png")
 
 ## 🎯 项目介绍
 
