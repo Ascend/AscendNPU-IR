@@ -10,7 +10,7 @@
 
 对于 AscendNPU-IR 用户，可在 bishengir-compile 命令中添加以下标志：`--enable-auto-blockify-loop`。
 
-![](../../../../images/developer_guide/AutoBlockify.jpg)
+![image](../../../../images/developer_guide/AutoBlockify.jpg)
 
 ## 算法原理
 
@@ -25,36 +25,36 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
 ### 逻辑说明
 
 1. ​**原始调度**​：
-   原始模式通常如下所示：
+    原始模式通常如下所示：
 
-   ```plaintext
-   block.idx = hivm.get_block_idx
-   use(block.idx)
-   -------等价于--------------
-   for block.idx from 0,...,logical_block_num
-       use(block.idx)
-   ```
+    ```plaintext
+    block.idx = hivm.get_block_idx
+    use(block.idx)
+    -------等价于--------------
+    for block.idx from 0,...,logical_block_num
+        use(block.idx)
+    ```
 
 2. **使用 TRITON_ALL_PARALLEL 的示例**​：
 
-当用户在 triton adapter 中添加 TRITON_ALL_PARALLEL 标志时，内核将被限制为仅使用最大物理块数量启动（假设逻辑块数 > 物理块数）。因此执行被限制为：
+    当用户在 triton adapter 中添加 TRITON_ALL_PARALLEL 标志时，内核将被限制为仅使用最大物理块数量启动（假设逻辑块数 > 物理块数）。因此执行被限制为：
 
-```plaintext
-for block.idx from 0,...,physical_block_num   <- 来自 get_block_idx
-    use(block.idx)
-```
+    ```plaintext
+    for block.idx from 0,...,physical_block_num   <- 来自 get_block_idx
+        use(block.idx)
+    ```
 
-仅有此逻辑是不完整的（部分索引会缺失），这正是需要 Auto Blockify Pass 来补全逻辑的原因——通过自动添加一层外部循环/块化来完善。
+    仅有此逻辑是不完整的（部分索引会缺失），这正是需要 Auto Blockify Pass 来补全逻辑的原因——通过自动添加一层外部循环/块化来完善。
 
-（注：如果用户不通过 triton adapter，需要自行确保块维度的设置与上述一致。）
+    （注：如果用户不通过 triton adapter，需要自行确保块维度的设置与上述一致。）
 
 3. **使用 Auto Blockify 后的最终逻辑**​：
 
-```plaintext
-for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
-    for inner from 0,...,physical_block_dim  <- 作为 block.idx 使用
-        use(min(outer * physical_block_dim + inner, logical_block_dim))
-```
+    ```plaintext
+    for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
+        for inner from 0,...,physical_block_dim  <- 作为 block.idx 使用
+            use(min(outer * physical_block_dim + inner, logical_block_dim))
+    ```
 
 ### 接口说明
 

@@ -20,21 +20,21 @@ Recommended:
 
 #### Source Preparation
 
-1. Clone the repository (then enter the repo directory, typically `ascendnpu-ir`):
+1. Clone the repository (then enter the repo directory, typically `ascendnpu-ir`).
 
-```bash
-git clone https://gitcode.com/Ascend/ascendnpu-ir.git
-cd ascendnpu-ir
-```
+    ```bash
+    git clone https://gitcode.com/Ascend/ascendnpu-ir.git
+    cd ascendnpu-ir
+    ```
 
-2. Initialize and update submodules
+2. Initialize and update submodules.
 
-The project depends on LLVM, Torch-MLIR, and other third-party libraries; submodules must be fetched and updated to the specified commit IDs.
+    The project depends on LLVM, Torch-MLIR, and other third-party libraries; submodules must be fetched and updated to the specified commit IDs.
 
-```bash
-# Recursively init and update all submodules
-git submodule update --init --recursive
-```
+    ```bash
+    # Recursively init and update all submodules
+    git submodule update --init --recursive
+    ```
 
 ### Runtime Dependencies
 
@@ -46,20 +46,20 @@ End-to-end runs depend on the CANN environment.
 
 2. Install CANN:
 
-```bash
-# Example: x86 A3, {version} is CANN version, e.g. 9.0.0
-chmod +x Ascend-cann_{version}_linux-x86_64.run
-chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
-./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
-```
+    ```bash
+    # Example: x86 A3, {version} is CANN version, e.g. 9.0.0
+    chmod +x Ascend-cann_{version}_linux-x86_64.run
+    chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
+    ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+    ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
+    ```
 
 3. Set environment variables:
 
-```bash
-# For version 8.5.0 and earlier, use ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
-source ${PATH-TO-CANN}/cann/set_env.sh
-```
+    ```bash
+    # For version 8.5.0 and earlier, use ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
+    source ${PATH-TO-CANN}/cann/set_env.sh
+    ```
 
 ## Build Commands
 
@@ -131,7 +131,7 @@ Run `./build-tools/build.sh` from the repo root to configure, build, and install
 
 #### Manual Build (Advanced)
 
-For full manual control, follow these steps. 
+For full manual control, follow these steps.
 
 **Prerequisites**: submodule init (`git submodule update --init --recursive`) and patch application (`source build-tools/apply_patches.sh`).
 
@@ -162,7 +162,7 @@ cmake ${LLVM_SOURCE_DIR}/llvm -G Ninja \
 ninja -j32
 ```
 
-**Note**: `[]` indicates optional options. To use an option, remove the leading `# ` and `[]`, and add the argument to the command.
+**Note**: `[]` indicates optional options. To use an option, remove the leading `#` and `[]`, and add the argument to the command.
 
 | Optional Option | Description |
 |-----------------|-------------|
@@ -191,9 +191,9 @@ This runs `check-mlir` and `check-bishengir`, executing the BiShengIR test suite
 
 #### Typical Output
 
-**When tests pass:**
+**When tests pass**:
 
-```
+```text
 -- Testing: 150 tests, 8 workers --
 ...
 
@@ -203,9 +203,9 @@ Testing Time: 45.23s
   Skipped: 2
 ```
 
-**When tests fail:**
+**When tests fail**:
 
-```
+```text
 -- Testing: 150 tests, 8 workers --
 PASS: bishengir :: bishengir-compile/commandline.mlir (1 of 150)
 ...
@@ -251,10 +251,10 @@ You can specify a test path, e.g. `./bin/llvm-lit ../bishengir/test/bishengir-co
 
 ## FAQ
 
-**Q:** When building with `build-tools/build.sh`, I get "ninja: error: loading 'build.ninja': No such file or directory". What should I do?  
+**Q:** When building with `build-tools/build.sh`, I get "ninja: error: loading 'build.ninja': No such file or directory". What should I do?
 **A:** Add the `-r` option to rerun CMake and regenerate `build.ninja`.
 
-**Q:** Build fails with "Too many open files". What should I do?  
+**Q:** Build fails with "Too many open files". What should I do?
 **A:** The number of open files exceeded the system limit. Raise the per-process open-file limit, e.g. `ulimit -n 65535`.
 
 **Q:** Build fails with:
@@ -267,5 +267,5 @@ You can specify a test path, e.g. `./bin/llvm-lit ../bishengir/test/bishengir-co
  is not a full path and was not found in the PATH.
 ```
 
-What should I do?  
+What should I do?
 **A:** The C++ compiler was not specified or the compiler binary is invalid. First try specifying the compiler with `--cxx-compiler=${CXX-COMPILER-PATH}`. If the error persists after specifying the compiler, reinstall or use another version (e.g. the recommended clang++-15).

@@ -20,21 +20,21 @@
 
 #### 源码准备
 
-1. 克隆主仓库（克隆后进入仓库目录，目录名通常为 `ascendnpu-ir`）：
+1. 克隆主仓库（克隆后进入仓库目录，目录名通常为 `ascendnpu-ir`）。
 
-```bash
-git clone https://gitcode.com/Ascend/ascendnpu-ir.git
-cd ascendnpu-ir
-```
+   ```bash
+   git clone https://gitcode.com/Ascend/ascendnpu-ir.git
+   cd ascendnpu-ir
+   ```
 
-1. 初始化并更新子模块（Submodules）
+2. 初始化并更新子模块（Submodules）。
 
-本项目依赖LLVM、Torch-MLIR等三方库，需要拉取并更新到指定的commit id。
+   本项目依赖LLVM、Torch-MLIR等三方库，需要拉取并更新到指定的commit id。
 
-```bash
-# 递归地拉取所有子模块
-git submodule update --init --recursive
-```
+   ```bash
+   # 递归地拉取所有子模块
+   git submodule update --init --recursive
+   ```
 
 ### 运行依赖
 
@@ -46,20 +46,20 @@ AscendNPU-IR端到端运行依赖CANN环境。
 
 2. 安装CANN包：
 
-```bash
-# 以x86系统A3环境，{version}为CANN版本，如9.0.0
-chmod +x Ascend-cann_{version}_linux-x86_64.run
-chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
-./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
-```
+   ```bash
+   # 以x86系统A3环境，{version}为CANN版本，如9.0.0
+   chmod +x Ascend-cann_{version}_linux-x86_64.run
+   chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
+   ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+   ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
+   ```
 
 3. 设置环境变量：
 
-```bash
-# 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
-source ${PATH-TO-CANN}/cann/set_env.sh
-```
+   ```bash
+   # 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
+   source ${PATH-TO-CANN}/cann/set_env.sh
+   ```
 
 ## 构建指令
 
@@ -162,7 +162,7 @@ cmake ${LLVM_SOURCE_DIR}/llvm -G Ninja \
 ninja -j32
 ```
 
-**说明**：`[]` 表示可选项。使用某选项时，去掉行首 `# ` 和 `[]`，将参数加入命令。
+**说明**：`[]` 表示可选项。使用某选项时，去掉行首 `#` 和 `[]`，将参数加入命令。
 
 | 可选参数 | 说明 |
 |----------|------|
@@ -191,9 +191,9 @@ cmake --build . --target "check-bishengir"
 
 #### 典型输出示例
 
-**测试通过时：**
+**测试通过时**：
 
-```
+```text
 -- Testing: 150 tests, 8 workers --
 ...
 
@@ -203,9 +203,9 @@ Testing Time: 45.23s
   Skipped: 2
 ```
 
-**测试失败时：**
+**测试失败时**：
 
-```
+```text
 -- Testing: 150 tests, 8 workers --
 PASS: bishengir :: bishengir-compile/commandline.mlir (1 of 150)
 ...
@@ -251,10 +251,10 @@ Testing Time: 38.12s
 
 ## FAQ
 
-Q：调用build-tools/build.sh脚本构建时，遇到报错"ninja: error: loading 'build.ninja': No such file or directory"应该如何处理？  
+Q：调用build-tools/build.sh脚本构建时，遇到报错"ninja: error: loading 'build.ninja': No such file or directory"应该如何处理？
 A：在调用build-tools/build.sh脚本时添加"-r"选项，重新执行CMake并生成新的build.ninja文件。
 
-Q：构建时遇到报错"Too many open files"应该如何处理？  
+Q：构建时遇到报错"Too many open files"应该如何处理？
 A：文件同时打开数量超过了系统中配置的上限，可以通过"ulimit -n xxx"来修改文件同时打开数量上限，如"ulimit -n 65535"。
 
 Q：构建时遇到报错
@@ -267,5 +267,5 @@ Q：构建时遇到报错
  is not a full path and was not found in the PATH.
 ```
 
-应该如何处理？  
+应该如何处理？
 A：未指定C++编译器或C++编译器二进制存在问题，首先尝试通过"--cxx-compiler=${CXX-COMPILER-PATH}"指定要使用的C++编译器，如果已经指定了C++编译器仍然报错，则尝试重新安装或使用其他版本的C++编译器，如使用推荐的clang++-15。

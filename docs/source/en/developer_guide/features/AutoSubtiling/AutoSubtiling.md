@@ -4,7 +4,7 @@
 
 During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
-![](../../../../images/developer_guide/cvarch.png)
+![image](../../../../images/developer_guide/cvarch.png)
 
 In the current ecosystem, neither user-written kernels nor community operators typically implement Ascend Cube–Vector 1:2 sub-block logic. To improve compute efficiency and Ascend affinity, the compiler needs automatic sub-block (subtiling) capability. This feature applies a Cube–Vector 1:2 subtiling strategy and performs the corresponding data splitting.
 
@@ -12,15 +12,16 @@ In the current ecosystem, neither user-written kernels nor community operators t
 
 The overall approach is:
 
-![](../../../../images/developer_guide/auto_subtiling2.png)
+![image](../../../../images/developer_guide/auto_subtiling2.png)
 
 Effects:
 
-![](../../../../images/developer_guide/auto_subtiling3.png)
+![image](../../../../images/developer_guide/auto_subtiling3.png)
 
 ### Input/output example
 
 Original Code
+
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
                      outs(%init: tensor<64xf16>) -> tensor<64xf16>
@@ -30,6 +31,7 @@ hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
 Vector Auto 1:2 Feature Enabled Successfully
+
 ```mlir
 %0 = hivm.hir.get_sub_block_idx -> i64
 %slice_src = tensor.extract_slice %src[%0][32][1] : tensor<64xf16> to tensor<32xf16>
@@ -50,25 +52,25 @@ hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
 
 If subtiling fails, the compiler falls back to 1:1.
 
-![](../../../../images/developer_guide/auto_subtiling4.png)
+![image](../../../../images/developer_guide/auto_subtiling4.png)
 
 Figure: Auto-subtiling 1:2 implementation.
 
 ### Design
 
-##### Dimension analyzer (axis selection)
+#### Dimension analyzer (axis selection)
 
 The Dimension Analyzer chooses a **parallel axis** for splitting by analyzing all operators in the target kernel.
 
-##### Why choose a parallel axis
+#### Why choose a parallel axis
 
 Vector cores do not share a direct data path. To maximize parallelism and correctness, splitting must avoid cross-tile dependencies. Splitting along a parallel axis allows each tile to be computed independently on a vector unit.
 
-##### Tile and slice store (leaf)
+#### Tile and slice store (leaf)
 
 Before each StoreOp/leaf node, an ExtractSliceOp for 1:2 splitting is inserted along the axis chosen by the Dimension Analyzer.
 
-##### BubbleUp Extract Slice
+#### BubbleUp Extract Slice
 
 A BubbleUp strategy is implemented per op type. Supported op types include:
 
@@ -96,6 +98,7 @@ Common reasons for falling back to 1:1:
 ### Fallback example
 
 Original Code
+
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
                      outs(%init: tensor<64xf16>) -> tensor<64xf16>

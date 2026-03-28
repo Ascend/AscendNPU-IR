@@ -1,53 +1,53 @@
-# Triton Integration #
+# Triton Integration
 
-[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/)	is an important component that helps Triton access the Ascend platform. After the Triton Ascend is built and installed, you can use the Ascend as the backend when executing the Triton operator.
+[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/) is an important component that helps Triton access the Ascend platform. After the Triton Ascend is built and installed, you can use the Ascend as the backend when executing the Triton operator.
 
-## Installation and Execution ##
+## Installation and Execution
 
-### Installation ###
+### Installation
 
-#### Python ####
+#### Python
 
 Currently, the Python version required by Triton-Ascend is py3.9-py3.11.
 
-#### Ascend CANN ####
+#### Ascend CANN
 
 The end-to-end operation of the Ascend NPU-IR depends on the CANN environment.
 
-1.  Download the CANN package: Download the toolkit package and the ops package corresponding to the hardware. You can download the toolkit package from[Ascend Community CANN Download Page](https://www.hiascend.com/cann/download) Get.
-2.  Install the CANN package.
+1. Download the CANN package: Download the toolkit package and the ops package corresponding to the hardware. You can download the toolkit package from[Ascend Community CANN Download Page](https://www.hiascend.com/cann/download) Get.
+2. Install the CANN package.
 
-```
-#In the x86 A3 environment, {version} indicates the CANN version, for example, 9.0.0.
-chmod +x Ascend-cann_{version}_linux-x86_64.run
-chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
-./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
-#Installing the Python Dependency of CANN
-pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
-```
+    ```bash
+    #In the x86 A3 environment, {version} indicates the CANN version, for example, 9.0.0.
+    chmod +x Ascend-cann_{version}_linux-x86_64.run
+    chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
+    ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+    ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
+    #Installing the Python Dependency of CANN
+    pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
+    ```
 
-3.  Set environment variables:
+3. Set environment variables:
 
-```
-#If the version is earlier than 8.5.0, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh.
-source ${PATH-TO-CANN}/cann/set_env.sh
-```
+    ```bash
+    #If the version is earlier than 8.5.0, the path is ${PATH-TO-CANN}/ascend-toolkit/set_env.sh.
+    source ${PATH-TO-CANN}/cann/set_env.sh
+    ```
 
-#### torch_npu & triton-ascend ####
+#### torch_npu & triton-ascend
 
 Currently, the torch_npu version is 2.7.1.
 
-```
+```bash
 pip install torch_npu==2.7.1
 pip install triton-ascend
 ```
 
-### Execution ###
+### Execution
 
 After installing Triton-Ascend, you can call the related Triton Kernel. For details, see the following source code. You can run the`pytest -sv <file>.py`Verify the functions after the installation. If the function is correct, the terminal displays`PASS`.
 
-```
+```python
 from typing import Optional
 import pytest
 import triton
@@ -133,11 +133,11 @@ def test_lt(param_list):
     validate_cmp(dtype, triton_res, torch_res)
 ```
 
-**Dynamic tiling support: The parallel granularity is configured by the grid parameter in \[\], and the tiling size is controlled by the XBLOCK and XBLOCK_SUB parameters. Users can adjust the size as required.**
+**Dynamic tiling support**: The parallel granularity is configured by the grid parameter in \[\], and the tiling size is controlled by the XBLOCK and XBLOCK_SUB parameters. Users can adjust the size as required.
 
-**Dynamic shape support: The kernel automatically adapts 1D tensors of any length. You only need to transfer the actual shape data.**
+**Dynamic shape support**: The kernel automatically adapts 1D tensors of any length. You only need to transfer the actual shape data.
 
-## Triton Op to AscendNPU IR Op Conversion ##
+## Triton Op to AscendNPU IR Op Conversion
 
 Triton Ascend degrades the advanced GPU abstraction operations of the Triton dialect to target dialects such as Linalg, HFusion, and HIVM, resulting in an optimized intermediate representation that can be efficiently executed on the Ascend NPU. The following table details the various Triton operations and their corresponding Ascend NPU IR operations in the fall process.
 
@@ -185,31 +185,31 @@ Triton Ascend degrades the advanced GPU abstraction operations of the Triton dia
 | `triton::ReduceOp`                | `linalg::ReduceOp`                                                                                                                               | general reduction operation                                        |
 | `triton::ScanOp`                  | First convert to`func::CallOp`(Invokes`triton_cumsum`or the`triton_cumprod`) and then converted to`hfusion::CumsumOp`and the`hfusion::CumprodOp` | Perform scanning operations (e.g., cumulative sum, cumulative sum) |
 
-## Triton extended operation ##
+## Triton extended operation
 
 Ascend NPU-IR provides language features. Triton-Ascend extends some operations based on NPU IR. To enable the capabilities, you need to import the following modules:
 
-```
+```python
 import triton.language.extra.cann.extension as al
 ```
 
 The relevant Ascend Language (al) unique interface can then be used. In addition, the Ascend Language provides bottom-layer interfaces, and the interfaces are not compatible.
 
-### Synchronization and Debugging Operations ###
+### Synchronization and Debugging Operations
 
-#### debug_barrier ####
+#### debug_barrier
 
 The Ascend provides multiple synchronization modes and supports the internal synchronization mode of the vector pipeline for fine-grained synchronization control during debugging and performance optimization.
 
-##### Parameter Description #####
+##### Parameter Description
 
 | Parameter name | Type                                           | Description                          |
 | -------------- | ---------------------------------------------- | ------------------------------------ |
-| `sync_mode`    | [Enumerated value of SYNC_IN_VF](#sync_in_vf)	 | Vector pipeline synchronization mode |
+| `sync_mode`    | [Enumerated value of SYNC_IN_VF](#sync_in_vf)  | Vector pipeline synchronization mode |
 
-**Example**
+**Example**:
 
-```
+```python
 @triton.jit
 def kernel_debug_barrier():
     #...
@@ -222,21 +222,21 @@ def kernel_debug_barrier():
     #...
 ```
 
-#### sync_block_set & sync_block_wait ####
+#### sync_block_set & sync_block_wait
 
 The Ascend supports the setting of synchronization events between computing units and vector units. The sync_block_set and sync_block_wait must be used together.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name        | Type                                                   | Description         |
 | --------------------- | ------------------------------------------------------ | ------------------- |
 | `sender`              | str                                                    | Sending unit type   |
 | `receiver`            | str                                                    | Receiving unit type |
 | `event_id`            | int                                                    | Event Identifier    |
-| `sender_pipe_value`   | [Specifies the enumerated values of Pipe.](#pipe)	     | Send Pipe Value     |
-| `receiver_pipe_value` | [Specifies the enumerated values of the pipe.](#pipe)	 | Receive Pipe Value  |
+| `sender_pipe_value`   | [Specifies the enumerated values of Pipe.](#pipe)      | Send Pipe Value     |
+| `receiver_pipe_value` | [Specifies the enumerated values of the pipe.](#pipe)  | Receive Pipe Value  |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -255,18 +255,18 @@ def triton_matmul_exp():
     #...
 ```
 
-#### sync_block_all ####
+#### sync_block_all
 
 Ascend supports global synchronization of the entire computing block, ensuring that all computing cores of a specified type complete the current operation.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type | Description                                            | Valid Value                                            |
 | -------------- | ---- | ------------------------------------------------------ | ------------------------------------------------------ |
 | `mode`         | str  | Sync mode, specifying the core type to be synchronized | `"all_cube"`,`"all_vector"`,`"all"`,`"all_sub_vector"` |
 | `event_id`     | int  | synchronization event identifier                       | `0`\-`15`                                              |
 
-**Synchronization mode details**
+**Synchronization mode details**:
 
 | mode               | Description                           | Synchronization Range                                    |
 | ------------------ | ------------------------------------- | -------------------------------------------------------- |
@@ -275,7 +275,7 @@ Ascend supports global synchronization of the entire computing block, ensuring t
 | `"all"`            | Synchronize all cores                 | All computing cores (Cube+Vector) on the current AI core |
 | `"all_sub_vector"` | Synchronizing all sub vectoring cores | All sub vectoring cores on the current AI core           |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -286,13 +286,13 @@ def test_sync_block_all():
     #...
 ```
 
-### Hardware query and control operations ###
+### Hardware query and control operations
 
-#### sub_vec_id & sub_vec_num ####
+#### sub_vec_id & sub_vec_num
 
 The Ascend provides an interface to query hardware information by calling the`sub_vec_id`Obtain the vector core index on the current AI core by calling.`sub_vec_num`Number of vectoring cores on a single AI core supported by the interface.
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -305,11 +305,11 @@ def triton_matmul_exp():
     #...
 ```
 
-#### parallel ####
+#### parallel
 
 Ascend extends the Python standard`range`capability, adding parallel execution semantics`parallel`Iterator.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameters           | Type | Description                          | Example                                 |
 | -------------------- | ---- | ------------------------------------ | --------------------------------------- |
@@ -319,11 +319,11 @@ Ascend extends the Python standard`range`capability, adding parallel execution s
 | `num_stages`         | int  | Number of pipeline phases (optional) | `parallel(0, 10, num_stages=3)`         |
 | `loop_unroll_factor` | int  | Cycle spread factor (optional)       | `parallel(0, 10, loop_unroll_factor=4)` |
 
-**Restriction**
+**Restriction**:
 
 Currently, the OptiX RTN 910B supports a maximum of two vectoring cores.
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -337,13 +337,13 @@ def triton_add():
     #...
 ```
 
-### Compilation Optimization Tips ###
+### Compilation Optimization Tips
 
-#### compile_hint ####
+#### compile_hint
 
 Ascend supports passing optimization prompts to the compiler to guide code generation and performance tuning.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type           | Description                   |
 | -------------- | -------------- | ----------------------------- |
@@ -351,7 +351,7 @@ Ascend supports passing optimization prompts to the compiler to guide code gener
 | `hint_name`    | str            | Prompt name                   |
 | `hint_val`     | Multiple types | Prompt Value (Optional)       |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -362,18 +362,18 @@ def triton_where_lt_case1():
     #...
 ```
 
-#### multibuffer ####
+#### multibuffer
 
 `multibuffer`is a function used to set up Double Buffering for existing tensors, optimizing data flow and computational overlap through compiler hints.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameters | Type   | Description                    |
 | ---------- | ------ | ------------------------------ |
 | `src`      | tensor | Tensor to be multiple buffered |
 | `size`     | int    | Number of buffered copies      |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -385,24 +385,24 @@ def triton_compile_hint():
     #...
 ```
 
-#### scope ####
+#### scope
 
 Ascend supports scope managers, adding hint information to a section of locale code, one use of which is through`core_mode`Specifies the cube or vector type.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type | Description                                                                                                                                   |
 | -------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `core_mode`    | str  | Core type, which specifies the computing core used by operations in a block. Only the core type is accepted.`"cube"`or the`"vector"`Two modes |
 
-**Core Mode Options**
+**Core Mode Options**:
 
 | mode       | Description                          |
 | ---------- | ------------------------------------ |
 | `"cube"`   | Use the Cube core for calculation.   |
 | `"vector"` | Use the vector core for calculation. |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -416,13 +416,13 @@ def kernel_debug_barrier():
     #...
 ```
 
-### Tensor slice operation ###
+### Tensor slice operation
 
-#### insert_slice & extract_slice ####
+#### insert_slice & extract_slice
 
 Ascend supports inserting a tensor into another tensor based on the offset, size, and step parameters of the operation (i.e.`insert_slice`) or extract the specified slice from another tensor (i.e.`extract_slice`).
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type          | Description                             |
 | -------------- | ------------- | --------------------------------------- |
@@ -432,7 +432,7 @@ Ascend supports inserting a tensor into another tensor based on the offset, size
 | `sizes`        | Integer Tuple | Size range of insert operations         |
 | `strides`      | Integer Tuple | Step parameter of the insert operation. |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -447,18 +447,18 @@ def triton_kernel():
     #...
 ```
 
-#### get_element ####
+#### get_element
 
 Ascend supports reading a single element value at a specified index position from a tensor.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type      | Description                                                 |
 | -------------- | --------- | ----------------------------------------------------------- |
 | `src`          | tensor    | Source Tensor to Access                                     |
 | `indice`       | int tuple | Specifies the index location of the element to be obtained. |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -469,13 +469,13 @@ def index_select_manual_kernel():
     #...
 ```
 
-### Tensor Calculation Operations ###
+### Tensor Calculation Operations
 
-#### sort ####
+#### sort
 
 Ascend supports the sorting operation on input tensors along the specified dimension.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type                         | Description                                                                              | Default value |
 | -------------- | ---------------------------- | ---------------------------------------------------------------------------------------- | ------------- |
@@ -483,7 +483,7 @@ Ascend supports the sorting operation on input tensors along the specified dimen
 | `dim`          | int or tl.constexpr\[int\]   | Dimension to sort                                                                        | `-1`          |
 | `descending`   | bool or tl.constexpr\[bool\] | Sorting direction,`True`Indicates the descending order,`False`Indicates ascending order. | `False`       |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -495,18 +495,18 @@ def sort_kernel_2d():
     #...
 ```
 
-#### flip ####
+#### flip
 
 Ascend supports the flip operation on the input tensor along the specified dimension.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type                       | Description       |
 | -------------- | -------------------------- | ----------------- |
 | `ptr`          | tensor                     | Input Tensor      |
 | `dim`          | int or tl.constexpr\[int\] | Dimension to flip |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -517,11 +517,11 @@ def flip_kernel_2d():
     #...
 ```
 
-#### cast ####
+#### cast
 
 The Ascend supports the conversion of tensors to specified data types, including numerical conversion, bit conversion, and overflow processing.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name         | Type           | Description                                                  | Default value |
 | ---------------------- | -------------- | ------------------------------------------------------------ | ------------- |
@@ -531,7 +531,7 @@ The Ascend supports the conversion of tensors to specified data types, including
 | `bitcast`              | bool, optional | Whether to perform bit conversion (not numeric conversion)   | `False`       |
 | `overflow_mode`        | str, optional  | Overflow handling mode                                       | `None`        |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -544,13 +544,13 @@ def cast_to_bool():
     #...
 ```
 
-### Indexing and Collection Operations ###
+### Indexing and Collection Operations
 
-#### _index_select ####
+#### _index_select
 
 The Ascend collects data in specified dimensions based on the index UB tensor from the source GM tensor and uses the SIMT template to collect values to the output UB tensor. This operation supports 2D-5D tensors.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name    | Type         | Description                                          |
 | ----------------- | ------------ | ---------------------------------------------------- |
@@ -564,7 +564,7 @@ The Ascend collects data in specified dimensions based on the index UB tensor fr
 | `other`(Optional) | scalar value | Default value when index is out of bounds (in UB)    |
 | `out`             | tensor       | Output Tensor (on UB)                                |
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -583,11 +583,11 @@ def select_index():
     #...
 ```
 
-#### index_put ####
+#### index_put
 
 Ascend allows you to place the value tensor in the target tensor based on the index tensor.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name   | Type                  | Description                                           |
 | ---------------- | --------------------- | ----------------------------------------------------- |
@@ -600,26 +600,26 @@ Ascend allows you to place the value tensor in the target tensor based on the in
 | `start_offset`   | int tuple             | Start offset of the placement area of each dimension. |
 | `dst_stride`     | int tuple             | Step size of each dimension of the target tensor.     |
 
-**Index Placement Rules**
+**Index Placement Rules**:
 
- *  2D Index Placement
+ * 2D Index Placement
     
-     *  dim = 0:`out[index[i]][start_offset[1]:end_offset[1]] = value[i][0:end_offset[1]-start_offset[1]]`
- *  3D Index Placement
+     * dim = 0:`out[index[i]][start_offset[1]:end_offset[1]] = value[i][0:end_offset[1]-start_offset[1]]`
+ * 3D Index Placement
     
-     *  dim = 0:`out[index[i]][start_offset[1]:end_offset[1]][start_offset[2]:end_offset[2]] = value[i][0:end_offset[1]-start_offset[1]][0:end_offset[2]-start_offset[2]]`
-     *  dim = 1:`out[start_offset[0]:end_offset[0]][index[j]][start_offset[2]:end_offset[2]] = value[0:end_offset[0]-start_offset[0]][j][0:end_offset[2]-start_offset[2]]`
+     * dim = 0:`out[index[i]][start_offset[1]:end_offset[1]][start_offset[2]:end_offset[2]] = value[i][0:end_offset[1]-start_offset[1]][0:end_offset[2]-start_offset[2]]`
+     * dim = 1:`out[start_offset[0]:end_offset[0]][index[j]][start_offset[2]:end_offset[2]] = value[0:end_offset[0]-start_offset[0]][j][0:end_offset[2]-start_offset[2]]`
 
-**Constraints**
+**Constraints**:
 
- *  `ptr`And to the`value`Must have the same rank.
- *  `ptr.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
- *  `index`Must be an integer tensor. If`index.rank`! = 1, will be remodeled as 1D.
- *  `index.numel`Must be equal to`value.shape[dim]`.
- *  `value`Supports two to five-dimensional tensors.
- *  `dim`Must be valid (0 ≤ dim < rank(value) - 1).
+ * `ptr`And to the`value`Must have the same rank.
+ * `ptr.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
+ * `index`Must be an integer tensor. If`index.rank`! = 1, will be remodeled as 1D.
+ * `index.numel`Must be equal to`value.shape[dim]`.
+ * `value`Supports two to five-dimensional tensors.
+ * `dim`Must be valid (0 ≤ dim < rank(value) - 1).
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -638,11 +638,11 @@ def put_index():
     #...
 ```
 
-#### gather_out_to_ub ####
+#### gather_out_to_ub
 
 Ascend can collect data from scatterpoints in the GM and save the data to the UB in a specified dimension. This operation supports index boundary check, ensuring efficient and secure data transfer.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name   | Type                    | Description                                         |
 | ---------------- | ----------------------- | --------------------------------------------------- |
@@ -655,37 +655,37 @@ Ascend can collect data from scatterpoints in the GM and save the data to the UB
 | `start_offset`   | int32 tuple             | Start offset of each dimension of the index tensor. |
 | `other`          | Scalar Value (Optional) | Default value used when index out of bounds (on UB) |
 
-**Return Value**
+**Return Value**:
 
- *  **Type: tensor**
- *  **Description: Result tensor in UB, shape vs.**`index.shape`The same.
+ * **Type: tensor**
+ * **Description: Result tensor in UB, shape vs.**`index.shape`The same.
 
-**Scatter collection rule**
+**Scatter collection rule**:
 
- *  One-dimensional index collection
+ * One-dimensional index collection
     
-     *  dim = 0:`out[i] = src[start_offset[0] + index[i]]`
- *  2D Index Collection
+     * dim = 0:`out[i] = src[start_offset[0] + index[i]]`
+ * 2D Index Collection
     
-     *  dim = 0:`out[i][j] = src[start_offset[0] + index[i][j]][start_offset[1] + j]`
-     *  dim = 1:`out[i][j] = src[start_offset[0] + i][start_offset[1] + index[i][j]]`
- *  3D Index Collection
+     * dim = 0:`out[i][j] = src[start_offset[0] + index[i][j]][start_offset[1] + j]`
+     * dim = 1:`out[i][j] = src[start_offset[0] + i][start_offset[1] + index[i][j]]`
+ * 3D Index Collection
     
-     *  dim = 0:`out[i][j][k] = src[start_offset[0] + index[i][j][k]][start_offset[1] + j][start_offset[2] + k]`
-     *  dim = 1:`out[i][j][k] = src[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k]`
-     *  dim = 2:`out[i][j][k] = src[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]]`
+     * dim = 0:`out[i][j][k] = src[start_offset[0] + index[i][j][k]][start_offset[1] + j][start_offset[2] + k]`
+     * dim = 1:`out[i][j][k] = src[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k]`
+     * dim = 2:`out[i][j][k] = src[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]]`
 
-**Constraints**
+**Constraints**:
 
- *  `src`And to the`index`Must have the same rank.
- *  `src.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
- *  `index`Must be an integer tensor with a rank between 1 and 5.
- *  `dim`Must be valid (0 ≤ dim < rank(index)).
- *  `other`Must be a scalar value.
- *  For each not equal to`dim`Dimension of`i`,`index.size[i]`≤`src.size[i]`.
- *  Output Shape vs.`index.shape`Same. if`index`None, the output tensor will be the same as the`index`Empty tensors of the same shape.
+ * `src`And to the`index`Must have the same rank.
+ * `src.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
+ * `index`Must be an integer tensor with a rank between 1 and 5.
+ * `dim`Must be valid (0 ≤ dim < rank(index)).
+ * `other`Must be a scalar value.
+ * For each not equal to`dim`Dimension of`i`,`index.size[i]`≤`src.size[i]`.
+ * Output Shape vs.`index.shape`Same. if`index`None, the output tensor will be the same as the`index`Empty tensors of the same shape.
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -703,11 +703,11 @@ def gather():
     #...
 ```
 
-#### scatter_ub_to_out ####
+#### scatter_ub_to_out
 
 Ascend stores data from scatterpoints in UB to GM along a specified dimension. This operation supports index boundary check, ensuring efficient and secure data transfer.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name   | Type                  | Description                                         |
 | ---------------- | --------------------- | --------------------------------------------------- |
@@ -720,31 +720,31 @@ Ascend stores data from scatterpoints in UB to GM along a specified dimension. T
 | `end_offset`     | int32 tuple           | End offset of each dimension of the index tensor.   |
 | `start_offset`   | int32 tuple           | Start offset of each dimension of the index tensor. |
 
-**Scatter storage rule**
+**Scatter storage rule**:
 
- *  one-dimensional index scatter
+ * one-dimensional index scatter
     
-     *  dim = 0:`out[start_offset[0] + index[i]] = value[i]`
- *  2D Index Scatter
+     * dim = 0:`out[start_offset[0] + index[i]] = value[i]`
+ * 2D Index Scatter
     
-     *  dim = 0:`out[start_offset[0] + index[i][j]][start_offset[1] + j] = value[i][j]`
-     *  dim = 1:`out[start_offset[0] + i][start_offset[1] + index[i][j]] = value[i][j]`
- *  3D Index Scatter
+     * dim = 0:`out[start_offset[0] + index[i][j]][start_offset[1] + j] = value[i][j]`
+     * dim = 1:`out[start_offset[0] + i][start_offset[1] + index[i][j]] = value[i][j]`
+ * 3D Index Scatter
     
-     *  dim = 0:`out[start_offset[0] + index[i][j][k]][start_offset[1] + j][start_offset[2] + k] = value[i][j][k]`
-     *  dim = 1:`out[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k] = value[i][j][k]`
-     *  dim = 2:`out[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]] = value[i][j][k]`
+     * dim = 0:`out[start_offset[0] + index[i][j][k]][start_offset[1] + j][start_offset[2] + k] = value[i][j][k]`
+     * dim = 1:`out[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k] = value[i][j][k]`
+     * dim = 2:`out[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]] = value[i][j][k]`
 
-**Constraints**
+**Constraints**:
 
- *  `ptr`,`index`And to the`value`Must have the same rank.
- *  `ptr.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
- *  `index`Must be an integer tensor with a rank between 1 and 5.
- *  `dim`Must be valid (0 ≤ dim < rank(index)).
- *  For each not equal to`dim`Dimension of`i`,`index.size[i]`≤`ptr.size[i]`.
- *  Output Shape vs.`index.shape`Same. if`index`None, the output tensor will be the same as the`index`Empty tensors of the same shape.
+ * `ptr`,`index`And to the`value`Must have the same rank.
+ * `ptr.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
+ * `index`Must be an integer tensor with a rank between 1 and 5.
+ * `dim`Must be valid (0 ≤ dim < rank(index)).
+ * For each not equal to`dim`Dimension of`i`,`index.size[i]`≤`ptr.size[i]`.
+ * Output Shape vs.`index.shape`Same. if`index`None, the output tensor will be the same as the`index`Empty tensors of the same shape.
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -763,11 +763,11 @@ def scatter():
     #...
 ```
 
-#### index_select_simd ####
+#### index_select_simd
 
 The Ascend supports parallel index selection. Data is directly loaded to the UB from GM points, implementing zero copy and efficient read.
 
-**Parameter Description**
+**Parameter Description**:
 
 | Parameter name | Type                         | Description                                                     |
 | -------------- | ---------------------------- | --------------------------------------------------------------- |
@@ -778,19 +778,19 @@ The Ascend supports parallel index selection. Data is directly loaded to the UB 
 | `src_offset`   | List\[Union\[int, tensor\]\] | Read start offset (can be an integer or a tensor)               |
 | `read_shape`   | List\[Union\[int, tensor\]\] | Size to read (Block shape, which can be an integer or a tensor) |
 
-**Constraints**
+**Constraints**:
 
- *  `read_shape[dim]`Must be for the`-1`.
- *  `src_offset[dim]`Can be used for`-1`(will be ignored).
- *  Boundary processing: when`src_offset + read_shape > src_shape`is automatically truncated to`src_shape`Borders.
- *  **No check is performed.**`index`Indicates whether to contain out-of-bounds values.
+ * `read_shape[dim]`Must be for the`-1`.
+ * `src_offset[dim]`Can be used for`-1`(will be ignored).
+ * Boundary processing: when`src_offset + read_shape > src_shape`is automatically truncated to`src_shape`Borders.
+ * **No check is performed.**`index`Indicates whether to contain out-of-bounds values.
 
-**Return Value**
+**Return Value**:
 
- *  **Return type: tensor**
- *  **Description: Resulting tensor in UB, whose shape**`dim`Dimension is replaced with`index`Length of.
+ * **Return type: tensor**
+ * **Description: Resulting tensor in UB, whose shape**`dim`Dimension is replaced with`index`Length of.
 
-**Example**
+**Example**:
 
 ```
 @triton.jit
@@ -807,13 +807,13 @@ def index_select_simd():
     #...
 ```
 
-## Triton extended CustomOp ##
+## Triton extended CustomOp
 
 In the A5 architecture, the Custom Op of Triton-Ascend allows users to customize operations and use it. Customization operations are converted into calling the implementation functions on the device side during running. The functions can call the existing library functions or the implementation functions generated by the source code or bytecode compilation provided by the user.
 
-### Basic Usage ###
+### Basic Usage
 
-#### Registering Customized Operations ####
+#### Registering Customized Operations
 
 The functions related to customization operations are provided by the triton Ascend extension package. User-defined customization operations can be used only after registration. You can use the`register_custom_op`Decorate a class to define and register the custom action:
 
@@ -830,12 +830,12 @@ class my_custom_op:
 
 To register a simplest customization operation, at least the basic attributes such as name, core, pipe, and mode must be provided.
 
- *  The name operation name, which is the unique identifier for this custom operation. If omitted, the class name is used by default.
- *  core indicates the type of Ascend core on which the.
- *  pipe indicates the pipeline.
- *  mode indicates the programming mode used.
+ * The name operation name, which is the unique identifier for this custom operation. If omitted, the class name is used by default.
+ * core indicates the type of Ascend core on which the.
+ * pipe indicates the pipeline.
+ * mode indicates the programming mode used.
 
-#### Use custom actions ####
+#### Use custom actions
 
 Registered custom actions are available through the Ascend expansion pack`custom()`The function is invoked. The name and parameters of the customized operation must be provided.
 
@@ -853,13 +853,13 @@ def my_kernel(...):
 
 `custom()`The parameters of the include the operation name, input parameters, and optional output parameters.
 
- *  **Operation name: The value must be the same as the registered operation name.**
- *  **Input parameter: Different operations have different input parameters.**
- *  **Output parameter (optional): The output parameter is defined by the**`out`Specifies the output of the operation.
+ * **Operation name: The value must be the same as the registered operation name.**
+ * **Input parameter: Different operations have different input parameters.**
+ * **Output parameter (optional): The output parameter is defined by the**`out`Specifies the output of the operation.
 
 If it's passed`out`If the parameter specifies the output variable, the return value of the customization operation is the same as that of the output variable. Otherwise, the return value of the operation is unavailable.
 
-### Built-in Customization Operations ###
+### Built-in Customization Operations
 
 The name of the built-in customization operation starts with`"__builtin_"`Start with the customized operations built in triton-ascend, which can be directly used without registration. For example:
 
@@ -878,7 +878,7 @@ def my_kernel(...):
 
 For details about the built-in customization operations, see the documentation of the related version.
 
-### Parameter Validity Check ###
+### Parameter Validity Check
 
 Without constraint, the user can give`al.custom()`If the number of parameters and parameter types are not the expected ones, an error occurs during the running.
 
@@ -919,7 +919,7 @@ If the provided parameter is incorrect, an error will be reported during compila
 AssertionError('dim must be an integer')
 ```
 
-### Output Parameters and Return Values ###
+### Output Parameters and Return Values
 
 `al.custom`The output parameter specified by the out parameter is returned. For example:
 
@@ -939,11 +939,11 @@ dst1 is returned to x and dst2 is returned to y.
 
 Without the out parameter,`al.custom`No value is returned (None is returned).
 
-### Symbolic name of the called function. ###
+### Symbolic name of the called function
 
 The customization operation will eventually be converted into calling the implementation function on the device side. We can register the custom action class`symbol`Property to configure the symbolic name of the function; if not set`symbol`Property, the name of the custom operation is used as the function name by default.
 
-#### Static Symbol Name ####
+#### Static Symbol Name
 
 If a custom operation always calls a device-side function, you can set the symbol name statically.
 
@@ -959,7 +959,7 @@ class my_custom_op:
 
 In this way,`al.custom('my_custom_op', ...)`will fix the corresponding device side`_my_custom_op_symbol_name_(...)`function.
 
-#### Dynamic symbol name ####
+#### Dynamic symbol name
 
 In most cases, the same customization operation needs to invoke different device functions based on the dimension and type of the input parameter. In this case, the symbol name needs to be set dynamically. Similar to the parameter validity check, you can dynamically set the symbol name in the constructor of the registered custom operation class. For example:
 
@@ -981,12 +981,12 @@ When the input src is a pointer pointing to the float32 type and the index is a 
 
 Note that the type name is used here`cname`, indicates the name of the corresponding type in the AscendC language. For example, the cname corresponding to int32 is`int32_t`. Because we usually declare these functions as macros and embed the related type name into the function name,`cname`It will be more common.
 
-### Source code and compilation ###
+### Source code and compilation
 
 If the functions for implementing customized operations need to be compiled from source code or bytecode, configure the functions when registering the customized operation class.`source`And to the`compile`Property:
 
- *  source: indicates the source code or bytecode file path for implementing the custom operation function.
- *  The compile command implements the compilation command of the customized operation function. You can use the`%<`And to the`%@`Indicates the source and target files, respectively (similar to Makefile).
+ * source: indicates the source code or bytecode file path for implementing the custom operation function.
+ * The compile command implements the compilation command of the customized operation function. You can use the`%<`And to the`%@`Indicates the source and target files, respectively (similar to Makefile).
 
 Similar to symbol names, these two attributes can be configured statically or dynamically in the registration class constructor, for example:
 
@@ -1002,9 +1002,9 @@ class my_custom_op:
     compile = "bisheng -std=c++17 -O2 -o $@ -c $<"
 ```
 
-### Parameter Conversion Rule ###
+### Parameter Conversion Rule
 
-#### Parameter Sequence ####
+#### Parameter Sequence
 
 Customized operations are converted into corresponding function invoking. The parameter sequence is the same as that on the Python side. The output parameter (out, if any) is always placed at the end. For example, the following Python code is used:
 
@@ -1018,7 +1018,7 @@ Converting to a function call is equivalent to:
 my_custom_op(src, index, dim, dst);
 ```
 
-#### List and Tuple Parameters ####
+#### List and Tuple Parameters
 
 The tuple or list parameter on the Python side is flattened. For example:
 
@@ -1032,7 +1032,7 @@ When converted to a function call, the offsets parameter is flattened:
 my_custom_op(src, index, 1, 2, 3, dst);
 ```
 
-### Constant Parameter Type ###
+### Constant Parameter Type
 
 Customization operations support the constant parameter types of integers and floating points. However, the integer and floating point types of Python do not distinguish the bit widths. Therefore, by default, only integers are mapped to the int32_t type and floating point numbers are mapped to the float type. When the constant parameter of the implementation function is of other type, for example, int64_t, the function signature does not match, causing errors.
 
@@ -1054,7 +1054,7 @@ Because the integer constants of Python do not distinguish the bit width, we can
 
 To avoid this problem, you are advised to implement the function parameters. For integers, use int32_t, and for floating point numbers, use float. In some specific scenarios, the following methods are provided to specify the type:
 
-#### Specify the integer bit width by using al.int64. ####
+#### Specify the integer bit width by using al.int64
 
 By default, integer constants are mapped to the int32_t type. If the implementation function requires an int64_t type, you can use the`al.int64`Wrap an integer, for example:
 
@@ -1062,7 +1062,7 @@ By default, integer constants are mapped to the int32_t type. If the implementat
 al.custom('my_custom_op', src, idx, bound=al.int64(1024))
 ```
 
-#### Specify the type by using the type hint. ####
+#### Specify the type by using the type hint
 
 In the constructor function of the registered class, you can add type annotations to the corresponding parameters. For example:
 
@@ -1080,7 +1080,7 @@ class my_custom_op:
 
 In this way, the bound parameter is always mapped to the int64_t type.
 
-#### Dynamically Specifying Parameter Types ####
+#### Dynamically Specifying Parameter Types
 
 Another extreme case is that the parameter type varies depending on the other parameters. For example, the bound type must be the same as the idx data type. In this case, you can use arg_type to dynamically specify the type in the constructor. For example:
 
@@ -1097,7 +1097,7 @@ class my_custom_op:
         self.arg_type['bound'] = idx.dtype
 ```
 
-### Encapsulation Customization Operations ###
+### Encapsulation Customization Operations
 
 Direct use`al.custom`Invoking a customized operation is a little troublesome, especially when there are output parameters. Therefore, you need to prepare the output parameters before invoking the operation. For example:
 
@@ -1127,9 +1127,9 @@ def my_kernel(...):
     ...
 ```
 
-## Triton extended Enumeration ##
+## Triton extended Enumeration
 
-### SYNC_IN_VF ###
+### SYNC_IN_VF
 
 | Enumerated Value | Description                                                                                              |
 | ---------------- | -------------------------------------------------------------------------------------------------------- |
@@ -1146,7 +1146,7 @@ def my_kernel(...):
 | `LD_VST`         | Blocks execution of vector store instructions until all scalar load instructions are complete.           |
 | `ST_VST`         | Blocks execution of vector store instructions until all scalar store instructions are complete.          |
 
-### PIPE ###
+### PIPE
 
 | Enumerated Value | Description                       |
 | ---------------- | --------------------------------- |
@@ -1158,5 +1158,3 @@ def my_kernel(...):
 | `PIPE_MTE3`      | Memory transfer engine 3 pipeline |
 | `PIPE_ALL`       | All pipelines                     |
 | `PIPE_FIX`       | Fixed functional pipeline         |
-
-

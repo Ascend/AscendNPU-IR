@@ -3,7 +3,9 @@
 ## 性能优化案例
 
 ## tiling策略
+
 ### 案例说明
+
 基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销
 建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能
 本案例使用triton实现
@@ -101,6 +103,7 @@ gather_dim1_kernel[grid](
 ```
 
 ### 案例说明
+
 基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销
 建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能
 本案例使用triton实现
@@ -198,7 +201,9 @@ gather_dim1_kernel[grid](
 ```
 
 ## kernel昇腾亲和改写
+
 ### 案例说明
+
 原始gpu计算流程i64/i32 cmp操作在npu设备上无法使能vector，退化为scalar计算效率降低；通过转化为fp32来利用vec_cast和vec_cmp实现vector操作加速  
 需要注意的是，在tl.load和tl.save中的mask使用cmp功能，大部分情况下编译器可以自动优化为vec操作，本例中tl.where则需要手动转换
 本案例以layerNorm为例说明实现向量化cmp加速npu计算流程，该cmp操作用于处理layerNorm中的尾块处理
@@ -206,6 +211,7 @@ gather_dim1_kernel[grid](
 ### 案例差异点详解
 
 Code diff of NPU and CUDA
+
 ```diff
 @triton.jit
 def npu_vector_cmp_kernel(
@@ -269,6 +275,7 @@ def npu_vector_cmp_kernel(
 ## 卡死类问题
 
 ### 定界
+
 - **现象** 算子选项规避超时报错,导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
 - **写法样例**
 
@@ -276,7 +283,6 @@ def npu_vector_cmp_kernel(
 |--------|------|------|
 | **inject_barrier_all** | false(default). | 前端尝试打开为true,如果卡死问题消失，证明核内同步有问题,适用mix/aic/aiv三类kernel |
 | **inject_block_all**|  false(default). | 前端尝试打开为true,如果卡死问题消失，证明核间同步有问题,适用mix类kernel | 
-
 
 以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码写法样例调用如下：
 
@@ -327,10 +333,11 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 ```
 
 ### 参数入参不合理
+
 对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且再[0, seqlen]范围内。
 
-
 ## ub overflow类问题
+
 ### triton argmax op 先32B对齐，再融轴，浪费大量UB空间
 
 mlir代码如下：
@@ -361,8 +368,6 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 - 总结：
 
     原始的数据256x9x11xi8大小：25344B；从GM中load到ub，ub中占用的大小（256x32x11x1xi8）：90112B，占用的ub大小为原始数据大小的3.5倍多。
-
-
 
 ### triton not op不合理的实现，导致额外占用内存
 
@@ -442,13 +447,17 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 ## d-cache类
 
 ### 无效地址访问
+
 - **现象** 算子输入合法且均为同一个deviceID, 实际算子的deviceID设置不正确，导致无法取到数据，出现D-cache读写错误
 - **写法样例**
 错误样例
+
 ```python
 A=torch.empty(shape, dtype)
 ```
+
 正确样例
+
 ```python
 A=torch.empty(shape, dtype).npu()
 or
@@ -457,15 +466,19 @@ A=torch.empty(shape, dtype, device=DEVICE).npu()
 ```
 
 ### 使用非负数iter arg作为访存索引
+
 - **现象** 由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如for循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的for循环iter参数作为访存索引。
 - **写法样例**
 以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中i_w可能是负数.
 错误样例
+
 ```python
 for i_w in tl.static_range(-W+1, 1):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
 ```
+
 正确样例
+
 ```python
 for i_w in tl.static_range(W):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
@@ -474,6 +487,7 @@ for i_w in tl.static_range(W):
 ## 访存类
 
 ### Load隐式转置
+
 - **现象** “隐式转置”是指在加载或存储数据的同时完成矩阵转置操作，避免单独执行一个转置内核或额外的显式数据重排。
 它通常通过调整指针的步长和形状来实现，使得内存访问模式隐含地完成维度交换。
 这种技术可以节省全局内存带宽、减少内核启动开销，并提高计算效率。
@@ -571,13 +585,16 @@ x = torch.randn(512, 1024, device='npu')
 # 调用转置函数
 y = transpose(x)
 ```
+
 执行结束不报错，证明运行成功。
 
 ### 使用mayDiscretememaccess规避UB overflow
+
 - **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
 - **写法样例**
 改写算子时，只需在load/store操作的数据上加上`compile_hint`即可，参考以下代码段：
 triton-adaptor 3.2.0之前的版本
+
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
 value = tl.load(pointer)
@@ -589,6 +606,7 @@ tl.store(pointer, value)
 ```
 
 triton-adaptor 3.4.0之后的的版本需要改成
+
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
 value = tl.load(pointer)
@@ -600,6 +618,7 @@ tl.store(pointer, value)
 ```
 
 - **写法样例1**
+
 ```python
 b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
 ```
@@ -612,6 +631,7 @@ tl.extra.cann.extension.compile_hint(b_x, "mayDiscretememaccess")
 ```
 
 - **写法样例2**
+
 ```diff
 import triton
 import triton.language as tl
@@ -661,6 +681,7 @@ def copy_column_major_to_row_major(
 ```
 
 - **示例2使用compile hint前后的ir对比**
+
 ```mlir
 // before using tl.compile_hint(a, "mayDiscretememaccess")
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
@@ -803,9 +824,10 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ```
 
-## 场景化调试举例	 
+## 场景化调试举例
 
 本章节介绍Triton NPU算子性能优化指南。
+
 ### 使用bitwise_mask优化访存掩码
 
 #### 问题描述
@@ -887,6 +909,7 @@ def test_where_lt_case1():
        
 test_where_lt_case1()
 ```
+
 执行结束不报错，证明运行成功。
 
 #### 切分逻辑
@@ -894,6 +917,7 @@ test_where_lt_case1()
 bitmask和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于 (1) CV场景下使能1:2性能优化 (2) 融轴 (3) broadcast场景 (4)非硬件支撑的数据类型 (5) triton算子输入非1的grid切块 等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组mask例子(由i8 bitmask组出i1的标杆mask)供你参考，这个组mask逻辑不考虑场景，是从bitmask结果的误差推导组mask逻辑的
 
 假设这是本来的组mask逻辑
+
 ```
 for i in range(numel // 8):
     byte_value = flatten_cond_i8[i]
@@ -1036,11 +1060,7 @@ def test_where_lt_case1(param_list):
 
 - 由于Triton前端会将i1转换为i8，如果对其他类型如i16/i32等进行bitwise_mask操作反而会带来性能损耗，因此此功能只支持i8类型的mask
 
-
-
 ## CV类
-
-
 
 ### 使用hivm.tile_mix_cube_num规避L1越界
 
@@ -1078,8 +1098,6 @@ pv = tl.dot(p, v)
 tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 ```
 
-
-
 ### 参考：编译优化选项
 
 | 编译选项| 含义| 取值范围|
@@ -1091,8 +1109,6 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 | set_workspace_multibuffer | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置CV并行的并行度使用时需确保数据没有依赖若设置为N，则N个CV操作并行执行 | 2 (默认),4 |
 | tile_mix_vector_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前vector的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
 | tile_mix_cube_loop | 仅在limit_auto_multi_buffer_only_for_local_buffer=false的场景下生效设置当前cube的切分数量，数值可由autotuning得出，均可为最优 | 1 (默认),2,4 |
-
-
 
 ### 算子选项规避超时报错
 
@@ -1158,9 +1174,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-
-
 ## Triton NPU 编程案例
+
 Triton NPU 编程请参考：
 [https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)
-
