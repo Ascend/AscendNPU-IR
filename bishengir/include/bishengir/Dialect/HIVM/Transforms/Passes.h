@@ -51,6 +51,9 @@ std::unique_ptr<Pass> createCloneSCFIfYieldOperandPass();
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
 
+/// Create a pass to normalize hivm ops.
+std::unique_ptr<Pass> createHIVMNormalizeOpsPass();
+
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
 

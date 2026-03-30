@@ -15,8 +15,23 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
+#include "bishengir/Transforms/Normalize/NormalizeArithmeticTemplate.h"
+
+namespace mlir {
+/// Normalizes `rsqrt(x)` to `rec(sqrt(x))`
+struct HFusionNormalizeRSqrtTraits
+    : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeRSqrt(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == hfusion::UnaryFn::rsqrt;
+  }
+};
+} // namespace mlir
 
 namespace mlir::hfusion {
 
@@ -102,45 +117,6 @@ public:
     auto recOP = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
                                         hfusion::UnaryFn, hfusion::UnaryFnAttr>(
         rewriter, op->getLoc(), hfusion::UnaryFn::rec, ValueRange{inputs[1]},
-        ValueRange(op.getDpsInits()[0]));
-    rewriter.replaceOp(op, recOP);
-    return success();
-  }
-};
-
-/// normalize rsqrt op to rec(sqrt) op
-/// eg.
-///  y = hfusion elemwise unary {rsqrt} (x)
-///  is normalized to
-///  tmp = hfusion elemwise unary {sqrt} (x)
-///  y = hfuson.elemwise_unary {rec}(tmp)
-struct NormalizeRSqrtOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::rsqrt) {
-      return failure();
-    }
-
-    auto input = op.getDpsInputs()[0];
-    auto emptyOp = utils::createEmptyOp(rewriter, op->getLoc(), input);
-
-    auto sqrtOP =
-        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                               hfusion::UnaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::UnaryFn::sqrt, ValueRange{input},
-            ValueRange(emptyOp));
-
-    auto recInput = sqrtOP->getResults();
-    auto recOP = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
-                                        hfusion::UnaryFn, hfusion::UnaryFnAttr>(
-        rewriter, op->getLoc(), hfusion::UnaryFn::rec, ValueRange{recInput},
         ValueRange(op.getDpsInits()[0]));
     rewriter.replaceOp(op, recOP);
     return success();
@@ -578,6 +554,9 @@ struct NormalizeVPowiToPowf
     return success();
   }
 };
+
+using NormalizeRSqrtOp =
+    NormalizeRSqrtOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeRSqrtTraits>;
 
 void populateNormalizeMulRecPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRec>(patterns.getContext());

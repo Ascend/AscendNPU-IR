@@ -33,6 +33,12 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   ];
 }
 
+def Normalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
+  let summary = "Normalize HIVM";
+  let constructor = "mlir::hivm::createHIVMNormalizeOpsPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
+}
+
 def TritonGlobalKernelArgsToHIVMOp
     : Pass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
   let summary = "";
