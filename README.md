@@ -40,7 +40,7 @@ AscendNPU IR uses a Sphinx-based documentation project under `docs/`, with **dua
 - **Language**: see `docs/README.md` (English) and `docs/README_zh.md` (Chinese) for full details.
 - **File scheme**:
   - **English**: The entry page is `docs/source/en/index.rst`; content under `docs/source/en` directory.
-  - **Chinese**: The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_ch` directory.
+  - **Chinese**: The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_cn` directory.
 - **Naming convention**: Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
 
 To build the documentation from the repository root:

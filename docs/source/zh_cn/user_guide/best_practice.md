@@ -917,7 +917,7 @@ def test_where_lt_case1(param_list):
 
 #### 算子示例
 
-改寫算子時，只需为dot操作结果加上`hivm.tile_mix_cube_num`的编译提示即可，參考一下代碼段：
+改写算子时，只需为dot操作结果加上`hivm.tile_mix_cube_num`的编译提示即可，参考以下代码段：
 
 ```python
 res = tl.dot(lhs, rhs)

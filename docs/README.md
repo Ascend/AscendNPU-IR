@@ -9,7 +9,7 @@ This directory is the Sphinx documentation project for AscendNPU IR. It supports
 | Item | Convention |
 |------|------------|
 | **English** | The entry page is `docs/source/en/index.rst`; content under `docs/source/en` directory |
-| **Chinese** | The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_ch` directory. |
+| **Chinese** | The entry page is `docs/source/zh_cn/index.rst`; content under `docs/source/zh_cn` directory. |
 | **Read the Docs** | Main project (en) + Translation project (zh); link in Admin → Translations for language switcher. |
 
 ### Naming convention (snake_case)
