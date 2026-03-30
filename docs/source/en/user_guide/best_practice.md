@@ -76,15 +76,6 @@ BLOCK_K = 128
 + # NPU
 + grid = (triton.cdiv(B, BLOCK_B),)
 
-gather_dim1_kernel[grid](
-    x, idx, out,
-    x.stride(0), x.stride(1),
-    idx.stride(0), idx.stride(1),
-    out.stride(0), out.stride(1),
-    B, K,
-    BLOCK_B=BLOCK_B,
-    BLOCK_K=BLOCK_K,
-)
 ```
 
 ## Ascend-friendly kernel rewrite (vectorized compare)
@@ -96,10 +87,19 @@ In the original GPU flow, i64/i32 compare operations cannot use the vector unit 
 ### NPU vs CUDA code diff
 
 ```diff
+    cols = tl.arange(0, BLOCK_N)  # cols is int64
+    x = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
+
+    # calculate mean & rstd
+    mean = tl.sum(x, axis=0) / N
+    tl.store(Mean + row, mean)
+    
 -   xbar = tl.where(cols < N, X - mean, 0.0)
-+   # Change cols (i64) to cols_cmp (f32) to enable vector processing
++   # change cols(i64) into cols_cmp(f32) to enable vector processing
 +   cols_cmp = cols.to(tl.float32)
 +   xbar = tl.where(cols_cmp < N, x - mean, 0.0)
+
+    var = tl.sum(xbar * xbar, axis=0) / N
 ```
 
 ## Function and precision cases
