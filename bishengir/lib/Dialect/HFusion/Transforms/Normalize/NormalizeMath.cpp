@@ -725,7 +725,6 @@ public:
     return success();
   }
 };
-
 /// normalize expm1(x) to exp(x) - 1
 /// eg.
 /// y = hfusion elemwise unary {expm1} (x)

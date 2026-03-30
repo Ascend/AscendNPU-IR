@@ -100,7 +100,7 @@ static bool isVsstbPatternTransposeOp(Operation *op) {
   }
 
   auto perm = transpose.getPermutation();
-  int64_t rank = perm.size();
+  int64_t rank = (int64_t)perm.size();
   // Rule 0: Should be 3-dim transpose
   if (rank != 3)
     return false;
@@ -116,7 +116,7 @@ static bool isVsstbPatternTransposeOp(Operation *op) {
       llvm::divideCeil(inputType.getElementType().getIntOrFloatBitWidth(),
                        utils::INTR_BITS_PER_BYTE);
   int64_t lastDim = shape[rank - 1];
-  return lastDim * elemByteWidth == 32;
+  return lastDim * (int64_t)elemByteWidth == 32;
 }
 
 static bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
@@ -286,6 +286,13 @@ estimateTileSizeForOpInFusedNode(
     int64_t allocAxisNum = 0;
     for (int64_t i = opInfo.numLoops - 1; i >= 0; --i) {
       allocAxisNum++;
+      if (maxElemByteWidthInFusedNode == 0) {
+        LLVM_DEBUG(llvm::dbgs() << "maxElemByteWidthInFusedNode is 0, "
+                                << "use default tile size " << opInfo.shape[i]
+                                << "\n");
+        tileSize[i] = opInfo.shape[i];
+        continue;
+      }
       if (allocAxisNum == 2) {
         tileSize[i] = remainBytes / maxElemByteWidthInFusedNode;
         break;
@@ -312,7 +319,7 @@ estimateTileSizeForOpInFusedNode(
       maxElemBitWidthInFusedNode == 1
           ? vectorLength
           : vectorLength /
-                (maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE);
+                (int64_t)(maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE);
 }
 
 static void

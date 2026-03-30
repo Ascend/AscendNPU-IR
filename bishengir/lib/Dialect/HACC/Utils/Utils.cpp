@@ -522,7 +522,7 @@ verifyReduceGeometryAndGetReduceDims(linalg::ReduceOp op) {
     }
   }
 
-  if (inputRank - reduceDims.size() != static_cast<size_t>(outRank)) {
+  if (inputRank - (int)reduceDims.size() != outRank) {
     return {};
   }
   return reduceDims;

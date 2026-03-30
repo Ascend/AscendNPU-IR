@@ -46,7 +46,7 @@ struct CircularStoreOpConversion
     uint32_t addrSpace = dataPack.addrSpace;
     if (addrSpace == 1) {
       llvm::report_fatal_error("unimplemented");
-    } else if (addrSpace == (int)ascend_dpx::AscendDPXAddressSpace::SHARED_MEM) {
+    } else if (addrSpace == static_cast<uint32_t>(ascend_dpx::AscendDPXAddressSpace::SHARED_MEM)) {
       // AMD says:
       // Setting predicate always true has bank conflicts but it is
       // expected and stable.

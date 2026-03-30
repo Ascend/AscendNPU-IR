@@ -290,7 +290,7 @@ struct LinalgGenericToHFusionGatherPattern
       if (iterators[i] == utils::IteratorType::gather) {
         if (gatherLoopDim != -1)
           return failure();
-        gatherLoopDim = i;
+        gatherLoopDim = (int64_t)i;
       }
     }
     if (gatherLoopDim == -1)

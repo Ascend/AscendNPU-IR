@@ -30,7 +30,7 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
 
   Type elementType = getElementTypeOrSelf(src);
   VectorType vectorType = VectorType::get(vectorSizes, elementType);
-  int64_t rank = vectorSizes.size();
+  int64_t rank = (int64_t)vectorSizes.size();
 
   // Map HIVM reduction op to vector combining kind and arithmetic kind
   VectorArithKind arithKind;

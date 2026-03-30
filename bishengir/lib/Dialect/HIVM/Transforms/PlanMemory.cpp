@@ -773,7 +773,13 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
 bool MemLivenessAnalysis::isParentOpDominate(Operation *op1,
                                              Operation *op2) const {
   assert((op1 != nullptr && op2 != nullptr) && "op must not be nullptr");
-  return op2->getParentOp()->isAncestor(op1->getParentOp());
+  Operation *op1Parent = op1->getParentOp();
+  Operation *op2Parent = op2->getParentOp();
+  assert(op2Parent != nullptr && "op2 must have parent op");
+  if (!op1Parent) {
+    return false;
+  }
+  return op2Parent->isAncestor(op1Parent);
 }
 
 bool MemLivenessAnalysis::IsBlockAfter(Block *afterBlock,
@@ -818,6 +824,7 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
     // later ops outside the whileOp use the result through the alias chain.
     if (auto *defOp = aliasBuffer.getDefiningOp()) {
       Region *defRegion = defOp->getParentRegion();
+      assert(defRegion != nullptr);
       if (auto whileOp =
               dyn_cast<scf::WhileOp>(defRegion->getParentOp())) {
         Region *siblingRegion = (defRegion == &whileOp.getBefore())

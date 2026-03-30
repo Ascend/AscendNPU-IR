@@ -39,7 +39,6 @@ LogicalResult NMostOpKindAnalyzer::fuseImpl(Block &block) {
       auto *defOp = opr.getDefiningOp();
       if (!defOp)
         defOp = cast<BlockArgument>(opr).getOwner()->getParentOp();
-
       // defOp is outside of the block.
       LDBG("check if defOp is outside of the block " << defOp->getName());
       if (!opToIndex.contains(defOp))

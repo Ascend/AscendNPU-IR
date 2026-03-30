@@ -41,7 +41,7 @@ LogicalResult AllOpKindAnalyzer::fuseImpl(Block &block) {
         defOp = cast<BlockArgument>(opr).getOwner()->getParentOp();
 
       // defOp is outside of the block.
-      LDBG("check if defOp is outside of the block " << defOp->getName());
+      LDBG("check if defOp is outside of the block " << (defOp ? defOp->getName().getStringRef() : StringRef("outside")));
       if (!opToIndex.contains(defOp))
         continue;
 

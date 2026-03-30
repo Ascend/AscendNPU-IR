@@ -32,14 +32,14 @@ void DimensionAnalyzerBase::dumpModuleOP() const {
 
 void DimensionAnalyzerBase::dumpArgumentsRef() {
   LLVM_DEBUG(
-      int numVal = argumentsRef_.size(); if (numVal == 0) {
+      int numVal = static_cast<int>(argumentsRef_.size()); if (numVal == 0) {
         llvm::dbgs() << "argumentsRef_.back(): [] (empty)\n";
         return;
       } llvm::dbgs() << "[Flatten] argumentsRef_ of size "
                      << numVal << " are:\n";
       for (int vi = 0; vi < numVal; ++vi) {
         auto &shapeIdx = argumentsRef_[vi];
-        int rank = shapeIdx.size();
+        int rank = static_cast<int>(shapeIdx.size());
         if (rank == 0) {
           return;
         }
@@ -54,7 +54,7 @@ void DimensionAnalyzerBase::dumpArgumentsRef() {
 
 void DimensionAnalyzerBase::dumpIsConnected() {
   LLVM_DEBUG(
-      int numDim = isConnected_.size();
+      int numDim = static_cast<int>(isConnected_.size());
       llvm::dbgs() << "[Flatten] isConnected_ of size " << numDim << " are:\n";
       llvm::dbgs()
       << "                  \t[elmentKind, leftConnected, rightConnected]\n";

@@ -90,7 +90,7 @@ LogicalResult processTensorDim(OpBuilder &builder, tensor::DimOp dimOp) {
   builder.setInsertionPointToStart(&parentOp->getRegion(0).getBlocks().front());
   auto newSymbolicDim =
       builder.create<hfusion::SymbolicDimOp>(dimOp->getLoc(), symbolAttr);
-  LDBG(*dimOp->getParentOp());
+  LDBG((dimOp->getParentOp() ? *(dimOp->getParentOp()) : *dimOp));
   dimOp.getResult().replaceAllUsesWith(newSymbolicDim);
   return success();
 }

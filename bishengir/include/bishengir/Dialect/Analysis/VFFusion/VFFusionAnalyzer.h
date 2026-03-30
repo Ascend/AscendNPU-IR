@@ -71,7 +71,7 @@ public:
     SmallVector<VFFusionBlock> fusedBlocks(dsu.minIndex.size());
 
     for (Operation &op : block.getOperations()) {
-      size_t parentIndex = dsu.find(opToIndex.at(&op));
+      int parentIndex = dsu.find(opToIndex.at(&op));
       if (isSafeToExcludeOps(&op))
         continue;
       fusedBlocks[parentIndex].fuseOp(&op);
@@ -197,17 +197,17 @@ bool VFFusionAnalyzerBase<AnalyzerClass>::isOutlineableOp(
 template <class AnalyzerClass>
 bool VFFusionAnalyzerBase<AnalyzerClass>::hasInvalidDependencyIfFused(
     const int x, const int y) {
-  const int pxMax = dsu.getMaxIndexUnion(x);
-  const int pyMax = dsu.getMaxIndexUnion(y);
+  const int pxMax = (int)dsu.getMaxIndexUnion(x);
+  const int pyMax = (int)dsu.getMaxIndexUnion(y);
   const int maxTopoRank = std::max(pyMax, pxMax);
   // all users of every ops in either unions should be defined later than it.
   // TODO: optimize using the smaller to larger technique instead of O(n)
   for (Operation *const op : opsInBlock) {
-    const int curOpIndex = dsu.getMaxIndexUnion(opToIndex.at(op));
+    const int curOpIndex = (int)dsu.getMaxIndexUnion(opToIndex.at(op));
     if (curOpIndex != pxMax && curOpIndex != pyMax)
       continue;
     for (Operation *const user : op->getUsers()) {
-      const int opUnionIndex = dsu.getMaxIndexUnion(opToIndex.at(user));
+      const int opUnionIndex = (int)dsu.getMaxIndexUnion(opToIndex.at(user));
       // not in either unions
       if (opUnionIndex == pxMax || opUnionIndex == pyMax)
         continue;

@@ -276,9 +276,8 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     int32_t alignN = 32;
     auto elemType = tensorType.getElementType();
 
-    uint64_t elemTypeSize = getElemBytesForAlign(elemType);
+    int64_t elemTypeSize = (int64_t)getElemBytesForAlign(elemType);
     int64_t newN = (((elemTypeSize * N + (alignN - 1)) / alignN) * alignN) / elemTypeSize;
-
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
       int64_t newM = ((M + alignM - 1) / alignM) * alignM;
       auto paddedType = RankedTensorType::get({newM, newN}, elemType);

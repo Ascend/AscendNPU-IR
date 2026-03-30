@@ -121,6 +121,9 @@ FailureOr<SmallVector<int64_t>> computeVectorSizes(linalg::LinalgOp op) {
   int64_t remain = capacity;
   SmallVector<int64_t> vectorSizes(rank, 1);
   for (int64_t dim = end; dim >= start; dim--) {
+    if (shape[dim] <= 0) {
+      return op.emitError("Invalid shape dimension: must be positive");
+    }
     if (shape[dim] > remain) {
       return op.emitError("Exceeds vector capacity");
     }
@@ -246,9 +249,11 @@ struct InsertCopyForReturnFuncArg : public OpRewritePattern<func::ReturnOp> {
         continue;
       }
       auto emptyOp = utils::createEmptyOp(rewriter, loc, arg);
-      emptyOp.getDefiningOp()->setAttr(
-          "__copy_id__",
-          rewriter.getI64IntegerAttr(operand->getOperandNumber()));
+      if (auto *definingOp = emptyOp.getDefiningOp()) {
+        definingOp->setAttr(
+            "__copy_id__",
+            rewriter.getI64IntegerAttr(operand->getOperandNumber()));
+      }
       auto memrefType =
           MemRefType::get(shapedType.getShape(), shapedType.getElementType());
       // copy out with bufferization to avoid folding the copy

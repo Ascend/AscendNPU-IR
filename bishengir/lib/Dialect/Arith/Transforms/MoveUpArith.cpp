@@ -30,7 +30,7 @@ using namespace mlir;
 using namespace mlir::arith;
 
 template <typename ArithOp>
-struct MoveUpPattern : OpRewritePattern<ArithOp> {
+struct MoveUpPattern : public OpRewritePattern<ArithOp> {
   using OpRewritePattern<ArithOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ArithOp op,

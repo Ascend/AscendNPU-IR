@@ -42,13 +42,13 @@ int getNumElementsPerThreads(Type type,
     auto structType =
         dyn_cast<LLVM::LLVMStructType>(typeConverter->convertType(type));
     if (structType)
-      numElemsPerThread = structType.getBody().size();
+      numElemsPerThread = static_cast<int>(structType.getBody().size());
   }
   return numElemsPerThread;
 }
 
 struct AscendSIToFPOpConversion
-    : ElementwiseOpConversionBase<arith::SIToFPOp, AscendSIToFPOpConversion> {
+    : public ElementwiseOpConversionBase<arith::SIToFPOp, AscendSIToFPOpConversion> {
   using Base =
       ElementwiseOpConversionBase<arith::SIToFPOp, AscendSIToFPOpConversion>;
   using Adaptor = typename Base::OpAdaptor;
@@ -386,7 +386,7 @@ struct ElementwiseInlineAsmOpConversion
     auto b = TritonLLVMOpBuilder(loc, rewriter);
     SmallVector<Value> packedOperands;
     unsigned numPackedElements = op.getPackedElement();
-    for (int i = 0, e = op.getNumOperands(); i < e; i++) {
+    for (int i = 0, e = (int)op.getNumOperands(); i < e; i++) {
       Type elemTy = getElementType(op.getOperand(i));
       unsigned bitWidth =
           elemTy.isIntOrFloat() ? elemTy.getIntOrFloatBitWidth() : 64;
@@ -479,7 +479,7 @@ struct ElementwiseInlineAsmOpConversion
           for (int k = 0; k < vectorTy.getNumElements(); k++) {
             ret[i].push_back(b.extract_element(val, b.i32_val(k)));
           }
-          j += vectorTy.getNumElements() - 1;
+          j += (uint32_t)vectorTy.getNumElements() - 1;
         } else {
           ret[i].push_back(val);
         }
@@ -503,17 +503,18 @@ struct ElementwiseInlineAsmOpConversion
 
     int numElemsPerThread = getNumElementsPerThreads(op->getResult(0).getType(),
                                                      getTypeConverter());
+    int packedElement = (int)op.getPackedElement();
 
     // These are checked by the verifier, so we don't need to raise a nice
     // error.
     assert(all_of(unpackedOperands, [&](auto &operands) {
-      return operands.size() == numElemsPerThread;
+      return (int)operands.size() == numElemsPerThread;
     }));
-    if (numElemsPerThread % op.getPackedElement() != 0) {
+    if (numElemsPerThread % packedElement != 0) {
       // Pad with the undef for each operand to have a multiple of
-      // op.getPackedElement() elements.
+      // packedElement elements.
       int numPaddedValue =
-          op.getPackedElement() - numElemsPerThread % op.getPackedElement();
+          packedElement - numElemsPerThread % packedElement;
       for (auto &operands : unpackedOperands) {
         operands.append(numPaddedValue, b.undef(operands[0].getType()));
       }
@@ -526,13 +527,13 @@ struct ElementwiseInlineAsmOpConversion
     // This loop always runs at least once, even when the asm has no input
     // elements.
     SmallVector<SmallVector<Value>> unpackedResults(op->getNumResults());
-    for (int i = 0; i < numElemsPerThread; i += op.getPackedElement()) {
+    for (int i = 0; i < numElemsPerThread; i += packedElement) {
       // Block of elements to process with one call to the inline asm.  This is
       // ordered opposite `unpackedResults`: The outer dim is
-      // op.getPackedElement(), and the inner dim is the operand.
-      SmallVector<SmallVector<Value>> block(op.getPackedElement());
+      // packedElement, and the inner dim is the operand.
+      SmallVector<SmallVector<Value>> block(packedElement);
       for (auto &os : unpackedOperands) {
-        for (uint32_t j = 0; j < op.getPackedElement(); j++) {
+        for (uint32_t j = 0; j < packedElement; j++) {
           block[j].push_back(os[i + j]);
         }
       }
@@ -573,7 +574,7 @@ struct AbsIOpConversion
 };
 
 struct AbsFOpConversion
-    : ElementwiseOpConversionBase<math::AbsFOp, AbsFOpConversion> {
+    : public ElementwiseOpConversionBase<math::AbsFOp, AbsFOpConversion> {
   using Base = ElementwiseOpConversionBase<math::AbsFOp, AbsFOpConversion>;
   using Base::Base;
   using Adaptor = typename Base::OpAdaptor;
@@ -599,7 +600,7 @@ struct AbsFOpConversion
 };
 
 struct SelectOpConversion
-    : ElementwiseOpConversionBase<arith::SelectOp, SelectOpConversion> {
+    : public ElementwiseOpConversionBase<arith::SelectOp, SelectOpConversion> {
   using Base = ElementwiseOpConversionBase<arith::SelectOp, SelectOpConversion>;
   using Base::Base;
   using Adaptor = typename Base::OpAdaptor;
@@ -623,7 +624,7 @@ struct SelectOpConversion
 };
 template <typename OpTy>
 struct MinMaxFOpConversion
-    : ElementwiseOpConversionBase<OpTy, MinMaxFOpConversion<OpTy>> {
+    : public ElementwiseOpConversionBase<OpTy, MinMaxFOpConversion<OpTy>> {
   using Base = ElementwiseOpConversionBase<OpTy, MinMaxFOpConversion<OpTy>>;
   using Base::Base;
   using Adaptor = typename Base::OpAdaptor;
@@ -678,7 +679,7 @@ private:
 };
 
 struct ClampFOpConversion
-    : ElementwiseOpConversionBase<ClampFOp, ClampFOpConversion> {
+    : public ElementwiseOpConversionBase<ClampFOp, ClampFOpConversion> {
   using Base = ElementwiseOpConversionBase<ClampFOp, ClampFOpConversion>;
   using Base::Base;
   using Adaptor = typename Base::OpAdaptor;

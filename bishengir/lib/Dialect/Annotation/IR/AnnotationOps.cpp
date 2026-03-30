@@ -222,9 +222,9 @@ int64_t MarkOp::getAttrNum() {
     }
   }
   attrNum +=
-      filterNonIgnoredAttr(DenseSet<NamedAttribute>((*this)->getAttrs().begin(),
-                                                    (*this)->getAttrs().end()),
-                           (*this).getEffectsAttrName())
-          .size();
+      (int64_t)filterNonIgnoredAttr(DenseSet<NamedAttribute>(
+                                    (*this)->getAttrs().begin(),
+                                    (*this)->getAttrs().end()),
+                                    (*this).getEffectsAttrName()).size();
   return attrNum;
 }

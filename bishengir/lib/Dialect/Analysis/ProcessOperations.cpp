@@ -147,7 +147,7 @@ void DimensionAnalyzerBase::processBFS() {
 
         LLVM_DEBUG({
           llvm::dbgs() << "    │   └─ Region terminator detected\n";
-          llvm::dbgs() << "    │       Parent op: " << *parentOp << "\n";
+          llvm::dbgs() << "    │       Parent op: " << (parentOp ? *parentOp : *terminatorOp) << "\n";
         });
 
         processOperation(parentOp, current);

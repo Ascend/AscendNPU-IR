@@ -726,7 +726,13 @@ ValueHandle *AnyPBRScheduler::tileParallelAxesAndFuseProducers(
     }
     assert(!outputInfo.inputsInterchange.empty());
     auto currentInterchange = outputInfo.inputsInterchange.front();
-    LDBG("output: " << *outputOp);
+    LLVM_DEBUG({
+      if (outputOp) {
+        DBGS() << "output: " << *outputOp << "\n";
+      } else {
+        DBGS() << "output: No output!\n";
+      }
+    });
     LDBG("axis mask: " << utils::debugger::to_string(axisMask));
     LDBG("tiling mask: " << utils::debugger::to_string(tilingMask));
     LDBG("interchange: " << utils::debugger::to_string(currentInterchange));

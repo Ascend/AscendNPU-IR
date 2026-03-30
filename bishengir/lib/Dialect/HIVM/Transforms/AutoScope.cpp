@@ -78,7 +78,9 @@ private:
         rewriter.eraseOp(*iter);
       }
     }
-    rewriter.create<scope::ReturnOp>(loc, cloned->getResults());
+    if (cloned != nullptr) {
+      rewriter.create<scope::ReturnOp>(loc, cloned->getResults());
+    }
     return scopeOp;
   }
 

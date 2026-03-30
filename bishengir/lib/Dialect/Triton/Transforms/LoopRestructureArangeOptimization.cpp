@@ -194,7 +194,7 @@ static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
     if (auto maybeInt = extractIntFromAttr(val)) {
       int64_t v = *maybeInt;
       // want power of two
-      if (v > 0 && (v & (v - 1)) == 0) {
+      if (v > 0 && (static_cast<uint64_t>(v) & (static_cast<uint64_t>(v) - 1)) == 0) {
         pattern.embeddingSize = v;
         return true;
       }

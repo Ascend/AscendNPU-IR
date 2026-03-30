@@ -107,6 +107,10 @@ void DimensionAnalyzer::processBFS() {
       }
       if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
         auto yieldParentOp = yieldOp->getParentOp();
+        if (!yieldParentOp) {
+          LDBG("Encounter yieldOp with null parent, skipping");
+          continue;
+        }
         LDBG("Encounter yieldOp. Parent " << *yieldParentOp);
         processOperation(yieldParentOp, current);
         for (Value result : yieldParentOp->getResults()) {

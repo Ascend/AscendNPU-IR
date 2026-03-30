@@ -2651,7 +2651,7 @@ struct GatherUnitDimCanonicalization : public OpRewritePattern<GatherOp> {
     Value src = gatherOp.getDpsInputs()[0];
     Value index = gatherOp.getDpsInputs()[1];
     Value output = gatherOp.getDpsInits()[0];
-    int64_t gatherAxis = gatherOp.getAxis();
+    int64_t gatherAxis = (int64_t)gatherOp.getAxis();
     auto srcShape = utils::getShape(src.getType());
     auto indexShape = utils::getShape(index.getType());
     auto outShape = utils::getShape(output.getType());

@@ -133,7 +133,7 @@ LogicalResult handleFlipOp(tensor::ExpandShapeOp expandOp,
   }
   auto expandOutShape = expandOp.getResultType().getShape();
   // Step 2: Calculate the new flip axis
-  uint64_t newFlipAxis = reassociation[flipAxis][0];
+  uint64_t newFlipAxis = static_cast<uint64_t>(reassociation[flipAxis][0]);
 
   LLVM_DEBUG(llvm::dbgs() << "Try to lift " << expandOp << " before a flip "
                           << *definingOp << ";\n Flip Axis: " << flipAxis
@@ -1314,7 +1314,7 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
       !isNonUnitExpandOrEmptyReassoc(expandOp.getResultType().getShape(),
                                      expandOp.getReassociationIndices()))
     return failure();
-  LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
+  LLVM_DEBUG(llvm::dbgs() << (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp) << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "-- Found definingOp: " << *definingOp << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   if (auto bitcastOp = dyn_cast<hivm::BitcastOp>(definingOp)) {

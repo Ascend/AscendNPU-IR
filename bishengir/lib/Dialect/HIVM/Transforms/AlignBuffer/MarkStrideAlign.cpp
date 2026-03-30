@@ -81,15 +81,14 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   SmallVector<int64_t> strides;
   auto successStrides = getStridesAndOffset(type, strides, offset);
   int64_t dim = type.getRank();
-  auto hwAlignBits = getHWAlignBytes(type.getMemorySpace()) * 8;
+  int64_t hwAlignBits = static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim == 1)
     return true;
   if (succeeded(successStrides) && !strides.empty() &&
       !type.isDynamicDim(dim - 1))
     return (type.getDimSize(dim - 1) == strides[dim - 2]) ||
-           (strides[dim - 2] * dataWidth % static_cast<uint64_t>(hwAlignBits) ==
-            0);
+           (strides[dim - 2] * dataWidth % hwAlignBits == 0);
   return false;
 }
 
@@ -101,13 +100,12 @@ static bool isSubLowDimStrideAlign(MemRefType type) {
   SmallVector<int64_t> strides;
   auto successStrides = getStridesAndOffset(type, strides, offset);
   int64_t dim = type.getRank();
-  auto hwAlignBits = getHWAlignBytes(type.getMemorySpace()) * 8;
+  int64_t hwAlignBits = static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim <= 2)
     return true;
   if (succeeded(successStrides) && !strides.empty())
-    return strides[dim - 3] * dataWidth % static_cast<int64_t>(hwAlignBits) ==
-           0;
+    return strides[dim - 3] * dataWidth % hwAlignBits == 0;
   return false;
 }
 
@@ -296,7 +294,7 @@ static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   if (auto blockArg = dyn_cast<BlockArgument>(memrefVal)) {
     defOp = blockArg.getOwner()->getParentOp();
     if (isa<func::FuncOp>(defOp)) {
-      res = blockArg.getArgNumber();
+      res = (int)blockArg.getArgNumber();
     }
   }
   return res;

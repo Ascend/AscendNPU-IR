@@ -126,7 +126,7 @@ getExtendHyperrectangleFromArray(int64_t superviewShape, int64_t offset,
     }
 
     int64_t dimOffset = sorted[0];
-    int64_t dimSize = sorted.size();
+    int64_t dimSize = (int64_t)sorted.size();
 
     if (dimOffset + (dimSize - 1) * dimStride >= staticNewShape[d]) {
       return std::nullopt;

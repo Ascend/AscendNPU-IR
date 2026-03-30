@@ -91,8 +91,8 @@ bool AscendReduceOpHelper::isSharedMemoryReductionPreferred() {
   ReduceOp op = getOperation();
   unsigned sizeIntraWarps = getIntraWarpSizeWithUniqueData();
   auto mod = op->getParentOfType<ModuleOp>();
-  int numLanes = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
-  int numWarps = triton::gpu::lookupNumWarps(op);
+  unsigned numLanes = (unsigned)triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
+  unsigned numWarps = (unsigned)triton::gpu::lookupNumWarps(op);
   bool Result = false;
   Operation *BaseOp = op.getOperation();
   // Variadic outputs are not supported for this transformation.

@@ -299,6 +299,7 @@ public:
   virtual LogicalResult
   rewriteFromGeneric(FromOp op, SmallVector<Value> &&preprocessedOperands,
                      PatternRewriter &rewriter) const = 0;
+
 };
 
 template <typename From, typename To>

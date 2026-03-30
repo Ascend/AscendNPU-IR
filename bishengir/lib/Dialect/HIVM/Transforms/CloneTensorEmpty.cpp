@@ -39,6 +39,9 @@ void CloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
       continue;
     if (!isa<TensorType>(dst.getType()))
       continue;
+    if (!DstDefiningOp) {
+      continue;
+    }
     auto clonedProducer = rewriter.clone(*DstDefiningOp);
     rewriter.modifyOpInPlace(
         operation, [&]() { operand.set(clonedProducer->getResult(0)); });

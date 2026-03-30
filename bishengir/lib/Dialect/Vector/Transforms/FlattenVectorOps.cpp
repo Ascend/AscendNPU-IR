@@ -61,8 +61,8 @@ Value flattenVector(Value vector, VectorType vecType, Location loc,
 int64_t getUniqSliceDim(ArrayRef<int64_t> rootShape,
                         ArrayRef<int64_t> resultShape) {
   SmallVector<int64_t> alignShape(rootShape.size(), 1);
-  int64_t rootRank = rootShape.size();
-  int64_t resultRank = resultShape.size();
+  int64_t rootRank = (int64_t)rootShape.size();
+  int64_t resultRank = (int64_t)resultShape.size();
   int64_t diff = rootRank - resultRank;
   for (int64_t i = diff; i < rootRank; ++i) {
     alignShape[i] = resultShape[i - diff];

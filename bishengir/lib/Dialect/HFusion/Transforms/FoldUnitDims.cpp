@@ -1256,7 +1256,7 @@ struct DropUnitDimsSCFForPattern : public OpRewritePattern<scf::ForOp> {
       rewriter.setInsertionPoint(op);
       auto maybeCollapsedInit = tryCollapseValue(initVal, rewriter, loc);
       if (succeeded(maybeCollapsedInit)) {
-        LDBG("Before altering: " << *(op->getParentOp()));
+        LDBG("Before altering: " << (op->getParentOp() ? *(op->getParentOp()) : *op));
         // inits
         auto collapsedInit = maybeCollapsedInit.value();
         auto collapsedInitTy = collapsedInit.getType();
@@ -1291,7 +1291,7 @@ struct DropUnitDimsSCFForPattern : public OpRewritePattern<scf::ForOp> {
             loc, resOrigTy, res, reassocIdxVec);
         auto expandedRes = expandResOp.getResult();
         rewriter.replaceAllUsesExcept(res, expandedRes, expandResOp);
-        LDBG("After altering: " << *(op->getParentOp()));
+        LDBG("After altering: " << (op->getParentOp() ? *(op->getParentOp()) : *op));
         isModified = true;
       }
     }

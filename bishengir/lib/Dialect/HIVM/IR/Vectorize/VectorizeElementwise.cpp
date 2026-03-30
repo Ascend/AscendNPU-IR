@@ -38,7 +38,7 @@ vectorizeElementwiseOp(Operation *op, RewriterBase &rewriter,
   Type elementType = getElementTypeOrSelf(firstOperand);
 
   VectorType vectorType = VectorType::get(vectorSizes, elementType);
-  int64_t rank = vectorSizes.size();
+  int64_t rank = (int64_t)vectorSizes.size();
 
   Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
   SmallVector<Value> indices(rank, zero);

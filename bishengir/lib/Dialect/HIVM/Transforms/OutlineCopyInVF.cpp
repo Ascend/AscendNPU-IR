@@ -79,6 +79,8 @@ static bool mayWriteFuncArgOrAlias(Operation *op, Value funcArg) {
 }
 
 static bool hasModificationBefore(hivm::CopyOp copyOp, Value funcArg) {
+  if (!copyOp || !copyOp->getParentRegion())
+    return false;
   if (copyOp->getBlock() != &copyOp->getParentRegion()->front())
     return true;
 

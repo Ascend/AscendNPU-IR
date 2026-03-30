@@ -81,7 +81,7 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   for (auto [idx, group] : llvm::enumerate(reassociation)) {
     OpFoldResult currentStride = oldStrides[idx];
     SmallVector<OpFoldResult> groupStrides;
-    for (int i = group.size() - 1; i >= 0; --i) {
+    for (int i = (int)group.size() - 1; i >= 0; --i) {
       groupStrides.push_back(currentStride);
       if (i > 0) {
         currentStride = multiplyOFR(rewriter, reinterpretCast.getLoc(),
@@ -104,7 +104,7 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
 
   rewriter.replaceOp(expandOp, newReinterpret);
-  LDBG(*definingOp->getParentOp());
+  LDBG((definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
   rewriter.eraseOp(reinterpretCast);
   return success();
 }
@@ -141,7 +141,7 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
       newSubviewOp.getResult(), reassociation);
   rewriter.replaceAllUsesExcept(subviewOp, newCollapse, expandOp);
   rewriter.replaceOp(expandOp, newSubviewOp);
-  LDBG(*definingOp->getParentOp());
+  LDBG((definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
   rewriter.eraseOp(subviewOp);
   return success();
 }
@@ -159,7 +159,7 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
     return failure();
   LLVM_DEBUG(llvm::dbgs() << "-- Found definingOp: " << *definingOp << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
-  LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
+  LLVM_DEBUG(llvm::dbgs() << (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp) << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
     LDBG("[AllocOp] Ok in here");
     return handleAllocOp(expandOp, rewriter, definingOp);

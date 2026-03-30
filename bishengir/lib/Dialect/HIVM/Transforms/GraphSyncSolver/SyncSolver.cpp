@@ -2054,7 +2054,7 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
     coreTypes = {hivm::TCoreType::CUBE_OR_VECTOR};
   }
   size_t pipeNumMax = static_cast<size_t>(hivm::PIPE::PIPE_NUM);
-  size_t eventIdMax = getHWAvailableEventIdNum(options.syncMode);
+  size_t eventIdMax = static_cast<size_t>(getHWAvailableEventIdNum(options.syncMode));
 
   for (size_t eventId = 0; eventId < eventIdMax; eventId++) {
     for (auto coreSrc : coreTypes) {
