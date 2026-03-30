@@ -18,7 +18,7 @@ Printing relies on the Bisheng compiler’s `cce::printf` interface. To enable p
 
 #### HFusion: PrintOp
 
-**Interface**:
+**Interface**
 
 ```mlir
 # hex: whether to print values in hex (default decimal)
@@ -26,7 +26,7 @@ Printing relies on the Bisheng compiler’s `cce::printf` interface. To enable p
 hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 ```
 
-**Usage**:
+**Usage**
 
 You can insert `PrintOp` during HFusion passes or when building IR by hand. Example: to print the result of a load, add `hfusion.print` in the HFusion IR:
 
@@ -43,7 +43,7 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 
 #### HIVM: DebugOp
 
-**Interface**:
+**Interface**
 
 ```mlir
 # debugtype: "print" or "assert"
@@ -54,7 +54,7 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<xxx>} %0 : tensor<8xi64>
 ```
 
-**Usage**:
+**Usage**
 
 You can add `DebugOp` during HIVM passes or in hand-written HIVM IR. Example: to print the result of a load, add `hivm.hir.debug` in the HIVM IR:
 
@@ -85,7 +85,7 @@ Triton debug-related ops:
 
 #### static_assert
 
-**API**:
+**API**
 
 ```text
 # condition: bool – compile-time constant boolean
@@ -93,9 +93,8 @@ Triton debug-related ops:
 triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
-**Example**:
+**Example**
 You can verify the correctness of the functionality by running `python3 <file>.py`
-
 ```python
 import triton
 import torch
@@ -121,22 +120,21 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Assertion effect**:
+**Assertion effect**
 
-![image](../../images/user_guide/debug_option1.png)
+![](../../images/user_guide/debug_option1.png)
 
 #### static_print
 
-**API**:
+**API**
 
 ```text
 # message: str – message to print; can include compile-time constants
 triton.language.static_print(message: str) -> None
 ```
 
-**Example**:
+**Example**
 You can verify the correctness of the functionality by running `python3 <file>.py`
-
 ```python
 import triton
 import torch
@@ -162,7 +160,7 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Print effect**:
+**Print effect**
 
 ```text
 [warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
@@ -174,7 +172,7 @@ Dumping intermediate results to /root/.triton/dump/KHviKCdUEjStublnqGQietpeng6Si
 
 Note: set `export TRITON_DEBUG=1` and `export TRITON_DEVICE_PRINT=1` before use.
 
-**API**:
+**API**
 
 ```text
 # condition: bool – condition to assert (must be a boolean tensor)
@@ -182,9 +180,8 @@ Note: set `export TRITON_DEBUG=1` and `export TRITON_DEVICE_PRINT=1` before use.
 triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
-**Example**:
+**Example**
 You can verify the correctness of the functionality by running `python3 <file>.py`
-
 ```python
 import triton
 import torch
@@ -213,15 +210,15 @@ if __name__ == "__main__":
     test_assert()
 ```
 
-**Assertion effect**:
+**Assertion effect**
 
-![image](../../images/user_guide/debug_option3.png)
+![](../../images/user_guide/debug_option3.png)
 
 #### device_print
 
 Note: set `export TRITON_DEVICE_PRINT=1` before use.
 
-**API**:
+**API**
 
 ```text
 # prefix: str – string printed before the value(s)
@@ -230,9 +227,8 @@ Note: set `export TRITON_DEVICE_PRINT=1` before use.
 triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
-**Example**:
+**Example**
 You can verify the correctness of the functionality by running `python3 <file>.py`
-
 ```python
 import triton
 import torch
@@ -258,9 +254,9 @@ if __name__ == "__main__":
     test_print()
 ```
 
-**Print effect**:
+**Print effect**
 
-![image](../../images/user_guide/debug_option4.png)
+![](../../images/user_guide/debug_option4.png)
 
 ## Debug: tools
 
@@ -268,14 +264,14 @@ if __name__ == "__main__":
 
 Command-line tool for Triton kernel memory errors, race conditions, and uninitialized access. Set `export TRITON_ENABLE_SANITIZER=true` before use.
 
-**Usage**:
+**Usage**
 
 ```bash
 # Run your Triton kernel as usual
 mssanitizer python test.py
 ```
 
-**Example**:
+**Example**
 
 The following Triton add example uses an incorrect `offsets` calculation to show mssanitizer detection:
 
@@ -323,7 +319,7 @@ if __name__ == "__main__":
 
 Running `mssanitizer python3 test_add.py` produces console output where mssanitizer reports a GM out-of-bounds read at the `tl.load` node (e.g. 40 bytes for 10 * float32).
 
-![image](../../images/user_guide/debug_option5.png)
+![](../../images/user_guide/debug_option5.png)
 
 For more on mssanitizer, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html).
 
@@ -331,7 +327,7 @@ For more on mssanitizer, see [MindStudio operator development tools](https://www
 
 Command-line profiling tool for Triton kernel performance collection and analysis.
 
-**Usage**:
+**Usage**
 
 ```bash
 # Full-network on-device profiling
@@ -350,19 +346,19 @@ msprof op --output=xxx --application="" --kernel-name=xxx --aic-metrics=xxx
 msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --output=xxx
 ```
 
-**Common performance analysis outputs**:
+**Common performance analysis outputs**
 
-- **trace.json**: Open in chrome://tracing/ for instruction pipeline view.
+- 1. **trace.json**: Open in chrome://tracing/ for instruction pipeline view.
 
-    ![image](../../images/user_guide/debug_option6.png)
+![](../../images/user_guide/debug_option6.png)
 
-- **visualize_data.bin**: Open in Mind Studio Insight to visualize instruction execution on the Ascend AI processor.
+- 2. **visualize_data.bin**: Open in Mind Studio Insight to visualize instruction execution on the Ascend AI processor.
 
-    ![image](../../images/user_guide/debug_option7.png)
+![](../../images/user_guide/debug_option7.png)
 
 For more analysis options, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html).
 
-**Triton kernel pipeline collection**:
+**Triton kernel pipeline collection**
 
 Using the following add kernel as an example to collect pipeline data:
 
@@ -418,4 +414,4 @@ This creates an OPPROF with a timestamp directory in the current path.
 
 Open the `simulator/visualize_data.bin` file in Mind Studio Insight to view the pipeline for the selected core (e.g. core 0), the two types of commonly used performance pipeline diagrams (trace.json/visualize_data.bin) described earlier can both be found in the `./OPPROF_<Timestamp>/simulator` directory.
 
-![image](../../images/user_guide/debug_option9.png)
+![](../../images/user_guide/debug_option9.png)

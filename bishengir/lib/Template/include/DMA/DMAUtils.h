@@ -1045,7 +1045,7 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
 __aiv__ inline bool check_atomic_none(AtomicKind atomic_kind) {
   if (atomic_kind != AtomicKind::None) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
-    cce::printf("Atomic operations are not supported  this stride pattern");
+    cce::printf("Atomic operations do not supporte this stride pattern");
 #endif
     return false;
   }

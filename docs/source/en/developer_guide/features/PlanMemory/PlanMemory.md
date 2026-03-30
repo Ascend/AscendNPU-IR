@@ -2,13 +2,15 @@
 
 This document describes the **PlanMemory** transformation (`PlanMemoryPass`) in HIVM: hardware context, algorithm, interface, and constraints.
 
+---
+
 ## Hardware background
 
 Ascend on-chip memory uses a buffer model. It includes storage for the Cube (matrix) and Vector units. Software must control addresses explicitly and respect alignment.
 
 For Atlas A2 training/inference products, the hardware layout<sup>[1]</sup> is:
 
-![image](../../../../images/developer_guide/HardwareStructure.png)
+![](../../../../images/developer_guide/HardwareStructure.png)
 
 Buffer alignment requirements:
 
@@ -21,6 +23,8 @@ Buffer alignment requirements:
 | L0C Buffer | 512 bytes | Matrix op intermediate and output |
 | BT Buffer | 64 bytes | BiasTable for matrix bias |
 | FP Buffer | 64 bytes | Fixpipe: quantization/ReLU parameters, etc. |
+
+---
 
 ## Algorithm
 
@@ -36,6 +40,8 @@ Allocation targets the storage used by Cube (L1, L0A, L0B, L0C, etc.) and Vector
 - **Alias**: Two values that refer to the same underlying data (e.g. before/after `subview`).
 - **Inplace reuse**: An op’s **output** can overwrite an **input** buffer (e.g. `vcast` f16→i16 same width). PlanMemory assigns the same offset to such output under hardware inplace rules.
 - **Address offset / pointer_cast**: After allocation, instead of a separate alloc, PlanMemory emits `hivm.hir.pointer_cast(offset)` (byte offset in that memory space).
+
+---
 
 ### Implementation
 
@@ -91,7 +97,7 @@ With double buffering, A and D use two buffers each for DMA. When shared memory 
 
 With Level2, C reuses B; both are Vector ops, so V_PIPE is serial anyway and reuse does not add cross-pipeline dependency.
 
-![image](../../../../images/developer_guide/plan_memory_level2.png)
+![](../../../../images/developer_guide/plan_memory_level2.png)
 
 - Pros: Same-pipeline reuse does not add cross-pipeline dependency; better overall performance.
 - Cons: Smaller reuse space; reuse may fail more often.
@@ -119,7 +125,7 @@ With double buffering, A and D use two buffers each. When shared memory is tight
 
 With Level1, C is upgraded to a double buffer; op1 uses A0 while op3 uses C1 (backed by A1), so op1 does not wait for op3 and the pipeline can overlap.
 
-![image](../../../../images/developer_guide/plan_memory_level1.png)
+![](../../../../images/developer_guide/plan_memory_level1.png)
 
 - Pros: Avoids pipeline stall in double-buffer scenarios.
 - Cons: Extra buffer for the new double buffer; may reduce reuse success rate.
@@ -128,7 +134,7 @@ With Level1, C is upgraded to a double buffer; op1 uses A0 while op3 uses C1 (ba
 
 Level0: any two buffers with non-overlapping lifetimes can share memory.
 
-![image](../../../../images/developer_guide/plan_memory_level0.png)
+![](../../../../images/developer_guide/plan_memory_level0.png)
 
 - Pros: Maximum reuse.
 - Cons: Ignores pipeline structure; bad reuse can hurt performance.
@@ -136,6 +142,8 @@ Level0: any two buffers with non-overlapping lifetimes can share memory.
 #### OP rewrite
 
 After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_PLAN) and `memref.alloc` (LOCAL_MEM_PLAN) with `hivm.hir.pointer_cast(offset)`.
+
+---
 
 ### Tests
 
@@ -149,6 +157,8 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 // CHECK: {{.*}} = hivm.hir.pointer_cast(%[[CONST0]])
 ```
 
+---
+
 ## Interface
 
 | Option | Default | Description |
@@ -157,14 +167,15 @@ After computing offsets, replace `memref_ext.alloc_workspace` (GLOBAL_WORKSPACE_
 | `enable-global-workspace-reuse` | false | Reuse buffers inside workspace |
 | `restrict-inplace-as-isa` | false | Restrict inplace to match ISA behavior |
 
+---
+
 ## Constraints
 
-The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.
+**The total size of buffers live at any one time must not exceed the actual hardware memory size for that scope.**
 
 > Each buffer is aligned as in [Hardware background](#hardware-background).
 
 Otherwise, PlanMemory fails with a scope overflow error (e.g. `UB overflow`):
-
 ```bash
 loc("/tmp/tmp0h121237/kernel.ttadapter.mlir":2:3): error: ub overflow,
 requires 3219456 bits while 1572864 bits available! (possible reason:

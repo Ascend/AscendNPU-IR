@@ -4,10 +4,10 @@ Tile Language Ascend (**tilelang-ascend**) is a specialized variant of the tile-
 
 Within the TileLang ecosystem, we have developed an NPU Intermediate Representation (AscendNPU IR) infrastructure specifically for Ascend, enabling seamless integration into the open-source AI compiler ecosystem based on MLIR. This effort not only enhances the openness and extensibility of the compiler stack but also provides developers with a more flexible and efficient pathway for custom operator development. The compiler backend supports two technical routes: [AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) and [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto).
 
-![image](../../../images/developer_guide/npuir_architecture.png)
+
+![](../../../images/developer_guide/npuir_architecture.png)
 
 ## Installation
-
 ### Environment Setup
 
 Install the Ascend Toolkit.
@@ -27,11 +27,14 @@ source /path/to/install/Ascend/ascend-toolkit/set_env.sh
 
 Prepare a Python environment with Python version between 3.7.*x* and 3.11.4 (inclusive) and ensure that `pip3` is available.
 
+
    Ascend Toolkit Installation Requirements
 
    ```shell
    pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml pathlib2 psutil protobuf==3.20.0 scipy requests absl-py
    ```
+
+
 
 Set Environment Variables
 
@@ -189,7 +192,6 @@ if __name__ == "__main__":
 ```
 
 After run `python3 test_tilelang.py`, we can see the result
-
 ```shell
 Reference result (PyTorch):
 tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])

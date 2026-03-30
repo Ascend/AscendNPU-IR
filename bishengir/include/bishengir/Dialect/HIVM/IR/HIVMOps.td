@@ -22,8 +22,8 @@
 #ifndef BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD
 #define BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD
 
-include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMBase.td"
+include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.td"
 include "bishengir/Dialect/HIVM/IR/HIVMTraits.td"
 
@@ -356,8 +356,11 @@ def CustomOp
                       Compiler will link these builtins to self-contained template library,
                       which comes together within bishengir-compile.
 
-                      For normal names/cases, user needs to specify implementation location/compilation command,
+                      For normal names/cases, user needs to specify implementation location/compilation commands (TODO),
                       and all ther necessary informations.
+
+               Available builtin names:
+                 "__builtin_gather_load"
 
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
@@ -374,6 +377,7 @@ def CustomOp
                           compiler will help to check the correctness and canonicalize.
 
     TODO:
+      - Impl : user provided implementation.
       - Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
   }];
 
@@ -383,6 +387,9 @@ def CustomOp
   let results = (outs Variadic<AnyType>:$results);
 
   let extraClassDeclaration = [{
+      // TODO: Customize
+      static int getOpLibraryMaxRankImpl() { return 5; }
+
       PIPE getPipe();
 
       ::mlir::MutableOperandRange getDpsInitsMutable() {
@@ -399,12 +406,6 @@ def CustomOp
       void setVFMode(VFMode);
 
       bool isBuiltin();
-
-      static constexpr StringLiteral kMaxRankAttrName = "max_rank";
-      int getMaxRank();
-
-      static constexpr StringLiteral kSymbolAttrName = "symbol";
-      std::string getSymbol();
 
       // Builtins helpers
       struct BuiltinInfo {

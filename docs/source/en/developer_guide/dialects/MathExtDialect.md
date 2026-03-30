@@ -9,6 +9,7 @@ Extended Math dialect.
 
 _An exponent components of a floating-point number_
 
+
 Syntax:
 
 ```
@@ -22,13 +23,14 @@ The `ilogb` operation takes one operand of floating point type (i.e.,
 scalar, tensor or vector) and returns one result of the same type. It has no
 standard attributes.
 
+
 Traits: `AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
 
 Interfaces: `ArithFastMathInterface`, `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`, `VectorUnrollOpInterface`
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -44,21 +46,23 @@ Effects: `MemoryEffects::Effect{}`
 * fast (`fast`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `operand` | floating-point-like
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | floating-point-like
 
+
 ### `mathExt.ldep` (mathExt::LdexpOp)
 
 _A fractional components of a floating-point number_
+
 
 Syntax:
 
@@ -73,13 +77,14 @@ The `ldexp` operation takes two operands of floating point type (i.e.,
 scalar, tensor or vector) and returns one result of the same type. Operands
 must have the same type.
 
+
 Traits: `AlwaysSpeculatableImplTrait`, `Elementwise`, `SameOperandsAndResultType`, `Scalarizable`, `Tensorizable`, `Vectorizable`
 
 Interfaces: `ArithFastMathInterface`, `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`, `VectorUnrollOpInterface`
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -95,18 +100,19 @@ Effects: `MemoryEffects::Effect{}`
 * fast (`fast`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `lhs` | floating-point-like
 | `rhs` | floating-point-like
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | floating-point-like
+
 
 ## Enums
 
@@ -114,7 +120,7 @@ Effects: `MemoryEffects::Effect{}`
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -139,7 +145,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -158,7 +164,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
 Integer overflow arith flags
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -170,7 +176,7 @@ Integer overflow arith flags
 
 Floating point rounding mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -184,7 +190,7 @@ Floating point rounding mode
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -208,7 +214,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 Floating point fast math flags
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -221,3 +227,4 @@ Floating point fast math flags
 | contract | `32` | contract |
 | afn | `64` | afn |
 | fast | `127` | fast |
+

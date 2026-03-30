@@ -6,7 +6,7 @@
 
 当前昇腾AI加速芯片，AIC与AIV分离，核数1:2。
 
-![image](../../../../images/developer_guide/cvarch.png)
+![](../../../../images/developer_guide/cvarch.png)
 
 在现有生态下，无论是用户编写的算法实现还是社区共享的算子，普遍没有昇腾 Cube-Vector 1:2 分核处理逻辑。为优化计算效率并实现昇腾亲和性，编译器需具备自动分核能力。该特性期待自动应用 Cube-Vector 1:2 分核策略，实现数据切分。
 
@@ -14,16 +14,15 @@
 
 总体实现的思路是：
 
-![image](../../../../images/developer_guide/auto_subtiling2.png)
+![](../../../../images/developer_guide/auto_subtiling2.png)
 
 带来的效果是：
 
-![image](../../../../images/developer_guide/auto_subtiling3.png)
+![](../../../../images/developer_guide/auto_subtiling3.png)
 
 ### 输入输出样例
 
 原始代码
-
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
                      outs(%init: tensor<64xf16>) -> tensor<64xf16>
@@ -33,7 +32,6 @@ hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
 成功使能Vector自动1:2特性
-
 ```mlir
 %0 = hivm.hir.get_sub_block_idx -> i64
 %slice_src = tensor.extract_slice %src[%0][32][1] : tensor<64xf16> to tensor<32xf16>
@@ -54,25 +52,25 @@ hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
 
 若切分失败，返回1:1
 
-![image](../../../../images/developer_guide/auto_subtiling4.png)
+![](../../../../images/developer_guide/auto_subtiling4.png)
 
 图 Autosubtiling 1:2实现思路
 
-### 实现设计
+### 实现设计 
 
-#### Dimension Analyzer选轴
+#### Dimension Analyzer选轴：
 
 Dimension Analyzer 的核心功能在于其选轴算法。该算法通过对目标计算内核 (Kernel) 内所有算子 (Operators) 的综合分析，识别并选定一个**平行轴 (Parallel Axis)** 作为数据切分的维度。
 
-#### 选择平行轴的依据
+#### 选择平行轴的依据：
 
 此设计决策源于底层硬件架构的关键特性：​**Vector核之间不存在直接的数据通路**​。为了最大化并行效率并确保计算正确性，数据切分策略必须**严格避免**引入跨分片的数据依赖。选择平行轴进行切分数据可被独立地分配至一个向量计算单元进行运算，从而实现高效的并行处理。
 
-#### Tile And Slice Store(Leaf)
+#### Tile And Slice Store(Leaf):
 
 会在每个StoreOp/ Leaf节点前，根据Dimension Analyzer选出的轴，插入1:2切分的Extract SliceOp
 
-#### BubbleUp Extract Slice
+#### BubbleUp Extract Slice:
 
 针对每个类型的Op实现了对应的BubbleUp Strategy，目前支持的Op类型包括：
 
@@ -102,7 +100,6 @@ ElementwiseOp, LoopOp, ExtractSliceOp(特定场景), InsertSliceOp(特定场景)
 ### 回退1:1样例
 
 原始代码
-
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
                      outs(%init: tensor<64xf16>) -> tensor<64xf16>
@@ -112,7 +109,6 @@ hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
 自动1:2使能失败时，假如 `if` 条件，仅0核工作
-
 ```mlir
 %0 = hivm.hir.get_sub_block_idx
 %1 = arith.cmpi eq %0, %c0_cst

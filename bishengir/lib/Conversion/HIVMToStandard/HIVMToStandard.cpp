@@ -1597,19 +1597,6 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
   }
 };
 
-class CustomOpToLibraryCallPattern : public OpRewritePattern<hivm::CustomOp> {
-  using OpRewritePattern<hivm::CustomOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hivm::CustomOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op.getOperands(), op.getResultTypes());
-    return success();
-  }
-};
-
 class SortOpToLibraryCallPattern
     : public MultiDimOpToLibraryCallPattern<hivm::VSortOp> {
 public:
@@ -1795,7 +1782,6 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
-               CustomOpToLibraryCallPattern,
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
@@ -1835,7 +1821,6 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::FixpipeOp,
                       hivm::MatmulOp,
                       hivm::CopyOp,
-                      hivm::CustomOp,
                       hivm::LoadOp,
                       hivm::StoreOp,
                       hivm::VAddOp,
