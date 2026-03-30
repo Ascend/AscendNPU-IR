@@ -79,6 +79,8 @@ void setupHFusionPipelineOptions(
       config.maxFusedElementwiseOps();
   hfusionPipelineOptions.enableDropUnitDims = config.shouldEnableDropUnitDims();
   hfusionPipelineOptions.enableFlatten = config.shouldEnableFlatten();
+  hfusionPipelineOptions.enableFuseReductionIntoLoop =
+      config.shouldEnableFuseReductionIntoLoop();
   hfusionPipelineOptions.enableAutoMultiBuffer =
       config.shouldEnableAutoMultiBuffer();
   hfusionPipelineOptions.enableDeterministicComputing =
@@ -300,6 +302,7 @@ public:
     disableHFusionVectorize = pass.disableHFusionVectorize;
     enableDropUnitDims = pass.enableDropUnitDims;
     enableFlatten = pass.enableFlatten;
+    enableFuseReductionIntoLoop = pass.enableFuseReductionIntoLoop;
     enableHFusionCompile = pass.enableHFusionCompile;
     enableHIVMCompile = pass.enableHIVMCompile;
     enableLIRCompile = pass.enableLIRCompile;
@@ -413,7 +416,8 @@ public:
         .tuningMode(enableTuningMode)
         .setBlockDim(blockDim)
         .enableDropUnitDims(enableDropUnitDims)
-        .enableFlatten(enableFlatten);
+        .enableFlatten(enableFlatten)
+        .enableFuseReductionIntoLoop(enableFuseReductionIntoLoop);
 
     // HFusion optimization control options
     config.setMaxHorizontalFusionSize(maxHorizontalFusionSize)
@@ -545,6 +549,10 @@ protected:
   Pass::Option<bool> enableFlatten{*this, "enable-flatten",
                                    llvm::cl::desc("Enable flatten pass"),
                                    llvm::cl::init(true)};
+  Pass::Option<bool> enableFuseReductionIntoLoop{
+      *this, "enable-fuse-reduction-into-loop",
+      llvm::cl::desc("Enable fuse post-loop reductions into the loop body"),
+      llvm::cl::init(false)};
   // -------------------------------------------------------------------------//
   //                           DFX control options
   // -------------------------------------------------------------------------//

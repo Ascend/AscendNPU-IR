@@ -573,6 +573,14 @@ public:
   }
   bool shouldEnableFlatten() const { return enableFlattenFlag; }
 
+  BiShengIRCompileMainConfig &enableFuseReductionIntoLoop(bool enable) {
+    enableFuseReductionIntoLoopFlag = enable;
+    return *this;
+  }
+  bool shouldEnableFuseReductionIntoLoop() const {
+    return enableFuseReductionIntoLoopFlag;
+  }
+
   BiShengIRCompileMainConfig &setWorkspaceMultiBufferNum(unsigned number) {
     workspaceMultiBufferNumFlag = number;
     return *this;
@@ -899,6 +907,9 @@ protected:
 
   /// Enable flatten pass.
   bool enableFlattenFlag{true};
+
+  /// Enable fuse-reduction-into-loop pass.
+  bool enableFuseReductionIntoLoopFlag{false};
 
   /// Number of multibuffers for workspace.
   unsigned workspaceMultiBufferNumFlag{2};

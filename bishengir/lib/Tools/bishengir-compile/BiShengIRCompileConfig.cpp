@@ -293,6 +293,12 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableFlattenFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableFuseReductionIntoLoop(
+        "enable-fuse-reduction-into-loop",
+        cl::desc("Enable fuse post-loop reductions into the loop body"),
+        cl::location(enableFuseReductionIntoLoopFlag), cl::init(false),
+        cl::cat(generalOptCategory));
+
     static cl::opt<int, /*ExternalStorage=*/true>
         enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",

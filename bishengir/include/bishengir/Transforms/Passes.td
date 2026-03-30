@@ -68,4 +68,24 @@ def InjectIR : Pass<"inject-ir", "mlir::ModuleOp"> {
                         "matching functions in the current module">];
 }
 
+def FuseReductionIntoLoop : Pass<"fuse-reduction-into-loop",
+                                  "mlir::func::FuncOp"> {
+  let summary = "Fuse post-loop reductions into the loop body";
+  let description = [{
+    This pass identifies linalg.reduce operations that consume scf.for loop
+    results and fuses them into the loop body.  When a loop accumulates full
+    (e.g. 2-D) tensors via arith.addf and a subsequent linalg.reduce collapses
+    the accumulated result to a lower-rank tensor, this pass moves the
+    reduction inside the loop so that the loop carries the smaller accumulator
+    directly.  This reduces on-chip buffer pressure and improves data locality.
+  }];
+  let constructor = "bishengir::createFuseReductionIntoLoopPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
 #endif //BISHENGIR_TRANSFORMS_PASSES_H

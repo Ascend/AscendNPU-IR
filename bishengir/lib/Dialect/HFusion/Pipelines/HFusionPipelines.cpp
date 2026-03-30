@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
+#include "bishengir/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -116,6 +117,8 @@ static void preProcess(OpPassManager &pm,
   auto targetEnum = hacc::symbolizeTargetDeviceEnum(options.target);
   if (options.enableTritonKernelCompile &&
       hacc::utils::isRegBasedArch(targetEnum)) {
+    if (options.enableFuseReductionIntoLoop)
+      pm.nest<func::FuncOp>().addPass(bishengir::createFuseReductionIntoLoopPass());
     pm.nest<func::FuncOp>().addPass(createLegalizeScalarPass());
     // Convert the operations to HFusion as much as possible to make
     // LinalgFoldUnitExtentDims work on LinalgOp interface more effectively.

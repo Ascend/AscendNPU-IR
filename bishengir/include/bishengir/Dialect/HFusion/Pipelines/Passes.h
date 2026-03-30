@@ -93,6 +93,11 @@ struct HFusionPipelineOptions
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
       llvm::cl::init(false)};
 
+  PassOptions::Option<bool> enableFuseReductionIntoLoop{
+      *this, "enable-fuse-reduction-into-loop",
+      llvm::cl::desc("Enable fuse post-loop reductions into the loop body"),
+      llvm::cl::init(false)};
+
   PassOptions::Option<bool> enableAutoMultiBuffer{
       *this, "enable-auto-multi-buffer",
       llvm::cl::desc("Enable automatic multi-buffer optimization"),
