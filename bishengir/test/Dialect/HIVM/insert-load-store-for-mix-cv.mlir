@@ -326,11 +326,25 @@ func.func @insert_load_between_vector_and_load(%arg0: memref<16x16xf16>, %arg1: 
   %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf16>
   %1 = tensor.empty() : tensor<16x16xf16>
   %2 = hivm.hir.vexp ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
-  // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.store ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK-NOT: hivm.hir.store
   %3 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
   %4 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) init_out_buffer = false -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_no_store_on_load_outs
+func.func @test_no_store_on_load_outs(%src_memref: memref<64x8xf32, strided<[8, 1]>>, %dst_alloc: memref<64x32xf32>) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %dst_tensor = bufferization.to_tensor %dst_alloc restrict writable : memref<64x32xf32>
+  %vec_res = hivm.hir.vbrc ins(%cst : f32) outs(%dst_tensor : tensor<64x32xf32>) -> tensor<64x32xf32>
+  %vec_memref = bufferization.to_memref %vec_res : memref<64x32xf32>
+  %dst_subview = memref.subview %vec_memref[0, 0] [64, 8] [1, 1] : memref<64x32xf32> to memref<64x8xf32, strided<[32, 1]>>
+  // CHECK-NOT: hivm.hir.store
+  // CHECK: hivm.hir.load ins(%arg0 : memref<64x8xf32, strided<[8, 1]>>) outs(%[[DST_SUBVIEW:.*]] : memref<64x8xf32, strided<[32, 1]>>)
+  hivm.hir.load ins(%src_memref : memref<64x8xf32, strided<[8, 1]>>) outs(%dst_subview : memref<64x8xf32, strided<[32, 1]>>) left_padding_num = %c0 : index init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  return
 }
 
 // -----
