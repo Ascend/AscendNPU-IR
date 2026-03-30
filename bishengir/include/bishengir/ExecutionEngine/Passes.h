@@ -37,6 +37,10 @@ std::unique_ptr<Pass> createCreateHostMainPass(
 /// Create a pass to convert HIVM operations to upstream dialect's equivalent.
 std::unique_ptr<Pass> createConvertHIVMToUpstreamPass();
 
+/// Create a pass to convert HFusion operations to upstream dialect's equivalent
+/// (e.g., for CPU runner fallback).
+std::unique_ptr<Pass> createConvertHFusionToUpstreamPass();
+
 struct CPURunnerPipelineOptions
     : public PassPipelineOptions<CPURunnerPipelineOptions> {
   CPURunnerPipelineOptions() = default;
