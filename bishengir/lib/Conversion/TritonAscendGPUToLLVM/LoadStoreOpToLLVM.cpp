@@ -461,10 +461,17 @@ struct AtomicRMWOpConversion
 
     auto valueTy = op.getResult().getType();
     auto tensorTy = dyn_cast<RankedTensorType>(valueTy);
-    Type valueElemTy =
-        getTypeConverter()->convertType(tensorTy.getElementType());
+    Type valueElemTy;
+    if (tensorTy) {
+      valueElemTy =
+          getTypeConverter()->convertType(tensorTy.getElementType());
+    } else {
+      valueElemTy = getTypeConverter()->convertType(valueTy);
+    }
 
-    unsigned elemsPerThread = getTotalElemsPerThread(op.getVal().getType());
+    unsigned elemsPerThread = tensorTy
+        ? getTotalElemsPerThread(op.getVal().getType())
+        : 1;
 
     // Compute warp/lane/block guard: only threads that hold unique data execute
     // the atomic. This matches the warp guard emitted by the remap path.
@@ -524,9 +531,13 @@ struct AtomicRMWOpConversion
       resultVals[i] = result;
     }
 
-    Value result =
-        packLLElements(loc, getTypeConverter(), resultVals, rewriter, tensorTy);
-    rewriter.replaceOp(op, result);
+    if (tensorTy) {
+      Value result = packLLElements(loc, getTypeConverter(), resultVals,
+                                    rewriter, tensorTy);
+      rewriter.replaceOp(op, result);
+    } else {
+      rewriter.replaceOp(op, resultVals[0]);
+    }
     return success();
   }
 
