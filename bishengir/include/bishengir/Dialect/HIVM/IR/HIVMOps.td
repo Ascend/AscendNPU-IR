@@ -335,10 +335,14 @@ def FinishDebugOp : HIVM_Op<"finish_debug", [CubeVectorCoreTypeTrait]> {
 
 def CustomOp
     : HIVM_StructuredOp<
-          "custom", [AttrSizedOperandSegments,
-                     MemoryEffects<[MemRead, MemWrite]>, SinglePipeOpTrait,
-                     DeclareOpInterfaceMethods<
-                         HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
+          "custom",
+          [AttrSizedOperandSegments, MemoryEffects<[MemRead, MemWrite]>,
+           SinglePipeOpTrait, DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
+           DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+                                     ["getIteratorTypesArray",
+                                      "getIndexingMaps"]>,
+           DeclareOpInterfaceMethods<
+               HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
   let summary = [{
     Custom operation is a generic op interface for users to write their own custom implementation.
 
@@ -378,7 +382,7 @@ def CustomOp
   }];
 
   let arguments = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
-      Variadic<AnyType>:$outputs);
+      Variadic<AnyType>:$outputs, Variadic<AnyType>:$temp_buffers);
 
   let results = (outs Variadic<AnyType>:$results);
 
@@ -399,6 +403,13 @@ def CustomOp
       void setVFMode(VFMode);
 
       bool isBuiltin();
+
+      static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
+      static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
+
+      static constexpr StringLiteral kIteratorTypesName = "iterator_types";
+
+      static constexpr StringLiteral kIndexingMapName = "indexing_map";
 
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       int getMaxRank();

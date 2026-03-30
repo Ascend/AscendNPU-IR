@@ -81,6 +81,13 @@ def HIVM_IteratorTypeEnum : HIVM_I32Enum<
     HIVM_IteratorType_Opaque
   ]>;
 
+def HIVM_IteratorTypeAttr
+    : HIVM_I32EnumAttr<"iterator_type", HIVM_IteratorTypeEnum> {
+  let description = [{
+    HIVM iterator_type attribute.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Data Layout
 //===----------------------------------------------------------------------===//

@@ -495,7 +495,8 @@ ParseResult CustomOp::parse(OpAsmParser &parser, OperationState &result) {
       return success();
     };
 
-    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs"))) {
+    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs")) ||
+        failed(parseVariadicArgs("tmps"))) {
       return failure();
     }
 
@@ -551,6 +552,7 @@ void CustomOp::print(OpAsmPrinter &p) {
 
   printVariadicArgs(getInputs(), "ins");
   printVariadicArgs(getOutputs(), "outs");
+  printVariadicArgs(getTempBuffers(), "tmps");
 
   if (!getResults().empty())
     p.printOptionalArrowTypeList(getResultTypes());

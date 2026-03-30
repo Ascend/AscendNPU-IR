@@ -97,6 +97,7 @@ ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSqrtOp)
 ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VRecOp)
 #undef ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC
 
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSelOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VBrcOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCastOp)
@@ -372,3 +373,9 @@ std::optional<int64_t> VXorOp::getExtraBufferSize() {
       utils::traceToAllocMaxSize(this->getSrc()[0]);
   return srcAllocTotalSize;
 }
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+OperandRange CustomOp::getExtraBuffers() { return getTempBuffersMutable(); }
