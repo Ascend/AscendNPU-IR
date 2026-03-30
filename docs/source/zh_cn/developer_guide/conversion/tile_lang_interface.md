@@ -4,7 +4,7 @@ Tile Language Ascend（**tilelang-ascend**）是 tile-lang 领域特定语言针
 
 在 TileLang 生态系统中，我们专为昇腾开发了 NPU 中间表示（AscendNPU IR）基础设施，实现了与基于 MLIR 的开源 AI 编译器生态系统的无缝集成。这不仅提升了编译器栈的开放性和可扩展性，还为开发者提供了更灵活高效的自定义算子开发途径。编译器后端支持两种技术路线：[AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) 和 [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto)。
 
-![](../../../images/developer_guide/npuir_architecture.png)
+![image](../../../images/developer_guide/npuir_architecture.png)
 
 ## 安装
 
@@ -62,6 +62,7 @@ bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
 ```
 
 然后需要做下面任何一步来使能tilelang的环境设置
+
 ```shell
 source ~/.bashrc
 
@@ -187,6 +188,7 @@ if __name__ == "__main__":
 ```
 
 运行 `python3 test_tilelang.py`, 我们可以看到执行成功的结果
+
 ```shell
 Reference result (PyTorch):
 tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])

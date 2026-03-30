@@ -2,8 +2,6 @@
 
 **AscendNPU IR** (AscendNPU Intermediate Representation) is an MLIR-based (Multi-Level Intermediate Representation) intermediate representation for Ascend-affinity operator compilation. It provides complete Ascend expression capability, improves Ascend AI processor efficiency through compilation optimizations, and supports flexible integration with ecosystem frameworks via open interfaces to efficiently enable Ascend AI processors.
 
----
-
 ## Key capabilities
 
 - **Multi-level abstraction and ease of use**  
@@ -20,10 +18,8 @@
 - **Ecosystem and openness**  
   Layered interfaces for PyTorch (Torch-MLIR), TileLang, Triton, and other frameworks, balancing performance and usability to enable Ascend AI processors.
 
----
-
 ## Next steps
 
-- [Install and build](quick_start/installing_guide) — Environment and build
-- [Quick start](quick_start/index) — Examples and entry
-- [Architecture](architecture) — Logical and code architecture, compilation flow
+- [Install and build](quick_start/installing_guide.md) — Environment and build
+- [Quick start](quick_start/index.rst) — Examples and entry
+- [Architecture](architecture.md) — Logical and code architecture, compilation flow

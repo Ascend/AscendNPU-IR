@@ -16,8 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -592,11 +593,16 @@ LogicalResult CustomOp::verify() {
 
   // Check VF mode attribute
   if (*coreType != TCoreType::CUBE) {
-    if (!getVFMode())
+    auto moduleOp =
+        this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+    if (hacc::utils::isAscend910_95(moduleOp) && (!getVFMode()))
       return emitOpError() << "Missing vf mode information";
   } else { // Pure cube
     // Cube function ignores vf mode information
   }
+
+  if (getSymbol().empty())
+    return emitOpError() << "Missing implementation function name";
 
   return success();
 }
@@ -609,5 +615,21 @@ PIPE CustomOp::getPipe() {
   return PIPE::PIPE_UNASSIGNED;
 }
 
-const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
-    {"__builtin_gather_load", {TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}}};
+int CustomOp::getMaxRank() {
+  if (auto maxRankAttr =
+          getOperation()->template getAttrOfType<IntegerAttr>(kMaxRankAttrName))
+    return static_cast<int>(maxRankAttr.getValue().getSExtValue());
+
+  static constexpr int defaultMaxRank = 5;
+  return defaultMaxRank;
+}
+
+std::string CustomOp::getSymbol() {
+  if (auto attr =
+          getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
+    return attr.str();
+  emitOpError() << "Missing implementation function name";
+  return "";
+}
+
+const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};

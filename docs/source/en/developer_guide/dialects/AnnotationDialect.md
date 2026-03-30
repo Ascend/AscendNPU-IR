@@ -15,7 +15,6 @@ annotation.mark %a { attr-dict } : f64
 
 _Annotate an IR value with key-value attribute pairs_
 
-
 Syntax:
 
 ```
@@ -44,18 +43,16 @@ Interfaces: `ConditionallySpeculatable`, `MemoryEffectOpInterface (MemoryEffectO
 
 Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mlir::SideEffects::DefaultResource}`, `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>keys</code></td><td>::mlir::ArrayAttr</td><td>string array attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | any type
 | `values` | variadic of any type
-
-

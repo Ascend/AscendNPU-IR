@@ -73,6 +73,15 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
     return;
   }
 
+  if (src->strides[2] > 1 && dst->strides[2] == 1) {
+    // When GM's last dim stride > 1 but UB's last dim is contiguous,
+    // we cannot use the dimension-lifting trick because the gap calculation
+    // in the underlying intrinsic functions assumes contiguous last dim.
+    // Using scalar copy to avoid incorrect gap values.
+    load_gm_to_ubuf_3d_by_scalar<T>(src, dst, left_padding_num, pad_value);
+    return;
+  }
+
   // last dimension is not contiguous,
   // view the src (size0, size1, size2) with stride [stride0, stride1, stride2]
   // as viewed_src (size0, size1, size2, 1) with stride [stride0, stride1,
@@ -152,11 +161,8 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   }
 
   if (!check_3d_ubuf_stride_align(src)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the stride is not "
-                  "block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
     return;
   }
@@ -179,11 +185,8 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   int64_t stride2_ub = src->strides[2];
   auto src_ptr = src->aligned + src->offset;
   if (!isAddress32ByteAligned(src_ptr)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the ub address is "
-                  "not block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     if (stride2_ub != 1) {
       store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
       return;
@@ -209,6 +212,17 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
     // last dimension is contiguous
     store_ubuf_to_gm_3d_core_with_contiguous_last_dim(src, dst);
     set_store_atomic_none(atomic_kind);
+    return;
+  }
+
+  if (dst->strides[2] > 1 && src->strides[2] == 1) {
+    // When GM's last dim stride > 1 but UB's last dim is contiguous,
+    // we cannot use the dimension-lifting trick because the gap calculation
+    // in the underlying intrinsic functions assumes contiguous last dim.
+    // Using scalar copy to avoid incorrect gap values.
+    if (!check_atomic_none(atomic_kind))
+      return;
+    store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
     return;
   }
 

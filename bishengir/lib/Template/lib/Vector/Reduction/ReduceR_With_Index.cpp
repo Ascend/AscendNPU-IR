@@ -183,14 +183,10 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
   check_inputs_of_reduce_r_with_index(src0, dst_value, dst_index, tmp_buf,
                                       initvalue);
   int64_t scalar_element_num = reduction_get_element_nums_on_scalar_1d<T>(src0);
-  int64_t vector_element_num = src0->sizes[0] - scalar_element_num;
-  if (vector_element_num != 0) [[likely]] {
-    reduce_r_with_index_on_vector<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, vector_element_num);
-  }
-
-  if (scalar_element_num != 0) {
-    bool need_merge = !(vector_element_num == 0);
-    reduce_r_with_index_on_scalar<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, scalar_element_num, need_merge);
+  if (scalar_element_num == 0) [[likely]] {
+    reduce_r_with_index_on_vector<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, src0->sizes[0]);
+  } else [[unlikely]] {
+    reduce_r_with_index_on_scalar<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, src0->sizes[0], false);
   }
 
   return;
