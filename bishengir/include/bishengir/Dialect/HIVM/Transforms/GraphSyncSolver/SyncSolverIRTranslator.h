@@ -146,8 +146,12 @@ private:
   bool isUnlikelyCondition(Condition *condOp);
 
   bool isParallelLoop(Loop *loopOp);
-  
+
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
+
+  std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);
+
+  std::optional<int64_t> getScopeMaxPreloadNum(Scope *scopeOp);
 };
 
 } // namespace mlir::hivm::syncsolver

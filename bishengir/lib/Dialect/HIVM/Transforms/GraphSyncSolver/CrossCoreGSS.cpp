@@ -139,7 +139,7 @@ void CrossCoreGSSPass::runOnOperation() {
 
   auto solver = std::make_unique<Solver>(std::move(irTranslator));
 
-  LLVM_DEBUG({
+  DEBUG_WITH_TYPE("gss-print-unrolled-sync-ir", {
     for (auto &occ : solver->syncIr) {
       llvm::dbgs() << std::string(occ->depth, ' ') << occ->op->id << ' '
                    << occ->syncIrIndex << ' ' << occ->startIndex << ' '

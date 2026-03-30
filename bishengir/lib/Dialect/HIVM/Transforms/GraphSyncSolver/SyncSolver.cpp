@@ -509,7 +509,8 @@ Solver::checkMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 }
 
 std::optional<EventIdInfo>
-Solver::checkCVMultiBufferEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
+Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
+                                            RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
   if (!options.isCrossCoreMode()) {
     return {};
@@ -546,6 +547,59 @@ Solver::checkCVMultiBufferEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
   return eventIdInfo;
 }
 
+std::optional<EventIdInfo>
+Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
+                                             RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!options.isCrossCoreMode()) {
+    return {};
+  }
+  auto *parentScope1 = rwOp1->getParentOfType<Scope>();
+  auto *parentScope2 = rwOp2->getParentOfType<Scope>();
+  while (parentScope1 != nullptr && !parentScope1->maxPreloadNum.has_value()) {
+    parentScope1 = parentScope1->getParentOfType<Scope>();
+  }
+  while (parentScope2 != nullptr && !parentScope2->maxPreloadNum.has_value()) {
+    parentScope2 = parentScope2->getParentOfType<Scope>();
+  }
+  if (!parentScope1 || !parentScope2) {
+    return {};
+  }
+  if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
+    if (!parCond1->isProperAncestor(rwOp2)) {
+      return {};
+    }
+  }
+  if (auto *parCond2 = rwOp2->getParentOfType<Condition>()) {
+    if (!parCond2->isProperAncestor(rwOp1)) {
+      return {};
+    }
+  }
+
+  auto *parentLoop1 = parentScope1->getParentOfType<Loop>();
+  auto *parentLoop2 = parentScope2->getParentOfType<Loop>();
+  if (parentLoop1 == nullptr || parentLoop1 != parentLoop2) {
+    return {};
+  }
+
+  assert(parentScope1->preloadNum.has_value());
+  assert(parentScope2->preloadNum.has_value());
+  assert(parentScope1->maxPreloadNum.value() ==
+         parentScope2->maxPreloadNum.value());
+
+  auto parentForLoop = llvm::dyn_cast_if_present<scf::ForOp>(parentLoop1->op);
+  assert(parentForLoop != nullptr);
+
+  EventIdInfo eventIdInfo;
+  eventIdInfo.eventIdNum = parentScope1->maxPreloadNum.value();
+  eventIdInfo.preloadOffset1 = parentScope1->maxPreloadNum.value() -
+                               parentScope1->preloadNum.value() - 1;
+  eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
+                               parentScope2->preloadNum.value() - 1;
+  eventIdInfo.multibufferLoop = parentForLoop;
+  return eventIdInfo;
+}
+
 // Determine required event id count and optional multibuffer loop parent for
 // occurrences.
 EventIdInfo Solver::getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
@@ -558,7 +612,10 @@ EventIdInfo Solver::getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   if (!isBackwardSync(occ1, occ2)) {
     return singleEventId;
   }
-  if (auto eventIdInfo = checkCVMultiBufferEventIdInfo(rwOp1, rwOp2)) {
+  if (auto eventIdInfo = checkCVMultiBufferUnrollEventIdInfo(rwOp1, rwOp2)) {
+    return eventIdInfo.value();
+  }
+  if (auto eventIdInfo = checkCVMultiBufferPreloadEventIdInfo(rwOp1, rwOp2)) {
     return eventIdInfo.value();
   }
   if (auto eventIdInfo =
@@ -1121,10 +1178,11 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
   // } {unroll=x}
   if (options.isCrossCoreMode()) {
     assert(setOcc->op != nullptr && waitOcc->op != nullptr);
-    auto *forOp1 = llvm::dyn_cast<Loop>(setOcc->op);
-    auto *forOp2 = llvm::dyn_cast<Loop>(waitOcc->op);
+    auto *forOp1 = llvm::dyn_cast_if_present<Loop>(setOcc->op);
+    auto *forOp2 = llvm::dyn_cast_if_present<Loop>(waitOcc->op);
     if (forOp1 != nullptr && forOp2 != nullptr) {
       if (forOp1->multibufferUnrollNum && forOp2->multibufferUnrollNum) {
+        assert(forOp1->multibufferUnrollNum == forOp2->multibufferUnrollNum);
         setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
         waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
       }
@@ -1151,13 +1209,11 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
   // } {preload=x}
   if (options.isCrossCoreMode()) {
     assert(setOcc->op != nullptr && waitOcc->op != nullptr);
-    auto scopeScopeOp1 =
-        llvm::dyn_cast_if_present<scope::ScopeOp>(setOcc->op->op);
-    auto scopeScopeOp2 =
-        llvm::dyn_cast_if_present<scope::ScopeOp>(waitOcc->op->op);
-    if (scopeScopeOp1 != nullptr && scopeScopeOp2 != nullptr) {
-      if (scopeScopeOp1->hasAttr(kPreLoadAttrName) &&
-          scopeScopeOp2->hasAttr(kPreLoadAttrName)) {
+    auto *scopeOp1 = llvm::dyn_cast_if_present<Scope>(setOcc->op);
+    auto *scopeOp2 = llvm::dyn_cast_if_present<Scope>(waitOcc->op);
+    if (scopeOp1 != nullptr && scopeOp2 != nullptr) {
+      if (scopeOp1->maxPreloadNum && scopeOp2->maxPreloadNum) {
+        assert(scopeOp1->maxPreloadNum == scopeOp2->maxPreloadNum);
         setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
         waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
       }

@@ -479,6 +479,30 @@ std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   return {};
 }
 
+std::optional<int64_t> IRTranslator::getScopePreloadNum(Scope *scopeOp) {
+  assert(scopeOp != nullptr);
+  if (scopeOp->op == nullptr) {
+    return {};
+  }
+  if (auto intAttr = scopeOp->op->getAttrOfType<IntegerAttr>(
+          hivm::PreloadNumAttr::name)) {
+    return intAttr.getInt();
+  }
+  return {};
+}
+
+std::optional<int64_t> IRTranslator::getScopeMaxPreloadNum(Scope *scopeOp) {
+  assert(scopeOp != nullptr);
+  if (scopeOp->op == nullptr) {
+    return {};
+  }
+  if (auto intAttr = scopeOp->op->getAttrOfType<IntegerAttr>(
+          hivm::MaxPreloadNumAttr::name)) {
+    return intAttr.getInt();
+  }
+  return {};
+}
+
 void IRTranslator::updateBlockArgAliases(Block *block,
                                          OperandRange destOperands) {
   assert(block->getArguments().size() == destOperands.size());
@@ -557,6 +581,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto scopeScopeOp = dyn_cast<scope::ScopeOp>(op)) {
         auto curScopeOp =
             std::make_unique<Scope>(OpType::SCOPE, scopeScopeOp, scopeOp.get());
+        curScopeOp->preloadNum = getScopePreloadNum(curScopeOp.get());
+        curScopeOp->maxPreloadNum = getScopeMaxPreloadNum(curScopeOp.get());
         for (auto &region : scopeScopeOp->getRegions()) {
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));

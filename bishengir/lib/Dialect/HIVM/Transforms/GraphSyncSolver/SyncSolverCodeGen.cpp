@@ -30,6 +30,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -326,21 +327,81 @@ void CodeGenerator::insertWaitBlockFlagOp(IRRewriter &rewriter,
 // Build/select a runtime i64 value that picks which buffer/event to use for
 // multi-buffer sync.
 Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
-                                           SetWaitOp *syncOp) {
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
-  assert(multibufferLoop != nullptr);
+                                           LoopLikeOpInterface multibufferLoop,
+                                           int64_t eventIdNum,
+                                           int64_t preloadOffset) {
+  Value modularIndex;
+  PatternRewriter::InsertionGuard guard(rewriter);
+  {
+    auto key = std::make_tuple(multibufferLoop, eventIdNum, /*offset=*/0);
+    auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+    if (isInserted) {
+      it->second =
+          createNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
+    }
+    modularIndex = it->second;
+  }
+  if (preloadOffset > 0) {
+    auto key = std::make_tuple(multibufferLoop, eventIdNum, preloadOffset);
+    auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+    if (isInserted) {
+      auto loc = multibufferLoop->getLoc();
+      PatternRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointAfter(modularIndex.getDefiningOp());
+      Value eventIdNumVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIndexAttr(eventIdNum));
+      Value preloadOffsetVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIndexAttr(eventIdNum - preloadOffset % eventIdNum));
+      Value newIndex = rewriter.create<arith::AddIOp>(
+          multibufferLoop->getLoc(), modularIndex, preloadOffsetVal);
+      it->second = rewriter.create<arith::RemSIOp>(multibufferLoop->getLoc(),
+                                                   newIndex, eventIdNumVal);
+    }
+    modularIndex = it->second;
+  }
+  return modularIndex;
+}
 
+Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                                       SetWaitOp *syncOp) {
+  assert(syncOp != nullptr);
+  if (!syncOp->eventIdInfo.multibufferLoop) {
+    return nullptr;
+  }
+
+  for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
+    if (syncOp->eventIds[i - 1] + 1 != syncOp->eventIds[i]) {
+      return nullptr;
+    }
+  }
+
+  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
+  assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
-  auto key = std::make_pair(multibufferLoop, eventIdNum);
-  auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+  int64_t preloadOffset = isa<SetFlagOp>(syncOp)
+                              ? syncOp->eventIdInfo.preloadOffset1
+                              : syncOp->eventIdInfo.preloadOffset2;
+
+  auto key = std::make_pair(multibufferLoop, preloadOffset);
+  auto [it, isInserted] =
+      bufferSelectedMem[key].insert({syncOp->eventIds, Value{}});
   if (!isInserted) {
     return it->second;
   }
 
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
+                                        preloadOffset);
+  assert(isa_and_present<OpResult>(counter));
+
   PatternRewriter::InsertionGuard guard(rewriter);
-  Value modularIndex =
-      createNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
-  return it->second = modularIndex;
+  rewriter.setInsertionPointAfter(counter.getDefiningOp());
+  auto loc = counter.getLoc();
+  auto eventIdAttr =
+      rewriter.getIntegerAttr(rewriter.getIndexType(), syncOp->eventIds[0]);
+  auto eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
+  Value eventId = rewriter.create<arith::AddIOp>(loc, rewriter.getIndexType(),
+                                                 counter, eventIdValue);
+  return getValueOrCreateCastToI64(rewriter, loc, eventId);
 }
 
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
@@ -352,18 +413,25 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
 
   auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
   assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
+  int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
+  int64_t preloadOffset = isa<SetFlagOp>(syncOp)
+                              ? syncOp->eventIdInfo.preloadOffset1
+                              : syncOp->eventIdInfo.preloadOffset2;
+
+  auto key = std::make_pair(multibufferLoop, preloadOffset);
   auto [it, isInserted] =
-      bufferSelectedMem[multibufferLoop].insert({syncOp->eventIds, Value{}});
+      bufferSelectedMem[key].insert({syncOp->eventIds, Value{}});
   if (!isInserted) {
     return it->second;
   }
 
-  Value counter = getNestedIndexModular(rewriter, syncOp);
-  assert(counter.getDefiningOp() != nullptr);
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
+                                        preloadOffset);
+  assert(isa_and_present<OpResult>(counter));
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
-  Location loc = counter.getDefiningOp()->getLoc();
+  auto loc = counter.getLoc();
 
   Value bufferSelected;
   if (syncOp->eventIds.size() == 2) {
@@ -463,6 +531,9 @@ Value CodeGenerator::getCVMultiBufferSelectOp(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferBlockSelectOp(IRRewriter &rewriter,
                                                  SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
+  if (auto selectOp = getMultiBufferSelectOpConsecutive(rewriter, syncOp)) {
+    return selectOp;
+  }
   if (auto selectOp = getMultiBufferSelectOp(rewriter, syncOp)) {
     return selectOp;
   }

@@ -122,6 +122,12 @@ std::string Scope::str(int indent, bool recursive) const {
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
+  if (maxPreloadNum.has_value()) {
+    ret += " max-preload-num=" + std::to_string(maxPreloadNum.value());
+  }
+  if (preloadNum.has_value()) {
+    ret += " preload-num=" + std::to_string(preloadNum.value());
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -140,6 +146,10 @@ std::string Loop::str(int indent, bool recursive) const {
   if (isParallel) {
     ret += " parallel-loop";
   }
+  if (multibufferUnrollNum.has_value()) {
+    ret += " multibuffer-unroll-num=" +
+           std::to_string(multibufferUnrollNum.value());
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -155,7 +165,6 @@ std::string Condition::str(int indent, bool recursive) const {
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
-  ;
   if (isUnlikely) {
     ret += " unlikely-cond";
   }
