@@ -717,6 +717,24 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
 }
 
 static LogicalResult
+handleSliceInsertDimOnly(tensor::ExtractSliceOp sliceOp,
+                         tensor::InsertSliceOp parentInsertOp, size_t tilingDim,
+                         PatternRewriter &rewriter) {
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp.getLoc(), parentInsertOp.getDest(), sliceOp.getMixedOffsets(),
+      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newDst);
+  auto newOffsets = newDst.getMixedOffsets();
+  auto newSizes = newDst.getMixedSizes();
+  newOffsets[tilingDim] = parentInsertOp.getMixedOffsets()[tilingDim];
+  newSizes[tilingDim] = parentInsertOp.getMixedSizes()[tilingDim];
+  rewriter.replaceOpWithNewOp<tensor::InsertSliceOp>(
+      sliceOp, parentInsertOp.getSource(), newDst, newOffsets, newSizes,
+      parentInsertOp.getMixedStrides());
+  return success();
+}
+
+static LogicalResult
 handleExtractOfInsertSameDimCase(tensor::ExtractSliceOp sliceOp,
                                  PatternRewriter &rewriter) {
   // This function is handling such cases
@@ -732,24 +750,31 @@ handleExtractOfInsertSameDimCase(tensor::ExtractSliceOp sliceOp,
 
   auto parentInsertOp =
       cast<tensor::InsertSliceOp>(sliceOp.getSource().getDefiningOp());
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return failure();
+
+  auto tilingDim = *extractDims.begin();
+  extractDims = getExtractOrInsertDim(parentInsertOp);
   // Note: be extremely careful when handling such case, and not all cases
   // can be bubbled up.
-  if (parentInsertOp.getStaticSizes().size() != 1)
+  if (extractDims.size() != 1 || tilingDim != *extractDims.begin()) {
     // We are being very conservative that, only handling the case when
     // inserting to single dim, and it's overlaps with extract dim.
     // It probably can be enhanced, but need to be very careful.
     return failure();
+  }
 
   // If this insertSlice is not created by Tiling, it's very dangerous for us
   // to bubbled up, because the semantic may not be guaranteed to be the same.
   if (!createdByTiling(parentInsertOp)) {
+    if (parentInsertOp.getSourceType().getDimSize(tilingDim) == 1) {
+      // This case is equivalent to handleInsertRankedReduceCase
+      return handleSliceInsertDimOnly(sliceOp, parentInsertOp, tilingDim,
+                                      rewriter);
+    }
     return failure();
   }
-
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  if (extractDims.size() != 1)
-    return failure();
-  auto tilingDim = *extractDims.begin();
 
   // We have an assumption here that HIVMBubbleUp is only serving
   // HIVMTileAndBindSubBlock 1:2. Since we only work on marked extractSlice,
@@ -827,6 +852,49 @@ handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+static LogicalResult
+handleExtractOfInsertDifferentDimCase(tensor::ExtractSliceOp sliceOp,
+                                       PatternRewriter &rewriter) {
+  auto parentSliceOp =
+      sliceOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
+  auto srcType = parentSliceOp.getSourceType();
+  auto parentExtractDims = getExtractOrInsertDim(parentSliceOp);
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  auto parentOffsets = parentSliceOp.getMixedOffsets();
+  auto parentSizes = parentSliceOp.getMixedSizes();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), parentSliceOp.getDest(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newDst);
+  for (auto dim : getExtractOrInsertDim(parentSliceOp)) {
+    std::swap(parentOffsets[dim], offsets[dim]);
+    sizes[dim] = parentSizes[dim];
+    parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+  }
+  for (auto dim : getExtractOrInsertDim(sliceOp)) {
+    std::swap(parentOffsets[dim], offsets[dim]);
+    parentSizes[dim] = sizes[dim];
+  }
+
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), parentSliceOp.getSource(), parentOffsets, parentSizes,
+      strides);
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+
+  auto newParentSliceOp = rewriter.create<tensor::InsertSliceOp>(
+      sliceOp->getLoc(), newSliceOp, newDst, offsets, sizes, strides);
+
+  for (auto attr : parentSliceOp->getAttrs()) {
+    if (!newParentSliceOp->hasAttr(attr.getName()))
+      newParentSliceOp->setAttr(attr.getName(), attr.getValue());
+  }
+
+  rewriter.replaceOp(sliceOp, newParentSliceOp);
+  return success();
+}
+
 LogicalResult
 InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                      PatternRewriter &rewriter) const {
@@ -866,6 +934,8 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     }
     if (!isDynamicSlice(parentInsertOp))
       return handleExtractOfInsertSameDimCase(sliceOp, rewriter);
+  } else {
+    return handleExtractOfInsertDifferentDimCase(sliceOp, rewriter);
   }
 
   // TODO:: Handle extract and insert on different dimension case.
