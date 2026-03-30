@@ -917,8 +917,7 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   for (int64_t groupIdx = 0;
        groupIdx < static_cast<int64_t>(reassociation.size()); groupIdx++) {
     auto subGroup = reassociation[groupIdx];
-    if (subGroup.size() !=
-        1) { // the collapse dim must be in the group with size > 1
+    if (subGroup.size() != 1) { // the collapse dim must be in the group with size > 1
       int64_t outputSize = outputType.getDimSize(groupIdx);
       for (int64_t i = 0; i < static_cast<int64_t>(subGroup.size()); i++) {
         auto InputIndex = subGroup[i];
@@ -1201,22 +1200,9 @@ VInterleaveBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!vinterleaveOp)
     return failure();
 
-  // auto outputType =
-  // dyn_cast<RankedTensorType>(vinterleaveOp.getResult().getType()); if
-  // (!outputType)
-  //   return failure();
-
   SmallVector<OpFoldResult> sliceOffsets = sliceOp.getMixedOffsets();
   SmallVector<OpFoldResult> sliceSizes = sliceOp.getMixedSizes();
   SmallVector<OpFoldResult> sliceStrides = sliceOp.getMixedStrides();
-
-  // int64_t outputRank = outputType.getRank();
-  // if (sliceOffsets.size() != outputRank || sliceSizes.size() != outputRank)
-  //   return failure();
-
-  // int64_t interleaveNum = vinterleaveOp.getInterleaveChannelNums();
-  // if (outputType.getDimSize(outputRank - 1) != interleaveNum)
-  //   return failure();  // only support interleaveOp with final dimsize=1
 
   SmallVector<OpFoldResult> newSizes(sliceSizes.begin(), sliceSizes.end() - 1);
   SmallVector<OpFoldResult> newSizesEmpty(sliceSizes.begin(),
@@ -1226,8 +1212,7 @@ VInterleaveBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   // Create the new sliceOp for every input of vinterleaveOp
   SmallVector<Value> slicedInputs;
-  int64_t count = 0;
-  for (Value input : vinterleaveOp.getOperands()) {
+  for (Value input : vinterleaveOp.getSrc()) {
     auto inputType = dyn_cast<RankedTensorType>(input.getType());
 
     rewriter.setInsertionPoint(vinterleaveOp);
@@ -1236,15 +1221,11 @@ VInterleaveBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
     markCreatedExtractSliceOp(rewriter, newSliceOp);
     slicedInputs.push_back(newSliceOp);
-
-    count += 1;
-    if (count >= 2) {
-      break;
-    }
   }
 
   auto interleaveType =
       dyn_cast<RankedTensorType>(vinterleaveOp.getOperand(0).getType());
+
   rewriter.setInsertionPoint(vinterleaveOp);
   auto newEmptyOp = rewriter.create<tensor::EmptyOp>(
       sliceOp.getLoc(), newSizesEmpty, interleaveType.getElementType());
@@ -1290,8 +1271,6 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   for (Operation *userOp :
        srcMemref.getUsers()) { // srcMemref is the source of ToTensorOp
     if (auto LoadOp = dyn_cast<hivm::LoadOp>(userOp)) {
-      LLVM_DEBUG(DBGS() << "It has Load Op: \n" << LoadOp << "\n");
-      // LoadOp->dump();
 
       // For Operand(0): if the Operand(0) of LoadOP is memref.reinterpret_cast
       auto castOp = dyn_cast<memref::ReinterpretCastOp>(
