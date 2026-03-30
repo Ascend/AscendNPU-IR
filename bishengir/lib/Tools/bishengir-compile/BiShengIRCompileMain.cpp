@@ -80,7 +80,7 @@ runExternalHIVMC(ModuleOp &module,
 
   // TODO: Support options in hivmc
   std::set<std::string> blacklist = {"inject-ir-from-file",
-                                     "enable-multiple-consumer-fusion"};
+                                     "hfusion-enable-multiple-consumer-fusion"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
