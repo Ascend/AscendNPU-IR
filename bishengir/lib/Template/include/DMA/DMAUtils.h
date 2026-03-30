@@ -1042,6 +1042,16 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
 }
 
+__aiv__ inline bool check_atomic_none(AtomicKind atomic_kind) {
+  if (atomic_kind != AtomicKind::None) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+    cce::printf("Atomic operations do not supporte this stride pattern");
+#endif
+    return false;
+  }
+  return true;
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) int64_t
 misaligned_prefix_elem_cnt(memref_t<__ubuf__ T, 1> *ub) {
@@ -1060,8 +1070,10 @@ __aiv__ __attribute__((always_inline)) int64_t
 store_ubuf_to_gm_initial_misalignment_1d(memref_t<__ubuf__ T, 1> *src,
                                          memref_t<__gm__ T, 1> *dst,
                                          bool update_to_aligned_addr = true) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   cce::printf("Warning: Scalar transport is used for the elements of the first "
               "misaligned block");
+#endif
   int64_t data_to_copy = misaligned_prefix_elem_cnt<T>(src);
   data_to_copy = min(data_to_copy, src->sizes[0]);
   memref_t<__ubuf__ T, 1> src_tmp{src->allocated,
