@@ -463,7 +463,7 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
   const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
   assert(liveBlockInfo != nullptr);
   auto currentLiveValues =
-      liveBlockInfo->currentlyLiveValues(loopOp.getOperation());
+      currentlyLiveValuesOrdered(liveBlockInfo, loopOp.getOperation());
   if (currentLiveValues.empty()) {
     return allocBeforeLoopBuffers;
   }
@@ -695,7 +695,7 @@ void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
   const auto *liveBlockInfo = live.getLiveness(block);
   assert(liveBlockInfo != nullptr && opInfo != nullptr);
   auto currentLiveValues =
-      liveBlockInfo->currentlyLiveValues(opInfo->operation);
+      currentlyLiveValuesOrdered(liveBlockInfo, opInfo->operation);
   if (currentLiveValues.empty()) {
     return;
   }
@@ -2298,7 +2298,7 @@ bool PlanMemoryPass::checkSimilarPointerCastOps(hivm::PointerCastOp op1,
 
 LogicalResult
 PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
-  DenseMap<PointerCastOp, annotation::MarkOp> markedOps;
+  llvm::MapVector<PointerCastOp, annotation::MarkOp> markedOps;
 
   funcOp->walk<WalkOrder::PreOrder>([&](annotation::MarkOp markOp) {
     auto attrDict = markOp->getAttrDictionary();
@@ -2359,6 +2359,68 @@ void MemPlan::SetMemscope2rootSuccessStorageEntry() {
       memscope2rootSuccessStorageEntry[it.first] = it.second;
     }
   }
+}
+
+//===----------------------------------------------------------------------===//
+// This file contains code from the LLVM Project.
+// Original License: Apache License v2.0 with LLVM Exceptions
+// Original Copyright: NA
+// Original Source:
+// https://github.com/llvm/llvm-project/blob/main/mlir/lib/Analysis/Liveness.cpp
+//===----------------------------------------------------------------------===//
+// Similar to Liveness::currentlyLiveValues but using SetVector instead of
+// ValueSetT=SmallPtrSet. Needed to make the pass output deterministic.
+mlir::SetVector<Value> MemLivenessAnalysis::currentlyLiveValuesOrdered(
+    const LivenessBlockInfo *livenessInfo, Operation *op) const {
+  mlir::SetVector<Value> liveSet;
+
+  // Given a value, check which ops are within its live range. For each of
+  // those ops, add the value to the set of live values as-of that op.
+  auto addValueToCurrentlyLiveSets = [&](Value value) {
+    // Determine the live range of this value inside this block.
+    Operation *startOfLiveRange = value.getDefiningOp();
+    Operation *endOfLiveRange = nullptr;
+    // If it's a live in or a block argument, then the start is the beginning
+    // of the block.
+    if (livenessInfo->isLiveIn(value) || isa<BlockArgument>(value))
+      startOfLiveRange = &livenessInfo->getBlock()->front();
+    else
+      startOfLiveRange =
+          livenessInfo->getBlock()->findAncestorOpInBlock(*startOfLiveRange);
+
+    // If it's a live out, then the end is the back of the block.
+    if (livenessInfo->isLiveOut(value))
+      endOfLiveRange = &livenessInfo->getBlock()->back();
+
+    // We must have at least a startOfLiveRange at this point. Given this, we
+    // can use the existing getEndOperation to find the end of the live range.
+    if (startOfLiveRange && !endOfLiveRange)
+      endOfLiveRange = livenessInfo->getEndOperation(value, startOfLiveRange);
+
+    assert(endOfLiveRange && "Must have endOfLiveRange at this point!");
+    // If this op is within the live range, insert the value into the set.
+    if (!(op->isBeforeInBlock(startOfLiveRange) ||
+          endOfLiveRange->isBeforeInBlock(op)))
+      liveSet.insert(value);
+  };
+
+  // Handle block arguments if any.
+  for (Value arg : livenessInfo->getBlock()->getArguments())
+    addValueToCurrentlyLiveSets(arg);
+
+  // Handle live-ins. Between the live ins and all the op results that gives us
+  // every value in the block.
+  for (Value in : livenessInfo->in())
+    addValueToCurrentlyLiveSets(in);
+
+  // Now walk the block and handle all values used in the block and values
+  // defined by the block.
+  for (Operation &walkOp :
+       llvm::make_range(livenessInfo->getBlock()->begin(), ++op->getIterator()))
+    for (auto result : walkOp.getResults())
+      addValueToCurrentlyLiveSets(result);
+
+  return liveSet;
 }
 
 void PlanMemoryPass::runOnOperation() {

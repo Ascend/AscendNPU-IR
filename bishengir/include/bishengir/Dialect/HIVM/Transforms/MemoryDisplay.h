@@ -81,7 +81,7 @@ public:
 // collect the memory information required for memory display tools.
 void collectMemoryInfoForDebug(
     SmallVector<MemoryDisplayInfo> &memoryDisplayInfoList,
-    DenseMap<hivm::AddressSpace, StorageEntry *> selectRootMap,
+    llvm::MapVector<hivm::AddressSpace, StorageEntry *> selectRootMap,
     DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets,
     DenseMap<hivm::AddressSpace, std::string> errorInfo, bool isFail);
 
