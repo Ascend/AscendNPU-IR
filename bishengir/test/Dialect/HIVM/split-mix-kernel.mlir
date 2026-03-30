@@ -199,3 +199,52 @@ func.func @test_split_and_cleanup(%A: tensor<64x128xf16>,
 
   return %res_outer#0, %res_outer#1, %res_outer#2 : tensor<64x256xf32>, tensor<64x256xf32>, tensor<64xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_scope_tensor_mix_aic(
+// CHECK-SAME:    %[[EXT_TENSOR:.*]]: tensor<128x128xf32>, %[[EXT_VAL:.*]]: i32)
+// CHECK-SAME:    hivm.func_core_type = #hivm.func_core_type<AIC>
+// CHECK-DAG:     %[[STUB_VEC_INT:.*]] = arith.constant 0 : i32
+// CHECK:         %[[CUBE_RES:.*]]:3 = scope.scope : () -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
+// CHECK:           hivm.hir.mmadL1
+// CHECK:           scope.return
+// CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NOT:     scope.scope {{.*}} {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT:     hivm.hir.vadd
+// CHECK-DAG:     %[[STUB_VEC_TENSOR:.*]] = tensor.empty() : tensor<128x128xf32>
+// CHECK:         return %[[CUBE_RES]]#0, %[[CUBE_RES]]#1, %[[CUBE_RES]]#2, %[[STUB_VEC_TENSOR]], %[[EXT_TENSOR]], %[[STUB_VEC_INT]]
+
+// CHECK-LABEL: func.func @test_scope_tensor_mix_aiv(
+// CHECK-SAME:    %[[EXT_TENSOR:.*]]: tensor<128x128xf32>, %[[EXT_VAL:.*]]: i32)
+// CHECK-SAME:    hivm.func_core_type = #hivm.func_core_type<AIV>
+// CHECK-NOT:     scope.scope {{.*}} {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+// CHECK-NOT:     hivm.hir.mmadL1
+// CHECK-DAG:     %[[STUB_CUBE_TENSOR:.*]] = tensor.empty() : tensor<128x128xf32>
+// CHECK-DAG:     %[[STUB_CUBE_INT:.*]] = arith.constant 0 : i32
+// CHECK:         %[[VEC_RES:.*]]:3 = scope.scope : () -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
+// CHECK:           hivm.hir.vadd
+// CHECK:           scope.return
+// CHECK:         } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+// CHECK:         return %[[STUB_CUBE_TENSOR]], %[[EXT_TENSOR]], %[[STUB_CUBE_INT]], %[[VEC_RES]]#0, %[[VEC_RES]]#1, %[[VEC_RES]]#2
+func.func @test_scope_tensor(%ext_tensor: tensor<128x128xf32>, %ext_val: i32) -> (tensor<128x128xf32>, tensor<128x128xf32>, i32, tensor<128x128xf32>, tensor<128x128xf32>, i32) attributes {hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+  %c128 = arith.constant 128 : index
+  %true = arith.constant true
+  %cube_res:3 = scope.scope : () -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
+    %a = tensor.empty() : tensor<128x128xbf16>
+    %b = tensor.empty() : tensor<128x128xbf16>
+    %c = tensor.empty() : tensor<128x128xf32>
+    %mmad = hivm.hir.mmadL1 {b_transpose} ins(%a, %b, %true, %c128, %c128, %c128 : tensor<128x128xbf16>, tensor<128x128xbf16>, i1, index, index, index) outs(%c : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %local_int_c = arith.constant 42 : i32
+    scope.return %mmad, %ext_tensor, %local_int_c : tensor<128x128xf32>, tensor<128x128xf32>, i32
+  } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+  %vec_res:3 = scope.scope : () -> (tensor<128x128xf32>, tensor<128x128xf32>, i32) {
+    %v1 = tensor.empty() : tensor<128x128xf32>
+    %v2 = tensor.empty() : tensor<128x128xf32>
+    %vadd = hivm.hir.vadd ins(%v1, %v2 : tensor<128x128xf32>, tensor<128x128xf32>) outs(%v1 : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %local_int_v = arith.constant 100 : i32
+    scope.return %vadd, %ext_tensor, %local_int_v : tensor<128x128xf32>, tensor<128x128xf32>, i32
+  } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+  return %cube_res#0, %cube_res#1, %cube_res#2, %vec_res#0, %vec_res#1, %vec_res#2 
+    : tensor<128x128xf32>, tensor<128x128xf32>, i32, tensor<128x128xf32>, tensor<128x128xf32>, i32
+}
