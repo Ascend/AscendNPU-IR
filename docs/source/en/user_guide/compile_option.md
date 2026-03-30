@@ -4,6 +4,7 @@
 
 ### BiShengIR Feature Control Options
 
+
 | Option                              | Description                                                                              | Type | Default                                         | Status |
 | ----------------------------------- | ---------------------------------------------------------------------------------------- | ---- | ----------------------------------------------- | ------ |
 | --enable-triton-kernel-compile      | Enable Triton kernel compilation.                                                        | bool | false                                           | In use |
@@ -20,7 +21,9 @@
 | --disable-hivm-auto-inject-sync     | Disable auto inject sync intra core.                                                     | bool | false                                           | In use |
 | --disable-hivm-tensor-compile       | Disable BiShengHIR HIVM Tensor compilation.                                              | bool | false                                           | In use |
 
+
 ### BiShengIR General Optimization Options
+
 
 | Option                                          | Description                                                                     | Type     | Default | Status |
 | ----------------------------------------------- | ------------------------------------------------------------------------------- | -------- | ------- | ------ |
@@ -29,7 +32,9 @@
 | --enable-tuning-mode                            | Enable tuning mode; do not retry compile multiple times on plan memory failure. | bool     | false   | In use |
 | --block-dim=                                    | Number of blocks to use.                                                        | unsigned | 1       | In use |
 
+
 ### BiShengIR HFusion Optimization Options
+
 
 | Option                                | Description                                                                                                                                               | Type         | Default | Status |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------- | ------ |
@@ -40,7 +45,9 @@
 | --cube-tiling-tuning=                 | Cube block size tuning in HFusion auto schedule.                                                                                                          | list int64_t | ""      | In use |
 | --enable-hfusion-count-buffer-dma-opt | If enabled, buffer used by DMA is not reused by Vector ops.                                                                                               | bool         | false   | In use |
 
+
 ### BiShengIR Target Options
+
 
 | Option          | Value               | Status |
 | --------------- | ------------------- | ------ |
@@ -68,9 +75,11 @@
 | =Ascend910_9599 | Ascend910_9599      | In use |
 | =Unknown        | Unknown             | In use |
 
+
 ## bishengir-hivm-compile options
 
 ### BiShengIR HIVM Optimization Options
+
 
 | Option                                     | Description                                                                                                                | Type                | Default   | Status         |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------- | -------------- |
@@ -91,7 +100,9 @@
 | --tile-mix-vector-loop=                    | Trip count of tiled vector loop for mix kernels.                                                                           | unsigned            | 1         | In use         |
 | --tile-mix-cube-loop=                      | Trip count of tiled cube loop for mix kernels.                                                                             | unsigned            | 1         | In use         |
 
+
 ### Options shared with bishengir-hivm-compile
+
 
 | Option                                | Description                                                   | Type | Default | Status |
 | ------------------------------------- | ------------------------------------------------------------- | ---- | ------- | ------ |
@@ -101,3 +112,5 @@
 | --enable-sanitizer                    | Enable ascend sanitizer.                                      | bool | false   | In use |
 | --enable-debug-info                   | Enable debug info.                                            | bool | false   | In use |
 | --enable-hivm-inject-barrier-all-sync | Enable barrier-all mode for HIVM inject sync.                 | bool | false   | In use |
+
+

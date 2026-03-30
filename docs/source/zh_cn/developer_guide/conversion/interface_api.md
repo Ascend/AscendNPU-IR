@@ -83,3 +83,5 @@ AscendNPU IR 支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方
 - **IR 接入方式**：如 Torch IR、Linalg/HFusion IR、HIVM IR
 
 详细的框架接入说明请参考 [框架接入](framework_interface.md)。
+
+---

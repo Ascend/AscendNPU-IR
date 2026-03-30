@@ -18,22 +18,22 @@ AscendNPU-IR端到端运行依赖CANN环境。
 
 2. 安装CANN包：
 
-    ```bash
-    # 以x86系统A3环境，{version}为CANN版本，如9.0.0
-    chmod +x Ascend-cann_{version}_linux-x86_64.run
-    chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
-    ./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
-    ./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
-    # 安装CANN的python依赖
-    pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
-    ```
+```bash
+# 以x86系统A3环境，{version}为CANN版本，如9.0.0
+chmod +x Ascend-cann_{version}_linux-x86_64.run
+chmod +x Ascend-cann-A3-ops_{version}_linux-x86_64.run
+./Ascend-cann_{version}_linux-x86_64.run --full [--install-path=${PATH-TO-CANN}]
+./Ascend-cann-A3-ops_{version}_linux-x86_64.run --install [--install-path=${PATH-TO-CANN}]
+# 安装CANN的python依赖
+pip install attrs==24.2.0 numpy==1.26.4 scipy==1.13.1 decorator==5.1.1 psutil==6.0.0 pyyaml
+```
 
 3. 设置环境变量：
 
-    ```bash
-    # 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
-    source ${PATH-TO-CANN}/cann/set_env.sh
-    ```
+```bash
+# 若是8.5.0及更早期的版本，路径为 ${PATH-TO-CANN}/ascend-toolkit/set_env.sh
+source ${PATH-TO-CANN}/cann/set_env.sh
+```
 
 #### 安装torch_npu & Triton-Ascend
 
@@ -43,6 +43,7 @@ AscendNPU-IR端到端运行依赖CANN环境。
 pip install torch_npu==2.7.1
 pip install triton-ascend
 ```
+
 
 ### 调用Triton Kernel
 
@@ -190,7 +191,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 
 AscendNPU-IR增量提供了语言特性，其中Triton-Ascend基于NPU IR扩展了一部分操作，若要使能相关能力，你需要import以下的模块。
 
-```python
+```py
 import triton.language.extra.cann.extension as al
 ```
 
@@ -208,9 +209,9 @@ import triton.language.extra.cann.extension as al
 |--------|------|------|
 | `sync_mode` | [SYNC_IN_VF枚举值](#sync_in_vf) | 向量流水线同步模式 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def kernel_debug_barrier():
     # ...
@@ -223,11 +224,12 @@ def kernel_debug_barrier():
     # ...
 ```
 
+
 #### sync_block_set & sync_block_wait
 
 昇腾支持在计算单元和向量单元之间的设置同步事件，sync_block_set及sync_block_wait需要同时配套使用。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -237,9 +239,9 @@ def kernel_debug_barrier():
 | `sender_pipe_value` | [PIPE枚举值](#pipe) | 发送管道值 |
 | `receiver_pipe_value` | [PIPE枚举值](#pipe) | 接收管道值 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_matmul_exp():
     # ...
@@ -257,17 +259,16 @@ def triton_matmul_exp():
 ```
 
 #### sync_block_all
-
 昇腾支持对整个计算块进行全局同步，确保所有指定类型的计算核心完成当前操作。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 | 有效值 |
 |--------|------|------|--------|
 | `mode` | str | 同步模式，指定要同步的核心类型 | `"all_cube"`, `"all_vector"`, `"all"`, `"all_sub_vector"` |
 | `event_id` | int | 同步事件标识符 | `0` ~ `15` |
 
-**同步模式详解**：
+**同步模式详解**
 
 | 模式 | 描述 | 同步范围 |
 |------|------|----------|
@@ -276,9 +277,9 @@ def triton_matmul_exp():
 | `"all"` | 同步所有核心 | 当前AI Core上的所有计算核心（Cube+Vector） |
 | `"all_sub_vector"` | 同步所有子Vector核 | 当前AI Core上的所有子Vector核 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def test_sync_block_all():
     # ...
@@ -290,14 +291,13 @@ def test_sync_block_all():
 ### 硬件查询与控制操作
 
 #### sub_vec_id & sub_vec_num
-
 昇腾提供接口对硬件信息进行查询。
 通过调用`sub_vec_id`接口可获取当前AI Core上的Vector核索引。
 通过调用`sub_vec_num`接口可单个AI Core上的Vector核数量。
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_matmul_exp():
     # ...
@@ -312,7 +312,7 @@ def triton_matmul_exp():
 
 昇腾扩展了 Python 标准的 `range` 功能，增加具有**并行执行语义**的`parallel`迭代器。
 
-**参数说明**：
+**参数说明**
 
 | 参数 | 类型 | 说明 | 范例 |
 |------|------|------|------|
@@ -322,13 +322,13 @@ def triton_matmul_exp():
 | `num_stages` | int | 流水线阶段数 (可选) | `parallel(0, 10, num_stages=3)` |
 | `loop_unroll_factor` | int | 循环展开因子 (可选) | `parallel(0, 10, loop_unroll_factor=4)` |
 
-**限制**：
+**限制**
 
 目前 910B 最多支持2个Vector核。
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_add():
     # ...
@@ -346,7 +346,7 @@ def triton_add():
 
 昇腾支持向编译器传递优化提示信息，指导代码生成和性能优化。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -354,9 +354,9 @@ def triton_add():
 | `hint_name` | str | 提示名称 |
 | `hint_val` | 多种类型 | 提示值（可选） |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_where_lt_case1():
     # ...
@@ -369,16 +369,16 @@ def triton_where_lt_case1():
 
 `multibuffer` 是用于为现有张量设置多重缓冲（Double Buffering）的函数，通过编译器提示优化数据流和计算重叠。
 
-**参数说明**：
+**参数说明**
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `src` | tensor | 要进行多重缓冲化的张量 |
 | `size` | int | 缓冲副本的数量 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_compile_hint():
     # ...
@@ -389,25 +389,23 @@ def triton_compile_hint():
 ```
 
 #### scope
-
 昇腾支持作用域管理器，为了一段区域代码添加hint信息，其中一种用法是通过`core_mode`指定cube或vector类型。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
 | `core_mode` | str | 核心类型，指定区块内操作使用的计算核心， 只接受`"cube"`或`"vector"`两种模式 |
 
-**核心模式选项**：
-
+**核心模式选项**
 | 模式 | 描述 |
 |------|------|
 | `"cube"` | 使用Cube核进行计算 |
 | `"vector"` | 使用Vector核进行计算 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def kernel_debug_barrier():
     # ...
@@ -422,10 +420,9 @@ def kernel_debug_barrier():
 ### 张量切片操作
 
 #### insert_slice & extract_slice
-
 昇腾支持根据操作的偏移量、大小和步长参数，将一个张量插入到另一个张量中(即`insert_slice`)或从另一个张量中提取指定的切片(即`extract_slice`)。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -435,9 +432,9 @@ def kernel_debug_barrier():
 | `sizes` | 整数元组 | 插入操作的大小范围 |
 | `strides` | 整数元组 | 插入操作的步长参数 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def triton_kernel():
     # ...
@@ -451,19 +448,18 @@ def triton_kernel():
 ```
 
 #### get_element
-
 昇腾支持从张量中读取指定索引位置的单个元素值。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
 | `src` | tensor | 要访问的源张量 |
 | `indice` | int元组 | 指定要获取元素的索引位置 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def index_select_manual_kernel():
     # ...
@@ -475,10 +471,9 @@ def index_select_manual_kernel():
 ### 张量计算操作
 
 #### sort
-
 昇腾支持对输入张量沿指定维度进行排序操作。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 | 默认值 |
 |--------|------|------|--------|
@@ -486,9 +481,9 @@ def index_select_manual_kernel():
 | `dim` | int 或 tl.constexpr[int] | 要排序的维度 | `-1` |
 | `descending` | bool 或 tl.constexpr[bool] | 排序方向，`True`表示降序，`False`表示升序 | `False` |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def sort_kernel_2d():
     # ...
@@ -499,19 +494,18 @@ def sort_kernel_2d():
 ```
 
 #### flip
-
 昇腾支持对输入张量沿指定维度进行翻转操作。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
 | `ptr` | tensor | 输入张量 |
 | `dim` | int 或 tl.constexpr[int] | 要翻转的维度 |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def flip_kernel_2d():
     # ...
@@ -521,10 +515,9 @@ def flip_kernel_2d():
 ```
 
 #### cast
-
 昇腾支持将张量转换为指定的数据类型，支持数值转换、位转换和溢出处理。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 | 默认值 |
 |--------|------|------|--------|
@@ -534,9 +527,9 @@ def flip_kernel_2d():
 | `bitcast` | bool, 可选 | 是否进行位转换（而非数值转换） | `False` |
 | `overflow_mode` | str, 可选 | 溢出处理模式 | `None` |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def cast_to_bool():
     # ...
@@ -550,10 +543,9 @@ def cast_to_bool():
 ### 索引与收集操作
 
 #### _index_select
-
 昇腾支持从源GM张量中根据索引UB张量在指定维度上进行数据收集操作，使用SIMT模板将值收集到输出UB张量中。此操作支持2D–5D张量。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -567,9 +559,9 @@ def cast_to_bool():
 | `other` (可选) | scalar value | 当索引越界时的默认值（位于UB中） |
 | `out` | tensor | 输出张量（位于UB中） |
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def select_index():
     # ...
@@ -587,10 +579,9 @@ def select_index():
 ```
 
 #### index_put
-
 昇腾支持将根据索引张量将值张量放置到目标张量中。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -603,7 +594,7 @@ def select_index():
 | `start_offset` | int元组 | 每个维度放置区域的起始偏移量 |
 | `dst_stride` | int元组 | 目标张量每个维度的步长 |
 
-**索引放置规则**：
+**索引放置规则**
 
 - 二维索引放置
     - dim = 0: `out[index[i]][start_offset[1]:end_offset[1]] = value[i][0:end_offset[1]-start_offset[1]]`
@@ -612,7 +603,7 @@ def select_index():
     - dim = 0: `out[index[i]][start_offset[1]:end_offset[1]][start_offset[2]:end_offset[2]]  = value[i][0:end_offset[1]-start_offset[1]][0:end_offset[2]-start_offset[2]]`
     - dim = 1: `out[start_offset[0]:end_offset[0]][index[j]][start_offset[2]:end_offset[2]] = value[0:end_offset[0]-start_offset[0]][j][0:end_offset[2]-start_offset[2]]`
 
-**约束条件**：
+**约束条件**
 
 - `ptr` 和 `value` 必须具有相同的秩。
 - `ptr.dtype` 目前仅支持 `float16`、`bfloat16`、`float32`。
@@ -621,9 +612,9 @@ def select_index():
 - `value` 支持 2~5 维张量。
 - `dim` 必须有效（0 ≤ dim < rank(value) - 1）。
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def put_index():
     # ...
@@ -641,10 +632,9 @@ def put_index():
 ```
 
 #### gather_out_to_ub
-
 昇腾支持沿指定维度从GM中散点收集数据到UB中，此操作支持索引边界检查，确保高效且安全的数据搬运。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -657,14 +647,15 @@ def put_index():
 | `start_offset` | int32元组 | 索引张量每个维度的起始偏移量 |
 | `other` | 标量值 (可选) | 当索引越界时使用的默认值（位于UB中） |
 
-**返回值**：
+**返回值**
 
 - **类型**: tensor
 - **描述**: 位于UB中的结果张量，形状与 `index.shape` 相同。
 
-**散点收集规则**：
 
-- 一维索引收集
+**散点收集规则**
+
+-  一维索引收集
     - dim = 0: `out[i] = src[start_offset[0] + index[i]]`
 
 - 二维索引收集
@@ -676,7 +667,7 @@ def put_index():
     - dim = 1: `out[i][j][k] = src[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k]`
     - dim = 2: `out[i][j][k] = src[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]]`
 
-**约束条件**：
+**约束条件**
 
 - `src` 和 `index` 必须具有相同的秩。
 - `src.dtype` 目前仅支持 `float16`、`bfloat16`、`float32`。
@@ -686,9 +677,9 @@ def put_index():
 - 对于每个不等于 `dim` 的维度 `i`，`index.size[i]` ≤ `src.size[i]`。
 - 输出形状与 `index.shape` 相同。如果 `index` 为 None，输出张量将是与 `index` 形状相同的空张量。
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def gather():
     # ...
@@ -705,10 +696,9 @@ def gather():
 ```
 
 #### scatter_ub_to_out
-
 昇腾支持沿指定维度从UB中散点储存数据到GM中，此操作支持索引边界检查，确保高效且安全的数据搬运。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -721,9 +711,9 @@ def gather():
 | `end_offset` | int32元组 | 索引张量每个维度的结束偏移量 |
 | `start_offset` | int32元组 | 索引张量每个维度的起始偏移量 |
 
-**散点储存规则**：
+**散点储存规则**
 
-- 一维索引散点
+-  一维索引散点
     - dim = 0: `out[start_offset[0] + index[i]] = value[i]`
 
 - 二维索引散点
@@ -735,7 +725,7 @@ def gather():
     - dim = 1: `out[start_offset[0] + i][start_offset[1] + index[i][j][k]][start_offset[2] + k] = value[i][j][k]`
     - dim = 2: `out[start_offset[0] + i][start_offset[1] + j][start_offset[2] + index[i][j][k]] = value[i][j][k]`
 
-**约束条件**：
+**约束条件**
 
 - `ptr`、`index` 和 `value` 必须具有相同的秩。
 - `ptr.dtype` 目前仅支持 `float16`、`bfloat16`、`float32`。
@@ -744,9 +734,9 @@ def gather():
 - 对于每个不等于 `dim` 的维度 `i`，`index.size[i]` ≤ `ptr.size[i]`。
 - 输出形状与 `index.shape` 相同。如果 `index` 为 None，输出张量将是与 `index` 形状相同的空张量。
 
-**写法样例**：
+**写法样例**
 
-```python
+```py
 @triton.jit
 def scatter():
     # ...
@@ -764,10 +754,9 @@ def scatter():
 ```
 
 #### index_select_simd
-
 昇腾支持平行索引选择操作，从GM多点选取数据直接载入到UB，实现零拷贝高效读取。
 
-**参数说明**：
+**参数说明**
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
@@ -778,21 +767,18 @@ def scatter():
 | `src_offset` | List[Union[int, tensor]] | 读取的起始偏移量（可以是整数或张量） |
 | `read_shape` | List[Union[int, tensor]] | 要读取的大小（图块形状，可以是整数或张量） |
 
-**约束条件**：
-
+**约束条件**
 - `read_shape[dim]` 必须为 `-1`。
 - `src_offset[dim]` 可以为 `-1`（将被忽略）。
 - 边界处理：当 `src_offset + read_shape > src_shape` 时，会自动截断到 `src_shape` 边界。
 - **不进行检查** `index` 是否包含越界值。
 
-**返回值**：
-
+**返回值**
 - **返回类型**: tensor
 - **描述**: 位于UB中的结果张量，其形状中的 `dim` 维度被替换为 `index` 的长度。
 
-**写法样例**：
-
-```python
+**写法样例**
+```py
 @triton.jit
 def index_select_simd():
     # ...
@@ -1136,6 +1122,7 @@ def my_kernel(...):
     ...
 ```
 
+
 ## Triton独有扩展枚举
 
 ### SYNC_IN_VF
@@ -1167,3 +1154,5 @@ def my_kernel(...):
 | `PIPE_MTE3` | 内存传输引擎3流水线 |
 | `PIPE_ALL` | 所有流水线 |
 | `PIPE_FIX` | 固定功能流水线 |
+
+

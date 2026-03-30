@@ -3,11 +3,13 @@
 
 Scope dialect to represent scoped regions.
 
+
 ## Operations
 
 ### `scope.return` (scope::ReturnOp)
 
 _Return operation inside of scope.scope operation_
+
 
 Syntax:
 
@@ -18,7 +20,6 @@ operation ::= `scope.return` attr-dict ($results^ `:` type($results))?
 The `scope.return` operation as a terminator of scope.scope region.
 
 Example:
-
 ```
 scope.return
 ```
@@ -29,11 +30,12 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `results` | variadic of any type
+
 
 ### `scope.scope` (scope::ScopeOp)
 
@@ -43,7 +45,6 @@ The "scope.scope" operation represents a scope of the
 operations inside the region.
 
 Example:
-
 ```
 scope.scope : () -> () {
     scope.return
@@ -58,15 +59,17 @@ Traits: `NoRegionArguments`, `RecursiveMemoryEffects`, `SingleBlockImplicitTermi
 
 Interfaces: `RegionBranchOpInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>no_inline</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 </table>
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `results` | variadic of any type
+
+

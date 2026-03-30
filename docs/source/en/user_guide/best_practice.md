@@ -76,6 +76,15 @@ BLOCK_K = 128
 + # NPU
 + grid = (triton.cdiv(B, BLOCK_B),)
 
+gather_dim1_kernel[grid](
+    x, idx, out,
+    x.stride(0), x.stride(1),
+    idx.stride(0), idx.stride(1),
+    out.stride(0), out.stride(1),
+    B, K,
+    BLOCK_B=BLOCK_B,
+    BLOCK_K=BLOCK_K,
+)
 ```
 
 ## Ascend-friendly kernel rewrite (vectorized compare)
@@ -87,20 +96,13 @@ In the original GPU flow, i64/i32 compare operations cannot use the vector unit 
 ### NPU vs CUDA code diff
 
 ```diff
-    cols = tl.arange(0, BLOCK_N)  # cols is int64
-    x = tl.load(X + cols, mask=cols < N, other=0.0).to(tl.float32)
-
-    # calculate mean & rstd
-    mean = tl.sum(x, axis=0) / N
-    tl.store(Mean + row, mean)
-    
 -   xbar = tl.where(cols < N, X - mean, 0.0)
-+   # change cols(i64) into cols_cmp(f32) to enable vector processing
++   # Change cols (i64) to cols_cmp (f32) to enable vector processing
 +   cols_cmp = cols.to(tl.float32)
 +   xbar = tl.where(cols_cmp < N, x - mean, 0.0)
-
-    var = tl.sum(xbar * xbar, axis=0) / N
 ```
+
+
 
 ## Function and precision cases
 
@@ -145,6 +147,8 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 ### Invalid varlen arguments
 
 For varlen-style kernels that randomly sample indices in seqlen, ensure indices are valid: strictly increasing and in the range [0, seqlen].
+
+
 
 ## UB overflow
 
@@ -265,18 +269,16 @@ Summary: The temp_buffer considered during the PlanMemory phase is not actually 
 
 - **Symptom**: The compiler analyzes and optimizes memory access; if the index involves complex control flow (e.g. loop indices causing out-of-bounds access), the compiler may not fully handle it. Prefer using non-negative for-loop iteration arguments as memory indices. Take the following code snippet as an example. For actual scenarios, please modify the access method by referring to the example below.
 - **Wrong**:
-
 ```python
 for i_w in tl.static_range(-W+1, 1):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w, i_d * BD), (BT, BD), (1, 0))
 ```
-
 - **Correct**: 
-
 ```python
 for i_w in tl.static_range(W):
     p_yi = tl.make_block_ptr(x + bos * D, (T, D), (D, 1), (i_t * BT + i_w - W + 1, i_d * BD), (BT, BD), (1, 0))
 ```
+
 
 ## Memory access
 
@@ -373,17 +375,15 @@ x = torch.randn(512, 1024, device='npu')
 # Call transpose function
 y = transpose(x)
 ```
-
 no error after executing means it works correctly
 
 ### Use mayDiscretememaccess to avoid UB overflow
 
-- **Symptom**: The causes of UB overflow vary. Apart from the tensor data type being too large, exceeding the 192KB UB limit, another possible reason is non-contiguous memory access leading to axis expansion within the UB. Taking the \<Nx1xf32> data type as an example, because the hardware requires 32-byte alignment for the last axis, and 1xf32 is only 4 bytes in size, the actual size of \<Nx1xf32> on the hardware is expanded to \<Nx8xf32> to ensure 32-byte alignment. Regardless of the cause of UB overflow, adding the mayDiscretememaccess compilation hint can degrade tensor operations to scalar operations, thereby avoiding UB overflow.
+- **Symptom**: The causes of UB overflow vary. Apart from the tensor data type being too large, exceeding the 192KB UB limit, another possible reason is non-contiguous memory access leading to axis expansion within the UB. Taking the <Nx1xf32> data type as an example, because the hardware requires 32-byte alignment for the last axis, and 1xf32 is only 4 bytes in size, the actual size of <Nx1xf32> on the hardware is expanded to <Nx8xf32> to ensure 32-byte alignment. Regardless of the cause of UB overflow, adding the mayDiscretememaccess compilation hint can degrade tensor operations to scalar operations, thereby avoiding UB overflow.
 
 - **Usage**: When rewriting operators, simply add the compile_hint to the data involved in load/store operations. Refer to the following code snippet:
 
 For versions prior to triton-adaptor 3.2.0:
-
 ```python
 # For load operations, compile_hint should be added to the loaded value
 value = tl.load(pointer)
@@ -395,7 +395,6 @@ tl.store(pointer, value)
 ```
 
 For versions after triton-adaptor 3.4.0, the following modification is required:
-
 ```python
 # For load operations, compile_hint should be added to the loaded value
 value = tl.load(pointer)
@@ -615,6 +614,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ```
 
+
 ## Scenario-based debugging
 
 This section gives guidance on Triton NPU kernel performance tuning.
@@ -629,19 +629,15 @@ On Ascend, boolean (i1) tensors are stored in GM as i8 (one byte). Triton Ascend
 
 Add the hint on the condition used in `tl.where`:
 For versions prior to triton-adaptor 3.2.0:
-
 ```python
 mask = tl.where(cond, value1, value2)
 tl.compile_hint(cond, "bitwise_mask")
 ```
-
 For versions after triton-adaptor 3.4.0, it needs to be changed to:
-
 ```python
 mask = tl.where(cond, value1, value2)
 tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
 ```
-
 Mask pointer offsets must be computed correctly for the bitmask layout.
 
 ![image](../../images/user_guide/best_practice1.png)
@@ -659,13 +655,11 @@ The bitmask feature is only available in versions after CANN 9.0.
 ```
 
 #### Example
-
 See [Ascend where kernel](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_where_lt.py). For i8 bitwise mask input, add the hint to the result of `tl.where`:
 
 Please download the dependency script from the link below, place it in the same directory as the test script, and run `python3 test_bitmask.py`.
 
  [related script](https://gitcode.com/Ascend/triton-ascend/blob/master/ascend/examples/pytest_ut/test_common.py)
-
 ```python
 # test_bitmask.py
 import triton
@@ -707,7 +701,6 @@ def test_where_lt_case1():
        
 test_where_lt_case1()
 ```
-
 If it finishes execution without errors, it proves the run was successful.
 
 #### Tiling
@@ -715,7 +708,6 @@ If it finishes execution without errors, it proves the run was successful.
 The bitmask is highly related to the tiling logic, and the kernel itself has different tiling logic under different scenarios, including but not limited to (1) enabling 1:2 optimization, (2) tensor axes fusion, (3) broadcast, (4) unsupported data types in hardware, (5) non-1 grid triton kernel, etc. Since the tiling logic varies across different scenarios, we have a generalized example of creating a benchmark mask (deriving an i1 benchmark mask from an i8 bitmask) for your reference. This mask creation logic does not consider specific scenarios; it is derived from the errors in the bitmask results.
 
 Let's say this is the original mask creation logic:
-
 ```
 for i in range(numel // 8):
     byte_value = flatten_cond_i8[i]
@@ -858,6 +850,8 @@ def test_where_lt_case1(param_list):
 
 Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
 
+
+
 ## Cube–Vector (CV)
 
 ### Use hivm.tile_mix_cube_num to avoid L1 overflow
@@ -907,6 +901,7 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 | set_workspace_multibuffer | When above is false: CV parallelism degree. Ensure no data dependency. N = N CV ops in parallel. | 2 (default), 4 |
 | tile_mix_vector_loop | When above is false: vector tile count (can autotune). | 1 (default), 2, 4 |
 | tile_mix_cube_loop | When above is false: cube tile count (can autotune). | 1 (default), 2, 4 |
+
 
 ### Kernel options to avoid timeout
 
@@ -971,6 +966,8 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
     limit_auto_multi_buffer_only_for_local_buffer = True,
 )
 ```
+
+
 
 ## Triton NPU programming tutorials
 

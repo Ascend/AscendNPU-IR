@@ -4,6 +4,8 @@
 
 **语言:** [English](README.md) · [中文](README_zh.md)
 
+---
+
 ## 文档方案
 
 | 项 | 约定 |
@@ -15,6 +17,8 @@
 ### 命名规范（snake_case）
 
 `docs/`（包含 `docs/source/`）下的**目录名**与**文档文件名**统一采用 **snake_case** 小写下划线风格，例如：`quick_start/`、`installing_guide.md`、`user_guide/`，以保持路径与 URL 风格一致。
+
+---
 
 ## 如何构建
 
@@ -34,6 +38,8 @@ make html-zh
 make html-all
 ```
 
+---
+
 ## 本地预览
 
 ```bash
@@ -47,6 +53,8 @@ open docs/_build/zh_cn/index.html
 cd docs/_build/en && python3 -m http.server 8080
 cd docs/_build/zh_cn && python3 -m http.server 8081
 ```
+
+---
 
 ## 在 Read the Docs 上部署
 
@@ -62,6 +70,8 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
    - URL 形如 `https://<slug>.readthedocs.io/zh_CN/latest/`。
 4. RTD 主题中的 Translations 下拉可让读者在英文与中文之间切换。
 
+---
+
 ## 添加新文档
 
 1. 添加**英文**文件，如 `source/en/introduction/new_doc.md`。
@@ -70,6 +80,8 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
    - **英文**：在 `docs/source/en/index.rst` 或相应子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或路径如 `section/new_doc`）。
    - **中文**：在 `docs/source/zh_cn/index.rst` 或子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或 `section/new_doc`）。
 4. 若需参与排序或工具处理，可在 `conf.py` 的 `_main_doc_order` 中追加该文档路径。
+
+---
 
 ## 文档结构
 
