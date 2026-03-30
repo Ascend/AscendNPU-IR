@@ -411,6 +411,10 @@ def CustomOp
 
       static constexpr StringLiteral kIndexingMapName = "indexing_map";
 
+      static constexpr StringLiteral kArgAttrsName = "arg_attrs";
+
+      static constexpr StringLiteral kAlignDimName = "align_dim";
+
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       int getMaxRank();
 
