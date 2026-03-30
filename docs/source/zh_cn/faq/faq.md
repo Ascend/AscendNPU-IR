@@ -119,7 +119,7 @@ with torch_npu.profiler.profile(
     # schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=1, skip_first=6),
     # warmup默认为0，老版本torch_npu包该参数为必填项
     experimental_config=experimental_config,  # 该参数选填，默认为Level0
-    # 产生的profling文件的位置
+    # 产生的profiling文件的位置
     on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result_dir")
     # 导出tensorboard可呈现的数据形式，可指定worker_name, 默认为：{host名称}_{进程id}
 ) as prof:

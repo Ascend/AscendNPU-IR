@@ -68,7 +68,7 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
 2. 添加**中文**文件，如 `source/zh_cn/introduction/new_doc.md`。
 3. 将文档加入对应 toctree：
    - **英文**：在 `docs/source/en/index.rst` 或相应子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或路径如 `section/new_doc`）。
-   - **中文**：在 `docs/source/zh_cn/index.rst` 或子目录的 `index.rst`（如 `source/en/introduction/quick_start/index.rst`）中加入 `new_doc`（或 `section/new_doc`）。
+   - **中文**：在 `docs/source/zh_cn/index.rst` 或子目录的 `index.rst`（如 `source/zh_cn/introduction/quick_start/index.rst`）中加入 `new_doc`（或 `section/new_doc`）。
 4. 若需参与排序或工具处理，可在 `conf.py` 的 `_main_doc_order` 中追加该文档路径。
 
 ## 文档结构

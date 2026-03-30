@@ -21,9 +21,9 @@ AscendNPU IR仓关键目录如下所示：
 │   ├── cmake
 │   ├── include          // 头文件
 │   ├── lib              // 源文件
-│   ├── test             // 测试用例
-│   |  └── Integration   // 端到端用例
-│   └── tools            // 二进制工具
+│   ├── test             // 测试用例
+│   │   └── Integration   // 端到端用例
+│   └── tools            // 二进制工具
 ├── build-tools          // 构建工具
 ├── CMakeLists.txt
 ├── docs                 // 文档
@@ -55,9 +55,9 @@ make -C docs html-all  # 中英文均构建
 
 ## ⚡️ 快速上手
 
-快速上手指南请见：[快速上手](./docs/source/zh_ch/introduction/quick_start/index.rst)
+快速上手指南请见：[快速上手](./docs/source/zh_cn/introduction/quick_start/index.rst)
 
-编译与安装指南请见：[构建安装](./docs/source/zh_ch/introduction/quick_start/installing_guide.md)
+编译与安装指南请见：[构建安装](./docs/source/zh_cn/introduction/quick_start/installing_guide.md)
 
 构建端到端用例示例请见：[README_zh.md](./bishengir/test/Integration/README_zh.md)
 

@@ -8,7 +8,7 @@
 
 **hivm层** **`DebugOp`** 在更低级的HIVM层执行时使用，用于打印中间计算结果和张量信息
 
-接下去将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以**Triton前端**为例，演示如何在算子开发全流程中注入并使用这些调试能力
+接下来将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以**Triton前端**为例，演示如何在算子开发全流程中注入并使用这些调试能力
 
 ### AscendNPU IR 调试op介绍
 
@@ -332,7 +332,7 @@ if __name__ == "__main__":
     output_triton = add(x, y)
 ```
 
-执行mssanitizer python3 test_add.py产生如下打屏信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
+执行mssanitizer python3 test_add.py产生如下屏幕输出信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
 
 ![image](../../images/user_guide/debug_option5.png)
 
