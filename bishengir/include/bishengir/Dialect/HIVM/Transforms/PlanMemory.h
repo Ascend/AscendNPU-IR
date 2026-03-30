@@ -24,10 +24,11 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <list>
@@ -270,7 +271,7 @@ public:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -429,6 +430,10 @@ private:
   /// e.g. for iter arg and for yield.
   void InitializeInplacePairList();
 
+  mlir::SetVector<Value>
+  currentlyLiveValuesOrdered(const LivenessBlockInfo *livenessInfo,
+                             Operation *op) const;
+
   func::FuncOp func_;
 
   /// different mode for mem plan.
@@ -438,7 +443,7 @@ private:
   DenseMap<Value, BufferStatus> buffer2status;
 
   /// map on buffer alias, and whether the alias buffer is conditional.
-  DenseMap<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
+  llvm::MapVector<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
 
   int seqIndex{0};
 };
@@ -466,8 +471,7 @@ public:
     linearOperation = std::move(linearOp);
   };
 
-  inline void
-  SetBufferInfos(std::map<Value, BufferInfo, utils::ValueComparator> bufsInfo) {
+  inline void SetBufferInfos(llvm::MapVector<Value, BufferInfo> bufsInfo) {
     bufferInfos = bufsInfo;
   }
 
@@ -498,16 +502,17 @@ public:
 
   void SetMemscope2rootSuccessStorageEntry();
 
-  DenseMap<hivm::AddressSpace, StorageEntry *> GetMemscope2rootStorageEntry() {
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+  GetMemscope2rootStorageEntry() {
     return memscope2rootStorageEntry;
   }
 
-  DenseMap<hivm::AddressSpace, StorageEntry *>
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
       GetMemscope2rootFailStorageEntry() {
     return memscope2rootFailStorageEntry;
   }
 
-  DenseMap<hivm::AddressSpace, StorageEntry *>
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
       GetMemscope2rootSuccessStorageEntry() {
     return memscope2rootSuccessStorageEntry;
   }
@@ -732,7 +737,7 @@ private:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -759,10 +764,10 @@ private:
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
 
   /// map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
 
   /// map from workspace arg to its root StorageEntry.
-  DenseMap<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
+  llvm::MapVector<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
 
   /// map from buffer scope to its required size to plan rest memory without any
   /// reuse.
@@ -790,13 +795,13 @@ private:
   SmallVector<ValuePair> inplacePairList;
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
-  std::map<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+  llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootFailStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootFailStorageEntry;
 
   /// when plan memory success, map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootSuccessStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootSuccessStorageEntry;
 };
 
 } // namespace hivm
