@@ -270,12 +270,12 @@ void DimensionAnalyzer::processVGatherMaskOp(hivm::VGatherMaskOp op) {
   auto input = op.getSrc();
   auto mask = op.getMask();
   OperandRange dstRange = op.getDst();
- 	Value output = dstRange.front();
+  Value output = dstRange.front();
   SmallVector<Value> outputs(op.getResult());
- 
+
   assert(outputs.size() <= 1 &&
          "result size must be 1 if tensor type and 0 if memref type");
- 
+
   outputs.push_back(mask);
   outputs.push_back(output);
   mergeValues({input}, outputs, getMutatedDims(op),
@@ -335,8 +335,7 @@ void DimensionAnalyzer::processVPadOp(hivm::VPadOp op) {
   mergeValues({input}, outputs, paddedIndices);
 }
 
-template <typename T, typename>
-void DimensionAnalyzer::processVCumOp(T op) {
+template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
   if constexpr (std::is_same_v<T, hivm::VCumsumOp>) {
     LDBG("Processing VCumsumOp " << op);
   } else {
@@ -376,8 +375,7 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
   }
 }
 
-template <typename T, typename>
-void DimensionAnalyzer::processReshapeOp(T op) {
+template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
   if constexpr (std::is_same_v<T, tensor::ExpandShapeOp>) {
     LDBG("Processing ExpandShapeOp " << op);
   } else {
@@ -477,16 +475,26 @@ void DimensionAnalyzer::markDimensionKind() {
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    SmallVector<int64_t> sliceRef;
-    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
-      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
-    } else {
-      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
+    auto origType = dyn_cast<ShapedType>(sliceOp.getSource().getType());
+    auto sliceType = dyn_cast<ShapedType>(sliceOp.getResult().getType());
+    auto origRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
+    auto sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
+    if (isa<tensor::InsertSliceOp>(sliceOp.getOperation())) {
+      std::swap(origRef, sliceRef);
+      std::swap(origType, sliceType);
     }
-    for (size_t i = 0; i < sliceRef.size(); ++i) {
+    size_t sliceIdx = 0;
+    for (size_t i = 0; i < origRef.size(); ++i) {
       if (droppedDimsMask[i]) {
-        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
+        tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
             TilingDimensionKind::RankReduced;
+      } else {
+        if (isa<tensor::InsertSliceOp>(sliceOp.getOperation()) &&
+            sliceType.getDimSize(sliceIdx) == 1) {
+          tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
+              TilingDimensionKind::Reduce;
+        }
+        sliceIdx++;
       }
     }
   };
