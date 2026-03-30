@@ -16,7 +16,7 @@ module {
     %alloc_1 = memref.alloc() : memref<1024xi32>
     memref.copy %reinterpret_cast_0, %alloc_1 : memref<1024xi32, strided<[1], offset: ?>> to memref<1024xi32>
     %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<1024xi32>
-    // CHECK: llvm.hivm.vcmp.gt.s32.z
+    // CHECK: llvm.hivm.vcmp.gt.s.z
     %4 = arith.cmpi sgt, %2, %3 : tensor<1024xi32>
     %reinterpret_cast_2 = memref.reinterpret_cast %arg3 to offset: [%1], sizes: [1024], strides: [1] : memref<?xi32> to memref<1024xi32, strided<[1], offset: ?>>
     %5 = arith.extui %4 : tensor<1024xi1> to tensor<1024xi32>
