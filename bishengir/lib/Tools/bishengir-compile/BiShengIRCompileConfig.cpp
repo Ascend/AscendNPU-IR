@@ -432,7 +432,14 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                      "(Default: pass default)"),
             cl::location(maxFusedOpsInAutoVectorizeV2Flag), cl::init(-1),
             cl::cat(hfusionOptCategory));
-    static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
+
+    static cl::opt<bool, /*ExternalStorage=*/true> enableMultipleConsumerFusion(
+        "hfusion-enable-multiple-consumer-fusion",
+        cl::desc("Enable multiple consumer fusion in AutoVectorizeV2."),
+        cl::location(enableMultipleConsumerFusionFlag), cl::init(false),
+        cl::cat(hfusionOptCategory));
+
+        static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
         "hfusion-max-fused-elementwise-ops",
         cl::desc("Maximum number of elementwise ops to fuse in "
                  "PreVectorizationFusion (Default: unlimited)"),

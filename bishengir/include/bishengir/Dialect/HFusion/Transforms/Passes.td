@@ -122,6 +122,8 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
     Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
            "Maximum number of ops allowed in one fused node.">,
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
+           "Enable multiple consumer fusion in AutoVectorizeV2.">,
   ];
 }
 
