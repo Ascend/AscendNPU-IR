@@ -3,11 +3,13 @@
 
 HIVM (Hybrid Intelligence Virtual Machine) dialect.
 
+
 ## Operations
 
 ### `hivm.hir.atomic_cas` (hivm::AtomicCasOp)
 
 _Atomic Compare-And-Swap (CAS) Op_
+
 
 Syntax:
 
@@ -25,39 +27,38 @@ only if the value of memory location V is equal to the expected old value A.
 The operation returns the original value of V regardless of whether it is updated or not.
 
 Constraints:
-
   1. The input memref and output memref must have the same rank
      and the same element type.
 
 Arguments:
-
   * `src0`: expected old value
   * `src1`: new value
   * `dst`: memory location in GM
 
 Examples:
-
 ```mlir
 hivm.hir.atomic_cas ins(%src0, %src1 : memref<?xf32>, memref<?xf32>) outs(%dst : memref<?xf32>)
 %result = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<?xf32>, tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
 ```
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | Tensor or Memref
 
+
 ### `hivm.hir.atomic_rmw` (hivm::AtomicRMWOp)
 
 _Atomic RMW Op_
+
 
 Syntax:
 
@@ -70,24 +71,20 @@ operation ::= `hivm.hir.atomic_rmw` attr-dict
 ```
 
 Atomic exchange is an atomic operation that consists of three steps:
-
 1. Read the current value of the specified memory address
 2. Perform action on value depending on atomic_kind attr
 3. Return the old value read previously
 The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
 
 Constraints:
-
   1. The input memref and output memref must have the same rank
      and the same element type.
 
 Arguments:
-
   * `src`: new value
   * `dst`: memory location in GM
 
 Examples:
-
 ```mlir
 hivm.hir.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_kind = <add>
 %result = hivm.hir.atomic_rmw ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) atomic_kind = <or> -> tensor<?xf32>
@@ -95,7 +92,7 @@ hivm.hir.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -104,22 +101,24 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | any type
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | Tensor or Memref
 
+
 ### `hivm.hir.atomic_xchg` (hivm::AtomicXchgOp)
 
 _Atomic Exchange Op_
+
 
 Syntax:
 
@@ -132,31 +131,27 @@ operation ::= `hivm.hir.atomic_xchg` attr-dict
 ```
 
 Atomic exchange is an atomic operation that consists of three steps:
-
 1. Read the current value of the specified memory address
 2. Write the new value to the memory address
 3. Return the old value read previously
 The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
 
 Constraints:
-
   1. The input memref and output memref must have the same rank
      and the same element type.
 
 Arguments:
-
   * `src`: new value
   * `dst`: memory location in GM
   * `mask`: mask the element
 
 Examples:
-
 ```mlir
 hivm.hir.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
 %result = hivm.hir.atomic_cas ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
 ```
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -164,15 +159,17 @@ hivm.hir.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>)
 | `dst` | Tensor or Memref
 | `mask` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | Tensor or Memref
 
+
 ### `hivm.hir.batchMmadL1` (hivm::BatchMmadL1Op)
 
 _Batch Matrix Multiply and Add Op with inputs from L1 memory hierarchy._
+
 
 Syntax:
 
@@ -212,7 +209,7 @@ Traits: `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE:
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `HIVMUnitFlagEnabledInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -224,7 +221,7 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -239,15 +236,17 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 | `unit_flag_cond` | 1-bit signless integer
 | `per_channel_bias` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.bitcast` (hivm::BitcastOp)
 
 _Reinterprets the bits of a shaped value without changing data_
+
 
 Syntax:
 
@@ -268,21 +267,23 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | any type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | any type
 
+
 ### `hivm.hir.convert_layout` (hivm::ConvertLayoutOp)
 
 _HIVM layout conversion operation._
+
 
 Syntax:
 
@@ -299,7 +300,7 @@ Interfaces: `ConditionallySpeculatable`, `InferCoreTypeInterface`, `NoMemoryEffe
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -315,21 +316,23 @@ Effects: `MemoryEffects::Effect{}`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `source` | ranked or unranked memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | ranked or unranked memref of any type values
 
+
 ### `hivm.hir.copy` (hivm::CopyOp)
 
 _HIVM data copy operation_
+
 
 Syntax:
 
@@ -345,42 +348,36 @@ operation ::= `hivm.hir.copy` `ins` `(` $src `:` type($src) `)`
 
 Copy the data between local memory hierarchies.
 Currently support:
-
   - UB to UB
   - UB to L1 (for Ascend910_95 series)
 
 Examples:
-
 ```mlir
 hivm.hir.copy ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
 ```
 
 Constraints:
-
 - `src` and `dst` are expected to have the same element type.
 - If `pad_mode` is not set, `src` and `dst` shape should be the same.
 - Only support left padding.
 - `pad_value` should have the same element type as `src` and `dst`.
 
 ### Non-contigous reassocicative reshape
-
 `hivm.hir.copy` also supports copying non-contiguous data to contiguous storage, and vice versa.
 This can be seen as "expanding" or "collapsing" the data. The `collapse_reassociation` attribute is used to
 specify which axes are collapsed together.
 For example:
-
 ```mlir
 hivm.hir.copy ins(%src : memref<32x4xbf16, strided<[16, 1]>>) outs(%dst : memref<32x4xbf16, strided<[4, 1]>>)
   collapse_reassociation = [[0, 1]]
 ```
-
 Means that the 0th and 1st axes are collapsed contiguously.
 
 Traits: `AlwaysSpeculatableImplTrait`, `SinglePipeOpTrait`, `UniformReassociationFlattenTrait`
 
 Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -390,7 +387,7 @@ Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpI
 <tr><td><code>collapse_reassociation</code></td><td>::mlir::ArrayAttr</td><td>Array of 64-bit integer array attributes</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -398,15 +395,17 @@ Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpI
 | `dst` | Tensor or Memref
 | `pad_value` | any type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | ranked tensor of any type values
 
+
 ### `hivm.hir.create_sync_block_lock` (hivm::CreateSyncBlockLockOp)
 
 _Create sync block lock operation._
+
 
 Syntax:
 
@@ -424,17 +423,18 @@ Example:
   hivm.hir.create_sync_block_lock() from %arg : from memref<?xi8> to memref<1xi64>
 ```
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `lockArg` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `memref` | memref of any type values
+
 
 ### `hivm.hir.custom` (hivm::CustomOp)
 
@@ -446,7 +446,6 @@ _Custom operation is a generic op interface for users to write their own custom 
       3. Desire for private operation._
 
 General interface for custom op, where:
-
   - name : unique op name.
 
            Note : there are names reserved for builtins, usually starts with "__builtin".
@@ -465,7 +464,6 @@ General interface for custom op, where:
 
 In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
 to retreive necessary information, required informations are:
-
   - CoreType : which core type to execute on, refer to TCoreTypeAttr.
   - Pipe     : which pipe to execute on, refer to PipeAttr.
   - VFMode   : which mode to run on vector units, refer to VFModeAttr.
@@ -475,7 +473,6 @@ to retreive necessary information, required informations are:
                       compiler will help to check the correctness and canonicalize.
 
 TODO:
-
   - Impl : user provided implementation.
   - Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
 
@@ -485,29 +482,31 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 
 Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mlir::SideEffects::DefaultResource, MemoryEffects::Write on ::mlir::SideEffects::DefaultResource}`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>name</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of any type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `results` | variadic of any type
 
+
 ### `hivm.hir.dcci` (hivm::DCCIOp)
 
 _Hivm dcci op_
+
 
 Syntax:
 
@@ -517,7 +516,7 @@ operation ::= `hivm.hir.dcci` attr-dict `(` $mode `,` $dataCacheKind (`,` $ptr^ 
 
 This op cleans(writes back) and invalidates one cacheline or the entire data cache
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -525,15 +524,17 @@ This op cleans(writes back) and invalidates one cacheline or the entire data cac
 <tr><td><code>dataCacheKind</code></td><td>::mlir::hivm::DataCacheKindAttr</td><td><details><summary>hivm data cache kind</summary>{{% markdown %}}HIVM data cache kind attribute.{{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `ptr` | memref of any type values
 
+
 ### `hivm.hir.debug` (hivm::DebugOp)
 
 _Device-side debugging_
+
 
 Syntax:
 
@@ -541,11 +542,12 @@ Syntax:
 operation ::= `hivm.hir.debug` attr-dict $arg `:` type($arg)
 ```
 
+
 Interfaces: `InferCoreTypeInterface`, `MemoryEffectOpInterface (MemoryEffectOpInterface)`
 
 Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mlir::SideEffects::DefaultResource, MemoryEffects::Write on ::mlir::SideEffects::DefaultResource}`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -557,15 +559,17 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mlir::SideEffects::Defa
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `arg` | integer or floating-point or Tensor or Memref
 
+
 ### `hivm.hir.finish_debug` (hivm::FinishDebugOp)
 
 _Finish func for device-side debugging_
+
 
 Syntax:
 
@@ -573,11 +577,14 @@ Syntax:
 operation ::= `hivm.hir.finish_debug` attr-dict
 ```
 
+
 Traits: `CubeVectorCoreTypeTrait`
+
 
 ### `hivm.hir.fixpipe` (hivm::FixpipeOp)
 
 _HIVM data copy operation from L0C to other memory hierarchies._
+
 
 Syntax:
 
@@ -593,7 +600,6 @@ Fixpipe is pipeline that performing data movement from L0C to other memory hiera
 with on-the-fly fixed function of pre-stage quantization,
 pre-stage ReLU, element-wise add, post-stage ReLU, post-stage quantization.
 Currently support:
-
   - L0C to OUT
   - L0C to L1
   - L0C to UB (for Ascend910_95 series)
@@ -604,7 +610,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::P
 
 Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `HIVMUnitFlagEnabledInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -617,7 +623,7 @@ Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpI
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -625,15 +631,17 @@ Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpI
 | `dst` | shaped of any type values
 | `unit_flag_cond` | 1-bit signless integer
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | ranked tensor of any type values
 
+
 ### `hivm.hir.get_block_idx` (hivm::GetBlockIdxOp)
 
 _Get block idx of the current device thread used for parallelization._
+
 
 Syntax:
 
@@ -650,15 +658,17 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit signless integer
 
+
 ### `hivm.hir.get_block_num` (hivm::GetBlockNumOp)
 
 _Get block number of the current device thread used for parallelization._
+
 
 Syntax:
 
@@ -675,15 +685,17 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit signless integer
 
+
 ### `hivm.hir.get_sub_block_idx` (hivm::GetSubBlockIdxOp)
 
 _Get sub block idx of the current device thread used for parallelization._
+
 
 Syntax:
 
@@ -700,15 +712,17 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit signless integer
 
+
 ### `hivm.hir.get_sub_block_num` (hivm::GetSubBlockNumOp)
 
 _Get sub block number of the current device thread used for parallelization._
+
 
 Syntax:
 
@@ -725,15 +739,17 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit signless integer
 
+
 ### `hivm.hir.get_sys_cnt` (hivm::GetSysCntOp)
 
 _Get sys cnt of the current device_
+
 
 Syntax:
 
@@ -750,15 +766,17 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit signless integer
 
+
 ### `hivm.hir.init_debug` (hivm::InitDebugOp)
 
 _Init func for device-side debugging_
+
 
 Syntax:
 
@@ -766,11 +784,14 @@ Syntax:
 operation ::= `hivm.hir.init_debug` attr-dict
 ```
 
+
 Traits: `CubeVectorCoreTypeTrait`
+
 
 ### `hivm.hir.load` (hivm::LoadOp)
 
 _HIVM data load operation_
+
 
 Syntax:
 
@@ -792,13 +813,11 @@ Loads the data from the global memory to the local buffer.
 Currently only support loading to the unified buffer.
 
 Examples:
-
 ```mlir
 hivm.load ins(%src : memref<16x16xf16, #hivm.address_space<gm>>) outs(%dst : memref<16x16xf16, #hivm.address_space<ub>>)
 ```
 
 Constraints:
-
 - `src` and `dst` are expected to have the same element type.
 - If `pad_mode` is not set, `src` and `dst` shape should be the same.
 - Supports both left and right padding.
@@ -808,7 +827,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -819,7 +838,7 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Copy
 <tr><td><code>may_implicit_transpose_with_last_axis</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -830,15 +849,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Copy
 | `right_padding_num` | any type
 | `init_condition` | any type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | ranked tensor of any type values
 
+
 ### `hivm.hir.load_scalar` (hivm::LoadScalarOp)
 
 _Hivm load scalar_
+
 
 Syntax:
 
@@ -846,21 +867,24 @@ Syntax:
 operation ::= `hivm.hir.load_scalar` attr-dict $addr `:` type($addr) `->` type($result)
 ```
 
-#### Operands
+
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `addr` | LLVM pointer type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | integer or floating-point
 
+
 ### `hivm.hir.matmul` (hivm::MatmulOp)
 
 _HIVM Matrix Multiply Op with inputs from global memory_
+
 
 Syntax:
 
@@ -882,13 +906,11 @@ operation ::= `hivm.hir.matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` t
 ```
 
 This operation takes three tiled matrices from the global memory as arguments:
-
   - `A` (ranked type): an `m x k` matrix
   - `B` (ranked type): an `k x n` matrix
   - `C` (ranked type): an `m x n` matrix
 
 Other arguments include:
-
   - `block_sizes`: data size of m, n, and k dimension processed on the L1 memory hierarchy
   - `process_sizes`: data size of m, n, and k dimension processed on the L0 memory hierarchy
   - (optional) `swizzle_offset`: continuous block number which swizzle schedule
@@ -900,7 +922,6 @@ If `a_transpose` or `b_transpose` is present, the respective operand is
 loaded in a transposed manner.
 
 Optionally, this operation takes the following arguments:
-
   - `bias` (ranked type): bias value, which is a vector of shape `n`
   - `descale`: antiquantionzation value. Support 3 types:
   - `DescaleNull` : no descale.
@@ -913,7 +934,7 @@ Traits: `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIP
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -924,7 +945,7 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -940,15 +961,17 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 | `epiloguePTiles` | 64-bit signless integer
 | `c` | shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.mix_group_matmul` (hivm::MixGroupMatmulOp)
 
 _HIVM (Mix) Matrix Group Multiply Op with inputs from global memory_
+
 
 Syntax:
 
@@ -974,13 +997,11 @@ operation ::= `hivm.hir.mix_group_matmul` attr-dict `ins` `(` $a `,` $b `,` $tok
 ```
 
 This operation takes three tiled matrices from the global memory as arguments:
-
   - `A` (ranked type): an `m x k` matrix
   - `B` (ranked type): an `k x n` matrix
   - `C` (ranked type): an `m x n` matrix
 
 Other arguments include:
-
   - `block_sizes`: data size of m, n, and k dimension processed on the L1 memory hierarchy
   - `process_sizes`: data size of m, n, and k dimension processed on the L0 memory hierarchy
   - (optional) `swizzle_offset`: continuous block number which swizzle schedule
@@ -992,7 +1013,6 @@ If `a_transpose` or `b_transpose` is present, the respective operand is
 loaded in a transposed manner.
 
 Optionally, this operation takes the following arguments:
-
   - `bias` (ranked type): bias value, which is a vector of shape `n`
   - `descale`: antiquantionzation value. Support 3 types:
   - `DescaleNull` : no descale.
@@ -1014,7 +1034,7 @@ Traits: `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIP
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1025,7 +1045,7 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1046,15 +1066,17 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 | `epiloguePTiles` | 64-bit signless integer
 | `c` | shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.mix_matmul` (hivm::MixMatmulOp)
 
 _HIVM (Mix) Matrix Multiply Op with inputs from global memory_
+
 
 Syntax:
 
@@ -1079,13 +1101,11 @@ operation ::= `hivm.hir.mix_matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `
 ```
 
 This operation takes three tiled matrices from the global memory as arguments:
-
   - `A` (ranked type): an `m x k` matrix
   - `B` (ranked type): an `k x n` matrix
   - `C` (ranked type): an `m x n` matrix
 
 Other arguments include:
-
   - `block_sizes`: data size of m, n, and k dimension processed on the L1 memory hierarchy
   - `process_sizes`: data size of m, n, and k dimension processed on the L0 memory hierarchy
   - (optional) `swizzle_offset`: continuous block number which swizzle schedule
@@ -1097,7 +1117,6 @@ If `a_transpose` or `b_transpose` is present, the respective operand is
 loaded in a transposed manner.
 
 Optionally, this operation takes the following arguments:
-
   - `bias` (ranked type): bias value, which is a vector of shape `n`
   - `descale`: antiquantionzation value. Support 3 types:
   - `DescaleNull` : no descale.
@@ -1117,7 +1136,7 @@ Traits: `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIP
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1128,7 +1147,7 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1147,15 +1166,17 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 | `epiloguePTiles` | 64-bit signless integer
 | `c` | shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.mmadL1` (hivm::MmadL1Op)
 
 _Matrix Multiply and Add Op with inputs from L1 memory hierarchy._
+
 
 Syntax:
 
@@ -1194,7 +1215,7 @@ Traits: `AttrSizedOperandSegments`, `CubeCoreTypeTrait`, `MacroOpPipeTrait<PIPE:
 
 Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `HIVMUnitFlagEnabledInterface`, `MemoryEffectsOpInterface`, `OpLayoutInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1206,7 +1227,7 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1221,15 +1242,17 @@ Interfaces: `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInte
 | `unit_flag_cond` | 1-bit signless integer
 | `per_channel_bias` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.nd2nz` (hivm::ND2NZOp)
 
 _HIVM data copy operation with on-the-fly ND to NZ layout transformation_
+
 
 Syntax:
 
@@ -1253,7 +1276,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CubeCoreType
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1261,7 +1284,7 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Copy
 <tr><td><code>init_out_buffer</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1270,15 +1293,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Copy
 | `pad_value` | any type
 | `init_condition` | any type
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.nz2nd` (hivm::NZ2NDOp)
 
 _HIVM data copy operation from L1 to Global Memory with NZ2ND conversion_
+
 
 Syntax:
 
@@ -1294,22 +1319,24 @@ Traits: `AlwaysSpeculatableImplTrait`, `CubeCoreTypeTrait`, `OpPipeTrait<PIPE::P
 
 Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | ranked tensor of any type values
 
+
 ### `hivm.hir.pipe_barrier` (hivm::PipeBarrierOp)
 
 _Hivm pipe barrier._
+
 
 Syntax:
 
@@ -1317,9 +1344,10 @@ Syntax:
 operation ::= `hivm.hir.pipe_barrier` `[` $pipe `]` attr-dict
 ```
 
+
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1328,9 +1356,11 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
+
 ### `hivm.hir.pointer_cast` (hivm::PointerCastOp)
 
 _HIVM pointer cast op at specific i64 addr_
+
 
 Syntax:
 
@@ -1341,12 +1371,10 @@ operation ::= `hivm.hir.pointer_cast` `(`$addrs `)` (`[` $dynamicSizes^`]`)? att
 The specific i64 addrs are stored in `$addrs`, which is variadic.
 
 Constraints:
-
 1. The type of each address should be i64.
 2. addrs should have at least one addr.
 
 Examples:
-
 ```mlir
 %addr = arith.constant 1234 : i64
 %tmp = hivm.hir.pointer_cast(%addr) : memref<32xf32>
@@ -1359,22 +1387,24 @@ Examples:
 
 Traits: `AttrSizedOperandSegments`, `CubeVectorCoreTypeTrait`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `addrs` | variadic of 64-bit signless integer
 | `dynamicSizes` | variadic of index
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | memref of any type values
 
+
 ### `hivm.hir.set_ffts_base_addr` (hivm::SetFFTSBaseAddrOp)
 
 _Set base addr for ffts sync machenism._
+
 
 Syntax:
 
@@ -1382,17 +1412,20 @@ Syntax:
 operation ::= `hivm.hir.set_ffts_base_addr` attr-dict $ffts_base_addr
 ```
 
+
 Traits: `CubeVectorCoreTypeTrait`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `ffts_base_addr` | 64-bit signless integer
 
+
 ### `hivm.hir.set_flag` (hivm::SetFlagOp)
 
 _Hivm set flag._
+
 
 Syntax:
 
@@ -1404,9 +1437,10 @@ operation ::= `hivm.hir.set_flag` `[`
               `]` attr-dict
 ```
 
+
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1421,15 +1455,17 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `dynamic_event_id` | 64-bit signless integer
 
+
 ### `hivm.hir.set_mask_norm` (hivm::SetMaskNormOp)
 
 _Hivm set mask norm_
+
 
 Syntax:
 
@@ -1437,9 +1473,12 @@ Syntax:
 operation ::= `hivm.hir.set_mask_norm` attr-dict
 ```
 
+
+
 ### `hivm.hir.store` (hivm::StoreOp)
 
 _HIVM data store operation_
+
 
 Syntax:
 
@@ -1455,13 +1494,11 @@ Stores the data on local buffer to global memory.
 Currently only support storing data on the unified buffer.
 
 Examples:
-
 ```mlir
 hivm.store ins(%src : memref<16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<16x16xf16, #hivm.address_space<gm>>)
 ```
 
 Constraints:
-
 - `src` and `dst` are expected to have the same element type.
 - If `atomic_kind` is set, the kind is one of `add`, `max`, `min`.
 
@@ -1469,7 +1506,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_MTE3>`, `SinglePi
 
 Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1479,22 +1516,24 @@ Interfaces: `ConditionallySpeculatable`, `CopyOpInterface`, `DestinationStyleOpI
 <tr><td><code>may_implicit_transpose_with_last_axis</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | ranked tensor of any type values
 
+
 ### `hivm.hir.sync_block` (hivm::SyncBlockOp)
 
 _Hivm sync block between different kernels._
+
 
 Syntax:
 
@@ -1506,7 +1545,6 @@ operation ::= `hivm.hir.sync_block` attr-dict `[` $sync_block_mode (`,` $flag_id
 ```
 
 There are sync block modes:
-
   - ALL_CUBE : All cube are synchronized to a same point.
                `tcube_pipe` needs to be set to the pipe that
                the cube core is waiting for.
@@ -1525,7 +1563,6 @@ There are sync block modes:
           vector core is waiting for.
 
 Note:
-
   - SyncBlockOp can only use after data is moved to gm.
   - `$ffts_base_addr` must be set in Ascend910B. Every time FFTS collect
     one specific `$flag_id` from all subblocks, FFTS would set the flag ID
@@ -1533,7 +1570,7 @@ Note:
 
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1571,15 +1608,17 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `ffts_base_addr` | 64-bit signless integer
 
+
 ### `hivm.hir.sync_block_lock` (hivm::SyncBlockLockOp)
 
 _Sync block lock operation._
+
 
 Syntax:
 
@@ -1594,15 +1633,17 @@ Example:
   hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
 ```
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `lock_var` | 1D memref of 64-bit signless integer values
 
+
 ### `hivm.hir.sync_block_set` (hivm::SyncBlockSetOp)
 
 _Hivm set block sync._
+
 
 Syntax:
 
@@ -1613,11 +1654,12 @@ operation ::= `hivm.hir.sync_block_set` attr-dict `[` $tcore_type `,` $tpipe `,`
               (`sync_instr_mode` `=` $tsync_instr_mode^)?
 ```
 
+
 Traits: `AttrSizedOperandSegments`
 
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1658,16 +1700,18 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `dynamic_flag_id` | 64-bit signless integer
 | `ffts_base_addr` | 64-bit signless integer
 
+
 ### `hivm.hir.sync_block_unlock` (hivm::SyncBlockUnlockOp)
 
 _Sync block unlock operation._
+
 
 Syntax:
 
@@ -1682,15 +1726,17 @@ Example:
   hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
 ```
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `lock_var` | 1D memref of 64-bit signless integer values
 
+
 ### `hivm.hir.sync_block_wait` (hivm::SyncBlockWaitOp)
 
 _Hivm wait block sync._
+
 
 Syntax:
 
@@ -1699,9 +1745,10 @@ operation ::= `hivm.hir.sync_block_wait` attr-dict `[` $tcore_type `,` $tpipe `,
               `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
 ```
 
+
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1739,15 +1786,17 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `dynamic_flag_id` | 64-bit signless integer
 
+
 ### `hivm.hir.vabs` (hivm::VAbsOp)
 
 _Elementwise Vector Absolute Value Op_
+
 
 Syntax:
 
@@ -1766,21 +1815,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1788,7 +1835,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1796,15 +1843,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vadd` (hivm::VAddOp)
 
 _Elementwise Binary Vector Addition Op_
+
 
 Syntax:
 
@@ -1823,14 +1872,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -1838,7 +1885,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1846,7 +1893,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1854,15 +1901,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vand` (hivm::VAndOp)
 
 _Elementwise Binary Vector And Op_
+
 
 Syntax:
 
@@ -1881,14 +1930,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support only Vector-Vector operation.
 
@@ -1896,7 +1943,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1904,7 +1951,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1912,15 +1959,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.varange` (hivm::VArangeOp)
 
 _Vector Arange Op_
+
 
 Syntax:
 
@@ -1938,12 +1987,10 @@ the result is [[1, 3, 5, 7,
                 2, 4, 6, 8]].
 
 Constraints:
-
   1. Must have at least one stride.
   2. Default offset is 0.
 
 Examples:
-
 ```mlir
 hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : memref<32xf32>)
 %result = hivm.hir.varange offset[%o] strides[%s0, %s1] outs(%dst : tensor<32xf32>)
@@ -1954,7 +2001,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -1962,15 +2009,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 | `offset` | index
 | `strides` | variadic of index
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | ranked tensor of any type values
 
+
 ### `hivm.hir.vbrc` (hivm::VBrcOp)
 
 _Vector Broadcast Op_
+
 
 Syntax:
 
@@ -1985,7 +2034,6 @@ operation ::= `hivm.hir.vbrc` attr-dict `ins` `(` $src `:` type($src) `)`
 Broadcast a vector or a scalar according to the broadcast axes array.
 
 Constraints:
-
   1. The input vector and output vector must have same rank
      and the same element type.
   2. For the input operand, the size of the broadcasted axis must be 1.
@@ -1997,7 +2045,6 @@ Constraints:
      otherwise there will be a risk of memory stampede
 
 Examples:
-
 ```mlir
 // Scalar broadcast
 hivm.hir.vbrc ins(%src : i32) outs(%dst : memref<?xi32>)
@@ -2010,14 +2057,14 @@ Traits: `AlwaysSpeculatableImplTrait`, `CollapsibleConsecutiveTargetDimsTrait`, 
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `InferCoreTypeInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>broadcast_dims</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2025,15 +2072,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 | `dst` | Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vcast` (hivm::VCastOp)
 
 _Elementwise Vector Type Conversion Op_
+
 
 Syntax:
 
@@ -2054,14 +2103,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
  Additional constraints:
-
    1. Supports the following conversions:
 
     | src  | dst  | roundingmode                                      |
@@ -2099,7 +2146,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2118,7 +2165,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2126,15 +2173,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vcmp` (hivm::VCmpOp)
 
 _Elementwise Binary Vector Comparison Op_
+
 
 Syntax:
 
@@ -2153,7 +2202,6 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
@@ -2163,7 +2211,6 @@ Compare elements from two source vector. If the comparison result is true,
 the corresponding bit of `dst` is 1 or 8.
 
 Additional constraints:
-
   1. The input vectors and output vector must have the same ranks
   2. The element type of `dst` must be bool
   3. The input is vector-only.
@@ -2177,7 +2224,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleC
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2188,22 +2235,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vconcat` (hivm::VConcatOp)
 
 _Vector Concatenation Op_
+
 
 Syntax:
 
@@ -2223,7 +2272,6 @@ of the inputs along that dimension. All other dimensions in both the inputs
 and result must be the same size.
 
 Example:
-
 ```mlir
 hivm.hir.vconcat dim(1) ins(%0, %1 : tensor<136x2048xf32>, tensor<136x2048xf32>)
                         outs(%2 : tensor<136x4096xf32>) -> tensor<136x4096xf32>
@@ -2233,29 +2281,31 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperand
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>dim</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vcos` (hivm::VCosOp)
 
 _Elementwise Vector Cosine Op_
+
 
 Syntax:
 
@@ -2273,21 +2323,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2295,22 +2343,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vcumprod` (hivm::VCumprodOp)
 
 _Vector Cumprod Op_
+
 
 Syntax:
 
@@ -2328,12 +2378,10 @@ contains the product of all elements from the first element to the current
 position in the original `src`.
 
 Constraints:
-
   1. The input vector and output vector must have the same rank
      and the same element type.
 
 Arguments:
-
   * `src`: the tensor/memref from which to calculate the cumulative sum
   * `dst`: the tensor/memref to store elements
   * `cum_dims`: specifies the dimension along which to calculate the
@@ -2341,7 +2389,6 @@ Arguments:
   * `reverse`: specifies the direction of the cumulative product.
 
 Examples:
-
 ```mlir
 hivm.hir.vcumprod ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
 %result = hivm.hir.vcumprod ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
@@ -2351,7 +2398,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperand
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2359,22 +2406,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>reverse</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vcumsum` (hivm::VCumsumOp)
 
 _Vector Cumsum Op_
+
 
 Syntax:
 
@@ -2392,12 +2441,10 @@ contains the sum of all elements from the first element to the current
 position in the original `src`.
 
 Constraints:
-
   1. The input vector and output vector must have the same rank
      and the same element type.
 
 Arguments:
-
   * `src`: the tensor/memref from which to calculate the cumulative sum
   * `dst`: the tensor/memref to store elements
   * `cum_dims`: specifies the dimension along which to calculate the
@@ -2405,7 +2452,6 @@ Arguments:
   * `reverse`: specifies the direction of the cumulative sum.
 
 Examples:
-
 ```mlir
 hivm.hir.vcumsum ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0] reverse = true
 %result = hivm.hir.vcumsum ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] reverse = true -> tensor<?xf32>
@@ -2415,7 +2461,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperand
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2423,22 +2469,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>reverse</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vdeinterleave` (hivm::VDeinterleaveOp)
 
 _Vector Deinterleave Op_
+
 
 Syntax:
 
@@ -2457,7 +2505,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPip
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2465,22 +2513,24 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 <tr><td><code>index_mode</code></td><td>::mlir::hivm::DeinterleaveModeAttr</td><td><details><summary>HIVM deinterleave mode</summary>{{% markdown %}}HIVM deinterleave index mode{{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | variadic of Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vdiv` (hivm::VDivOp)
 
 _Elementwise Binary Vector Division Op_
+
 
 Syntax:
 
@@ -2499,14 +2549,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support only Vector-Vector operation.
 
@@ -2514,7 +2562,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2522,7 +2570,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2530,15 +2578,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.verf` (hivm::VErfOp)
 
 _Elementwise Vector Error function Op_
+
 
 Syntax:
 
@@ -2556,21 +2606,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2578,22 +2626,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vexp` (hivm::VExpOp)
 
 _Elementwise Vector Exponential Op_
+
 
 Syntax:
 
@@ -2612,21 +2662,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2634,7 +2682,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2642,15 +2690,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vflip` (hivm::VFlipOp)
 
 _Vector Flip Op_
+
 
 Syntax:
 
@@ -2667,29 +2717,31 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperand
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>flip_axis</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vgather` (hivm::VGatherOp)
 
 _Vector Gather Op_
+
 
 Syntax:
 
@@ -2706,7 +2758,6 @@ and store these elements in another tensor/memref.
 The gather axis is the last dimension.
 
 Arguments:
-
   * `src`: the tensor/memref from which to gather elements
   * `indices`: the indices of elements to gather from src
   * `dst`: the tensor/memref to store elements
@@ -2716,7 +2767,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `HIVMOpSameOperandsAndResultRank`, `OpPip
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2725,15 +2776,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vinterleave` (hivm::VInterleaveOp)
 
 _Vetor Interleave Op_
+
 
 Syntax:
 
@@ -2752,14 +2805,14 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOp
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>interleave_channel_nums</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2767,15 +2820,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vln` (hivm::VLnOp)
 
 _Elementwise Vector Natural Logarithm Op_
+
 
 Syntax:
 
@@ -2794,21 +2849,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2816,7 +2869,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2824,15 +2877,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmax` (hivm::VMaxOp)
 
 _Elementwise Binary Vector Maximum Op_
+
 
 Syntax:
 
@@ -2851,14 +2906,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -2866,7 +2919,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2874,7 +2927,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2882,15 +2935,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmin` (hivm::VMinOp)
 
 _Elementwise Binary Vector Minimum Op_
+
 
 Syntax:
 
@@ -2909,14 +2964,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -2924,7 +2977,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2932,7 +2985,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -2940,15 +2993,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmod` (hivm::VModOp)
 
 _Elementwise Vector Mod Op_
+
 
 Syntax:
 
@@ -2966,21 +3021,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<2>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -2988,22 +3041,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmul` (hivm::VMulOp)
 
 _Elementwise Binary Vector Multiplication Op_
+
 
 Syntax:
 
@@ -3022,14 +3077,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -3037,7 +3090,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3045,7 +3098,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3053,16 +3106,18 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmulext` (hivm::VMulExtOp)
 
 _Elementwise Binary Vector Multiplication that Calculates
     the Most Significant 32-bits._
+
 
 Syntax:
 
@@ -3080,14 +3135,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support Vector-Vector operation.
 
@@ -3095,7 +3148,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleC
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3103,22 +3156,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vmulextended` (hivm::VMulextendedOp)
 
 _Vector Mulextended Op_
+
 
 Syntax:
 
@@ -3135,7 +3190,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOp
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3143,15 +3198,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vnot` (hivm::VNotOp)
 
 _Elementwise Vector Not Op_
+
 
 Syntax:
 
@@ -3170,21 +3227,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3192,7 +3247,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3200,15 +3255,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vor` (hivm::VOrOp)
 
 _Elementwise Binary Vector Or Op_
+
 
 Syntax:
 
@@ -3227,14 +3284,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support only Vector-Vector operation.
 
@@ -3242,7 +3297,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3250,7 +3305,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3258,15 +3313,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vpad` (hivm::VPadOp)
 
 _Vector Pad Op_
+
 
 Syntax:
 
@@ -3284,7 +3341,6 @@ Pads the input operand. Operation semantic is similar to
 `tensor.pad`.
 
 Arguments:
-
   * `src`: the tensor/memref on which to pad values
   * `dst`: reserved for bufferization
   * `pad_value`: the value to pad
@@ -3292,7 +3348,6 @@ Arguments:
   * `high`: the padding lengths along the end of each dimension
 
 Example:
-
 ```mlir
 hivm.hir.vpad ins(%src : tensor<2x16xf32>) outs(%dst: tensor<?x16xf32>)
               low[%first_dim_low, 0] high[%first_dim_high, 0]
@@ -3304,7 +3359,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `HIVMOpSameOp
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3312,7 +3367,7 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 <tr><td><code>static_high</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3322,15 +3377,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 | `low` | variadic of index
 | `high` | variadic of index
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vpow` (hivm::VPowOp)
 
 _Elementwise Binary Vector Power Op_
+
 
 Syntax:
 
@@ -3349,14 +3406,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -3364,7 +3419,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleC
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3372,7 +3427,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3380,15 +3435,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vrec` (hivm::VRecOp)
 
 _Elementwise Vector Reciprocal Op_
+
 
 Syntax:
 
@@ -3407,21 +3464,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3429,7 +3484,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3437,15 +3492,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vreduce` (hivm::VReduceOp)
 
 _Vector Reduction Op_
+
 
 Syntax:
 
@@ -3462,7 +3519,6 @@ Recuce one or more axes of the source vector according to
 the reduction axes array, starting from an init value.
 
 Constraints:
-
   1. The input vector and output vector must have the same rank
      and the same element type.
   2. For the output operand, the size of the reduced axis must be 1.
@@ -3471,7 +3527,6 @@ Constraints:
   4. The reduced indices must be in `[0, RankOfDstVec)`.
 
 Examples:
-
 ```mlir
 hivm.hir.vreduce <add> ins(%src : memref<?xf32>) outs(%dst : memref<1xf32>) reduce_dims : [1]
 %result = hivm.hir.vreduce <max> ins(%src : tensor<?xf32>) outs(%dst : tensor<1xf32>) reduce_dims : [0] -> tensor<1xf32>
@@ -3481,7 +3536,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleC
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3491,7 +3546,7 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 <tr><td><code>reduce_dims</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3500,15 +3555,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 | `temp_buffer` | memref of any type values
 | `indices` | Tensor or Memref
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vrelu` (hivm::VReluOp)
 
 _Elementwise Vector Rectified Linear Unit Op_
+
 
 Syntax:
 
@@ -3527,21 +3584,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3549,7 +3604,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3557,15 +3612,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vrsqrt` (hivm::VRsqrtOp)
 
 _Elementwise Vector Reciprocal Square Root Op_
+
 
 Syntax:
 
@@ -3584,21 +3641,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3606,7 +3661,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3614,15 +3669,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vsel` (hivm::VSelOp)
 
 _Elementwise Vector Selection Op_
+
 
 Syntax:
 
@@ -3641,7 +3698,6 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
@@ -3652,7 +3708,6 @@ If the corresponding bit of the indicator is 1, select `src0`. Otherwise,
 select `src1`.
 
 Additional constraints:
-
   1. The input vectors and output vector must have the same ranks.
   2. The element type of indicator vector must be bool.
 
@@ -3660,7 +3715,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3668,7 +3723,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3676,15 +3731,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vshl` (hivm::VShLOp)
 
 _Elementwise Binary Vector Shift Left Op_
+
 
 Syntax:
 
@@ -3703,14 +3760,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input vector and result have the same element type.
   2. Support only Vector - Scalar operation.
 
@@ -3718,7 +3773,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3726,7 +3781,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3734,15 +3789,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vshr` (hivm::VShROp)
 
 _Elementwise Binary Vector Shift Right Op_
+
 
 Syntax:
 
@@ -3762,14 +3819,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input vector and result have the same element type.
   2. Support only Vector - Scalar operation.
   3. If `round` is set to true, rounding is applied during arithmetic
@@ -3779,7 +3834,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3788,7 +3843,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3796,15 +3851,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vsin` (hivm::VSinOp)
 
 _Elementwise Vector Sine Op_
+
 
 Syntax:
 
@@ -3822,21 +3879,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3844,22 +3899,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vsort` (hivm::VSortOp)
 
 _Vector Sort Op_
+
 
 Syntax:
 
@@ -3876,12 +3933,10 @@ Sort the sorting axis of `src` in ascending or descending order, and output
 the sorted value and the index corresponding to the value.
 
 Constraints:
-
   1. The input vector and output vector must have the same rank.
   2. Currently only tail axis sorting is supported.
 
 Arguments:
-
   * `src`: the tensor/memref from which to be sorted
   * `dst_value`: the tensor/memref to store the sorted value
   * `dst_index`: the tensor/memref to store the index corresponding to dst_value
@@ -3890,7 +3945,6 @@ Arguments:
   * `sort_axis`: Axis to be sorted
 
 Examples:
-
 ```mlir
 hivm.hir.vsort ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) descending = true sort_axis = 0
 %result = hivm.hir.vsort ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) descending = true sort_axis = 0 -> tensor<?xf32>
@@ -3900,7 +3954,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `OpPipeTrait<
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3908,7 +3962,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>sort_axis</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3916,15 +3970,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vsqrt` (hivm::VSqrtOp)
 
 _Elementwise Vector Square Root Op_
+
 
 Syntax:
 
@@ -3943,21 +3999,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -3965,7 +4019,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -3973,15 +4027,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vsub` (hivm::VSubOp)
 
 _Elementwise Binary Vector Subtraction Op_
+
 
 Syntax:
 
@@ -4000,14 +4056,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support both Vector-Vector and Vector-Scalar operation.
 
@@ -4015,7 +4069,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `Broadcastabl
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `ImplByScalarOpInterface`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -4023,7 +4077,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -4031,15 +4085,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vtanh` (hivm::VTanhOp)
 
 _Elementwise Vector Hyperbolic Tangent Op_
+
 
 Syntax:
 
@@ -4057,21 +4113,19 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SameOperandsElementType`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -4079,22 +4133,24 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `Flatten
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | variadic of any type
 | `dst` | variadic of shaped of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vtranspose` (hivm::VTransposeOp)
 
 _Vector Transpose Op_
+
 
 Syntax:
 
@@ -4112,11 +4168,9 @@ other words:
   `dim(dst, i) = dim(src, permutation[i])`.
 
 Constraints:
-
   1. The input vector and output vector must have same rank, and the same element type.
 
 Examples:
-
 ```mlir
  hivm.hir.vtranspose ins(%src : memref<32x8xf32>) outs(%dst : memref<8x32xf32>) permutation = [1, 0]
  %result = hivm.hir.vtranspose ins(%src : tensor<32x8xf32>) outs(%dst: tensor<8x32xf32>) permutation = [1, 0] -> tensor<8x32xf32>
@@ -4126,7 +4180,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeO
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -4134,7 +4188,7 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 <tr><td><code>disable_align</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -4142,15 +4196,17 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `Dest
 | `dst` | Tensor or Memref
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.vxor` (hivm::VXorOp)
 
 _Elementwise Binary Vector Xor Op_
+
 
 Syntax:
 
@@ -4169,14 +4225,12 @@ This operation performs element-wise operation on N operands and produces a sing
 It may perform either transpose or broadcast along the way (but not both).
 
 Common constraints:
-
   1. Follows DestinationStyleOpInterface.
   2. The number of input operands is N; the number of output/result is one.
   3. The input/init operands and result have the same rank.
   4. The first input is vector-only.
 
 Additional constraints:
-
   1. The input/init operands and result have the same element type.
   2. Support only Vector-Vector operation.
 
@@ -4184,7 +4238,7 @@ Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `CollapsibleC
 
 Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBufferOpInterface`, `FlattenInterface`, `HIVMCoreTypeInterface`, `HIVMStructuredOpInterface`, `HIVMStructuredOp`, `MemoryEffectsOpInterface`, `OpPipeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -4192,7 +4246,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 <tr><td><code>broadcast</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -4200,15 +4254,17 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 | `dst` | variadic of shaped of any type values
 | `temp_buffer` | memref of any type values
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
 
+
 ### `hivm.hir.wait_flag` (hivm::WaitFlagOp)
 
 _Hivm wait flag._
+
 
 Syntax:
 
@@ -4220,9 +4276,10 @@ operation ::= `hivm.hir.wait_flag` `[`
               `]` attr-dict
 ```
 
+
 Interfaces: `InferCoreTypeInterface`
 
-#### Attributes
+#### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -4237,15 +4294,18 @@ Interfaces: `InferCoreTypeInterface`
   {{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
 | `dynamic_event_id` | 64-bit signless integer
 
+
 ## Attributes
 
 ### AddressSpaceAttr
+
+
 
 Syntax:
 
@@ -4257,7 +4317,7 @@ Syntax:
 
 HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C and UB.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4276,8 +4336,7 @@ Syntax:
 ```
 
 HIVM alignment kind attribute.
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4285,11 +4344,15 @@ HIVM alignment kind attribute.
 
 ### AllocAlignDimsAttr
 
+
+
 Syntax: `#hivm.alloc_align_dims`
 
 HIVM alloc align dims.
 
 ### AllocAlignValueInByteAttr
+
+
 
 Syntax: `#hivm.alloc_align_value_in_byte`
 
@@ -4309,7 +4372,7 @@ Syntax:
 
 HIVM atomic store kind attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4328,14 +4391,15 @@ Syntax:
 ```
 
 HIVM op axis kind attribute.
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | value | `::mlir::hivm::AxisKind` | an enum of type AxisKind |
 
 ### HIVMBlockMappingAttr
+
+
 
 Syntax:
 
@@ -4345,7 +4409,8 @@ Syntax:
 >
 ```
 
-#### Parameters
+
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4365,7 +4430,7 @@ Syntax:
 
 HIVM compare mode attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4384,8 +4449,7 @@ Syntax:
 ```
 
 HIVM DCCI mode attribute.
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4404,14 +4468,15 @@ Syntax:
 ```
 
 HIVM data cache kind attribute.
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | value | `::mlir::hivm::DataCacheKind` | an enum of type DataCacheKind |
 
 ### DataLayoutAttr
+
+
 
 Syntax:
 
@@ -4424,11 +4489,10 @@ Syntax:
 ```
 
 HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
-
   - `transpose`: Indicates that the layout is transposed.
                  Only valid and must be present for DOTA_ND and DOTB_ND layout.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4449,8 +4513,7 @@ Syntax:
 ```
 
 HIVM deinterleave index mode
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4470,7 +4533,7 @@ Syntax:
 
 HIVM descale mode attribute for matmul op.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4478,11 +4541,15 @@ HIVM descale mode attribute for matmul op.
 
 ### DisableAutoInjectBlockSyncAttr
 
+
+
 Syntax: `#hivm.disable_auto_inject_block_sync`
 
 Disable auto inject block sync, skip block sync injection.
 
 ### EventAttr
+
+
 
 Syntax:
 
@@ -4494,7 +4561,7 @@ Syntax:
 
 HIVM event attribute for synchronization.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4513,8 +4580,7 @@ Syntax:
 ```
 
 HIVM fixpipe pre_quant mode
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4533,14 +4599,15 @@ Syntax:
 ```
 
 HIVM fixpipe pre_relu mode
-
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | value | `::mlir::hivm::FixpipePreReluMode` | an enum of type FixpipePreReluMode |
 
 ### HIVMFuncDynMemrefArgsAttr
+
+
 
 Syntax: `#hivm.func_dyn_memref_args`
 
@@ -4549,17 +4616,23 @@ memref arguments of function.
 
 ### InsertSliceSourceIndexAttr
 
+
+
 Syntax: `#hivm.insert_slice_source_index`
 
 Specifies which operand is insert_slice source in vconcat op
 
 ### MultiBufferAttr
 
+
+
 Syntax: `#hivm.multi_buffer`
 
 HIVM multi-buffer attribute.
 
 ### PadModeAttr
+
+
 
 Syntax:
 
@@ -4571,7 +4644,7 @@ Syntax:
 
 HIVM pad mode attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4579,11 +4652,15 @@ HIVM pad mode attribute.
 
 ### ParallelLoopAttr
 
+
+
 Syntax: `#hivm.parallel_loop`
 
 Specifies that marked loop can run in parallel.
 
 ### PipeAttr
+
+
 
 Syntax:
 
@@ -4595,13 +4672,15 @@ Syntax:
 
 HIVM Op pipe attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | pipe | `::mlir::hivm::PIPE` | an enum of type PIPE |
 
 ### ReduceOpAttr
+
+
 
 Syntax:
 
@@ -4613,7 +4692,7 @@ Syntax:
 
 HIVM reduction arithmetic operation attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4638,13 +4717,15 @@ Syntax:
 - TRUNC: round to zero (c language trunc)
 - ODD: round to odd (Von Neumann rounding)
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | value | `::mlir::hivm::RoundMode` | an enum of type RoundMode |
 
 ### StorageAlignedAttr
+
+
 
 Syntax: `#hivm.storage_aligned`
 
@@ -4655,17 +4736,23 @@ in this function are aligned.
 
 ### StrideAlignDimsAttr
 
+
+
 Syntax: `#hivm.stride_align_dims`
 
 HIVM stride align dims.
 
 ### StrideAlignValueInByteAttr
 
+
+
 Syntax: `#hivm.stride_align_value_in_byte`
 
 HIVM stride align value in bytes.
 
 ### HIVMSubBlockMappingAttr
+
+
 
 Syntax:
 
@@ -4677,13 +4764,15 @@ Syntax:
 
 HIVM sub block mapping attribute for the cv block dim ratio of mix func.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | sub_block | `::mlir::hivm::MappingId` | an enum of type MappingId |
 
 ### SyncBlockInstrModeAttr
+
+
 
 Syntax:
 
@@ -4695,13 +4784,15 @@ Syntax:
 
 HIVM synchronization block instruction mode attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | sync_instr_mode | `::mlir::hivm::SyncBlockInstrMode` | an enum of type SyncBlockInstrMode |
 
 ### SyncBlockModeAttr
+
+
 
 Syntax:
 
@@ -4713,13 +4804,15 @@ Syntax:
 
 HIVM synchronization block mode attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | sync_mode | `::mlir::hivm::SyncBlockMode` | an enum of type SyncBlockMode |
 
 ### TCoreTypeAttr
+
+
 
 Syntax:
 
@@ -4731,13 +4824,15 @@ Syntax:
 
 HIVM op core type attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | tcoretype | `::mlir::hivm::TCoreType` | an enum of type TCoreType |
 
 ### TCoreTypeMarkerAttr
+
+
 
 Syntax:
 
@@ -4749,13 +4844,15 @@ Syntax:
 
 HIVM op core type marker attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | tcoretype | `::mlir::hivm::TCoreType` | an enum of type TCoreType |
 
 ### TFuncCoreTypeAttr
+
+
 
 Syntax:
 
@@ -4767,13 +4864,15 @@ Syntax:
 
 HIVM function core type attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcCoreType | `::mlir::hivm::TFuncCoreType` | an enum of type TFuncCoreType |
 
 ### TModuleCoreTypeAttr
+
+
 
 Syntax:
 
@@ -4793,13 +4892,15 @@ module core type is `AIC`.
 
 Otherwise, the module core type is `MIX`.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | moduleCoreType | `::mlir::hivm::TModuleCoreType` | an enum of type TModuleCoreType |
 
 ### TPartOfMixAttr
+
+
 
 Syntax: `#hivm.part_of_mix`
 
@@ -4819,13 +4920,15 @@ Syntax:
 
 HIVM cast attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | value | `::mlir::hivm::TypeFn` | an enum of type TypeFn |
 
 ### UnitFlagAttr
+
+
 
 Syntax:
 
@@ -4837,13 +4940,15 @@ Syntax:
 
 HIVM unit flag attribute for synchronization.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | unit_flag | `::mlir::hivm::UNIT_FLAG` | an enum of type UNIT_FLAG |
 
 ### UnlikelyConditionAttr
+
+
 
 Syntax: `#hivm.unlikely_condition`
 
@@ -4863,7 +4968,7 @@ Syntax:
 
 HIVM VF mode attribute.
 
-#### Parameters
+#### Parameters:
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -4875,7 +4980,7 @@ HIVM VF mode attribute.
 
 HIVM Address Space
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4891,7 +4996,7 @@ HIVM Address Space
 
 alignment kind information
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4903,7 +5008,7 @@ alignment kind information
 
 Atomic Operation Kind for StoreOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4923,7 +5028,7 @@ Atomic Operation Kind for StoreOp
 
 hivm op axis kind information
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4935,7 +5040,7 @@ hivm op axis kind information
 
 Compare Mode for VCmpOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4950,7 +5055,7 @@ Compare Mode for VCmpOp
 
 hivm dcci mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4961,7 +5066,7 @@ hivm dcci mode
 
 hivm data cache kind
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4974,7 +5079,7 @@ hivm data cache kind
 
 HIVM data layout
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -4989,7 +5094,7 @@ HIVM data layout
 
 HIVM deinterleave mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5001,7 +5106,7 @@ HIVM deinterleave mode
 
 descale mode for matmul
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5013,7 +5118,7 @@ descale mode for matmul
 
 Event ID for Synchronization
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5030,7 +5135,7 @@ Event ID for Synchronization
 
 HIVM fixpipe pre_quant mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5043,7 +5148,7 @@ HIVM fixpipe pre_quant mode
 
 HIVM fixpipe pre_relu mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5056,7 +5161,7 @@ HIVM fixpipe pre_relu mode
 
 HIVM Structured Op Iterator Type
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5077,7 +5182,7 @@ HIVM Structured Op Iterator Type
 
 bias mode for local matmul op
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5091,7 +5196,7 @@ bias mode for local matmul op
 
 Mem Plan Mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5102,7 +5207,7 @@ Mem Plan Mode
 
 Pad Mode for LoadOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5114,7 +5219,7 @@ Pad Mode for LoadOp
 
 HIVM Op Pipe
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5138,7 +5243,7 @@ HIVM Op Pipe
 
 Reduction kind for VReduceOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5161,7 +5266,7 @@ Reduction kind for VReduceOp
 
 Round Mode for VCastOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5177,7 +5282,7 @@ Round Mode for VCastOp
 
 HIVM SyncBlockInstrMode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5189,7 +5294,7 @@ HIVM SyncBlockInstrMode
 
 HIVM SyncBlockMode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5204,7 +5309,7 @@ HIVM SyncBlockMode
 
 HIVM Op Core Type
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5217,7 +5322,7 @@ HIVM Op Core Type
 
 HIVM Function Core Type
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5230,7 +5335,7 @@ HIVM Function Core Type
 
 HIVM Module Core Type
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5242,7 +5347,7 @@ HIVM Module Core Type
 
 Cast for VCastOp
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5254,7 +5359,7 @@ Cast for VCastOp
 
 Unit Flag Mode for Synchronization
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5270,7 +5375,7 @@ Unit Flag Mode for Synchronization
 
 HIVM VF Mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -5282,8 +5387,9 @@ HIVM VF Mode
 
 Mapping ids for loop mapping
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
 | DimX | `0` | x |
+

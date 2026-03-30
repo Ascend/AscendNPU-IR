@@ -52,6 +52,36 @@ check_inputs_of_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
 #endif
 }
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_supported_stride(const memref_t<__ubuf__ T, 2> *src0,
+                    const memref_t<__ubuf__ T, 2> *dst_value,
+                    const memref_t<__ubuf__ int32_t, 2> *dst_index) {
+  const int64_t size1 = src0->sizes[1];
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  const int64_t src_stride0 = src0->strides[0];
+  const int64_t dst_value_stride0 = dst_value->strides[0];
+  const int64_t dst_value_stride1 = dst_value->strides[1];
+  const int64_t dst_index_stride0 = dst_index->strides[0];
+  const int64_t dst_index_stride1 = dst_index->strides[1];
+
+  if (size1 > num_per_repeat) {
+    bool is_src_aligned = is32ByteAligned<T>(src0->strides[0]) && (src0->strides[1] == 1);
+    if (is_src_aligned) {
+      return true;
+    }
+  }
+
+  if (size1 == 1 && src_stride0 == 1 && dst_value_stride0 == 1 && dst_index_stride0 == 1) {
+    return true;
+  }
+
+  if (is32ByteAligned<T>(src_stride0) && (src0->strides[1] == 1)) {
+    return true;
+  }
+  return false;
+}
+
 
 template <ReduceOpTy OP, typename T,
           typename = typename std::enable_if<(std::is_same<half, T>() ||
@@ -251,26 +281,54 @@ reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
   check_inputs_of_reduce_ar_with_index(src0, dst_value, dst_index, tmp_buf,
                                        initvalue);
 
+  const int64_t size1 = src0->sizes[1];
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
   __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
-  const int64_t size1 = src0->sizes[1];
-  const int64_t src_stride0 = src0->strides[0];
-  const int64_t dst_value_stride0 = dst_value->strides[0];
-  const int64_t dst_index_stride0 = dst_index->strides[0];
 
-  bool is_unit_reduce_dim = (size1 == 1 && src_stride0 == 1 && dst_value_stride0 == 1 && dst_index_stride0 == 1);
-  bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) && isAddress32ByteAligned<T>(dst_value_ptr) &&
-  isAddress32ByteAligned(dst_index_ptr);
-
-  // if stride is not aligned or offset is not aligned, fallback to scalar implemention
-  if ((is_unit_reduce_dim && is_offset_aligned) ||
-  (is32ByteAligned<T>(src_stride0) && isAddress32ByteAligned<T>(src_ptr))) [[likely]] {
-    vec_reduce_ar_with_index<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, initvalue);
-  } else [[unlikely]] {
+  // if stride is not aligned, fallback to scalar implemention
+  if (!is_supported_stride<T>(src0, dst_value, dst_index)) [[unlikely]] {
     reduce_with_index_scalar_iml<OP, WITH_INDEX_TYPE, T>(
       src0, dst_value, dst_index, src0->sizes[0], src0->sizes[1], initvalue);
+    return;
   }
+
+  // if stride is aligned, offset of dst is alined, offset of src is not alined, use scalar and vec instructions
+  if (!isAddress32ByteAligned<T>(src_ptr)) [[unlikely]] { 
+    auto address = reinterpret_cast<uintptr_t>(src_ptr);
+    auto align_diff = (UB_ALIGN_BYTES - (address & 0x1F)) & 0x1F;
+    int64_t scalarNum = static_cast<int64_t>(align_diff / sizeof(T));
+    int64_t offset = src0->offset;
+    int64_t vectorNum = size1  - scalarNum; 
+
+    // calculate the result of vec part
+    if (vectorNum > 0){
+      memref_t<__ubuf__ T, 2> subview_src {
+        src0->allocated,
+        src0->aligned,
+        src0->offset + scalarNum,
+        {src0->sizes[0], vectorNum},
+        {src0->strides[0], src0->strides[1]}
+      };
+
+      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      vec_reduce_ar_with_index<OP, WITH_INDEX_TYPE, T>(&subview_src, dst_value, dst_index, tmp_buf, initvalue);
+      INTRINSIC(set_flag, PIPE_V,PIPE_S,  LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_V,PIPE_S, LIB_EVENT_ID0);
+      for (int i = 0; i < dst_value->sizes[0]; i++) {
+        *(dst_index_ptr + i * dst_index->strides[0]) += scalarNum/src0->strides[1];
+      }
+    }
+
+    // calculate the result of scalar part, and gather the result of two part
+    bool need_merge = (vectorNum > 0);
+    reduce_with_index_scalar_iml<OP, WITH_INDEX_TYPE, T>(
+      src0, dst_value, dst_index, src0->sizes[0], scalarNum, initvalue, need_merge);
+    return;
+  }
+
+  vec_reduce_ar_with_index<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, initvalue);
 
 }
 

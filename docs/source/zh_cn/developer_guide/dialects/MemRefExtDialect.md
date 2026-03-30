@@ -3,11 +3,13 @@
 
 extended memref dialect
 
+
 ## Operations
 
 ### `memref_ext.alloc_workspace` (::bishengir::memref_ext::AllocWorkspaceOp)
 
 _Workspace memory allocation operation._
+
 
 Syntax:
 
@@ -27,7 +29,7 @@ memref_ext.alloc_workspace(%dynamic) from %arg offset = [%offset] : from memref<
 
 Traits: `AttrSizedOperandSegments`
 
-#### Operands
+#### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -35,11 +37,12 @@ Traits: `AttrSizedOperandSegments`
 | `dynamicSize` | variadic of index
 | `offset` | variadic of index
 
-#### Results
+#### Results:
 
 | Result | Description |
 | :----: | ----------- |
 | `memref` | memref of any type values
+
 
 ## Enums
 
@@ -47,7 +50,7 @@ Traits: `AttrSizedOperandSegments`
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -72,7 +75,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -91,7 +94,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
 Integer overflow arith flags
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -103,7 +106,7 @@ Integer overflow arith flags
 
 Floating point rounding mode
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -117,7 +120,7 @@ Floating point rounding mode
 
 allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -141,7 +144,7 @@ allowed 64-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 Floating point fast math flags
 
-#### Cases
+#### Cases:
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -154,3 +157,4 @@ Floating point fast math flags
 | contract | `32` | contract |
 | afn | `64` | afn |
 | fast | `127` | fast |
+

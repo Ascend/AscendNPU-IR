@@ -4,6 +4,8 @@ This directory is the Sphinx documentation project for AscendNPU IR. It supports
 
 **Language:** [English](README.md) · [Chinese](README_zh.md)
 
+---
+
 ## Documentation scheme
 
 | Item | Convention |
@@ -15,6 +17,8 @@ This directory is the Sphinx documentation project for AscendNPU IR. It supports
 ### Naming convention (snake_case)
 
 Directory names and document file names under `docs/` (including `docs/source/`) adopt a unified lowercase **snake_case** style, for example: `quick_start/`, `installing_guide.md`, `user_guide/`，to keep consistent paths and URLs.
+
+---
 
 ## How to build
 
@@ -34,6 +38,8 @@ make html-zh
 make html-all
 ```
 
+---
+
 ## Local preview
 
 ```bash
@@ -47,6 +53,8 @@ open docs/_build/zh_cn/index_zh.html
 cd docs/_build/en && python3 -m http.server 8080
 cd docs/_build/zh_cn && python3 -m http.server 8081
 ```
+
+---
 
 ## Deploy on Read the Docs
 
@@ -62,6 +70,8 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
    - URL like `https://<slug>.readthedocs.io/zh_CN/latest/`.
 4. The Translations flyout in the RTD theme will let users switch between English and Chinese.
 
+---
+
 ## Adding a new document
 
 1. Add the **English** file, e.g. `source/en/introduction/new_doc.md`.
@@ -70,6 +80,8 @@ cd docs/_build/zh_cn && python3 -m http.server 8081
    - In **English**: `docs/source/en/index.rst` or the relevant subdir `index.rst`(e.g. `source/en/introduction/quick_start/index.rst`) with entry `new_doc` (or path like `section/new_doc`).
    - In **Chinese**: `docs/source/zh_cn/index.rst` or the subdir `index.rst`(e.g. `source/zh_cn/introduction/quick_start/index.rst`) with entry `new_doc` (or `section/new_doc`).
 4. Optionally append the doc to `_main_doc_order` in `conf.py` if you use it for ordering or tooling.
+
+---
 
 ## Doc layout
 

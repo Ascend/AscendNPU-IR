@@ -1,6 +1,8 @@
 # Tile Cube and Vector Loop
 
-This document describes the **TileCubeVectorLoop** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](CVOptimization.md) for CV terminology.
+This document describes the **TileCubeVectorLoop** pass in HIVM. It optimizes CV-style kernels. Before reading, we recommend [CV Optimization](CVOptimization) for CV terminology.
+
+---
 
 ## Hardware background
 
@@ -25,6 +27,8 @@ Current Ascend AI accelerator chips adopt a decoupled architecture for AIC and A
 |--------|--------|-------------|
 | `tile-mix-cube-loop` | 1 | Cube loop trip count; 1 means no tiling. |
 | `tile-mix-vector-loop` | 1 | Vector loop trip count; 1 means no tiling. |
+
+---
 
 ## Hardware background
 
@@ -57,6 +61,8 @@ scf.for {
   } {sub_tile}
 } {cube_loop}
 ```
+
+---
 
 ## Constraints
 

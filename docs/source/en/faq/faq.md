@@ -2,6 +2,8 @@
 
 This page collects common questions about using and developing AscendNPU IR, grouped by topic. For build details see [Install and build](../introduction/quick_start/installing_guide.md); for contribution flow see [Contributing guide](../contributing_guide/contribute.md).
 
+
+
 ## Build and installation
 
 **Q1.1** When running build.sh I get "ninja: error: loading 'build.ninja': No such file or directory". What should I do?
@@ -23,6 +25,8 @@ ulimit -n 65535
 **Q1.3** Why is `--apply-patches` required on first build?
 
 `--apply-patches` enables AscendNPU IR extensions (patches) for LLVM/MLIR and other third-party repos; it is required on the first build. You can omit it for later incremental builds.
+
+
 
 ## Running and debugging
 
@@ -64,13 +68,15 @@ See [Compile options](../user_guide/compile_option.md) and [Architecture](../int
 
 Use the failing test name to find the test file and assertions; check whether the issue is IR transformation, numerical result, or environment (CANN, paths, etc.). Use "How do I get intermediate MLIR" (Q2.3) to inspect intermediate state. See [Debug and tune](../user_guide/debug_option.md).
 
+
+
 ## Performance tuning
 
 **Q3.1** How do I find operator performance bottlenecks?
 
 ### MindStudio
 
-Link: <https://www.hiascend.com/developer/software/mindstudio>  
+Link: https://www.hiascend.com/developer/software/mindstudio  
 On Ascend, MindStudio’s Profiler collects runtime metrics to help locate kernel bottlenecks when debugging Triton kernels.
 
 ### Torch NPU profiler
@@ -79,7 +85,7 @@ On Ascend, MindStudio’s Profiler collects runtime metrics to help locate kerne
 
 It injects instrumentation to collect CPU and NPU data, including: PyTorch-layer info (ops, memory, call stacks), CANN-layer scheduling and execution, and hardware-layer info (operator time, AI Core metrics such as pipeline utilization, cache hit rate). It bridges your training script and visualization tools (e.g. MindStudio Insight or TensorBoard).
 
-**Example**:
+**Example**
 
 ```python
 @triton.jit
@@ -118,19 +124,17 @@ with torch_npu.profiler.profile(
 When debugging precision issues in Triton kernels, `tl.device_print` is an indispensable tool.
 It allows you to directly print intermediate values of tensors or scalars at NPU runtime, 
 thereby pinpointing where the error occurs. Usage guide:
-
 ```python
 # Usage requires setting the environment variable TRITON_DEVICE_PRINT=1
 tl.device_print("prefix string", value)
 ```
 
 Precision issue troubleshooting strategy:
-
 1. Segmented printing: Insert tl.device_print before and after key computation steps (e.g., matrix multiply-add, reduction, activation functions) to observe numerical changes.
 2. Compare with expected values: After printing intermediate results, compare them with manual calculations or the CPU reference implementation to quickly locate the source of error.
 3. Watch for abnormal values: If values suddenly become NaN or Inf, print more context around the corresponding positions.
 
-**Example**:
+**Example**
 
 ```python
 import triton
@@ -159,10 +163,10 @@ You can think of it as a "Swiss Army knife" testing and debugging tool: it reads
 Hence, it can be used for independent pass debugging of AscendNPU IR.
 Through it, developers can apply a specific pass individually and compare the IR differences before and after application, thereby verifying whether the pass achieves the intended functionality.
 
-**Basic syntax**:
+**Basic syntax:**
 `bishengir-opt xx.mlir --{pass name}`
 
-**Usage example**:
+**Usage example**
 
 `bishengir-opt test.mlir --hfusion-normalize-ops`
 
@@ -216,6 +220,7 @@ Since floating-point numbers cannot be directly compared with ==, tolerance-base
 Absolute Error: |a - b|
 Relative Error: |a - b| / max(|a|, |b|) – suitable for comparing large numbers.
 Mixed tolerance: Combines both, e.g., the implementation of np.isclose().
+
 
 ## Contributing and community
 

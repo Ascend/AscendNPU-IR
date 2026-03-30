@@ -83,3 +83,5 @@ AscendNPU IR supports framework integration (PyTorch/TensorFlow/MindSpore) in tw
 - **IR integration**: e.g., Torch IR, Linalg/HFusion IR, and HIVM IR
 
 See [Framework interface](framework_interface.md) for details.
+
+---
