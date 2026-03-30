@@ -463,41 +463,46 @@ func.func @test_mmadL1_build_init_yielded_matmul_not_using_iter_arg() -> tensor<
 }
 
 // -----
-// CHECK-LABEL: func.func @test_mmadL1_build_init_multiple_uses
-// CHECK-DAG: %[[FALSE:.*]] = arith.constant false
-// CHECK: %[[LOOP:.*]] = scf.for {{.*}} -> (tensor<64x64xf32>) {
-// CHECK:   hivm.hir.vadd ins({{.*}}, {{.*}} : tensor<64x64xf32>, tensor<64x64xf32>) outs({{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK-LABEL: func.func @test_mmadL1_build_init_same_zero_for_two_iter_args(
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+// CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+// CHECK: %[[INIT0:.*]] = tensor.empty() : tensor<64x64xf32>
+// CHECK: %[[INIT1:.*]] = tensor.empty() : tensor<64x64xf32>
+// CHECK: %[[RES:.*]]:2 = scf.for %[[IV:.*]] = %[[C0]] to %arg0 step %[[C1]] iter_args(%[[ACC0:.*]] = %[[INIT0]], %[[ACC1:.*]] = %[[INIT1]]) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+// CHECK:   %[[FIRST0:.*]] = arith.cmpi eq, %[[IV]], %[[C0]] : index
+// CHECK:   %[[MMAD0:.*]] = hivm.hir.mmadL1 ins({{.*}} : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%[[ACC0]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK:   %[[FIRST1:.*]] = arith.cmpi eq, %[[IV]], %[[C0]] : index
+// CHECK:   %[[MMAD1:.*]] = hivm.hir.mmadL1 ins({{.*}} : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%[[ACC1]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK:   scf.yield %[[MMAD0]], %[[MMAD1]] : tensor<64x64xf32>, tensor<64x64xf32>
 // CHECK: }
-// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 ins({{.*}}, {{.*}}, %[[FALSE]], {{.*}}, {{.*}}, {{.*}} : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs({{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
-// CHECK: %[[FINAL:.*]] = hivm.hir.vadd ins(%[[MMAD]], %[[LOOP]] : tensor<64x64xf32>, tensor<64x64xf32>) outs({{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
-// CHECK: return %[[FINAL]] : tensor<64x64xf32>
-func.func @test_mmadL1_build_init_multiple_uses(%ub: index) -> tensor<64x64xf32> {
+// CHECK: return %[[RES]]#0 : tensor<64x64xf32>
+func.func @test_mmadL1_build_init_same_zero_for_two_iter_args(%ub: index) -> tensor<64x64xf32> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %cst = arith.constant 0.000000e+00 : f32
 
-  %mc0 = tensor.empty() : tensor<64x64xf32>
-  %mc1 = tensor.empty() : tensor<64x64xf32>
-  %mc2 = tensor.empty() : tensor<64x64xf32>
-  %seed = linalg.fill ins(%cst : f32) outs(%mc0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+  %empty0 = tensor.empty() : tensor<64x64xf32>
+  %zero = linalg.fill ins(%cst : f32) outs(%empty0 : tensor<64x64xf32>) -> tensor<64x64xf32>
 
-  %ma = memref.alloc() : memref<64x64xf16>
-  %ma_tensor = bufferization.to_tensor %ma restrict writable : memref<64x64xf16>
-  %mb = memref.alloc() : memref<64x64xf16>
-  %mb_tensor = bufferization.to_tensor %mb restrict writable : memref<64x64xf16>
+  %ma0 = memref.alloc() : memref<64x64xf16>
+  %mb0 = memref.alloc() : memref<64x64xf16>
+  %ma1 = memref.alloc() : memref<64x64xf16>
+  %mb1 = memref.alloc() : memref<64x64xf16>
 
-  %tmp = scf.for %i = %c0 to %ub step %c1 iter_args(%acc = %seed) -> (tensor<64x64xf32>) {
-    %next = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-            ins(%seed, %acc : tensor<64x64xf32>, tensor<64x64xf32>)
-            outs(%mc1 : tensor<64x64xf32>) -> tensor<64x64xf32>
-    scf.yield %next : tensor<64x64xf32>
+  %a0 = bufferization.to_tensor %ma0 restrict writable : memref<64x64xf16>
+  %b0 = bufferization.to_tensor %mb0 restrict writable : memref<64x64xf16>
+  %a1 = bufferization.to_tensor %ma1 restrict writable : memref<64x64xf16>
+  %b1 = bufferization.to_tensor %mb1 restrict writable : memref<64x64xf16>
+
+  %res0, %res1 = scf.for %i = %c0 to %ub step %c1
+      iter_args(%acc0 = %zero, %acc1 = %zero)
+      -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    %m0 = linalg.matmul ins(%a0, %b0 : tensor<64x64xf16>, tensor<64x64xf16>)
+                        outs(%acc0 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %m1 = linalg.matmul ins(%a1, %b1 : tensor<64x64xf16>, tensor<64x64xf16>)
+                        outs(%acc1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %m0, %m1 : tensor<64x64xf32>, tensor<64x64xf32>
   }
 
-  %ret = linalg.matmul ins(%ma_tensor, %mb_tensor : tensor<64x64xf16>, tensor<64x64xf16>)
-                       outs(%seed : tensor<64x64xf32>) -> tensor<64x64xf32>
-
-  %final = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-           ins(%ret, %tmp : tensor<64x64xf32>, tensor<64x64xf32>)
-           outs(%mc2 : tensor<64x64xf32>) -> tensor<64x64xf32>
-  return %final : tensor<64x64xf32>
+  return %res0 : tensor<64x64xf32>
 }
