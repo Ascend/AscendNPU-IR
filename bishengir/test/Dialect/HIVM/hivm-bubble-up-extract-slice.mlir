@@ -75,6 +75,21 @@ func.func @bubble_up_expand_shape(%arg0: tensor<64xf32>) -> tensor<32x1xf32> {
 }
 
 // -----
+// CHECK-LABEL:   func.func @bubble_up_vinterleave(
+// CHECK-SAME:                                     %[[VAL_0:.*]]: tensor<32x16x1xi32>) -> tensor<16x16x2xi32> {
+// CHECK:          %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:          %[[VAL_2:.*]] = tensor.empty() : tensor<16x16x2xi32>
+// CHECK:          %[[VAL_3:.*]] = hivm.hir.vinterleave ins(%[[VAL_1:.*]], %[[VAL_1:.*]] : tensor<16x16x1xi32>, tensor<16x16x1xi32>) outs(%[[VAL_2:.*]] : tensor<16x16x2xi32>) interleave_channel_nums = 2 -> tensor<16x16x2xi32>
+// CHECK:          return %[[VAL_3:.*]] : tensor<16x16x2xi32>
+// CHECK:         }
+func.func @bubble_up_vinterleave(%arg0: tensor<32x16x1xi32>) -> tensor<16x16x2xi32> {
+  %62 = tensor.empty() : tensor<32x16x2xi32>
+  %63 = hivm.hir.vinterleave ins(%arg0, %arg0 : tensor<32x16x1xi32>, tensor<32x16x1xi32>) outs(%62 : tensor<32x16x2xi32>) interleave_channel_nums = 2 -> tensor<32x16x2xi32>
+  %extracted_slice = tensor.extract_slice %63[0, 0, 0] [16, 16, 2] [1, 1, 1] {to_be_bubbled_slice} : tensor<32x16x2xi32> to tensor<16x16x2xi32>
+  return %extracted_slice : tensor<16x16x2xi32>
+}
+
+// -----
 // CHECK-LABEL:   func.func @bubble_up_for_loop3(
 // CHECK-SAME:                                   %[[VAL_0:.*]]: tensor<64x32xf32>,
 // CHECK-SAME:                                   %[[VAL_1:.*]]: tensor<32x16xf32>,
