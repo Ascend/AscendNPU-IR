@@ -21,6 +21,7 @@
 #include <iterator>
 #include <type_traits>
 
+#undef DEBUG_TYPE
 #define DEBUG_TYPE "ttag-to-llvm"
 
 using namespace mlir;

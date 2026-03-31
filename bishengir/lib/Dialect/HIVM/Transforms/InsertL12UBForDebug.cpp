@@ -59,7 +59,6 @@ public:
         // currently only support tensors
         continue;
       }
-      TensorType tensorType = cast<TensorType>(val.getType());
       if (val.getDefiningOp() == nullptr) {
         // currently only support MmadL1Op inputs with defining op
         continue;

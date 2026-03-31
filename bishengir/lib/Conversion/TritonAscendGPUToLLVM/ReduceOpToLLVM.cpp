@@ -311,14 +311,13 @@ private:
       sync(rewriter, loc, op);
 
       // Now we put in an if condition to only work on threads that are packed into working warps
-      Value readOffset = threadId;
       SmallVector<Type> resultTypes;
       auto threadIsNeeded = b.icmp_slt(threadId, b.i32_val(neededTIDs));
       auto IfStmt = rewriter.create<scf::IfOp>(loc, resultTypes, threadIsNeeded, true);
       rewriter.setInsertionPointToStart(&IfStmt.getThenRegion().front());
       SmallVector<Value> resultsThen;
       AccIdx = 0;
-      for (auto &it : accs) {
+      for (size_t idx = 0; idx < accs.size(); ++idx) {
         // Point the rewriter to the body of the 'then' block and generate the reduction.
         Value ValTrue = b.true_val();
         SmallVector<Value> local_acc(op.getNumOperands());

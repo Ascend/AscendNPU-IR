@@ -75,7 +75,7 @@ static bool operateOnSigned(Operation *op) {
                 if (!op->hasAttr("isSigned")) {
                     return signed_require == IntegerType::Signed;
                 }
-                mlir::BoolAttr validAttr = op->getAttr("isSigned").cast<mlir::BoolAttr>();
+                mlir::BoolAttr validAttr = op->getAttr("isSigned").mlir::cast<mlir::BoolAttr>();
                 bool validValue = validAttr.getValue();
                 if (validValue) {
                     return signed_require == IntegerType::Signed;
@@ -166,7 +166,6 @@ struct VectorOpToMathUnary : public OpRewritePattern<HIVMVectorOp> {
         return failure();
     }
     Value lhs = hivmOperands[0];
-    Value dst_val = hivmOperands[1];
     auto resType = op.getResult().getType();
  
     auto result = rewriter.create<MathUnaryOp>(op.getLoc(), resType, lhs);
@@ -221,7 +220,6 @@ struct HIVMVAbsToMathAbsPattern : public OpRewritePattern<VAbsOp> {
       return vabsOp.emitError("VAbsOp must have at least one src and one dst operand");
     }
     Value src = vabsOp.getSrc()[0];
-    Value dst = vabsOp.getDst()[0];
 
     // Verify that the input is of RankedTensorType (vector/tensor, compliant with VAbsOp constraints)
     auto srcTensorType = dyn_cast<RankedTensorType>(src.getType());

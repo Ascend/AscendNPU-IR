@@ -165,13 +165,13 @@ static Value ensureValueOfType(Value src, Type targetType, Location loc,
     return src;
 
   // scalar -> splat
-  if (src.getType().isa<IntegerType, FloatType, IndexType>()) {
+  if (src.getType().mlir::isa<IntegerType, FloatType, IndexType>()) {
     return createSplatFromScalar(src, targetType, loc, rewriter);
   }
 
   // try stepping through to find scalar inner
   Value inner = stepThroughBroadcastIfAny(src);
-  if (inner && inner.getType().isa<IntegerType>()) {
+  if (inner && inner.getType().mlir::isa<IntegerType>()) {
     return createSplatFromScalar(inner, targetType, loc, rewriter);
   }
 
@@ -773,7 +773,7 @@ public:
     if (digit != 0) {
       RewritePatternSet patterns(context);
       patterns.add<MoveLoadsAsLateAsPossiblePattern>(context);
-      auto success = applyPatternsAndFoldGreedily(module, std::move(patterns));
+      auto success = applyPatternsGreedily(module, std::move(patterns));
       LLVM_DEBUG(if (failed(success))
         llvm::dbgs() << "apply MoveLoadsAsLateAsPossiblePattern failed\n";);
 

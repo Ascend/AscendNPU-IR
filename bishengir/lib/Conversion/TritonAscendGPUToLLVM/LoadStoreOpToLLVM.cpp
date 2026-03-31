@@ -28,7 +28,6 @@ namespace ttg = mlir::triton::gpu;
 using ::mlir::triton::gpu::getTotalElemsPerThread;
 
 namespace {
-constexpr size_t kMinLoadStoreWidthBits = 16;
 constexpr unsigned kMaxTransferWidthBits = 128;
 constexpr unsigned kMinWordWidthBits = 32;
 
@@ -382,7 +381,6 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
         pred = maybeAnd(rewriter, loc, pred, mask);
       }
 
-      Type wordType = rewriter.getI32Type();
       Type storeValueTy =
           VectorType::get({static_cast<long>(nWords)}, valArgTy);
       Value toBeStored = b.undef(storeValueTy);

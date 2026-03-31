@@ -622,7 +622,7 @@ struct ZeroDimToOneDimGenericPattern
     }
 
     auto output = op.getDpsInitOperand(0)->get();
-    auto outputType = output.getType().cast<RankedTensorType>();
+    auto outputType = output.getType().mlir::cast<RankedTensorType>();
     if (outputType.getRank() != 0) {
       return failure();
     }
@@ -727,7 +727,7 @@ void EmptifyReduceInit(Operation *op, IRRewriter &rewriter) {
     auto initOp = initValue.getDefiningOp();
     if (!initOp || !mlir::hfusion::isFillOp(initOp))
       return;
-    RankedTensorType outType = initValue.getType().cast<RankedTensorType>();
+    RankedTensorType outType = initValue.getType().mlir::cast<RankedTensorType>();
     rewriter.setInsertionPoint(reduceOp);
     auto emptyOp = rewriter.create<tensor::EmptyOp>(
         reduceOp.getLoc(), outType.getShape(), outType.getElementType());

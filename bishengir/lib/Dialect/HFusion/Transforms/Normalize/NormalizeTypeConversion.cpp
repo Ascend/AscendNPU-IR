@@ -608,8 +608,8 @@ public:
     Value input = reduceOp.getInputs()[0];
     Value init = reduceOp.getInits()[0];
 
-    auto inputType = input.getType().dyn_cast<RankedTensorType>();
-    auto initType = init.getType().dyn_cast<RankedTensorType>();
+    auto inputType = input.getType().mlir::dyn_cast<RankedTensorType>();
+    auto initType = init.getType().mlir::dyn_cast<RankedTensorType>();
     if (!inputType || !initType)
       return failure();
     if (!inputType.getElementType().isInteger(1) ||
@@ -1306,7 +1306,7 @@ public:
     Value trueVal = inputs[1];
     Value falseVal = inputs[2];
 
-    auto trueType = trueVal.getType().dyn_cast<RankedTensorType>();
+    auto trueType = trueVal.getType().mlir::dyn_cast<RankedTensorType>();
     auto shape = trueType.getShape();
     Type i16 = rewriter.getI16Type();
     auto newType = RankedTensorType::get(shape, i16);

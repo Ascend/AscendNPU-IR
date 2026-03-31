@@ -363,10 +363,6 @@ private:
     rewriter.setInsertionPoint(storeOp);
     auto srcShape = llvm::to_vector(cast<ShapedType>(src.getType()).getShape());
     auto dstShape = llvm::to_vector(cast<ShapedType>(dst.getType()).getShape());
-    auto srcOp =
-        storeOp.getSrc().getDefiningOp<OffsetSizeAndStrideOpInterface>();
-    auto dstOp =
-        storeOp.getDst().getDefiningOp<OffsetSizeAndStrideOpInterface>();
     if (srcShape != dstShape || ShapedType::isDynamicShape(srcShape))
       return modifyFailure();
     if (failed(modifyStoreOp(storeOp, tilingDim, srcOpr, dstOpr, containingLoop,
@@ -579,13 +575,13 @@ public:
     Value srcMemRef = copyOp->getOperand(0);
     Value dstMemRef = copyOp->getOperand(1);
     // check if memref type
-    auto srcType = srcMemRef.getType().dyn_cast<MemRefType>();
-    auto dstType = dstMemRef.getType().dyn_cast<MemRefType>();
+    auto srcType = srcMemRef.getType().mlir::dyn_cast<MemRefType>();
+    auto dstType = dstMemRef.getType().mlir::dyn_cast<MemRefType>();
     if (!srcType || !dstType)
       return failure();
     // check if hivm address space
-    auto srcAS = srcType.getMemorySpace().dyn_cast<hivm::AddressSpaceAttr>();
-    auto dstAS = dstType.getMemorySpace().dyn_cast<hivm::AddressSpaceAttr>();
+    auto srcAS = srcType.getMemorySpace().mlir::dyn_cast<hivm::AddressSpaceAttr>();
+    auto dstAS = dstType.getMemorySpace().mlir::dyn_cast<hivm::AddressSpaceAttr>();
     if (!srcAS || !dstAS)
       return failure();
     // check if ub to l1
@@ -1151,7 +1147,7 @@ public:
 static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   patterns.add<splitFixpipe>(funcOp.getContext());
-  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return failure();
   }
   if (funcOp

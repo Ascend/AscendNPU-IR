@@ -421,7 +421,6 @@ struct FoldFixpipeConvertLayoutPattern
     auto resultTensorType = cast<RankedTensorType>(op.getType());
     auto ofrSize = tensor::reshape_utils::getMixedSizesOrOutputShape(
         rewriter, fixpipeOp.getSource());
-    auto srcLayout = op.getSrcLayout();
 
     // Src should be the fractal
     assert(dstLayout.isNDLayout());

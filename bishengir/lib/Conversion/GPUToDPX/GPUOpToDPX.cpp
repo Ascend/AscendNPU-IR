@@ -86,6 +86,7 @@ Value getGridDims(LLVM::LLVMFuncOp funcOp, OpBuilder builder, Location loc, gpu:
         return gridDim;
     }
   }
+  return Value();
 }
 
 struct GPUGridDimOpOpLowering : public ConvertOpToLLVMPattern<gpu::GridDimOp> {

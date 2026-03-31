@@ -63,7 +63,6 @@ struct AscendSIToFPOpConversion
                                    ConversionPatternRewriter &rewriter,
                                    Type elemTy, MultipleOperandsRange operands,
                                    Location loc) const {
-    Type inElemTy = getElementType(op.getIn());
     Type outElemTy = getElementType(op.getOut());
     SmallVector<Value> outVals;
     for (size_t i = 0; i < operands.size(); i++) {
@@ -777,7 +776,6 @@ struct MapElementwiseOpConversion
     }
 
     auto &scalarOp = op.getScalarOp();
-    Region &parent = *rewriter.getBlock()->getParent();
 
     auto nOutputs = op.getNumResults();
     SmallVector<Value> scalarOutputs(nOutputs * nElems);
