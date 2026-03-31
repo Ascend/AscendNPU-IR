@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -32,9 +33,13 @@ struct NormalizeHIVMPass
     : public impl::NormalizeBase<NormalizeHIVMPass> {
   using impl::NormalizeBase<NormalizeHIVMPass>::NormalizeBase;
   void runOnOperation() override {
+    ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    bool isRegbased = hacc::utils::isRegBasedArch(moduleOp);
     auto *context = &getContext();
     RewritePatternSet patterns(context);
     populateNormalizeArithmeticPatterns(patterns);
+    if (!isRegbased)
+      populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

@@ -21,11 +21,17 @@
 #include "bishengir/Transforms/Normalize/Utils.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 
 namespace mlir::hivm {
 
-class NormalizeTraitsBase {
+/// Base traits class for HIVM Normalize operations.
+/// Provides common utility methods that can be reused by specific traits.
+struct NormalizeTraitsBase {
 public:
+  static Value createCmpOp(PatternRewriter &rewriter, Location loc,
+                           Value input, Value dst, CompareKind kind);
+
   static Value createUnaryOp(PatternRewriter &rewriter, Location loc,
                              Value input, Value dst, UnaryKind kind);
 };

@@ -20,7 +20,8 @@
 
 namespace mlir {
 
-enum class UnaryKind { Rec, Sqrt };
+enum class UnaryKind { Rec, Sqrt, Not };
+enum class CompareKind {EQ, NE, LT, GT, GE, LE};
 
 } // namespace mlir
 

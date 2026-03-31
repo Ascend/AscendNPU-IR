@@ -31,7 +31,8 @@ namespace mlir::hfusion {
 static UnaryFn mapUnaryKindToUnaryFn(UnaryKind kind) {
   static const llvm::DenseMap<UnaryKind, hfusion::UnaryFn> kindToFn = {
       {UnaryKind::Rec, hfusion::UnaryFn::rec},
-      {UnaryKind::Sqrt, hfusion::UnaryFn::sqrt}
+      {UnaryKind::Sqrt, hfusion::UnaryFn::sqrt},
+      {UnaryKind::Not, hfusion::UnaryFn::vnot}
   };
 
   auto it = kindToFn.find(kind);
@@ -40,6 +41,32 @@ static UnaryFn mapUnaryKindToUnaryFn(UnaryKind kind) {
   }
 
   return it->second;
+}
+
+static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
+  static const llvm::DenseMap<CompareKind, hfusion::CompareFn> kindToFn = {
+      {CompareKind::EQ, hfusion::CompareFn::veq},
+      {CompareKind::NE, hfusion::CompareFn::vne},
+      {CompareKind::LT, hfusion::CompareFn::vlt},
+      {CompareKind::GT, hfusion::CompareFn::vgt},
+      {CompareKind::GE, hfusion::CompareFn::vge},
+      {CompareKind::LE, hfusion::CompareFn::vle}
+  };
+
+  auto it = kindToFn.find(kind);
+  if (it == kindToFn.end()) {
+    llvm_unreachable("unsupported compare kind");
+  }
+
+  return it->second;
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createCmpOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst,
+    CompareKind kind) {
+  CompareFn cmpFn = mapCompareKindToCompareFn(kind);
+  Operation *cmpOp = hfusion::createCmpOp(rewriter, loc, input, dst, cmpFn);
+  return cmpOp->getResult(0);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(

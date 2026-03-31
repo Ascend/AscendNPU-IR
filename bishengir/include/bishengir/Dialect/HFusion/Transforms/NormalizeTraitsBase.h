@@ -23,8 +23,13 @@
 
 namespace mlir::hfusion {
 
-class NormalizeTraitsBase {
+/// Base traits class for HFusion Normalize operations.
+/// Provides common utility methods that can be reused by specific traits.
+struct NormalizeTraitsBase {
 public:
+  static Value createCmpOp(PatternRewriter &rewriter, Location loc,
+                           Value input, Value dst, CompareKind kind);
+
   static Value createUnaryOp(PatternRewriter &rewriter, Location loc,
                              Value input, Value dst, UnaryKind kind);
 };

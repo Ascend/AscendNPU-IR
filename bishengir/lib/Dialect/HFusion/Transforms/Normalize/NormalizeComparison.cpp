@@ -17,6 +17,8 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
+#include "bishengir/Transforms/Normalize/NormalizeComparison.h"
 
 namespace mlir::hfusion {
 
@@ -64,39 +66,13 @@ public:
   }
 };
 
-/// Normalize cmp Vne to Not(cmp Veq)
-/// Because ne will work incorrectly, if src element value is NAN
-/// eg.
-///  y = hfusion.compare x, z {vne} ->  i1
-/// is normalized to
-/// tmp = hfusion.compare x, z {veq} ->  i1
-///  y = hfusion.elemwise {unary <vnot>} tmp -> i1
-struct NormalizeCmpVne : public OpRewritePattern<CompareOp> {
-public:
-  using OpRewritePattern<CompareOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(CompareOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics())
-      return failure();
-    if (op.getCompareFn() != CompareFn::vne)
-      return failure();
-    Value lhs = op.getInputs()[0];
-    Value rhs = op.getInputs()[1];
-
-    // create eq op
-    // replace OG op with not op
-    auto veqOp = createCmpOp(rewriter, op->getLoc(), lhs, rhs, CompareFn::veq);
-    auto vnotOp =
-        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                               hfusion::UnaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::UnaryFn::vnot,
-            ValueRange{veqOp->getResults()}, ValueRange(op.getOutputs()));
-    rewriter.replaceOp(op, vnotOp);
-
-    return success();
+struct HFusionCmpVneTraits : public NormalizeTraitsBase {
+  static bool shouldNormalize(CompareOp op) {
+    return op.hasPureTensorSemantics() && op.getCompareFn() == CompareFn::vne;
   }
 };
+
+using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<CompareOp, HFusionCmpVneTraits>;
 
 struct NormalizeCmpOp : public OpRewritePattern<hfusion::CompareOp> {
 public:
@@ -546,6 +522,6 @@ void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns) {
 
 void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns) {
   if (!archIsRegbased)
-    patterns.add<NormalizeCmpVne>(patterns.getContext());
+    patterns.add<NormalizeCmpVneOp>(patterns.getContext());
 }
 } // namespace mlir::hfusion

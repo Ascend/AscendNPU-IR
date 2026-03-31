@@ -43,7 +43,36 @@ using UnaryOpFn = Value (*)(PatternRewriter &, Location, Value, Value);
 static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
     UNARY_OP_ENTRY(Rec, hivm::VRecOp),
     UNARY_OP_ENTRY(Sqrt, hivm::VSqrtOp),
+    UNARY_OP_ENTRY(Not, hivm::VNotOp),
 };
+
+CompareMode mapCompareKindToCompareMode(CompareKind kind) {
+  static const llvm::DenseMap<CompareKind, CompareMode> compareKindMap = {
+    {CompareKind::EQ, CompareMode::EQ},
+    {CompareKind::NE, CompareMode::NE},
+    {CompareKind::LT, CompareMode::LT},
+    {CompareKind::GT, CompareMode::GT},
+    {CompareKind::GE, CompareMode::GE},
+    {CompareKind::LE, CompareMode::LE}
+  };
+  auto it = compareKindMap.find(kind);
+  if (it == compareKindMap.end())
+    llvm_unreachable("Unknown CompareKind");
+  return it->second;
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst,
+    CompareKind kind) {
+  CompareMode cmpMode = mapCompareKindToCompareMode(kind);
+  Type boolType = rewriter.getIntegerType(1);
+  auto emptyOp = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                                        boolType);
+  auto cmpOp = rewriter.create<VCmpOp>(loc, TypeRange(emptyOp),
+                                       ValueRange({input, dst}),
+                                       ValueRange(emptyOp), cmpMode);
+  return cmpOp.getResult()[0];
+}
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,

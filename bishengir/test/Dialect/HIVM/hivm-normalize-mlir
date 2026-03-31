@@ -1,0 +1,21 @@
+// RUN: bishengir-opt --convert-hfusion-to-hivm --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
+
+//
+// This test verifies the correctness of HIVM normalization transformations
+// applied to HFusion operators after conversion to HIVM dialect.
+//
+
+// CHECK-LABEL: func.func @test_normalize_compare_neq_to_Not_eq
+// CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi64>, %[[arg2:.*]]: tensor<1024xi1>)
+// CHECK: %[[empty:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[vcmp:.]] = hivm.hir.vcmp ins(%[[arg0]], %[[arg1]] : tensor<1024xi64>, tensor<1024xi64>) outs(%[[empty]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: %[[vnot:.]] = hivm.hir.vnot ins(%[[vcmp]] : tensor<1024xi1>) outs(%[[arg2]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: return %[[vnot]]
+func.func @test_normalize_compare_neq_to_Not_eq(
+  %src1 : tensor<1024xi64>, %src2 : tensor<1024xi64>,  %dst : tensor<1024xi1>) ->  tensor<1024xi1> {
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vne>}
+    ins(%src1, %src2 : tensor<1024xi64>, tensor<1024xi64>)
+    outs(%dst : tensor<1024xi1>)
+    -> tensor<1024xi1>
+  return %ret : tensor<1024xi1>
+}

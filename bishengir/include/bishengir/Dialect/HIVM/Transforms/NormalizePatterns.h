@@ -14,16 +14,20 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+//
+// This file declares the populate functions for HIVM Normalize patterns.
+//
+//===----------------------------------------------------------------------===//
 
 #ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H
 
 #include "mlir/IR/PatternMatch.h"
 
-using namespace mlir;
 namespace mlir::hivm {
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hivm
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H
