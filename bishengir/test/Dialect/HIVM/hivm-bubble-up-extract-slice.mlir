@@ -162,6 +162,25 @@ func.func @bubble_up_hivm_reduce(%arg0: tensor<5x4xf32>) -> tensor<2xf32> {
     return %extracted_slice : tensor<2xf32>
 }
 
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_varange(
+// CHECK-SAME:                                 %[[VAL_0:.*]]: tensor<128xi32>) -> tensor<64xi32> {
+// CHECK:            %c1 = arith.constant 1 : index
+// CHECK:            %c64 = arith.constant 64 : index
+// CHECK:            %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0:.*]][64] [64] [1] {to_be_bubbled_slice} : tensor<128xi32> to tensor<64xi32>
+// CHECK:            %[[VAL_2:.*]] = hivm.hir.varange offset[%c64] strides[%c1] outs(%[[VAL_1:.*]] : tensor<64xi32>) -> tensor<64xi32>
+// CHECK:            return %[[VAL_2:.*]] : tensor<64xi32>
+// CHECK:        }
+func.func @bubble_up_varange(%arg0 : tensor<128xi32>) -> tensor<64xi32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index 
+    %14 = hivm.hir.varange offset[%c0] strides[%c1] outs(%arg0 : tensor<128xi32>) -> tensor<128xi32>
+    %extracted_slice = tensor.extract_slice %14[64] [64] [1] {to_be_bubbled_slice} : tensor<128xi32> to tensor<64xi32>
+    return %extracted_slice : tensor<64xi32>
+}
+
+
 // -----
 // CHECK-LABEL:   func.func @bubble_up_hivm_fixpipe(
 // CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<128x128xf32>) -> tensor<64x128xf32> {

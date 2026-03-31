@@ -1172,9 +1172,15 @@ VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   markCreatedExtractSliceOp(rewriter, newSliceOp);
 
+  // get the offset value from extract_slice
+  Value sliceOffset = getValueOrCreateConstantIndexOp(rewriter, loc, offsets[0]);
+  Value origVarangeOffset = varangeOp.getOffset();
+  // The new offset of varange = sliceOffset + origVarangeOffset
+  Value newVarangeOffset = rewriter.create<arith::AddIOp>(loc, origVarangeOffset, sliceOffset);
+
   rewriter.setInsertionPointAfter(varangeOp);
   auto newVarangeOp = rewriter.create<hivm::VArangeOp>(loc, sliceOp.getType(),
-                                                       newSliceOp.getResult());
+                                                       newSliceOp.getResult(), newVarangeOffset);
 
   rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
   rewriter.eraseOp(varangeOp);
