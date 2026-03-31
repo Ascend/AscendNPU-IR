@@ -227,6 +227,11 @@ Value rewriteMmadThrowOutBatch(hivm::BatchMmadL1Op batchmmOp,
       batchmmOp.getRealK(), batchmmOp.getRealN(), /*C=*/newOutput,
       batchmmOp.getPerChannelBias(), batchmmOp.getATransposeAttr(),
       batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr());
+  // Set the batch_matmul attribute on the Mmad
+  rewriter.modifyOpInPlace(tiledMmad, [&]() -> void {
+    tiledMmad->setAttr(hivm::batchMatmulAttr,
+                       UnitAttr::get(rewriter.getContext()));
+  });
   Value matrixToStore = rewriteMatrixCShapeChange(
       /* ignore first fixpipe */ ArrayRef<Operation *>(useChain).drop_front(),
       tiledMmad.getResultTensors()[0], rewriter);
@@ -334,11 +339,6 @@ public:
     rewriter.setInsertionPointAfter(originFixpipe);
     auto nestFor = createNestedLoops(rewriter, batchmmOp.getLoc(), matrixC,
                                      loopDims, buildLoopBody, 0, forInitArgs);
-    // Set the batch_matmul attribute on the outer loop
-    rewriter.modifyOpInPlace(nestFor[0], [&]() -> void {
-      nestFor[0]->setAttr(hivm::batchMatmulAttr,
-                          UnitAttr::get(rewriter.getContext()));
-    });
 
     assert(nestFor.size() == 1);
     if (isa<TensorType>(originFixpipe.getDst().getType())) {
