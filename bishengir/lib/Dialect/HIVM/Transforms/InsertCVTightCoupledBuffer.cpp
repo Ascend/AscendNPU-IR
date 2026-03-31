@@ -56,6 +56,10 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+constexpr static llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+ 	     "MayImplicitTransposeWithLastAxis";
+constexpr static llvm::StringLiteral maybeUnCollapsibleReshape =
+       "maybeUnCollapsibleReshape";
 struct InsertCVTightCoupledBufferPass
     : public impl::InsertCVTightCoupledBufferBase<
           InsertCVTightCoupledBufferPass> {
@@ -262,7 +266,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
   for (OpOperand *consumerOperand : consumerOperands) {
     Value origTensor = consumerOperand->get();
     // TODO: enhance support for dynamic shape
-    auto tensorType = origTensor.getType().dyn_cast<RankedTensorType>();
+    auto tensorType = mlir::dyn_cast<RankedTensorType>(origTensor.getType());
     if (!tensorType)
       continue;
 
@@ -272,15 +276,17 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     // TODO: Consider encapsulating it as an nd2dz function
     int64_t M = tensorType.getDimSize(0);
     int64_t N = tensorType.getDimSize(1);
-    int32_t alignM = 16;
-    int32_t alignN = 32;
+    static constexpr int32_t alignM = 16;
+    static constexpr int32_t alignN = 32;
     auto elemType = tensorType.getElementType();
 
     uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-    int64_t newN = (((elemTypeSize * N + (alignN - 1)) / alignN) * alignN) / elemTypeSize;
+    int64_t newN = (AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
+                            static_cast<uint64_t>(alignN)) / elemTypeSize);
 
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
-      int64_t newM = ((M + alignM - 1) / alignM) * alignM;
+      int64_t newM = static_cast<int64_t>(
+        AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
       auto paddedType = RankedTensorType::get({newM, newN}, elemType);
       Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
 
@@ -437,7 +443,11 @@ struct InsertMoveL1BetweenVectorAndCube
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
     bool changed = false;
+    auto inputValues = op.getInputOperands();
     for (OpOperand &operand : op->getOpOperands()) {
+      Value beforeValue = operand.get();
+      if (llvm::find(inputValues, beforeValue) == inputValues.end())
+        continue;
       auto producerOps = traceDefOps<OpType>(operand.get());
       if (producerOps.empty())
         continue;
@@ -460,13 +470,30 @@ struct InsertMoveL1BetweenVectorAndCube
           if (!maybeSpace.has_value() || maybeSpace.value() != hivm::AddressSpace::UB)
             continue;
         }
+        if constexpr (std::is_same_v<OpType, bufferization::ToTensorOp>) {
+          auto toTensorOp = llvm::cast<bufferization::ToTensorOp>(producer);
+          auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+              toTensorOp.getResult(), kMayImplicitTransposeWithLastAxis);
+          if (!maybeAnnotateOp.has_value()) {
+            maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+                toTensorOp.getMemref(), kMayImplicitTransposeWithLastAxis);
+          }
+          if (!maybeAnnotateOp.has_value())
+            continue;
+ 	      }
+        if constexpr (std::is_same_v<OpType, tensor::CollapseShapeOp>) {
+          auto collapseShapeOp = llvm::cast<tensor::CollapseShapeOp>(producer);
+          auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
+              collapseShapeOp.getResult(), maybeUnCollapsibleReshape);
+          if (!maybeAnnotateOp.has_value())
+            continue;
+        }
         matched = true;
         break;
       }
       if (!matched)
         continue;
 
-      Value beforeValue = operand.get();
       auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
       LogicalResult result = InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
@@ -502,10 +529,7 @@ struct InsertDataMovementFixpipeToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
       if (!maybeFixpipe)
         continue;
-      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(maybeFixpipe.value());
-
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
-
       LogicalResult ubResult =
           InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
       if (failed(ubResult))
@@ -543,6 +567,8 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferization::ToTensorOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::CollapseShapeOp>>(patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
