@@ -1386,6 +1386,25 @@ struct DropUnitDimsLinalgOp
       return rewriter.create<linalg::FillOp>(loc, zero, empty).getResult(0);
     };
 
+    auto squeezeValueIfPossible = [&](Value tensor) -> Value {
+      auto maybeCollapsed = tryCollapseValue(tensor, rewriter, loc);
+      if (succeeded(maybeCollapsed))
+        return maybeCollapsed.value();
+      return tensor;
+    };
+
+    auto restoreResultShape = [&](Value tensor, Value refVal) -> Value {
+      if (tensor.getType() == refVal.getType())
+        return tensor;
+
+      SmallVector<ReassociationIndices> reassocIdxVec;
+      auto maybeExpanded = tryExpandValueWithUnitDim(
+          tensor, refVal, reassocIdxVec, rewriter, loc);
+      if (!maybeExpanded.has_value())
+        return {};
+      return maybeExpanded.value();
+    };
+
     auto buildNanNormalizedTensor = [&](Value tensor, auto isMaxLike) -> Value {
       auto tensorTy = dyn_cast<RankedTensorType>(tensor.getType());
       if (!tensorTy)
@@ -1474,17 +1493,28 @@ struct DropUnitDimsLinalgOp
       if (!resultTy)
         return false;
 
-      Value src = input0;
-      if (kind == ReduceKind::MaxNumF)
-        src = buildNanNormalizedTensor(src, /*isMaxLike=*/true);
-      else if (kind == ReduceKind::MinNumF)
-        src = buildNanNormalizedTensor(src, /*isMaxLike=*/false);
-
-      Value collapsed = dropUnitDim(src, resultTy, redDim);
-      if (!collapsed)
+      Value replacement = dropUnitDim(input0, resultTy, redDim);
+      if (!replacement)
         return false;
 
-      rewriter.replaceOp(reduce, collapsed);
+      replacement = squeezeValueIfPossible(replacement);
+
+      // Keep the no-op reduce in the collapsed rank so downstream reshape
+      // propagation does not have to shuttle unit-dim expand/collapse pairs
+      // through the NaN normalization path.
+      if (kind == ReduceKind::MaxNumF)
+        replacement = buildNanNormalizedTensor(replacement, /*isMaxLike=*/true);
+      else if (kind == ReduceKind::MinNumF)
+        replacement = buildNanNormalizedTensor(replacement, /*isMaxLike=*/false);
+
+      if (!replacement)
+        return false;
+
+      replacement = restoreResultShape(replacement, reduce->getResult(0));
+      if (!replacement)
+        return false;
+
+      rewriter.replaceOp(reduce, replacement);
       return true;
     }
 
