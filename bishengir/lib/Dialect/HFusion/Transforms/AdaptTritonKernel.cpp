@@ -900,7 +900,8 @@ void setCustomOpBuiltinGMArgAttrs(Operation *op) {
   if (const auto maybeGMAddrArgsIndices = customOp.getGMAddrArgsIndices()) {
     const auto &gmAddrArgsIndices = *maybeGMAddrArgsIndices;
     for (const size_t i : gmAddrArgsIndices) {
-      const size_t funcArgIdx = utils::getArgumentIndex(customOp.getOperand(i));
+      const size_t funcArgIdx = static_cast<size_t>
+                                (utils::getArgumentIndex(customOp.getOperand(i)));
       funcOp.setArgAttr(funcArgIdx, hacc::KernelArgTypeAttr::name,
                         hacc::KernelArgTypeAttr::get(
                             op->getContext(), hacc::KernelArgType::kGMAddr));

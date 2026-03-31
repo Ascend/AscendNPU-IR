@@ -543,7 +543,7 @@ struct ElementwiseInlineAsmOpConversion
       // packedElement, and the inner dim is the operand.
       SmallVector<SmallVector<Value>> block(packedElement);
       for (auto &os : unpackedOperands) {
-        for (uint32_t j = 0; j < packedElement; j++) {
+        for (uint32_t j = 0; j < static_cast<uint32_t>(packedElement); j++) {
           block[j].push_back(os[i + j]);
         }
       }
@@ -569,7 +569,7 @@ struct ElementwiseInlineAsmOpConversion
 };
 
 struct AbsIOpConversion
-    : ElementwiseOpConversionBase<math::AbsIOp, AbsIOpConversion> {
+    : public ElementwiseOpConversionBase<math::AbsIOp, AbsIOpConversion> {
   using Base = ElementwiseOpConversionBase<math::AbsIOp, AbsIOpConversion>;
   using Base::Base;
   using Adaptor = typename Base::OpAdaptor;

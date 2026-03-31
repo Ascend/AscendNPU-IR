@@ -21,11 +21,11 @@ namespace triton {
 namespace proton {
 namespace gpu {
 
-const int getBytesPerClockEntry();
+int getBytesPerClockEntry();
 
-const int getCircularHeaderSize();
+int getCircularHeaderSize();
 
-const int getTotalNumWarps(ModuleOp mod);
+int getTotalNumWarps(ModuleOp mod);
 
 } // namespace gpu
 } // namespace proton

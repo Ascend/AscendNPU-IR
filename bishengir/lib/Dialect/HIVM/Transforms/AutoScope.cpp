@@ -68,7 +68,7 @@ private:
     rewriter.createBlock(&scopeOp->getRegion(0));
     rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
     IRMapping mapping;
-    Operation *cloned;
+    Operation *cloned = nullptr;  
     for (auto iter = simtVFOps.rbegin(); iter != simtVFOps.rend(); iter++) {
       cloned = rewriter.clone(**iter, mapping);
       for (size_t i = 0; i < cloned->getNumResults(); i++) {
@@ -78,7 +78,7 @@ private:
         rewriter.eraseOp(*iter);
       }
     }
-    if (cloned != nullptr) {
+    if (cloned && cloned->getNumResults()) {
       rewriter.create<scope::ReturnOp>(loc, cloned->getResults());
     }
     return scopeOp;

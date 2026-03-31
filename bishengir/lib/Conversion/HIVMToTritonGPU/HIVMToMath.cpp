@@ -166,7 +166,6 @@ struct VectorOpToMathUnary : public OpRewritePattern<HIVMVectorOp> {
         return failure();
     }
     Value lhs = hivmOperands[0];
-    Value dst_val = hivmOperands[1];
     auto resType = op.getResult().getType();
  
     auto result = rewriter.create<MathUnaryOp>(op.getLoc(), resType, lhs);
@@ -195,7 +194,6 @@ struct VectorOpToMathBinary : public OpRewritePattern<HIVMVectorOp> {
     }
     Value lhs = hivmOperands[0];
     Value rhs = hivmOperands[1];
-    Value dst_val = hivmOperands[2];
     auto resType = op.getResult().getType();
  
     auto result = rewriter.create<MathBinaryOp>(op.getLoc(), resType, lhs, rhs);
