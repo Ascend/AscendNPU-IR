@@ -1187,7 +1187,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
            << castOp << "\n"
            << subViewOpGM << "\n"
            << allocOp << "\n"
-           << subViewOp);
+           << subViewOp << "\n"
+           << loadOp);
       rewriter.setInsertionPoint(subViewOpGM);
 
       // Compute new size
@@ -1239,10 +1240,14 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
               sliceOp, allocOp.getResult(), true, true);
 
-      rewriter.eraseOp(subViewOp);
-      rewriter.eraseOp(subViewOpGM);
       rewriter.replaceOp(toTensorOp, newToTensorOp);
-
+      
+      LDBG("After Pattern 2:\n"
+           << newCastValue << "\n"
+           << newSubViewOpGM << "\n"
+           << allocOp << "\n"
+           << newSubViewOp << "\n"
+           << loadOp);
       LDBG(newSubViewOp->getParentOfType<func::FuncOp>());
       return success();
     }
