@@ -4,8 +4,10 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 get_property(extension_libs GLOBAL PROPERTY MLIR_EXTENSION_LIBS)
 
 set(triton_libs)
+set(triton_deps)
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
   list(APPEND triton_libs TritonAggregateLib)
+  list(APPEND triton_deps ProtonToProtonGPUIncGen)
 endif()
 
 add_bishengir_library(MLIRBiShengIRCompileLib
@@ -16,6 +18,9 @@ add_bishengir_library(MLIRBiShengIRCompileLib
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Tools/bisheng-compile
+
+  DEPENDS
+  ${triton_deps}
 
   LINK_LIBS PUBLIC
   ${translation_libs}

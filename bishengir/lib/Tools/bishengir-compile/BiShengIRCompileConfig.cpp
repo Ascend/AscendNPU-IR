@@ -10,6 +10,10 @@
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/Utility.h"
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+#endif
+
 #include "llvm/ADT/STLExtras.h" // interleaveComma
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -19,6 +23,16 @@
 using namespace bishengir;
 using namespace llvm;
 using namespace mlir::triton;
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+static proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
+
+namespace bishengir {
+const proton::ConvertProtonToProtonGPUOptions &getProtonGPUCompileConfig() {
+  return protonGPUCompileConfig;
+}
+} // namespace bishengir
+#endif
 
 namespace {
 static cl::OptionCategory featCtrlCategory("BiShengIR Feature Control Options");
@@ -562,6 +576,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(maxReductionSplitNumFlag), cl::init(1),
         cl::cat(hivmOptCategory));
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
     // -------------------------------------------------------------------------//
     //                            proton options
     // -------------------------------------------------------------------------//
@@ -668,6 +683,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::desc("Use long clock if true, otherwise use 32-bit clock"),
         cl::location(protonGPUCompileConfig.clockExtension), cl::init(false),
         cl::cat(protonCategory));
+#endif
 
     // -------------------------------------------------------------------------//
     //                            Target options

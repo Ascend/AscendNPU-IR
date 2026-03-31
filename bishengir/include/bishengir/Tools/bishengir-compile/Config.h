@@ -20,8 +20,6 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 
-#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
-
 using namespace llvm;
 using namespace mlir;
 
@@ -664,15 +662,6 @@ public:
   }
 
   // -------------------------------------------------------------------------//
-  //                            proton options                                //
-  // -------------------------------------------------------------------------//
-
-  mlir::triton::proton::ConvertProtonToProtonGPUOptions
-  getProtonGPUCompileConfig() const {
-    return protonGPUCompileConfig;
-  }
-
-  // -------------------------------------------------------------------------//
   //                            Target options                                //
   // -------------------------------------------------------------------------//
   BiShengIRCompileMainConfig &targetBackend(mlir::hacc::TargetDevice target) {
@@ -1057,12 +1046,6 @@ protected:
 
   /// Enable SIMT reorder instruction pattern
   bool enableSimtReorderInstructionFlag{false};
-
-  // -------------------------------------------------------------------------//
-  //                            proton options                                //
-  // -------------------------------------------------------------------------//
-
-  mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 
   // -------------------------------------------------------------------------//
   //                            Target options                                //
