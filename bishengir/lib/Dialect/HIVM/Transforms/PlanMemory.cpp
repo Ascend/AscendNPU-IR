@@ -842,7 +842,12 @@ bool MemLivenessAnalysis::IsDeadAfterOp(Value value,
           return false;
         }
         // once different parent ops in same block, check the order
-        return !currentOp->isBeforeInBlock(op);
+        if (currentOp->isBeforeInBlock(op)) {
+          return false;
+        } else {
+          // CurrentOp is after UserOp, check the next user
+          break;
+        }
       }
       userChildOp = op;
     }
