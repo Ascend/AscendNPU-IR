@@ -451,7 +451,6 @@ void DimensionAnalyzerBase::separateGroup(Value val, BitVector contiguousMask,
     }
     return false;
   };
-
   // Second iteration: merge considering units and existing connections
   SmallVector<Group> mergedGroups;
   mergedGroups.push_back(contiguousGroups[0]);

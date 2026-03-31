@@ -476,6 +476,7 @@ void buildConvertToHIVMPipeline(OpPassManager &pm,
 void buildHIVMTensorOptimizations(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
+  pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
   hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
 }
 

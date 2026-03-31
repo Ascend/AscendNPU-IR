@@ -755,6 +755,92 @@ module {
 
 // -----
 module {
+  func.func @test_mem_plan_multi_address(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
+                                         %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST3:.*]] = arith.constant 96 : i64
+    // CHECK: %[[CONST2:.*]] = arith.constant 64 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 32 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    scf.for %i0 = %c0 to %c16 step %c4 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]], %[[CONST2]], %[[CONST3]])
+      %src_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %src_ub {hivm.multi_buffer = 4 : i32} : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%src_gm : memref<16xf16, #hivm.address_space<gm>>)
+                    outs(%src_ub : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%src_ub : memref<16xf16,#hivm.address_space<ub>>)
+                     outs(%dst_gm: memref<16xf16,#hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+module {
+  func.func @test_inplace_single_and_mb(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
+                                        %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST3:.*]] = arith.constant 96 : i64
+    // CHECK: %[[CONST2:.*]] = arith.constant 64 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 32 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    scf.for %i0 = %c0 to %c16 step %c4 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]], %[[CONST2]], %[[CONST3]])
+      %src_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %src_ub {hivm.multi_buffer = 4 : i32} : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]], %[[CONST2]], %[[CONST3]])
+      %dst_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%src_gm : memref<16xf16, #hivm.address_space<gm>>)
+                    outs(%src_ub : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.vadd ins(%src_ub, %src_ub : memref<16xf16, #hivm.address_space<ub>>,
+                        memref<16xf16, #hivm.address_space<ub>>)
+                    outs(%dst_ub : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%dst_ub : memref<16xf16,#hivm.address_space<ub>>)
+                     outs(%dst_gm: memref<16xf16,#hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+module {
+  func.func @test_mem_inplace_mb_and_mb(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
+                                        %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST3:.*]] = arith.constant 96 : i64
+    // CHECK: %[[CONST2:.*]] = arith.constant 64 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 32 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    scf.for %i0 = %c0 to %c16 step %c4 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]], %[[CONST2]], %[[CONST3]])
+      %src_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %src_ub {hivm.multi_buffer = 4 : i32} : memref<16xf16, #hivm.address_space<ub>>
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]], %[[CONST2]], %[[CONST3]])
+      %dst_ub = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
+      annotation.mark %dst_ub {hivm.multi_buffer = 4 : i32} : memref<16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%src_gm : memref<16xf16, #hivm.address_space<gm>>)
+                    outs(%src_ub : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.vadd ins(%src_ub, %src_ub : memref<16xf16, #hivm.address_space<ub>>,
+                        memref<16xf16, #hivm.address_space<ub>>)
+                    outs(%dst_ub : memref<16xf16, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%dst_ub : memref<16xf16,#hivm.address_space<ub>>)
+                     outs(%dst_gm: memref<16xf16,#hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+module {
   func.func @test_infer_mem_allocate_loop_conflict(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                                    %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -1646,7 +1732,7 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST1:.*]])
       %alloc_0 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
       %alloc_1 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg10, %alloc_0 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_1 : memref<16xf16, #hivm.address_space<ub>>)
@@ -1655,13 +1741,13 @@ module {
       // CHECK: hivm.hir.pointer_cast(%[[CONST2:.*]])
       %alloc_2 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg1 : memref<16xf16, #hivm.address_space<gm>>) outs(%alloc_2 : memref<16xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST2]])
       %alloc_3 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vsub ins(%arg11, %alloc_2 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
         outs(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
       cf.br ^bb3(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
     ^bb3(%arg12 : memref<16xf16, #hivm.address_space<ub>>):
-      // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
       %alloc_4 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg12, %arg12 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
                   outs(%alloc_4 : memref<16xf16, #hivm.address_space<ub>>)
@@ -1726,4 +1812,108 @@ func.func @test_mark_op_kill_handle(%arg0: memref<4096x8xf32, #hivm.address_spac
   hivm.hir.store ins(%alloc_1 : memref<4096x8xf32, #hivm.address_space<ub>>) outs(%arg1 : memref<4096x8xf32, #hivm.address_space<gm>>)
   annotation.mark %alloc : memref<4096x8xf32, #hivm.address_space<ub>>
   return 
+}
+
+// -----
+
+module {
+  func.func @test_iter_plan_memory_if_yield(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %alloc6 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %alloc8 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %cond: i1) {
+    // CHECK-NOT: memref.alloc()
+
+    // CHECK: %[[CONST0:.*]] = arith.constant 16384 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 8192 : i64
+    // CHECK: %[[CONST2:.*]] = arith.constant 0 : i64
+    // CHECK: %[[CONST3:.*]] = arith.constant 24576 : i64
+    // CHECK: hivm.hir.pointer_cast(%[[CONST3]])
+    %alloc1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[CONST3]])
+    %alloc3 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[CONST2]])
+    %alloc5 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+    %alloc9 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+    %alloc10 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                 outs(%alloc1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.load ins(%alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                  outs(%alloc5 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.load ins(%alloc6 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                  outs(%alloc9 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.load ins(%alloc8 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                  outs(%alloc10 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+
+    %0 = scf.if %cond -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
+      %1 = scf.if %cond -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
+        scf.yield %alloc1: memref<16x16x16xf16, #hivm.address_space<ub>>
+      } else {
+        hivm.hir.vadd ins(%alloc1, %alloc9 : memref<16x16x16xf16, #hivm.address_space<ub>>,
+                          memref<16x16x16xf16, #hivm.address_space<ub>>)
+                      outs(%alloc3 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+        scf.yield %alloc3: memref<16x16x16xf16, #hivm.address_space<ub>>
+      }
+      %alloc11 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.copy ins(%1 : memref<16x16x16xf16, #hivm.address_space<ub>>) outs(%alloc11 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+      scf.yield %alloc11 : memref<16x16x16xf16, #hivm.address_space<ub>>
+    } else {
+      hivm.hir.vadd ins(%alloc5, %alloc10 : memref<16x16x16xf16, #hivm.address_space<ub>>,
+                        memref<16x16x16xf16, #hivm.address_space<ub>>)
+          outs(%alloc3 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+      scf.yield %alloc3 : memref<16x16x16xf16, #hivm.address_space<ub>>
+    }
+    hivm.hir.store ins(%0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+                   outs(%alloc8 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @outlined_vf(%arg0: memref<16x16x16xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    return
+  }
+  func.func @test_plan_memory_if_yield_vf(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %arg2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
+                                             %cond: i1) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK-DAG​: %[[CONST0:.*]] = arith.constant 8192 : i64
+    // CHECK-DAG​: %[[CONST1:.*]] = arith.constant 0 : i64
+    // CHECK-DAG​: %[[CONST2:.*]] = arith.constant 16384 : i64
+    // CHECK-DAG​: hivm.hir.pointer_cast(%[[CONST2]])
+    // CHECK-DAG​: hivm.hir.pointer_cast(%[[CONST1]])
+    %alloc = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+
+    hivm.hir.load ins(%arg2 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                  outs(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    hivm.hir.copy ins(%alloc_0 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+                  outs(%alloc : memref<16x16x16xf16, #hivm.address_space<ub>>)
+    %0 = scf.if %cond -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
+      %1 = scf.if %cond -> (memref<16x16x16xf16, #hivm.address_space<ub>>) {
+        %alloc_3 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+        hivm.hir.load ins(%arg0 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                      outs(%alloc_3 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+        scf.yield %alloc_3 : memref<16x16x16xf16, #hivm.address_space<ub>>
+      } else {
+        scf.yield %alloc : memref<16x16x16xf16, #hivm.address_space<ub>>
+      }
+      %alloc_1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.copy ins(%1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+                    outs(%alloc_1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+      %alloc_2 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.load ins(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>)
+                  outs(%alloc_2 : memref<16x16x16xf16, #hivm.address_space<ub>>)
+      scf.yield %alloc_2 : memref<16x16x16xf16, #hivm.address_space<ub>>
+    } else {
+      scf.yield %alloc : memref<16x16x16xf16, #hivm.address_space<ub>>
+    }
+    func.call @outlined_vf(%0) {hivm.vector_function, no_inline} : (memref<16x16x16xf16, #hivm.address_space<ub>>) -> ()
+    return
+  }
 }

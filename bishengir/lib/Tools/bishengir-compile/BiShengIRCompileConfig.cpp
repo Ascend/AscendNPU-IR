@@ -293,6 +293,12 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableFlattenFlag), cl::init(true),
         cl::cat(generalOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableFuseReductionIntoLoop(
+        "enable-fuse-reduction-into-loop",
+        cl::desc("Enable fuse post-loop reductions into the loop body"),
+        cl::location(enableFuseReductionIntoLoopFlag), cl::init(false),
+        cl::cat(generalOptCategory));
+
     static cl::opt<int, /*ExternalStorage=*/true>
         enableBishengirSimtOptimization(
             "enable-bishengir-simt-optimization",
@@ -432,7 +438,14 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                      "(Default: pass default)"),
             cl::location(maxFusedOpsInAutoVectorizeV2Flag), cl::init(-1),
             cl::cat(hfusionOptCategory));
-    static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
+
+    static cl::opt<bool, /*ExternalStorage=*/true> enableMultipleConsumerFusion(
+        "hfusion-enable-multiple-consumer-fusion",
+        cl::desc("Enable multiple consumer fusion in AutoVectorizeV2."),
+        cl::location(enableMultipleConsumerFusionFlag), cl::init(false),
+        cl::cat(hfusionOptCategory));
+
+        static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
         "hfusion-max-fused-elementwise-ops",
         cl::desc("Maximum number of elementwise ops to fuse in "
                  "PreVectorizationFusion (Default: unlimited)"),

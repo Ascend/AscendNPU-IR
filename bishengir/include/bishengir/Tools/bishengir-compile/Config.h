@@ -573,6 +573,14 @@ public:
   }
   bool shouldEnableFlatten() const { return enableFlattenFlag; }
 
+  BiShengIRCompileMainConfig &enableFuseReductionIntoLoop(bool enable) {
+    enableFuseReductionIntoLoopFlag = enable;
+    return *this;
+  }
+  bool shouldEnableFuseReductionIntoLoop() const {
+    return enableFuseReductionIntoLoopFlag;
+  }
+
   BiShengIRCompileMainConfig &setWorkspaceMultiBufferNum(unsigned number) {
     workspaceMultiBufferNumFlag = number;
     return *this;
@@ -628,6 +636,14 @@ public:
     return *this;
   }
   int getMaxReductionSplitNum() const { return maxReductionSplitNumFlag; }
+
+  BiShengIRCompileMainConfig &enableMultipleConsumerFusion(bool enable) {
+    enableMultipleConsumerFusionFlag = enable;
+    return *this;
+  }
+  bool shouldEnableMultipleConsumerFusion() const {
+    return enableMultipleConsumerFusionFlag;
+  }
 
   // -------------------------------------------------------------------------//
   //                            proton options                                //
@@ -892,6 +908,9 @@ protected:
   /// Enable flatten pass.
   bool enableFlattenFlag{true};
 
+  /// Enable fuse-reduction-into-loop pass.
+  bool enableFuseReductionIntoLoopFlag{false};
+
   /// Number of multibuffers for workspace.
   unsigned workspaceMultiBufferNumFlag{2};
 
@@ -947,6 +966,9 @@ protected:
   int32_t maxHorizontalFusionSizeFlag{-1};
   /// Maximum number of elementwise ops to fuse in PreVectorizationFusion.
   int32_t maxFusedElementwiseOpsFlag{-1};
+
+  /// Enable multiple consumer fusion in AutoVectorizeV2
+  bool enableMultipleConsumerFusionFlag{false};
 
   /// Max buffer count tuning in HFusion auto schedule.
   int64_t maxBufferCntTuningFlag{0};

@@ -1352,3 +1352,14 @@ func.func @extract_slice_rank_reduced2() -> tensor<4x12x16xf32> {
       : tensor<4x12x1x1x16x16xf32> to tensor<4x12x16xf32>
     return %extracted_slice :  tensor<4x12x16xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @hivm_store(
+// CHECK: hivm.hir.store ins({{.*}} : tensor<4x8xf32>) outs({{.*}} : memref<4x8xf32>)
+func.func @hivm_store(%arg0: tensor<4xf32>, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}) {
+  %0 = tensor.empty() : tensor<4x8xf32>
+  %broadcasted = linalg.broadcast ins(%arg0 : tensor<4xf32>) outs(%0 : tensor<4x8xf32>) dimensions = [1]
+  %reinterpret_cast_18 = memref.reinterpret_cast %arg8 to offset: [0], sizes: [4, 8], strides: [8, 1] : memref<?xf32> to memref<4x8xf32>
+  hivm.hir.store ins(%broadcasted : tensor<4x8xf32>) outs(%reinterpret_cast_18 : memref<4x8xf32>) atomic = <add>
+  return
+}

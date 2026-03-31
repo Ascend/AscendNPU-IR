@@ -63,6 +63,11 @@ struct HFusionPipelineOptions
       *this, "enable-tree-reduce", llvm::cl::desc("Enable tree reduce"),
       llvm::cl::init(false)};
 
+  PassOptions::Option<bool> enableMultipleConsumerFusion{
+      *this, "enable-multiple-consumer-fusion",
+      llvm::cl::desc("Enable multiple consumer fusion in AutoVectorizeV2"),
+      llvm::cl::init(false)};
+
   PassOptions::Option<bool> skipScope{
       *this, "skip-scope",
       llvm::cl::desc("Skip passes like flattenOps when scope exists"),
@@ -86,6 +91,11 @@ struct HFusionPipelineOptions
 
   PassOptions::Option<bool> enableMixedCV{
       *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
+      llvm::cl::init(false)};
+
+  PassOptions::Option<bool> enableFuseReductionIntoLoop{
+      *this, "enable-fuse-reduction-into-loop",
+      llvm::cl::desc("Enable fuse post-loop reductions into the loop body"),
       llvm::cl::init(false)};
 
   PassOptions::Option<bool> enableAutoMultiBuffer{

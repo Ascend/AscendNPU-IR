@@ -17,6 +17,7 @@
 #include "triton/Conversion/TritonGPUToLLVM/TargetInfoBase.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace mlir::triton::ascend {
 
@@ -86,7 +87,11 @@ public:
   void printf(RewriterBase &, StringRef, ValueRange,
               ArrayRef<bool> = {}) const override {}
 
-  int getAddressSpace(Attribute) const override { return 0; }
+  int getAddressSpace(Attribute attr) const override {
+    if (isa<triton::gpu::SharedMemorySpaceAttr>(attr))
+      return (int)ascend_dpx::AscendDPXAddressSpace::SHARED_MEM;
+    return 0;
+  }
 
   bool supportVectorizedAtomics() const override { return false; }
 };

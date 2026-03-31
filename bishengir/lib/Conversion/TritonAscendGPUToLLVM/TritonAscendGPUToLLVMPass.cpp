@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "nvidia/lib/TritonNVIDIAGPUToLLVM/PatternTritonGPUOpToLLVM.h"
 #include "triton/Analysis/Allocation.h"
 #include "triton/Analysis/AxisInfo.h"
 #include "triton/Analysis/Membar.h"
@@ -126,6 +127,9 @@ struct ConvertTritonAscendGPUToLLVMPass
                                                kDefaultPatternBenefit);
     triton::ascend::populateTritonOpToDPXPatterns(typeConverter, patterns,
                                                   kDefaultPatternBenefit);
+    // Compute capability 61 means devices do not support MMA
+    NVIDIA::populateDotOpToLLVMPatterns(typeConverter, patterns, 61,
+                                        kDefaultPatternBenefit);
     triton::ascend::populateLoadStoreOpToLLVMPatterns(
         typeConverter, targetInfo, patterns, axisInfoAnalysis,
         kDefaultPatternBenefit);
@@ -137,8 +141,8 @@ struct ConvertTritonAscendGPUToLLVMPass
     mlir::arith::populateCeilFloorDivExpandOpsPatterns(patterns);
     mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
     mlir::populateMathToLLVMConversionPatterns(typeConverter, patterns);
-    triton::populateMemoryOpToLLVMPatterns(
-        typeConverter, targetInfo, patterns, kDefaultPatternBenefit);
+    triton::populateMemoryOpToLLVMPatterns(typeConverter, targetInfo, patterns,
+                                           kDefaultPatternBenefit);
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns)))) {
       return signalPassFailure();
     }

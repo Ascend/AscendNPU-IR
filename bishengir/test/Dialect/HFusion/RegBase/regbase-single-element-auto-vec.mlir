@@ -4,7 +4,7 @@ module {
   // CHECK-LABEL: @triton_kernel_i8_fused_0_outlined_vf_0
   // CHECK: @llvm.hivm.pge.b8
   // CHECK: @llvm.hivm.vldsx1.v256s8
-  // CHECK: @llvm.hivm.vabs.v256s8.x
+  // CHECK: @llvm.hivm.vabs.x
   // CHECK: @llvm.hivm.vstsx1.v256s8
   func.func @triton_kernel_i8(%arg0: memref<?xi8>, %arg1: memref<?xi8> {tt.divisibility = 16 : i32}, %arg2: memref<?xi8> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "aiv"} {
     %c1_i32 = arith.constant 1 : i32
@@ -28,7 +28,7 @@ module {
   // CHECK-LABEL: triton_kernel_i8_fused_0_outlined_vf_0
   // CHECK: @llvm.hivm.pge.b16
   // CHECK: @llvm.hivm.vldsx1.v128s16
-  // CHECK: @llvm.hivm.vabs.v128s16.x
+  // CHECK: @llvm.hivm.vabs.x
   // CHECK: @llvm.hivm.vstsx1.v128s16
   func.func @triton_kernel_i16(%arg0: memref<?xi8>, %arg1: memref<?xi16> {tt.divisibility = 16 : i32}, %arg2: memref<?xi16> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "aiv"} {
   %c1_i32 = arith.constant 1 : i32
