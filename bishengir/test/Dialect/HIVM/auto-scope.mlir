@@ -2,10 +2,11 @@
 
 module {
   // CHECK: scope.scope
+  // CHECK-NEXT:   %[[EMPTY:.*]] = tensor.empty() : tensor<8xf32>
   // CHECK-NEXT:   %[[REINTERPRETCAST:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
   // CHECK-NEXT:   hivm.hir.load ins(%[[REINTERPRETCAST:.*]] : memref<8xi64, strided<[1]>>) outs(%[[ALLOC:.*]] : memref<8xi64>) eviction_policy = <EvictFirst>
   // CHECK-NEXT:   %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC:.*]] restrict writable : memref<8xi64>
-  // CHECK-NEXT:   %[[GATHERLOAD:.*]] = hivm.hir.gather_load ins(%[[ARG2:.*]] : memref<?xf32>, %[[TOTENSOR:.*]] : tensor<8xi64>, %[[c:.*]] : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+  // CHECK-NEXT:   %[[GATHERLOAD:.*]] = hivm.hir.gather_load ins(%[[ARG2:.*]] : memref<?xf32>, %[[TOTENSOR:.*]] : tensor<8xi64>, %[[c:.*]] : i32) outs(%[[EMPTY]] : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
   // CHECK-NEXT:   scope.return %[[GATHERLOAD:.*]] : tensor<8xf32>
   // CHECK-NEXT:  hivm.func_core_type = #hivm.func_core_type<AIV>
   func.func @simple_indirect_load_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
@@ -19,9 +20,10 @@ module {
     %alloc = memref.alloc() : memref<8xi64>
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%alloc : memref<8xi64>) eviction_policy = <EvictFirst>
     %2 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
-    %3 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %2 : tensor<8xi64>, %c1_i32 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+    %3 = tensor.empty() : tensor<8xf32>
+    %4 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %2 : tensor<8xi64>, %c1_i32 : i32) outs(%3 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
     %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
-    hivm.hir.store ins(%3 : tensor<8xf32>) outs(%reinterpret_cast_0 : memref<8xf32, strided<[1]>>)
+    hivm.hir.store ins(%4 : tensor<8xf32>) outs(%reinterpret_cast_0 : memref<8xf32, strided<[1]>>)
     return
   }
 }
@@ -33,7 +35,7 @@ module {
   // CHECK-NEXT:   %[[REINTERPRETCAST:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
   // CHECK-NEXT:   hivm.hir.load ins(%[[REINTERPRETCAST:.*]] : memref<8xi64, strided<[1]>>) outs(%[[ALLOC:.*]] : memref<8xi64>) eviction_policy = <EvictFirst>
   // CHECK-NEXT:   %[[TOTENSOR:.*]] = bufferization.to_tensor %[[ALLOC:.*]] restrict writable : memref<8xi64>
-  // CHECK-NEXT:   hivm.hir.scatter_store ins(%[[ARG2:.*]] : memref<?xf32>, %[[TOTENSOR:.*]] : tensor<8xi64>, %[[DATA:.*]] : tensor<8xf32>, %[[c:.*]] : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
+  // CHECK-NEXT:   hivm.hir.scatter_store ins(%[[TOTENSOR:.*]] : tensor<8xi64>, %[[DATA:.*]] : tensor<8xf32>, %[[c:.*]] : i32) outs(%[[ARG2:.*]] : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
   // CHECK-NEXT:   scope.return
   // CHECK-NEXT:  hivm.func_core_type = #hivm.func_core_type<AIV>
   func.func @simple_indirect_store_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
@@ -51,7 +53,7 @@ module {
     %alloc_1 = memref.alloc() : memref<8xf32>
     hivm.hir.load ins(%reinterpret_cast_0 : memref<8xf32, strided<[1]>>) outs(%alloc_1 : memref<8xf32>) eviction_policy = <EvictFirst>
     %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<8xf32>
-    hivm.hir.scatter_store ins(%arg2 : memref<?xf32>, %2 : tensor<8xi64>, %3 : tensor<8xf32>, %c1_i32 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
+    hivm.hir.scatter_store ins(%2 : tensor<8xi64>, %3 : tensor<8xf32>, %c1_i32 : i32) outs(%arg2 : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
     return
   }
 }

@@ -6,8 +6,9 @@ module {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
-    %1 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %0 : tensor<8xi64>, %arg3 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
-    hivm.hir.local_store ins(%arg4 : memref<8xf32>, %1 : tensor<8xf32>)
+    %1 = tensor.empty() : tensor<8xf32>
+    %2 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %0 : tensor<8xi64>, %arg3 : i32) outs(%1 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+    hivm.hir.local_store ins(%arg4 : memref<8xf32>, %2 : tensor<8xf32>)
     return
   }
   func.func @simple_indirect_load_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
@@ -36,7 +37,7 @@ module {
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
     %1 = hivm.hir.local_load ins(%arg2 : memref<8xf32>) -> tensor<8xf32>
-    hivm.hir.scatter_store ins(%arg3 : memref<?xf32>, %0 : tensor<8xi64>, %1 : tensor<8xf32>, %arg4 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
+    hivm.hir.scatter_store ins(%0 : tensor<8xi64>, %1 : tensor<8xf32>, %arg4 : i32) outs(%arg3 : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
     return
   }
   func.func @simple_indirect_store_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {

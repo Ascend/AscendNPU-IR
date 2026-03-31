@@ -36,7 +36,7 @@ using namespace mlir::triton;
 namespace {
 // Convert hivm.hir.gather_load op into tt.load, for example:
 // Before:
-//  %1 = hivm.hir.gather_load (%base, %indices, %burst_len)
+//  %1 = hivm.hir.gather_load ins(%base, %indices, %burst_len) outs(%dst)
 // After:
 //  %5 = tt.splat %base : !tt.ptr<f32> -> tensor<16x!tt.ptr<f32>>
 //  %6 = tt.addptr %5, %indices : tensor<16x!tt.ptr<f32>>, tensor<16xi32>
@@ -47,6 +47,16 @@ public:
   LogicalResult
   matchAndRewrite(hivm::GatherLoadOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (!op.getResult()) {
+      return rewriter.notifyMatchFailure(
+          op, "only tensor destination gather_load is supported");
+    }
+
+    if (!isa<RankedTensorType>(adaptor.getDst().getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "destination must be a ranked tensor type");
+    }
+
     auto indices = adaptor.getIndices();
     auto indicesTy = dyn_cast<RankedTensorType>(indices.getType());
     if (!indicesTy) {
@@ -66,21 +76,13 @@ public:
     auto ptrTensor = splat.getResult();
     auto addptr = rewriter.create<triton::AddPtrOp>(loc, ptrTensor.getType(),
                                                     ptrTensor, indices);
-    auto *context = op.getContext();
-    auto boundary =
-        adaptor.getBoundaryCheck().value_or(llvm::ArrayRef<int32_t>{});
-    triton::PaddingOptionAttr padding;
-    if (auto res = adaptor.getPaddingAttr()) {
-      auto v = static_cast<triton::PaddingOption>(res.getValue());
-      padding = triton::PaddingOptionAttr::get(context, v);
-    }
     auto cache = triton::CacheModifier::NONE;
     if (auto res = adaptor.getCacheAttr()) {
-      cache = static_cast<triton::CacheModifier>(res.getValue());
+      cache = static_cast<triton::CacheModifier>(res.getPolicy());
     }
     auto evict = triton::EvictionPolicy::NORMAL;
     if (auto res = adaptor.getEvictAttr()) {
-      evict = static_cast<triton::EvictionPolicy>(res.getEvictionpolicy());
+      evict = static_cast<triton::EvictionPolicy>(res.getPolicy());
     }
     auto isVolatile = false;
     if (auto res = adaptor.getIsVolatile()) {
@@ -88,7 +90,8 @@ public:
     }
     auto load = rewriter.create<triton::LoadOp>(
         loc, addptr.getResult(), adaptor.getMask(), adaptor.getOther(),
-        boundary, padding, cache, evict, isVolatile);
+        llvm::ArrayRef<int32_t>{}, triton::PaddingOptionAttr{}, cache, evict,
+        isVolatile);
     rewriter.replaceOp(op, load);
 
     return success();
@@ -147,7 +150,7 @@ class HIVMLoalLoadOpPattern : public OpConversionPattern<hivm::LocalLoadOp> {
 
 // Convert hivm.hir.scatter_store op into tt.store, for example:
 // Before:
-//  %1 = hivm.hir.scatter_store (%base, %indices, %data, %burst_len)
+//  hivm.hir.scatter_store ins(%indices, %data, %burst_len) outs(%base)
 // After:
 //  %5 = tt.splat %base : !tt.ptr<f32> -> tensor<16x!tt.ptr<f32>>
 //  %6 = tt.addptr %5, %indices : tensor<16x!tt.ptr<f32>>, tensor<16xi32>
@@ -158,6 +161,11 @@ public:
   LogicalResult
   matchAndRewrite(hivm::ScatterStoreOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    if (!isa<MemRefType>(adaptor.getBase().getType())) {
+      return rewriter.notifyMatchFailure(
+          op, "only memref base scatter_store is supported");
+    }
+
     auto indices = adaptor.getIndices();
     auto indicesTy = dyn_cast<RankedTensorType>(indices.getType());
     if (!indicesTy) {
@@ -175,18 +183,17 @@ public:
     auto splat = rewriter.create<triton::SplatOp>(loc, splatTy, ttPtr.getResult(0));
     auto ptrTensor = splat.getResult();
     auto addptr = rewriter.create<triton::AddPtrOp>(loc, ptrTensor.getType(), ptrTensor, indices);
-    auto boundaryCheck = adaptor.getBoundaryCheck().value_or(llvm::ArrayRef<int32_t>{});
     auto cache = triton::CacheModifier::NONE;
     if (auto res = adaptor.getCacheAttr()) {
-      cache = static_cast<triton::CacheModifier>(res.getValue());
+      cache = static_cast<triton::CacheModifier>(res.getPolicy());
     }
     auto evict = triton::EvictionPolicy::NORMAL;
     if (auto res = adaptor.getEvictAttr()) {
-      evict = static_cast<triton::EvictionPolicy>(res.getEvictionpolicy());
+      evict = static_cast<triton::EvictionPolicy>(res.getPolicy());
     }
     auto storeOp = rewriter.create<triton::StoreOp>(
         loc, addptr.getResult(), adaptor.getData(), adaptor.getMask(),
-        boundaryCheck, cache, evict);
+        llvm::ArrayRef<int32_t>{}, cache, evict);
     rewriter.replaceOp(op, storeOp);
  
     return success();
@@ -427,7 +434,10 @@ public:
     auto dst = adaptor.getDst();
     auto evict = triton::EvictionPolicy::NORMAL;
     if (auto evictAttr = op.getEvictionPolicy()) {
-      switch (evictAttr->getEvictionpolicy()) {
+      switch (evictAttr->getPolicy()) {
+      case hivm::EvictionPolicy::EvictNormal:
+        evict = triton::EvictionPolicy::NORMAL;
+        break;
       case hivm::EvictionPolicy::EvictFirst:
         evict = triton::EvictionPolicy::EVICT_FIRST;
         break;

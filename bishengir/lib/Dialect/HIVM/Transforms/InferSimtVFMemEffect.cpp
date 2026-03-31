@@ -102,10 +102,12 @@ void InferSimtVFMemEffectPass::inferFuncArgMemEffect(func::FuncOp funcOp) {
           storeOp, funcOp, [](hivm::StoreOp op) { return op.getDst(); },
           hivm::MemoryEffect::WRITE);
     } else if (auto scatterStoreOp = llvm::dyn_cast<hivm::ScatterStoreOp>(op)) {
-      handleMemOp(
-          scatterStoreOp, funcOp,
-          [](hivm::ScatterStoreOp op) { return op.getBase(); },
-          hivm::MemoryEffect::WRITE);
+      if (isa<MemRefType>(scatterStoreOp.getBase().getType())) {
+        handleMemOp(
+            scatterStoreOp, funcOp,
+            [](hivm::ScatterStoreOp op) { return op.getBase(); },
+            hivm::MemoryEffect::WRITE);
+      }
     } else if (auto localLoadOp = llvm::dyn_cast<hivm::LocalLoadOp>(op)) {
       handleMemOp(
           localLoadOp, funcOp,

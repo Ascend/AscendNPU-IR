@@ -29,6 +29,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/ValueRange.h"
@@ -1117,30 +1118,20 @@ struct HFusionToHIVMGatherLoadOp
     auto newOp = rewriter.create<hivm::GatherLoadOp>(
         op->getLoc(), op->getResultTypes(), op->getOperands());
 
-    if (auto boundary = op.getBoundaryCheckAttr()) {
-      newOp.setBoundaryCheck(boundary);
-    }
-    if (auto padding = op.getPaddingAttr()) {
-      auto attrVal = (hivm::PaddingOption)padding.getValue();
-      newOp.setPaddingAttr(
-          hivm::PaddingOptionAttr::get(op->getContext(), attrVal));
-    }
     if (auto evict = op.getEvictAttr()) {
-      auto attrVal = (hivm::EvictionPolicy)evict.getValue();
-      newOp.setEvictAttr(
-          hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+      auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
     }
     if (auto cache = op.getCacheAttr()) {
-      auto attrVal = (hivm::CacheModifier)cache.getValue();
-      newOp.setCacheAttr(
-          hivm::CacheModifierAttr::get(op->getContext(), attrVal));
+      auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
+      newOp->setAttr("cache",
+                     hivm::CacheModifierAttr::get(op->getContext(), attrVal));
     }
-    if (auto isVolatile = op.getIsVolatileAttr()) {
-      newOp.setIsVolatileAttr(isVolatile);
-    }
+    if (auto isVolatile = op.getIsVolatileAttr())
+      newOp->setAttr("isVolatile", isVolatile);
 
     rewriter.replaceOp(op, newOp);
-
     return success();
   }
 };
@@ -1158,22 +1149,18 @@ struct HFusionToHIVMScatterStoreOp
     auto newOp = rewriter.create<hivm::ScatterStoreOp>(
         op->getLoc(), op->getResultTypes(), op->getOperands());
 
-    if (auto boundaryCheck = op.getBoundaryCheckAttr()) {
-      newOp.setBoundaryCheck(boundaryCheck);
-    }
     if (auto evict = op.getEvictAttr()) {
-      auto attrVal = (hivm::EvictionPolicy)evict.getValue();
-      newOp.setEvictAttr(
-          hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+      auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
     }
     if (auto cache = op.getCacheAttr()) {
-      auto attrVal = (hivm::CacheModifier)cache.getValue();
-      newOp.setCacheAttr(
-          hivm::CacheModifierAttr::get(op->getContext(), attrVal));
+      auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
+      newOp->setAttr("cache",
+                     hivm::CacheModifierAttr::get(op->getContext(), attrVal));
     }
 
     rewriter.replaceOp(op, newOp);
-
     return success();
   }
 };

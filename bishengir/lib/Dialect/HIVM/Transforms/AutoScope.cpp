@@ -74,7 +74,8 @@ private:
       for (size_t i = 0; i < cloned->getNumResults(); i++) {
         mapping.map((*iter)->getResult(i), cloned->getResult(i));
       }
-      if (llvm::isa<DestinationStyleOpInterface>(*iter)) {
+      if (llvm::isa<DestinationStyleOpInterface>(*iter) &&
+          *iter != simtVFOps.front() && (*iter)->use_empty()) {
         rewriter.eraseOp(*iter);
       }
     }
@@ -98,6 +99,7 @@ private:
       auto &op = *iter;
       if (&op == simtOp) {
         startMatch = true;
+        continue;
       }
       if (!startMatch) {
         continue;
@@ -166,6 +168,7 @@ private:
     if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(simtVFOps[0])) {
       recurseIR(simtVFOps, loadOp.getBase(), simtVFOps[0]);
       recurseIR(simtVFOps, loadOp.getIndices(), simtVFOps[0]);
+      recurseIR(simtVFOps, loadOp.getDst(), simtVFOps[0]);
       if (loadOp.getMask()) {
         recurseIR(simtVFOps, loadOp.getMask(), simtVFOps[0]);
       }
