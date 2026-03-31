@@ -112,14 +112,14 @@ LogicalResult padForInput(hivm::Conv1DL1Op op, PatternRewriter &rewriter,
       ValueRange{expandShapeOp->getResults()[0], hivmVBrcOp->getResults()[0]},
       emptyOp1->getResults()[0]);
 
-  // collaspe [N, G, C/G, iW] -> [N, C, iW]
+  // collapse [N, G, C/G, iW] -> [N, C, iW]
   SmallVector<int64_t> newShapeInput1{batch, C, iW};
   SmallVector<SmallVector<int64_t, 2>> reassoc1 = {{0}, {1, 2}, {3}};
-  auto collaspeOp = rewriter.create<tensor::CollapseShapeOp>(
+  auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
       op->getLoc(), RankedTensorType::get(newShapeInput1, elementType),
       concatOp->getResults()[0], reassoc1);
 
-  op->replaceUsesOfWith(input, collaspeOp.getResult());
+  op->replaceUsesOfWith(input, collapseOp.getResult());
   return success();
 }
 
@@ -309,7 +309,7 @@ LogicalResult getElementsFor32ByteAlignment(Type elementType, int64_t &C0) {
 ///
 /// In short:
 ///   logical layout -> padded & transformed fractal layout (for hardware)
-struct NormalizeConvIutputAndWeightPattern
+struct NormalizeConvInputAndWeightPattern
     : public OpRewritePattern<hivm::Conv1DL1Op> {
 public:
   using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
@@ -927,7 +927,7 @@ void populateNormalizeConvOpsPattern2(RewritePatternSet &patterns) {
 }
 
 void populateNormalizeConvOpsPattern3(RewritePatternSet &patterns) {
-  patterns.add<NormalizeConvIutputAndWeightPattern>(patterns.getContext());
+  patterns.add<NormalizeConvInputAndWeightPattern>(patterns.getContext());
   patterns.add<NormalizeConvOutputPattern>(patterns.getContext());
 }
 
