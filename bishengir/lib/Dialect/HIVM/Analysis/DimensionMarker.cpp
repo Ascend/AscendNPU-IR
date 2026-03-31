@@ -75,21 +75,27 @@ void DimensionAnalyzer::processBFS() {
     Value current = bfsQueue.front();
     bfsQueue.pop();
 
-    for (Operation *user : current.getUsers()) {
+    for (auto &use : current.getUses()) {
+      auto *user = use.getOwner();
       processOperation(user, current);
       if (isa<ShapedType>(current.getType())) {
         createDummyRefIfNotExist({current});
         auto curRef = argumentsRefPointer_.at(current);
-        for (auto res : user->getResults()) {
-          if (isa<ShapedType>(res.getType())) {
-            createDummyRefIfNotExist({res});
-            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+        if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+          auto regionArg = forOp.getTiedLoopRegionIterArg(&use);
+          auto res = forOp.getTiedLoopResult(&use);
+          createDummyRefIfNotExist({regionArg, res});
+          if (visited.insert(regionArg).second) {
+            bfsQueue.push(regionArg);
           }
-        }
-        for (auto opr : user->getOperands()) {
-          if (isa<ShapedType>(opr.getType())) {
-            createDummyRefIfNotExist({opr});
-            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
+          solverGroup_->join(curRef, argumentsRefPointer_.at(regionArg));
+          solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+        } else {
+          for (auto res : user->getResults()) {
+            if (isa<ShapedType>(res.getType())) {
+              createDummyRefIfNotExist({res});
+              solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+            }
           }
         }
       }
@@ -101,7 +107,7 @@ void DimensionAnalyzer::processBFS() {
         }
       }
       if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
-        auto yieldParentOp = yieldOp->getParentOp();
+        auto *yieldParentOp = yieldOp->getParentOp();
         LDBG("Encounter yieldOp. Parent " << *yieldParentOp);
         processOperation(yieldParentOp, current);
         for (Value result : yieldParentOp->getResults()) {
@@ -488,11 +494,15 @@ void DimensionAnalyzer::markDimensionKind() {
       if (droppedDimsMask[i]) {
         tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
             TilingDimensionKind::RankReduced;
+        LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
+                    << ") is marked as RankReduced");
       } else {
         if (isa<tensor::InsertSliceOp>(sliceOp.getOperation()) &&
             sliceType.getDimSize(sliceIdx) == 1) {
           tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
               TilingDimensionKind::Reduce;
+          LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
+                      << ") is marked as Reduce");
         }
         sliceIdx++;
       }
