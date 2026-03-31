@@ -75,7 +75,7 @@ static bool operateOnSigned(Operation *op) {
                 if (!op->hasAttr("isSigned")) {
                     return signed_require == IntegerType::Signed;
                 }
-                mlir::BoolAttr validAttr = op->getAttr("isSigned").mlir::cast<mlir::BoolAttr>();
+                mlir::BoolAttr validAttr = mlir::cast<mlir::BoolAttr>(op->getAttr("isSigned"));
                 bool validValue = validAttr.getValue();
                 if (validValue) {
                     return signed_require == IntegerType::Signed;

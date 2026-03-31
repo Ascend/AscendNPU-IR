@@ -58,7 +58,7 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
   Type elemTy = srcType.getElementType();
   DenseElementsAttr denseAttr;
   if (elemTy.isF32() || elemTy.isF16()) {
-    const llvm::fltSemantics &semantics = elemTy.mlir::cast<FloatType>().getFloatSemantics();
+    const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elemTy).getFloatSemantics();
     llvm::APFloat initVal(semantics);
     switch (reduceKind) {
     case vector::CombiningKind::MAXNUMF:

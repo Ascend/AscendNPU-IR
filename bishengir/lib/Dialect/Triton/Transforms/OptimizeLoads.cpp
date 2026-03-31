@@ -165,13 +165,13 @@ static Value ensureValueOfType(Value src, Type targetType, Location loc,
     return src;
 
   // scalar -> splat
-  if (src.getType().mlir::isa<IntegerType, FloatType, IndexType>()) {
+  if (mlir::isa<IntegerType, FloatType, IndexType>(src.getType())) {
     return createSplatFromScalar(src, targetType, loc, rewriter);
   }
 
   // try stepping through to find scalar inner
   Value inner = stepThroughBroadcastIfAny(src);
-  if (inner && inner.getType().mlir::isa<IntegerType>()) {
+  if (inner && mlir::isa<IntegerType>(inner.getType())) {
     return createSplatFromScalar(inner, targetType, loc, rewriter);
   }
 

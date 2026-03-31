@@ -70,7 +70,7 @@ static bool operateOnSigned(Operation *op) {
             if (!op->hasAttr("isSigned")) {
                 return signed_require == IntegerType::Signed;
             }
-            mlir::BoolAttr validAttr = op->getAttr("isSigned").mlir::cast<mlir::BoolAttr>();
+            mlir::BoolAttr validAttr = mlir::cast<mlir::BoolAttr>(op->getAttr("isSigned"));
             bool validValue = validAttr.getValue();
             if (validValue) {
                 return signed_require == IntegerType::Signed;
@@ -724,7 +724,7 @@ struct HIVMToArithReluOp: public OpRewritePattern<hivm::VReluOp> {
         DenseElementsAttr onesAttr;
         assert(elem_type.isF16() || elem_type.isF32() || elem_type.isSignlessInteger(32));
         if (elem_type.isF16() || elem_type.isF32()) {
-            const llvm::fltSemantics &semantics = elem_type.mlir::cast<FloatType>().getFloatSemantics();
+            const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elem_type).getFloatSemantics();
             llvm::APFloat initVal(semantics);
             initVal = llvm::APFloat::getZero(semantics);
             onesAttr = DenseElementsAttr::get(const_type, rewriter.getFloatAttr(elem_type, initVal));
@@ -792,7 +792,7 @@ struct HIVMToArithRecOp: public OpRewritePattern<hivm::VRecOp> {
         auto const_type = RankedTensorType::get(tensorType.getShape(), elem_type);
         DenseElementsAttr onesAttr;
         assert(elem_type.isF16() || elem_type.isF32());
-        const llvm::fltSemantics &semantics = elem_type.mlir::cast<FloatType>().getFloatSemantics();
+        const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elem_type).getFloatSemantics();
         llvm::APFloat initVal(semantics);
         initVal = llvm::APFloat::getOne(semantics);
         onesAttr = DenseElementsAttr::get(const_type, rewriter.getFloatAttr(elem_type, initVal));

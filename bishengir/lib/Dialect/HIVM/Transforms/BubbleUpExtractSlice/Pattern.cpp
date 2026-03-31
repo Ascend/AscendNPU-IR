@@ -1768,7 +1768,7 @@ bool SelectBubbleUpStrategy::isSupportedOperation(
 
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
   return isa_and_nonnull<arith::SelectOp>(sourceOp) &&
-         sliceOp.getSource().getType().mlir::isa<RankedTensorType>();
+         mlir::isa<RankedTensorType>(sliceOp.getSource().getType());
 }
 
 LogicalResult SelectBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
@@ -1780,7 +1780,7 @@ LogicalResult SelectBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
 
   // only support tensor select
-  if (!sliceOp.getSource().getType().mlir::isa<RankedTensorType>())
+  if (!mlir::isa<RankedTensorType>(sliceOp.getSource().getType()))
     return failure();
 
   auto loc = selectOp.getLoc();

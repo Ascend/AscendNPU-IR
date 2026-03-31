@@ -575,13 +575,13 @@ public:
     Value srcMemRef = copyOp->getOperand(0);
     Value dstMemRef = copyOp->getOperand(1);
     // check if memref type
-    auto srcType = srcMemRef.getType().mlir::dyn_cast<MemRefType>();
-    auto dstType = dstMemRef.getType().mlir::dyn_cast<MemRefType>();
+    auto srcType = mlir::dyn_cast<MemRefType>(srcMemRef.getType());
+    auto dstType = mlir::dyn_cast<MemRefType>(dstMemRef.getType());
     if (!srcType || !dstType)
       return failure();
     // check if hivm address space
-    auto srcAS = srcType.getMemorySpace().mlir::dyn_cast<hivm::AddressSpaceAttr>();
-    auto dstAS = dstType.getMemorySpace().mlir::dyn_cast<hivm::AddressSpaceAttr>();
+    auto srcAS = mlir::dyn_cast<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
+    auto dstAS = mlir::dyn_cast<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
     if (!srcAS || !dstAS)
       return failure();
     // check if ub to l1

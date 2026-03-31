@@ -1113,7 +1113,7 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
     return false;
   }
   auto writeOp = cast<vector::TransferWriteOp>(op);
-  auto memrefTy = writeOp.getSource().getType().mlir::dyn_cast<MemRefType>();
+  auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getSource().getType());
   LLVM_DEBUG(DBGS() << "transferOp: " << writeOp << "\n");
   if (!memrefTy) {
     return false;

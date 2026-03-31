@@ -957,8 +957,8 @@ struct ExpandLoad1D : public OpRewritePattern<hivm::LoadOp> {
 
     Value src = loadOp.getSrc();
     Value dst = loadOp.getDst();
-    auto srcType = src.getType().mlir::dyn_cast<MemRefType>();
-    auto dstType = dst.getType().mlir::dyn_cast<MemRefType>();
+    auto srcType = mlir::dyn_cast<MemRefType>(src.getType());
+    auto dstType = mlir::dyn_cast<MemRefType>(dst.getType());
     auto srcSize = srcType.getDimSize(0);
 
     if (!srcType || !dstType || srcType.getRank() != 1) {
@@ -986,7 +986,7 @@ struct ExpandLoad1D : public OpRewritePattern<hivm::LoadOp> {
 
       for (auto &use : llvm::make_early_inc_range(allocOp.getResult().getUses())) {
         if (auto expandOp = dyn_cast<memref::ExpandShapeOp>(use.getOwner())) {
-          auto expandResultType = expandOp.getResult().getType().mlir::cast<MemRefType>();
+          auto expandResultType = mlir::cast<MemRefType>(expandOp.getResult().getType());
           if (expandResultType.getRank() == 2 && expandResultType.getDimSize(0) == 1) {
             LLVM_DEBUG(llvm::dbgs() << "  Found Redundant ExpandShape, Replacing: " << *expandOp << "\n");
             rewriter.replaceOp(expandOp, newAlloc.getResult());
