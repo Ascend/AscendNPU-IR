@@ -15,6 +15,8 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/Support/Debug.h"
 
@@ -75,12 +77,98 @@ struct DeleteCreatedMarkOp : public OpRewritePattern<annotation::MarkOp> {
 };
 
 // Identify if the input value carries the pseudo boolean attribute
+static bool hasPseudoBoolAttr(Operation *op) {
+  return op && op->hasAttr("was_bool_to_int8");
+}
+
+static Value getPseudoBoolSource(Value val) {
+  Operation *defOp = val.getDefiningOp();
+  if (!defOp) {
+    return {};
+  }
+
+  if (hfusion::isReshapeOrSliceOp(defOp)) {
+    return hfusion::getReshapeOrSliceSource(defOp);
+  }
+
+  if (auto broadcastOp = dyn_cast<linalg::BroadcastOp>(defOp)) {
+    return broadcastOp.getInput();
+  }
+
+  if (auto absOp = dyn_cast<math::AbsIOp>(defOp)) {
+    return absOp.getOperand();
+  }
+
+  if (auto unaryOp = dyn_cast<linalg::ElemwiseUnaryOp>(defOp)) {
+    if (unaryOp.getFun() == linalg::UnaryFn::abs &&
+        unaryOp.getNumDpsInputs() == 1) {
+      return unaryOp.getInputs()[0];
+    }
+    return {};
+  }
+
+  if (auto unaryOp = dyn_cast<hfusion::ElemwiseUnaryOp>(defOp)) {
+    if ((unaryOp.getFun() == hfusion::UnaryFn::absi ||
+         unaryOp.getFun() == hfusion::UnaryFn::relu) &&
+        unaryOp.getNumDpsInputs() == 1) {
+      return unaryOp.getInputs()[0];
+    }
+  }
+
+  return {};
+}
+
 static bool isPseudoBool(Value val) {
   if (auto defOp = val.getDefiningOp()) {
-    return defOp->hasAttr("was_bool_to_int8");
+    if (hasPseudoBoolAttr(defOp)) {
+      return true;
+    }
+
+    Value source = getPseudoBoolSource(val);
+    if (source) {
+      return isPseudoBool(source);
+    }
   }
   return false;
 }
+
+struct ClampPseudoBoolReduceOp : public OpRewritePattern<linalg::ReduceOp> {
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op->hasAttr("is_clamped") || op.getNumDpsInputs() != 1 ||
+        op.getNumDpsInits() != 1 || !isPseudoBool(op.getInputs()[0])) {
+      return failure();
+    }
+
+    Type elemType = getElementTypeOrSelf(op.getInputs()[0].getType());
+    if (!elemType.isInteger(8)) {
+      return failure();
+    }
+
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getNumOperands() != 1) {
+      return failure();
+    }
+
+    auto addOp = dyn_cast_or_null<arith::AddIOp>(
+        yieldOp.getValues()[0].getDefiningOp());
+    if (!addOp) {
+      return failure();
+    }
+
+    rewriter.setInsertionPoint(addOp);
+    auto orOp = rewriter.create<arith::OrIOp>(addOp.getLoc(), addOp.getLhs(),
+                                              addOp.getRhs());
+    orOp->setAttr("is_clamped", rewriter.getBoolAttr(true));
+    rewriter.replaceOp(addOp, orOp.getResult());
+    op->setAttr("is_clamped", rewriter.getBoolAttr(true));
+    op->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
+    return success();
+  }
+};
 
 template <typename OpTy>
 struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
@@ -127,30 +215,30 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
 
     // Sign extend addition result to i32
     Value extendedResult = rewriter.create<arith::ExtSIOp>(
-        location, tensorTypeI32, unClampedResult);
+      location, tensorTypeI32, unClampedResult);
 
     // Construct i32 zero tensor
     Value zeroScalarI32 = rewriter.create<arith::ConstantOp>(
-        location, rewriter.getI32IntegerAttr(0));
+      location, rewriter.getI32IntegerAttr(0));
     Value emptyTensorI32 = rewriter.create<tensor::EmptyOp>(
-        location, tensorTypeI32.getShape(), i32Type);
+      location, tensorTypeI32.getShape(), i32Type);
     Value zeroTensorI32 = rewriter.create<linalg::FillOp>(
-        location, zeroScalarI32, emptyTensorI32).getResult(0);
+      location, zeroScalarI32, emptyTensorI32).getResult(0);
 
     // Compare in i32 precision
     Value cmpTensor = rewriter.create<arith::CmpIOp>(
-        location, arith::CmpIPredicate::ne, extendedResult, zeroTensorI32);
+      location, arith::CmpIPredicate::ne, extendedResult, zeroTensorI32);
 
     // Zero extend boolean result back to i8
-    Value clampedTensor = rewriter.create<arith::ExtUIOp>(
-        location, tensorType, cmpTensor);
+    Value clampedResult = rewriter.create<arith::ExtUIOp>(
+      location, tensorType, cmpTensor);
 
     // Propagate semantic marker
-    if (auto extOp = clampedTensor.getDefiningOp()) {
+    if (auto extOp = clampedResult.getDefiningOp()) {
       extOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
     }
 
-    rewriter.replaceOp(op, clampedTensor);
+    rewriter.replaceOp(op, clampedResult);
     return success();
   }
 };
@@ -400,7 +488,8 @@ void LegalizeBoolPass::runOnOperation() {
   // Conditional Execution Branch
   if (this->enableClamp) {
     RewritePatternSet clampPatterns(context);
-    clampPatterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
+    clampPatterns.add<ClampPseudoBoolReduceOp,
+                      ClampPseudoBoolArithOp<arith::AddIOp>,
                       ClampPseudoBoolArithOp<arith::SubIOp>>(context);
                       
     if (failed(applyPatternsGreedily(mod, std::move(clampPatterns)))) {
