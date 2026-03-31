@@ -224,6 +224,10 @@ broadcast_scalar_b64(T scalar, memref_t<__ubuf__ T, 1> *dst) {
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 broadcast_scalar_1d(T scalar, memref_t<__ubuf__ T, 1> *dst) {
+  if (!is_offset_aligned(dst)) {
+    brc_scalar_1d_by_scalar(scalar, dst);
+    return;
+  }
   // Input parameter constraints assert.
   check_inputs_of_broadcast_scalar(scalar, dst);
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
@@ -255,6 +259,10 @@ broadcast_scalar_1d(T scalar, memref_t<__ubuf__ T, 1> *dst) {
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 broadcast_scalar_2d(T scalar, memref_t<__ubuf__ T, 2> *dst) {
+  if (!is_offset_aligned(dst) || !is_stride_aligned(dst)) {
+    brc_scalar_2d_by_scalar(scalar, dst);
+    return;
+  }
   if constexpr (sizeof(T) == 1) {
     memref_t<__ubuf__ T, 1> dst_1d;
     dst_1d.allocated = dst->allocated;
