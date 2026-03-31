@@ -2,7 +2,7 @@
 
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @vf_mm_func(%x : tensor<16x16xf16>)
                       -> tensor<16x16xf16>
                       attributes {hivm.vector_function} {
@@ -38,7 +38,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @vf_mm_func(%x : tensor<16x16xf16>)
                       -> tensor<16x16xf16>
                       attributes {hivm.vector_function} {
@@ -77,7 +77,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_insert_slice_mm(
   // CHECK-SAME: %[[ARG0:.*]]: tensor<16x16xf16>, %[[ARG1:.*]]: tensor<16x16xf16>) -> tensor<16x16xf16> {
   func.func @test_insert_slice_mm(%a : tensor<16x16xf16>,
@@ -120,7 +120,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_insert_slice_scf_for_mm(
   // CHECK-SAME: %[[ARG0:.*]]: tensor<16x16xf16>, %[[ARG1:.*]]: tensor<16x16xf16>) -> tensor<16x16xf16> {
   func.func @test_insert_slice_scf_for_mm(%a : tensor<16x16xf16>,
@@ -171,7 +171,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_vector_mm(
   // CHECK: %[[VMUL:.*]] = hivm.hir.vmul ins({{.*}} : tensor<16x16xf32>, f32) outs({{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
   // CHECK: %[[EXPAND:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 2, 8\]}} : tensor<16x16xf32> into tensor<16x2x8xf32>
@@ -205,7 +205,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_fixpipe_vector(
   // CHECK: %[[ALLOC_UB:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
   // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
@@ -228,7 +228,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_fixpipe_store(
   // CHECK: %[[ALLOC_UB:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
   // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
@@ -250,7 +250,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_mmad_fixpipe_vadd_dynamic(
   // CHECK-SAME: %{{.*}}: tensor<16x32xf32>, %{{.*}}: tensor<32x16xf32>, %[[ARG2:.*]]: index, %[[ARG3:.*]]: index
   // CHECK: %[[MINSI:.*]] = arith.minsi %[[ARG2]], %{{.*}} : index
@@ -274,7 +274,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   
   func.func @_attn_fwd_outlined_vf_3(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.vector_function} {
     %cst = arith.constant dense<5.000000e-01> : vector<1x64xf32>
@@ -333,7 +333,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_vector_for_next_loop_cube
   func.func @test_vector_for_next_loop_cube() -> tensor<16x16xf32> {
     %c0_i32 = arith.constant 0 : i32
@@ -359,7 +359,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_cube_for_next_loop_vector
   func.func @test_cube_for_next_loop_vector() -> tensor<16x16xf32> {
     %c0_i32 = arith.constant 0 : i32
@@ -389,7 +389,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_fixpipe_to_mmadl1_tight_coupled
   // CHECK-SAME: (%[[ARG0:.*]]: tensor<16x16xf32>, %[[ARG1:.*]]: tensor<16x16xf32>, %[[ARG2:.*]]: tensor<16x16xf32>, %[[ARG3:.*]]: tensor<16x16xf32>)
   func.func @test_fixpipe_to_mmadl1_tight_coupled(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>, %arg3: tensor<16x16xf32>) -> tensor<16x16xf32> {
@@ -421,7 +421,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_fixpipe_extract(
   func.func @test_fixpipe_extract(%src : tensor<16x16xf32>) -> f16 {
     %dst_init = tensor.empty() : tensor<16x16xf16>
@@ -440,7 +440,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_connect_point_with_if(
   func.func @test_connect_point_with_if() -> tensor<16x16xf32> {
     %c0_i32 = arith.constant 0 : i32
@@ -487,7 +487,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_marked_to_tensor_b_operand(
   // CHECK: %[[B_TENSOR:.*]] = bufferization.to_tensor %[[B_MEM:.*]] restrict writable : memref<16x64xf16>
   // CHECK: annotation.mark %[[B_TENSOR]] {MayImplicitTransposeWithLastAxis} : tensor<16x64xf16>
@@ -517,7 +517,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_collapse_shape_with_annotation(
   func.func @test_collapse_shape_with_annotation(%arg1 : memref<4x4x16xf16>, 
                                                 %arg2 : tensor<16x64xf16>) -> tensor<16x64xf32> {
@@ -545,7 +545,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @triton_dot_2(
   func.func @triton_dot_2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, false, false, false]> : vector<8xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {
     %c16 = arith.constant 16 : index

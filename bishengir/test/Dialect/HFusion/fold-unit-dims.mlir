@@ -283,40 +283,42 @@ func.func @triton_extract_insert_slice_02(%3: i32) -> tensor<1x8192x1xf32> {
 // CHECK-LABEL: triton_scope
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[NOT_COLLAPSED1:.*]], %[[NOT_COLLAPSED2:.*]] : tensor<1x64xf32>, tensor<1x64xf32>)
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[VAL:.*]] : tensor<1x64xf32>)
-func.func @triton_scope(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>, %arg4: memref<?xf32>) {
-  %c0_i32 = arith.constant 0 : i32
-  %c1_i32 = arith.constant 1 : i32
-  %c64_i32 = arith.constant 64 : i32
-  %cst_0 = arith.constant 0.000000e+00 : f32
-  %cst_1 = arith.constant 5.000000e-01 : f32
-  %0 = tensor.empty() : tensor<128x128xf32>
-  %1 = linalg.fill ins(%cst_0 : f32) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
-  %alloc = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
-  scope.scope : () -> () {
-    %2 = linalg.matmul {input_precison = "ieee"} ins(%arg0, %arg1 : tensor<128x128xf32>, tensor<128x128xf32>) outs(%1 : tensor<128x128xf32>) -> tensor<128x128xf32>
-    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%2 : tensor<128x128xf32>) outs(%alloc : memref<64x128xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
-    scope.return
-  } {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, noinline}
-  %3 = tensor.empty() : tensor<1x64xf32>
-  %4 = linalg.fill ins(%cst_1 : f32) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
-  scope.scope : () -> () {
-    %memspacecast = memref.memory_space_cast %alloc : memref<64x128xf32, #hivm.address_space<ub>> to memref<64x128xf32>
-    %5 = bufferization.to_tensor %memspacecast restrict writable : memref<64x128xf32>
-    %8 = scf.for %arg2 = %c0_i32 to %c64_i32 step %c1_i32 iter_args(%arg3 = %4) -> (tensor<1x64xf32>)  : i32 {
-      %6 = arith.index_cast %arg2 : i32 to index
-      %extracted_slice = tensor.extract_slice %5[%6, 0] [1, 64] [1, 1] : tensor<64x128xf32> to tensor<1x64xf32>
-      %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice, %arg3 : tensor<1x64xf32>, tensor<1x64xf32>) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
-      scf.yield %7 : tensor<1x64xf32>
-    }
-    %10 = scope.scope : () -> (tensor<1x64xf32>) {
-      %9 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%8 : tensor<1x64xf32>) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
-      scope.return %9 : tensor<1x64xf32>
-    } {noinline, outline = true, vector_mode = "simd"}
-    %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?xf32> to memref<1x64xf32, strided<[64, 1]>>
-    bufferization.materialize_in_destination %10 in writable %reinterpret_cast : (tensor<1x64xf32>, memref<1x64xf32, strided<[64, 1]>>) -> ()
-    scope.return
-  } {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, noinline}
-  return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @triton_scope(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>, %arg4: memref<?xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %cst_1 = arith.constant 5.000000e-01 : f32
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %1 = linalg.fill ins(%cst_0 : f32) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %alloc = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+    scope.scope : () -> () {
+      %2 = linalg.matmul {input_precison = "ieee"} ins(%arg0, %arg1 : tensor<128x128xf32>, tensor<128x128xf32>) outs(%1 : tensor<128x128xf32>) -> tensor<128x128xf32>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%2 : tensor<128x128xf32>) outs(%alloc : memref<64x128xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
+      scope.return
+    } {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, noinline}
+    %3 = tensor.empty() : tensor<1x64xf32>
+    %4 = linalg.fill ins(%cst_1 : f32) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
+    scope.scope : () -> () {
+      %memspacecast = memref.memory_space_cast %alloc : memref<64x128xf32, #hivm.address_space<ub>> to memref<64x128xf32>
+      %5 = bufferization.to_tensor %memspacecast restrict writable : memref<64x128xf32>
+      %8 = scf.for %arg2 = %c0_i32 to %c64_i32 step %c1_i32 iter_args(%arg3 = %4) -> (tensor<1x64xf32>)  : i32 {
+        %6 = arith.index_cast %arg2 : i32 to index
+        %extracted_slice = tensor.extract_slice %5[%6, 0] [1, 64] [1, 1] : tensor<64x128xf32> to tensor<1x64xf32>
+        %7 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%extracted_slice, %arg3 : tensor<1x64xf32>, tensor<1x64xf32>) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
+        scf.yield %7 : tensor<1x64xf32>
+      }
+      %10 = scope.scope : () -> (tensor<1x64xf32>) {
+        %9 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%8 : tensor<1x64xf32>) outs(%3 : tensor<1x64xf32>) -> tensor<1x64xf32>
+        scope.return %9 : tensor<1x64xf32>
+      } {noinline, outline = true, vector_mode = "simd"}
+      %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [1, 64], strides: [64, 1] : memref<?xf32> to memref<1x64xf32, strided<[64, 1]>>
+      bufferization.materialize_in_destination %10 in writable %reinterpret_cast : (tensor<1x64xf32>, memref<1x64xf32, strided<[64, 1]>>) -> ()
+      scope.return
+    } {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, noinline}
+    return
+  }
 }
 
 // -----

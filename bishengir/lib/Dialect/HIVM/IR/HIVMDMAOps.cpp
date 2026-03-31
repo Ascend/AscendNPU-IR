@@ -841,23 +841,51 @@ int FixpipeOp::getFixpipeState() {
   return FixpipeState::Init;
 }
 
+inline static bool isDualDstEnabled(FixpipeDualDstMode dualDstMode) {
+  return dualDstMode != FixpipeDualDstMode::NO_DUAL;
+}
+
 LogicalResult FixpipeOp::verify() {
-  // TODO: check that the nz2nd mode is enabled before the dual_dst_mode.
-  // TODO: Verify that NZ2DN DMA Mode is only supported on Ascend950
-  // TODO: Verify that Dual Dst Mode is only supported on Ascend950
+  auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
+  bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
+  auto dmaMode = getDmaMode();
+  auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
+
+  // NZ2DN DMA mode is only supported on Ascend950.
+  if (dmaMode == FixpipeDMAMode::NZ2DN && !isAscend950) {
+    return emitOpError("NZ2DN is only supported on Ascend950!");
+  }
+  // dst=UB is only supported on Ascend950.
+  if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB &&
+      !isAscend950) {
+    return emitOpError("dst=UB is only supported on Ascend950!");
+  }
+
   // check src and dst of dual_dst_mode
   auto dualDstModeAttr = getDualDstModeAttr();
-  if (dualDstModeAttr) {
-    auto dualDstMode = dualDstModeAttr.getDualDstMode();
-    auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
-    auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
-    bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
-    if (hasScopeValue && (dualDstMode != FixpipeDualDstMode::NO_DUAL &&
-                          (srcScope != hivm::AddressSpace::L0C ||
-                           dstScope != hivm::AddressSpace::UB)))
-      return emitOpError("if dual_dst_mode is enabled, the data movement must "
-                         "be performed from L0C to UB!");
+  if (!dualDstModeAttr) {
+    return success();
   }
+  auto dualDstMode = dualDstModeAttr.getDualDstMode();
+  if (!isDualDstEnabled(dualDstMode)) {
+    return success();
+  }
+
+  // dual_dst_mode can only be enabled in NZ2ND/NZ2NZ and only on Ascend950.
+  if (dmaMode == FixpipeDMAMode::NZ2DN) {
+    return emitOpError("dual_dst_mode requires dma_mode to be NZ2ND or "
+                       "NZ2NZ, but got NZ2DN!");
+  }
+  if (!isAscend950) {
+    return emitOpError("dual_dst_mode is only supported on Ascend950!");
+  }
+
+  auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
+  bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
+  if (hasScopeValue &&
+      (srcScope != hivm::AddressSpace::L0C || dstScope != hivm::AddressSpace::UB))
+    return emitOpError("if dual_dst_mode is enabled, the data movement must "
+                       "be performed from L0C to UB!");
 
   return success();
 }
