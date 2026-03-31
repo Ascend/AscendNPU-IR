@@ -494,7 +494,7 @@ bool isMultiAxisVectorizableTranspose(linalg::TransposeOp op) {
 
   // Calculate element size in bytes
   unsigned bitWidth = inputType.getElementType().getIntOrFloatBitWidth();
-  uint64_t bytesPerElement = llvm::divideCeil(bitWidth, utils::kBitsToByte);
+  int64_t bytesPerElement = static_cast<int64_t>(llvm::divideCeil(bitWidth, utils::kBitsToByte));
 
   // Rule 2: Last axis should fit in exactly 32 bytes
   int64_t lastDim = shape[rank - 1];
@@ -583,8 +583,8 @@ bool hasNotAlignedLastAxis(Operation *op, int64_t alignBytes) {
     }
     ArrayRef<int64_t> shape = shapedType.getShape();
     int64_t lastSize = shape.back();
-    int64_t lastBits = lastSize * shapedType.getElementTypeBitWidth();
-    int64_t lastBytes = llvm::divideCeil(lastBits, utils::kBitsToByte);
+    int64_t lastBits = lastSize * (int64_t)shapedType.getElementTypeBitWidth();
+    int64_t lastBytes = (int64_t)llvm::divideCeil(lastBits, utils::kBitsToByte);
     if (lastBytes % alignBytes != 0) {
       return true;
     }
@@ -704,8 +704,8 @@ Value AutoVectorize::tileAndFuseElemwiseWithTranspose(
   Value linalgOpHandle = getOpTransformHandle(transpose, builder, seqOp);
 
   SmallVector<int64_t> interchange;
-  int64_t size = tileSize.size();
-  if (tileSize.size() >= 2 && hasManyNonUnitTileSizes(tileSize)) {
+  int64_t size = (int64_t)tileSize.size();
+  if (size >= 2 && hasManyNonUnitTileSizes(tileSize)) {
     interchange.push_back(1);
     interchange.push_back(0);
     for (int64_t i = 0; i < size - 2; ++i) {
@@ -727,7 +727,7 @@ Value AutoVectorize::tileAndFuseElemwiseWithTranspose(
   }
 
   Value loopToBeOutlined;
-  int64_t consumerLoopSize = tilingResult.getLoops().size();
+  int64_t consumerLoopSize = (int64_t)tilingResult.getLoops().size();
   if (consumerLoopSize > 0) {
     loopToBeOutlined = tilingResult.getLoops().front();
   }

@@ -1047,6 +1047,10 @@ Operation *DataLayoutInferAndPropagateHelper::rewriteForOp(scf::ForOp op) {
   auto newForOp = rewriter.create<scf::ForOp>(op.getLoc(), op.getLowerBound(),
                                               op.getUpperBound(), op.getStep(),
                                               newOperands);
+  if (!newForOp.getBody() || !op.getBody()) {
+    llvm::report_fatal_error("scf.for body is null");
+    return nullptr;
+  }
   newForOp.getBody()->getOperations().splice(
       newForOp.getBody()->getOperations().begin(),
       op.getBody()->getOperations());

@@ -42,7 +42,7 @@ static bool areOperandsUpperLevel(tensor::ExtractSliceOp sliceOp) {
   // can bubble up if all of the dependencies are on the equal or ancestor
   // of the source op
   auto *sliceParentRegion = sliceOp.getSource().getParentRegion();
-  assert(sliceParentRegion->getParentOp() &&
+  assert(sliceParentRegion && sliceParentRegion->getParentOp() &&
          "sliceOp should have a parent region");
   auto *op = sliceParentRegion->getParentOp();
   if (!op)

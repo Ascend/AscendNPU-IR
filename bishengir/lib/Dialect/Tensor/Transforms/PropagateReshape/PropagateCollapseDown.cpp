@@ -126,7 +126,7 @@ LogicalResult handleFlipOp(tensor::CollapseShapeOp collapseOp,
   }
 
   // Step 2: Calculate the new flip axis
-  uint64_t newFlipAxis = reassociation[flipAxis][0];
+  uint64_t newFlipAxis = (uint64_t)reassociation[flipAxis][0];
 
   LLVM_DEBUG(llvm::dbgs() << "Try to push " << collapseOp << " after a flip "
                           << *userOp << ";\n Flip Axis: " << flipAxis << "\n";);

@@ -298,7 +298,7 @@ void MergeVecScopePass::runOnOperation() {
       vfs.push_back(f);
   });
 
-  unsigned int numberVfBefore = vfs.size();
+  unsigned int numberVfBefore = static_cast<unsigned int>(vfs.size());
 
   // get call function/root
   func::FuncOp root = nullptr;
@@ -483,7 +483,7 @@ void MergeVecScopePass::runOnOperation() {
                         [&useScoreTotal, &useIncrIdx](int bValue) {
                           auto it = std::find(useIncrIdx.begin(),
                                               useIncrIdx.end(), bValue);
-                          size_t index = std::distance(useIncrIdx.begin(), it);
+                          size_t index = static_cast<size_t>(std::distance(useIncrIdx.begin(), it));
                           return useScoreTotal[index] == 0;
                         });
   LLVM_DEBUG(size_t n = useIncrIdx.size(); if (n > 0) {
@@ -561,7 +561,8 @@ void MergeVecScopePass::runOnOperation() {
       scoreIdx++;
       continue;
     }
-    size_t vf1Idx = std::distance(vfs.begin(), vf1Ptr);
+
+    size_t vf1Idx = static_cast<size_t>(std::distance(vfs.begin(), vf1Ptr));
     if (vf1Idx == vfs.size() - 1) {
       scoreIdx++;
       continue;

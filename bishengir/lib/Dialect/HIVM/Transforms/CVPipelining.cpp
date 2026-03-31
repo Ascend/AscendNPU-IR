@@ -278,7 +278,7 @@ static bool illegalRegionedOp(Operation *op) {
 /// Get the highest level parent op that is not the containing op
 static Operation *getContainedParent(Operation *containing, Operation *inner) {
   Operation *parent = inner->getParentOp();
-  while (parent != containing && containing->isAncestor(inner)) {
+  while (parent && parent != containing && containing->isAncestor(inner)) {
     inner = parent;
     parent = inner->getParentOp();
   }

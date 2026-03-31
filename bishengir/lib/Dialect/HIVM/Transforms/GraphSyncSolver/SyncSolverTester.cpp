@@ -368,7 +368,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
         auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
         assert(!waitFlagOp->eventIds.empty());
         auto eventId =
-            waitFlagOp->eventIds[loopIdx % waitFlagOp->eventIds.size()];
+            waitFlagOp->eventIds[loopIdx % (int)(waitFlagOp->eventIds.size())];
         auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
           assert((*it) == eventId);

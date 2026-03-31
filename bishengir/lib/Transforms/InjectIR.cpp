@@ -38,7 +38,7 @@ using namespace bishengir::impl;
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-struct InjectIR : InjectIRBase<InjectIR> {
+struct InjectIR : public InjectIRBase<InjectIR> {
   using InjectIRBase::InjectIRBase;
 
   explicit InjectIR(const InjectIROptions &options)

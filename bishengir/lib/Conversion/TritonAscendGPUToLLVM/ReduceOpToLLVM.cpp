@@ -257,13 +257,13 @@ private:
       auto mod = op->getParentOfType<ModuleOp>();
       int numLanes = triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod);
       int numWarps = triton::gpu::lookupNumWarps(op);
-      int interleave = helper.getThreadOffsetOnReductionAxis();
+      int interleave = (int)helper.getThreadOffsetOnReductionAxis();
       int numThreads = numLanes * numWarps;
       int workingThreads = numThreads / static_cast<int>(sizeIntraWarps);
       LDBG(" * workingthreads = " << workingThreads);
       LDBG(" * numLanes = " << numLanes);
       LDBG(" * numWarps = " << numWarps);
-      int accOffset = workingThreads * sizeIntraWarps;
+      int accOffset = workingThreads * (int)sizeIntraWarps;
       Location loc = op.getLoc();
       auto b = TritonLLVMOpBuilder(loc, rewriter);
       Value threadId = getThreadId(rewriter, loc);
@@ -463,7 +463,7 @@ private:
 
     // The warp packing only makes sense if we use fewer threads. Now we can still
     // do more work per thread if needed, but that will be a future extension.
-    if (numThreads < threadsNeeded * 2)
+    if (numThreads < static_cast<int>(threadsNeeded) * 2)
       ReplaceButterflyReduction = false;
 
     auto smemOrder = helper.getOrderWithAxisAtBeginning();

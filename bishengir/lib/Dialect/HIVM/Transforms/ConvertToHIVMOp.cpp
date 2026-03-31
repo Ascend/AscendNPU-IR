@@ -243,7 +243,7 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
     }
   }
   loadOp.setEvictionPolicyAttr(evictionPolicyAttr);
-  LDBG(*(copyOp->getParentOp()) << "\n");
+  LDBG((copyOp->getParentOp() ? *(copyOp->getParentOp()) : *copyOp) << "\n");
   rewriter.replaceOp(copyOp, loadOp);
 
   // ensure pad value and left pad num are defined before load op

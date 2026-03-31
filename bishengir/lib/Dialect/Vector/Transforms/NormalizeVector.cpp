@@ -1247,7 +1247,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
     Type resultType = op.getType();
     if (!(lhsType.isF32() && rhsType.isF32() || lhsType.isInteger(1) && rhsType.isInteger(1)))
       return failure();
-    int numOperands = op.getNumOperands();
+    int numOperands = static_cast<int>(op.getNumOperands());
     if (numOperands != 2)
       return failure();
     Value leftOperand = op.getOperand(0);

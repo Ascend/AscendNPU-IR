@@ -279,11 +279,9 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
     static constexpr int32_t alignM = 16;
     static constexpr int32_t alignN = 32;
     auto elemType = tensorType.getElementType();
-
     uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-    int64_t newN = (AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
+    int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
                             static_cast<uint64_t>(alignN)) / elemTypeSize);
-
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
       int64_t newM = static_cast<int64_t>(
         AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));

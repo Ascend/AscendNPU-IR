@@ -110,13 +110,13 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
     auto parentIndex = solverCollapserElem_->find(args[i]);
     if (selectedTilingParIdx.contains(parentIndex)) {
       auto solverIndex = solverShapeElem_->find(args[i]);
-      int candOrder = i;
+      int candOrder = (int)i;
       if (auto it = transposedDimMap.find(solverIndex);
           it != transposedDimMap.end()) {
         candOrder = it->second;
       }
       if (tilingDim == -1 || order > candOrder) {
-        tilingDim = i;
+        tilingDim = (int64_t)i;
         order = candOrder;
       }
     }

@@ -274,7 +274,8 @@ struct ReorderOpsByBFS : public impl::ReorderOpsByBFSBase<ReorderOpsByBFS> {
 void reorderOpsByBFS(func::FuncOp funcOp) {
   std::map<Operation *, int> operationIdx;
   funcOp.walk([&operationIdx](Operation *op) {
-    int curSize = operationIdx.size();
+    // 安全转换：operationIdx.size()返回size_t，用于索引分配，使用static_cast显式转换
+    int curSize = static_cast<int>(operationIdx.size());
     LLVM_DEBUG(llvm::dbgs() << *op << "--" << curSize << "\n";;);
     operationIdx[op] = curSize;
   });

@@ -1214,9 +1214,9 @@ LogicalResult ConvertLayoutOp::verify() {
       return emitOpError(
           "requires the same element type for all operands and results");
   }
-  size_t numDynamic = llvm::count_if(getStaticOutputShape(), [](int64_t dim) {
+  size_t numDynamic = static_cast<size_t>(llvm::count_if(getStaticOutputShape(), [](int64_t dim) {
     return ShapedType::isDynamic(dim);
-  });
+  }));
   if (numDynamic != getOutputShape().size()) {
     return emitOpError("expected ")
            << numDynamic << " dynamic dimensions but got "

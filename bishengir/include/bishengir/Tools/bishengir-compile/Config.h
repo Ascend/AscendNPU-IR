@@ -423,7 +423,7 @@ public:
   unsigned blockDim() const { return blockDimFlag; }
 
   BiShengIRCompileMainConfig &setVfMergeLevel(unsigned enableVfMergeLevel) {
-    enableVfMergeLevelFlag = enableVfMergeLevel;
+    enableVfMergeLevelFlag = (int32_t)enableVfMergeLevel;
     return *this;
   }
   int32_t enableVfMergeLevel() const { return enableVfMergeLevelFlag; }

@@ -25,7 +25,7 @@ constexpr unsigned kMinWordWidthBits = 32;
 constexpr unsigned kMaxTransferWidthBits = 128;
 constexpr unsigned kMaxVectorSize = 4;
 constexpr int kSharedMemoryAddressSpace =
-    (int)ascend_dpx::AscendDPXAddressSpace::SHARED_MEM;
+    static_cast<int>(ascend_dpx::AscendDPXAddressSpace::SHARED_MEM);
 constexpr int64_t kConstantTruePredValue = -1;
 
 // Helper function to check if predicate is constant true
@@ -236,7 +236,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
 
   // If vec > 4 and elemBitwidth < 32, load b32's instead
   if (vec > kMaxVectorSize && elemBitwidth < kMinWordWidthBits) {
-    auto newVec = vec / (kMinWordWidthBits / elemBitwidth);
+    auto newVec = vec / (int64_t)(kMinWordWidthBits / elemBitwidth);
     auto newVecTy = vec_ty(i32_ty, newVec);
     auto res = loadDShared(rewriter, loc, ptr, ctaId, newVecTy, pred);
 
@@ -252,13 +252,13 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   }
 
   // If total width > 128, split into multiple loads
-  if (vec * elemBitwidth > kMaxTransferWidthBits) {
+  if (vec * elemBitwidth > (int64_t)kMaxTransferWidthBits) {
     assert(elemBitwidth == 32 || elemBitwidth == 64);
     assert(llvm::isPowerOf2_32(vec));
     unsigned int maxVec = kMaxTransferWidthBits / elemBitwidth;
 
     SmallVector<Value> vals;
-    for (unsigned int i = 0; i < vec / maxVec; i++) {
+    for (unsigned int i = 0; i < vec / (int)maxVec; i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec));
       auto newVal = loadDShared(rewriter, loc, newPtr, ctaId,
                                 vec_ty(elemTy, maxVec), pred);
@@ -272,7 +272,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   assert(elemBitwidth >= kMinElementWidthBits);
   assert(elemTy.isInteger());
   assert(1 <= vec && vec <= kMaxVectorSize);
-  assert(vec * elemBitwidth <= kMaxTransferWidthBits);
+  assert(vec * elemBitwidth <= (int64_t)kMaxTransferWidthBits);
 
   Type loadResTy =
       vec > 1 ? VectorType::get({static_cast<long>(vec)}, elemTy) : elemTy;

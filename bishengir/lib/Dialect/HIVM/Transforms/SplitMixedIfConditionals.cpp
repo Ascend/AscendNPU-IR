@@ -523,6 +523,10 @@ static DenseMap<Value, Value> processBlock(const BlockProcessContext &ctx) {
   DenseMap<Value, Value> valueMap;
   DenseMap<Value, Value> yieldMap;
 
+  if (!ctx.block) {
+    llvm::errs() << "Block is nullptr\n"; 
+    return yieldMap;
+  }
   // Copy block arguments to valueMap
   for (auto arg : ctx.block->getArguments()) {
     valueMap[arg] = arg;
@@ -591,6 +595,9 @@ struct SplitMixedIfConditionalsPattern : public OpRewritePattern<scf::IfOp> {
 
     SmallVector<Value> elseYields;
     if (hasElse) {
+      if (!ifOp.elseBlock()) {
+        return failure();
+      }
       auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
       elseYields.assign(elseYield.getOperands().begin(),
                         elseYield.getOperands().end());

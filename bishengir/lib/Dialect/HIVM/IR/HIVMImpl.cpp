@@ -312,7 +312,7 @@ Type getAnnotationMarkByteAlignment(Value value) {
       continue;
     }
     for (int i = 0; i < alignBytes.size(); ++i) {
-      assert(alignBytes[i] * 8 % elemType.getIntOrFloatBitWidth() == 0);
+      assert(alignBytes[i] * 8 % static_cast<int>(elemType.getIntOrFloatBitWidth()) == 0);
       auto alignElemNum = alignBytes[i] * 8 /
                           static_cast<int>(elemType.getIntOrFloatBitWidth());
       strideAlignElems[alignDims[i]] =
@@ -382,7 +382,10 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
 
 std::pair<bool, bool> analyzeCoreTypes(Block *block) {
   bool hasC = false, hasV = false;
-
+  if (!block || block->empty()) {
+    LDBG("Empty block or nullptr");
+    return std::pair<bool, bool>(hasC, hasV);
+  }
   for (Operation &op : *block) {
     auto coreType = mlir::hivm::detail::queryCoreTypeHelper(&op);
 

@@ -535,7 +535,7 @@ static LogicalResult lowerReduceWithIndex(PatternRewriter& rewriter,
   return success();
 }
 
-struct HandleReduceOpPattern : OpRewritePattern<linalg::ReduceOp> {
+struct HandleReduceOpPattern : public OpRewritePattern<linalg::ReduceOp> {
   using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(linalg::ReduceOp op,

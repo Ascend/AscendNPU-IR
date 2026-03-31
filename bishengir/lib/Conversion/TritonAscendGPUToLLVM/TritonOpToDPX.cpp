@@ -46,7 +46,8 @@ struct GetProgramIdOpConversion
           rewriter.create<ascend_dpx::BlockIdxZOp>(op.getLoc(), op.getType());
       break;
     }
-
+    if (!newOp)
+      return failure();
     rewriter.replaceOp(op, newOp->getResult(0));
     return success();
   }
@@ -77,7 +78,8 @@ struct GetNumProgramsOpConversion
           rewriter.create<ascend_dpx::GridDimZOp>(op.getLoc(), op.getType());
       break;
     }
-
+    if (!newOp)
+      return failure();
     rewriter.replaceOp(op, newOp->getResult(0));
     return success();
   }

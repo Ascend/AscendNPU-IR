@@ -413,7 +413,7 @@ static bool adjustSubviewExpansion(int64_t totalSrc, int64_t innermostStride,
                                    SmallVector<int64_t> &resultShape,
                                    SmallVector<int64_t> &srcShape) {
 
-  int64_t k = resultShape.size();
+  int64_t k = (int64_t)resultShape.size();
   if (k == 0)
     return false;
 
@@ -750,7 +750,7 @@ checkHyperRectangle(PatternRewriter &rewriter,
                     OpFoldResult mixedStride, int64_t laststride) {
   SmallVector<int64_t> resSlicedRef;
   SmallVector<int64_t> srcSlicedRef;
-  int64_t reassociationSize = reassociation.size();
+  int64_t reassociationSize = (int64_t)reassociation.size();
   resSlicedRef.reserve(reassociationSize);
   srcSlicedRef.reserve(reassociationSize);
   for (long j : reassociation) {
@@ -762,6 +762,10 @@ checkHyperRectangle(PatternRewriter &rewriter,
   }
   auto staticStride = getConstantIntValue(mixedStride);
   if (isSubview) {
+    if (!staticStride) {
+      LDBG("[failed] staticStride can't be null");
+      return failure();
+    }
     // Compute totalSize and check if all dimensions are static
     bool adjusted =
         adjustSubviewExpansion(superviewShape, laststride, staticStride.value(),

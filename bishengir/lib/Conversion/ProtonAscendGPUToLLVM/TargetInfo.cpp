@@ -24,9 +24,9 @@ Value TargetInfo::processorId(ConversionPatternRewriter &rewriter,
 int TargetInfo::getAddressSpace(Attribute addressSpace) const {
   int spaceId = 0;
   if (mlir::isa<triton::gpu::SharedMemorySpaceAttr>(addressSpace)) {
-    spaceId = (int)ascend_dpx::AscendDPXAddressSpace::SHARED_MEM;
+    spaceId = static_cast<int>(ascend_dpx::AscendDPXAddressSpace::SHARED_MEM);
   } else if (mlir::isa<proton::gpu::GlobalMemorySpaceAttr>(addressSpace)) {
-    spaceId = (int)ascend_dpx::AscendDPXAddressSpace::GLOBAL_MEM;
+    spaceId = static_cast<int>(ascend_dpx::AscendDPXAddressSpace::GLOBAL_MEM);
   } else {
     llvm::report_fatal_error("Only support SharedMemorySpace, "
                              "and GlobalMemorySpace for now");

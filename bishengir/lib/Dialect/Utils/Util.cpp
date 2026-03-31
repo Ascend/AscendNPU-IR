@@ -367,7 +367,9 @@ bool checkUsersAnyWithCondition(
 
     if (op->hasTrait<OpTrait::IsTerminator>()) {
       Operation *parentOp = op->getParentOp();
-
+      if (!parentOp) {
+        continue;
+      }
       // like scf.yield
       if (auto branchTerminator =
               dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
@@ -729,7 +731,7 @@ int64_t getVectorSizeByElementType(Type t) {
   int factor = t.isInteger(64) ? 2 : 1;
   constexpr unsigned int vectorByteLength = 256;
   constexpr unsigned int byteSize = 8;
-  return factor * vectorByteLength / (t.getIntOrFloatBitWidth() / byteSize);
+  return factor * vectorByteLength / ((int64_t)t.getIntOrFloatBitWidth() / byteSize);
 }
 
 template <bool DropUnitDimOnly>

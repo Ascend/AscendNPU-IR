@@ -111,7 +111,7 @@ MemRefType inferRankReducedResultType(ArrayRef<int64_t> resultShape,
   debugShape(inferredType.getShape(), "inferredType.getShape(): ");
   debugShape(resultShape, "resultShape: ");
 #ifndef NDEBUG
-  for (unsigned dim : dropDims) {
+  for (int64_t dim : dropDims) {
     LDBG("dropDim: " << dim);
   }
 #endif

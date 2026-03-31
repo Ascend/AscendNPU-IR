@@ -531,7 +531,7 @@ static void refineLoads(SmallVectorImpl<CollectedLoadInfo> &loadInfo) {
     // entries from its chain (these are the global mask candidates).
     int longestIdx = -1;
     size_t longestSize = 0;
-    for (int i = 0, e = loadInfo.size(); i < e; ++i) {
+    for (int i = 0, e = (int)loadInfo.size(); i < e; ++i) {
       if (loadInfo[i].condChain.size() > longestSize) {
         longestSize = loadInfo[i].condChain.size();
         longestIdx = i;

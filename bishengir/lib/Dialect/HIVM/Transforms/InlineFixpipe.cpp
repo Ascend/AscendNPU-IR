@@ -351,6 +351,10 @@ private:
                                  hivm::FixpipeOp op, hivm::VCastOp castOp,
                                  Value newFixpipeSrcTensor) const {
     std::optional<FixpipePreQuantMode> quantMode = getQuantMode(castOp);
+    if (!quantMode) {
+      LDBG("cast op quant mode is null");
+      return;
+    }
     auto quantModeAttr =
         FixpipePreQuantModeAttr::get(op.getContext(), quantMode.value());
 

@@ -292,7 +292,7 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
 
     // Traverse all instructions between start and end ops.
     bool hasSyncBarrier = false;
-    for (auto it = start->getNextNode(); it != end; it = it->getNextNode()) {
+    for (auto it = start->getNextNode(); it != end && it != nullptr; it = it->getNextNode()) {
       // If a synchronization barrier is found, prohibit fusion to avoid data races.
       if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(it)) {
         hasSyncBarrier = true;
@@ -667,9 +667,10 @@ static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
   populateFusionPatterns(patterns, maxFusedElementwiseOps);
   annotation::MarkOp::getCanonicalizationPatterns(patterns,
                                                   patterns.getContext());
-  patterns.getContext()
-      ->getLoadedDialect<linalg::LinalgDialect>()
-      ->getCanonicalizationPatterns(patterns);
+  if (auto *linalgDialect = patterns.getContext()
+                                ->getLoadedDialect<linalg::LinalgDialect>()) {
+    linalgDialect->getCanonicalizationPatterns(patterns);
+  }
 }
 
 bool isCopyFromGM(memref::CopyOp copyOp) {

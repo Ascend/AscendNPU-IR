@@ -59,6 +59,7 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
     } else {
       if (!resultFuncIrWasGenerated) {
         auto *scopeOp = dyn_cast<Scope>(opBase);
+        assert(scopeOp != nullptr);
         const auto &it = llvm::find_if(
             scopeOp->body, [](const std::unique_ptr<OperationBase> &opBase) {
               return opBase->op != nullptr;
