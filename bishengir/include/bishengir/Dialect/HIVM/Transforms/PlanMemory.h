@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallSet.h"
 
 #include <list>
+#include <random>
 
 namespace mlir {
 namespace hivm {
@@ -262,8 +263,10 @@ using BufferCondPair = std::pair<Value, bool>;
 
 class MemLivenessAnalysis {
 public:
-  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode)
-      : func_(func), planMode(planMode) {}
+  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
+                      uint32_t randomSeed = 0)
+      : func_(func), planMode(planMode), randomSeed(randomSeed),
+        randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -434,6 +437,12 @@ private:
   currentlyLiveValuesOrdered(const LivenessBlockInfo *livenessInfo,
                              Operation *op) const;
 
+  template <typename RangeT> RangeT getShuffledRange(const RangeT &range) {
+    RangeT rangeClone = range;
+    std::shuffle(rangeClone.begin(), rangeClone.end(), randomGenerator);
+    return rangeClone;
+  }
+
   func::FuncOp func_;
 
   /// different mode for mem plan.
@@ -446,6 +455,12 @@ private:
   llvm::MapVector<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
 
   int seqIndex{0};
+
+  /// random seed for shuffle operation order in plan memory.
+  uint32_t randomSeed{0};
+
+  /// random generator for shuffle operation order in plan memory.
+  std::mt19937 randomGenerator;
 };
 
 /// Pair of StorageEntry.
@@ -455,11 +470,11 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA)
-      : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
-        enableMemoryDisplay(enableMemoryDisplay),
+      : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
+        enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA) {}
 
-  LogicalResult plan();
+  LogicalResult plan(bool emitErrors = true);
 
   /// Get buffer2Offsets
   inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
