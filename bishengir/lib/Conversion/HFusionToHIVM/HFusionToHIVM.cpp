@@ -303,6 +303,8 @@ Operation *convertBinaryHFusionOp(ElemwiseOpConvertor &b,
     return b.create<hivm::VModUIOp>();
   case hfusion::BinaryFn::mod:
     return b.create<hivm::VModOp>();
+  case hfusion::BinaryFn::vxor:
+    return b.create<hivm::VXorOp>();
   default:
     llvm_unreachable("unsupported hfusion binary operation kind");
   }
