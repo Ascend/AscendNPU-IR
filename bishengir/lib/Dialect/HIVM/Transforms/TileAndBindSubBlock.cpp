@@ -250,6 +250,13 @@ public:
                             // a tiling start point.
         }
       }
+      // If the copy input is memref, we cannot tile it.
+ 	    auto inputType = Op.getOperand(0).getType();
+ 	    if (isa<mlir::MemRefType>(inputType)){
+ 	      tilingDim = -1;
+        Op->emitWarning(
+                "Copy input memref is not supported, skip tile and bind.");
+ 	    }
       LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
       LLVM_DEBUG(DBGS() << "The store op tiling dim is: "<<tilingDim<<"\n");
@@ -560,73 +567,6 @@ public:
   }
 };
 
-// If there are memref-to-memref copy op before the 1:2 split, convert
-// them into equivalent tensor-to-tensor copy op.
-// oldcopy: hivm.hir.copy ins(%1 : memref<..., ub>) outs(%alloc : memref<...,
-// cbuf>) newcopy: %2 = hivm.hir.copy ins(%1 : tensor<...>) outs(%alloc :
-// tensor<...>)
-class ConvertMemRefUBToL1TensorCopyPattern
-    : public OpRewritePattern<hivm::CopyOp> {
-public:
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hivm::CopyOp copyOp,
-                                PatternRewriter &rewriter) const override {
-    // get src and dst, hivm.copy %src, %dst
-    Value srcMemRef = copyOp->getOperand(0);
-    Value dstMemRef = copyOp->getOperand(1);
-    // check if memref type
-    auto srcType = mlir::dyn_cast<MemRefType>(srcMemRef.getType());
-    auto dstType = mlir::dyn_cast<MemRefType>(dstMemRef.getType());
-    if (!srcType || !dstType)
-      return failure();
-    // check if hivm address space
-    auto srcAS = mlir::dyn_cast<hivm::AddressSpaceAttr>(srcType.getMemorySpace());
-    auto dstAS = mlir::dyn_cast<hivm::AddressSpaceAttr>(dstType.getMemorySpace());
-    if (!srcAS || !dstAS)
-      return failure();
-    // check if ub to l1
-    if (srcAS.getAddressSpace() != hivm::AddressSpace::UB ||
-        dstAS.getAddressSpace() != hivm::AddressSpace::L1)
-      return failure();
-
-    auto toMemRefOp = srcMemRef.getDefiningOp<bufferization::ToMemrefOp>();
-    if (!toMemRefOp)
-      return failure();
-    // get origin tensor
-    Value srcTensor = toMemRefOp.getTensor();
-    // support vtranspose -> tensor -> to_memref -> copy to rewrite
-    if (!srcTensor.getDefiningOp<hivm::VTransposeOp>())
-      return failure();
-
-    rewriter.setInsertionPoint(copyOp);
-    // memref<..., L1> to memref<...>
-    auto castedMemRefType =
-        MemRefType::get(dstType.getShape(), dstType.getElementType());
-    auto memSpaceCast = rewriter.create<memref::MemorySpaceCastOp>(
-        copyOp.getLoc(), castedMemRefType, dstMemRef);
-
-    // bufferization.to_tensor
-    auto dstTensor = rewriter.create<bufferization::ToTensorOp>(
-        copyOp.getLoc(), memSpaceCast.getResult(),
-        /*restrict=*/true,
-        /*writable=*/true);
-
-    auto newCopy = rewriter.create<hivm::CopyOp>(
-        copyOp.getLoc(), srcTensor.getType(), srcTensor, dstTensor.getResult());
-
-    rewriter.setInsertionPointAfter(newCopy);
-    rewriter.create<annotation::MarkOp>(newCopy.getLoc(), newCopy.getResult(0));
-
-    rewriter.eraseOp(copyOp);
-
-    if (toMemRefOp->use_empty())
-      rewriter.eraseOp(toMemRefOp);
-
-    return success();
-  }
-};
-
 /// add if (sublock_id == 0) guard for each store/copy op.
 /// case 1: store/copy op without results
 ///   store/copy op
@@ -802,7 +742,6 @@ tileAndSliceOp(func::FuncOp func,
   });
 
   RewritePatternSet patterns(func->getContext());
-  patterns.add<ConvertMemRefUBToL1TensorCopyPattern>(func->getContext());
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>>(func->getContext(),
                                                        analyzer);
   patterns.add<TileAndSliceStoreCopyOp<hivm::CopyOp>>(func->getContext(),
