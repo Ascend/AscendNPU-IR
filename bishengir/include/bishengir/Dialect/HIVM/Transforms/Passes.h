@@ -218,6 +218,10 @@ std::unique_ptr<Pass> createInsertInferSyncBlockLockNumAndInitFuncPass();
 // Create a pass to lower CreateSyncBlockLockOp.
 std::unique_ptr<Pass> createSyncBlockLockLoweringPass();
 
+// Create a pass to insert FreeLockVarOp before return to prevent
+// deadlock when control flow skips sync_block_lock/unlock.
+std::unique_ptr<Pass> createInsertFreeLockVarBeforeReturnPass();
+
 // Create a pass to auto infer buffer size by inserting Annotation MarkOp
 std::unique_ptr<Pass> createAutoInferBufferSizePass();
 

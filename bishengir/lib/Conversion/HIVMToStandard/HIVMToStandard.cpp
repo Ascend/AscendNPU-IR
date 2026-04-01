@@ -1735,16 +1735,13 @@ class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
 template <typename SyncBlockOp>
 class SyncBlockOpToLibraryCallPattern : public OpRewritePattern<SyncBlockOp> {
 public:
-  static constexpr llvm::StringLiteral kSyncBlockLockWithSubblockAttr =
-      "sync_block_lock_with_subblock";
-
   using OpRewritePattern<SyncBlockOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(SyncBlockOp op,
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
-    if (op->hasAttr(kSyncBlockLockWithSubblockAttr))
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
       libCallName += "_with_subblock";
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
@@ -1806,6 +1803,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
+               SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SortOpToLibraryCallPattern,
                FlipOpToLibraryCallPattern
                >
@@ -1882,6 +1880,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::DebugOp,
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
+                      hivm::FreeLockVarOp,
                       hivm::VSortOp
                       >();
 

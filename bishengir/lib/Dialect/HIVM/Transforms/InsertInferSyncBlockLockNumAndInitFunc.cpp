@@ -45,7 +45,8 @@ using namespace mlir::hivm;
 namespace {
 /// Strip _mix_aiv or _mix_aic suffix from func name to get the original kernel
 /// name. This ensures host callback func names are consistent when the kernel
-/// has been split by SplitMixKernel (e.g., kernel -> kernel_mix_aiv/kernel_mix_aic).
+/// has been split by SplitMixKernel (e.g., kernel ->
+/// kernel_mix_aiv/kernel_mix_aic).
 static std::string getBaseKernelNameForHostFunc(StringRef funcName) {
   std::string name = funcName.str();
   constexpr size_t kMixSuffixLen = 8; // length of "_mix_aiv" or "_mix_aic"
@@ -77,8 +78,10 @@ func::FuncOp insertInferSyncBlockLockNumFuncImpl(func::FuncOp funcOp,
   Block *entryBlock = func.addEntryBlock();
   builder.setInsertionPointToStart(entryBlock);
 
-  auto lockNumVal = builder.create<arith::ConstantIntOp>(funcOp.getLoc(),
-                                                         syncBlockLockNum, 64);
+  // To avoid more than 1 lock_vars in 1 cache-line, every lock_var will use a
+  // whole cache-line(64B, which is 8xi64)
+  auto lockNumVal = builder.create<arith::ConstantIntOp>(
+      funcOp.getLoc(), syncBlockLockNum * 8, 64);
   builder.create<func::ReturnOp>(funcOp.getLoc(),
                                  ValueRange{lockNumVal.getResult()});
   return func;

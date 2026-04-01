@@ -252,6 +252,9 @@ std::optional<TCoreType> SyncBlockUnlockOp::inferCoreType() {
   return TCoreType::VECTOR;
 }
 
+std::optional<TCoreType> FreeLockVarOp::inferCoreType() {
+  return TCoreType::VECTOR;
+}
 //===----------------------------------------------------------------------===//
 // HIVM DMA Ops
 //===----------------------------------------------------------------------===//

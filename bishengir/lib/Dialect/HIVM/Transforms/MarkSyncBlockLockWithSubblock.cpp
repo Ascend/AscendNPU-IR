@@ -1,4 +1,4 @@
-//===--------------------- MarkSyncBlockLockWithSubblock.cpp ----------------===//
+//===--------- MarkSyncBlockLockWithSubblock.cpp ----------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,9 +38,8 @@ using namespace mlir::hivm;
 #define DEBUG_TYPE "hivm-mark-sync-block-lock-with-subblock"
 
 namespace {
-static constexpr llvm::StringLiteral kLimitSubBlockId0Attr = "limit_sub_block_id0";
-static constexpr llvm::StringLiteral kSyncBlockLockWithSubblockAttr =
-    "sync_block_lock_with_subblock";
+static constexpr llvm::StringLiteral kLimitSubBlockId0Attr =
+    "limit_sub_block_id0";
 
 /// Check if the module contains any mix type function.
 static bool isMixModule(ModuleOp module) {
@@ -83,11 +82,11 @@ void MarkSyncBlockLockWithSubblockPass::runOnOperation() {
     if (!isa<SyncBlockLockOp, SyncBlockUnlockOp>(op))
       return WalkResult::advance();
 
-    if (op->hasAttr(kSyncBlockLockWithSubblockAttr))
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
       return WalkResult::advance();
 
     if (!isInsideLimitSubBlockId0If(op)) {
-      op->setAttr(kSyncBlockLockWithSubblockAttr,
+      op->setAttr(SyncBlockLockWithSubblockAttr::name,
                   UnitAttr::get(op->getContext()));
     }
     return WalkResult::advance();

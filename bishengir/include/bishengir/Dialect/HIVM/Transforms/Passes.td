@@ -631,6 +631,20 @@ def LowerCreateSyncBlockLock : Pass<"hivm-lower-create-sync-block-lock", "func::
                            "hivm::HIVMDialect"];
 }
 
+def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-return",
+                                        "ModuleOp"> {
+  let summary = "Insert FreeLockVarOp before return to prevent deadlock "
+                "when control flow skips sync_block_lock/unlock";
+  let description = [{
+    When SyncBlockLock/Unlock are in conditional branches (e.g. else block),
+    some blocks may not execute them, causing lock_var count mismatch and
+    deadlock. This pass inserts FreeLockVarOp before every return.
+    Each FreeLockVarOp lowers to one sync_block_lock / sync_block_unlock pair.
+  }];
+  let constructor = "mlir::hivm::createInsertFreeLockVarBeforeReturnPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let summary = "Auto infer buffer size";
   let description = "infer buffer size by inserting annotation.mark Op";
