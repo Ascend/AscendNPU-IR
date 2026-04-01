@@ -24,8 +24,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_broadcast_last_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                      memref_t<__ubuf__ T, 2> *dst) {
-  cce::printf("Warning: [broadcast last axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast last axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -46,8 +47,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                       memref_t<__ubuf__ T, 2> *dst) {
-  cce::printf("Warning: [broadcast first axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast first axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -68,8 +70,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_broadcast_middle_axis_by_scalar(memref_t<__ubuf__ T, 3> *src,
                                        memref_t<__ubuf__ T, 3> *dst) {
-  cce::printf("Warning: [broadcast middle axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast middle axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -92,8 +95,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 3> *src,
                                       memref_t<__ubuf__ T, 3> *dst) {
-  cce::printf("Warning: [broadcast first axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast first axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
