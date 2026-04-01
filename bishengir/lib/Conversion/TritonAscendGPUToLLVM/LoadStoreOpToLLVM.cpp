@@ -190,7 +190,6 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
 
     const int valueElemNBits =
         std::max(8u, valueElemTy.getIntOrFloatBitWidth());
-    const int numVecs = static_cast<int>(numElems / vec);
 
     // Load redundantly in all dims except reg
     auto freeVarMasks = getFreeVariableMasks(ptr.getType());
