@@ -23,9 +23,11 @@ namespace hivm {
 namespace detail {
 
 bool DimensionAnalyzer::isParallelDim(Dimension dim) {
-  auto solverIndex = solverCollapserElem_->find(
-      getArgumentRefOrCreateDummy(dim.first)[dim.second]);
-  LDBG("Checking parallelDim of " << solverIndex);
+  auto args = getArgumentRefOrCreateDummy(dim.first);
+  auto solverIndex = solverCollapserElem_->find(args[dim.second]);
+  LDBG("Checking parallelDim of " << solverIndex << "("
+                                  << solverShapeElem_->find(args[dim.second])
+                                  << ")");
   auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
   if (tilingDimKindVal != tilingDimKindMap.end()) {
     return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
@@ -67,8 +69,11 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
           int64_t curDim = tilingDim_[store];
           auto dim = cDim;
           auto solverIndex = solverShapeElem_->find(storeRef[dim]);
+          LDBG("Checking if " << solverIndex << " is transposed dim");
           if (transposedDimMap.contains(solverIndex)) {
-            LDBG("Found transposed mapping(" << solverIndex << "): " << dim << " to " << transposedDimMap.at(solverIndex));
+            LDBG("Found transposed mapping("
+                 << solverIndex << "): " << dim << " to "
+                 << transposedDimMap.at(solverIndex));
             dim = transposedDimMap.at(solverIndex);
           }
           if (curDim != -1) {
@@ -91,7 +96,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     }
   }
   LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
-  for (auto[_, parIdx] : selectedTilingParIdxMap) {
+  for (auto [_, parIdx] : selectedTilingParIdxMap) {
     selectedTilingParIdx.insert(parIdx);
     isBroadcastAxisCase |= broadcastAxisCaseCandidate.contains(parIdx);
   }

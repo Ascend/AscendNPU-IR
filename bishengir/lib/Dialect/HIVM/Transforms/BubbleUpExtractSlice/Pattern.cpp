@@ -669,6 +669,45 @@ handleExtractOfExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+static LogicalResult
+handleExtractOfExtractDifferentDimCase(tensor::ExtractSliceOp sliceOp,
+                                       PatternRewriter &rewriter) {
+  auto parentSliceOp =
+      sliceOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+  auto srcType = parentSliceOp.getSourceType();
+  auto parentExtractDims = getExtractOrInsertDim(parentSliceOp);
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  auto parentOffsets = parentSliceOp.getMixedOffsets();
+  auto parentSizes = parentSliceOp.getMixedSizes();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  for (auto dim : getExtractOrInsertDim(parentSliceOp)) {
+    std::swap(parentOffsets[dim], offsets[dim]);
+    parentSizes[dim] = rewriter.getIndexAttr(srcType.getDimSize(dim));
+  }
+  for (auto dim : getExtractOrInsertDim(sliceOp)) {
+    std::swap(parentOffsets[dim], offsets[dim]);
+    parentSizes[dim] = sizes[dim];
+  }
+
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), parentSliceOp.getSource(), parentOffsets, parentSizes,
+      strides);
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+
+  auto newParentSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), newSliceOp, offsets, sizes, strides);
+
+  for (auto attr : parentSliceOp->getAttrs()) {
+    if (!newParentSliceOp->hasAttr(attr.getName()))
+      newParentSliceOp->setAttr(attr.getName(), attr.getValue());
+  }
+
+  rewriter.replaceOp(sliceOp, newParentSliceOp);
+  return success();
+}
+
 LogicalResult
 ExtractSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                       PatternRewriter &rewriter) const {
@@ -679,11 +718,17 @@ ExtractSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return handleExtractRankReducedCase(sliceOp, rewriter);
   }
 
+  LDBG("Handling ExtractSliceBubbleUpStrategy:\n" << parentSliceOp << "\n" << sliceOp);
+
   // Handle the case when both extracts are extracting same dim.
   if (!llvm::set_intersection(getExtractOrInsertDim(sliceOp),
                               getExtractOrInsertDim(parentSliceOp))
            .empty()) {
+    LDBG("Try handleExtractOfExtractSameDimCase");
     return handleExtractOfExtractSameDimCase(sliceOp, rewriter);
+  } else {
+    LDBG("Try handleExtractOfExtractDifferentDimCase");
+    return handleExtractOfExtractDifferentDimCase(sliceOp, rewriter);
   }
 
   // TODO: Handle the case when both extracts are extracting different dims.
