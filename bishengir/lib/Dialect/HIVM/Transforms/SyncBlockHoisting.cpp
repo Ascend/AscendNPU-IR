@@ -51,11 +51,12 @@ public:
   void runOnOperation() override;
 };
 
-template <typename OpTy>
-struct HoistingSyncBlockPattern : public OpRewritePattern<OpTy> {
-  using OpRewritePattern<OpTy>::OpRewritePattern;
+struct HoistingSyncBlockPattern
+    : public OpInterfaceRewritePattern<LoopLikeOpInterface> {
+  using OpInterfaceRewritePattern<
+      LoopLikeOpInterface>::OpInterfaceRewritePattern;
 
-  LogicalResult matchAndRewrite(OpTy op,
+  LogicalResult matchAndRewrite(LoopLikeOpInterface op,
                                 PatternRewriter &rewriter) const override {
     // Step 1: Get the list of lock and unlock operation
     SmallVector<hivm::SyncBlockLockOp> lockVec = {};
@@ -88,9 +89,7 @@ struct HoistingSyncBlockPattern : public OpRewritePattern<OpTy> {
 
 void SyncBlockHoistingPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  patterns.add<HoistingSyncBlockPattern<scf::ForOp>,
-               HoistingSyncBlockPattern<scf::WhileOp>,
-               HoistingSyncBlockPattern<scf::IfOp>>(patterns.getContext());
+  patterns.add<HoistingSyncBlockPattern>(patterns.getContext());
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
