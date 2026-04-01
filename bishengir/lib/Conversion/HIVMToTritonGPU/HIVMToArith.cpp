@@ -70,7 +70,7 @@ static bool operateOnSigned(Operation *op) {
             if (!op->hasAttr("isSigned")) {
                 return signed_require == IntegerType::Signed;
             }
-            mlir::BoolAttr validAttr = op->getAttr("isSigned").cast<mlir::BoolAttr>();
+            mlir::BoolAttr validAttr = mlir::cast<mlir::BoolAttr>(op->getAttr("isSigned"));
             bool validValue = validAttr.getValue();
             if (validValue) {
                 return signed_require == IntegerType::Signed;
@@ -230,7 +230,6 @@ static bool extui_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm:
     const bool isInt8ToInt64 = src.isInteger(8) && dst.isInteger(64);
     const bool isInt16ToInt32 = src.isInteger(16) && dst.isInteger(32);
     const bool isInt16ToInt64 = src.isInteger(16) && dst.isInteger(64);
-    const bool isInt32ToInt64 = src.isInteger(32) && dst.isInteger(64);
     const bool isInTypeI8  = isInt8ToInt16 || isInt8ToInt32 || isInt8ToInt64;
     const bool isInTypeI16 = isInt16ToInt32 || isInt16ToInt64;
     const bool isInTypeI32 = src.isInteger(32) && dst.isInteger(64);
@@ -725,7 +724,7 @@ struct HIVMToArithReluOp: public OpRewritePattern<hivm::VReluOp> {
         DenseElementsAttr onesAttr;
         assert(elem_type.isF16() || elem_type.isF32() || elem_type.isSignlessInteger(32));
         if (elem_type.isF16() || elem_type.isF32()) {
-            const llvm::fltSemantics &semantics = elem_type.cast<FloatType>().getFloatSemantics();
+            const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elem_type).getFloatSemantics();
             llvm::APFloat initVal(semantics);
             initVal = llvm::APFloat::getZero(semantics);
             onesAttr = DenseElementsAttr::get(const_type, rewriter.getFloatAttr(elem_type, initVal));
@@ -793,7 +792,7 @@ struct HIVMToArithRecOp: public OpRewritePattern<hivm::VRecOp> {
         auto const_type = RankedTensorType::get(tensorType.getShape(), elem_type);
         DenseElementsAttr onesAttr;
         assert(elem_type.isF16() || elem_type.isF32());
-        const llvm::fltSemantics &semantics = elem_type.cast<FloatType>().getFloatSemantics();
+        const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elem_type).getFloatSemantics();
         llvm::APFloat initVal(semantics);
         initVal = llvm::APFloat::getOne(semantics);
         onesAttr = DenseElementsAttr::get(const_type, rewriter.getFloatAttr(elem_type, initVal));
@@ -849,7 +848,6 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
             lhs,
             rhs
         );
-        auto resType = op.getResult().getType();
         low_res.replaceAllUsesWith(result.getLow());
         high_res.replaceAllUsesWith(result.getHigh());
         rewriter.replaceOp(op, result);

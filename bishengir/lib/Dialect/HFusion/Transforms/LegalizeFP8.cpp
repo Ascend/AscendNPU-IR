@@ -300,7 +300,7 @@ void LegalizeFP8Pass::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   populateLegalizeFP8Pattern(patterns);
-  if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns))))
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
     return signalPassFailure();
 }
 

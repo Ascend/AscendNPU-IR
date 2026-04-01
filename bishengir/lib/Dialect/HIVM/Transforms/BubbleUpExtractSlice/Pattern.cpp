@@ -1716,7 +1716,6 @@ LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                        "source failed to bind to scf.if");
 
   auto yieldIndex = cast<OpResult>(sliceOp.getSource()).getResultNumber();
-  auto oldResultType = sliceOp.getSource().getType();
   LDBG("Processing result of " << yieldIndex << " from if op " << ifOp);
 
   // then block
@@ -1769,7 +1768,7 @@ bool SelectBubbleUpStrategy::isSupportedOperation(
 
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
   return isa_and_nonnull<arith::SelectOp>(sourceOp) &&
-         sliceOp.getSource().getType().isa<RankedTensorType>();
+         mlir::isa<RankedTensorType>(sliceOp.getSource().getType());
 }
 
 LogicalResult SelectBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
@@ -1781,7 +1780,7 @@ LogicalResult SelectBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
 
   // only support tensor select
-  if (!sliceOp.getSource().getType().isa<RankedTensorType>())
+  if (!mlir::isa<RankedTensorType>(sliceOp.getSource().getType()))
     return failure();
 
   auto loc = selectOp.getLoc();

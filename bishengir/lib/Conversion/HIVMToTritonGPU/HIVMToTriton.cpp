@@ -302,7 +302,7 @@ public:
     Value indices = range;
     if (shape.size() != 1 || shape[0] != numElements) {
       indices = rewriter.create<triton::ReshapeOp>(
-          loc, RankedTensorType::get(shape, range.getType().cast<RankedTensorType>().getElementType()), range);
+          loc, RankedTensorType::get(shape, mlir::cast<RankedTensorType>(range.getType()).getElementType()), range);
     }
 
     // 4. Create pointer tensor (Splat + AddPtr)
@@ -409,7 +409,7 @@ public:
     Value indices = range;
     if (shape.size() != 1 || shape[0] != numElements) {
       indices = rewriter.create<triton::ReshapeOp>(
-          loc, RankedTensorType::get(shape, range.getType().cast<RankedTensorType>().getElementType()), range);
+          loc, RankedTensorType::get(shape, mlir::cast<RankedTensorType>(range.getType()).getElementType()), range);
     }
 
     auto ttDstBase =

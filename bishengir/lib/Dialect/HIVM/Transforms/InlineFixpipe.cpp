@@ -621,7 +621,7 @@ void InlineFixpipe::runOnOperation() {
   RewritePatternSet devicePrintPatterns(&getContext());
   populateDevicePrintPatterns(devicePrintPatterns);
 
-  if (failed(applyPatternsAndFoldGreedily(getOperation(),
+  if (failed(applyPatternsGreedily(getOperation(),
                                           std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }

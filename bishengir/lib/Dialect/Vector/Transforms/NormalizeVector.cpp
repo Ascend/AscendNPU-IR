@@ -58,7 +58,7 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
   Type elemTy = srcType.getElementType();
   DenseElementsAttr denseAttr;
   if (elemTy.isF32() || elemTy.isF16()) {
-    const llvm::fltSemantics &semantics = elemTy.cast<FloatType>().getFloatSemantics();
+    const llvm::fltSemantics &semantics = mlir::cast<FloatType>(elemTy).getFloatSemantics();
     llvm::APFloat initVal(semantics);
     switch (reduceKind) {
     case vector::CombiningKind::MAXNUMF:
@@ -1245,7 +1245,7 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
     Type lhsType = lhs.getType();
     Type rhsType = rhs.getType();
     Type resultType = op.getType();
-    if (!(lhsType.isF32() && rhsType.isF32() || lhsType.isInteger(1) && rhsType.isInteger(1)))
+    if (!((lhsType.isF32() && rhsType.isF32()) || (lhsType.isInteger(1) && rhsType.isInteger(1))))
       return failure();
     int numOperands = static_cast<int>(op.getNumOperands());
     if (numOperands != 2)

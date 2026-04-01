@@ -49,20 +49,6 @@ struct InlineFixpipeV2 : public impl::InlineFixpipeV2Base<InlineFixpipeV2> {
 
 namespace {
 
-std::optional<bool> isStoreOp(Operation *dstOp) {
-  if (isa<hivm::StoreOp>(dstOp)) {
-    return true;
-  }
-  bool isPreOp = isa<hivm::VCastOp>(dstOp) || isa<hivm::VReluOp>(dstOp);
-
-  if (dstOp->getDialect()->getNamespace() ==
-          HIVMDialect::getDialectNamespace() &&
-      !isPreOp) {
-    return false;
-  }
-  return std::nullopt;
-}
-
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto users = op->getResult(resultIndx).getUsers();
   std::set<scf::YieldOp> yieldOperands;
@@ -500,7 +486,7 @@ void InlineFixpipeV2::runOnOperation() {
   RewritePatternSet devicePrintPatterns(&getContext());
   populateDevicePrintPatterns(devicePrintPatterns);
 
-  if (failed(applyPatternsAndFoldGreedily(getOperation(),
+  if (failed(applyPatternsGreedily(getOperation(),
                                           std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }

@@ -92,7 +92,7 @@ public:
     auto newArgs = newEntryBlock->getArguments();
     auto &oldEntryBlock = op.getBody().front();
     for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
-      if (auto memrefTy = oldArg.getType().dyn_cast<MemRefType>()) {
+      if (auto memrefTy = mlir::dyn_cast<MemRefType>(oldArg.getType())) {
         auto dataPtr1 = newArgs[argIdx];
         argIdx += 5;
         /// New args should be repackaged as llvm.struct{ptr, ptr, index, {index}, {index}}.

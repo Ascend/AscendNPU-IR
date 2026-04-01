@@ -724,7 +724,7 @@ struct RewriteVModOp : public OpRewritePattern<From> {
   LogicalResult matchAndRewrite(From op,
                                 PatternRewriter &rewriter) const final {
     const auto resultType = cast<ShapedType>(op.getDst()[0].getType());
-    auto res = rewriter.replaceOpWithNewOp<linalg::GenericOp>(
+    rewriter.replaceOpWithNewOp<linalg::GenericOp>(
         op, op.getResultTypes(), op.getSrc(), op.getDst(),
         op.getIndexingMapsArray(),
         SmallVector<utils::IteratorType>(resultType.getRank(),

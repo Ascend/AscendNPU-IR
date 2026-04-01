@@ -61,14 +61,14 @@ struct StoreLoadPattern {
 /// Try to extract a single int64_t from an Attribute that might be a
 /// DenseIntElementsAttr (splat or single element) or an IntegerAttr.
 static std::optional<int64_t> extractIntFromAttr(Attribute a) {
-  if (auto i = a.dyn_cast<IntegerAttr>()) {
+  if (auto i = mlir::dyn_cast<IntegerAttr>(a)) {
     return i.getValue().getSExtValue();
   }
-  if (auto dense = a.dyn_cast<DenseElementsAttr>()) {
-    if (dense.getType().getElementType().isa<IntegerType>()) {
+  if (auto dense = mlir::dyn_cast<DenseElementsAttr>(a)) {
+    if (mlir::isa<IntegerType>(dense.getType().getElementType())) {
       if (dense.isSplat()) {
         Attribute v = dense.getSplatValue<Attribute>();
-        if (auto ia = v.dyn_cast<IntegerAttr>())
+        if (auto ia = mlir::dyn_cast<IntegerAttr>(v))
           return ia.getValue().getSExtValue();
       } else if (dense.getNumElements() == 1) {
         auto it = dense.value_begin<llvm::APInt>();
@@ -292,7 +292,7 @@ static Value ensureValueWithNewLastDim(
     return v;
 
   Type t = v.getType();
-  auto rt = t.dyn_cast<RankedTensorType>();
+  auto rt = mlir::dyn_cast<RankedTensorType>(t);
   if (!rt)
     return v;
 
@@ -309,7 +309,7 @@ static Value ensureValueWithNewLastDim(
   if (Operation *def = v.getDefiningOp()) {
     if (clonedOpsMap.count(def)) {
       Operation *clonedProducer = clonedOpsMap[def];
-      unsigned idx = v.cast<OpResult>().getResultNumber();
+      unsigned idx = mlir::cast<OpResult>(v).getResultNumber();
       Value mapped = clonedProducer->getResult(idx);
       valueMapping[v] = mapped;
       return mapped;
@@ -364,11 +364,11 @@ cloneConstantOp(PatternRewriter &rewriter, Location loc,
           newValAttr = SplatElementsAttr::get(newResRT, splatVal);
         } else if (dense.getNumElements() == 1) {
           Type elemTy = newResRT.getElementType();
-          if (elemTy.isa<IntegerType>()) {
+          if (mlir::isa<IntegerType>(elemTy)) {
             auto it = dense.value_begin<llvm::APInt>();
             IntegerAttr scalar = IntegerAttr::get(elemTy, *it);
             newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          } else if (elemTy.isa<FloatType>()) {
+          } else if (mlir::isa<FloatType>(elemTy)) {
             auto it = dense.value_begin<llvm::APFloat>();
             FloatAttr scalar = FloatAttr::get(elemTy, *it);
             newValAttr = SplatElementsAttr::get(newResRT, scalar);
@@ -376,17 +376,17 @@ cloneConstantOp(PatternRewriter &rewriter, Location loc,
         } else {
           //  create a splat from the first element
           Type elemTy = newResRT.getElementType();
-          if (elemTy.isa<IntegerType>()) {
+          if (mlir::isa<IntegerType>(elemTy)) {
             auto it = dense.value_begin<llvm::APInt>();
             IntegerAttr scalar = IntegerAttr::get(elemTy, *it);
             newValAttr = SplatElementsAttr::get(newResRT, scalar);
-          } else if (elemTy.isa<FloatType>()) {
+          } else if (mlir::isa<FloatType>(elemTy)) {
             auto it = dense.value_begin<llvm::APFloat>();
             FloatAttr scalar = FloatAttr::get(elemTy, *it);
             newValAttr = SplatElementsAttr::get(newResRT, scalar);
           }
         }
-      } else if (valAttr.isa<IntegerAttr>() || valAttr.isa<FloatAttr>()) {
+      } else if (mlir::isa<IntegerAttr>(valAttr) || mlir::isa<FloatAttr>(valAttr)) {
         newValAttr = SplatElementsAttr::get(newResRT, valAttr);
       }
     }
