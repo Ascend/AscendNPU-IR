@@ -286,8 +286,31 @@ MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
     // %res1 = mm outs(%arg0)
     // scf.yield %res0, %res1
     for (auto use : info.currentValue.getUsers()) {
-      if (!isa<T>(use)) {
-        return failure();
+      auto forOp = dyn_cast<scf::ForOp>(use);
+      if (!forOp) {
+        continue;
+      }
+
+      for (unsigned i = 0; i < forOp.getNumRegionIterArgs(); ++i) {
+        if (forOp.getInitArgs()[i] != info.currentValue) {
+          continue;
+        }
+        
+        BlockArgument regionIterArg = forOp.getRegionIterArg(i);
+        OpOperand *tiedYielded = forOp.getTiedLoopYieldedValue(regionIterArg);
+        if (!tiedYielded) {
+          continue;
+        }
+
+        auto yieldedMatmul = hivm::traceDefOp<T>(tiedYielded->get());
+        if (!yieldedMatmul.has_value()) {
+          continue;
+        }
+
+        auto matmulOp = cast<T>(yieldedMatmul.value());
+        if (matmulOp.getDpsInitOperand(0)->get() == info.currentValue) {
+          return failure();
+        }
       }
     }
 
