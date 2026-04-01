@@ -12,8 +12,8 @@ MLIR 源自 LLVM 社区，提供可复用、可扩展的编译器基础设施。
 
 ## [Triton-Ascend](https://gitcode.com/Ascend/triton-ascend)
 
-Triton-Ascend 是面向昇腾的 Triton 编程，使 Triton 代码能在昇腾硬件上高效运行。AscendNPU IR 作为 Triton 的编译后端，使开发者能以熟悉的 Triton 语法与编程模型为昇腾 NPU 高效开发kernel，降低 Python 开发者为昇腾开发算子的门槛。
+Triton-Ascend 是面向昇腾平台构建的Triton编译框架，使 Triton 代码能在昇腾硬件上高效运行。AscendNPU IR 作为 Triton 的编译后端，使开发者能以熟悉的 Triton 语法与编程模型为昇腾 NPU 高效开发kernel，降低 Python 开发者为昇腾开发算子的门槛。
 
 ## [TileLang-Ascend](https://github.com/tile-ai/tilelang-ascend)
 
-TileLang 是用于描述张量计算的领域特定语言，TileLang-Ascend 为其面向昇腾的版本。通过将 AscendNPU IR 作为编译后端，TileLang-Ascend 可借助 AscendNPU IR 的昇腾硬件亲优化能力生成高性能昇腾算子。
+TileLang 是用于描述张量计算的领域特定语言，TileLang-Ascend 为其面向昇腾的版本。通过将 AscendNPU IR 作为编译后端，TileLang-Ascend 可借助 AscendNPU IR 的昇腾硬件亲和优化能力生成高性能昇腾算子。
