@@ -21,12 +21,14 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
@@ -88,6 +90,37 @@ void annotateOpOperand(OpBuilder builder, Operation *op,
   }
 }
 
+static bool isDefinedOutside(Value value, Region &region) {
+  if (Operation *defOp = value.getDefiningOp()) {
+    return !region.isAncestor(defOp->getParentRegion());
+  }
+  if (BlockArgument arg = dyn_cast<BlockArgument>(value)) {
+    return !region.isAncestor(arg.getOwner()->getParent());
+  }
+  return false;
+}
+
+static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
+                                   Type type) {
+  return llvm::TypeSwitch<Type, Value>(type)
+      .Case<TensorType>([&](TensorType t) {
+        return builder.create<tensor::EmptyOp>(loc, t.getShape(),
+                                               t.getElementType());
+      })
+      .Case<IntegerType>([&](IntegerType t) {
+        return builder.create<arith::ConstantOp>(loc, t,
+                                                 builder.getIntegerAttr(t, 0));
+      })
+      .Case<FloatType>([&](FloatType t) {
+        return builder.create<arith::ConstantOp>(loc, t,
+                                                 builder.getFloatAttr(t, 0.0));
+      })
+      .Default([&](Type t) {
+        llvm::errs() << "Unsupported result type for stubbing: " << t << "\n";
+        return Value();
+      });
+}
+
 static SmallVector<Value> getOutOperands(Operation *op) {
   if (op->getResults().empty()) {
     return {};
@@ -117,6 +150,37 @@ static SmallVector<Value> getOutOperands(Operation *op) {
     return outOperands;
   }
 
+  // For scope ops: derive replacement values from the terminator's operands.
+  // Values defined outside the scope are used directly; values defined inside
+  // are replaced with zero/empty stubs created immediately before the scope op.
+  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+    Operation *terminator = scopeOp.getBody()->getTerminator();
+    SmallVector<Value> outVals;
+    for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
+      if (result.use_empty()) {
+        // Sentinel: result has no uses, no replacement needed.
+        outVals.push_back(Value());
+        continue;
+      }
+      Value yieldedVal = terminator->getOperand(index);
+      if (isDefinedOutside(yieldedVal, scopeOp.getRegion())) {
+        outVals.push_back(yieldedVal);
+      } else {
+        // Insert stub immediately before the scope op so it is visible to
+        // all users of the scope result after the scope is erased.
+        OpBuilder localBuilder(op->getBlock(), Block::iterator(op));
+        Value stub = createZeroOrEmptyStub(localBuilder, scopeOp.getLoc(),
+                                           result.getType());
+        if (!stub)
+          scopeOp.emitError()
+              << "Failed to create replacement stub for scope result #" << index
+              << " with unsupported type: " << result.getType();
+        outVals.push_back(stub); // null on failure; caller checks
+      }
+    }
+    return outVals;
+  }
+
   // TODO: should we get the last operands as out operands by default?
   llvm_unreachable("unsupported op to get out operands");
 }
@@ -127,9 +191,6 @@ void replaceResultWithInitOperand(Operation *op) {
   if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
     return;
   }
-  auto numOperands = op->getNumOperands();
-  if (numResults > numOperands)
-    op->emitError("invalid element type");
 
   SmallVector<Value> outOperands = getOutOperands(op);
   assert(outOperands.size() == numResults &&
@@ -251,7 +312,16 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
         return;
       }
     }
+
     FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
+              hivm::kPipelinedLoopCoreTypeAttrName)) {
+        auto scopeCoreType = coreTypeAttr.getTcoretype();
+        res = scopeCoreType == filterCoreType;
+      }
+    }
+
     if (failed(res)) {
       signalPassFailure();
       return;
