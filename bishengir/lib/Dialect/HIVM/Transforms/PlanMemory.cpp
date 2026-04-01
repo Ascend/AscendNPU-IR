@@ -31,6 +31,7 @@
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include <algorithm>
 
 #define DEBUG_TYPE "hivm-plan-memory"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X)
@@ -462,17 +463,17 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
   SmallVector<Value> allocBeforeLoopBuffers;
   const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
   assert(liveBlockInfo != nullptr);
-  auto currentLiveValues =
+
+  SetVector<Value> currentLiveValues =
       currentlyLiveValuesOrdered(liveBlockInfo, loopOp.getOperation());
   if (currentLiveValues.empty()) {
     return allocBeforeLoopBuffers;
   }
-  // The gen buffer of the same operation must ensure the order of priority.
-  SetVector<Value> currentLiveValuesOrder;
-  for (auto buffer : currentLiveValues) {
-    currentLiveValuesOrder.insert(buffer);
-  }
-  for (const Value &operand : currentLiveValuesOrder) {
+
+  // TODO: Remove once plan-memory no longer depends on traversal order.
+  auto currentLiveValuesShuffled =
+      getShuffledRange(currentLiveValues.takeVector());
+  for (const Value &operand : currentLiveValuesShuffled) {
     auto aliasBuffers = GetAliasBuffers(operand);
     aliasBuffers.insert(operand);
     for (auto Buffer : aliasBuffers) {
@@ -694,14 +695,17 @@ void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
                                        Block *block) {
   const auto *liveBlockInfo = live.getLiveness(block);
   assert(liveBlockInfo != nullptr && opInfo != nullptr);
-  auto currentLiveValues =
+
+  SetVector<Value> currentLiveValues =
       currentlyLiveValuesOrdered(liveBlockInfo, opInfo->operation);
   if (currentLiveValues.empty()) {
     return;
   }
-  SetVector<Value> liveValues(currentLiveValues.begin(),
-                              currentLiveValues.end());
-  for (const Value &operand : liveValues) {
+
+  // TODO: Remove once plan-memory no longer depends on traversal order.
+  auto currentLiveValuesShuffled =
+      getShuffledRange(currentLiveValues.takeVector());
+  for (const Value &operand : currentLiveValuesShuffled) {
     UpdateOpKillInfo(opInfo, operand, live);
   }
 }
@@ -987,7 +991,7 @@ void MemPlan::EmitPlanMemoryFailureInfo() {
 }
 
 // Plan Memory algorithm.
-LogicalResult MemPlan::plan() {
+LogicalResult MemPlan::plan(bool emitErrors) {
   // Construct StorageEntry structure.
   GenerateStorageEntry();
   // Plan memory address.
@@ -995,7 +999,9 @@ LogicalResult MemPlan::plan() {
                       ? PlanLocalMemAddress()
                       : PlanWorkSpaceMemAddress();
   if (as == PlanStatus::PLAN_FAILED) {
-    EmitPlanMemoryFailureInfo();
+    if (emitErrors) {
+      EmitPlanMemoryFailureInfo();
+    }
     if (enableMemoryDisplay) {
       // Update the address information of each buffer after memory buffer.
       UpdateBuffer2Offsets();
@@ -2437,52 +2443,80 @@ void PlanMemoryPass::runOnOperation() {
     }
   }
 
-  MemLivenessAnalysis memLiveness(funcOp, this->memMode);
-  memLiveness.build();
-
-  MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                  this->enableMemoryDisplay, this->restrictInplaceAsISA);
-  memPlan.func_ = funcOp;
-  memPlan.SetLinearOperation(memLiveness.linearOperation);
-  memPlan.SetBufferInfos(memLiveness.bufferInfos);
-  memPlan.SetBuffer2Life(memLiveness.buffer2Life);
-  memPlan.SetGenKillMap(memLiveness.genKillMap);
-  memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
-  memPlan.SetInplacePairList(memLiveness.inplacePairList);
-
   // Add a attr to the memref alloc for the tempbuf.
-  if (memPlan.enableMemoryDisplay) {
+  if (this->enableMemoryDisplay) {
     markTempBufForMemoryDisplay(funcOp);
   }
 
-  // record the memory display info list.
-  SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
-  if (failed(memPlan.plan())) {
-    if (memPlan.enableMemoryDisplay) {
-      // Collect plan fail memory info for memory display tools.
-      collectMemoryInfoForDebug(
-          memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
-          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
-      memPlan.SetMemscope2rootSuccessStorageEntry();
-      // Collect plan success memory info for memory display tools.
-      collectMemoryInfoForDebug(
-          memoryDisplayInfoList, memPlan.GetMemscope2rootSuccessStorageEntry(),
-          memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
-      createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+  constexpr int kPlanRetryCount = 20;
+  bool planSucceeded = false;
+  DenseMap<Value, SmallVector<uint64_t>> plannedBuffer2Offsets;
+
+  // The current plan-memory algorithm is sensitive to the order in which some
+  // candidate buffers are considered. We retry planning with different
+  // deterministic shuffle seeds to improve the chance of finding a valid plan
+  // without making the pass behavior non-reproducible.
+  // TODO: Remove the retry loop once the plan-memory algorithm is improved to
+  // produce a stable valid plan in a single attempt.
+  for (int attempt = 0; attempt < kPlanRetryCount; ++attempt) {
+    LDBG("Memory planning attempt " << attempt + 1 << "/"
+                                     << kPlanRetryCount << "\n");
+
+    MemLivenessAnalysis memLiveness(funcOp, this->memMode,
+                                    /*randomSeed=*/attempt);
+    memLiveness.build();
+
+    MemPlan memPlan(this->memMode, this->enableGlobalReuse,
+                    this->enableMemoryDisplay, this->restrictInplaceAsISA);
+    memPlan.func_ = funcOp;
+    memPlan.SetLinearOperation(memLiveness.linearOperation);
+    memPlan.SetBufferInfos(memLiveness.bufferInfos);
+    memPlan.SetBuffer2Life(memLiveness.buffer2Life);
+    memPlan.SetGenKillMap(memLiveness.genKillMap);
+    memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
+    memPlan.SetInplacePairList(memLiveness.inplacePairList);
+
+    const bool isLastAttempt = attempt == kPlanRetryCount - 1;
+    if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
+      planSucceeded = true;
+      plannedBuffer2Offsets = memPlan.GetBuffer2Offsets();
+
+      if (memPlan.enableMemoryDisplay) {
+        SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
+        // Collect plan success memory info for memory display tools.
+        collectMemoryInfoForDebug(
+            memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
+            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+        createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+      }
+      break;
     }
+
+    if (isLastAttempt) {
+      if (memPlan.enableMemoryDisplay) {
+        SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
+        // Collect plan fail memory info for memory display tools.
+        collectMemoryInfoForDebug(
+            memoryDisplayInfoList, memPlan.GetMemscope2rootFailStorageEntry(),
+            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, true);
+        memPlan.SetMemscope2rootSuccessStorageEntry();
+        // Collect plan success memory info for memory display tools.
+        collectMemoryInfoForDebug(
+            memoryDisplayInfoList,
+            memPlan.GetMemscope2rootSuccessStorageEntry(),
+            memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
+        createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
+      }
+      return signalPassFailure();
+    }
+  }
+
+  if (!planSucceeded) {
     return signalPassFailure();
   }
 
-  if (memPlan.enableMemoryDisplay) {
-    // Collect plan success memory info for memory display tools.
-    collectMemoryInfoForDebug(
-        memoryDisplayInfoList, memPlan.GetMemscope2rootStorageEntry(),
-        memPlan.GetBuffer2Offsets(), memPlan.errorInfo, false);
-    createJsonForMemoryDisplay(funcOp, memoryDisplayInfoList);
-  }
-
   RewritePatternSet patterns(&getContext());
-  populateBufferAddressToAllocOp(patterns, memPlan.GetBuffer2Offsets());
+  populateBufferAddressToAllocOp(patterns, plannedBuffer2Offsets);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return signalPassFailure();
   }
