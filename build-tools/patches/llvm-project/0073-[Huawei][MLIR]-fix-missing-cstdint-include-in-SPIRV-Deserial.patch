@@ -1,0 +1,12 @@
+diff --git a/mlir/include/mlir/Target/SPIRV/Deserialization.h b/mlir/include/mlir/Target/SPIRV/Deserialization.h
+index e39258beeaac..a346a7fd1e5f 100644
+--- a/mlir/include/mlir/Target/SPIRV/Deserialization.h
++++ b/mlir/include/mlir/Target/SPIRV/Deserialization.h
+@@ -15,6 +15,7 @@
+ 
+ #include "mlir/IR/OwningOpRef.h"
+ #include "mlir/Support/LLVM.h"
++#include <cstdint>
+ 
+ namespace mlir {
+ class MLIRContext;
