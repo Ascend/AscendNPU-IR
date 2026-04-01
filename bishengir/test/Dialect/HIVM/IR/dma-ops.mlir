@@ -47,55 +47,59 @@ func.func @test_nd2nz_tensor_init_out_buffer(%arg0: memref<?x?x?x?xf32, #hivm.ad
 
 // -----
 // CHECK-LABEL: test_fixpipe
-func.func @test_fixpipe() {
-  %gmC = memref.alloc() : memref<1024x2048xf16>
-  %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
-                       : memref<1024x2048xf16> to
-                         memref<256x128xf16, strided<[2048, 1], offset: 0>>
-  %l0c = memref.alloc() : memref<256x128xf16>
-  // Normal data movement
-  hivm.hir.fixpipe ins(%l0c : memref<256x128xf16>)
-                   outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
-  // NZ2ND data movement
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%l0c : memref<256x128xf16>)
-                                  outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
-  // DUAL DST data movement
-  %l0c1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
-  %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
-  hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf16, #hivm.address_space<cc>>)
-                   outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
-                   dual_dst_mode = #hivm.fixpipe_dual_dst_mode<NO_DUAL>
-  
-  // NZ2DN data movement
-  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf16>)
-                                  outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
-  return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe() {
+    %gmC = memref.alloc() : memref<1024x2048xf16>
+    %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
+                        : memref<1024x2048xf16> to
+                          memref<256x128xf16, strided<[2048, 1], offset: 0>>
+    %l0c = memref.alloc() : memref<256x128xf16>
+    // Normal data movement
+    hivm.hir.fixpipe ins(%l0c : memref<256x128xf16>)
+                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    // NZ2ND data movement
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%l0c : memref<256x128xf16>)
+                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    // DUAL DST data movement
+    %l0c1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf16, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+                    dual_dst_mode = #hivm.fixpipe_dual_dst_mode<NO_DUAL>
+    
+    // NZ2DN data movement
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf16>)
+                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    return
+  }
 }
 
 // -----
 // CHECK-LABEL: test_fixpipe_tensor
-func.func @test_fixpipe_tensor() {
-  %gmC = tensor.empty() : tensor<1024x2048xf16>
-  %gmCSubview = tensor.extract_slice %gmC[0, 0][256, 128][1, 1]
-                       : tensor<1024x2048xf16> to
-                         tensor<256x128xf16>
-  %l0c = tensor.empty() : tensor<256x128xf16>
-  // Normal data movement
-  %ret = hivm.hir.fixpipe ins(%l0c : tensor<256x128xf16>)
-                          outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  // NZ2ND data movement
-  %ret1 = hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : tensor<256x128xf16>)
-                                          outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  // f322f16 pre quant on the fly
-  %l0c1 = tensor.empty() : tensor<256x128xf32>
-  %ret2 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
-                           ins(%l0c1 : tensor<256x128xf32>)
-                           outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  // leaky relu on the fly
-  %ret3 = hivm.hir.fixpipe {pre_relu = #hivm.fixpipe_pre_relu_mode<LEAKY_RELU>}
-                           ins(%l0c : tensor<256x128xf16>)
-                           outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
-  return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_tensor() {
+    %gmC = tensor.empty() : tensor<1024x2048xf16>
+    %gmCSubview = tensor.extract_slice %gmC[0, 0][256, 128][1, 1]
+                        : tensor<1024x2048xf16> to
+                          tensor<256x128xf16>
+    %l0c = tensor.empty() : tensor<256x128xf16>
+    // Normal data movement
+    %ret = hivm.hir.fixpipe ins(%l0c : tensor<256x128xf16>)
+                            outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+    // NZ2ND data movement
+    %ret1 = hivm.hir.fixpipe {enable_nz2nd} ins(%l0c : tensor<256x128xf16>)
+                                            outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+    // f322f16 pre quant on the fly
+    %l0c1 = tensor.empty() : tensor<256x128xf32>
+    %ret2 = hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
+                            ins(%l0c1 : tensor<256x128xf32>)
+                            outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+    // leaky relu on the fly
+    %ret3 = hivm.hir.fixpipe {pre_relu = #hivm.fixpipe_pre_relu_mode<LEAKY_RELU>}
+                            ins(%l0c : tensor<256x128xf16>)
+                            outs(%gmCSubview : tensor<256x128xf16>) -> tensor<256x128xf16>
+    return
+  }
 }
 
 // -----

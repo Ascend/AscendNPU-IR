@@ -101,7 +101,7 @@ module {
 // OPTS-OFF: linalg.matmul
 // OPTS-OFF: hivm.hir.fixpipe
 // OPTS-OFF-NEXT: scope.return 
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @nested_regions(%arg1: memref<128x128xf16, strided<[128, 1], offset: ?>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {
     %c32_i32 = arith.constant 32 : i32
     %c8192_i32 = arith.constant 8192 : i32

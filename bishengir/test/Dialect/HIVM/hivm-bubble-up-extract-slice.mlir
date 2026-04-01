@@ -188,11 +188,13 @@ func.func @bubble_up_varange(%arg0 : tensor<128xi32>) -> tensor<64xi32> {
 // CHECK:           %[[VAL_2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_0:.*]] : tensor<128x128xf32>) outs(%[[VAL_1:.*]] : tensor<64x128xf32>) dual_dst_mode = <ROW_SPLIT> -> tensor<64x128xf32>
 // CHECK:           return %[[VAL_2:.*]] : tensor<64x128xf32>
 // CHECK:         }
-func.func @bubble_up_hivm_fixpipe(%arg0 : tensor<128x128xf32>) -> tensor<64x128xf32> {
-  %0 = tensor.empty() : tensor<128x128xf32>
-  %2 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
-  %extracted_slice = tensor.extract_slice %2[0, 0] [64,128] [1,1] {to_be_bubbled_slice} : tensor<128x128xf32> to tensor<64x128xf32>
-  return %extracted_slice : tensor<64x128xf32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @bubble_up_hivm_fixpipe(%arg0 : tensor<128x128xf32>) -> tensor<64x128xf32> {
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %2 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %extracted_slice = tensor.extract_slice %2[0, 0] [64,128] [1,1] {to_be_bubbled_slice} : tensor<128x128xf32> to tensor<64x128xf32>
+    return %extracted_slice : tensor<64x128xf32>
+  }
 }
 
 // -----

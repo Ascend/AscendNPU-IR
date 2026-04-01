@@ -963,7 +963,9 @@ public:
       return failure();
     }
     Value dst = op.getDst();
-    if (op.getDualDstModeAttr()) {
+   if (auto dualDstModeAttr = op.getDualDstModeAttr();
+        dualDstModeAttr &&
+        dualDstModeAttr.getDualDstMode() != hivm::FixpipeDualDstMode::NO_DUAL) {
       return failure();
     }
     // Determine the address space of the destination operand of the fixpipe
@@ -1014,7 +1016,6 @@ public:
                          : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
     auto shape = llvm::to_vector(oldTy.getShape());
-    // TODO: support NZ2DN
     auto splitShape = [](bool cvpipeFlag, hivm::FixpipeDualDstMode splitMode,
                          SmallVector<int64_t> &shape) -> LogicalResult {
       int64_t splitIdx = 0;
@@ -1037,6 +1038,10 @@ public:
       return success();
     };
 
+    if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
+    }
     if (!cvpipeFlag) {
       if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
         op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());

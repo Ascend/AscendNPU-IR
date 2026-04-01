@@ -395,7 +395,7 @@ func.func @collapse_flip_axis(%arg0: tensor<2x3x4x5xf32>) -> (tensor<2x12x5xf32>
 // CHECK-LABEL: triton_scope
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[COLLAPSED1:.*]], %[[COLLAPSED2:.*]] : tensor<64xf32>, tensor<64xf32>)
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[VAL:.*]] : tensor<1x64xf32>)
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @triton_scope(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>, %arg2: memref<?xf32>) {
     %c0_i32 = arith.constant 0 : i32
     %c1_i32 = arith.constant 1 : i32
