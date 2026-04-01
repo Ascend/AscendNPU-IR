@@ -1446,41 +1446,47 @@ static bool canTraceBackToMatmul(Value operand) {
 }
 
 static bool isValueReachingMatmul(Value val) {
-  for (auto *user : val.getUsers()) {
-    if (isa<linalg::MatmulOp>(user) || isa<linalg::BatchMatmulOp>(user) || isa<hfusion::MatMulMxOp>(user)) {
-      continue;
-    }
-    /* In case the matmul has been broken into a matmul + add
-       and the add has been generalized. */
-    if (auto genericOp = dyn_cast<linalg::GenericOp>(user)) {
-      if (canTraceBackToMatmul(genericOp.getInputs()[0]))
-        continue;
-    }
-    /* Result of the FillOp reaches an iterarg and the iterarg
-       in turn reaches a matmul:
-       %1 = FillOp
-       scf.for (%arg12 = %1) {
-          matmul(%arg12)
-       } */
-    if (auto forloop = dyn_cast<scf::ForOp>(user)) {
-      OperandRange iterArgs = forloop.getInitArgs();
-      size_t idx;
-      for (idx = 0; idx < iterArgs.size(); idx++) {
-        if (iterArgs[idx] == val)
-          break;
-      }
-      Value arg = forloop.getRegionIterArg(idx);
-      if (isValueReachingMatmul(arg))
-        continue;
-    }
+  if (val.use_empty()) {
+    // not used value cannot reach matmul
     return false;
   }
-  return true;
+
+  bool reachable = llvm::any_of(val.getUsers(), [&](Operation *user) {
+    return llvm::TypeSwitch<Operation *, bool>(user)
+        // directly reach matmul-like op
+        .Case<linalg::MatmulOp, linalg::BatchMatmulOp, hfusion::MatMulMxOp>(
+            [](auto) { return true; })
+        // generic op reaches matmul if first input can trace back to matmul.
+        .Case<linalg::GenericOp>([&](auto genericOp) {
+          if (genericOp.getNumDpsInputs() == 0) {
+            return false;
+          }
+          // TODO: Should we check all inputs/operands of generic op?
+          return canTraceBackToMatmul(genericOp.getInputs()[0]);
+        })
+        // trace through scf::ForOp arguments
+        .Case<scf::ForOp>([&](auto forOp) {
+          auto inits = forOp.getInitArgs();
+          auto it = llvm::find(inits, val);
+          if (it == inits.end()) {
+            return false;
+          }
+          unsigned idx = std::distance(inits.begin(), it);
+          Value iterArg = forOp.getRegionIterArg(idx);
+          return isValueReachingMatmul(iterArg);
+        })
+        // treat unhandled cases as not reachable to matmul
+        // TODO: should we handle other cases?
+        .Default(false);
+  });
+
+  LDBG("[isValueReachingMatmul]: val: " << val);
+  LDBG("[isValueReachingMatmul]: reachable: " << reachable);
+  return reachable;
 }
 
 namespace {
-template <typename T>
-bool canFillLikeOpFuseIntoMatmul(Operation *op) {
+template <typename T> bool canFillLikeOpFuseIntoMatmul(Operation *op) {
   // for linalg.fill and linalg.transpose
   /* Check if the DestinationPassing input
      becomes to_tensor and reaches a matmul */
@@ -1570,14 +1576,14 @@ bool hfusion::isInCubeScope(Operation *op) {
 
 bool hfusion::isFP8(Type type, Builder builder) {
   return type == builder.getFloat8E5M2Type() ||
-      type == builder.getFloat8E4M3Type() ||
-      type == builder.getFloat8E4M3FNType() ||
-      type == builder.getFloat8E5M2FNUZType() ||
-      type == builder.getFloat8E4M3FNUZType() ||
-      type == builder.getFloat8E4M3B11FNUZType();
+         type == builder.getFloat8E4M3Type() ||
+         type == builder.getFloat8E4M3FNType() ||
+         type == builder.getFloat8E5M2FNUZType() ||
+         type == builder.getFloat8E4M3FNUZType() ||
+         type == builder.getFloat8E4M3B11FNUZType();
 }
 
-/// Tile_reduction_using_for will fail or cause bugs in some context, 
+/// Tile_reduction_using_for will fail or cause bugs in some context,
 /// see issue: AscendNPU-IR/issues/307
 /// So we still use tile_using_for instead for these context.
 bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
