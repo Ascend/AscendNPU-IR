@@ -1275,3 +1275,19 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: func.func @unsupported_inline_quant_scale_fixpipe_non_scalar(
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: quant_scale
+// CHECK: hivm.hir.vmul
+// CHECK: return
+module {
+  func.func @unsupported_inline_quant_scale_fixpipe_non_scalar(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: tensor<?x64xf32>, %arg3: tensor<?x64xf32>, %arg6: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg2 : tensor<?x64xf32>, tensor<?x64xf32>) outs(%arg3 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    hivm.hir.store ins(%1 : tensor<?x64xf32>) outs(%arg6 : memref<?x64xf32, strided<[256, 1], offset: ?>>)
+    return
+  }
+}
