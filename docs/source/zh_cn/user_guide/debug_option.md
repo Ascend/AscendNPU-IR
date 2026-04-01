@@ -8,7 +8,7 @@
 
 **hivm层** **`DebugOp`** 在更低级的HIVM层执行时使用，用于打印中间计算结果和张量信息
 
-接下去将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以**Triton前端**为例，演示如何在算子开发全流程中注入并使用这些调试能力
+接下来将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以**Triton前端**为例，演示如何在算子开发全流程中注入并使用这些调试能力
 
 ### AscendNPU IR 调试op介绍
 
@@ -97,7 +97,9 @@ triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
 ##### 使用示例
+
 可以通过执行`python3 <file>.py`验证功能正确性
+
 ```
 import triton
 import torch
@@ -125,7 +127,7 @@ if __name__ == "__main__":
 
 ##### 断言效果
 
-![](../../images/user_guide/debug_option1.png)
+![image](../../images/user_guide/debug_option1.png)
 
 #### static_print
 
@@ -137,7 +139,9 @@ triton.language.static_print(message: str) -> None
 ```
 
 ##### 使用示例
+
 可以通过执行`python3 <file>.py`验证功能正确性
+
 ```
 import triton
 import torch
@@ -186,7 +190,9 @@ triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
 ##### 使用示例
+
 可以通过执行`python3 <file>.py`验证功能正确性
+
 ```
 import triton
 import torch
@@ -217,7 +223,7 @@ if __name__ == "__main__":
 
 ##### 断言效果
 
-![](../../images/user_guide/debug_option3.png)
+![image](../../images/user_guide/debug_option3.png)
 
 #### device_print
 
@@ -235,7 +241,9 @@ triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
 ##### 使用示例
+
 可以通过执行`python3 <file>.py`验证功能正确性
+
 ```
 import triton
 import torch
@@ -263,7 +271,7 @@ if __name__ == "__main__":
 
 ##### 打印效果
 
-![](../../images/user_guide/debug_option4.png)
+![image](../../images/user_guide/debug_option4.png)
 
 ## 调试：工具类
 
@@ -324,9 +332,9 @@ if __name__ == "__main__":
     output_triton = add(x, y)
 ```
 
-执行mssanitizer python3 test_add.py产生如下打屏信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
+执行mssanitizer python3 test_add.py产生如下屏幕输出信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
 
-![](../../images/user_guide/debug_option5.png)
+![image](../../images/user_guide/debug_option5.png)
 
 注: 想了解更多mssanitizer的检测情况可以参考[详见MindStdudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
@@ -359,15 +367,13 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 
 #### 常用性能分析图
 
-1. trace.json：支持在chrome://tracing/上生成指令流水图
-![](../../images/user_guide/debug_option6.png)
+- **trace.json**：支持在chrome://tracing/上生成指令流水图
+    ![image](../../images/user_guide/debug_option6.png)
 
-2. visualize_data.bin：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
-![](../../images/user_guide/debug_option7.png)
+- **visualize_data.bin**：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
+    ![image](../../images/user_guide/debug_option7.png)
 
-#### 其他性能分析图
-
-注：想要了解更多性能分析图可以详见[Mindstudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)
+注：想要了解更多性能分析图可参见[Mindstudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)
 
 #### triton算子流水采集
 
@@ -418,4 +424,4 @@ if __name__ == "__main__":
 执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成带着时间戳的OPPROF文件夹
 
 取出simulator下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图(trace.json/visualize_data.bin)都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
-![](../../images/user_guide/debug_option9.png)
+![image](../../images/user_guide/debug_option9.png)

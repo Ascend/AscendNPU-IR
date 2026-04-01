@@ -3,10 +3,10 @@
 
 Hybrid Fusion (HFusion) dialect.
 
-
 ## Operations
 
 ### `hfusion.arange` (hfusion::ArangeOp)
+
 Differs from the classical definition of arange slightly with the addition
 of an offset(default is 0) and ability to be multi-dimensional (which also
 introduces strides). The offset and stride definition are similar to that of
@@ -19,7 +19,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -27,17 +27,15 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 | `strides` | variadic of index
 | `init` | shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensor` | shaped of any type values
 
-
 ### `hfusion.assert` (hfusion::AssertOp)
 
 _Device-side assert for debugging_
-
 
 Syntax:
 
@@ -48,24 +46,22 @@ operation ::= `hfusion.assert` $msg attr-dict $cond `:` type($cond)
 `hfusion.assert` takes a literal string `msg` and an argument of
 scalar or tensor that should be asserted.
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>msg</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `cond` | integer or ranked tensor of any type values
 
-
 ### `hfusion.atomic_cas` (hfusion::AtomicCasOp)
 
 _Atomic Compare-And-Swap (CAS) Op_
-
 
 Syntax:
 
@@ -82,15 +78,18 @@ only if the value of memory location V is equal to the expected old value A.
 The operation returns the original value of V regardless of whether it is updated or not.
 
 Constraints:
+
   1. The input and output must have the same rank
      and the same element type.
 
 Arguments:
+
   * `src0`: expected old value
   * `src1`: new value
   * `dst`: memory location in GM
 
 Examples:
+
 ```mlir
 hfusion.atomic_cas ins(%src0, %src1 : memref<?xf32>, memref<?xf32>) outs(%dst : memref<?xf32>)
 %result = hfusion.atomic_cas ins(%src0, %src1 : tensor<?xf32>, tensor<?xf32>) outs(%dst : tensor<?xf32>) -> tensor<?xf32>
@@ -100,24 +99,22 @@ Traits: `SameOperandsAndResultRank`
 
 Interfaces: `MemoryEffectOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | variadic of Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | Tensor or Memref
 
-
 ### `hfusion.atomic_rmw` (hfusion::AtomicRMWOp)
 
 _Atomic RMW Op_
-
 
 Syntax:
 
@@ -129,20 +126,24 @@ operation ::= `hfusion.atomic_rmw` attr-dict `ins` `(` $input `:` type($input) `
 ```
 
 Atomic RMW is an atomic operation that consists of three steps:
+
 1. Read the current value of the specified memory address
 2. Perform action depending on atomic_kind attr
 3. Return the old value read previously
 The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
 
 Constraints:
+
   1. The input memref and output memref must have the same rank
     and the same element type.
 
 Arguments:
+
   * `src`: new value
   * `dst`: memory location in GM
 
 Examples:
+
 ```mlir
 hfusion.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_kind = <add>
 %result = hfusion.atomic_rmw ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) atomic_kind = <or> -> tensor<?xf32>
@@ -152,7 +153,7 @@ Traits: `SameOperandsAndResultRank`
 
 Interfaces: `MemoryEffectOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -170,24 +171,22 @@ Interfaces: `MemoryEffectOpInterface`
 * umin (`UMIN`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | Tensor or Memref
 | `dst` | Tensor or Memref
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | Tensor or Memref
 
-
 ### `hfusion.atomic_xchg` (hfusion::AtomicXchgOp)
 
 _Atomic Exchange Op_
-
 
 Syntax:
 
@@ -199,21 +198,25 @@ operation ::= `hfusion.atomic_xchg` attr-dict `ins` `(` $input `:` type($input) 
 ```
 
 Atomic exchange is an atomic operation that consists of three steps:
+
 1. Read the current value of the specified memory address
 2. Write the new value to the memory address
 3. Return the old value read previously
 The whole process is atomic, that is, it will not be interrupted by other threads during the operation.
 
 Constraints:
+
   1. The input memref and output memref must have the same rank
     and the same element type.
 
 Arguments:
+
   * `src`: new value
   * `dst`: memory location in GM
   * `mask` : mask the element
 
 Examples:
+
 ```mlir
 hfusion.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) mask(%m : memref<?xi1>)
 %result = hfusion.atomic_xchg ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) mask(%m : memref<?xi1>) -> tensor<?xf32>
@@ -223,7 +226,7 @@ Traits: `SameOperandsAndResultRank`
 
 Interfaces: `MemoryEffectOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -231,17 +234,15 @@ Interfaces: `MemoryEffectOpInterface`
 | `dst` | Tensor or Memref
 | `mask` | Tensor or Memref
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | Tensor or Memref
 
-
 ### `hfusion.barrier` (hfusion::BarrierOp)
 
 _Synchronizes all pipelines of a core._
-
 
 Syntax:
 
@@ -251,40 +252,36 @@ operation ::= `hfusion.barrier` attr-dict
 
 The "barrier" op synchronizes all pipelines of a core.
 
-
 ### `hfusion.bitcast` (hfusion::BitcastOp)
 
 _Applies the bitcast function elementwise._
-
 
 Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg::YieldOp>`, `SingleBlock`
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.cast` (hfusion::CastOp)
 
 _Applies the cast function elementwise._
-
 
 Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg::YieldOp>`, `SingleBlock`
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -303,19 +300,18 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 * bitcast (`bitcast`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
-
 
 ### `hfusion.compare` (hfusion::CompareOp)
 
@@ -326,7 +322,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -343,24 +339,22 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 * vugt (`vugt`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.cumprod` (hfusion::CumprodOp)
 
 _Calculate cumulative product on a certain dim of the input tensor_
-
 
 Syntax:
 
@@ -378,7 +372,7 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -386,23 +380,21 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>reverse</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float or 8-bit signless integer or 16-bit signless integer or 32-bit signless integer or 64-bit signless integer values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float or 8-bit signless integer or 16-bit signless integer or 32-bit signless integer or 64-bit signless integer values
 
-
 ### `hfusion.cumsum` (hfusion::CumsumOp)
 
 _Calculate cumulative sum on a certain dim of the input tensor_
-
 
 Syntax:
 
@@ -420,7 +412,7 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -428,23 +420,21 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>reverse</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float or 8-bit signless integer or 16-bit signless integer or 32-bit signless integer or 64-bit signless integer values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float or 8-bit signless integer or 16-bit signless integer or 32-bit signless integer or 64-bit signless integer values
 
-
 ### `hfusion.deinterleave` (hfusion::DeinterleaveOp)
 
 _Constructs two tensors by deinterleaving an input tensor_
-
 
 Syntax:
 
@@ -459,6 +449,7 @@ dimension index). And it constrains the last dimension size of input must be
 multiples of 2.
 
 The channelIndex attribute controls the output behavior:
+
 * -1: Output all channels (returns two tensors, one with even indexes and one with odd indexes)
 * 0: Output only channel 0 (even indexes)
 * 1: Output only channel 1 (odd indexes)
@@ -469,25 +460,24 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>channelIndex</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | variadic of ranked tensor of any type values
-
 
 ### `hfusion.elemwise_binary` (hfusion::ElemwiseBinaryOp)
 
@@ -499,7 +489,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -528,19 +518,18 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 * bitcast (`bitcast`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
-
 
 ### `hfusion.elemwise_unary` (hfusion::ElemwiseUnaryOp)
 
@@ -552,7 +541,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -581,24 +570,22 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 * bitcast (`bitcast`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.flip` (hfusion::FlipOp)
 
 _Flips a tensor x along the dimension dim._
-
 
 Syntax:
 
@@ -617,32 +604,33 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>flip_axis</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of any type values
 
-
 ### `hfusion.gather` (hfusion::GatherOp)
+
 Gathers one axis of the src tensor into a different with the same shape in
 all but the gather axis. Corresponds to triton.language.gather.
 
 Given src:tensor<16x16> and index:tensor<16x4> with axis = 1, the op is
 equivalent to:
+
 ```
 for i in 0 to 16 {
   for j in 0 to 4 {       // Can be tiled without consequence
@@ -658,14 +646,14 @@ Traits: `SingleBlockImplicitTerminator<mlir::linalg::YieldOp>`, `SingleBlock`
 
 Interfaces: `BiShengIRAggregatedOpInterface`, `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>axis</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
@@ -673,41 +661,37 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `DestinationStyleOpInterface`, `Li
 | `index` | shaped of any type values
 | `init` | shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of tensor of any type values
-
 
 ### `hfusion.group_matmul` (hfusion::GroupMatmulOp)
 
 _Performs grouped matrix multiplications between expert weights and token embeddings.
 For each expert, multiplies its weight matrix with its assigned tokens._
 
-
 Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg::YieldOp>`, `SingleBlock`
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.histogram` (hfusion::HistogramOp)
 
 _Compute histogram of an integer tensor with optional mask_
-
 
 Syntax:
 
@@ -722,32 +706,30 @@ If a mask tensor is provided, only elements with mask[i] = true are counted.
 
 Interfaces: `BiShengIRAggregatedOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>num_bins</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of 8-bit signless integer or 16-bit signless integer or 32-bit signless integer or 64-bit signless integer values
 | `mask` | ranked tensor of 1-bit signless integer values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of 32-bit signless integer or 64-bit signless integer values
 
-
 ### `hfusion.interleave` (hfusion::InterleaveOp)
 
 _Constructs one tensor by interleaving n input tensors.
       Only support n = 2 now._
-
 
 Syntax:
 
@@ -765,23 +747,21 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | variadic of ranked tensor of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of any type values
 
-
 ### `hfusion.isfinite` (hfusion::IsFiniteOp)
 
 _Calculates whether elements of a float type tensor is finite._
-
 
 Syntax:
 
@@ -798,24 +778,22 @@ Interfaces: `BiShengIRAggregatedOpInterface`, `ConditionallySpeculatable`, `NoMe
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of 1-bit signless integer values
 
-
 ### `hfusion.isinf` (hfusion::IsInfOp)
 
 _Calculates whether elements of a float type tensor equal positive
     infinity or negative infinity._
-
 
 Syntax:
 
@@ -832,23 +810,21 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of 1-bit signless integer values
 
-
 ### `hfusion.isnan` (hfusion::IsNanOp)
 
 _Calculates whether elements of a float type tensor is NAN._
-
 
 Syntax:
 
@@ -864,18 +840,17 @@ Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterfac
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `input` | ranked tensor of bfloat16 type or 16-bit float or 32-bit float values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `output` | ranked tensor of 1-bit signless integer values
-
 
 ### `hfusion.load` (hfusion::LoadOp)
 
@@ -886,24 +861,22 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.mulext` (hfusion::MulExtOp)
 
 _Extended signed integer multiplication operation_
-
 
 Syntax:
 
@@ -921,25 +894,23 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `lhs` | signless-integer-like
 | `rhs` | signless-integer-like
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `low` | signless-integer-like
 | `high` | signless-integer-like
 
-
 ### `hfusion.print` (hfusion::PrintOp)
 
 _Device-side print for debugging_
-
 
 Syntax:
 
@@ -951,7 +922,7 @@ operation ::= `hfusion.print` $prefix attr-dict $arg `:` type($arg)
 scalar or tensor that should be printed. The optional arg `hex` configs
 if printing in hex format.
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -959,12 +930,11 @@ if printing in hex format.
 <tr><td><code>hex</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `arg` | integer or floating-point or ranked tensor of any type values
-
 
 ### `hfusion.reduce_with_index` (hfusion::ReduceWithIndexOp)
 
@@ -982,7 +952,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -993,47 +963,43 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 <tr><td><code>dimensions</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute should be in increasing order</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of shaped of any type values
 | `inits` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of tensor of any type values
 
-
 ### `hfusion.select` (hfusion::SelectOp)
 
 _Chooses one value based on a binary condition supplied as its first operand._
-
 
 Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg::YieldOp>`, `SingleBlock`
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.sort` (hfusion::SortOp)
 
 _Sort Op_
-
 
 Syntax:
 
@@ -1048,10 +1014,12 @@ Sort the sorting axis of `src` in ascending or descending order, and output
 the sorted value and the index corresponding to the value.
 
 Constraints:
+
   1. The input vector and output vector must have the same rank.
   2. Currently only tail axis sorting is supported.
 
 Arguments:
+
   * `src`: the tensor/memref from which to be sorted
   * `dst_value`: the tensor/memref to store the sorted value
   * `dst_index`: the tensor/memref to store the index corresponding to dst_value
@@ -1060,13 +1028,14 @@ Arguments:
   * `sort_axis`: Axis to be sorted
 
 Examples:
+
   ```mlir
   %result = hfusion.sort ins(%src : tensor<?xf32>) descending = true sort_axis = 0 -> tensor<?xf32>
   ```
 
 Traits: `SameOperandsAndResultRank`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1074,18 +1043,17 @@ Traits: `SameOperandsAndResultRank`
 <tr><td><code>sort_axis</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `src` | Tensor or Memref
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | variadic of ranked tensor of any type values
-
 
 ### `hfusion.store` (hfusion::StoreOp)
 
@@ -1096,7 +1064,7 @@ Traits: `AttrSizedOperandSegments`, `SingleBlockImplicitTerminator<mlir::linalg:
 
 Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryEffectOpInterface`, `ReifyRankedShapedTypeOpInterface`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
@@ -1114,24 +1082,22 @@ Interfaces: `DestinationStyleOpInterface`, `LinalgStructuredInterface`, `MemoryE
 * umin (`UMIN`){{% /markdown %}}</details></td></tr>
 </table>
 
-#### Operands:
+#### Operands
 
 | Operand | Description |
 | :-----: | ----------- |
 | `inputs` | variadic of any type
 | `outputs` | variadic of shaped of any type values
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result_tensors` | variadic of ranked tensor of any type values
 
-
 ### `hfusion.symbolic_dim` (hfusion::SymbolicDimOp)
 
 _Symbolic dimension reference returning an index_
-
 
 Syntax:
 
@@ -1148,19 +1114,18 @@ Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect
 
 Effects: `MemoryEffects::Effect{}`
 
-#### Attributes:
+#### Attributes
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>symbolName</code></td><td>::mlir::SymbolRefAttr</td><td>symbol reference attribute</td></tr>
 </table>
 
-#### Results:
+#### Results
 
 | Result | Description |
 | :----: | ----------- |
 | `result` | index
-
 
 ## Attributes
 
@@ -1177,6 +1142,7 @@ Syntax:
 ```
 
 Enum cases:
+
 * none (`NONE`)
 * add (`ADD`)
 * max (`MAX`)
@@ -1188,7 +1154,8 @@ Enum cases:
 * xchg (`XCHG`)
 * umax (`UMAX`)
 * umin (`UMIN`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1207,6 +1174,7 @@ Syntax:
 ```
 
 Enum cases:
+
 * vor (`vor`)
 * vand (`vand`)
 * vxor (`vxor`)
@@ -1225,7 +1193,8 @@ Enum cases:
 * powi (`powi`)
 * minnumf (`minnumf`)
 * maxnumf (`maxnumf`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1244,6 +1213,7 @@ Syntax:
 ```
 
 Enum cases:
+
 * veq (`veq`)
 * vne (`vne`)
 * vle (`vle`)
@@ -1254,7 +1224,8 @@ Enum cases:
 * vult (`vult`)
 * vuge (`vuge`)
 * vugt (`vugt`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1262,15 +1233,11 @@ Enum cases:
 
 ### BindSubBlockAttr
 
-
-
 Syntax: `#hfusion.bind_sub_block`
 
 Specific operations for bind sub block.
 
 ### FusionKindAttr
-
-
 
 Syntax:
 
@@ -1282,7 +1249,7 @@ Syntax:
 
 HFusion fused kernel kind.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1290,15 +1257,11 @@ HFusion fused kernel kind.
 
 ### InsertSliceSourceIndexAttr
 
-
-
 Syntax: `#hfusion.insert_slice_source_index`
 
 Specifies which operand is insert_slice source in concat op
 
 ### MultiBufferAttr
-
-
 
 Syntax: `#hfusion.multi_buffer`
 
@@ -1306,15 +1269,11 @@ HFusion multi buffer attribute for target op.
 
 ### ReduceComposeAttr
 
-
-
 Syntax: `#hfusion.reduce_composed`
 
 HFusion reduced composed.
 
 ### ReduceWithIndexKindAttr
-
-
 
 Syntax:
 
@@ -1326,7 +1285,7 @@ Syntax:
 
 The kind of reduce with index.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1334,23 +1293,17 @@ The kind of reduce with index.
 
 ### ReturnOperandNumAttr
 
-
-
 Syntax: `#hfusion.return_operand_num`
 
 Specifies which operand this corresponds to in the function return
 
 ### StrideAlignDimsAttr
 
-
-
 Syntax: `#hfusion.stride_align_dims`
 
 HFusion stride align dims.
 
 ### StrideAlignValueInByteAttr
-
-
 
 Syntax: `#hfusion.stride_align_value_in_byte`
 
@@ -1375,7 +1328,7 @@ Syntax:
 - TRUNC: round to zero (c language trunc)
 - ODD: round to odd (Von Neumann rounding)
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1394,8 +1347,10 @@ Syntax:
 ```
 
 Enum cases:
+
 * select (`select`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1414,10 +1369,12 @@ Syntax:
 ```
 
 Enum cases:
+
 * cast_signed (`cast_signed`)
 * cast_unsigned (`cast_unsigned`)
 * bitcast (`bitcast`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1436,6 +1393,7 @@ Syntax:
 ```
 
 Enum cases:
+
 * relu (`relu`)
 * sqrt (`sqrt`)
 * rsqrt (`rsqrt`)
@@ -1454,7 +1412,8 @@ Enum cases:
 * exp2 (`exp2`)
 * expm1 (`expm1`)
 * ilogb (`ilogb`)
-#### Parameters:
+
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -1466,7 +1425,7 @@ Enum cases:
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1486,7 +1445,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1513,7 +1472,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1531,7 +1490,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1550,7 +1509,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
 HFusion flatten mode
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1561,7 +1520,7 @@ HFusion flatten mode
 
 HFusion fused kernel kind
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1580,7 +1539,7 @@ HFusion fused kernel kind
 
 HFusion Output mode
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1592,7 +1551,7 @@ HFusion Output mode
 
 HFusion cumulative operation type
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1604,7 +1563,7 @@ HFusion cumulative operation type
 
 allowed 32-bit signless integer cases: 0, 1
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1615,7 +1574,7 @@ allowed 32-bit signless integer cases: 0, 1
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1628,7 +1587,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1644,7 +1603,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6
 
 allowed 32-bit signless integer cases: 0, 1
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1655,7 +1614,7 @@ allowed 32-bit signless integer cases: 0, 1
 
 allowed 32-bit signless integer cases: 0
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1665,7 +1624,7 @@ allowed 32-bit signless integer cases: 0
 
 allowed 32-bit signless integer cases: 0, 1, 2
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1677,7 +1636,7 @@ allowed 32-bit signless integer cases: 0, 1, 2
 
 allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -1699,4 +1658,3 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 | exp2 | `15` | exp2 |
 | expm1 | `16` | expm1 |
 | ilogb | `17` | ilogb |
-

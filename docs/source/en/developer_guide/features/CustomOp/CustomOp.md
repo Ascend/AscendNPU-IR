@@ -10,23 +10,18 @@ AscendNPU-IR already supports a rich operator set for upstream models. However, 
 
 Custom operator allows users to freely use the interfaces provided by AscendNPU-IR to provide their own operators that compiles with other operators.
 
----
-
 ### Hardware Background
 
 N/A
-
----
 
 ### Algorithm Principle
 
 N/A
 
----
-
 ### Interface Description
 
 Generic interface for custom op as following:
+
 - name : unique op name.
 
          Note : there are names reserved for builtins, usually starts with "__builtin".
@@ -45,6 +40,7 @@ Generic interface for custom op as following:
 
 In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
 to retrieve necessary information:
+
 - CoreType : which core type to execute on, refer to TCoreTypeAttr.
 - Pipe     : which pipe to execute on, refer to PipeAttr.
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
@@ -55,10 +51,9 @@ to retrieve necessary information:
 - Symbol   : Implementation function name
 
 TODO:
+
 - Implementation linkage       : user provided implementation and linking process.
 - Multi-Pipes (Macro CustomOp) : custom op that uses multiple pipes, which is a MacroOp in HIVM's context.
-
----
 
 ## Lowering Process
 
@@ -82,7 +77,6 @@ TODO:
                               ▼
             BiSheng Compiler compiles to objects
 ```
----
 
 ### Constraints and Capabilities
 
@@ -110,8 +104,6 @@ TODO:
 |                              | - Layout transformation                                   |
 |                              | - ... more to go                                          |
 
----
-
 ### MLIR Example
 
 #### Builtin
@@ -136,8 +128,6 @@ TODO:
           : memref<?xf32>, tensor<3x3xi64>, i64, i32, i64, i64, i32, i32, i32, i32)
       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
 ```
-
----
 
 #### TRITON CustomOp Lowering Example
 ```python

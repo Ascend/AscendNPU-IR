@@ -3,12 +3,9 @@
 
 Heterogeneous Async Computing Call (HACC) dialect.
 
-
 ## Attributes
 
 ### BlockDimAttr
-
-
 
 Syntax: `#hacc.block_dim`
 
@@ -16,15 +13,11 @@ HACC block dimension attribute for function.
 
 ### CachedIOAttr
 
-
-
 Syntax: `#hacc.cached_io`
 
 This attribute is used to indicate the value has been cached io.
 
 ### DummyFuncAttr
-
-
 
 Syntax: `#hacc.dummy_func`
 
@@ -32,23 +25,17 @@ HACC dummy func type.
 
 ### ExportAsDAGAttr
 
-
-
 Syntax: `#hacc.export_as_dag`
 
 Export function as DAG.
 
 ### ExternalFunctionPathAttr
 
-
-
 Syntax: `#hacc.external_function_path`
 
 This attribute is used to indicate the location of external functions.
 
 ### HACCFuncTypeAttr
-
-
 
 Syntax:
 
@@ -60,15 +47,13 @@ Syntax:
 
 HACC function type.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | function_kind | `::mlir::hacc::HACCFuncType` | an enum of type HACCFuncType |
 
 ### GetTilingStructSizeFunctionAttr
-
-
 
 Syntax:
 
@@ -81,15 +66,13 @@ Syntax:
 HACC get tiling struct size function attribute. This is used to indicate the host
 get tiling struct size function of the device function.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### HostFuncTypeAttr
-
-
 
 Syntax:
 
@@ -101,15 +84,13 @@ Syntax:
 
 HACC host func type.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | host_func_type | `::mlir::hacc::HostFuncType` | an enum of type HostFuncType |
 
 ### InferOutputShapeFunctionAttr
-
-
 
 Syntax:
 
@@ -122,15 +103,13 @@ Syntax:
 HACC infer output shape function attribute. This is used to indicate the host
 infer output shape function of the device function.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### InferSyncBlockLockInitFunctionAttr
-
-
 
 Syntax:
 
@@ -146,15 +125,13 @@ get sync block lock init value for the device function.
 Every lock needs to be initialized before running the kernel,
 this function is used to infer the initial value of the lock.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### InferSyncBlockLockNumFunctionAttr
-
-
 
 Syntax:
 
@@ -170,15 +147,13 @@ infer sync block lock num function of the device function.
 For 1 atomic op, all the blocks share 1 <1xi64> type memref on gm, which is called a lock,
 and this function is used to infer how many locks the kernel needs.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### InferTaskTypeFunctionAttr
-
-
 
 Syntax:
 
@@ -190,15 +165,13 @@ Syntax:
 
 HACC infer core type and mix ratio.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### InferWorkspaceShapeFunctionAttr
-
-
 
 Syntax:
 
@@ -211,15 +184,13 @@ Syntax:
 HACC infer workspace shape function attribute. This is used to indicate the host
 infer workspace shape function of the device function.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | funcName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### InputIdxAttr
-
-
 
 Syntax:
 
@@ -229,16 +200,13 @@ Syntax:
 >
 ```
 
-
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | argIdx | `unsigned` |  |
 
 ### KernelArgTypeAttr
-
-
 
 Syntax:
 
@@ -250,7 +218,7 @@ Syntax:
 
 HACC kernel arg type.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -258,16 +226,12 @@ HACC kernel arg type.
 
 ### NoIOAliasAttr
 
-
-
 Syntax: `#hacc.no_io_alias`
 
 This attribute is used to indicate the function inputs/outputs are
 strictly not alias.
 
 ### OutputIdxAttr
-
-
 
 Syntax:
 
@@ -283,15 +247,13 @@ is passed in as a input parameter.
 This attribute is used to indicate which output value does the current
 function argument corresponds to.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | argIdx | `unsigned` |  |
 
 ### RenameFuncAttr
-
-
 
 Syntax:
 
@@ -304,15 +266,13 @@ Syntax:
 This attribute is used to indicate that current function shall be
 renamed to the target function name.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | targetName | `::mlir::FlatSymbolRefAttr` | function symbol name |
 
 ### TargetAttr
-
-
 
 Syntax:
 
@@ -324,7 +284,7 @@ Syntax:
 
 This attribute is used to indicate the target device.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -347,20 +307,19 @@ hardware properties. Each device specification can contain any number
 of optional hardware properties (e.g., "UB_SIZE" below).
 
 Example:
+
 ```
 #hacc.target_device_spec<
   #dlti.dl_entry<"UB_SIZE", 196608 : i32>>
 ```
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | entries | `::llvm::ArrayRef<DataLayoutEntryInterface>` | single spec entry |
 
 ### TilingFunctionAttr
-
-
 
 Syntax:
 
@@ -373,7 +332,7 @@ Syntax:
 HACC tiling function attribute. This is used to indicate the host
 tiling function of the device function.
 
-#### Parameters:
+#### Parameters
 
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
@@ -385,7 +344,7 @@ tiling function of the device function.
 
 HACC device spec
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -405,7 +364,7 @@ HACC device spec
 
 HACC Function Category
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -416,7 +375,7 @@ HACC Function Category
 
 HACC Host function type
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -433,7 +392,7 @@ HACC Host function type
 
 HACC Kernel Arg Category
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
@@ -453,11 +412,10 @@ HACC Kernel Arg Category
 
 allowed 32-bit signless integer cases: 0, 1, 2
 
-#### Cases:
+#### Cases
 
 | Symbol | Value | String |
 | :----: | :---: | ------ |
 | ENTRY | `0` | hacc.entry |
 | MIX_ENTRY | `1` | hacc.mix_entry |
 | ALWAYS_INLINE | `2` | hacc.always_inline |
-
