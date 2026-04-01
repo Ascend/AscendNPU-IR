@@ -69,9 +69,11 @@ struct InsertCVTightCoupledBufferPass
 
 enum class InsertMode { MoveToUb = 0, MoveToL1 };
 
-template <InsertMode Mode>
-LogicalResult InsertOpHelper(PatternRewriter &,
-                             const llvm::SmallVector<OpOperand *> &);
+template <InsertMode Mode, bool EnableND2NZ>
+struct InsertOpImpl {
+    static LogicalResult run(PatternRewriter &rewriter,
+                             const llvm::SmallVector<OpOperand *> &consumerOperands);
+};
 
 /// pattern1
 /// fixpipe has vector or vf users
@@ -90,93 +92,97 @@ LogicalResult InsertOpHelper(PatternRewriter &,
 /// %to_tensor = bufferization.to_tensor %no_ub restrict writable :
 /// memref<16x16xf32> %24 = tensor.empty() : tensor<16x16xi32> %25 =
 /// hivm.hir.bitcast %to_tensor : tensor<16x16xf32> -> tensor<16x16xi32>
-template <>
-LogicalResult InsertOpHelper<InsertMode::MoveToUb>(
-    PatternRewriter &rewriter,
-    const llvm::SmallVector<OpOperand *> &consumerOperands) {
-  if (consumerOperands.empty()) {
-    return failure();
-  }
-  llvm::DenseSet<Operation *> processed;
-  bool changed = false;
 
-  for (OpOperand *consumerOperand : consumerOperands) {
-    Value usedVal = consumerOperand->get();
-    auto fixpipes = traceDefOps<hivm::FixpipeOp>(usedVal);
-    if (fixpipes.empty())
-      continue;
-    for (Operation *fixpipe : fixpipes) {
-      auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(fixpipe);
-      // The same FixpipeOp can feed multiple vector/vf users. Use a set
-      // to make sure we rewrite each FixpipeOp at most once.
-      if (!processed.insert(fixpipe).second)
-        continue;
-
-      auto resultTensorType =
-          mlir::dyn_cast<RankedTensorType>(fixpipeOp.getResult(0).getType());
-      if (!resultTensorType)
-        continue;
-
-      auto elemType = resultTensorType.getElementType();
-      auto shape = resultTensorType.getShape();
-      MLIRContext *ctx = rewriter.getContext();
-      auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-      auto ubMemrefType =
-          mlir::MemRefType::get(shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
-      auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
-      rewriter.setInsertionPoint(fixpipe);
-      Location fixLoc = fixpipeOp.getLoc();
-  
-      Value alloc;
-      bool hasDynamicShape = llvm::any_of(
-        shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
-      // dynamic shape
-      if (hasDynamicShape) {
-        Value sourceVal = fixpipeOp.getSrc();
-        auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
-
-        if (maybeMmad.has_value()) {
-          auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
-          auto mmadResult = mmadOp.getResult(0);
-          auto mmadType = cast<ShapedType>(mmadResult.getType());
-          auto mmadShape = mmadType.getShape();
-          auto mmadElemType = mmadType.getElementType();
-
-          Value emptyTensor = fixpipeOp.getOperand(1);
-          auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
-          SmallVector<Value> dynamicDims;
-
-          if (emptyOp) {
-            dynamicDims.append(emptyOp.getDynamicSizes().begin(),
-                              emptyOp.getDynamicSizes().end());
-          }
-          alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
-                                      dynamicDims, mmadShape, mmadElemType);
-        } else {
-          llvm_unreachable(
-            "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
-        }
-      } else {
-        alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
-      }
-      Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
-          fixLoc, noUbMemrefType, alloc);
-      SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
-      if (auto quantScale = fixpipeOp.getQuantScale())
-        oprs.push_back(quantScale);
-      auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-          fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
-      rewriter.setInsertionPointAfter(newFixpipeOp);
-      auto toTensor = rewriter.create<bufferization::ToTensorOp>(
-          fixLoc, resultTensorType, noUb,
-          /*restrict=*/true,
-          /*writable=*/true);
-      rewriter.replaceOp(fixpipeOp, toTensor.getResult());
-      changed = true;
+template <bool EnableND2NZ>
+struct InsertOpImpl<InsertMode::MoveToUb, EnableND2NZ> {
+  static LogicalResult
+  run(PatternRewriter &rewriter,
+      const llvm::SmallVector<OpOperand *> &consumerOperands) {
+    if (consumerOperands.empty()) {
+      return failure();
     }
+    llvm::DenseSet<Operation *> processed;
+    bool changed = false;
+
+    for (OpOperand *consumerOperand : consumerOperands) {
+      Value usedVal = consumerOperand->get();
+      auto fixpipes = traceDefOps<hivm::FixpipeOp>(usedVal);
+      if (fixpipes.empty())
+        continue;
+      for (Operation *fixpipe : fixpipes) {
+        auto fixpipeOp = llvm::cast<hivm::FixpipeOp>(fixpipe);
+        // The same FixpipeOp can feed multiple vector/vf users. Use a set
+        // to make sure we rewrite each FixpipeOp at most once.
+        if (!processed.insert(fixpipe).second)
+          continue;
+
+        auto resultTensorType =
+            mlir::dyn_cast<RankedTensorType>(fixpipeOp.getResult(0).getType());
+        if (!resultTensorType)
+          continue;
+
+        auto elemType = resultTensorType.getElementType();
+        auto shape = resultTensorType.getShape();
+        MLIRContext *ctx = rewriter.getContext();
+        auto ubSpaceAttr =
+            hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
+        auto ubMemrefType = mlir::MemRefType::get(
+            shape, elemType, /*layout=*/nullptr, ubSpaceAttr);
+        auto noUbMemrefType = mlir::MemRefType::get(shape, elemType);
+        rewriter.setInsertionPoint(fixpipe);
+        Location fixLoc = fixpipeOp.getLoc();
+
+        Value alloc;
+        bool hasDynamicShape = llvm::any_of(
+            shape, [](int64_t dim) { return dim == ShapedType::kDynamic; });
+        // dynamic shape
+        if (hasDynamicShape) {
+          Value sourceVal = fixpipeOp.getSrc();
+          auto maybeMmad = traceDefOp<hivm::MmadL1Op>(sourceVal);
+
+          if (maybeMmad.has_value()) {
+            auto mmadOp = cast<hivm::MmadL1Op>(maybeMmad.value());
+            auto mmadResult = mmadOp.getResult(0);
+            auto mmadType = cast<ShapedType>(mmadResult.getType());
+            auto mmadShape = mmadType.getShape();
+            auto mmadElemType = mmadType.getElementType();
+
+            Value emptyTensor = fixpipeOp.getOperand(1);
+            auto emptyOp = emptyTensor.getDefiningOp<tensor::EmptyOp>();
+            SmallVector<Value> dynamicDims;
+
+            if (emptyOp) {
+              dynamicDims.append(emptyOp.getDynamicSizes().begin(),
+                                 emptyOp.getDynamicSizes().end());
+            }
+            alloc = createAllocWithMark(rewriter, fixLoc, ubMemrefType,
+                                        dynamicDims, mmadShape, mmadElemType);
+          } else {
+            llvm_unreachable(
+                "Unable to trace to MmadL1 op for dynamic shape fixpipe\n");
+          }
+        } else {
+          alloc = rewriter.create<memref::AllocOp>(fixLoc, ubMemrefType);
+        }
+        Value noUb = rewriter.create<memref::MemorySpaceCastOp>(
+            fixLoc, noUbMemrefType, alloc);
+        SmallVector<Value> oprs({fixpipeOp.getSrc(), alloc});
+        if (auto quantScale = fixpipeOp.getQuantScale())
+          oprs.push_back(quantScale);
+        auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
+            fixLoc, TypeRange{}, oprs, fixpipeOp->getAttrs());
+        rewriter.setInsertionPointAfter(newFixpipeOp);
+        auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+            fixLoc, resultTensorType, noUb,
+            /*restrict=*/true,
+            /*writable=*/true);
+        rewriter.replaceOp(fixpipeOp, toTensor.getResult());
+        changed = true;
+      }
+    }
+    return changed ? success() : failure();
   }
-  return changed ? success() : failure();
-}
+};
 
 static uint64_t getElemBytesForAlign(Type t) {
   if (auto ft = dyn_cast<FloatType>(t))
@@ -252,27 +258,57 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
 /// %54 = tensor.empty() : tensor<16x16xf32>
 /// %55 = hivm.hir.mmadL1 ins(%copy, %52, %true, %c16, %c16, %c16 : ...
 
-template <>
-LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
-    PatternRewriter &rewriter,
-    const llvm::SmallVector<OpOperand *> &consumerOperands) {
-  if (consumerOperands.empty()) {
-    return failure();
-  }
+template <bool EnableND2NZ>
+struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
+  static LogicalResult
+  run(PatternRewriter &rewriter,
+      const llvm::SmallVector<OpOperand *> &consumerOperands) {
+    if (consumerOperands.empty()) {
+      return failure();
+    }
 
-  MLIRContext *ctx = rewriter.getContext();
-  bool changed = false;
+    MLIRContext *ctx = rewriter.getContext();
+    bool changed = false;
 
-  for (OpOperand *consumerOperand : consumerOperands) {
-    Value origTensor = consumerOperand->get();
-    // TODO: enhance support for dynamic shape
-    auto tensorType = mlir::dyn_cast<RankedTensorType>(origTensor.getType());
-    if (!tensorType)
-      continue;
+    for (OpOperand *consumerOperand : consumerOperands) {
+      Value origTensor = consumerOperand->get();
+      // TODO: enhance support for dynamic shape
+      auto tensorType = mlir::dyn_cast<RankedTensorType>(origTensor.getType());
+      if (!tensorType)
+        continue;
 
-    Operation *consumerOp = consumerOperand->getOwner();
-    Location loc = consumerOp->getLoc();
-    rewriter.setInsertionPoint(consumerOp);
+      Operation *consumerOp = consumerOperand->getOwner();
+      Location loc = consumerOp->getLoc();
+      rewriter.setInsertionPoint(consumerOp);
+
+      // Skip nd2nz conversion for bias operand, just do simple copy
+      if constexpr (!EnableND2NZ) {
+        auto l1SpaceAttr =
+            hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
+        auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),
+                                                  tensorType.getElementType(),
+                                                  nullptr, l1SpaceAttr);
+        auto plainMemrefType = mlir::MemRefType::get(
+            tensorType.getShape(), tensorType.getElementType());
+        Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
+        Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
+            loc, plainMemrefType, alloc);
+        auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
+            loc, tensorType, memspacecast,
+            /*restrict=*/true,
+            /*writable=*/true);
+
+        rewriter.create<hivm::CopyOp>(loc,
+                                      /*resultType=*/TypeRange(),
+                                      /*src=*/origTensor,
+                                      /*dst=*/memspacecast);
+        rewriter.modifyOpInPlace(consumerOp, [&]() {
+          consumerOperand->set(emptyTensor.getResult());
+        });
+        changed = true;
+        continue;
+      }
+
     // TODO: Consider encapsulating it as an nd2dz function
     int64_t M = tensorType.getDimSize(0);
     int64_t N = tensorType.getDimSize(1);
@@ -303,67 +339,78 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
       N = newN;
     }
 
-    SmallVector<ReassociationIndices> reassociation = {{0}, {1,2}};
-    auto blkOr = getBlockElemsFor32BAlign(elemType);
-    if (failed(blkOr)) {
-      return consumerOp->emitOpError()
-             << "unsupported element type for 32B-aligned expand_shape: "
-             << elemType;
+      SmallVector<ReassociationIndices> reassociation = {{0}, {1, 2}};
+      auto blkOr = getBlockElemsFor32BAlign(elemType);
+      if (failed(blkOr)) {
+        return consumerOp->emitOpError()
+               << "unsupported element type for 32B-aligned expand_shape: "
+               << elemType;
+      }
+      int64_t blk = (int64_t)*blkOr;
+
+      int64_t M1 = M / alignM;
+      // TODO: enhance UB alignment
+      int64_t N1 = N / blk;
+      auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
+      auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
+          loc, dstTy, origTensor, reassociation);
+      if (N1 > 1) {
+        auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
+        auto tilingDimAttr = rewriter.getDictionaryAttr(
+            SmallVector<NamedAttribute>{NamedAttribute(
+                rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
+        markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
+      }
+      auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
+      auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
+          loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
+      SmallVector<int64_t> premVec = {1, 0, 2};
+      auto transposed = rewriter.create<hivm::VTransposeOp>(
+          loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
+          emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
+      auto nzTy = RankedTensorType::get({N1, M1, 16, blk}, elemType);
+      SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
+      auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
+          loc, nzTy, transposed->getResult(0), nzReassoc);
+      if (M1 > 1) {
+        auto markOp = rewriter.create<annotation::MarkOp>(loc, nzOp);
+        auto tilingDimAttr = rewriter.getDictionaryAttr(
+            SmallVector<NamedAttribute>{NamedAttribute(
+                rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
+        markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
+      }
+      auto l1SpaceAttr =
+          hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
+      auto l1MemrefType = mlir::MemRefType::get(
+          nzTy.getShape(), nzTy.getElementType(), nullptr, l1SpaceAttr);
+      auto plainMemrefType =
+          mlir::MemRefType::get(nzTy.getShape(), nzTy.getElementType());
+      Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
+      Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
+          loc, plainMemrefType, alloc);
+      auto emptyTensor =
+          rewriter.create<bufferization::ToTensorOp>(loc, nzTy, memspacecast,
+                                                     /*restrict=*/true,
+                                                     /*writable=*/true);
+      Value src = nzOp.getResult();
+      Value dst = emptyTensor.getResult();
+      rewriter.create<hivm::CopyOp>(loc,
+                                    /*resultType=*/TypeRange(),
+                                    /*src=*/src,
+                                    /*dst=*/memspacecast);
+      rewriter.modifyOpInPlace(consumerOp,
+                               [&]() { consumerOperand->set(dst); });
+      changed = true;
     }
-    int64_t blk = (int64_t)*blkOr;
-    
-    int64_t M1 = M / alignM;
-    // TODO: enhance UB alignment
-    int64_t N1 = N / blk;
-    auto dstTy = RankedTensorType::get({M, N1, blk}, elemType);
-    auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
-        loc, dstTy, origTensor, reassociation);
-    if (N1 > 1) {
-      auto markOp = rewriter.create<annotation::MarkOp>(loc, expandOp);
-      auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
-          NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
-      markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    }
-    auto emptyTensorType = RankedTensorType::get({N1, M, blk}, elemType);
-    auto emptyTransposed = rewriter.create<tensor::EmptyOp>(
-        loc, emptyTensorType.getShape(), emptyTensorType.getElementType());
-    SmallVector<int64_t> premVec = {1, 0, 2};
-    auto transposed = rewriter.create<hivm::VTransposeOp>(
-        loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
-        emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
-    auto nzTy = RankedTensorType::get({N1, M1, 16, blk}, elemType);
-    SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
-    auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
-        loc, nzTy, transposed->getResult(0), nzReassoc);
-    if (M1 > 1) {
-      auto markOp = rewriter.create<annotation::MarkOp>(loc, nzOp);
-      auto tilingDimAttr = rewriter.getDictionaryAttr(SmallVector<NamedAttribute>{
-          NamedAttribute(rewriter.getStringAttr("1"), rewriter.getIndexAttr(1))});
-      markOp->setAttr(kTilingDimMappingAttrName, tilingDimAttr);
-    }
-    auto l1SpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
-    auto l1MemrefType = mlir::MemRefType::get(nzTy.getShape(),
-                                              nzTy.getElementType(),
-                                              nullptr, l1SpaceAttr);
-    auto plainMemrefType = mlir::MemRefType::get(
-        nzTy.getShape(), nzTy.getElementType());
-    Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
-    Value memspacecast =
-        rewriter.create<memref::MemorySpaceCastOp>(loc, plainMemrefType, alloc);
-    auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
-        loc, nzTy, memspacecast,
-        /*restrict=*/true,
-        /*writable=*/true);
-    Value src = nzOp.getResult();
-    Value dst = emptyTensor.getResult();
-    rewriter.create<hivm::CopyOp>(loc,
-                                  /*resultType=*/TypeRange(),
-                                  /*src=*/src,
-                                  /*dst=*/memspacecast);
-    rewriter.modifyOpInPlace(consumerOp, [&]() { consumerOperand->set(dst); });
-    changed = true;
+    return changed ? success() : failure();
   }
-  return changed ? success() : failure();
+};
+
+template <InsertMode Mode, bool EnableND2NZ = true>
+LogicalResult
+InsertOpHelper(PatternRewriter &rewriter,
+               const llvm::SmallVector<OpOperand *> &consumerOperands) {
+  return InsertOpImpl<Mode, EnableND2NZ>::run(rewriter, consumerOperands);
 }
 
 } // anonymous namespace
@@ -441,12 +488,9 @@ struct InsertMoveL1BetweenVectorAndCube
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
                                 PatternRewriter &rewriter) const override {
     bool changed = false;
-    auto inputValues = op.getInputOperands();
-    for (OpOperand &operand : op->getOpOperands()) {
-      Value beforeValue = operand.get();
-      if (llvm::find(inputValues, beforeValue) == inputValues.end())
-        continue;
-      auto producerOps = traceDefOps<OpType>(operand.get());
+    for (OpOperand *operand : op.getDpsInputOperands()) {
+      Value beforeValue = operand->get();
+      auto producerOps = traceDefOps<OpType>(beforeValue);
       if (producerOps.empty())
         continue;
 
@@ -493,16 +537,19 @@ struct InsertMoveL1BetweenVectorAndCube
         continue;
 
       auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
-      llvm::SmallVector<OpOperand *> consumerOperands{&operand};
-      LogicalResult result = InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
+      llvm::SmallVector<OpOperand *> consumerOperands{operand};
+      bool isBiasOperand = (beforeValue == op.getPerChannelBias());
+      LogicalResult result = isBiasOperand?
+          InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
+          InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
       if (failed(result))
         continue;
 
-      // Handle the case where multiple operands of `op` are the same SSA value.
+      // Handle case where multiple operands of `op` are same SSA value.
       // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are the same vector.
-      // In this case, we only want to rewrite the operand once, and make sure the other operand
+      // In this case, we only want to rewrite the operand once, and make sure that other operand
       // is updated with the new value as well.
-      Value converted = operand.get();
+      Value converted = operand->get();
       rewriter.modifyOpInPlace(op, [&]() {
         op->replaceUsesOfWith(beforeValue, converted);
       });
@@ -533,10 +580,12 @@ struct InsertDataMovementFixpipeToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       if (failed(ubResult))
         continue;
 
-      Value valueAfterUb = operand.get(); 
+      Value valueAfterUb = operand.get();
 
-      LogicalResult l1Result =
-          InsertOpHelper<InsertMode::MoveToL1>(rewriter, consumerOperands);
+      bool isBiasOperand = (operand.get() == op.getPerChannelBias());
+      LogicalResult l1Result = isBiasOperand?
+          InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
+          InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
       if (failed(l1Result))
         continue;
 
