@@ -97,6 +97,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   SinkOpToConsumerInLoop.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
+  StripMemRefAddressSpace.cpp
   SplitSimtModule.cpp
   SyncBlockHoisting.cpp
   TileAndBindSubBlock.cpp
