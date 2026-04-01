@@ -252,7 +252,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   }
 
   // If total width > 128, split into multiple loads
-  if (vec * elemBitwidth > (int64_t)kMaxTransferWidthBits) {
+  if (static_cast<unsigned int>(vec) * elemBitwidth > kMaxTransferWidthBits) {
     assert(elemBitwidth == 32 || elemBitwidth == 64);
     assert(llvm::isPowerOf2_32(vec));
     unsigned int maxVec = kMaxTransferWidthBits / elemBitwidth;
@@ -272,7 +272,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   assert(elemBitwidth >= kMinElementWidthBits);
   assert(elemTy.isInteger());
   assert(1 <= vec && vec <= kMaxVectorSize);
-  assert(vec * elemBitwidth <= (int64_t)kMaxTransferWidthBits);
+  assert(static_cast<unsigned int>(vec) * elemBitwidth <= kMaxTransferWidthBits);
 
   Type loadResTy =
       vec > 1 ? VectorType::get({static_cast<long>(vec)}, elemTy) : elemTy;

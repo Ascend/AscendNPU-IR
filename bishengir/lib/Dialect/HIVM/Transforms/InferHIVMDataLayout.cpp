@@ -1126,7 +1126,7 @@ Operation *DataLayoutInferAndPropagateHelper::rewriteIfOp(scf::IfOp op) {
       newIfOp.thenBlock()->getOperations().begin(),
       op.thenBlock()->getOperations());
 
-  if (hasElseRegion) {
+  if (hasElseRegion && op.elseBlock() && newIfOp.elseBlock()) {
     newIfOp.elseBlock()->getOperations().splice(
         newIfOp.elseBlock()->getOperations().begin(),
         op.elseBlock()->getOperations());

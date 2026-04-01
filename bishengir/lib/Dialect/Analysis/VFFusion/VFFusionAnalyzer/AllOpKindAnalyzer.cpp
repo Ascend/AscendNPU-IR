@@ -52,8 +52,6 @@ LogicalResult AllOpKindAnalyzer::fuseImpl(Block &block) {
       LDBG("fusing index of " << xIndex << " with " << yIndex);
       if (!VFFusionAnalyzerBase::fuseIndexWith(xIndex, yIndex))
         continue;
-
-      LDBG("Fused " << op.getName() << " " << defOp->getName());
     }
   }
 

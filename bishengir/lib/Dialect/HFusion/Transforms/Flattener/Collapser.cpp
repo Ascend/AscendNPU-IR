@@ -782,10 +782,6 @@ void Flattener::computeNewSlicingOperands(
     T slicingOp, SmallVector<OpFoldResult> &newMixedOffsets,
     SmallVector<OpFoldResult> &newMixedSizes,
     SmallVector<OpFoldResult> &newMixedStrides, OpBuilder &builder) {
-  LDBG("Processing subview here");
-  LDBG((slicingOp.getOperation()->getParentOp() ? *(slicingOp.getOperation()->getParentOp()) : *slicingOp.getOperation()));
-  LDBG((slicingOp.getOperation()->getParentOp()->getParentOp() ? *(slicingOp.getOperation()->getParentOp()->getParentOp()) :
-    *(slicingOp.getOperation()->getParentOp())));
   OpBuilder::InsertionGuard guard(builder);
   Value src;
   if (std::is_same_v<T, tensor::InsertSliceOp>) {

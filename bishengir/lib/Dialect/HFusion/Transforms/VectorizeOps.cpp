@@ -115,12 +115,18 @@ FailureOr<SmallVector<int64_t>> computeVectorSizes(linalg::LinalgOp op) {
   }
 
   int64_t rank = static_cast<int64_t>(shape.size());
+  if (rank == 0) {
+    return op.emitError("Empty shape: rank is zero");
+  }
   auto first = getFirstNonUnitDim(shape);
   int64_t start = first.has_value() ? first.value() : rank - 1;
   int64_t end = rank - 1;
   int64_t remain = capacity;
   SmallVector<int64_t> vectorSizes(rank, 1);
   for (int64_t dim = end; dim >= start; dim--) {
+    if (dim < 0 || static_cast<size_t>(dim) >= shape.size()) {
+      return op.emitError("Invalid dimension index");
+    }
     if (shape[dim] <= 0) {
       return op.emitError("Invalid shape dimension: must be positive");
     }

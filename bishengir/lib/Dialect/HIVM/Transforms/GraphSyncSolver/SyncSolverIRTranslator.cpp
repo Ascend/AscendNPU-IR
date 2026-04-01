@@ -435,7 +435,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
       }
     }
   }
-  hivm::PIPE pipeRead, pipeWrite;
+  hivm::PIPE pipeRead = hivm::PIPE::PIPE_UNASSIGNED;
+  hivm::PIPE pipeWrite = hivm::PIPE::PIPE_UNASSIGNED;
   if (pipe.has_value()) {
     pipeRead = pipe.value();
     pipeWrite = pipe.value();

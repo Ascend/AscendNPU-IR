@@ -9,8 +9,8 @@
 
 using namespace mlir;
 
-const int mlir::triton::proton::gpu::getBytesPerClockEntry() { return 8; }
-const int mlir::triton::proton::gpu::getCircularHeaderSize() { return 16; }
+int mlir::triton::proton::gpu::getBytesPerClockEntry() { return 8; }
+int mlir::triton::proton::gpu::getCircularHeaderSize() { return 16; }
 
 void mlir::triton::proton::gpu::ProtonGPUDialect::initialize() {
   registerTypes();
@@ -24,7 +24,7 @@ void mlir::triton::proton::gpu::ProtonGPUDialect::initialize() {
       >();
 }
 
-const int mlir::triton::proton::gpu::getTotalNumWarps(ModuleOp mod) {
+int mlir::triton::proton::gpu::getTotalNumWarps(ModuleOp mod) {
   int numWarps = mlir::triton::gpu::lookupNumWarps(mod);
   if (auto totalNumWarps =
           mod->getAttrOfType<IntegerAttr>("ttg.total-num-warps"))

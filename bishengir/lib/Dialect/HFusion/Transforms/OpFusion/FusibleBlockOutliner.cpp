@@ -140,7 +140,6 @@ FusibleBlockOutliner::FusibleBlockOutliner(FusibleBlocks &fusibleBlocks,
     auto tmpOut = curBlock.getOutputs();
     for (Value v : tmpOut) {
       Operation *outOp = v.getDefiningOp();
-      LLVM_DEBUG(llvm::dbgs() << "Separating for out " << *outOp << "\n");
       // re-fusion non picked fused blocks for single mode is not implemented
       const SmallVector<Operation *> &fusedOps = collectFusedOps(outOp);
 

@@ -558,7 +558,7 @@ struct HandleReduceOpPattern : public OpRewritePattern<linalg::ReduceOp> {
   }
 };
 
-struct HandleReduceWithIndexOpPattern : OpRewritePattern<hfusion::ReduceWithIndexOp> {
+struct HandleReduceWithIndexOpPattern : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
   using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,

@@ -298,7 +298,7 @@ LogicalResult InsertOpHelper<InsertMode::MoveToL1>(
       SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
       origTensor = rewriter.create<tensor::InsertSliceOp>(
               loc, origTensor, initializedMatrix, offsets, sizes, strides);
-      tensorType = origTensor.getType().cast<RankedTensorType>();
+      tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
       M = newM;
       N = newN;
     }

@@ -45,7 +45,7 @@ struct NormalizeHIVMPass
   }
 };
 
-std::unique_ptr<Pass> mlir::hivm::createHIVMNormalizeOpsPass() {
+std::unique_ptr<Pass> createHIVMNormalizeOpsPass() {
   return std::make_unique<NormalizeHIVMPass>();
 }
 

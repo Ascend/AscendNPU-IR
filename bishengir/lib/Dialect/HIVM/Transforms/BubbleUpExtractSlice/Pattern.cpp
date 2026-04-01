@@ -1258,8 +1258,6 @@ VInterleaveBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   // Create the new sliceOp for every input of vinterleaveOp
   SmallVector<Value> slicedInputs;
   for (Value input : vinterleaveOp.getSrc()) {
-    auto inputType = dyn_cast<RankedTensorType>(input.getType());
-
     rewriter.setInsertionPoint(vinterleaveOp);
     auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
         sliceOp.getLoc(), input, sliceOffsets, newSizes, sliceStrides);

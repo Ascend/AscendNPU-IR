@@ -240,7 +240,6 @@ void OpReorderer::reorderOps(llvm::iterator_range<Block::iterator> ops) {
 
   LDBG("traverse from outside vars");
   auto *blockParentOp = block->getParentOp();
-  LDBG("parentOp : " << *blockParentOp);
   Liveness liveness(blockParentOp);
   ValueSetType varsFromOutside;
   getOpNestedInVarsFromOutside(block, varsFromOutside, liveness);

@@ -33,6 +33,9 @@ namespace hfusion {
 namespace detail {
 
 bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
+  if (!op) {
+    return false;
+  }
   LLVM_DEBUG(llvm::dbgs() << "Processing operation: [" << *op << "]\n"
                           << "with value [" << current << "]\n");
   bool success = true;
