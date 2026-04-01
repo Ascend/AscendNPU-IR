@@ -14,6 +14,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -85,95 +86,6 @@ struct GetNumProgramsOpConversion
   }
 };
 
-struct AtomicRMWOpConversion
-    : public ConvertOpToLLVMPattern<triton::AtomicRMWOp> {
-
-  AtomicRMWOpConversion(LLVMTypeConverter &converter, PatternBenefit benefit)
-      : ConvertOpToLLVMPattern<triton::AtomicRMWOp>(converter, benefit) {}
-
-  LogicalResult
-  matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    auto ptrElems = unpackLLElements(loc, adaptor.getPtr(), rewriter);
-    auto valElems = unpackLLElements(loc, adaptor.getVal(), rewriter);
-
-    auto valueTy = op.getResult().getType();
-    auto tensorTy = dyn_cast<RankedTensorType>(valueTy);
-    Type valueElemTy =
-        getTypeConverter()->convertType(tensorTy.getElementType());
-
-    unsigned elemsPerThread = getTotalElemsPerThread(op.getVal().getType());
-    SmallVector<Value> resultVals(elemsPerThread);
-    auto rmwOp = op.getAtomicRmwOp();
-
-    for (size_t i = 0; i < elemsPerThread; i++) {
-      Value ptr = ptrElems[i];
-      Value val = valElems[i];
-
-      Value result;
-      switch (rmwOp) {
-      case triton::RMWOp::AND:
-        result =
-            rewriter.create<ascend_dpx::AtomicAndOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::OR:
-        result =
-            rewriter.create<ascend_dpx::AtomicOrOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::XOR:
-        result =
-            rewriter.create<ascend_dpx::AtomicXorOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::ADD:
-      case triton::RMWOp::FADD:
-        result =
-            rewriter.create<ascend_dpx::AtomicAddOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::MAX:
-        result =
-            rewriter.create<ascend_dpx::AtomicMaxOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::MIN:
-        result =
-            rewriter.create<ascend_dpx::AtomicMinOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::UMAX:
-        result =
-            rewriter
-                .create<ascend_dpx::AtomicUMaxOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::UMIN:
-        result =
-            rewriter
-                .create<ascend_dpx::AtomicUMinOp>(loc, valueElemTy, ptr, val)
-                .getRes();
-        break;
-      case triton::RMWOp::XCHG:
-        result = rewriter
-                     .create<ascend_dpx::AtomicExchangeOp>(loc, valueElemTy,
-                                                           ptr, val)
-                     .getRes();
-        break;
-      }
-
-      resultVals[i] = result;
-    }
-
-    Value result =
-        packLLElements(loc, getTypeConverter(), resultVals, rewriter, tensorTy);
-    rewriter.replaceOp(op, result);
-    return success();
-  }
-};
 
 } // namespace
 
@@ -184,7 +96,6 @@ void populateTritonOpToDPXPatterns(LLVMTypeConverter &converter,
                                    PatternBenefit benefit) {
   patterns.add<GetProgramIdOpConversion, GetNumProgramsOpConversion>(
       converter, patterns.getContext(), benefit);
-  patterns.add<AtomicRMWOpConversion>(converter, benefit);
 }
 
 } // namespace mlir::triton::ascend

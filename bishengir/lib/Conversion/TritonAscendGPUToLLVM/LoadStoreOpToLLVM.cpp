@@ -31,6 +31,8 @@ namespace {
 constexpr unsigned kMaxTransferWidthBits = 128;
 constexpr unsigned kMinWordWidthBits = 32;
 
+StringAttr getRegStrAttr(MLIRContext *ctx) { return str_attr("reg"); }
+
 Value maybeAnd(RewriterBase &rewriter, Location loc, Value a, Value b) {
   auto tb = TritonLLVMOpBuilder(loc, rewriter);
   if (a && b) {
@@ -193,7 +195,8 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
 
     // Load redundantly in all dims except reg
     auto freeVarMasks = getFreeVariableMasks(ptr.getType());
-    uint32_t regMask = static_cast<uint32_t>(freeVarMasks[str_attr("reg")]);
+    auto kReg = getRegStrAttr(ctx);
+    uint32_t regMask = static_cast<uint32_t>(freeVarMasks[kReg]);
 
     auto cachePolicy = [&]() -> ascend_dpx::AscendDPXLoadCachePolicy {
       switch (evict) {
@@ -317,7 +320,8 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
     auto freeVarMasks = getFreeVariableMasks(ptr.getType());
     Value threadPred =
         emitRedundantThreadPredicate(freeVarMasks, rewriter, loc, targetInfo);
-    uint32_t regMask = static_cast<uint32_t>(freeVarMasks[str_attr("reg")]);
+    auto kReg = getRegStrAttr(ctx);
+    uint32_t regMask = static_cast<uint32_t>(freeVarMasks[kReg]);
 
     triton::EvictionPolicy evict = op.getEvict();
     auto cachePolicy = [&]() -> ascend_dpx::AscendDPXStoreCachePolicy {
@@ -432,6 +436,151 @@ struct AtomicCASOpConversion
   }
 };
 
+struct AtomicRMWOpConversion
+    : public ConvertOpToLLVMPattern<triton::AtomicRMWOp> {
+
+  AtomicRMWOpConversion(LLVMTypeConverter &converter,
+                        const ascend::TargetInfo &targetInfo,
+                        PatternBenefit benefit)
+      : ConvertOpToLLVMPattern<triton::AtomicRMWOp>(converter, benefit),
+        targetInfo(targetInfo) {}
+
+  LogicalResult
+  matchAndRewrite(triton::AtomicRMWOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    auto *ctx = rewriter.getContext();
+
+    auto ptrElems = unpackLLElements(loc, adaptor.getPtr(), rewriter);
+    auto valElems = unpackLLElements(loc, adaptor.getVal(), rewriter);
+
+    SmallVector<Value> maskElems;
+    if (adaptor.getMask())
+      maskElems = unpackLLElements(loc, adaptor.getMask(), rewriter);
+
+    auto valueTy = op.getResult().getType();
+    auto tensorTy = dyn_cast<RankedTensorType>(valueTy);
+    Type valueElemTy =
+        getTypeConverter()->convertType(tensorTy.getElementType());
+
+    unsigned elemsPerThread = getTotalElemsPerThread(op.getVal().getType());
+
+    // Compute warp/lane/block guard: only threads that hold unique data execute
+    // the atomic. This matches the warp guard emitted by the remap path.
+    auto freeVarMasks = getFreeVariableMasks(op.getPtr().getType());
+    auto kReg = getRegStrAttr(ctx);
+    Value threadPred =
+        emitRedundantThreadPredicate(freeVarMasks, rewriter, loc, targetInfo);
+    uint32_t regMask = static_cast<uint32_t>(freeVarMasks[kReg]);
+
+    SmallVector<Value> resultVals(elemsPerThread);
+
+    for (size_t i = 0; i < elemsPerThread; i++) {
+      if (auto canonicalStart = getCanonicalIndex(i, regMask);
+          canonicalStart != i) {
+        resultVals[i] = resultVals[canonicalStart];
+        continue;
+      }
+
+      Value ptr = ptrElems[i];
+      Value val = valElems[i];
+      Value pred = !maskElems.empty()
+                       ? maybeAnd(rewriter, loc, threadPred, maskElems[i])
+                       : threadPred;
+
+      Value result;
+      if (pred) {
+        // Wrap the atomic in a conditional branch so that redundant threads
+        // (warp guard = false) do not execute it at all.
+        Value undefVal = b.undef(valueElemTy);
+        auto *curBlock = rewriter.getInsertionBlock();
+        auto *endBlock =
+            curBlock->splitBlock(rewriter.getInsertionPoint());
+        auto *atomicBlock = rewriter.createBlock(
+            curBlock->getParent(), std::next(Region::iterator(curBlock)));
+        endBlock->addArgument({valueElemTy}, {loc});
+
+        rewriter.setInsertionPointToEnd(curBlock);
+        rewriter.create<LLVM::CondBrOp>(loc, pred, atomicBlock, endBlock,
+                                        undefVal);
+
+        rewriter.setInsertionPointToEnd(atomicBlock);
+        auto atomOrFailure = emitAtomicOp(rewriter, loc, valueElemTy,
+                                          op.getAtomicRmwOp(), ptr, val);
+        if (failed(atomOrFailure))
+          return op.emitError("unhandled atomic operation");
+        rewriter.create<LLVM::BrOp>(loc, *atomOrFailure, endBlock);
+
+        rewriter.setInsertionPointToStart(endBlock);
+        result = endBlock->getArgument(0);
+      } else {
+        auto atomOrFailure = emitAtomicOp(rewriter, loc, valueElemTy,
+                                          op.getAtomicRmwOp(), ptr, val);
+        if (failed(atomOrFailure))
+          return op.emitError("unhandled atomic operation");
+        result = *atomOrFailure;
+      }
+      resultVals[i] = result;
+    }
+
+    Value result =
+        packLLElements(loc, getTypeConverter(), resultVals, rewriter, tensorTy);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  FailureOr<Value> emitAtomicOp(ConversionPatternRewriter &rewriter,
+                                Location loc, Type valueElemTy,
+                                triton::RMWOp rmwOp, Value ptr,
+                                Value val) const {
+    switch (rmwOp) {
+    case triton::RMWOp::AND:
+      return rewriter.create<ascend_dpx::AtomicAndOp>(loc, valueElemTy, ptr,
+                                                      val)
+          .getRes();
+    case triton::RMWOp::OR:
+      return rewriter
+          .create<ascend_dpx::AtomicOrOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::XOR:
+      return rewriter
+          .create<ascend_dpx::AtomicXorOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::ADD:
+    case triton::RMWOp::FADD:
+      return rewriter
+          .create<ascend_dpx::AtomicAddOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::MAX:
+      return rewriter
+          .create<ascend_dpx::AtomicMaxOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::MIN:
+      return rewriter
+          .create<ascend_dpx::AtomicMinOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::UMAX:
+      return rewriter
+          .create<ascend_dpx::AtomicUMaxOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::UMIN:
+      return rewriter
+          .create<ascend_dpx::AtomicUMinOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    case triton::RMWOp::XCHG:
+      return rewriter
+          .create<ascend_dpx::AtomicExchangeOp>(loc, valueElemTy, ptr, val)
+          .getRes();
+    default:
+      return failure();
+    }
+  }
+
+  const ascend::TargetInfo &targetInfo;
+};
+
 } // namespace
 
 namespace mlir::triton::ascend {
@@ -443,6 +592,7 @@ void populateLoadStoreOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
   patterns.add<LoadOpConversion, StoreOpConversion>(typeConverter, targetInfo,
                                                     axisInfoAnalysis, benefit);
   patterns.add<AtomicCASOpConversion>(typeConverter, benefit);
+  patterns.add<AtomicRMWOpConversion>(typeConverter, targetInfo, benefit);
 }
 
 } // namespace mlir::triton::ascend
