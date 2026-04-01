@@ -1200,9 +1200,21 @@ VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                  PatternRewriter &rewriter) const {
   auto varangeOp =
       dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
-  if (!varangeOp) {
+  if (!varangeOp)
     return failure();
-  }
+
+  auto varangeOutputType =
+      dyn_cast<RankedTensorType>(varangeOp.getResult().getType());
+  if (!varangeOutputType)
+    return failure();
+
+  auto sliceOutputType =
+      dyn_cast<RankedTensorType>(sliceOp.getSource().getType());
+  if (!sliceOutputType)
+    return failure();
+
+  if (varangeOutputType.getRank() != 1 || sliceOutputType.getRank() != 1)
+    return failure();
 
   auto loc = varangeOp.getLoc();
 
@@ -1217,9 +1229,17 @@ VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
   markCreatedExtractSliceOp(rewriter, newSliceOp);
 
+  // get the offset value from extract_slice
+  Value sliceOffset =
+      getValueOrCreateConstantIndexOp(rewriter, loc, offsets[0]);
+  Value origVarangeOffset = varangeOp.getOffset();
+  // The new offset of varange = sliceOffset + origVarangeOffset
+  Value newVarangeOffset =
+      rewriter.create<arith::AddIOp>(loc, origVarangeOffset, sliceOffset);
+
   rewriter.setInsertionPointAfter(varangeOp);
-  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(loc, sliceOp.getType(),
-                                                       newSliceOp.getResult());
+  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
+      loc, sliceOp.getType(), newSliceOp.getResult(), newVarangeOffset);
 
   rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
   rewriter.eraseOp(varangeOp);
