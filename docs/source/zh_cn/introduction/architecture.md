@@ -74,5 +74,5 @@ Conversion中既包括三方生态对接转换（如TorchToHFusion）也包括As
 
 ## 编译流程
 
-AscendNPU IR对应工具链是bishengir-compile，会负责把高抽象层级的Tile级OP编译成感知NPU 硬件架构的low level op，该工具链输入和输出均是mlir。hivmc工具会负责把low level的mlir转成llvm ir并基于LLVM IR进行底层指令编译优化，最终生成算子二进制。
+AscendNPU IR对应工具链是bishengir-compile，会负责把高抽象层级的Tile级OP编译成感知NPU 硬件架构的low level op，该工具链输入和输出均是MLIR。hivmc工具会负责把low level的MLIR转成LLVM IR并基于LLVM IR进行底层指令编译优化，最终生成算子二进制。
 ![image](../../images/introduction/architecture3_zh.png)

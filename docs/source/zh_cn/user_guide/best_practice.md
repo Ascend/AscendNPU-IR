@@ -2,7 +2,7 @@
 
 ## 性能优化案例
 
-## tiling策略
+## Tiling策略
 
 ### 案例说明
 
@@ -89,13 +89,13 @@ BLOCK_K = 128
 + grid = (triton.cdiv(B, BLOCK_B),)
 ```
 
-## kernel昇腾亲和改写
+## kernel 昇腾亲和改写
 
 ### 案例说明
 
-原始gpu计算流程i64/i32 cmp操作在npu设备上无法使能vector，退化为scalar计算效率降低；通过转化为fp32来利用vec_cast和vec_cmp实现vector操作加速  
+原始GPU计算流程i64/i32 cmp操作在NPU设备上无法使能vector，退化为scalar计算效率降低；通过转化为fp32来利用vec_cast和vec_cmp实现vector操作加速
 需要注意的是，在tl.load和tl.save中的mask使用cmp功能，大部分情况下编译器可以自动优化为vec操作，本例中tl.where则需要手动转换
-本案例以layerNorm为例说明实现向量化cmp加速npu计算流程，该cmp操作用于处理layerNorm中的尾块处理
+本案例以layerNorm为例说明实现向量化cmp加速NPU计算流程，该cmp操作用于处理layerNorm中的尾块处理
 
 ### 案例差异点详解
 
@@ -181,7 +181,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 ### 参数入参不合理
 
-对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且再[0, seqlen]范围内。
+对于varlen类的算子，通常会在seqlen中随机采样indice，需要保证indice的入参合理性。例如严格递增且在[0, seqlen]范围内。
 
 ## ub overflow类问题
 
@@ -452,7 +452,7 @@ tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-triton-adaptor 3.4.0之后的的版本需要改成
+triton-adaptor 3.4.0之后的版本需要改成
 
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
@@ -702,7 +702,7 @@ tl.compile_hint(cond, "bitwise_mask")
 
 triton-adaptor 3.2.0之前的版本: tl.compile_hint(cond, "bitwise_mask")
 
-triton-adaptor 3.4.0 之后的的版本需要改成: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+triton-adaptor 3.4.0 之后的版本需要改成: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
 
 bitmask 功能 cann9.0 之后的版本才有，因此需要下载 cann.9.0 之后的版本。
 ```
@@ -917,7 +917,7 @@ def test_where_lt_case1(param_list):
 
 #### 算子示例
 
-改寫算子時，只需为dot操作结果加上`hivm.tile_mix_cube_num`的编译提示即可，參考一下代碼段：
+改写算子时，只需为dot操作结果加上`hivm.tile_mix_cube_num`的编译提示即可，参考以下代码段：
 
 ```python
 res = tl.dot(lhs, rhs)
