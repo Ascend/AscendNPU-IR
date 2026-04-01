@@ -71,9 +71,11 @@ hivmNormSyncPipeline(OpPassManager &pm,
 static void
 hivmCrossCoreSyncPipeline(OpPassManager &pm,
                           const HIVMPipelineOptions &hivmPipelineOptions) {
-  // Mark load/store scalar operations with core-type attributes so block
-  // synchronization passes recognize cross-core scalar-pipeline conflicts and
-  // insert needed sync operations.
+  // Mark operations that could write to a shared memory (gm-workspace/ub) with
+  // core-type attributes so they get be recognized by cross-core/block
+  // synchronization passes.
+  // Canonicalize first, since some ops may be rewritten or removed.
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(createMarkRealCoreTypePass());
   if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
       !hivmPipelineOptions.enableHIVMInjectBlockAllSync &&
