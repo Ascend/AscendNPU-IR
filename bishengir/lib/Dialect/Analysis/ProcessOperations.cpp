@@ -145,6 +145,11 @@ void DimensionAnalyzerBase::processBFS() {
       if (auto terminatorOp = dyn_cast<RegionBranchTerminatorOpInterface>(user)) {
         auto parentOp = terminatorOp->getParentOp();
 
+        if (!parentOp) {
+          llvm::errs() << "Error: Region terminator has no parent operation.\n";
+          return;
+        }
+
         LLVM_DEBUG({
           llvm::dbgs() << "    │   └─ Region terminator detected\n";
           llvm::dbgs() << "    │       Parent op: " << (parentOp ? *parentOp : *terminatorOp) << "\n";
