@@ -34,6 +34,16 @@ sync_block_lock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
 __aiv__ __attribute__((always_inline)) void
 sync_block_unlock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
 
+/// free_lock_var: If lock_var still equals this block's index, completes one
+/// lock/unlock pair; if lock_var is already past this block (branch already
+/// unlocked), no-op so sync_block_lock is not re-entered (would spin forever).
+__aiv__ __attribute__((always_inline)) void
+free_lock_var(memref_t<__gm__ int64_t, 1> *lock_var);
+
+/// free_lock_var_with_subblock: Same as free_lock_var with subblock index.
+__aiv__ __attribute__((always_inline)) void
+free_lock_var_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
+
 #define DECLARE_SYNCBLOCKLOCK()                                                \
   __aiv__ __attribute__((always_inline)) void _mlir_ciface_sync_block_lock(    \
       memref_t<__gm__ int64_t, 1> *lock_var)
@@ -50,8 +60,8 @@ sync_block_unlock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
 
 #define DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK()                                  \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_sync_block_lock_with_subblock(                              \
-          memref_t<__gm__ int64_t, 1> *lock_var)
+  _mlir_ciface_sync_block_lock_with_subblock(                                  \
+      memref_t<__gm__ int64_t, 1> *lock_var)
 
 #define REGISTE_SYNCBLOCKLOCK_WITH_SUBBLOCK()                                  \
   DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK() {                                      \
@@ -60,12 +70,29 @@ sync_block_unlock_with_subblock(memref_t<__gm__ int64_t, 1> *lock_var);
 
 #define DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK()                                \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_sync_block_unlock_with_subblock(                           \
-          memref_t<__gm__ int64_t, 1> *lock_var)
+  _mlir_ciface_sync_block_unlock_with_subblock(                                \
+      memref_t<__gm__ int64_t, 1> *lock_var)
 
 #define REGISTE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK()                                \
   DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK() {                                    \
     sync_block_unlock_with_subblock(lock_var);                                 \
+  }
+
+#define DECLARE_FREE_LOCK_VAR()                                                \
+  __aiv__ __attribute__((always_inline)) void _mlir_ciface_free_lock_var(      \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_FREE_LOCK_VAR()                                                \
+  DECLARE_FREE_LOCK_VAR() { free_lock_var(lock_var); }
+
+#define DECLARE_FREE_LOCK_VAR_WITH_SUBBLOCK()                                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_free_lock_var_with_subblock(                                    \
+      memref_t<__gm__ int64_t, 1> *lock_var)
+
+#define REGISTE_FREE_LOCK_VAR_WITH_SUBBLOCK()                                  \
+  DECLARE_FREE_LOCK_VAR_WITH_SUBBLOCK() {                                      \
+    free_lock_var_with_subblock(lock_var);                                     \
   }
 
 extern "C" {
@@ -88,5 +115,15 @@ DECLARE_SYNCBLOCKLOCK_WITH_SUBBLOCK();
 // sync_block_unlock_with_subblock
 //===-------------------------------------------------------------------===//
 DECLARE_SYNCBLOCKUNLOCK_WITH_SUBBLOCK();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var
+//===-------------------------------------------------------------------===//
+DECLARE_FREE_LOCK_VAR();
+
+//===-------------------------------------------------------------------===//
+// free_lock_var_with_subblock
+//===-------------------------------------------------------------------===//
+DECLARE_FREE_LOCK_VAR_WITH_SUBBLOCK();
 }
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_SYNC_UTILS_H
