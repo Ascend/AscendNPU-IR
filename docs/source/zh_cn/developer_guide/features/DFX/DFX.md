@@ -28,11 +28,11 @@ flowchart LR
 
 ### 算法原理
 
-实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合, 实现该部分主要以AscendNPU IR为重点展开说明
+实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合，实现该功能主要以AscendNPU IR为重点展开说明
 
 #### Triton Ascend
 
-生成初始.ttadapter ir. 过程中会将triton侧tl.device_print转换成func.call @triton_print_接口
+生成初始`.ttadapter` IR过程中会将triton侧 `tl.device_print` 转换成 `func.call @triton_print_*` 接口。
 
 #### AscendNPU IR
 
@@ -40,7 +40,7 @@ flowchart LR
 
 ##### AdaptTritonKernel
 
-将func.call @triton_print_接口转换成hfusion.print接口
+将`func.call @triton_print_*`接口转换成 `hfusion.print` 接口
 
 ```
 // Before AdaptTritonKernel

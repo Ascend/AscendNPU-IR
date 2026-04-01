@@ -29,7 +29,7 @@
 
 片上内存分配主要是在Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元（包括 UB、L1、L0C 等）上进行内存分配。Cube访问的存储单元中，L0A存储左矩阵，L0B存储右矩阵，左右矩阵会从L1 Buffer搬入L0A和L0B，L0C存储矩阵乘的结果和中间结果，内存分配主要在L1和L0C存储单元上进行内存分配。Vector访问的存储单元是UB(Unified Buffer)内存，存储着向量计算的输入和输出，内存分配也需要在UB为不同的Buffer分配内存。
 
-除了片上内存，PlanMemory还会进行少量的Workspace的内存分配(`memref_ext.alloc_workspace`)，主要用于CV场景。如果涉及Cube计算完成后Vector单元继续参与运算，则需要将Cube运算结果从L0C搬出，临时保存在Workspace空间，再搬入UB进行Vector运算。片外空间交给框架Rumtime统一申请管理，因此算子需要反馈所需的Workspace空间大小。
+除了片上内存，PlanMemory还会进行少量的Workspace的内存分配(`memref_ext.alloc_workspace`)，主要用于CV场景。如果涉及Cube计算完成后Vector单元继续参与运算，则需要将Cube运算结果从L0C搬出，临时保存在Workspace空间，再搬入UB进行Vector运算。片外空间交给框架Runtime统一申请管理，因此算子需要反馈所需的Workspace空间大小。
 
 ### 相关术语说明
 
