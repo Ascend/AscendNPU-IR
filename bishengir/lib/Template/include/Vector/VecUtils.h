@@ -1082,27 +1082,26 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
   auto src0_last_stride = src0 == nullptr ? 1 : src0->strides[DIM - 1];
   auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
   auto dst_last_stride = dst->strides[DIM - 1];
-
   bool broadcast_cond = need_broadcast<T, DIM>(src0, src1, dst);
-  if (broadcast_cond) {
-    return 0;
-  }
   
   if (src0_last_stride != 1 || src1_last_stride != 1 || dst_last_stride != 1) {
     return dst->sizes[DIM - 1];
   }
 
-  // Check if all other dimensions' strides are aligned to block size
-  for (size_t i = 0; i < DIM - 1; ++i) {
-    auto src0_stride = src0 == nullptr ? 0 : src0->strides[i];
-    auto src1_stride = src1 == nullptr ? 0 : src1->strides[i];
-    auto dst_stride = dst->strides[i];
-    if ((!isSizeAlignedToBlock<T>(src0_stride) && src0_stride != 1) ||
-        (!isSizeAlignedToBlock<T>(src1_stride) && src1_stride != 1) ||
-        (!isSizeAlignedToBlock<T>(dst_stride) && dst_stride != 1)) {
-      return dst->sizes[DIM - 1];
+  if (!broadcast_cond) {
+    // Check if all other dimensions' strides are aligned to block size
+    for (size_t i = 0; i < DIM - 1; ++i) {
+      auto src0_stride = src0 == nullptr ? 0 : src0->strides[i];
+      auto src1_stride = src1 == nullptr ? 0 : src1->strides[i];
+      auto dst_stride = dst->strides[i];
+      if ((!isSizeAlignedToBlock<T>(src0_stride) && src0_stride != 1) ||
+          (!isSizeAlignedToBlock<T>(src1_stride) && src1_stride != 1) ||
+          (!isSizeAlignedToBlock<T>(dst_stride) && dst_stride != 1)) {
+        return dst->sizes[DIM - 1];
+      }
     }
   }
+  
 
   // Check offset alignment
   bool is_src0_aligned = src0 == nullptr ? true : isAddress32ByteAligned(src0->aligned + src0->offset);
