@@ -1369,7 +1369,7 @@ half handle_half_operation(half src0_oprand, half src1_oprand, VectorLastAxisMod
     half *res_float16 = (half*)&res_int16;
     return *res_float16;
   } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
-                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS || OP == VectorOpTy::VRELU) {
     float src0_oprand_float = static_cast<float>(src0_oprand);
     float src1_oprand_float = static_cast<float>(src1_oprand);
     // if one of the operands is NAN, return NAN.
@@ -1433,7 +1433,7 @@ float handle_float_operation(float src0_oprand, float src1_oprand, VectorLastAxi
     float *res_float32 = (float*)&res_int32;
     return *res_float32;
   } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
-                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS || OP == VectorOpTy::VRELU) {
     // if one of the operands is NAN, return NAN.
     if ((src0_oprand != src0_oprand) || (src1_oprand != src1_oprand)) {
       return NAN;
