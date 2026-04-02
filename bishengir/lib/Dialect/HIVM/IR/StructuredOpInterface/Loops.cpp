@@ -17,6 +17,8 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -533,4 +535,21 @@ SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray() {
         hivm::IteratorType::kParallel,  hivm::IteratorType::kReduction,
         hivm::IteratorType::kReduction, hivm::IteratorType::kParallel};
   }
+}
+
+ArrayAttr CustomOp::getIndexingMaps() {
+  if (auto attr = getOperation()->getAttrOfType<ArrayAttr>(kIndexingMapName))
+    return attr;
+  return ArrayAttr::get(getContext(), {});
+}
+
+SmallVector<hivm::IteratorType> CustomOp::getIteratorTypesArray() {
+  if (!getOperation()->hasAttr(kIteratorTypesName))
+    return {};
+
+  return llvm::to_vector(llvm::map_range(
+      getOperation()->getAttrOfType<ArrayAttr>(kIteratorTypesName),
+      [](Attribute attr) {
+        return cast<hivm::IteratorTypeAttr>(attr).getValue();
+      }));
 }

@@ -594,3 +594,40 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
   this->getTempBufferMutable().assign(extraBuf);
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CustomOp::allocExtraBuffersIfPossible() {
+  if (!llvm::to_vector(this->getTempBuffers()).empty()) {
+    this->emitWarning("already has extra temp buffers");
+    return success();
+  }
+
+  const auto typeArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  if (!typeArrayAttr)
+    return failure();
+
+  const auto sizesArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (!sizesArrayAttr)
+    return failure();
+
+  if (typeArrayAttr.size() != sizesArrayAttr.size()) {
+    this->emitError("extra buffer types/sizes mismatch");
+    return failure();
+  }
+
+  SmallVector<Value> buffs;
+  for (auto [typeAttr, sizeAttr] : llvm::zip(typeArrayAttr, sizesArrayAttr)) {
+    const mlir::Type type = cast<mlir::TypeAttr>(typeAttr).getValue();
+    const int64_t size = cast<mlir::IntegerAttr>(sizeAttr).getInt();
+    Value extraBuf = allocExtraBuffer(getOperation(), {size}, type);
+    buffs.push_back(extraBuf);
+  }
+
+  this->getTempBuffersMutable().assign(buffs);
+  return success();
+}
