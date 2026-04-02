@@ -105,3 +105,64 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
   hivm.hir.fixpipe {enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
   return
 }
+
+// -----
+module {
+// CHECK-LABEL:   func.func @test_tile_batchMmadL1_debug(
+// CHECK-SAME:                                           %[[VAL_0:.*]]: memref<2x256x256xf16>) -> tensor<2x256x256xf32> {
+// CHECK:           %[[VAL_1:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_3:.*]] = arith.constant 2 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 128 : index
+// CHECK:           %[[VAL_5:.*]] = arith.constant 256 : index
+// CHECK:           %[[VAL_6:.*]] = arith.constant true
+// CHECK:           %[[VAL_7:.*]] = tensor.empty() : tensor<2x256x128xf16>
+// CHECK:           %[[VAL_8:.*]] = tensor.empty() : tensor<2x128x256xf16>
+// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<2x256x256xf32>
+// CHECK:           %[[VAL_10:.*]] = tensor.empty() : tensor<2x256x256xf32>
+// CHECK:           %[[VAL_11:.*]] = tensor.empty() : tensor<2x256x256xf32>
+// CHECK:           %[[VAL_12:.*]]:2 = scf.for %[[VAL_13:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_1]] iter_args(%[[VAL_14:.*]] = %[[VAL_10]], %[[VAL_15:.*]] = %[[VAL_9]]) -> (tensor<2x256x256xf32>, tensor<2x256x256xf32>) {
+// CHECK:             %[[VAL_16:.*]] = tensor.extract_slice %[[VAL_7]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 128] [1, 1, 1] : tensor<2x256x128xf16> to tensor<256x128xf16>
+// CHECK:             %[[VAL_17:.*]] = tensor.extract_slice %[[VAL_8]]{{\[}}%[[VAL_13]], 0, 0] [1, 128, 256] [1, 1, 1] : tensor<2x128x256xf16> to tensor<128x256xf16>
+// CHECK:             %[[VAL_18:.*]] = tensor.empty() : tensor<256x256xf32>
+// CHECK:             %[[VAL_19:.*]] = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%[[VAL_16]], %[[VAL_17]], %[[VAL_6]], %[[VAL_5]], %[[VAL_4]], %[[VAL_5]] : tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index) outs(%[[VAL_18]] : tensor<256x256xf32>) -> tensor<256x256xf32>
+// CHECK:             %[[VAL_20:.*]] = memref.subview %[[VAL_0]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] : memref<2x256x256xf16> to memref<1x256x256xf16, strided<[65536, 256, 1], offset: ?>>
+// CHECK:             %[[VAL_21:.*]] = memref.collapse_shape %[[VAL_20]] {{\[\[}}0, 1], [2]] : memref<1x256x256xf16, strided<[65536, 256, 1], offset: ?>> into memref<256x256xf16, strided<[256, 1], offset: ?>>
+// CHECK:             hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_21]] : memref<256x256xf16, strided<[256, 1], offset: ?>>)
+// CHECK:             %[[VAL_22:.*]] = tensor.extract_slice %[[VAL_14]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] : tensor<2x256x256xf32> to tensor<256x256xf32>
+// CHECK:             %[[VAL_23:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_22]] : tensor<256x256xf32>) -> tensor<256x256xf32>
+// CHECK:             %[[VAL_24:.*]] = tensor.insert_slice %[[VAL_23]] into %[[VAL_14]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] {elide_after_bufferize} : tensor<256x256xf32> into tensor<2x256x256xf32>
+// CHECK:             %[[VAL_25:.*]] = tensor.extract_slice %[[VAL_15]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] : tensor<2x256x256xf32> to tensor<256x256xf32>
+// CHECK:             %[[VAL_26:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[VAL_19]] : tensor<256x256xf32>) outs(%[[VAL_25]] : tensor<256x256xf32>) -> tensor<256x256xf32>
+// CHECK:             %[[VAL_27:.*]] = tensor.insert_slice %[[VAL_26]] into %[[VAL_15]]{{\[}}%[[VAL_13]], 0, 0] [1, 256, 256] [1, 1, 1] {elide_after_bufferize} : tensor<256x256xf32> into tensor<2x256x256xf32>
+// CHECK:             scf.yield %[[VAL_24]], %[[VAL_27]] : tensor<2x256x256xf32>, tensor<2x256x256xf32>
+// CHECK:           }
+// CHECK:           hivm.hir.debug {debugtype = "print", hex = true, prefix = " ret (hex)\0A: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %[[VAL_28:.*]]#1 : tensor<2x256x256xf32>
+// CHECK:           %[[VAL_29:.*]] = hivm.hir.vcumsum ins(%[[VAL_28]]#0 : tensor<2x256x256xf32>) outs(%[[VAL_11]] : tensor<2x256x256xf32>) cum_dims = [0] reverse = false -> tensor<2x256x256xf32>
+// CHECK:           return %[[VAL_29]] : tensor<2x256x256xf32>
+// CHECK:         }
+
+func.func @test_tile_batchMmadL1_debug(%dst : memref<2x256x256xf16>) -> tensor<2x256x256xf32> {
+  %ma = tensor.empty() : tensor<2x256x128xf16>
+  %mb = tensor.empty() : tensor<2x128x256xf16>
+  %mc = tensor.empty() : tensor<2x256x256xf32>
+  %true = arith.constant true
+  %M = arith.constant 256 : index
+  %K = arith.constant 128 : index
+  %N = arith.constant 256 : index
+  %result = hivm.hir.batchMmadL1 {fixpipe_already_inserted = true} ins(%ma, %mb, %true, %M, %K, %N: tensor<2x256x128xf16>, tensor<2x128x256xf16>, i1, index, index, index)
+                              outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
+
+  %tmp = tensor.empty() : tensor<2x256x256xf32>
+  %debug_print = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%result : tensor<2x256x256xf32>) outs(%tmp : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
+  hivm.hir.debug {debugtype = "print", hex = true, prefix = " ret (hex)\0A: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %debug_print : tensor<2x256x256xf32>
+
+  %tmp_1 = tensor.empty() : tensor<2x256x256xf32>
+  %tmp_2 = tensor.empty() : tensor<2x256x256xf32>
+  %tmp_3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%result : tensor<2x256x256xf32>) outs(%tmp_1 : tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
+  %tmp_4 = hivm.hir.vcumsum ins(%tmp_3 : tensor<2x256x256xf32>) outs(%tmp_2: tensor<2x256x256xf32>) cum_dims = [0] reverse = false -> tensor<2x256x256xf32>
+
+  hivm.hir.fixpipe {enable_nz2nd} ins(%result : tensor<2x256x256xf32>) outs(%dst : memref<2x256x256xf16>)
+  return %tmp_4 : tensor<2x256x256xf32>
+}
+}
