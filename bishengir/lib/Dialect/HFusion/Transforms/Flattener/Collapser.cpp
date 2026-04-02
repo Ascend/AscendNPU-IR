@@ -584,8 +584,7 @@ void Flattener::adjustTransposeOp(linalg::TransposeOp transposeOp,
   transposeOp.setPermutationAttr(builder.getDenseI64ArrayAttr(newPerm));
 }
 
-template <class T>
-void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
+template <class T> void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   auto collapseGroup = getCollapseGroup(reduceOp.getDpsInputs()[0]);
   auto newDimensions = adjustCollapseDimensions(reduceOp, collapseGroup);
   reduceOp.setDimensionsAttr(
@@ -603,8 +602,7 @@ void Flattener::adjustReduceLikeOpBody(T reduceOp) const {
   });
 }
 
-template <class T>
-void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
+template <class T> void Flattener::adjustCumOp(T cumOp, OpBuilder &builder) {
   auto collapseGroups = getCollapseGroup(cumOp.getODSOperands(0)[0]);
   int64_t tmpCumDim = cumOp.getCumDims()[0];
   int64_t newCumDim = 0;
@@ -1045,12 +1043,7 @@ void Flattener::adjustArangeOp(hfusion::ArangeOp arangeOp,
                                mlir::OpBuilder &builder) {
   auto init = arangeOp.getInit();
   auto collapseGroup = this->getCollapseGroup(init);
-  // currently, only handle unit dimension flattened. which implies the stride
-  // of the axis can be ignored
   auto newType = init.getType();
-  assert(isOnlyUnitDimFlattened(arangeOp.getResultTensor().getType().getShape(),
-                                newType.getShape()) &&
-         "only support flattened unit dimension");
   LDBG("operation result " << arangeOp << " " << newType);
   auto result = arangeOp.getResultTensor();
   if (result == nullptr)

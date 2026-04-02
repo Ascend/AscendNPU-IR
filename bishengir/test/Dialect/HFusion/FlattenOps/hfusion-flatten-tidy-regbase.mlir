@@ -87,6 +87,26 @@ func.func @test_arange_0(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 }
 
 // -----
+// CHECK-LABEL: func.func @test_arange_multidim_flatten(
+// CHECK-SAME:                                     %[[ARG0:.*]]: tensor<2x8x8xi32>) -> tensor<2x8x8xi32>
+// CHECK: %[[ARG0_COLLAPSED:.*]] = tensor.collapse_shape %[[ARG0]] {{\[\[}}0, 1, 2]] : tensor<2x8x8xi32> into tensor<128xi32>
+// CHECK: %[[ARANGE:.*]] = hfusion.arange offset[%[[C0:.*]]] strides[%[[C1:.*]]] outs(%[[EMPTY:.*]] : tensor<128xi32>) -> tensor<128xi32>
+// CHECK: %[[ADDED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0_COLLAPSED]], %[[ARANGE]] : tensor<128xi32>, tensor<128xi32>) outs(%[[EMPTY_0:.*]] : tensor<128xi32>) -> tensor<128xi32>
+// CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[ADDED]] {{\[\[}}0, 1, 2]] output_shape {{\[}}2, 8, 8] : tensor<128xi32> into tensor<2x8x8xi32>
+// CHECK: return %[[EXPANDED]] : tensor<2x8x8xi32>
+func.func @test_arange_multidim_flatten(%arg0: tensor<2x8x8xi32>) -> tensor<2x8x8xi32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %c64 = arith.constant 64 : index
+  %0 = tensor.empty() : tensor<2x8x8xi32>
+  %1 = hfusion.arange offset[%c0] strides[%c64, %c8, %c1] outs(%0 : tensor<2x8x8xi32>) -> tensor<2x8x8xi32>
+  %2 = tensor.empty() : tensor<2x8x8xi32>
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %1 : tensor<2x8x8xi32>, tensor<2x8x8xi32>) outs(%2 : tensor<2x8x8xi32>) -> tensor<2x8x8xi32>
+  return %3 : tensor<2x8x8xi32>
+}
+
+// -----
 // CHECK-LABEL: @test_subview_strided_memref_copy_and_elemwise
 // CHECK-SAME: %[[VAL_0:.*]]: memref<1x8x2x8x3x1x85xf32>,
 // Important things about the new memref is prioritizing unit dimension to be collapsed with contiguous ones:
@@ -1318,7 +1338,7 @@ func.func @insert_slice_rank_reduced1(
   %empty = tensor.empty() : tensor<3x1x1x2x250x2xf32>
   %1 = tensor.insert_slice %arg3 into %empty[0, 0, 0, 0, 0, 0] [3, 1, 1, 2, 250, 1] [1, 1, 1, 1, 1, 2]
     : tensor<3x2x250xf32> into tensor<3x1x1x2x250x2xf32>
- 
+
   return %1 : tensor<3x1x1x2x250x2xf32>
 }
 
