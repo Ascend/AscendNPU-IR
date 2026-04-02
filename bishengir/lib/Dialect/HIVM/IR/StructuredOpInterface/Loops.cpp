@@ -537,6 +537,90 @@ SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray() {
   }
 }
 
+//===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+ArrayAttr Conv2DL1Op::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d1, d2, d3)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4, d5, d6, d7)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap(
+          "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d4, d8, d9)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d0, d1, d2)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d4, d5, d6)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap =
+          parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d7, d8)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  }
+}
+
+SmallVector<hivm::IteratorType> Conv2DL1Op::getIteratorTypesArray() {
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kParallel,  hivm::IteratorType::kReduction,
+        hivm::IteratorType::kReduction, hivm::IteratorType::kReduction,
+        hivm::IteratorType::kParallel,  hivm::IteratorType::kReduction,
+        hivm::IteratorType::kReduction, hivm::IteratorType::kReduction,
+        hivm::IteratorType::kParallel,  hivm::IteratorType::kParallel};
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kReduction, hivm::IteratorType::kReduction,
+        hivm::IteratorType::kReduction, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kReduction, hivm::IteratorType::kReduction,
+        hivm::IteratorType::kReduction, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kParallel};
+  }
+}
+
 ArrayAttr CustomOp::getIndexingMaps() {
   if (auto attr = getOperation()->getAttrOfType<ArrayAttr>(kIndexingMapName))
     return attr;

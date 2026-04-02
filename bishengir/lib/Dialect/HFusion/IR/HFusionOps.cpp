@@ -3082,7 +3082,7 @@ Conv1DOp::getRegionBuilder() {
 #ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
             , function_ref<InFlightDiagnostic()> emitError
 #endif
- 	   ) {
+  ) {
     RegionBuilderHelper helper(builder.getContext(), block);
     SmallVector<Value> yields;
 
@@ -3094,6 +3094,304 @@ Conv1DOp::getRegionBuilder() {
     } else {
       assert(block.getNumArguments() == 3 &&
              "Conv1DOp regionBuilder expects 3 (>=0) args");
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(2).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    }
+
+    helper.yieldOutputs(yields);
+  };
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv2DOp::verify() {
+  auto inputTy = mlir::dyn_cast<ShapedType>(getInput().getType());
+  auto weightTy = mlir::dyn_cast<ShapedType>(getWeight().getType());
+  auto initTy = mlir::dyn_cast<ShapedType>(getInit().getType());
+  auto resultTy = mlir::dyn_cast<ShapedType>(getResult().getType());
+
+  if (!inputTy || !weightTy || !initTy || !resultTy)
+    return emitOpError()
+           << "requires shaped types for input/weight/init/result";
+
+  // init and result must be consistent
+  if (initTy.getRank() != resultTy.getRank())
+    return emitOpError() << "init and result must have the same rank";
+
+  for (int i = 0; i < initTy.getRank(); ++i) {
+    if (!initTy.isDynamicDim(i) && !resultTy.isDynamicDim(i) &&
+        initTy.getDimSize(i) != resultTy.getDimSize(i))
+      return emitOpError() << "init and result must have the same shape";
+  }
+
+  // input and init must be 3D or 4D and have same rank
+  int64_t inputRank = inputTy.getRank();
+  int64_t initRank = initTy.getRank();
+  if (inputRank != initRank)
+    return emitOpError() << "requires input and init to have the same rank";
+
+  if (inputRank != 3 && inputRank != 4)
+    return emitOpError() << "requires input and init to be 3D or 4D tensors";
+
+  // weight must be [oC, iC/groups, wH, wW]
+  if (weightTy.getRank() != 4)
+    return emitOpError()
+           << "requires weight to have rank 4: [oC, iC/groups, wH, wW]";
+
+  // bias must be 1D if present, and match oC
+  if (getBias()) {
+    auto biasTy = mlir::dyn_cast<ShapedType>(getBias().getType());
+    if (!biasTy)
+      return emitOpError() << "requires shaped type for bias";
+
+    if (biasTy.getRank() != 1)
+      return emitOpError() << "requires bias to be 1D tensor";
+
+    if (!weightTy.isDynamicDim(0) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != weightTy.getDimSize(0))
+      return emitOpError() << "requires bias shape to be oC from weight";
+
+    // init: [oC, oH, oW] or [N, oC, oH, oW]
+    int64_t oCDimInInit = (initRank == 3) ? 0 : 1;
+    if (!initTy.isDynamicDim(oCDimInInit) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != initTy.getDimSize(oCDimInInit))
+      return emitOpError() << "requires bias shape to be oC from init";
+  }
+
+  // input.shape[C] == weight.shape[1] * groups
+  int64_t groups = getGroups();
+  int64_t inputCDim = (inputRank == 3) ? 0 : 1;
+
+  if (!inputTy.isDynamicDim(inputCDim) && !weightTy.isDynamicDim(1)) {
+    int64_t expectedIC = weightTy.getDimSize(1) * groups;
+    if (inputTy.getDimSize(inputCDim) != expectedIC)
+      return emitOpError()
+             << "requires input channels == weight.shape[1] * groups";
+  }
+
+  // batch check: if 4D, input.shape[0] == init.shape[0]
+  if (inputRank == 4) {
+    if (!inputTy.isDynamicDim(0) && !initTy.isDynamicDim(0) &&
+        inputTy.getDimSize(0) != initTy.getDimSize(0))
+      return emitOpError() << "requires batch size of input and init to match";
+  }
+
+  int64_t stride = getStride();
+  int64_t dilation = getDilation();
+
+  // Currently only support stride == 1 and dilation == 1
+  if (stride != 1 || dilation != 1)
+    return emitOpError()
+           << "currently does not support stride != 1 or dilation != 1";
+
+  // Check output height oH
+  // oH = floor((iH + 2 * padding - dilation * (wH - 1) - 1) / stride + 1)
+  int64_t padding = getPadding();
+  int64_t inputHDim = (inputRank == 3) ? 1 : 2;
+  int64_t outputHDim = (initRank == 3) ? 1 : 2;
+
+  if (!inputTy.isDynamicDim(inputHDim) && !weightTy.isDynamicDim(2) &&
+      !initTy.isDynamicDim(outputHDim)) {
+    int64_t iH = inputTy.getDimSize(inputHDim);
+    int64_t wH = weightTy.getDimSize(2);
+    int64_t oHExpected =
+        (iH + 2 * padding - dilation * (wH - 1) - 1) / stride + 1;
+
+    if (initTy.getDimSize(outputHDim) != oHExpected)
+      return emitOpError()
+             << "requires output height oH to be computed as: "
+             << "(iH + 2 * padding - dilation * (wH - 1) - 1) / stride + 1";
+  }
+
+  // Check output width oW
+  // oW = floor((iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1)
+  int64_t inputWDim = (inputRank == 3) ? 2 : 3;
+  int64_t outputWDim = (initRank == 3) ? 2 : 3;
+
+  if (!inputTy.isDynamicDim(inputWDim) && !weightTy.isDynamicDim(3) &&
+      !initTy.isDynamicDim(outputWDim)) {
+    int64_t iW = inputTy.getDimSize(inputWDim);
+    int64_t wW = weightTy.getDimSize(3);
+    int64_t oWExpected =
+        (iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1;
+
+    if (initTy.getDimSize(outputWDim) != oWExpected)
+      return emitOpError()
+             << "requires output width oW to be computed as: "
+             << "(iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1";
+  }
+
+  return success();
+}
+
+void Conv2DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, int32_t stride,
+                     int32_t padding, int32_t dilation, int32_t groups) {
+  odsState.addAttribute("stride", odsBuilder.getI32IntegerAttr(stride));
+  odsState.addAttribute("padding", odsBuilder.getI32IntegerAttr(padding));
+  odsState.addAttribute("dilation", odsBuilder.getI32IntegerAttr(dilation));
+  odsState.addAttribute("groups", odsBuilder.getI32IntegerAttr(groups));
+  auto outType = output.getType();
+  odsState.addOperands(inputs);
+  odsState.addOperands(output);
+  odsState.addTypes(outType);
+  Region &region = *odsState.addRegion();
+  fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
+                         TypeRange(output), odsState.attributes.getAttrs(),
+                         getRegionBuilder());
+}
+
+MutableOperandRange Conv2DOp::getDpsInitsMutable() { return getInitMutable(); }
+
+SmallVector<utils::IteratorType> Conv2DOp::getIteratorTypesArray() {
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::parallel};
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::parallel};
+  }
+}
+
+void Conv2DOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  getGenericEffectsImpl(effects, cast<linalg::LinalgOp>(getOperation()));
+}
+
+ArrayAttr Conv2DOp::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d1, d2, d3)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4, d5, d6, d7)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap(
+          "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d4, d8, d9)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d0, d1, d2)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d4, d5, d6)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap =
+          parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d7, d8)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  }
+}
+
+void Conv2DOp::print(OpAsmPrinter &p) {
+  // attr-dict
+  p.printOptionalAttrDict((*this)->getAttrs(), ArrayRef<StringRef>{});
+  if (getODSOperands(2).empty())
+    printCommonStructuredOpParts(p, {getInput(), getWeight()}, getInit());
+  else
+    printCommonStructuredOpParts(p, {getInput(), getWeight(), getBias()},
+                                 getInit());
+  p.printArrowTypeList(TypeRange{getResult().getType()});
+}
+
+ParseResult Conv2DOp::parse(OpAsmParser &p, OperationState &result) {
+  // Parse attr-dict
+  if (p.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  SmallVector<Type> inputTypes;
+  SmallVector<Type, 1> outputTypes;
+  if (parseCommonStructuredOpParts(p, result, inputTypes, outputTypes,
+                                   /*OperandSegmentSizes*/ false))
+    return failure();
+
+  // Parse optional result type
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
+
+  // Build implicit region
+  OpBuilder opBuilder(p.getContext());
+  fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
+                         outputTypes, result.attributes.getAttrs(),
+                         getRegionBuilder());
+
+  return success();
+}
+
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
+Conv2DOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
+    RegionBuilderHelper helper(builder.getContext(), block);
+    SmallVector<Value> yields;
+
+    if (block.getNumArguments() == 4) {
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(3).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    } else {
+      assert(block.getNumArguments() == 3 &&
+             "Conv2DOp regionBuilder expects 3 (>=0) args");
       Value arg0 = block.getArgument(0);
       Type targetType = block.getArgument(2).getType();
       yields.push_back(

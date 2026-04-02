@@ -615,5 +615,76 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
   }];
 }
+
+//===----------------------------------------------------------------------===//
+// HIVM Conv2DL1Op definitions.
+//===----------------------------------------------------------------------===//
+
+def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  OpLayoutInterface,
+  AttrSizedOperandSegments,
+]>{
+  let arguments = (ins Arg<TensorOrMemref, "Conv2d input">:$input,
+                      Arg<TensorOrMemref, "Conv2d weight">:$weight,
+                      Arg<Optional<TensorOrMemref>, "Conv2d bias">:$bias,
+                      Arg<TensorOrMemref, "Conv2d init">:$init,
+                      Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                      }]>:$init_condition,
+                      Arg<Variadic<I64>, [{
+                        Arguments required by conv2d_group to insert 
+                        synchronization instructions, they are 
+                        managed by inject-sync passes.
+                      }]>:$sync_related_args,
+                      I32Attr:$padding,
+                      I32Attr:$groups
+                      );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let summary = [{
+    2D convolution operator with inputs from L1 memory hierarchy.
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+      $input `,` $weight
+      `,` $init_condition
+      (`,` $bias^)?
+      `:` type($input) `,` type($weight)
+      `,` type($init_condition)
+      (`,` type($bias)^)?
+    `)`
+    `outs` `(` $init `:` type($init) `)`
+    (`sync_related_args`
+      `(` $sync_related_args^ `:` type($sync_related_args) `)`
+    )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getInitMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+  
+    static StringRef getOpName() { return "Conv2dL1"; }
+
+    FailureOr<DataLayoutAttr> getInputLayout();
+    FailureOr<DataLayoutAttr> getWeightLayout();
+    FailureOr<DataLayoutAttr> getBiasLayout();
+    FailureOr<DataLayoutAttr> getInitLayout();
+
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
+
+    int getNumSyncRelatedArgs();
+    // Needed for lower-hivm-to-std, should be updated if input operands got changed.
+    SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
+  }];
+}
  	 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD

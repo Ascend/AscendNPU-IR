@@ -814,3 +814,85 @@ Conv1DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
   }
   return retOperands;
 }
+
+//===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+bool Conv2DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv2DL1Op>(this, cst);
+}
+
+void Conv2DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getInputLayout() {
+  auto rank = getRankFromShapedTypeValue(getInput());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getWeightLayout() {
+  auto rank = getRankFromShapedTypeValue(getWeight());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getBiasLayout() {
+  return DataLayoutAttr::get(getContext(), DataLayout::ND);
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getInitLayout() {
+  auto rank = getRankFromShapedTypeValue(getInit());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
+int Conv2DL1Op::getNumSyncRelatedArgs() { return 6; }
+
+SmallVector<Value>
+Conv2DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getInput());
+  retOperands.push_back(getWeight());
+  retOperands.push_back(getInitCondition());
+  if (getBias()) {
+    retOperands.push_back(getBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
