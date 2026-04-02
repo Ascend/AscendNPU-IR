@@ -479,9 +479,9 @@ void DimensionAnalyzer::markDimensionKind() {
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
     SmallVector<int64_t> sliceRef;
     if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
-      sliceRef = getArgumentRef(sliceOp.getSource());
+      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
     } else {
-      sliceRef = getArgumentRef(sliceOp.getResult());
+      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
     }
     for (size_t i = 0; i < sliceRef.size(); ++i) {
       if (droppedDimsMask[i]) {
