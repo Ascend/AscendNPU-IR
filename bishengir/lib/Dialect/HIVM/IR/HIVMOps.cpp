@@ -197,12 +197,12 @@ LogicalResult PointerCastOp::verify() {
     return emitOpError("addrs of PointerCastOp should not be empty!");
   }
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  if (const std::size_t dynDims = getResult().getType().getNumDynamicDims(),
-      dynDimValues = getDynamicSizes().size();
-      dynDims != dynDimValues) {
-    return emitOpError() << "expected " << dynDims
+  const int64_t expectedDynamicDims = static_cast<int64_t>(
+      getResult().getType().getNumDynamicDims());
+  if (static_cast<int64_t>(getDynamicSizes().size()) != expectedDynamicDims) {
+    return emitOpError() << "expected " << expectedDynamicDims
                          << " dynamic size operands, but found "
-                         << dynDimValues;
+                         << getDynamicSizes().size();
   }
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   return success();
@@ -401,9 +401,10 @@ LogicalResult ConvertLayoutOp::verify() {
       return emitOpError(
           "requires the same element type for all operands and results");
   }
-  size_t numDynamic = llvm::count_if(getStaticOutputShape(), [](int64_t dim) {
-    return ShapedType::isDynamic(dim);
-  });
+  const size_t numDynamic = static_cast<size_t>(llvm::count_if(
+      getStaticOutputShape(), [](int64_t dim) {
+        return ShapedType::isDynamic(dim);
+      }));
   if (numDynamic != getOutputShape().size()) {
     return emitOpError("expected ")
            << numDynamic << " dynamic dimensions but got "

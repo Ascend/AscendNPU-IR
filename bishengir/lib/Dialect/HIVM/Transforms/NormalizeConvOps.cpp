@@ -71,6 +71,7 @@ struct NormalizeConvResultTypePattern
     : public OpRewritePattern<hivm::Conv1DL1Op> {
 public:
   using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+  ~NormalizeConvResultTypePattern() override = default;
 
   LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
                                 PatternRewriter &rewriter) const override {
@@ -163,6 +164,7 @@ struct DecomposeConv1dWithBiasPattern
     : public OpRewritePattern<hivm::Conv1DL1Op> {
 public:
   using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+  ~DecomposeConv1dWithBiasPattern() override = default;
 
   LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
                                 PatternRewriter &rewriter) const override {

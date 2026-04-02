@@ -109,6 +109,8 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
     } else {
       // Unknown broadcast temp buffer is same to unaligned broadcast.
       if (!dstType.hasStaticShape()) {
+        if (srcMaxSizeMaybe == 0)
+          return std::nullopt;
         auto alignedSrc =
             llvm::alignTo(srcMaxSizeMaybe, srcNumPerRepeatOfVBRCBIntrin);
         b = dstMaxSizeMaybe / srcMaxSizeMaybe;

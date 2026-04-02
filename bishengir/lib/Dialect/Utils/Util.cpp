@@ -596,8 +596,9 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
 bool isAlignedInUB(Type type) {
   if (auto shapedType = dyn_cast<ShapedType>(type)) {
     auto shape = shapedType.getShape();
-    auto lastDimSizeInBit =
-        shape.back() * shapedType.getElementType().getIntOrFloatBitWidth();
+    const int64_t lastDimSizeInBit =
+        shape.back() * static_cast<int64_t>(
+            shapedType.getElementType().getIntOrFloatBitWidth());
     return lastDimSizeInBit % kUBAlignSizeInBits == 0;
   }
   return type.getIntOrFloatBitWidth() % kUBAlignSizeInBits == 0;
