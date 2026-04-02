@@ -39,13 +39,14 @@ bool checkDimIdx(memref::CollapseShapeOp collapseOp, memref::DimOp dimOp, size_t
   if (!indexOp)
     return false;
   if (src == collapseOp.getSrc()) {
-    return indexOp.value() == idx;
+    return indexOp.value() == static_cast<int64_t>(idx);
   } else if (src == collapseOp.getResult()) {
     auto srcType = collapseOp.getSrcType();
-    auto reassociation = collapseOp.getReassociationIndices()[indexOp.value()];
+    auto reassociation = collapseOp.getReassociationIndices()
+                               [static_cast<size_t>(indexOp.value())];
     bool idxFound = false;
     for (auto ridx : reassociation) {
-      if (ridx == idx) {
+      if (ridx == static_cast<int64_t>(idx)) {
         idxFound = true;
       } else if (srcType.getDimSize(ridx) != 1) {
         return false;

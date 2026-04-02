@@ -91,11 +91,11 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
     OpFoldResult currentStride = oldStrides[idx];
     SmallVector<OpFoldResult> groupStrides;
 
-    for (int i = group.size() - 1; i >= 0; --i) {
+    for (size_t i = group.size(); i > 0; --i) {
       groupStrides.push_back(currentStride);
-      if (i > 0) {
+      if (i > 1) {
         currentStride = multiplyOFR(rewriter, reinterpretCast.getLoc(),
-                                    currentStride, sizesOfr[group[i]]);
+                                    currentStride, sizesOfr[group[i - 1]]);
       }
     }
     std::reverse(groupStrides.begin(), groupStrides.end());

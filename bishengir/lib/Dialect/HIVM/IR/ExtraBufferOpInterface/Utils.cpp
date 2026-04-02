@@ -130,6 +130,8 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
     } else {
       // Unknown broadcast temp buffer is same to unaligned broadcast.
       if (!dstType.hasStaticShape()) {
+        if (srcMaxSizeMaybe == 0)
+          return std::nullopt;
         auto alignedSrc =
             llvm::alignTo(srcMaxSizeMaybe, srcNumPerRepeatOfVBRCBIntrin);
         b = dstMaxSizeMaybe / srcMaxSizeMaybe;
@@ -373,9 +375,10 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
           ceilDiv(aDimension, bitsPerByte * numElemPerBlock) * numElemPerBlock;
       return elementsSize + maskSize + numElemPerBlock;
     }
-    // RA, dynamic shape
-    // use 1.5 * alloc_size aligned to ub_block_unit
-    return ceilFactor(1.5 * srcAllocTotalSize.value(), numElemPerBlock);
+    // RA, dynamic shape: 1.5× alloc_size (int64_t, no float), align to block.
+    const int64_t alloc = srcAllocTotalSize.value();
+    const int64_t scaledAlloc = static_cast<int64_t>(1.5 * alloc);
+    return ceilFactor(scaledAlloc, numElemPerBlock);
   }
   if (arithOp == hivm::ReduceOperation::sum ||
       arithOp == hivm::ReduceOperation::max ||

@@ -119,7 +119,8 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       if (isa<scope::ReturnOp>(op))
         newScopeReturnOp = &*newOp;
     }
-    assert(newScopeReturnOp != nullptr && "scope::ReturnOp is not cloned");
+    if (!newScopeReturnOp)
+      return failure();
 
     auto funcReturnOp = rewriter.create<func::ReturnOp>(
         entryBB->front().getLoc(), newScopeReturnOp->getOperands());

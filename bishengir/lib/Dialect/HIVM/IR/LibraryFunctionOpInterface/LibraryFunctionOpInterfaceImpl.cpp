@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
