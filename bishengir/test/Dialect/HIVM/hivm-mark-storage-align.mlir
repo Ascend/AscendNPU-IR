@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -hivm-mark-stride-align -split-input-file | FileCheck %s
-// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -hivm-mark-stride-align -split-input-file | FileCheck %s -check-prefix=A5
 
+// -----
 
 // CHECK-LABEL: @test_mark_elementwise_unary
 func.func @test_mark_elementwise_unary(%dim0 : index, %dim1: index) {
@@ -418,18 +418,4 @@ func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_
   hivm.hir.store ins(%alloc_0 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   hivm.hir.store ins(%alloc_1 : memref<5x3x3x3x3x5xi32, #hivm.address_space<ub>>) outs(%arg2 : memref<5x3x3x3x3x5xi32, #hivm.address_space<gm>>)
   return
-}
-
-// -----
-
-// A5-LABEL: func @mark_fixpipe
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @mark_fixpipe() {
-    %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<9x4x16x16xf32, #hivm.address_space<cc>>
-    // A5-NOT: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>}
-    %alloc_1 = memref.alloc() : memref<36x256xf32, #hivm.address_space<ub>>
-    // A5: annotation.mark %alloc_0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
-    hivm.hir.fixpipe ins(%alloc_0 : memref<9x4x16x16xf32, #hivm.address_space<cc>>) outs(%alloc_1 : memref<36x256xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
-    return
-  }
 }

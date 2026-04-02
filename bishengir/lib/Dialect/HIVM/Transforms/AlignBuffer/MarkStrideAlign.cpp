@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -275,6 +276,12 @@ filterNonHivmSpace(const SmallVectorImpl<MemRefType> &memRefTypes) {
   return resMemRefTypes;
 }
 
+static bool isRegBasedStrideAlignWhitelistOp(Operation *op) {
+  // These A5 regbased templates currently require aligned non-unit last
+  // strides.
+  return isa<hivm::VCumsumOp, hivm::VCumprodOp, hivm::VSortOp>(op);
+}
+
 // find the src memref arg used in transferwrite op
 static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   int res = -1;
@@ -358,6 +365,15 @@ void MarkStrideAlignPass::runOnOperation() {
   if (hacc::utils::isHost(funcOp))
     return;
 
+  std::optional<hivm::TFuncCoreType> funcCoreType =
+      hivm::queryFuncCoreType(funcOp);
+  if (funcCoreType.has_value()) {
+    if (funcCoreType.value() == hivm::TFuncCoreType::AIC) {
+      LDBG(funcOp.getName() << "skip stride align for AIC function");
+      return;
+    }
+  }
+
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
@@ -415,9 +431,12 @@ void MarkStrideAlignPass::runOnOperation() {
       for (auto i = 0; i < filterMemrefTypes[0].getRank(); ++i) {
         identityReassoc[i] = i;
       }
-      // In A5, memrefTypes is already the result of flattening.
-      alignDim = getLastDiscontinuousDimRegBased(filterMemrefTypes,
-                                                 identityReassoc, isUBDMAOp);
+      if (isRegBasedStrideAlignWhitelistOp(op)) {
+        // These A5 regbased templates do not support unaligned strides yet.
+        // FIXME: remove this special handling after template support lands.
+        alignDim = getLastDiscontinuousDimRegBased(filterMemrefTypes,
+                                                   identityReassoc, isUBDMAOp);
+      }
     } else {
       // For A2/3
       auto hivmFlattenInterfaceOp = dyn_cast<hivm::FlattenInterface>(op);
