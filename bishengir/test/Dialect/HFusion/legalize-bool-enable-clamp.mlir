@@ -57,8 +57,8 @@ func.func @triton_sum_bool_reduce(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg
   %2 = linalg.fill ins(%c0_i8 : i8) outs(%1 : tensor<i8>) -> tensor<i8>
   %reduced = linalg.reduce ins(%0 : tensor<512xi8>) outs(%2 : tensor<i8>) dimensions = [0]
     (%in: i8, %init: i8) {
-      // CHECK: %[[OR:.*]] = arith.ori %in, %init {is_clamped = true} : i8
-      // CHECK: linalg.yield %[[OR]] : i8
+      // CHECK: %[[ADD:.*]] = arith.addi %in, %init : i8
+      // CHECK: linalg.yield %[[ADD]] : i8
       %3 = arith.addi %in, %init : i8
       linalg.yield %3 : i8
     }
@@ -87,8 +87,8 @@ func.func @triton_sum_bool_reduce_after_math_abs(%arg0: memref<?xi8>, %arg1: mem
   %3 = linalg.fill ins(%c0_i8 : i8) outs(%2 : tensor<i8>) -> tensor<i8>
   %reduced = linalg.reduce ins(%1 : tensor<512xi8>) outs(%3 : tensor<i8>) dimensions = [0]
     (%in: i8, %init: i8) {
-      // CHECK: %[[MATH_OR:.*]] = arith.ori %in, %init {is_clamped = true} : i8
-      // CHECK: linalg.yield %[[MATH_OR]] : i8
+      // CHECK: %[[MATH_ADD:.*]] = arith.addi %in, %init : i8
+      // CHECK: linalg.yield %[[MATH_ADD]] : i8
       %4 = arith.addi %in, %init : i8
       linalg.yield %4 : i8
     }
@@ -118,8 +118,8 @@ func.func @triton_sum_bool_reduce_after_hfusion_abs(%arg0: memref<?xi8>, %arg1: 
   %4 = linalg.fill ins(%c0_i8 : i8) outs(%3 : tensor<i8>) -> tensor<i8>
   %reduced = linalg.reduce ins(%2 : tensor<512xi8>) outs(%4 : tensor<i8>) dimensions = [0]
     (%in: i8, %init: i8) {
-      // CHECK: %[[HF_OR:.*]] = arith.ori %in, %init {is_clamped = true} : i8
-      // CHECK: linalg.yield %[[HF_OR]] : i8
+      // CHECK: %[[HF_ADD:.*]] = arith.addi %in, %init : i8
+      // CHECK: linalg.yield %[[HF_ADD]] : i8
       %5 = arith.addi %in, %init : i8
       linalg.yield %5 : i8
     }
