@@ -8,6 +8,7 @@
 
 #include "bishengir/Tools/bishengir-compile/Utility.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -124,6 +125,14 @@ runPipeline(ModuleOp mod,
   (void)mlir::applyPassManagerCLOptions(passManager);
   (void)bishengir::applyPassManagerCLOptions(passManager);
 
+  // Add InjectIR instrumentation if any of the options are enabled.
+  if (config.shouldPrintPassId() || !config.getInjectIrBefore().empty() ||
+      !config.getInjectIrAfter().empty()) {
+    passManager.addInstrumentation(std::make_unique<InjectIRInstrumentation>(
+        config.shouldPrintPassId(), config.getInjectIrBefore(),
+        config.getInjectIrAfter()));
+  }
+
   if (failed(passManager.run(mod))) {
     return mod->emitError("Failed to run " + pipelineName + " pipeline\n");
   }
@@ -194,10 +203,10 @@ MixedModules getMixedModules(ModuleOp topMod) {
   // if no main module, return the top module
   if (!res.first)
     res.first = topMod;
- 
+
   return res;
 }
- 
+
 bool hasSplitModules(ModuleOp topMod) {
   return !topMod.getOps<ModuleOp>().empty();
 }
@@ -220,7 +229,7 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
   }
 
   bool foundDotScaled = false;
-  module.walk<WalkOrder::PreOrder>([&](Operation* op) -> WalkResult {
+  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (isa<hfusion::MatMulMxOp>(op)) {
       foundDotScaled = true;
       return WalkResult::interrupt();
@@ -237,7 +246,7 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     config.mixedCV(false);
     return success();
   }
-  
+
   auto first =
       (*funcs.begin())->getAttrOfType<StringAttr>("mix_mode").getValue();
   if (!llvm::all_of(funcs, [&](const func::FuncOp &func) {

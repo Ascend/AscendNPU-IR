@@ -20,6 +20,8 @@
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
+#include "bishengir/Transforms/Passes.h"
+
 #include "mlir/Conversion/SCFToGPU/SCFToGPUPass.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -488,6 +490,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
+  pm.addPass(bishengir::createInjectIRPass(hivmPipelineOptions.injectIrFromFile));
 }
 
 //===----------------------------------------------------------------------===//

@@ -22,6 +22,7 @@
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Transforms/Passes.h"
+#include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToEmitC/ArithToEmitCPass.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"

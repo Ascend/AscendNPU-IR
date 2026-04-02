@@ -265,6 +265,26 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                  "functions are replaced with those from the file for debug"),
         cl::location(injectIrFromFileFlag), cl::init(""),
         cl::cat(dfxCtrlCategory));
+        
+    static cl::opt<bool, /*ExternalStorage=*/true> printPassId(
+        "print-pass-id",
+        cl::desc("Print pass ID before each pass"),
+        cl::location(printPassIdFlag),
+        cl::init(false),
+        cl::cat(dfxCtrlCategory));
+    
+    static cl::opt<std::string, /*ExternalStorage=*/true> injectIrBefore(
+        "inject-ir-before",
+        cl::desc("Inject IR from file before a specific pass. Format: pass_id@file_path"),
+        cl::location(injectIrBeforeFlag), cl::init(""),
+        cl::cat(dfxCtrlCategory));
+    
+    static cl::opt<std::string, /*ExternalStorage=*/true> injectIrAfter(
+        "inject-ir-after",
+        cl::desc("Inject IR from file after a specific pass. Format: pass_id@file_path"),
+        cl::location(injectIrAfterFlag),
+        cl::init(""),
+        cl::cat(dfxCtrlCategory));
 
     // -------------------------------------------------------------------------//
     //                        Output setting options
