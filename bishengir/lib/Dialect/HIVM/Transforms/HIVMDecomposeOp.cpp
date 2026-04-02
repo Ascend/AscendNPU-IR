@@ -1368,12 +1368,8 @@ private:
     Operation* returnedValueLoadOp = findReturnedValueLoadOp(storeOp, storeOp.getDst());
     if (auto LoadOp = dyn_cast_or_null<hivm::LoadOp>(returnedValueLoadOp)) {
       auto dst = LoadOp.getDst();
-      // If the dst of loadOp just be used for this loadop, the returned value dead code. 
-      size_t usersCnt = 0;
-      for (auto *user : dst.getUsers()) {
-        ++usersCnt;
-      }
-      return usersCnt > 1;
+      // If the dst of loadOp just be used for this loadop, the returned value dead code.
+      return llvm::range_size(dst.getUsers()) > 1;
     }
     return false;
   }

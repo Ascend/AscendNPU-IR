@@ -205,71 +205,7 @@ reduce_ar_vcg_unalign(memref_t<__ubuf__ T, 2> *src0,
   }
   return;
 }
- 
-/// reduce src (a, r) with stride [n1, 1] to dst (a, 1) with stride [n2, 1],
-/// here r is reduction axis, a is non-reduce axis. dtype is float and op is
-/// reduce_sum/reduce_min/reduce_max reduce by vcgadd/vcgmin/vcgmax.
-///
-/// USING VCG
-template <ReduceOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void
-reduce_ar_vcg(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
-              memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
-  // Input parameter constraints assert.
-  check_inputs_of_reduce_ar<OP, T>(src0, dst, tmp_buf, initvalue);
- 
-  const int64_t size0 = src0->sizes[0];
-  const int64_t size1 = src0->sizes[1];
-  const int64_t src_stride0 = src0->strides[0];
-  const int64_t src_stride1 = src0->strides[1];
-  const int64_t dst_stride0 = dst->strides[0];
- 
-  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
-  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
-  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
- 
-  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
 
-  bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
-  if (is_unalign) {
-    reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
-    return;
-  }
-  // stride and offset are all aligned
-  if (num_per_repeat < size1) {
-    if (size1 != src_stride0) {
-      // Reduce each row seperately. lower performance
-      reduce_ar_vcg_unalign<OP, T>(src0, dst, tmp_buf, initvalue);
-      return;
-    }
-    const int64_t k = Log2(num_per_block);
-    const int64_t div_num =
-        divisions_needed_by_pow2(src_stride0, num_per_repeat, k);
-    const int64_t divisor = pow(num_per_block, div_num);
-    const int64_t size_tmp = (size1 + divisor - 1) / divisor;
-    // Fast vcg reduceAR Impl
-    memref_t<__ubuf__ T, 2> tmp_buf_2d{tmp_buf->allocated,
-                                       tmp_buf->aligned,
-                                       tmp_buf->offset,
-                                       {size0, size_tmp},
-                                       {size_tmp, 1}};
-    // note: size tmp may not be aligned
-    reduceARByBlocks<OP, T>(src0, &tmp_buf_2d, initvalue);
-    // reduce temp buffer (a, r0) to dst (a, 1) with strides [n, 1] by
-    // vcmax/vcmin/vcadd, here r0 is <= max number per repeat that intrinsic
-    // can handles, n is 1 or aligned to a block.
-    INTRINSIC(pipe_barrier, PIPE_V);
-    if (dst->strides[0] == 1) {
-      reduceAR0ToA<OP, T, false>(&tmp_buf_2d, dst, nullptr);
-    } else {
-      reduceAR0ToAByLoopAAxis<OP, T, false>(&tmp_buf_2d, dst, nullptr);
-    }
-  } else if (size1 <= num_per_repeat) {
-    reduce_ar_core<OP, T>(src0, dst, tmp_buf, initvalue);
-  }
-}
- 
 /// reduce src (a, r) with stride [n1, 1] to dst (a, 1) with stride [n2, 1],
 /// here r is reduction axis, a is non-reduce axis. dtype is float and op is
 /// reduce_sum/reduce_min/reduce_max reduce by vcadd/vcmin/vcmax.
@@ -382,6 +318,70 @@ reduce_ar_core(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
     } else {
       reduceAR0ToAByLoopAAxis<OP, T, false>(src0, dst, nullptr);
     }
+  }
+}
+
+/// reduce src (a, r) with stride [n1, 1] to dst (a, 1) with stride [n2, 1],
+/// here r is reduction axis, a is non-reduce axis. dtype is float and op is
+/// reduce_sum/reduce_min/reduce_max reduce by vcgadd/vcgmin/vcgmax.
+///
+/// USING VCG
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+reduce_ar_vcg(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
+              memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
+  // Input parameter constraints assert.
+  check_inputs_of_reduce_ar<OP, T>(src0, dst, tmp_buf, initvalue);
+
+  const int64_t size0 = src0->sizes[0];
+  const int64_t size1 = src0->sizes[1];
+  const int64_t src_stride0 = src0->strides[0];
+  const int64_t src_stride1 = src0->strides[1];
+  const int64_t dst_stride0 = dst->strides[0];
+
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *tmp_buf_ptr = tmp_buf->aligned + tmp_buf->offset;
+
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+
+  bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
+  if (is_unalign) {
+    reduce_scalar_iml<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue);
+    return;
+  }
+  // stride and offset are all aligned
+  if (num_per_repeat < size1) {
+    if (size1 != src_stride0) {
+      // Reduce each row seperately. lower performance
+      reduce_ar_vcg_unalign<OP, T>(src0, dst, tmp_buf, initvalue);
+      return;
+    }
+    const int64_t k = Log2(num_per_block);
+    const int64_t div_num =
+        divisions_needed_by_pow2(src_stride0, num_per_repeat, k);
+    const int64_t divisor = pow(num_per_block, div_num);
+    const int64_t size_tmp = (size1 + divisor - 1) / divisor;
+    // Fast vcg reduceAR Impl
+    memref_t<__ubuf__ T, 2> tmp_buf_2d{tmp_buf->allocated,
+                                       tmp_buf->aligned,
+                                       tmp_buf->offset,
+                                       {size0, size_tmp},
+                                       {size_tmp, 1}};
+    // note: size tmp may not be aligned
+    reduceARByBlocks<OP, T>(src0, &tmp_buf_2d, initvalue);
+    // reduce temp buffer (a, r0) to dst (a, 1) with strides [n, 1] by
+    // vcmax/vcmin/vcadd, here r0 is <= max number per repeat that intrinsic
+    // can handles, n is 1 or aligned to a block.
+    INTRINSIC(pipe_barrier, PIPE_V);
+    if (dst->strides[0] == 1) {
+      reduceAR0ToA<OP, T, false>(&tmp_buf_2d, dst, nullptr);
+    } else {
+      reduceAR0ToAByLoopAAxis<OP, T, false>(&tmp_buf_2d, dst, nullptr);
+    }
+  } else if (size1 <= num_per_repeat) {
+    reduce_ar_core<OP, T>(src0, dst, tmp_buf, initvalue);
   }
 }
 

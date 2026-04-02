@@ -1287,9 +1287,6 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!transOp)
     return failure();
 
-  auto src = transOp.getSrc();
-  auto dst = transOp.getDst();
-
   auto resultType = cast<RankedTensorType>(sliceOp.getType());
   auto resultRank = resultType.getRank();
 
@@ -1297,7 +1294,6 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto perm = transOp.getPermutation();
 
   rewriter.setInsertionPoint(transOp);
-  auto loc = transOp.getLoc();
   auto dstOffsets = sliceOp.getMixedOffsets();
   auto srcOffsets = SmallVector<OpFoldResult>(resultRank);
   auto srcSizes = llvm::to_vector(sliceOp.getMixedSizes());

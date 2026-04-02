@@ -172,12 +172,6 @@ void collectMemoryInfoForDebug(
     MemoryInfo memoryRootInfo =
         generateMemoryInfo(rootStorageEntry, buffer2Offsets, rootOper);
     memoryDisplayInfo.memoryInfoArray.emplace_back(memoryRootInfo);
-    uint64_t needByte =
-        (rootStorageEntry->alignedConstBits + utils::kBitsToByte - 1) /
-        utils::kBitsToByte;
-    uint64_t offsetByte =
-        (rootStorageEntry->bitsOffset + utils::kBitsToByte - 1) /
-        utils::kBitsToByte;
     for (auto &childrenStorageEntry : rootStorageEntry->mergedChildren) {
       for (auto &buffer : childrenStorageEntry->inplaceBuffers) {
         if (buffer.getDefiningOp()) {

@@ -231,7 +231,6 @@ std::optional<int64_t> getVcgReduceExtraBufferSize(ShapedType srcType,
                                                    int64_t srcAllocTotalSize,
                                                    int64_t reductionDim) {
   int64_t rDim = srcType.getShape()[reductionDim];
-  int64_t aDim = srcType.getShape()[0];
   auto eleType = srcType.getElementType();
   const int numPerBlock = getNumPerBlock(eleType);
   const int numPerRepeat = getNumPerRepeat(eleType);

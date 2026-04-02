@@ -48,9 +48,7 @@ using namespace mlir::hivm;
 namespace {
 static constexpr llvm::StringLiteral outputAlreadyNormalized =
     "outputAlreadyNormalized";
-} // namespace
 
-namespace {
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
                                   Type dstType) {
   return hivm::RoundModeAttr::get(

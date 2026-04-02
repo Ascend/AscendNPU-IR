@@ -2465,17 +2465,6 @@ LogicalResult GatherMaskOp::verify() {
   return success();
 }
 
-static Type getElementTypeOrSelf(Value value) {
-  Type type = value.getType();
-  if (auto tensorTy = mlir::dyn_cast<TensorType>(type)) {
-    return tensorTy.getElementType();
-  }
-  if (auto memrefTy = mlir::dyn_cast<MemRefType>(type)) {
-    return memrefTy.getElementType();
-  }
-  return type;
-}
-
 //===----------------------------------------------------------------------===//
 // CumsumOp
 //===----------------------------------------------------------------------===//

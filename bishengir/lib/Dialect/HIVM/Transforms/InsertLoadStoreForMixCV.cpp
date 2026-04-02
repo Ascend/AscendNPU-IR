@@ -70,11 +70,6 @@ bool isGM(Value v) {
          traceDefOp<hivm::StoreOp>(v).has_value();
 }
 
-bool isCube(Value v) {
-  // TODO: use interface (including ConvOp)
-  return traceDefOp<hivm::MmadL1Op>(v).has_value();
-}
-
 template <typename... OpType>
 bool canTraceTo(Value v) {
   return (false || ... || traceDefOp<OpType>(v).has_value());
