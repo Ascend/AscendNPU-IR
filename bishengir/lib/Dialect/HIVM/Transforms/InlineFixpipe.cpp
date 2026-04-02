@@ -284,7 +284,6 @@ private:
     bool matched = false;
     auto loc = op.getLoc();
     auto *curOp = *(op.getResultTensor().getUsers().begin());
-    auto dualDstMode = op.getDualDstMode().getDualDstMode();
 
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
@@ -311,10 +310,7 @@ private:
         inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
                                  op.getDpsInputOperand(0)->get());
       }
-    } else if (llvm::isa_and_present<hivm::VMulOp>(curOp) &&
-               dualDstMode == FixpipeDualDstMode::NO_DUAL &&
-               op.getQuantScale() == nullptr && curOp->getNumResults() == 1 &&
-               traceDownStoreOpWithSingleChain(curOp->getResult(0))) {
+    } else if (isUserQuantScaleInlinable(op, curOp)) {
       auto vMulOp = cast<hivm::VMulOp>(curOp);
       matched = true;
       inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
@@ -430,6 +426,28 @@ private:
     return curPreQuant;
   }
 
+  bool isUserQuantScaleInlinable(hivm::FixpipeOp op, Operation *userOp) const {
+    auto vMulOp = dyn_cast<hivm::VMulOp>(userOp);
+    if (!vMulOp)
+      return false;
+    if (op.getDualDstMode().getDualDstMode() != FixpipeDualDstMode::NO_DUAL)
+      return false;
+    if (op.getQuantScale())
+      return false;
+    if (userOp->getNumResults() != 1)
+      return false;
+    if (!traceDownStoreOpWithSingleChain(userOp->getResult(0)))
+      return false;
+    Value quantScaleValue =
+        vMulOp
+            .getDpsInputOperand(static_cast<unsigned>(
+                vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op))
+            ->get();
+    if (!utils::isScalarLike(quantScaleValue))
+      return false;
+    return true;
+  }
+
   void inlineFixPipeWithQuantScale(PatternRewriter &rewriter,
                                    hivm::FixpipeOp op,
                                    hivm::VMulOp vMulOp) const {
@@ -448,6 +466,8 @@ private:
             .getDpsInputOperand(static_cast<unsigned>(
                 vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op))
             ->get();
+    assert(utils::isScalarLike(quantScaleValue) &&
+           "currently, only handle scalar quant scale");
     Value fixPipeSrc = op.getSource();
     auto quantPreMode = inferPreQuantMode(op, vMulOp);
     LDBG("inferred pre quant mode id:" << quantPreMode);
@@ -477,8 +497,7 @@ private:
         extractSliceOp.getMixedStrides());
 
     auto newExtractSliceResult = newExtractSliceOp->getResult(0);
-    Value fixpipeInit = nullptr;
-    fixpipeInit = utils::createEmptyOpWithTargetElemType(
+    Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
         rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
         getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
     MLIRContext *ctx = rewriter.getContext();
