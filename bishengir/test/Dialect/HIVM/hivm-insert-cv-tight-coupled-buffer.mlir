@@ -584,3 +584,41 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+module {
+  func.func @vf_mm_func(%x : tensor<16x16xf16>)
+                      -> tensor<16x16xf16>
+                      attributes {hivm.vector_function} {
+    %dst = tensor.empty() : tensor<16x16xf16>
+    %one = arith.constant 1.000000e+00 : f16
+    %r = hivm.hir.vmul ins(%x, %one : tensor<16x16xf16>, f16)
+                       outs(%dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    return %r : tensor<16x16xf16>
+  }
+
+  // CHECK-LABEL: func.func @test_vf_mm_with_bias(
+  func.func @test_vf_mm_with_bias(%a : tensor<16x16xf16>,
+                                 %b : tensor<16x16xf16>,
+                                 %bias : tensor<16x16xf16>)
+               -> tensor<16x16xf32> {
+    %true = arith.constant 1 : i1
+    %c16 = arith.constant 16 : index
+    %mm_dst = tensor.empty() : tensor<16x16xf32>
+
+    %vf_res = func.call @vf_mm_func(%bias) {hivm.vector_function}
+              : (tensor<16x16xf16>) -> tensor<16x16xf16>
+    
+    // Bias should skip nd2nz conversion, just do simple copy
+    // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+    // CHECK: %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16x16xf16>
+    // CHECK: hivm.hir.copy ins(%{{.*}} : tensor<16x16xf16>) outs(%[[CAST]] : memref<16x16xf16>)
+    
+    %mm = hivm.hir.mmadL1
+            ins(%a, %b, %true, %c16, %c16, %c16, %vf_res
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index, tensor<16x16xf16>)
+            outs(%mm_dst : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mm : tensor<16x16xf32>
+  }
+}
