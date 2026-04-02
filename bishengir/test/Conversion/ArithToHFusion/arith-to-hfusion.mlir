@@ -566,3 +566,14 @@ func.func @test_arith_cmpi_u32(%arg1 : tensor<32xi32>, %arg2 : tensor<32xi32>) -
   %ule = arith.cmpi ule, %arg1, %arg2 : tensor<32xi32>
   return %ule : tensor<32xi1>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @select_scalar_predicate
+// CHECK: linalg.fill
+// CHECK: hfusion.select
+
+func.func @select_scalar_predicate(%pred: i1, %lhs: tensor<4x8xbf16>, %rhs: tensor<4x8xbf16>) -> tensor<4x8xbf16> {
+  %0 = arith.select %pred, %lhs, %rhs : tensor<4x8xbf16>
+  return %0 : tensor<4x8xbf16>
+}
