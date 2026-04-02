@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
+
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
@@ -55,6 +56,12 @@
 using namespace mlir;
 
 namespace bishengir {
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+/// Defined in BiShengIRCompileConfig.cpp.
+const mlir::triton::proton::ConvertProtonToProtonGPUOptions &
+getProtonGPUCompileConfig();
+#endif
 
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(
@@ -219,7 +226,9 @@ void setupLowerTritonPipelineOptions(
       config.getEnableBishengirSimtOptimize();
   options.enableSimtReorderInstruction = config.getEnableSimtReorderInstruction();
 #endif
-  options.protonGPUCompileConfig = config.getProtonGPUCompileConfig();
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  options.protonGPUCompileConfig = getProtonGPUCompileConfig();
+#endif
 }
 
 void buildBiShengTTIRPipeline(OpPassManager &pm,
