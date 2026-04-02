@@ -59,6 +59,11 @@ public:
       : impl::DumpFractalLayoutBase<DumpFractalLayoutPass>(options) {}
 
   void runOnOperation() override {
+#ifndef BSPRIV_DAVINCI_BISHENGIR
+    getOperation().emitError("dump-fractal-layout: fractal layout support "
+                             "requires BSPRIV_DAVINCI_BISHENGIR");
+    return signalPassFailure();
+#else
     MLIRContext *ctx = &getContext();
 
     SmallVector<int64_t> shape = parseShape(shapeStr);
@@ -69,10 +74,16 @@ public:
     }
 
     auto ctaLayout = CTALayoutAttr::getDefault(ctx, shape.size());
-    auto fractalAttr = FractalzNSharedEncodingAttr::get(
-        ctx, fractalM0, fractalN0, /*order=*/{1, 0}, ctaLayout);
+    auto lt = symbolizeFractalLayoutType(layoutTypeStr);
+    if (!lt) {
+      getOperation().emitError("dump-fractal-layout: unknown layoutType '")
+          << layoutTypeStr << "', expected 'zN' or 'nZ'";
+      return signalPassFailure();
+    }
+    auto fractalAttr = FractalSharedEncodingAttr::get(
+        ctx, fractalM0, fractalN0, *lt, ctaLayout);
 
-    LinearLayout layout = fractalzNSharedToLinearLayout(shape, fractalAttr);
+    LinearLayout layout = fractalSharedToLinearLayout(shape, fractalAttr);
 
     auto offsetAttr = StringAttr::get(ctx, "offset");
     auto blockAttr = StringAttr::get(ctx, "block");
@@ -84,6 +95,7 @@ public:
     for (auto [name, val] : logical)
       llvm::outs() << " " << name.getValue() << "=" << val;
     llvm::outs() << "\n";
+#endif
   }
 };
 

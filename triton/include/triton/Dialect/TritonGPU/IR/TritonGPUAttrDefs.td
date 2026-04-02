@@ -2,6 +2,7 @@
 #define TRITONGPU_ATTRDEFS
 
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/EnumAttr.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
 include "triton/Dialect/TritonGPU/IR/TritonGPUDialect.td"
 
@@ -168,47 +169,45 @@ addition, if there's only one CTA per CGA, then Triton canonicalizes CTAOrder to
   let skipDefaultBuilders = 1;
 }
 
+#ifdef BSPRIV_DAVINCI_BISHENGIR
 //===----------------------------------------------------------------------===//
-// FractalzNSharedEncodingAttr
+// FractalSharedEncodingAttr
 //===----------------------------------------------------------------------===//
 
-def FractalzNSharedEncodingAttr
-    : TritonGPU_Attr<"FractalzNSharedEncoding", "fractalzn_shared_encoding",
+def FractalLayoutType_zN : I32EnumAttrCase<"zN", 0, "zN">;
+def FractalLayoutType_nZ : I32EnumAttrCase<"nZ", 1, "nZ">;
+def FractalLayoutType : I32EnumAttr<
+    "FractalLayoutType", "Fractal layout ordering",
+    [FractalLayoutType_zN, FractalLayoutType_nZ]> {
+  let cppNamespace = "::mlir::triton::gpu";
+}
+
+def FractalSharedEncodingAttr
+    : TritonGPU_Attr<"FractalSharedEncoding", "fractal_shared_encoding",
                      [SharedEncodingTrait, LayoutEncodingTrait]> {
-  let mnemonic = "fractalzn_shared";
+  let mnemonic = "fractal_shared";
 
   let description = [{
-    Custom fractal shared memory layout for e.g. Huawei Ascend Cube emulation.
+    Custom fractal shared memory layout for Huawei Ascend Cube emulation.
+
+    Supports two layout types:
+      - "zN": inner Z-shape (cols then rows), outer N-shape (M-blocks then N-blocks)
+      - "nZ": inner N-shape (rows then cols), outer Z-shape (N-blocks then M-blocks)
   }];
 
   let parameters = (
     ins
     "int64_t":$fractalM0,
     "int64_t":$fractalN0,
-    ArrayRefParameter<"unsigned">:$order,   // fastest-changing dim first
+    "FractalLayoutType":$layoutType,
     "CTALayoutAttr":$CTALayout
   );
 
-  let builders = [
-    AttrBuilder<(ins "int64_t":$fractalM0,
-                     "int64_t":$fractalN0,
-                     "ArrayRef<int64_t>":$shape,
-                     "ArrayRef<unsigned>":$order,
-                     "CTALayoutAttr":$CTALayout), [{
-      return get(context, fractalM0, fractalN0, order, CTALayout);
-    }]>
-  ];
-
-  let assemblyFormat = [{
-    `<`
-      `fractalM0` `=` $fractalM0 `,`
-      `fractalN0` `=` $fractalN0 `,`
-      `order` `=` `[` $order `]` `,`
-      `CTALayout` `=` $CTALayout `>`
-  }];
+  let hasCustomAssemblyFormat = 1;
 
   let genVerifyDecl = 1;
 }
+#endif // BSPRIV_DAVINCI_BISHENGIR
 
 //===----------------------------------------------------------------------===//
 // Shared Layout Encoding

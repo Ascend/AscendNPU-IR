@@ -14,7 +14,9 @@ enum class ScaleDotElemType : uint32_t;
 
 namespace mlir::triton::gpu {
 class SwizzledSharedEncodingAttr;
-class FractalzNSharedEncodingAttr;
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+class FractalSharedEncodingAttr;
+#endif
 class NVMMASharedEncodingAttr;
 class AMDRotatingSharedEncodingAttr;
 class AMDMfmaEncodingAttr;
@@ -66,8 +68,10 @@ LinearLayout nvmmaSharedToLinearLayout(ArrayRef<int64_t> shape,
                                        NVMMASharedEncodingAttr shared,
                                        bool disableSwizzle = false);
 
-LinearLayout fractalzNSharedToLinearLayout(ArrayRef<int64_t> shape,
-                                           FractalzNSharedEncodingAttr fractal);
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+LinearLayout fractalSharedToLinearLayout(ArrayRef<int64_t> shape,
+                                         FractalSharedEncodingAttr fractal);
+#endif
 
 // Given a linear layout where the input dimensions contain a "block" dimension,
 // this method sets the "block" dimension to 0 and removes the corresponding

@@ -273,8 +273,9 @@ LinearLayout getCoreMatrixLinearLayout(NVMMASharedEncodingAttr shared,
 
 } // namespace
 
-LinearLayout fractalzNSharedToLinearLayout(ArrayRef<int64_t> shape,
-                                           FractalzNSharedEncodingAttr fractal) {
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+LinearLayout fractalSharedToLinearLayout(ArrayRef<int64_t> shape,
+                                         FractalSharedEncodingAttr fractal) {
   MLIRContext *ctx = fractal.getContext();
   auto shapePerCTA = getShapePerCTA(fractal, shape);
   int rank = shape.size();
@@ -288,30 +289,44 @@ LinearLayout fractalzNSharedToLinearLayout(ArrayRef<int64_t> shape,
   StringAttr mName = outDimNames[mDim];
   StringAttr nName = outDimNames[nDim];
 
-  // int64_t fM = fractal.getFractalM0();  // e.g. 16
-  // int64_t fN = fractal.getFractalN0();  // e.g. 16
-  int64_t fM = 16;
-  int64_t fN = 16;
+  int64_t fM = fractal.getFractalM0();
+  int64_t fN = fractal.getFractalN0();
 
   int64_t outerM = shapePerCTA[mDim] / fM;
   int64_t outerN = shapePerCTA[nDim] / fN;
+
+  bool isZN = fractal.getLayoutType() == FractalLayoutType::zN;
 
   // Build a flat list of (Δdim0, Δdim1) basis vectors with output dims
   // {mName, nName} only, matching the pattern of swizzledSharedToLinearLayout.
   std::vector<std::vector<int>> bases2D;
 
-  // Inner Z-shape: columns first (fastest varying), then rows.
-  for (int c = 1; c < fN; c *= 2)
-    bases2D.push_back({0, c});
-  for (int r = 1; r < fM; r *= 2)
-    bases2D.push_back({r, 0});
+  if (isZN) {
+    // Inner Z-shape: columns first (fastest varying), then rows.
+    for (int c = 1; c < fN; c *= 2)
+      bases2D.push_back({0, c});
+    for (int r = 1; r < fM; r *= 2)
+      bases2D.push_back({r, 0});
 
-  // Outer N-shape: M-blocks (row direction) first so that M varies fastest across
-  // block boundaries (column-major block ordering), then N-blocks.
-  for (int bm = 1; bm < outerM; bm *= 2)
-    bases2D.push_back({static_cast<int>(bm * fM), 0});
-  for (int bn = 1; bn < outerN; bn *= 2)
-    bases2D.push_back({0, static_cast<int>(bn * fN)});
+    // Outer N-shape: M-blocks first (column-major block ordering), then
+    // N-blocks.
+    for (int bm = 1; bm < outerM; bm *= 2)
+      bases2D.push_back({static_cast<int>(bm * fM), 0});
+    for (int bn = 1; bn < outerN; bn *= 2)
+      bases2D.push_back({0, static_cast<int>(bn * fN)});
+  } else {
+    // Inner N-shape: rows first (fastest varying), then columns.
+    for (int r = 1; r < fM; r *= 2)
+      bases2D.push_back({r, 0});
+    for (int c = 1; c < fN; c *= 2)
+      bases2D.push_back({0, c});
+
+    // Outer Z-shape: N-blocks first (row-major block ordering), then M-blocks.
+    for (int bn = 1; bn < outerN; bn *= 2)
+      bases2D.push_back({0, static_cast<int>(bn * fN)});
+    for (int bm = 1; bm < outerM; bm *= 2)
+      bases2D.push_back({static_cast<int>(bm * fM), 0});
+  }
 
   LinearLayout ctaLayout =
       LinearLayout({{S("offset"), bases2D}}, {mName, nName});
@@ -325,6 +340,7 @@ LinearLayout fractalzNSharedToLinearLayout(ArrayRef<int64_t> shape,
 
   return combineCtaCgaWithShape(ctaLayout, fractal.getCTALayout(), shape);
 }
+#endif // BSPRIV_DAVINCI_BISHENGIR
 
 LinearLayout nvmmaSharedToLinearLayout(ArrayRef<int64_t> shape,
                                        NVMMASharedEncodingAttr shared,
@@ -1349,8 +1365,10 @@ LinearLayout TritonGPUDialect::toLinearLayout(ArrayRef<int64_t> shape,
            "shape must be a postive power of 2");
     if (auto shared = dyn_cast<SwizzledSharedEncodingAttr>(layout)) {
       result = swizzledSharedToLinearLayout(shape, shared);
-    } else if (auto shared = dyn_cast<FractalzNSharedEncodingAttr>(layout)) {
-      result = fractalzNSharedToLinearLayout(shape, shared);
+#ifdef BSPRIV_DAVINCI_BISHENGIR
+    } else if (auto shared = dyn_cast<FractalSharedEncodingAttr>(layout)) {
+      result = fractalSharedToLinearLayout(shape, shared);
+#endif
     } else if (auto shared = dyn_cast<NVMMASharedEncodingAttr>(layout)) {
       result = nvmmaSharedToLinearLayout(shape, shared);
     } else if (auto sbl = dyn_cast<AMDRotatingSharedEncodingAttr>(layout)) {
