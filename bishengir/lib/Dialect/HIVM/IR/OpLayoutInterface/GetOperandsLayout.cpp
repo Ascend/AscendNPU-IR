@@ -107,7 +107,6 @@ MmadL1Op::getOperandsTargetFractalLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
 
   auto operA = getA();
-  bool isATranspose = getATranspose().has_value();
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal,
@@ -116,7 +115,6 @@ MmadL1Op::getOperandsTargetFractalLayout() {
   valLayoutMap[operA] = mALayoutAttr;
 
   auto operB = getB();
-  bool isBTranspose = getBTranspose().has_value();
   auto bBlockSizes = getBlockSizes(operB);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal,

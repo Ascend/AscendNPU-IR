@@ -85,7 +85,8 @@ static std::optional<int64_t> getStaticOffset(Value v) {
   auto memrefTy = dyn_cast<MemRefType>(v.getType());
   if (!memrefTy)
     return std::nullopt;
-  if (auto strided = memrefTy.getLayout().dyn_cast_or_null<StridedLayoutAttr>())
+  if (auto strided =
+          dyn_cast<StridedLayoutAttr>(memrefTy.getLayout()))
     return strided.getOffset();
   return 0;
 }

@@ -748,9 +748,11 @@ void Solver::memorizeSyncedPair(ConflictPair *conflictPair) {
       conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
       conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
   syncedPairs[key].insert(conflictPair);
+#ifndef NDEBUG
   for (auto *oldConflictPair : syncedPairs[key]) {
     assert(oldConflictPair->eventIdNode == conflictPair->eventIdNode);
   }
+#endif
 }
 
 void Solver::forgetSyncedPair(ConflictPair *conflictPair) {
@@ -868,9 +870,11 @@ Occurrence *Solver::getBeforePlaceHolderOcc(Occurrence *occ) {
   int index = occ->syncIrIndex - 1;
   assert(0 <= index && index < static_cast<int>(syncIr.size()));
   auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
   auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
   assert(placeHolderOp != nullptr);
   assert(placeHolderOp->beforeOp == occ->op);
+#endif
   return placeHolderOcc;
 }
 
@@ -880,9 +884,11 @@ Occurrence *Solver::getAfterPlaceHolderOcc(Occurrence *occ) {
   int index = occ->syncIrEndIndex;
   assert(0 <= index && index < static_cast<int>(syncIr.size()));
   auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
   auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
   assert(placeHolderOp != nullptr);
   assert(placeHolderOp->afterOp == occ->op);
+#endif
   return placeHolderOcc;
 }
 
@@ -892,9 +898,11 @@ Occurrence *Solver::getScopeBeginPlaceHolderOcc(Occurrence *occ) {
   int index = occ->syncIrIndex + 1;
   assert(0 <= index && index < static_cast<int>(syncIr.size()));
   auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
   auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
   assert(placeHolderOp != nullptr);
   assert(placeHolderOp->scopeBegin == occ->op);
+#endif
   return placeHolderOcc;
 }
 
@@ -904,9 +912,11 @@ Occurrence *Solver::getScopeEndPlaceHolderOcc(Occurrence *occ) {
   int index = occ->syncIrEndIndex - 1;
   assert(0 <= index && index < static_cast<int>(syncIr.size()));
   auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
   auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
   assert(placeHolderOp != nullptr);
   assert(placeHolderOp->scopeEnd == occ->op);
+#endif
   return placeHolderOcc;
 }
 
@@ -1342,12 +1352,14 @@ bool Solver::reuseConflictPair(ConflictPair *conflictPair,
     }
   }
 
+#ifndef NDEBUG
   if (!conflictPair->isUseless) {
     auto it = replacedWithReusableSyncedPairs.find(
         {conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
          conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo});
     assert(it == replacedWithReusableSyncedPairs.end());
   }
+#endif
 
   if (conflictPair->isUseless && oldReusedConflictPair == nullptr) {
     return false;
@@ -1776,6 +1788,7 @@ void Solver::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
   conflictPair->dontCheckForConflict = true;
   conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
 
+#ifndef NDEBUG
   Occurrence *parentLCALoopOcc{nullptr};
   if (conflictPair->isInnerBackward) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
@@ -1790,6 +1803,7 @@ void Solver::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
       llvm::dbgs() << parentLCALoopOcc->op->str(0, false) << '\n';
     }
   });
+#endif
 
   occ1->unitFlagInfo.merge(unitFlagInfo, occ1, occ2,
                            /*asSet=*/true, /*asWait=*/false);
@@ -1836,7 +1850,9 @@ void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
 void Solver::calcAllEventIds() {
   for (auto &[pipes, eventIdSolver] : eventIdSolver) {
     assert(eventIdSolver != nullptr);
-    auto result = eventIdSolver->shrinkEventIdMaxToEventIdNum();
+
+    [[maybe_unused]] auto result =
+        eventIdSolver->shrinkEventIdMaxToEventIdNum();
     assert(llvm::succeeded(result));
     assert(eventIdSolver->isColorable());
   }

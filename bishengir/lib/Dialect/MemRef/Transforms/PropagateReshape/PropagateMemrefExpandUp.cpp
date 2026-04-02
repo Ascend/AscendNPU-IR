@@ -74,7 +74,7 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
                                     PatternRewriter &rewriter,
                                     Operation *definingOp) {
   auto reinterpretCast = cast<memref::ReinterpretCastOp>(definingOp);
-  auto expandResType = expandOp.getResult().getType().cast<MemRefType>();
+  auto expandResType = cast<MemRefType>(expandOp.getResult().getType());
 
   auto reassociation = expandOp.getReassociationIndices();
 

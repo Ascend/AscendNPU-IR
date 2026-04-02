@@ -59,29 +59,6 @@ bool isStrided(Value operand) {
   return memrefType && isa<StridedLayoutAttr>(memrefType.getLayout());
 }
 
-int64_t getOffset(Value operand) {
-  if (!isStrided(operand))
-    return ShapedType::kDynamic;
-  return dyn_cast<StridedLayoutAttr>(
-             dyn_cast<MemRefType>(operand.getType()).getLayout())
-      .getOffset();
-}
-
-StridedLayoutAttr calcStridedLayout(MLIRContext *context,
-                                    SmallVector<int64_t> shape,
-                                    int64_t offset) {
-  SmallVector<int64_t> outputStrides(shape.size(), ShapedType::kDynamic);
-  int64_t stride = 1;
-  for (int i = (int)(shape.size()) - 1; i >= 0; --i) {
-    outputStrides[i] = stride;
-    stride *= shape[i];
-    if (shape[i] == ShapedType::kDynamic) {
-      break;
-    }
-  }
-  return StridedLayoutAttr::get(context, offset, outputStrides);
-}
-
 // %a = collapse_shape %arg0
 // %b = elemwise_binary(%a, %arg1), outs(%c);
 //
