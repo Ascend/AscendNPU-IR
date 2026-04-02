@@ -42,22 +42,6 @@ namespace mlir::hivm::detail {
 static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
     "MayImplicitTransposeWithLastAxis";
 
-/// Propagate MayImplicitTransposeWithLastAxis annotation.mark ops from
-/// \p srcValue to \p dstValue if any such marks exist on \p srcValue.
-static void propagateMayImplicitTransposeAnnotation(RewriterBase &rewriter,
-                                                    Location loc,
-                                                    Value srcValue,
-                                                    Value dstValue) {
-  if (utils::getAnnotateOpWithAttr(srcValue,
-                                   kMayImplicitTransposeWithLastAxis)) {
-    auto mark = rewriter.create<annotation::MarkOp>(loc, dstValue);
-    rewriter.modifyOpInPlace(mark, [&]() {
-      mark->setAttr(kMayImplicitTransposeWithLastAxis,
-                    rewriter.getUnitAttr());
-    });
-  }
-}
-
 static bool areOperandsUpperLevel(tensor::ExtractSliceOp sliceOp) {
   // can bubble up if all of the dependencies are on the equal or ancestor
   // of the source op
@@ -1499,19 +1483,25 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     }
   }
 
-  // Pattern 3: This deals with the pattern: memref.alloc() -> memref.memory_space_cast -> bufferization.to_tensor
-  auto sourceOp = srcMemref.getDefiningOp(); // srcMemref is the source of ToTensorOp, it is bufferization.to_tensor
-  if (auto memorySpaceCastOp = dyn_cast<memref::MemorySpaceCastOp>(sourceOp)){
-    if (auto UbAllocOp = dyn_cast<memref::AllocOp>(memorySpaceCastOp.getSource().getDefiningOp())){
-      auto addrSpace = cast<hivm::AddressSpaceAttr>(UbAllocOp.getResult().getType().getMemorySpace());
-      if (addrSpace.getAddressSpace() == hivm::AddressSpace::UB){ // If alloc is UB, tile it
-        // If this buffer carries MayImplicitTransposeWithLastAxis, the vtranspose
-        // chain already handles sub-tiling through expand_shape → vtranspose → cbuf
-        // copy.  Creating a new smaller sub-block alloc here would disconnect the
-        // hivm.hir.load (which writes the full tile) from the vtranspose source, or
-        // force the load to write a partial tile into an undersized buffer.  Skip
-        // this pattern and leave the original alloc intact so the load and the
-        // vtranspose chain share the same buffer.
+  // Pattern 3: This deals with the pattern: memref.alloc() ->
+  // memref.memory_space_cast -> bufferization.to_tensor
+  auto sourceOp =
+      srcMemref.getDefiningOp(); // srcMemref is the source of ToTensorOp, it is
+                                 // bufferization.to_tensor
+  if (auto memorySpaceCastOp = dyn_cast<memref::MemorySpaceCastOp>(sourceOp)) {
+    if (auto UbAllocOp = dyn_cast<memref::AllocOp>(
+            memorySpaceCastOp.getSource().getDefiningOp())) {
+      auto addrSpace = cast<hivm::AddressSpaceAttr>(
+          UbAllocOp.getResult().getType().getMemorySpace());
+      if (addrSpace.getAddressSpace() ==
+          hivm::AddressSpace::UB) { // If alloc is UB, tile it
+        // If this buffer carries MayImplicitTransposeWithLastAxis, the
+        // vtranspose chain already handles sub-tiling through expand_shape →
+        // vtranspose → cbuf copy.  Creating a new smaller sub-block alloc here
+        // would disconnect the hivm.hir.load (which writes the full tile) from
+        // the vtranspose source, or force the load to write a partial tile into
+        // an undersized buffer.  Skip this pattern and leave the original alloc
+        // intact so the load and the vtranspose chain share the same buffer.
         if (utils::getAnnotateOpWithAttr(memorySpaceCastOp.getResult(),
                                          kMayImplicitTransposeWithLastAxis))
           return failure();
@@ -1664,16 +1654,6 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.setInsertionPoint(ToTensorOp);
         auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
             ToTensorOp.getLoc(), newMemExpandOp.getResult(), true, true);
-
-        // Propagate MayImplicitTransposeWithLastAxis from the original
-        // memory_space_cast and to_tensor to the newly created ops.
-        rewriter.setInsertionPointAfter(newToTensorOp);
-        propagateMayImplicitTransposeAnnotation(
-            rewriter, newMemorySpaceCastOp.getLoc(),
-            memorySpaceCastOp.getResult(), newMemorySpaceCastOp.getResult());
-        propagateMayImplicitTransposeAnnotation(
-            rewriter, newToTensorOp.getLoc(), ToTensorOp.getResult(),
-            newToTensorOp.getResult());
 
         rewriter.replaceOp(sliceOp, newToTensorOp);
         if (ToTensorOp->use_empty())
