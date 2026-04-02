@@ -1,5 +1,28 @@
 // RUN: bishengir-opt -hivm-mark-stride-align -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
+// CHECK-LABEL: @test_mark_custom_operand_align_dim
+func.func @test_mark_custom_operand_align_dim(
+    %arg0: memref<1xi32, #hivm.address_space<ub>>,
+    %arg1: memref<2xi32, #hivm.address_space<ub>>) {
+  %out = memref.alloc() : memref<2xi32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark %[[ARG0_ALIGNED:.*]] {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1xi32, #hivm.address_space<ub>>
+  // CHECK-NOT: annotation.mark %arg1
+  // CHECK-NOT: annotation.mark %out
+  // CHECK: hivm.hir.custom
+  hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "my_custom_impl",
+       arg_attrs = [{align_dim = 0 : i64}]}
+      "my_custom_op"
+      ins(%arg0, %arg1 : memref<1xi32, #hivm.address_space<ub>>, memref<2xi32, #hivm.address_space<ub>>)
+      outs(%out : memref<2xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: @test_mark_elementwise_unary
 func.func @test_mark_elementwise_unary(%dim0 : index, %dim1: index) {
   // CHECK: %[[A:.*]] = memref.alloc
