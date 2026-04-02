@@ -573,8 +573,6 @@ private:
       return rewriter
           .create<ascend_dpx::AtomicExchangeOp>(loc, valueElemTy, ptr, val)
           .getRes();
-    default:
-      return failure();
     }
   }
 
