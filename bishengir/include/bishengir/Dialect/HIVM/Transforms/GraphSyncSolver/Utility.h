@@ -142,6 +142,9 @@ struct SyncSolverOptions {
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
 
+  // Ignore workspace function arguments.
+  bool intraCoreIgnoreWorkSpaceFunctionArguments{true};
+
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
         isRegBasedArch(isRegBasedArch) {
