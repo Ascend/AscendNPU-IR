@@ -8,11 +8,9 @@ module {
   // collapse_shape, and the addf reduce should disappear
 
   // CHECK-OPT-LABEL: func.func @triton_softmax_dim1_3d(
-  // CHECK-OPT: hfusion.isnan %{{.*}} : tensor<27x1x39xf32> -> tensor<27x1x39xi1>
-  // CHECK-OPT: tensor.collapse_shape
-  // CHECK-OPT-SAME: tensor<27x1x39xi1> into tensor<27x39xi1>
   // CHECK-OPT: tensor.collapse_shape
   // CHECK-OPT-SAME: tensor<27x1x39xf32> into tensor<27x39xf32>
+  // CHECK-OPT: hfusion.isnan %{{.*}} : tensor<27x39xf32> -> tensor<27x39xi1>
   // CHECK-OPT: hfusion.select
   // CHECK-OPT-SAME: tensor<27x39xi1>, tensor<27x39xf32>, tensor<27x39xf32>
   // CHECK-OPT-NOT: linalg.reduce
@@ -48,6 +46,62 @@ module {
     %8 = arith.truncf %7 : tensor<27x1x39xf32> to tensor<27x1x39xf16>
     bufferization.materialize_in_destination %8 in writable %reinterpret_cast_3 : (tensor<27x1x39xf16>, memref<27x1x39xf16, strided<[39, 39, 1]>>) -> ()
     return
+  }
+
+  // Positive test
+  // This case isolates the "reuse expand source" path:
+  // if the reduce input is only an expand of an already-collapsed tensor,
+  // the rewrite should use that source directly and avoid creating
+  // collapse(expand(x)) again.
+
+  // CHECK-OPT-LABEL: func.func @reduce_fold_reuses_expand_source(
+  // CHECK-OPT-NOT: tensor.expand_shape
+  // CHECK-OPT: hfusion.isnan %arg0 : tensor<27x39xf32> -> tensor<27x39xi1>
+  // CHECK-OPT: hfusion.select
+  // CHECK-OPT-SAME: tensor<27x39xi1>, tensor<27x39xf32>, tensor<27x39xf32>
+  // CHECK-OPT-NOT: linalg.reduce
+  // CHECK-OPT: return
+
+  func.func @reduce_fold_reuses_expand_source(%arg0: tensor<27x39xf32>) -> tensor<27x39xf32> {
+    %cst = arith.constant 0xFF800000 : f32
+    %expanded = tensor.expand_shape %arg0 [[0], [1, 2]] output_shape [27, 1, 39] : tensor<27x39xf32> into tensor<27x1x39xf32>
+    %init = tensor.empty() : tensor<27x39xf32>
+    %fill = linalg.fill ins(%cst : f32) outs(%init : tensor<27x39xf32>) -> tensor<27x39xf32>
+    %reduced = linalg.reduce ins(%expanded : tensor<27x1x39xf32>) outs(%fill : tensor<27x39xf32>) dimensions = [1]
+      (%in: f32, %initv: f32) {
+        %r = arith.maxnumf %in, %initv : f32
+        linalg.yield %r : f32
+      }
+    return %reduced : tensor<27x39xf32>
+  }
+
+  // Positive test
+  // This case isolates the "restore result shape" path:
+  // even if the reduce result still keeps another unit dim, the no-op reduce
+  // should disappear, NaN normalization should happen on the squeezed rank,
+  // and only the final result type should be restored.
+
+  // CHECK-OPT-LABEL: func.func @reduce_fold_with_extra_unit_dims(
+  // CHECK-OPT: tensor.collapse_shape %arg0
+  // CHECK-OPT-SAME: tensor<20x1x2x1x21xf32> into tensor<20x2x21xf32>
+  // CHECK-OPT: hfusion.isnan %{{.*}} : tensor<20x2x21xf32> -> tensor<20x2x21xi1>
+  // CHECK-OPT: hfusion.select
+  // CHECK-OPT-SAME: tensor<20x2x21xi1>, tensor<20x2x21xf32>, tensor<20x2x21xf32>
+  // CHECK-OPT: tensor.expand_shape
+  // CHECK-OPT-SAME: tensor<20x2x21xf32> into tensor<20x2x1x21xf32>
+  // CHECK-OPT-NOT: linalg.reduce
+  // CHECK-OPT: return
+
+  func.func @reduce_fold_with_extra_unit_dims(%arg0: tensor<20x1x2x1x21xf32>) -> tensor<20x2x1x21xf32> {
+    %cst = arith.constant 0xFF800000 : f32
+    %init = tensor.empty() : tensor<20x2x1x21xf32>
+    %fill = linalg.fill ins(%cst : f32) outs(%init : tensor<20x2x1x21xf32>) -> tensor<20x2x1x21xf32>
+    %reduced = linalg.reduce ins(%arg0 : tensor<20x1x2x1x21xf32>) outs(%fill : tensor<20x2x1x21xf32>) dimensions = [1]
+      (%in: f32, %initv: f32) {
+        %r = arith.maxnumf %in, %initv : f32
+        linalg.yield %r : f32
+      }
+    return %reduced : tensor<20x2x1x21xf32>
   }
 
   // Negative test
