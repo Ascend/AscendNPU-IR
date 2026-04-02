@@ -2449,7 +2449,6 @@ void PlanMemoryPass::runOnOperation() {
   }
 
   constexpr int kPlanRetryCount = 20;
-  bool planSucceeded = false;
   DenseMap<Value, SmallVector<uint64_t>> plannedBuffer2Offsets;
 
   // The current plan-memory algorithm is sensitive to the order in which some
@@ -2478,9 +2477,7 @@ void PlanMemoryPass::runOnOperation() {
 
     const bool isLastAttempt = attempt == kPlanRetryCount - 1;
     if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
-      planSucceeded = true;
       plannedBuffer2Offsets = memPlan.GetBuffer2Offsets();
-
       if (memPlan.enableMemoryDisplay) {
         SmallVector<MemoryDisplayInfo> memoryDisplayInfoList;
         // Collect plan success memory info for memory display tools.
@@ -2509,10 +2506,6 @@ void PlanMemoryPass::runOnOperation() {
       }
       return signalPassFailure();
     }
-  }
-
-  if (!planSucceeded) {
-    return signalPassFailure();
   }
 
   RewritePatternSet patterns(&getContext());
