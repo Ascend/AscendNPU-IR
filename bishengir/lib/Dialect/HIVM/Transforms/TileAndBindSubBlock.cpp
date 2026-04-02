@@ -52,6 +52,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1223,6 +1224,19 @@ restoreFunctionsFromBackups(ModuleOp moduleOp,
   return success();
 }
 
+static void eraseTilingDimMappingMarksInModule(ModuleOp moduleOp) {
+  SmallVector<Operation *> toBeErased;
+  moduleOp->walk([&toBeErased](Operation *op) {
+    if (auto markOp = dyn_cast<annotation::MarkOp>(op);
+        markOp && markOp.isAnnotatedBy(kTilingDimMappingAttrName)) {
+      toBeErased.push_back(op);
+    }
+  });
+  for (auto *op : toBeErased) {
+    op->erase();
+  }
+}
+
 /// Walks through all functions in the module and attempts to tile and bind
 /// sub-blocks for vector functions.
 ///
@@ -1231,6 +1245,10 @@ restoreFunctionsFromBackups(ModuleOp moduleOp,
 /// unique block to store.
 void TileAndBindSubBlockPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
+  // Ensure temporary tiling-dim mapping marks are removed on every exit path.
+  auto eraseTilingDimMappingMarksOnExit = llvm::make_scope_exit(
+      [moduleOp]() { eraseTilingDimMappingMarksInModule(moduleOp); });
+
   if (moduleOp->hasAttr("hivm.disable_auto_tile_and_bind_subblock")) {
     return;
   }
@@ -1281,19 +1299,6 @@ void TileAndBindSubBlockPass::runOnOperation() {
     });
   };
 
-  auto eraseTilingDimMappingMarks = [moduleOp]() {
-    SmallVector<Operation *> toBeErased;
-    moduleOp->walk([&toBeErased](Operation *op) {
-      if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-          markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
-        toBeErased.push_back(op);
-      }
-    });
-    for (auto *op : toBeErased) {
-      op->erase();
-    }
-  };
-
   collectMixAicAndAivFuncs();
 
   if (!this->enableTile) {
@@ -1319,7 +1324,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // Tile AIV functions
   bool aivSuccessFlag = false;
-  auto tileAivFuncs = [this, &aivFunctions, &eraseTilingDimMappingMarks,
+  auto tileAivFuncs = [this, &aivFunctions,
                        &aivSuccessFlag
 #ifndef NDEBUG
                        ,
@@ -1329,7 +1334,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
     for (func::FuncOp originalFunc : aivFunctions) {
       auto symNameStr = originalFunc.getSymNameAttr().str();
       FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
-      eraseTilingDimMappingMarks();
+      eraseTilingDimMappingMarksInModule(originalFunc->getParentOfType<ModuleOp>());
       if (failed(res)) {
         if (failed(limitUniqueSubBlockToStore(originalFunc))) {
           LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
