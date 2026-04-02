@@ -180,6 +180,7 @@ static void findMaskAndConstantOps(Operation *storeOp,
 // TODO: currently this works but maybe in other test cases this method cant
 // find the size of load
 static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
+  int64_t bestSize = -1;
   for (Operation *cOp : pattern.constantOps) {
     if (!cOp)
       continue;
@@ -194,11 +195,24 @@ static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
     if (auto maybeInt = extractIntFromAttr(val)) {
       int64_t v = *maybeInt;
       // want power of two
-      if (v > 0 && (static_cast<uint64_t>(v) & (static_cast<uint64_t>(v) - 1)) == 0) {
-        pattern.embeddingSize = v;
-        return true;
-      }
+      if (v <= 0 || (v & (v - 1)) != 0)
+        continue;
+      auto tensorType = dyn_cast<RankedTensorType>(cst.getType());
+      // get tensor last dim size
+      if (!tensorType || tensorType.getShape().empty())
+        continue;
+      int64_t lastDim = tensorType.getShape().back();
+      // only consider size if <= last dim size
+      if (v > lastDim)
+        continue;
+      // chose the largest valid value
+      if (v > bestSize)
+        bestSize = v;
     }
+  }
+  if (bestSize > 0) {
+    pattern.embeddingSize = bestSize;
+    return true;
   }
   return false;
 }
@@ -990,7 +1004,7 @@ private:
     LLVM_DEBUG(llvm::dbgs() << "Grouped into " << groups.size() << " groups\n");
 
     // Find a representative scf.for (if any)
-    scf::ForOp foundFor;
+    scf::ForOp foundFor = nullptr;
     int loopCount = 0;
 
     func.walk([&](scf::ForOp f) {
@@ -1004,6 +1018,29 @@ private:
       LLVM_DEBUG(llvm::dbgs()
                  << "SKIPPING: More than 1 loop is not supported yet \n");
       return success();
+    }
+    if (loopCount == 1) {
+      for (const auto &p : patterns) {
+        Operation *storeParent = p.storeOp->getParentOp();
+        bool insideLoop = false;
+        // Walk u the parent chain to check if store is nested in foundFor
+        while (storeParent && storeParent != func) {
+          if (storeParent == foundFor.getOperation()) {
+            insideLoop = true;
+            break;
+          }
+          storeParent = storeParent->getParentOp();
+        }
+        if (!insideLoop) {
+          LLVM_DEBUG(llvm::dbgs()
+                     << "SKIPPING: Store pattern not inside the single loop: "
+                     << p.storeOp << "\n");
+          return success();
+        }
+      }
+      LLVM_DEBUG(llvm::dbgs()
+                 << "ALL" << patterns.size()
+                 << " store patterns verified insid single loop \n");
     }
     // TODO: create a flag to enable splitting loops. Currently from testing
     // splitting has no effects to performance
