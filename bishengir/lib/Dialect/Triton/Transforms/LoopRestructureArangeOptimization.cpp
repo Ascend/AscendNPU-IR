@@ -195,7 +195,7 @@ static bool extractEmbeddingSize(StoreLoadPattern &pattern) {
     if (auto maybeInt = extractIntFromAttr(val)) {
       int64_t v = *maybeInt;
       // want power of two
-      if (v <= 0 || (v & (v - 1)) != 0)
+      if (v <= 0 || (static_cast<unsigned int>(v) & (static_cast<unsigned int>(v) - 1)) != 0)
         continue;
       auto tensorType = dyn_cast<RankedTensorType>(cst.getType());
       // get tensor last dim size

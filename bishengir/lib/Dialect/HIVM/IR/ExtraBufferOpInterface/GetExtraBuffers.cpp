@@ -185,7 +185,12 @@ std::optional<int64_t> getExtraBufferSizeForBinaryOp(HIVMOP op) {
   int64_t lastAxisInlineBrcBuffSize = 0;
   bool isSrc0BrcInline = false;
   bool isSrc1BrcInline = false;
-  int64_t upperLimit = utils::traceToAllocMaxSize(op.getDst()[0]).value();
+  
+  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getSrc()[0]);
+  if (!srcAllocTotalSize.has_value()) {
+    return std::nullopt;
+  }
+  int64_t upperLimit = srcAllocTotalSize.value();
   if (!src0ScalarType) {
     MemRefType src0VecType = cast<MemRefType>(op.getSrc()[0].getType());
     isSrc0BrcInline = isSrcBrcInline(src0VecType, dstVecType);
@@ -233,8 +238,12 @@ std::optional<int64_t> getExtraBufferSizeForUnaryOp(HIVMOP op) {
   if (!isSrc0BrcInline) {
     return std::nullopt;
   }
-
-  int64_t upperLimit = utils::traceToAllocMaxSize(op.getDst()[0]).value();
+  
+  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getSrc()[0]);
+  if (!srcAllocTotalSize.has_value()) {
+    return std::nullopt;
+  }
+  int64_t upperLimit = srcAllocTotalSize.value();
   int64_t lastAxisInlineBrcBuffSize =
       getLastAxisInlineBrcBuffSize(src0VecType, upperLimit);
   return lastAxisInlineBrcBuffSize;

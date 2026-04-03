@@ -1471,7 +1471,7 @@ static bool isValueReachingMatmul(Value val) {
           if (it == inits.end()) {
             return false;
           }
-          unsigned idx = std::distance(inits.begin(), it);
+          unsigned idx = static_cast<unsigned>(std::distance(inits.begin(), it));
           Value iterArg = forOp.getRegionIterArg(idx);
           return isValueReachingMatmul(iterArg);
         })
