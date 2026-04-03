@@ -396,16 +396,6 @@ std::pair<bool, bool> analyzeCoreTypes(Block *block) {
         hasV = true;
       }
     }
-
-    if (op.getNumRegions() > 0) {
-      for (Region &region : op.getRegions()) {
-        for (Block &nestedBlock : region) {
-          auto [nestedHasC, nestedHasV] = analyzeCoreTypes(&nestedBlock);
-          hasC = hasC || nestedHasC;
-          hasV = hasV || nestedHasV;
-        }
-      }
-    }
   }
   return std::pair<bool, bool>(hasC, hasV);
 }
