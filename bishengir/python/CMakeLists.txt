@@ -96,7 +96,6 @@ declare_mlir_python_extension(BiShengIRPythonExtensions.Main
   EMBED_CAPI_LINK_LIBS
     BiShengIRCAPIRegisterEverything
     MLIRCAPIHIVM
-    MLIRCAPIAVE
     MLIRCAPIHFusion
     MLIRCAPIAnnotation
     MLIRCAPIMesh
