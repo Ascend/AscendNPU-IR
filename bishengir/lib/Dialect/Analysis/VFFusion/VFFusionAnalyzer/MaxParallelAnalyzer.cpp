@@ -118,7 +118,15 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
                                         OpOperand *fusedOperand) {
   auto producerOp =  opsInBlock[producerIndex];
   auto consumerOp =  opsInBlock[consumerIndex];
-  
+
+  // If a SyncBlockSetOp is found, prohibit fusion to avoid data races
+  for (auto it = producerOp->getNextNode(); it != nullptr && it != consumerOp;
+       it = it->getNextNode()) {
+    if (isa<hivm::SyncBlockSetOp>(it)) {
+      return false;
+    }
+  }
+
   if (hfusion::isMatmulOps(producerOp) || hfusion::isMatmulOps(consumerOp) ||
       isCubeScopeOp(producerOp) || isCubeScopeOp(consumerOp)) 
     return false;
