@@ -79,6 +79,11 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableTritonKernelCompileFlag), cl::init(false),
         cl::cat(featCtrlCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> disableTightlyCoupledBufferReuse(
+        "disable-tightly-coupled-buffer-reuse", cl::desc("disable tightly coupled buffer reuse"),
+        cl::location(disableTightlyCoupledBufferReuseFlag), cl::init(false),
+        cl::cat(featCtrlCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true> enableDotScaledCompile(
         "enable-dot-scaled-compile", cl::desc("Enable dot scaled compile"),
         cl::location(enableDotScaledCompileFlag), cl::init(false),

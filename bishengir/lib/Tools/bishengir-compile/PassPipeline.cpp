@@ -155,6 +155,8 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   hivmPipelineOptions.enableFusedMultiplyAdd = config.shouldEnableFusedMultiplyAdd();
   hivmPipelineOptions.enablePrintMemoryAllocatedSize =
       config.shouldenablePrintMemoryAllocatedSize();
+  hivmPipelineOptions.disableTightlyCoupledBufferReuse =
+      config.shouldDisableTightlyCoupledBufferReuse();
   hivmPipelineOptions.maxReductionSplitNum =
       config.getMaxReductionSplitNum();
   hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
