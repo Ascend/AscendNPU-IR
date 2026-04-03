@@ -40,25 +40,29 @@ public:
     }
 
     llvm::SmallVector<Value> inputs = op.getInputs();
-    bool isValidPattern = llvm::any_of(inputs, [&](Value &src) {
+    auto isZeroFill = [&](Value src) {
       if (auto fillOp = src.getDefiningOp<linalg::FillOp>()) {
         if (auto cstOp =
                 fillOp.getInputs()[0].getDefiningOp<arith::ConstantIntOp>()) {
-          return ((op.getCompareFn() == CompareFn::vne && cstOp.value() == 0));
+          return op.getCompareFn() == CompareFn::vne && cstOp.value() == 0;
         }
       }
       return false;
-    });
+    };
+    bool lhsIsZero = isZeroFill(inputs[0]);
+    bool rhsIsZero = isZeroFill(inputs[1]);
+    bool isValidPattern = lhsIsZero || rhsIsZero;
     if (!isValidPattern) {
       return failure();
     }
 
+    Value inputToCast = lhsIsZero && !rhsIsZero ? inputs[1] : inputs[0];
     hfusion::RoundMode rounding = hfusion::RoundMode::RINT;
     auto roundingAttr = rewriter.getAttr<hfusion::RoundModeAttr>(rounding);
     auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                           roundingAttr);
     auto castOp = rewriter.create<hfusion::CastOp>(
-        op->getLoc(), TypeRange(op.getResults()), ValueRange{inputs[0]},
+        op->getLoc(), TypeRange(op.getResults()), ValueRange{inputToCast},
         ValueRange{op.getOutputs()[0]}, ArrayRef{modeAttr});
     rewriter.replaceOp(op, castOp);
 

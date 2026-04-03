@@ -23,6 +23,26 @@ func.func @test_hfusion_compare_neq_ops(
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops_left_zero
+// CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi1>)
+// CHECK: %[[arg2:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[arg3:.*]] = hfusion.cast {{.*}} ins(%[[arg0]] : tensor<1024xi64>) outs(%[[arg2]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK-NOT: compare_fn = #hfusion.compare_fn<vne>
+// CHECK: return
+func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops_left_zero(
+  %src1 : tensor<1024xi64>,  %dst : tensor<1024xi1>) ->  tensor<1024xi1> {
+  %c0_i64 = arith.constant 0 : i64
+  %0 = tensor.empty() : tensor<1024xi64>
+  %1 = linalg.fill ins(%c0_i64 : i64) outs(%0 : tensor<1024xi64>) -> tensor<1024xi64>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vne>}
+    ins(%1, %src1 : tensor<1024xi64>, tensor<1024xi64>)
+    outs(%dst : tensor<1024xi1>)
+    -> tensor<1024xi1>
+  return %ret : tensor<1024xi1>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_linalg_negf_mul
 // CHECK-SAME: (%[[arg0:.*]]: tensor<5x1xf32>)
 // CHECK: %[[CST:.*]]: f32
