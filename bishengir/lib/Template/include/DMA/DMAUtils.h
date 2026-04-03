@@ -886,6 +886,8 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
   for (int i = 0; i < src->sizes[0]; ++i) {
     *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
   }
+  INTRINSIC(dcci, dst_ptr, 1);
+
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
