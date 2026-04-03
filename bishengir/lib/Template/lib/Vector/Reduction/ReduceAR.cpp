@@ -546,11 +546,11 @@ reduce_ar_core(memref_t<__ubuf__ int8_t, 2> *src0,
                memref_t<__ubuf__ int8_t, 2> *dst,
                memref_t<__ubuf__ int8_t, 1> *tmp_buf, int8_t initvalue) {
 
-  if (OP == ReduceOpTy::REDUCE_AND && src0->sizes[1] % 2) {
+  if (src0->sizes[1] % 2) {
     auto src0_ptr = src0->aligned + src0->offset;
     INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
     INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-    constexpr int8_t pad_value = 0xFF;
+    constexpr int8_t pad_value = (OP == ReduceOpTy::REDUCE_AND) ? 0xFF : 0;
     for (int i = 0; i < src0->sizes[0]; i++) {
       *(src0_ptr + i * src0->strides[0] + src0->sizes[1]) = pad_value;
     }
