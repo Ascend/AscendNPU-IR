@@ -887,7 +887,6 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
     *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
   }
   INTRINSIC(dcci, dst_ptr, 1);
-
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -905,13 +904,13 @@ load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[0];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
       *(padding_start + i * dst->strides[0]) = pad_value;
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -939,6 +938,7 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
           *(src_ptr + i * src->strides[0] + j * src->strides[1]);
     }
   }
+  INTRINSIC(dcci, dst_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -956,16 +956,16 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[1];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
       for (int j = 0; j < src->sizes[1]; ++j) {
         *(padding_start + i * dst->strides[0] + j * dst->strides[1]) =
             pad_value;
       }
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -999,6 +999,7 @@ store_ubuf_to_gm_3d_by_scalar(memref_t<__ubuf__ T, 3> *src,
       }
     }
   }
+  INTRINSIC(dcci, dst_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -1016,8 +1017,8 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[2];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
       for (int j = 0; j < src->sizes[1]; ++j) {
         for (int k = 0; k < src->sizes[2]; ++k) {
@@ -1026,8 +1027,8 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
         }
       }
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -1095,7 +1096,6 @@ store_ubuf_to_gm_initial_misalignment_1d(memref_t<__ubuf__ T, 1> *src,
     dst->offset += data_to_copy;
     dst->sizes[0] -= data_to_copy;
   }
-  INTRINSIC(dcci, dst->allocated, 1);
   return data_to_copy;
 }
 
@@ -1132,7 +1132,6 @@ store_ubuf_to_gm_initial_misalignment_nd(memref_t<__ubuf__ T, Dim> *src,
     src->sizes[Dim - 1] -= data_to_copy;
     dst->offset += data_to_copy;
     dst->sizes[Dim - 1] -= data_to_copy;
-    INTRINSIC(dcci, dst->allocated, 1);
     return data_to_copy;
   }
 }
