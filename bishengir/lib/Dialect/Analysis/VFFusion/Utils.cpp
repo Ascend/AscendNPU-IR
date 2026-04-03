@@ -56,7 +56,6 @@ bool isCubeFunc(func::FuncOp funcOp) {
   std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
       mlir::hivm::queryFuncCoreType(funcOp);
   return (funcCoreType.has_value() &&
-          funcCoreType.value() != hivm::TFuncCoreType::AIV) ||
-         funcOp->hasAttr(hivm::TPartOfMixAttr::name);
+          funcCoreType.value() != hivm::TFuncCoreType::AIV);
 }
 } // namespace mlir::analysis

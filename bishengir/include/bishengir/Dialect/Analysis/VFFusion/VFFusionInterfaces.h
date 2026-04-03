@@ -94,9 +94,21 @@ public:
 
   explicit NMostOpKind(const VFFusionKindOption &option)
       : FusionKindBase(option), analyzer(option, N){};
+
 private:
   const size_t N = 8;
   NMostOpKindAnalyzer analyzer;
+};
+
+class MaxParallelKind : public FusionKindBase {
+public:
+  FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
+
+  explicit MaxParallelKind(const VFFusionKindOption &option)
+      : FusionKindBase(option), analyzer(option) {};
+
+private:
+  MaxParallelAnalyzer analyzer;
 };
 
 } // namespace mlir::analysis

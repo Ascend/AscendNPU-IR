@@ -135,7 +135,7 @@ protected:
     if (hasInvalidDependencyIfFused(xIndex, yIndex))
       return false;
 
-    if (!areReshapesValidIfFused(xIndex, yIndex))
+    if (!this->option.enableReshapeTiling && !areReshapesValidIfFused(xIndex, yIndex))
       return false;
 
     return static_cast<AnalyzerClass *>(this)->isFusibleImpl(xIndex, yIndex);
@@ -326,6 +326,31 @@ public:
 private:
   // max number operations fusible ops including the ops inside regions.
   const size_t N;
+};
+
+//===----------------------------------------------------------------------===//
+// MaxParallelAnalyzer
+//===----------------------------------------------------------------------===//
+
+class MaxParallelAnalyzer : public VFFusionAnalyzerBase<MaxParallelAnalyzer> {
+public:
+  MaxParallelAnalyzer() = delete;
+
+  bool isFusibleImpl(int xIndex, int yIndex);
+  LogicalResult fuseImpl(Block &block);
+
+  explicit MaxParallelAnalyzer(const VFFusionKindOption &option)
+      : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option) {};
+  ~MaxParallelAnalyzer() override = default;
+
+private:
+  std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
+  bool fuseProducerConsumerImpl(Block &block);
+  bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
+  bool fuseIntoGroup(const int producerIndex, const int consumerIndex);
+  bool areFusibleOps(const int producerIndex, const int consumerIndex, OpOperand *fusedOperand);
+  DenseMap<Operation *, size_t> opToGroupIndex;
+  SmallVector<DenseSet<Operation *>> AllFusedBlocks;
 };
 
 } // namespace mlir::analysis

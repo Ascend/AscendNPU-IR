@@ -377,6 +377,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
   pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
+  if (enableSIMDVFFusion(hfusionOptions))
+    pm.addPass(scope::createInlineScopePass());
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);

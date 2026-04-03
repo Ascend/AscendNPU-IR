@@ -18,16 +18,18 @@
 namespace mlir {
 namespace analysis {
 
-enum class FusionMode { AllOp, NMostOp };
+enum class FusionMode { AllOp, NMostOp, MaxParallel };
 
 struct VFFusionKindOption {
   VFFusionKindOption(const bool enableOutlineCF, const bool enableOutlineMemref,
                      const bool enableOutlineArith,
-                     const bool enableOutlineCube)
+                     const bool enableOutlineCube,
+                     const bool enableReshapeTiling)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
-        enableOutlineCube(enableOutlineCube){};
+        enableOutlineCube(enableOutlineCube),
+        enableReshapeTiling(enableReshapeTiling){};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -37,6 +39,7 @@ struct VFFusionKindOption {
   const bool enableOutlineMemref;
   const bool enableOutlineArith;
   const bool enableOutlineCube;
+  const bool enableReshapeTiling;
 };
 
 bool isReshapeOp(Operation *op);

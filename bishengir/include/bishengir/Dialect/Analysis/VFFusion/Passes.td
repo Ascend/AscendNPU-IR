@@ -57,13 +57,15 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
   let dependentDialects = ["mlir::func::FuncDialect"];
   let options =
       [Option<"fusionMode", "fusion-mode", "::mlir::analysis::FusionMode",
-              "analysis::FusionMode::AllOp",
+              "analysis::FusionMode::MaxParallel",
               "Strategy of fusing operations",
               [{::llvm::cl::values(
                clEnumValN(analysis::FusionMode::AllOp, "all-op",
                           "Fuse all vector operations"),
                clEnumValN(analysis::FusionMode::NMostOp, "n-most-op",
-                          "Fuse at most N number of operations"))}]>,
+                          "Fuse at most N number of operations"), 
+               clEnumValN(analysis::FusionMode::MaxParallel, "max-parallel",
+                          "Fuse operations for max parallel"))}]>,
       Option<"enableOutlineCF", "enable-outline-cf", "bool", /*default=*/"false",
               "Enable outlining control-flow operations">,
       Option<"enableOutlineMemref", "enable-outline-memref", "bool", /*default=*/"false",
@@ -71,7 +73,9 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
       Option<"enableOutlineArith", "enable-outline-arith", "bool", /*default=*/"false",
               "Enable outlining arith operations">,
       Option<"enableOutlineCube", "enable-outline-cube", "bool", /*default=*/"false",
-              "Enable outlining cube operations">
+              "Enable outlining cube operations">,
+      Option<"enableReshapeTiling", "enable-reshape-tiling", "bool", /*default=*/"false",
+              "Enable reshape operation fused">,
       ];
 }
 

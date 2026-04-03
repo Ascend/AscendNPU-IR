@@ -49,7 +49,7 @@ public:
 
 VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
-                            enableOutlineArith, enableOutlineCube);
+                            enableOutlineArith, enableOutlineCube, enableReshapeTiling);
 }
 
 template <typename FusionKind>
@@ -103,7 +103,12 @@ void VFFusionPass::runOnOperation() {
     case FusionMode::NMostOp:
       return WalkResult(
           this->tryToFuse<NMostOpKind>(funcOp.getOperation(), builder));
-    }
+    case FusionMode::MaxParallel:
+      return WalkResult(
+          this->tryToFuse<MaxParallelKind>(funcOp.getOperation(), builder));
+    
+  }
+
     return WalkResult::interrupt();
   });
   if (walkResult.wasInterrupted())
