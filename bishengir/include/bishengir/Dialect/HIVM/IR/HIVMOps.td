@@ -310,6 +310,7 @@ def DebugOp :
   let assemblyFormat = [{
     attr-dict $arg `:` type($arg)
   }];
+  let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
     static StringRef getOpName() { return "debug"; }
   }];

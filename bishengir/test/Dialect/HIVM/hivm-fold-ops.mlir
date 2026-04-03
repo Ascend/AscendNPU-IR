@@ -512,3 +512,36 @@ func.func @test_redundant_init_and_reduce_with_index(%arg0: tensor<128x1xf32>, %
                                            reduce_dims = [1] -> tensor<128x1xf32>, tensor<128x1xi32>
   return %0#0 : tensor<128x1xf32>
 }
+
+// -----
+
+// Assert debug with constant true (from hfusion.assert) is removed by canonicalize-ext.
+// CHECK-LABEL: func.func @fold_trivial_hivm_debug_assert
+// CHECK-NOT: hivm.hir.debug
+// CHECK: return
+func.func @fold_trivial_hivm_debug_assert() {
+  %true = arith.constant true
+  hivm.hir.debug {debugtype = "assert", hex = false, prefix = "msg", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %true : i1
+  return
+}
+
+// -----
+
+// Non-constant assert condition must be kept.
+// CHECK-LABEL: func.func @keep_hivm_debug_assert_nonconst
+// CHECK: hivm.hir.debug {debugtype = "assert"
+func.func @keep_hivm_debug_assert_nonconst(%cond: i1) {
+  hivm.hir.debug {debugtype = "assert", hex = false, prefix = "msg", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %cond : i1
+  return
+}
+
+// -----
+
+// Constant i1 on a print debug must not be removed.
+// CHECK-LABEL: func.func @keep_hivm_debug_print_const_i1
+// CHECK: hivm.hir.debug {debugtype = "print"
+func.func @keep_hivm_debug_print_const_i1() {
+  %true = arith.constant true
+  hivm.hir.debug {debugtype = "print", hex = false, prefix = "", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %true : i1
+  return
+}
