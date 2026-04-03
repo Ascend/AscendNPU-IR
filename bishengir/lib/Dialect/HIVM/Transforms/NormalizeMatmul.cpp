@@ -366,6 +366,9 @@ inline Value getBiasInputForPerChannelAdd(Value v) {
         getElementTypeOrSelf(castOp.getSingleDst().getType()).isF32())
       src = castOp.getSingleSrc();
 
+  if (auto expandShapeOp = src.getDefiningOp<tensor::ExpandShapeOp>())
+    src = extractMmadBiasFromPotentialUnitDimExpand(src);
+
   return src;
 }
 
@@ -439,7 +442,7 @@ LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
 /// ```
 template <typename T>
 LogicalResult
-decomposeMatmulWithPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
+decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
   auto matmulOutput = op.getC();
   auto blockArg = dyn_cast_if_present<BlockArgument>(matmulOutput);
   assert(blockArg && "blockArg is not nullptr for split k");
@@ -468,6 +471,61 @@ decomposeMatmulWithPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
   return success();
 }
 
+/// Input IR:
+///
+/// ```
+/// %alloc = memref.alloc()
+/// %32 = bufferization.to_tensor %alloc
+/// %33 = tensor.empty()
+/// %34 = hivm.hir.vcast ins(%32) outs(%33)
+/// %35 = tensor.empty()
+/// %expanded = tensor.expand_shape %34
+/// %36 = vbrc %expanded: (1, n) %35 :(m, n)
+/// %mat = for split k (%iterator = %36) {
+///   %acc_mad = mmadL1 dst(%iterator)
+///   yield %acc_mad
+/// }
+/// ```
+///
+/// is converted into
+/// ```
+/// %0 = tensor.empty() : tensor<16x128xf32>
+/// %1 = scf.for %arg12 = %lb to ub iter_args(%arg1 = %0) ->
+///   (tensor<16x128xf32>) : i32 {
+///   %init = arith.cmpi eq, %arg12, %lb : i32
+///   %2 = hivm.hir.mmadL1 ins(*, %init, *, bias = %bias)
+///           outs(%arg1 : tensor<16x128xf32>) -> tensor<16x128xf32>
+///   scf.yield ...
+/// }
+/// some_use(%1)
+/// ```
+template <typename T>
+LogicalResult
+decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter, T op) {
+  auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
+  op.getPerChannelBiasMutable().assign(perChannelValue);
+
+  auto matmulOutput = op.getC();
+  auto blockArg = dyn_cast_if_present<BlockArgument>(matmulOutput);
+  assert(blockArg && "blockArg is not nullptr for mm init per channel split k");
+  auto scfForOp =
+      dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
+  assert(scfForOp && "scfForOp is not nullptr for mm init per channel split k");
+
+  rewriter.setInsertionPoint(op);
+  auto additionalCondition = rewriter.create<arith::CmpIOp>(
+      op.getLoc(), arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
+      scfForOp.getInductionVar());
+  op.setInitCondition(additionalCondition);
+
+  rewriter.setInsertionPoint(scfForOp);
+  auto newMmadInit =
+      mlir::utils::createEmptyOp(rewriter, op.getLoc(), op.getC());
+  auto blockArgIdx = blockArg.getArgNumber() - 1;
+  scfForOp.getInitArgsMutable()[blockArgIdx].assign(newMmadInit);
+  return success();
+}
+
 template <typename T>
 struct DecomposeMatmulWithBiasPattern : public OpRewritePattern<T> {
 public:
@@ -490,9 +548,13 @@ public:
       LDBG("decompose matmul with per channel add");
       return decomposeMatmulWithPerChannelAdd<T>(rewriter, op);
     }
-    if (biasMode == MatmulBiasMode::PerChannelAddWithSplitK) {
-      LDBG("decompose matmul with per channel add with split k add");
-      return decomposeMatmulWithPerChannelAddWithSplitKAdd<T>(rewriter, op);
+    if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+      LDBG("decompose matmul with post per channel add with split k add");
+      return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter, op);
+    }
+    if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
+      LDBG("decompose matmul with mm init per channel add with split k add");
+      return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
     }
     if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant()) {
       LDBG("decompose matmul with elemwise add and non-const init");

@@ -902,13 +902,15 @@ def HIVM_DescaleModeAttr : HIVM_I32EnumAttr<"descale_mode", HIVM_DescaleModeEnum
 
 def HIVM_LocalMatmul_NoBias : I32EnumAttrCase<"NoBias", 0>;
 def HIVM_LocalMatmul_PerChannelAdd : I32EnumAttrCase<"PerChannelAdd", 1>;
-def HIVM_LocalMatmul_PerChannelAddWithSplitK : I32EnumAttrCase<"PerChannelAddWithSplitK", 2>;
+def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 2>;
 def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
+def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 4>;
 def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
   HIVM_LocalMatmul_NoBias,
   HIVM_LocalMatmul_PerChannelAdd,
-  HIVM_LocalMatmul_PerChannelAddWithSplitK,
-  HIVM_LocalMatmul_ElementwiseAdd
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
 ]>;
 
 //===----------------------------------------------------------------------===//
