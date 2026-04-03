@@ -1155,7 +1155,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
 
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (leafNodeGroup.size() > 15 || isMemrefLinalgOp(leafNodeGroup[0]))
+      if (leafNodeGroup.size() > maxFusedOps || isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
@@ -1185,6 +1185,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       fusableOpInfoMap[leafNode].fusedNode = fusedNode;
     }
     moveLeafNodesAndTheirUsers(leafNodeGroup, block);
+    updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
   }
 }
 
@@ -1270,7 +1271,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
   } else {
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (leafNodeGroup.size() > 15)
+      if (leafNodeGroup.size() > maxFusedOps)
         continue;
       // All leafNodes within a group have the common axis and do not conflict
       // with each other.
