@@ -1291,3 +1291,64 @@ module {
     return
   }
 }
+
+// -----
+module {
+  func.func @fixpipe_with_2mmad_in_if(%arg0: i1, %arg1: index, %arg2: memref<?xf32>, %arg3: tensor<128x128xbf16>, %arg4: tensor<128x64xbf16>) {
+    %c128 = arith.constant 128 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %false = arith.constant false
+    %alloc_0 = memref.alloc() : memref<128x64xf32, #hivm.address_space<cc>>
+    annotation.mark %alloc_0 {effects = ["write", "read"]} : memref<128x64xf32, #hivm.address_space<cc>>
+    %0 = scf.if %arg0 -> (tensor<128x64xf32>) {
+      %memspacecast = memref.memory_space_cast %alloc_0 : memref<128x64xf32, #hivm.address_space<cc>> to memref<128x64xf32>
+      %1 = bufferization.to_tensor %memspacecast restrict writable : memref<128x64xf32>
+      %2 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn} ins(%arg3, %arg4, %false, %c128, %c128, %c64 : tensor<128x128xbf16>, tensor<128x64xbf16>, i1, index, index, index) outs(%1 : tensor<128x64xf32>) -> tensor<128x64xf32>
+      // CHECK-NOT: hivm.hir.fixpipe
+      scf.yield %2 : tensor<128x64xf32>
+    } else {
+      %memspacecast = memref.memory_space_cast %alloc_0 : memref<128x64xf32, #hivm.address_space<cc>> to memref<128x64xf32>
+      %1 = bufferization.to_tensor %memspacecast restrict writable : memref<128x64xf32>
+      %2 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn} ins(%arg3, %arg4, %true, %c128, %c128, %c64 : tensor<128x128xbf16>, tensor<128x64xbf16>, i1, index, index, index) outs(%1 : tensor<128x64xf32>) -> tensor<128x64xf32>
+      // CHECK-NOT: hivm.hir.fixpipe
+      scf.yield %2 : tensor<128x64xf32>
+    }
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%arg1], sizes: [128, 64], strides: [64, 1] : memref<?xf32> to memref<128x64xf32, strided<[64, 1], offset: ?>>
+    // CHECK: hivm.hir.fixpipe
+    hivm.hir.store ins(%0 : tensor<128x64xf32>) outs(%reinterpret_cast : memref<128x64xf32, strided<[64, 1], offset: ?>>) atomic = <add>
+    annotation.mark %0 keys = ["bind_buffer"] values = [%alloc_0 : memref<128x64xf32, #hivm.address_space<cc>>] : tensor<128x64xf32>
+    return
+  }
+}
+
+// -----
+module {
+  func.func @fixpipe_with_mmadvec_in_if(%arg0: i64, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xf32>, %arg4: memref<?xf32>, %arg5: memref<?xf32>, %arg6: memref<?xf32>, %arg7: i8, %arg8: i32, %arg9: i32, %arg10: i32) {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = arith.trunci %arg7 : i8 to i1
+    %1 = tensor.empty() : tensor<16x16xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf32>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf32, strided<[16, 1]>>) outs(%alloc : memref<16x16xf32>) eviction_policy = <EvictFirst>
+    %2 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf32>
+    %3 = tensor.empty() : tensor<16x16xf32>
+    %4 = scf.if %0 -> (tensor<16x16xf32>) {
+      %reinterpret_cast_1 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+      %alloc_2 = memref.alloc() : memref<16x16xf32>
+      hivm.hir.load ins(%reinterpret_cast_1 : memref<16x16xf32, strided<[16, 1]>>) outs(%alloc_2 : memref<16x16xf32>) eviction_policy = <EvictFirst>
+      %5 = bufferization.to_tensor %alloc_2 restrict writable : memref<16x16xf32>
+      %6 = hivm.hir.mmadL1 {already_set_real_mkn} ins(%2, %5, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      //CHECK: hivm.hir.fixpipe
+      scf.yield %6 : tensor<16x16xf32>
+    } else {
+      %55 = hivm.hir.vbrc ins(%cst : f32) outs(%1 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %55 : tensor<16x16xf32>
+    }
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    hivm.hir.store ins(%4 : tensor<16x16xf32>) outs(%reinterpret_cast_0 : memref<16x16xf32, strided<[16, 1]>>)
+    return
+  }
+}
