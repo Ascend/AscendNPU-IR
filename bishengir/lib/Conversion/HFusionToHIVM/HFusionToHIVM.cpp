@@ -328,6 +328,12 @@ Value brcOperand(OpBuilder &b, Location loc, Value scalarVal,
   Type brcInitType = brcInitVal.getType();
   const bool isTensorType = isa<TensorType>(brcInitType);
 
+  // Extract tensor<i16> to i16 to make vbrc valid.
+  // hivm.hir.vbrc ins(%x : i16) outs(%y : tensor<1xi16>) -> tensor<1xi16>
+  if (isa<ShapedType>(scalarVal.getType())) {
+    scalarVal = b.create<tensor::ExtractOp>(loc, scalarVal, ArrayRef<Value>{});
+  }
+
   auto resultTypeRange = isTensorType ? TypeRange(brcInitVal) : TypeRange();
   auto vbrcOp =
       b.create<hivm::VBrcOp>(loc, resultTypeRange, scalarVal, brcInitVal,
@@ -337,7 +343,11 @@ Value brcOperand(OpBuilder &b, Location loc, Value scalarVal,
   return newVal;
 }
 
-bool isScalarOperand(Value val) { return val.getType().isIntOrFloat(); }
+bool isScalarOperand(Value val) {
+  auto const &type = val.getType();
+  return type.isIntOrFloat() || isa<IndexType>(type) ||
+         (isa<ShapedType>(type) && cast<ShapedType>(type).getRank() == 0);
+}
 
 void getInvalidScalarOperands(HIVMStructuredOp *hivmOp,
                               SmallVector<size_t> &scalarOperands) {

@@ -1009,3 +1009,19 @@ module {
     return
   }
 }
+
+// -----
+module {
+  // CHECK-LABEL: func.func @test_hivm_op_same_rank
+  // CHECK: %0 = tensor.empty() : tensor<1xi1>
+  // CHECK: %1 = tensor.empty() : tensor<1xi16>
+  // CHECK: %extracted = tensor.extract %arg0[] : tensor<i16>
+  // CHECK: %2 = hivm.hir.vbrc ins(%extracted : i16) outs(%1 : tensor<1xi16>) -> tensor<1xi16>
+  // CHECK: %3 = hivm.hir.vcmp ins(%2, %c0_i16 : tensor<1xi16>, i16) outs(%0 : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
+  func.func @test_hivm_op_same_rank(%arg0: tensor<i16>) -> tensor<1xi1> {
+    %c0 = arith.constant 0 : i16
+    %out = tensor.empty() : tensor<1xi1>
+    %res = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%arg0, %c0 : tensor<i16>, i16) outs(%out : tensor<1xi1>) -> tensor<1xi1>
+    return %res : tensor<1xi1>
+  }
+}
