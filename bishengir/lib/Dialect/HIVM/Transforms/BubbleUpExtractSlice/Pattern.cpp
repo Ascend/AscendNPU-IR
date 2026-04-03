@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -37,6 +38,9 @@
   LLVM_DEBUG(DBGS() << __FILE__ << ":" << __LINE__ << " " << X << "\n")
 
 namespace mlir::hivm::detail {
+
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
 
 static bool areOperandsUpperLevel(tensor::ExtractSliceOp sliceOp) {
   // can bubble up if all of the dependencies are on the equal or ancestor
@@ -1491,6 +1495,16 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           UbAllocOp.getResult().getType().getMemorySpace());
       if (addrSpace.getAddressSpace() ==
           hivm::AddressSpace::UB) { // If alloc is UB, tile it
+        // If this buffer carries MayImplicitTransposeWithLastAxis, the
+        // vtranspose chain already handles sub-tiling through expand_shape →
+        // vtranspose → cbuf copy.  Creating a new smaller sub-block alloc here
+        // would disconnect the hivm.hir.load (which writes the full tile) from
+        // the vtranspose source, or force the load to write a partial tile into
+        // an undersized buffer.  Skip this pattern and leave the original alloc
+        // intact so the load and the vtranspose chain share the same buffer.
+        if (utils::getAnnotateOpWithAttr(memorySpaceCastOp.getResult(),
+                                         kMayImplicitTransposeWithLastAxis))
+          return failure();
         // get the alloc result shape from sliceOp
         auto resultType =
             dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
@@ -1620,7 +1634,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           }
         }
 
-        /// create the new Ops with 1:2 shape
+        // create the new Ops with 1:2 shape
         rewriter.setInsertionPoint(memorySpaceCastOp);
         Value sourceUbmemref = newUbAllocOp.getResult();
         auto ubType = mlir::cast<MemRefType>(sourceUbmemref.getType());
