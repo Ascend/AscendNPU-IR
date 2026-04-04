@@ -854,7 +854,7 @@ handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
 
 static LogicalResult
 handleExtractOfInsertDifferentDimCase(tensor::ExtractSliceOp sliceOp,
-                                       PatternRewriter &rewriter) {
+                                      PatternRewriter &rewriter) {
   auto parentSliceOp =
       sliceOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
   auto srcType = parentSliceOp.getSourceType();
@@ -1032,80 +1032,120 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 bool LoopBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<scf::ForOp>(sourceOp) && !isDynamicSlice(sliceOp);
+  return isa_and_nonnull<scf::ForOp, scf::WhileOp>(sourceOp) &&
+         !isDynamicSlice(sliceOp);
+}
+
+static void sliceRegionIterArg(BlockArgument regionIterArg,
+                               tensor::ExtractSliceOp sliceOp, Location loc,
+                               PatternRewriter &rewriter) {
+  regionIterArg.setType(sliceOp.getType());
+  rewriter.setInsertionPointAfterValue(regionIterArg);
+  LDBG("!!!!: " << sliceOp);
+  auto tmpEmpty = rewriter.create<tensor::EmptyOp>(loc, sliceOp.getSourceType(),
+                                                   ValueRange{});
+  auto argumentInsert = rewriter.create<tensor::InsertSliceOp>(
+      loc, regionIterArg, tmpEmpty, sliceOp.getMixedOffsets(),
+      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+  rewriter.replaceAllUsesExcept(regionIterArg, argumentInsert.getResult(),
+                                argumentInsert);
 }
 
 LogicalResult LoopBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                             PatternRewriter &rewriter) const {
-  auto forOp = dyn_cast<scf::ForOp>(sliceOp.getSource().getDefiningOp());
-  if (!forOp)
-    return rewriter.notifyMatchFailure(sliceOp, "source failed to bind");
+  auto *defOp = sliceOp.getSource().getDefiningOp();
+  if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    Value oldStep = forOp.getStep();
+    auto oldStepAsIndexOp = oldStep.getDefiningOp<arith::ConstantIndexOp>();
+    if (oldStepAsIndexOp && oldStepAsIndexOp.value() != 1) {
+      bishengir::normalizeLoop(rewriter, forOp, oldStep);
+      return success();
+    }
 
-  Value oldStep = forOp.getStep();
-  auto oldStepAsIndexOp = oldStep.getDefiningOp<arith::ConstantIndexOp>();
-  if (oldStepAsIndexOp && oldStepAsIndexOp.value() != 1) {
-    bishengir::normalizeLoop(rewriter, forOp, oldStep);
+    auto yieldIndex = cast<OpResult>(sliceOp.getSource()).getResultNumber();
+    LDBG("Processing result of " << yieldIndex << " from for op " << forOp);
+    auto valueToSlice = forOp.getYieldedValues()[yieldIndex];
+    Operation *yieldOp =
+        forOp.getRegion().getBlocks().rbegin()->getTerminator();
+    rewriter.setInsertionPoint(yieldOp);
+    auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp->getLoc(),
+        /* resultType */ cast<RankedTensorType>(sliceOp.getType()),
+        /* src */ valueToSlice, sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+
+    LDBG(valueToSlice);
+    rewriter.modifyOpInPlace(yieldOp, [&]() {
+      auto &yieldValueOpr = yieldOp->getOpOperand(yieldIndex);
+      yieldValueOpr.assign(newMovedInSlice.getResult());
+    });
+
+    BlockArgument regionIterArg = forOp.getRegionIterArg(yieldIndex);
+    sliceRegionIterArg(regionIterArg, sliceOp, forOp.getLoc(), rewriter);
+
+    OpOperand &forOpInit = forOp.getInitsMutable()[yieldIndex];
+    rewriter.setInsertionPoint(forOp);
+    auto slicedInit = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp->getLoc(),
+        /* resultType */ cast<RankedTensorType>(sliceOp.getType()),
+        /* src */ forOpInit.get(), sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, slicedInit);
+
+    forOpInit.set(slicedInit.getResult());
+    rewriter.modifyOpInPlace(forOp, [&]() {
+      forOp.getResult(yieldIndex).setType(sliceOp.getType());
+    });
+    rewriter.replaceOp(sliceOp, forOp->getResult(yieldIndex));
     return success();
   }
+  if (auto whileOp = dyn_cast<scf::WhileOp>(defOp)) {
+    auto yieldIndex = cast<OpResult>(sliceOp.getSource()).getResultNumber();
+    auto conditionOp = whileOp.getConditionOp();
+    auto valueToSlice = conditionOp.getArgs()[yieldIndex];
 
-  auto yieldIndex = cast<OpResult>(sliceOp.getSource()).getResultNumber();
-  auto oldResultType = sliceOp.getSource().getType();
-  LDBG("Processing result of " << yieldIndex << " from for op " << forOp);
-  auto valueToSlice = forOp.getYieldedValues()[yieldIndex];
-  Operation *yieldOp = forOp.getRegion().getBlocks().rbegin()->getTerminator();
-  rewriter.setInsertionPoint(yieldOp);
-  auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
-      sliceOp->getLoc(),
-      /* resultType */ cast<RankedTensorType>(sliceOp.getType()),
-      /* src */ valueToSlice, sliceOp.getMixedOffsets(),
-      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-  markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+    rewriter.setInsertionPoint(conditionOp);
+    auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+        sliceOp->getLoc(),
+        /* resultType */ cast<RankedTensorType>(sliceOp.getType()),
+        /* src */ valueToSlice, sliceOp.getMixedOffsets(),
+        sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+    markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+    rewriter.modifyOpInPlace(conditionOp, [&]() {
+      auto &yieldValueOpr = conditionOp.getArgsMutable()[yieldIndex];
+      yieldValueOpr.assign(newMovedInSlice.getResult());
+    });
 
-  LDBG(valueToSlice);
-  rewriter.modifyOpInPlace(
-      forOp, [&]() { forOp.getResult(yieldIndex).setType(sliceOp.getType()); });
-  rewriter.replaceAllUsesWith(sliceOp, forOp->getResult(yieldIndex));
-  rewriter.modifyOpInPlace(yieldOp, [&]() {
-    auto &yieldValueOpr = yieldOp->getOpOperand(yieldIndex);
-    yieldValueOpr.assign(newMovedInSlice.getResult());
-  });
-
-  BlockArgument regionIterArg = forOp.getRegionIterArg(yieldIndex);
-  regionIterArg.setType(sliceOp.getType());
-  rewriter.setInsertionPointAfterValue(regionIterArg);
-  auto tmpEmpty = rewriter.create<tensor::EmptyOp>(forOp.getLoc(),
-                                                   oldResultType, ValueRange{});
-  auto argumentInsert = rewriter.create<tensor::InsertSliceOp>(
-      forOp.getLoc(), regionIterArg, tmpEmpty, sliceOp.getMixedOffsets(),
-      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-  rewriter.replaceAllUsesExcept(regionIterArg, argumentInsert.getResult(),
-                                argumentInsert);
-
-  OpOperand &forOpInit = forOp.getInitsMutable()[yieldIndex];
-  rewriter.setInsertionPoint(forOp);
-  auto slicedInit = rewriter.create<tensor::ExtractSliceOp>(
-      sliceOp->getLoc(),
-      /* resultType */ cast<RankedTensorType>(sliceOp.getType()),
-      /* src */ forOpInit.get(), sliceOp.getMixedOffsets(),
-      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
-  markCreatedExtractSliceOp(rewriter, slicedInit);
-
-  forOpInit.set(slicedInit.getResult());
-
-  return success();
+    BlockArgument regionIterArg = whileOp.getAfterArguments()[yieldIndex];
+    sliceRegionIterArg(regionIterArg, sliceOp, whileOp.getLoc(), rewriter);
+    rewriter.modifyOpInPlace(whileOp, [&]() {
+      whileOp.getResult(yieldIndex).setType(sliceOp.getType());
+    });
+    rewriter.replaceOp(sliceOp, whileOp->getResult(yieldIndex));
+    return success();
+  }
+  return failure();
 }
 
 bool LoopArgsBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
-  return false;
+  auto blockArg = dyn_cast<BlockArgument>(sliceOp.getSource());
+  if (!blockArg)
+    return false;
+  auto whileOp = dyn_cast_or_null<scf::WhileOp>(sliceOp->getParentOp());
+  if (!whileOp)
+    return false;
+  return llvm::any_of(whileOp.getBeforeArguments(), [&blockArg](auto beforeArg) {
+    return blockArg == beforeArg;
+  });
 }
 
 LogicalResult
 LoopArgsBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                   PatternRewriter &rewriter) const {
-  llvm_unreachable("This should not happen anymore");
-  auto forOp = sliceOp->getParentOfType<scf::ForOp>();
-  if (!forOp) {
+  auto whileOp = sliceOp->getParentOfType<scf::WhileOp>();
+  if (!whileOp) {
     return failure();
   }
 
@@ -1113,18 +1153,33 @@ LoopArgsBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (!blockArg)
     return failure();
 
-  auto blockArgIdx = blockArg.getArgNumber() - 1;
+  auto blockArgIdx = blockArg.getArgNumber();
 
-  rewriter.setInsertionPoint(forOp);
+  rewriter.setInsertionPoint(whileOp);
   auto movedOutSlice = rewriter.create<tensor::ExtractSliceOp>(
       sliceOp->getLoc(), cast<RankedTensorType>(sliceOp.getType()),
-      forOp.getInitArgsMutable()[blockArgIdx].get(), sliceOp.getMixedOffsets(),
+      whileOp.getInits()[blockArgIdx], sliceOp.getMixedOffsets(),
       sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
   markCreatedExtractSliceOp(rewriter, movedOutSlice);
 
   blockArg.setType(sliceOp.getType());
   rewriter.replaceAllUsesWith(sliceOp, blockArg);
-  forOp.getInitArgsMutable()[blockArgIdx].set(movedOutSlice);
+  rewriter.modifyOpInPlace(whileOp, [&]() {
+    whileOp.getInitsMutable()[blockArgIdx].set(movedOutSlice);
+  });
+
+  auto yieldOp = whileOp.getYieldOp();
+  rewriter.setInsertionPoint(yieldOp);
+  movedOutSlice = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), cast<RankedTensorType>(sliceOp.getType()),
+      yieldOp.getResults()[blockArgIdx], sliceOp.getMixedOffsets(),
+      sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, movedOutSlice);
+
+  rewriter.modifyOpInPlace(yieldOp, [&]() {
+    auto &yieldValueOpr = yieldOp.getResultsMutable()[blockArgIdx];
+    yieldValueOpr.assign(movedOutSlice.getResult());
+  });
 
   return success();
 }
