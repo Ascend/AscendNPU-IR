@@ -99,6 +99,24 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   return -1;
 }
 
+static bool checkTileableMaskedStore(hivm::StoreOp storeOp, size_t i) {
+  auto src = storeOp.getSrc();
+  auto dst = storeOp.getDst();
+  int64_t srcOrigDim = ShapedType::kDynamic;
+  int64_t dstOrigDim = ShapedType::kDynamic;
+  if (auto extractSliceOp = src.getDefiningOp<tensor::ExtractSliceOp>()) {
+      srcOrigDim = extractSliceOp.getSourceType().getDimSize(i);
+  } else if (auto subviewOp = src.getDefiningOp<memref::SubViewOp>()) {
+      srcOrigDim = subviewOp.getSourceType().getDimSize(i);
+  }
+  if (auto extractSliceOp = dst.getDefiningOp<tensor::ExtractSliceOp>()) {
+      dstOrigDim = extractSliceOp.getSourceType().getDimSize(i);
+  } else if (auto subviewOp = dst.getDefiningOp<memref::SubViewOp>()) {
+      dstOrigDim = subviewOp.getSourceType().getDimSize(i);
+  }
+  return srcOrigDim != ShapedType::kDynamic && srcOrigDim != 1 && srcOrigDim == dstOrigDim;
+}
+
 template <typename StoreOpTy>
 void DimensionAnalyzer::computeTilingDimImpl(
     DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
@@ -114,14 +132,14 @@ void DimensionAnalyzer::computeTilingDimImpl(
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
-      if (isParallelDim(dim) && shape[i] != 1) {
-        if (ShapedType::isDynamic(shape[i])) {
-          if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>();
-              extractSliceOp && extractSliceOp.getSourceType().getDimSize(i) == 1)
+      if (isParallelDim(dim)) {
+        if (ShapedType::isDynamic(shape[i]) || shape[i] == 1) {
+          if constexpr (std::is_same_v<StoreOpTy, hivm::StoreOp>) {
+            if (!checkTileableMaskedStore(op, i))
               continue;
-          if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>();
-              subviewOp && subviewOp.getSourceType().getDimSize(i) == 1)
-              continue;
+          } else {
+            continue;
+          }
         }
         LDBG("Dim " << i << " is selected in group " << srcRef);
         auto parentIndex = solverCollapserElem_->find(args[i]);
