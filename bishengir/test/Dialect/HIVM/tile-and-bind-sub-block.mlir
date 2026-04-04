@@ -1135,3 +1135,128 @@ module {
     return
   }
 }
+
+// -----
+// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 32)>
+// CHECK-LABEL:   func.func @store_with_nonzero_offset(
+// CHECK-SAME:                                         %[[VAL_0:.*]]: tensor<64xf32>,
+// CHECK-SAME:                                         %[[VAL_1:.*]]: memref<64xf32>,
+// CHECK-SAME:                                         %[[VAL_2:.*]]: index,
+// CHECK-SAME:                                         %[[VAL_3:.*]]: index)
+// CHECK:           %[[VAL_4:.*]] = arith.constant 32 : index
+// CHECK:           %[[VAL_5:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_6:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_7:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %[[VAL_8:.*]] = %[[VAL_5]] to %[[VAL_7]] step %[[VAL_6]] {
+// CHECK:             %[[VAL_9:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_8]]]
+// CHECK:             %[[VAL_10:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_12:.*]] = tensor.empty() : tensor<32xf32>
+// CHECK:             %[[VAL_13:.*]] = hivm.hir.vln ins(%[[VAL_11]] : tensor<32xf32>) outs(%[[VAL_12]] : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:             %[[VAL_14:.*]] = arith.addi %[[VAL_9]], %[[VAL_4]] : index
+// CHECK:             %[[VAL_15:.*]] = arith.addi %[[VAL_2]], %[[VAL_3]] : index
+// CHECK:             %[[VAL_16:.*]] = arith.maxsi %[[VAL_2]], %[[VAL_9]] : index
+// CHECK:             %[[VAL_17:.*]] = arith.minsi %[[VAL_15]], %[[VAL_14]] : index
+// CHECK:             %[[VAL_18:.*]] = arith.maxsi %[[VAL_16]], %[[VAL_17]] : index
+// CHECK:             %[[VAL_19:.*]] = arith.subi %[[VAL_18]], %[[VAL_16]] : index
+// CHECK:             %[[VAL_20:.*]] = arith.subi %[[VAL_16]], %[[VAL_9]] : index
+// CHECK:             %[[VAL_21:.*]] = tensor.extract_slice %[[VAL_13]]{{\[}}%[[VAL_20]]] {{\[}}%[[VAL_19]]] [1] : tensor<32xf32> to tensor<?xf32>
+// CHECK:             %[[VAL_22:.*]] = memref.subview %[[VAL_10]]{{\[}}%[[VAL_20]]] {{\[}}%[[VAL_19]]] [1] : memref<32xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+// CHECK:             hivm.hir.store ins(%[[VAL_21]] : tensor<?xf32>) outs(%[[VAL_22]] : memref<?xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK:           return
+// CHECK:         }
+func.func @store_with_nonzero_offset(%arg0: tensor<64xf32>, %arg1: memref<64xf32>, %arg2: index, %arg3: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %1[%arg2] [%arg3] [1] : tensor<64xf32> to tensor<?xf32>
+  %subview = memref.subview %arg1[%arg2] [%arg3] [1] : memref<64xf32> to memref<?xf32, strided<[1], offset: ?>>
+  hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview : memref<?xf32, strided<[1], offset: ?>>)
+  return
+}
+
+// -----
+// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 32)>
+// CHECK-LABEL:   func.func @broadcast_two_different_dims(
+// CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<64xf32>,
+// CHECK-SAME:                                            %[[VAL_1:.*]]: memref<64x64xf32>)
+// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_3:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
+// CHECK:             %[[VAL_6:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_5]]]
+// CHECK:             %[[VAL_7:.*]] = memref.subview %[[VAL_1]]{{\[}}%[[VAL_6]], 0] [32, 64] [1, 1] {to_be_bubbled_slice} : memref<64x64xf32> to memref<32x64xf32, strided<[64, 1], offset: ?>>
+// CHECK:             %[[VAL_8:.*]] = tensor.empty() : tensor<64xf32>
+// CHECK:             %[[VAL_9:.*]] = hivm.hir.vln ins(%[[VAL_0]] : tensor<64xf32>) outs(%[[VAL_8]] : tensor<64xf32>) -> tensor<64xf32>
+// CHECK:             %[[VAL_10:.*]] = tensor.expand_shape %[[VAL_9]] {{\[\[}}0, 1]] output_shape [1, 64] : tensor<64xf32> into tensor<1x64xf32>
+// CHECK:             %[[VAL_11:.*]] = tensor.extract_slice %[[VAL_9]]{{\[}}%[[VAL_6]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_12:.*]] = tensor.expand_shape %[[VAL_11]] {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+// CHECK:             %[[VAL_13:.*]] = tensor.empty() : tensor<32x64xf32>
+// CHECK:             %[[VAL_14:.*]] = hivm.hir.vadd ins(%[[VAL_12]], %[[VAL_10]] : tensor<32x1xf32>, tensor<1x64xf32>) outs(%[[VAL_13]] : tensor<32x64xf32>) broadcast = [0, 1] -> tensor<32x64xf32>
+// CHECK:             hivm.hir.store ins(%[[VAL_14]] : tensor<32x64xf32>) outs(%[[VAL_7]] : memref<32x64xf32, strided<[64, 1], offset: ?>>) {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK:           return
+// CHECK:         }
+// expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
+func.func @broadcast_two_different_dims(%arg0: tensor<64xf32>, %arg1: memref<64x64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = tensor.empty() : tensor<64x64xf32>
+  %2 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+// expected-warning @+1{{Extract slice is not fully bubbled up}}
+  %expanded = tensor.expand_shape %2 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
+  %expanded_0 = tensor.expand_shape %2 [[0, 1]] output_shape [1, 64] : tensor<64xf32> into tensor<1x64xf32>
+  %3 = hivm.hir.vadd ins(%expanded, %expanded_0 : tensor<64x1xf32>, tensor<1x64xf32>) outs(%1 : tensor<64x64xf32>) broadcast = [0, 1] -> tensor<64x64xf32>
+// expected-warning @+1{{Detected dimensions are in the same group in one storeOp.}}
+  hivm.hir.store ins(%3 : tensor<64x64xf32>) outs(%arg1 : memref<64x64xf32>)
+  return
+}
+
+// -----
+// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 32)>
+// CHECK-LABEL:   func.func @load_and_store_same_GM(
+// CHECK-SAME:                                      %[[VAL_0:.*]]: tensor<64xf32>,
+// CHECK-SAME:                                      %[[VAL_1:.*]]: memref<?xf32>,
+// CHECK-SAME:                                      %[[VAL_2:.*]]: index)
+// CHECK:           %[[VAL_3:.*]] = arith.constant 32 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 64 : index
+// CHECK:           %[[VAL_5:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_6:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_7:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %[[VAL_8:.*]] = %[[VAL_5]] to %[[VAL_7]] step %[[VAL_6]] {
+// CHECK:             %[[VAL_9:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_8]]]
+// CHECK:             %[[VAL_10:.*]] = memref.alloc() : memref<32xf32>
+// CHECK:             %[[VAL_11:.*]] = memref.reinterpret_cast %[[VAL_1]] to offset: [0], sizes: [64], strides: [1] : memref<?xf32> to memref<64xf32>
+// CHECK:             %[[VAL_12:.*]] = memref.subview %[[VAL_11]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_13:.*]] = arith.minsi %[[VAL_2]], %[[VAL_4]] : index
+// CHECK:             %[[VAL_14:.*]] = arith.minsi %[[VAL_9]], %[[VAL_13]] : index
+// CHECK:             %[[VAL_15:.*]] = arith.subi %[[VAL_13]], %[[VAL_14]] : index
+// CHECK:             %[[VAL_16:.*]] = arith.minsi %[[VAL_15]], %[[VAL_3]] : index
+// CHECK:             %[[VAL_17:.*]] = memref.subview %[[VAL_12]][0] {{\[}}%[[VAL_16]]] [1] : memref<32xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_18:.*]] = memref.subview %[[VAL_11]]{{\[}}%[[VAL_9]]] [32] [1] : memref<64xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_19:.*]] = memref.subview %[[VAL_18]][0] {{\[}}%[[VAL_16]]] [1] : memref<32xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_20:.*]] = memref.subview %[[VAL_10]][0] {{\[}}%[[VAL_16]]] [1] : memref<32xf32> to memref<?xf32, strided<[1]>>
+// CHECK:             hivm.hir.load ins(%[[VAL_19]] : memref<?xf32, strided<[1], offset: ?>>) outs(%[[VAL_20]] : memref<?xf32, strided<[1]>>)
+// CHECK:             %[[VAL_21:.*]] = tensor.extract_slice %[[VAL_0]]{{\[}}%[[VAL_9]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_22:.*]] = bufferization.to_tensor %[[VAL_10]] restrict writable : memref<32xf32>
+// CHECK:             %[[VAL_23:.*]] = tensor.empty() : tensor<32xf32>
+// CHECK:             %[[VAL_24:.*]] = hivm.hir.vadd ins(%[[VAL_21]], %[[VAL_22]] : tensor<32xf32>, tensor<32xf32>) outs(%[[VAL_23]] : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:             %[[VAL_25:.*]] = tensor.extract_slice %[[VAL_24]][0] {{\[}}%[[VAL_16]]] [1] : tensor<32xf32> to tensor<?xf32>
+// CHECK:             hivm.hir.store ins(%[[VAL_25]] : tensor<?xf32>) outs(%[[VAL_17]] : memref<?xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK:           return
+// CHECK:         }
+func.func @load_and_store_same_GM(%arg0: tensor<64xf32>, %arg1: memref<?xf32>, %arg2: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %c64 = arith.constant 64 : index
+  %alloc = memref.alloc() : memref<64xf32>
+  %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [64], strides: [1] : memref<?xf32> to memref<64xf32>
+  %0 = arith.minsi %arg2, %c64 : index
+  %subview = memref.subview %reinterpret_cast[0] [%0] [1] : memref<64xf32> to memref<?xf32>
+  %subview_0 = memref.subview %alloc[0] [%0] [1] : memref<64xf32> to memref<?xf32>
+  hivm.hir.load ins(%subview : memref<?xf32>) outs(%subview_0 : memref<?xf32>)
+  %1 = bufferization.to_tensor %alloc restrict writable : memref<64xf32>
+  %2 = tensor.empty() : tensor<64xf32>
+  %3 = hivm.hir.vadd ins(%arg0, %1 : tensor<64xf32>, tensor<64xf32>) outs(%2 : tensor<64xf32>) -> tensor<64xf32>
+  %extracted_slice = tensor.extract_slice %3[0] [%0] [1] : tensor<64xf32> to tensor<?xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview : memref<?xf32>)
+  return
+}
