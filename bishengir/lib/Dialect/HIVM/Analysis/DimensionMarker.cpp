@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -90,6 +91,25 @@ void DimensionAnalyzer::processBFS() {
           }
           solverGroup_->join(curRef, argumentsRefPointer_.at(regionArg));
           solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+        } else if (auto whileOp = dyn_cast<scf::WhileOp>(user)) {
+          auto oprNum = use.getOperandNumber();
+          auto arg = whileOp.getBeforeArguments()[oprNum];
+          createDummyRefIfNotExist({arg});
+          if (visited.insert(arg).second) {
+            bfsQueue.push(arg);
+          }
+          solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
+        } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(user)) {
+          auto whileOp = cast<scf::WhileOp>(user->getParentOp());
+          auto oprNum = use.getOperandNumber() - 1;
+          for (auto arg : SmallVector<Value>{whileOp.getAfterArguments()[oprNum],
+                                     whileOp->getResult(oprNum)}) {
+            createDummyRefIfNotExist({arg});
+            if (visited.insert(arg).second) {
+              bfsQueue.push(arg);
+            }
+            solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
+          }
         } else {
           for (auto res : user->getResults()) {
             if (isa<ShapedType>(res.getType())) {
@@ -114,6 +134,14 @@ void DimensionAnalyzer::processBFS() {
           updatePreviousType(result);
           if (visited.insert(result).second) {
             bfsQueue.push(result);
+          }
+        }
+        if (auto loopOp = dyn_cast<LoopLikeOpInterface>(yieldParentOp)) {
+          for (Value init : loopOp.getInits()) {
+            updatePreviousType(init);
+            if (visited.insert(init).second) {
+              bfsQueue.push(init);
+            }
           }
         }
       }
@@ -149,6 +177,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
     processYieldOp(yieldOp);
   } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
     processForOp(forOp);
+  } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(op)) {
+    processConditionOp(conditionOp);
   } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
     processReshapeOp(expandShapeOp);
   } else if (auto collapseShapeOp = dyn_cast<tensor::CollapseShapeOp>(op)) {
@@ -361,9 +391,17 @@ template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
 
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
   LDBG("Processing YieldOp " << op);
-  auto parentOp = op->getParentOp();
+  auto *parentOp = op->getParentOp();
   if (!parentOp) {
     llvm::report_fatal_error("YieldOp doesn't have a parent");
+  }
+  if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
+    for (auto [beforeArg, yieldOpResult] :
+         llvm::zip_equal(whileOp.getBeforeArguments(), op.getOperands())) {
+      if (isa<ShapedType>(beforeArg.getType()))
+        mergeValues({beforeArg}, {yieldOpResult});
+    }
+    return;
   }
   for (auto [parentResult, yieldOpResult] :
        llvm::zip_equal(parentOp->getResults(), op.getOperands())) {
@@ -378,6 +416,16 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
        zip_equal(op.getRegionIterArgs(), op.getInitArgs())) {
     createDummyRefIfNotExist({regionArg, initArg});
     processValue(regionArg, initArg);
+  }
+}
+
+void DimensionAnalyzer::processConditionOp(scf::ConditionOp op) {
+  LDBG("Processing ConditionOp " << op);
+  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
+  for (auto [afterArg, arg] :
+       llvm::zip_equal(whileOp.getAfterArguments(), op.getArgs())) {
+    if (isa<ShapedType>(afterArg.getType()))
+      mergeValues({afterArg}, {arg});
   }
 }
 
