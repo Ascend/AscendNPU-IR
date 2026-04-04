@@ -1453,6 +1453,150 @@ struct NormalizeArgMinMaxOp
 /// y = hfusion elemwise unary {expm1} (x)
 /// is normalized to
 ///  y = linalg.elemwise_unary{exp}(x) -1
+
+struct NormalizeSinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    if (op.getFun() != hfusion::UnaryFn::sinh) {
+      return failure();
+    }
+
+    Value src = op.getInputs()[0];
+    auto inType = getElementTypeOrSelf(src.getType());
+    assert((inType.isF16() || inType.isF32()) &&
+           "only support input Type is f16 or f32");
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op.getLoc();
+    auto srcType = cast<RankedTensorType>(src.getType());
+    auto elementType = srcType.getElementType();
+
+    auto createConstTensor = [&](double v) -> Value {
+      Value cst = rewriter.create<arith::ConstantOp>(
+          loc, elementType, rewriter.getFloatAttr(elementType, v));
+      Value empty = utils::createEmptyOp(rewriter, loc, src);
+      return rewriter.create<linalg::FillOp>(loc, ValueRange{cst},
+                                             ValueRange{empty})
+          .getResult(0);
+    };
+
+    Value minusOneTensor = createConstTensor(-1.0);
+    Value halfTensor = createConstTensor(0.5);
+    Value negHalfTensor = createConstTensor(-0.5);
+    Value posThresholdTensor = createConstTensor(5.0);
+    Value negThresholdTensor = createConstTensor(-5.0);
+    Value smallPosThresholdTensor = createConstTensor(0.25);
+    Value smallNegThresholdTensor = createConstTensor(-0.25);
+
+    // exp(x)
+    auto emptyExp0 = utils::createEmptyOp(rewriter, loc, src);
+    auto *exp0 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
+        rewriter, loc, linalg::UnaryFn::exp, ValueRange{src},
+        ValueRange{emptyExp0});
+
+    // -x = x * (-1)
+    auto emptyNeg = utils::createEmptyOp(rewriter, loc, src);
+    auto *negx =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{src, minusOneTensor}, ValueRange{emptyNeg});
+
+    // exp(-x)
+    auto emptyExp1 = utils::createEmptyOp(rewriter, loc, src);
+    auto *exp1 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
+        rewriter, loc, linalg::UnaryFn::exp,
+        ValueRange{negx->getResults()[0]}, ValueRange{emptyExp1});
+
+    // midRes = (exp(x) - exp(-x)) * 0.5
+    auto emptySub = utils::createEmptyOp(rewriter, loc, src);
+    auto *sub =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{exp0->getResults()[0], exp1->getResults()[0]},
+            ValueRange{emptySub});
+
+    auto emptyMid = utils::createEmptyOp(rewriter, loc, src);
+    auto *midRes =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{sub->getResults()[0], halfTensor},
+            ValueRange{emptyMid});
+
+    // large positive approximation: 0.5 * exp(x)
+    auto emptyLargePos = utils::createEmptyOp(rewriter, loc, src);
+    auto *largePos =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{exp0->getResults()[0], halfTensor},
+            ValueRange{emptyLargePos});
+
+    // large negative approximation: -0.5 * exp(-x)
+    auto emptyLargeNeg = utils::createEmptyOp(rewriter, loc, src);
+    auto *largeNeg =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{exp1->getResults()[0], negHalfTensor},
+            ValueRange{emptyLargeNeg});
+
+    // small masks: -0.25 < x < 0.25
+    Value gtSmallNegMask = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, src, smallNegThresholdTensor);
+
+    Value ltSmallPosMask = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, src, smallPosThresholdTensor);
+
+    Value smallMask = rewriter.create<arith::AndIOp>(
+        loc, gtSmallNegMask, ltSmallPosMask);
+
+    // large masks
+    Value gtMask = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OGT, src, posThresholdTensor);
+
+    Value ltMask = rewriter.create<arith::CmpFOp>(
+        loc, arith::CmpFPredicate::OLT, src, negThresholdTensor);
+
+    // base = select(|x| < 0.25, x, midRes)
+    Value base = rewriter.create<arith::SelectOp>(
+        loc, smallMask, src, midRes->getResult(0));
+
+    // tmp = select(x > 5, 0.5 * exp(x), base)
+    Value tmp = rewriter.create<arith::SelectOp>(
+        loc, gtMask, largePos->getResult(0), base);
+
+    // res = select(x < -5, -0.5 * exp(-x), tmp)
+    Value res = rewriter.create<arith::SelectOp>(
+        loc, ltMask, largeNeg->getResult(0), tmp);
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
 struct NormalizeExpM1Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
@@ -6239,6 +6383,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeLog1pOp>(patterns.getContext());
   patterns.add<NormalizeExp2Op>(patterns.getContext());
   patterns.add<NormalizeExpM1Op>(patterns.getContext());
+  patterns.add<NormalizeSinhOp>(patterns.getContext());
   patterns.add<NormalizeErfOp>(patterns.getContext());
   patterns.add<NormalizeBrcCast>(patterns.getContext());
   patterns.add<NormalizefillCastToTensorBrc>(patterns.getContext());

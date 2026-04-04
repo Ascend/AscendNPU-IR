@@ -80,6 +80,16 @@ func.func @test_cos(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_sinh
+func.func @test_sinh(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sinh>}
+  %ret = math.sinh %arg0 : tensor<6x6xf32>
+  return %ret : tensor<6x6xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_erf
 func.func @test_erf(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
