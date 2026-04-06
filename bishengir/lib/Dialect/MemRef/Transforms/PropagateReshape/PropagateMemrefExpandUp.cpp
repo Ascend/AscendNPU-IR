@@ -70,7 +70,6 @@ static OpFoldResult multiplyOFR(PatternRewriter &rewriter, Location loc,
   return rewriter.create<arith::MulIOp>(loc, aVal, bVal).getResult();
 }
 
-
 LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
                                     PatternRewriter &rewriter,
                                     Operation *definingOp) {
@@ -78,7 +77,6 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   auto expandResType = expandOp.getResult().getType().cast<MemRefType>();
 
   auto reassociation = expandOp.getReassociationIndices();
-
 
   SmallVector<OpFoldResult> offsetOfr = reinterpretCast.getMixedOffsets();
   SmallVector<OpFoldResult> oldStrides = reinterpretCast.getMixedStrides();
@@ -88,11 +86,11 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   SmallVector<OpFoldResult> newStridesOfr;
 
   rewriter.setInsertionPoint(reinterpretCast);
-  
+
   for (auto [idx, group] : llvm::enumerate(reassociation)) {
     OpFoldResult currentStride = oldStrides[idx];
     SmallVector<OpFoldResult> groupStrides;
-    
+
     for (int i = group.size() - 1; i >= 0; --i) {
       groupStrides.push_back(currentStride);
       if (i > 0) {
@@ -117,11 +115,11 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
 
   rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
   rewriter.replaceOp(expandOp, newReinterpret);
-  
+
   LDBG(*definingOp->getParentOp());
-  
+
   rewriter.eraseOp(reinterpretCast);
-  
+
   return success();
 }
 
@@ -167,10 +165,10 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
     }
   }
   rewriter.setInsertionPoint(expandOp);
-  auto newExpand = rewriter.create<memref::ExpandShapeOp>(expandOp.getLoc(), newShape, subviewOp.getSource(), reassociation);
+  auto newExpand = rewriter.create<memref::ExpandShapeOp>(
+      expandOp.getLoc(), newShape, subviewOp.getSource(), reassociation);
   auto newSubView = rewriter.create<memref::SubViewOp>(
-      subviewOp.getLoc(), newExpand, newOffsets, newSizes,
-      newStrides);
+      subviewOp.getLoc(), newExpand, newOffsets, newSizes, newStrides);
   rewriter.replaceOp(expandOp, newSubView);
   return success();
 }
@@ -215,8 +213,14 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
-    // expand shape dims is all 1, not propagate alloc op.
-    if (isExpandShapeAllOne(expandOp)) {
+    auto dstType = expandOp.getResult().getType();
+    auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+    // expand shape dims is all 1, not propagate alloc op (only when dst rank >
+    // 3).
+    // TODO: remove this after the logic of HIVMInferDataLayout pass is
+    // refactored.
+    if (isExpandShapeAllOne(expandOp) && dstMemrefType &&
+        dstMemrefType.getRank() > 3) {
       return failure();
     }
     LDBG("Ok in here");
