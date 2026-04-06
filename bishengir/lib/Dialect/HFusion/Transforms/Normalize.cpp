@@ -1597,6 +1597,162 @@ public:
   }
 };
 
+struct NormalizeAtan2Op : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    if (op.getFun() != hfusion::BinaryFn::atan2) {
+      return failure();
+    }
+
+    Value y = op.getInputs()[0];
+    Value x = op.getInputs()[1];
+
+    auto inType = getElementTypeOrSelf(y.getType());
+    auto xType = getElementTypeOrSelf(x.getType());
+    if ((!inType.isF16() && !inType.isF32()) || inType != xType) {
+      return failure();
+    }
+
+    bool castBackToF16 = inType.isF16();
+    if (castBackToF16) {
+      y = hfusion::castTo(rewriter, y, rewriter.getF32Type(),
+                          hfusion::RoundMode::ROUND);
+      x = hfusion::castTo(rewriter, x, rewriter.getF32Type(),
+                          hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op.getLoc();
+    auto elemType = cast<FloatType>(getElementTypeOrSelf(y.getType()));
+
+    auto f32Const = [&](float v) -> Value {
+      return rewriter.create<arith::ConstantOp>(
+          loc, elemType, rewriter.getFloatAttr(elemType, v));
+    };
+
+    auto makeUnary = [&](linalg::UnaryFn fn, Value src) -> Value {
+      auto empty = utils::createEmptyOp(rewriter, loc, src);
+      return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                    linalg::UnaryFnAttr>(
+                 rewriter, loc, fn, ValueRange{src}, ValueRange{empty})
+          ->getResult(0);
+    };
+
+    auto makeBinary = [&](linalg::BinaryFn fn, Value lhs, Value rhs,
+                          Value outLike) -> Value {
+      auto empty = utils::createEmptyOp(rewriter, loc, outLike);
+      return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                     linalg::BinaryFn, linalg::BinaryFnAttr>(
+                 rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
+          ->getResult(0);
+    };
+
+    auto makeCmp = [&](Value lhs, Value rhs, CompareFn fn) -> Value {
+      return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
+    };
+
+    auto makeSelect = [&](Value cond, Value trueVal, Value falseVal,
+                          Value outLike) -> Value {
+      auto out = utils::createEmptyOp(rewriter, loc, outLike);
+      return rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange{out.getType()},
+                                     ValueRange{cond, trueVal, falseVal},
+                                     ValueRange{out})
+          .getResult(0);
+    };
+
+    // 用于 xi1 tensor 的逐元素 vand
+    auto makeVand = [&](Value lhs, Value rhs) -> Value {
+      return createVandOp(rewriter, loc, lhs, rhs)->getResult(0);
+    };
+
+    auto mulAdd = [&](Value a, Value b, Value c, Value outLike) -> Value {
+      Value mul = makeBinary(linalg::BinaryFn::mul, a, b, outLike);
+      return makeBinary(linalg::BinaryFn::add, mul, c, outLike);
+    };
+
+    Value zero = f32Const(0.0f);
+    Value one = f32Const(1.0f);
+    Value negOne = f32Const(-1.0f);
+    Value pi = f32Const(3.14159265358979323846f);
+    Value halfPi = f32Const(1.57079632679489661923f);
+
+    Value c0 = f32Const(0.99998005f);
+    Value c1 = f32Const(-0.33269410f);
+    Value c2 = f32Const(0.19401768f);
+    Value c3 = f32Const(-0.11768927f);
+    Value c4 = f32Const(0.05407583f);
+    Value c5 = f32Const(-0.01229686f);
+
+    // ax = |x|, ay = |y|
+    Value ax = makeUnary(linalg::UnaryFn::abs, x);
+    Value ay = makeUnary(linalg::UnaryFn::abs, y);
+
+    // swapMask = ay > ax
+    Value swapMask = makeCmp(ay, ax, CompareFn::vgt);
+
+    // maxv = max(ax, ay), minv = min(ax, ay)
+    Value maxv = makeSelect(swapMask, ay, ax, y);
+    Value minv = makeSelect(swapMask, ax, ay, y);
+
+    // safeMaxv = (maxv == 0) ? 1 : maxv
+    Value maxIsZero = makeCmp(maxv, zero, CompareFn::veq);
+    Value safeMaxv = makeSelect(maxIsZero, one, maxv, y);
+
+    // t = minv / safeMaxv
+    Value t = makeBinary(linalg::BinaryFn::div, minv, safeMaxv, y);
+    Value t2 = makeBinary(linalg::BinaryFn::mul, t, t, y);
+
+    // Horner:
+    // poly = c0 + t2*(c1 + t2*(c2 + t2*(c3 + t2*(c4 + t2*c5))))
+    Value poly = mulAdd(t2, c5, c4, y);
+    poly = mulAdd(t2, poly, c3, y);
+    poly = mulAdd(t2, poly, c2, y);
+    poly = mulAdd(t2, poly, c1, y);
+    poly = mulAdd(t2, poly, c0, y);
+
+    Value a = makeBinary(linalg::BinaryFn::mul, t, poly, y);
+
+    // first quadrant angle
+    Value halfPiMinusA = makeBinary(linalg::BinaryFn::sub, halfPi, a, y);
+    Value a1 = makeSelect(swapMask, halfPiMinusA, a, y);
+
+    // quadrant restore
+    Value xNeg = makeCmp(x, zero, CompareFn::vlt);
+    Value yNeg = makeCmp(y, zero, CompareFn::vlt);
+
+    Value piMinusA1 = makeBinary(linalg::BinaryFn::sub, pi, a1, y);
+    Value a1MinusPi = makeBinary(linalg::BinaryFn::sub, a1, pi, y);
+    Value negA1 = makeBinary(linalg::BinaryFn::mul, negOne, a1, y);
+
+    Value upper = makeSelect(xNeg, piMinusA1, a1, y);
+    Value lower = makeSelect(xNeg, a1MinusPi, negA1, y);
+    Value theta = makeSelect(yNeg, lower, upper, y);
+
+    // origin: x == 0 && y == 0
+    Value xZero = makeCmp(x, zero, CompareFn::veq);
+    Value yZero = makeCmp(y, zero, CompareFn::veq);
+    Value originMask = makeVand(xZero, yZero);
+
+    // if origin -> 0, else theta
+    theta = makeSelect(originMask, zero, theta, y);
+
+    if (castBackToF16) {
+      theta = hfusion::castTo(rewriter, theta, rewriter.getF16Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, theta);
+    return success();
+  }
+};
+
 struct NormalizeExpM1Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
@@ -6367,6 +6523,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeSinOp>(patterns.getContext());
   patterns.add<NormalizeCosOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
+  patterns.add<NormalizeAtan2Op>(patterns.getContext());
   patterns.add<NormalizeTanOp>(patterns.getContext());
   patterns.add<NormalizeTanhOp>(patterns.getContext());
   patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());

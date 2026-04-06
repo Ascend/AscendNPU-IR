@@ -120,6 +120,16 @@ func.func @test_powf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor
 
 // -----
 
+// CHECK-LABEL: func.func @test_atan2
+func.func @test_atan2(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<atan2>}
+  %ret = math.atan2 %arg0, %arg1 : tensor<6x6xf32>
+  return %ret : tensor<6x6xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_log2
 func.func @test_log2(%arg0 : tensor<1024xf32>) -> tensor<1024xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()
