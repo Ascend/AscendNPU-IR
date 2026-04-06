@@ -35,6 +35,11 @@ static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
 namespace {
 
+struct AtomicEffect {
+  AtomicKind kind;
+  TypeAttr type;
+};
+
 struct WorkspaceAllocParams {
   unsigned multibuffer;
   annotation::MarkOp marker;
@@ -97,6 +102,8 @@ private:
   void traceMemrefSubnet(Operation *start,
                          SmallVector<Operation *> &workingStack);
 
+  void collectAtomicEffects();
+
   void markOutputs();
 
   void expandOutputInits(WorkItem *item);
@@ -154,6 +161,13 @@ private:
 
   // Corresponding expanded tensors for each output of work items
   DenseMap<Value, Value> expandedTensorMap;
+
+  // Mapping from each op under atomic effect to its atomic kind and data type
+  DenseMap<Operation *, AtomicEffect> atomicEffectMap;
+
+  // If the atomic effect is still active at the end of the loop body, this
+  // holds that trailing state so it can be restored after the pipelined loops.
+  std::optional<AtomicEffect> trailingAtomicEffect;
 
   // Mapping from the original pipelineLoop to the newLoop to guide the cloning
   // process
@@ -759,6 +773,34 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
   return success();
 }
 
+/// Walk the pipeline loop body and record which store-like ops (FixpipeOp,
+/// StoreOp) are under an active atomic effect.
+void CVPipelineImpl::collectAtomicEffects() {
+  std::optional<AtomicEffect> current;
+  for (Operation &op : *pipelineLoop.getBody()) {
+    if (auto setAtomic = dyn_cast<SetAtomicOp>(&op)) {
+      if (setAtomic.getKind() != AtomicKind::NONE)
+        current = AtomicEffect{setAtomic.getKind(), setAtomic.getTypeAttr()};
+      else
+        current = std::nullopt;
+      continue;
+    }
+    if (current && isa<FixpipeOp, StoreOp>(&op))
+      atomicEffectMap[&op] = *current;
+  }
+  trailingAtomicEffect = current;
+  LLVM_DEBUG({
+    dbgs() << "[collectAtomicEffects] Ops under atomic effect:\n";
+    for (auto &[op, effect] : atomicEffectMap) {
+      dbgs() << "\t" << stringifyAtomicKind(effect.kind) << " ";
+      if (effect.type)
+        dbgs() << effect.type;
+      dbgs() << ": ";
+      op->dump();
+    }
+  });
+}
+
 /// Split loop based on separator ops into individual work items
 LogicalResult CVPipelineImpl::createWorkItems() {
   int multibuffer = numMultibuffer > 1 ? numMultibuffer : 2;
@@ -781,7 +823,7 @@ LogicalResult CVPipelineImpl::createWorkItems() {
         // Conflict in multibuffer count, use smallest one
         multibuffer = std::min(multibuffer, markMultibuffer);
       }
-    } else if (illegalRegionedOp(&op) || isa<SetAtomicOp>(&op)) {
+    } else if (illegalRegionedOp(&op)) {
       // Illegal op, do nothing and return
       return failure();
     }
@@ -1084,7 +1126,16 @@ void CVPipelineImpl::migrateOps() {
     }
     for (WorkItem *target : it->getSecond()) {
       builder.setInsertionPointToEnd(target->forOp.getBody());
+      auto atomicIt = atomicEffectMap.find(&op);
+      if (atomicIt != atomicEffectMap.end()) {
+        auto &effect = atomicIt->getSecond();
+        builder.create<SetAtomicOp>(op.getLoc(), effect.kind, effect.type);
+      }
       builder.clone(op, target->irMap);
+      if (atomicIt != atomicEffectMap.end()) {
+        builder.create<SetAtomicOp>(op.getLoc(), AtomicKind::NONE,
+                                    atomicIt->getSecond().type);
+      }
     }
   }
   LLVM_DEBUG(dbgs() << "\n\n[migrateOps] After cloning:\n";
@@ -1195,11 +1246,17 @@ void CVPipelineImpl::migrateOps() {
     yieldVals.clear();
   }
   builder.setInsertionPointToEnd(newLoop.getBody());
+  if (trailingAtomicEffect) {
+    builder.create<SetAtomicOp>(pipelineLoop->getLoc(),
+                                trailingAtomicEffect->kind,
+                                trailingAtomicEffect->type);
+  }
   builder.clone(*pipelineLoop.getBody()->getTerminator(), globalIRMap);
 }
 
 /// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
+  collectAtomicEffects();
   if (createWorkItems().failed())
     return failure();
   markOutputs();
