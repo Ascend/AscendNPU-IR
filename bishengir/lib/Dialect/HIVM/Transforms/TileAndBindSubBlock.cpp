@@ -833,7 +833,14 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   }
 
   if (isBroadcastAxisCase) {
-    strictMode = false;
+    if (!func.walk([](scf::ForOp forOp) {
+               return forOp->hasAttr("ExtractedLoadOrStore")
+                          ? WalkResult::interrupt()
+                          : WalkResult::advance();
+             })
+             .wasInterrupted()) {
+      strictMode = false;
+    }
   }
 
   // If all the pattern fails due to the tilingDim=-1

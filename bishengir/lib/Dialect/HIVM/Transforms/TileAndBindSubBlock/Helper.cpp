@@ -263,6 +263,8 @@ static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
       return false;
   }
 
+  if (offsets.size() <= tilingDim)
+    return false;
   // Offset at tiling dim should be tileSize * loop index;
   // First check the affine map is calculating N * tileSize;
   auto offsetAffineMap =
