@@ -428,7 +428,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<9x4x16x16xf32, #hivm.address_space<cc>>
     // A5-NOT: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>}
     %alloc_1 = memref.alloc() : memref<36x256xf32, #hivm.address_space<ub>>
-    // A5: annotation.mark %alloc_0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
+    // A5: annotation.mark %alloc_0 {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 128>}
     hivm.hir.fixpipe ins(%alloc_0 : memref<9x4x16x16xf32, #hivm.address_space<cc>>) outs(%alloc_1 : memref<36x256xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
     return
   }
