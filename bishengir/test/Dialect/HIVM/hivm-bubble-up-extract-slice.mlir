@@ -884,3 +884,26 @@ func.func @trivial_collapse(%arg0: tensor<1x64x1xf32>, %arg1: memref<64xf32>, %o
   hivm.hir.store ins(%extracted_slice : tensor<32xf32>) outs(%subview : memref<32xf32, strided<[1], offset: ?>>) {tiled_op}
   return
 }
+
+// -----
+// CHECK-LABEL:   func.func @trivial_collapse2(
+// CHECK-SAME:                                 %[[VAL_0:.*]]: tensor<1x1x64xf32>,
+// CHECK-SAME:                                 %[[VAL_1:.*]]: memref<1x64xf32>,
+// CHECK-SAME:                                 %[[VAL_2:.*]]: index) {
+// CHECK:           %[[VAL_3:.*]] = memref.subview %[[VAL_1]][0, %[[VAL_2]]] [1, 32] [1, 1] {to_be_bubbled_slice} : memref<1x64xf32> to memref<1x32xf32, strided<[64, 1], offset: ?>>
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_0]][0, 0, %[[VAL_2]]] [1, 1, 32] [1, 1, 1] {to_be_bubbled_slice} : tensor<1x1x64xf32> to tensor<1x1x32xf32>
+// CHECK:           %[[VAL_5:.*]] = tensor.collapse_shape %[[VAL_4]] {{\[\[}}0, 1], [2]] : tensor<1x1x32xf32> into tensor<1x32xf32>
+// CHECK:           %[[VAL_6:.*]] = tensor.empty() : tensor<1x32xf32>
+// CHECK:           %[[VAL_7:.*]] = hivm.hir.vln ins(%[[VAL_5]] : tensor<1x32xf32>) outs(%[[VAL_6]] : tensor<1x32xf32>) -> tensor<1x32xf32>
+// CHECK:           hivm.hir.store ins(%[[VAL_7]] : tensor<1x32xf32>) outs(%[[VAL_3]] : memref<1x32xf32, strided<[64, 1], offset: ?>>) {tiled_op}
+// CHECK:           return
+// CHECK:         }
+func.func @trivial_collapse2(%arg0: tensor<1x1x64xf32>, %arg1: memref<1x64xf32>, %arg2: index) {
+  %subview = memref.subview %arg1[0, %arg2] [1, 32] [1, 1] {to_be_bubbled_slice} : memref<1x64xf32> to memref<1x32xf32, strided<[64, 1], offset: ?>>
+  %0 = tensor.empty() : tensor<1x64xf32>
+  %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2]] : tensor<1x1x64xf32> into tensor<1x64xf32>
+  %1 = hivm.hir.vln ins(%collapsed : tensor<1x64xf32>) outs(%0 : tensor<1x64xf32>) -> tensor<1x64xf32>
+  %extracted_slice = tensor.extract_slice %1[0, %arg2] [1, 32] [1, 1] {to_be_bubbled_slice} : tensor<1x64xf32> to tensor<1x32xf32>
+  hivm.hir.store ins(%extracted_slice : tensor<1x32xf32>) outs(%subview : memref<1x32xf32, strided<[64, 1], offset: ?>>) {tiled_op}
+  return
+}
