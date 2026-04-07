@@ -1,9 +1,6 @@
 // RUN: bishengir-opt --convert-hfusion-to-hivm --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
-
-//
 // This test verifies the correctness of HIVM normalization transformations
 // applied to HFusion operators after conversion to HIVM dialect.
-//
 
 // CHECK-LABEL: func.func @test_normalize_compare_neq_to_Not_eq
 // CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi64>, %[[arg2:.*]]: tensor<1024xi1>)

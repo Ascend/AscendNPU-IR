@@ -1,4 +1,6 @@
 // RUN: bishengir-opt --convert-hfusion-to-hivm --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
+// This test verifies the correctness of HIVM normalization transformations
+// applied to HFusion operators after conversion to HIVM dialect.
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<5x1xf32>)

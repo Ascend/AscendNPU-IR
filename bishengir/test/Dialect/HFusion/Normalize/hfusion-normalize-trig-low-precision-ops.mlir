@@ -1,6 +1,6 @@
 // RUN: bishengir-opt --hfusion-normalize-ops="enable-high-precision=false" %s -split-input-file -verify-diagnostics | FileCheck %s
-// -----
-// CHECK-LABEL: func.func @test_hfusion_sin_ops(
+
+// CHECK-LABEL: func.func @test_NormalizeSin_hfusion_sin_ops(
 // CHECK-SAME: %[[VAL_0:.*]]: tensor<5x1xf32>) -> tensor<5x1xf32> {
 // CHECK: %[[VAL_1:.*]] = arith.constant -2.000000e+00 : f32
 // CHECK: %[[VAL_2:.*]] = arith.constant 4.000000e+00 : f32
@@ -55,14 +55,15 @@
 // CHECK: %[[VAL_51:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_42]], %[[VAL_50]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_16]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK  return %[[VAL_51]] : tensor<5x1xf32>
 // CHECK: }
-func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
+func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
   %0 = tensor.empty() : tensor<5x1xf32>
   %ret = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>} ins(%arg0 : tensor<5x1xf32>) outs(%0 : tensor<5x1xf32>) -> tensor<5x1xf32>
   return %ret : tensor<5x1xf32>
 }
 
 // -----
-// CHECK-LABEL: func.func @test_hfusion_cos_ops(
+
+// CHECK-LABEL: func.func @test_NormalizeCos_hfusion_cos_ops(
 // CHECK-SAME: %[[VAL_0:.*]]: tensor<5x1xf16>) -> tensor<5x1xf16> {
 // CHECK: %[[VAL_1:.*]] = arith.constant -2.000000e+00 : f32
 // CHECK: %[[VAL_2:.*]] = arith.constant 4.000000e+00 : f32
@@ -123,7 +124,7 @@ func.func @test_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
 // CHECK: %[[VAL_57:.*]] = hfusion.cast {{.*}} ins(%[[VAL_55]] : tensor<5x1xf32>) outs(%[[VAL_56]] : tensor<5x1xf16>) -> tensor<5x1xf16>
 // CHECK: return %[[VAL_57]] : tensor<5x1xf16>
 // CHECK: }
-func.func @test_hfusion_cos_ops(%arg0 : tensor<5x1xf16>) ->  tensor<5x1xf16> {
+func.func @test_NormalizeCos_hfusion_cos_ops(%arg0 : tensor<5x1xf16>) ->  tensor<5x1xf16> {
   %0 = tensor.empty() : tensor<5x1xf16>
   %ret = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>} ins(%arg0 : tensor<5x1xf16>) outs(%0 : tensor<5x1xf16>) -> tensor<5x1xf16>
   return %ret : tensor<5x1xf16>
