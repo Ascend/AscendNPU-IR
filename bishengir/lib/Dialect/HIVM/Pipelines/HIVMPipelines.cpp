@@ -18,6 +18,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
@@ -263,6 +264,20 @@ alignStoragePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createEnableStrideAlignPass());
 }
 
+static void syncBlockLockPipeline(OpPassManager &pm,
+                                  SyncBlockLockPipelinePhase phase) {
+  if (phase == SyncBlockLockPipelinePhase::Prepare) {
+    pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
+    pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
+    pm.nest<func::FuncOp>().addPass(
+        createInsertInferSyncBlockLockNumAndInitFuncPass());
+    pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
+  } else if (phase == SyncBlockLockPipelinePhase::Finalize) {
+    pm.addPass(createMarkSyncBlockLockWithSubblockPass());
+    pm.addPass(createInsertFreeLockVarBeforeReturnPass());
+  }
+}
+
 static void hivmPostBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.nest<func::FuncOp>().addPass(createLiftZeroRankPass());
@@ -270,11 +285,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMMapForallToBlocksPass());
   // Op decompose, need mark buffer size for newly allocated buffer.
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
-  pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
-  pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
-  pm.nest<func::FuncOp>().addPass(
-      createInsertInferSyncBlockLockNumAndInitFuncPass());
-  pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Prepare);
   // Convert non-contiguous reshape to hivm.copy
   // Call this before infer mem scope. Otherwise, there might be UB allocs in
   // AIC function.
@@ -378,6 +389,7 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.addPass(annotation::createAnnotationLoweringPass());
   pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
   pm.nest<func::FuncOp>().addPass(createMarkDisableLoadPass());
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
   pm.addPass(createConvertHIVMToStandardPass());
 }
 

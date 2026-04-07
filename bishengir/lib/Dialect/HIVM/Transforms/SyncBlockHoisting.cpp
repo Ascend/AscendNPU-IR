@@ -21,12 +21,12 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
@@ -51,35 +51,93 @@ public:
   void runOnOperation() override;
 };
 
-template <typename OpTy>
-struct HoistingSyncBlockPattern : public OpRewritePattern<OpTy> {
-  using OpRewritePattern<OpTy>::OpRewritePattern;
+/// Hoist every create_sync_block_lock in scf.if regions to the start of the
+/// enclosing func. Does not move sync_block_lock / sync_block_unlock.
+struct HoistCreateSyncBlockLockInIfPattern
+    : public OpRewritePattern<scf::IfOp> {
+  using OpRewritePattern<scf::IfOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(OpTy op,
+  LogicalResult matchAndRewrite(scf::IfOp ifOp,
                                 PatternRewriter &rewriter) const override {
-    // Step 1: Get the list of lock and unlock operation
+    SmallVector<CreateSyncBlockLockOp, 4> createOps;
+    for (Region &region : ifOp->getRegions()) {
+      region.walk([&](CreateSyncBlockLockOp createOp) {
+        createOps.push_back(createOp);
+      });
+    }
+    if (createOps.empty())
+      return failure();
+
+    auto funcOp = ifOp->getParentOfType<func::FuncOp>();
+    assert(funcOp && "create hoisting expects scf.if inside func.func");
+    Block &entry = funcOp.getBody().front();
+
+    for (CreateSyncBlockLockOp createOp : createOps)
+      rewriter.moveOpBefore(createOp, &entry.front());
+    return success();
+  }
+};
+
+struct HoistingSyncBlockPattern
+    : public OpInterfaceRewritePattern<LoopLikeOpInterface> {
+  using OpInterfaceRewritePattern<
+      LoopLikeOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult matchAndRewrite(LoopLikeOpInterface op,
+                                PatternRewriter &rewriter) const override {
+    Operation *loopOp = op.getOperation();
+    // Step 1: Collect all lock/unlock in the loop (including under scf.if).
     SmallVector<hivm::SyncBlockLockOp> lockVec = {};
     SmallVector<hivm::SyncBlockUnlockOp> unlockVec = {};
     for (auto &region : op->getRegions()) {
-      region.walk([&](hivm::SyncBlockLockOp op) { lockVec.push_back(op); });
-      region.walk([&](hivm::SyncBlockUnlockOp op) { unlockVec.push_back(op); });
+      region.walk(
+          [&](hivm::SyncBlockLockOp lockOp) { lockVec.push_back(lockOp); });
+      region.walk([&](hivm::SyncBlockUnlockOp unlockOp) {
+        unlockVec.push_back(unlockOp);
+      });
     }
-    // Step 2: Return if no lock and unlock op is found
     assert(lockVec.size() == unlockVec.size() &&
            "The number of lock and unlock should be the same in one region.");
     if (lockVec.empty())
       return failure();
-    // Step 3: Erase all the lock and unlock op and create them outside
-    for (auto op : lockVec)
-      rewriter.eraseOp(op);
-    for (auto op : unlockVec)
-      rewriter.eraseOp(op);
-    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+
+    for (auto lockOp : lockVec) {
+      auto *defOp = lockOp.getLockVar().getDefiningOp();
+      if (!isa<CreateSyncBlockLockOp>(defOp)) {
+        op->emitOpError(
+            "expected lock memref defined by hivm.hir.create_sync_block_lock");
+        return failure();
+      }
+    }
+
+    Value lockMemref = lockVec.front().getLockVar();
+    llvm::SmallPtrSet<Operation *, 4> createOpSet;
+    for (auto lockOp : lockVec)
+      createOpSet.insert(lockOp.getLockVar().getDefiningOp());
+
+    auto funcOp = op->getParentOfType<func::FuncOp>();
+    assert(funcOp && "sync block hoisting expects loop inside func.func");
+    Block &entry = funcOp.getBody().front();
+
+    auto primaryCreate =
+        cast<CreateSyncBlockLockOp>(lockMemref.getDefiningOp());
+    rewriter.moveOpBefore(primaryCreate, &entry.front());
+
+    for (auto lockOp : lockVec)
+      rewriter.eraseOp(lockOp);
+    for (auto unlockOp : unlockVec)
+      rewriter.eraseOp(unlockOp);
+
+    for (Operation *createOp : createOpSet) {
+      if (createOp != primaryCreate && createOp->use_empty())
+        rewriter.eraseOp(createOp);
+    }
+
     OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPoint(op);
-    rewriter.create<hivm::SyncBlockLockOp>(op->getLoc(), lockVar);
-    rewriter.setInsertionPointAfter(op);
-    rewriter.create<hivm::SyncBlockUnlockOp>(op->getLoc(), lockVar);
+    rewriter.setInsertionPoint(loopOp);
+    rewriter.create<hivm::SyncBlockLockOp>(op->getLoc(), lockMemref);
+    rewriter.setInsertionPointAfter(loopOp);
+    rewriter.create<hivm::SyncBlockUnlockOp>(op->getLoc(), lockMemref);
     return success();
   }
 };
@@ -88,9 +146,8 @@ struct HoistingSyncBlockPattern : public OpRewritePattern<OpTy> {
 
 void SyncBlockHoistingPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  patterns.add<HoistingSyncBlockPattern<scf::ForOp>,
-               HoistingSyncBlockPattern<scf::WhileOp>,
-               HoistingSyncBlockPattern<scf::IfOp>>(patterns.getContext());
+  patterns.add<HoistCreateSyncBlockLockInIfPattern>(patterns.getContext());
+  patterns.add<HoistingSyncBlockPattern>(patterns.getContext());
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }

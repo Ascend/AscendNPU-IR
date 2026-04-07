@@ -218,6 +218,10 @@ std::unique_ptr<Pass> createInsertInferSyncBlockLockNumAndInitFuncPass();
 // Create a pass to lower CreateSyncBlockLockOp.
 std::unique_ptr<Pass> createSyncBlockLockLoweringPass();
 
+// Create a pass to insert FreeLockVarOp before return to prevent
+// deadlock when control flow skips sync_block_lock/unlock.
+std::unique_ptr<Pass> createInsertFreeLockVarBeforeReturnPass();
+
 // Create a pass to auto infer buffer size by inserting Annotation MarkOp
 std::unique_ptr<Pass> createAutoInferBufferSizePass();
 
@@ -242,6 +246,11 @@ std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
 
 // Create a pass to mark memref.loads that need to disable dcache.
 std::unique_ptr<Pass> createMarkDisableLoadPass();
+
+/// Create a pass to mark sync_block_lock/sync_block_unlock with
+/// sync_block_lock_with_subblock tag when not inside limit_sub_block_id0 if in
+/// mix module.
+std::unique_ptr<Pass> createMarkSyncBlockLockWithSubblockPass();
 
 // Create a pass to insert nz2nd for debug.
 std::unique_ptr<Pass> createInsertNZ2NDForDebugPass();
