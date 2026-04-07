@@ -288,10 +288,10 @@ private:
 
   /// Compose grouped reduce operations
   void composeGroupedOperations(
-      const SmallVector<SmallVector<linalg::ReduceOp>> &reduceGrouping) const {
+      SmallVector<SmallVector<linalg::ReduceOp>> &reduceGrouping) const {
     for (auto &group : reduceGrouping) {
       if (group.size() > 1) {
-        composeReduceOps(const_cast<SmallVector<linalg::ReduceOp> &>(group));
+        composeReduceOps(group);
       }
     }
   }

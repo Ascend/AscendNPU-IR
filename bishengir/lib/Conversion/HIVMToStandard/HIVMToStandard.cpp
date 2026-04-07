@@ -1298,7 +1298,8 @@ public:
         loopIndices.insert(loopIndice);
       }
 
-      int curReducedRank = originalRank - loopIndices.size();
+      int curReducedRank =
+          originalRank - static_cast<int>(loopIndices.size());
 
       if (curReducedRank > 3) {
         int additionalLoopNum = curReducedRank - 3;
@@ -1315,7 +1316,7 @@ public:
       convertedVals = reduceMemrefsToNestedForUsingAxes(
           rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
 
-      reducedRank = originalRank - loopIndices.size();
+      reducedRank = originalRank - static_cast<int>(loopIndices.size());
     } else if (firstAxis && rank > 3) {
       convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
                                                memrefValsMaybe, 1, rank - 2);

@@ -789,7 +789,7 @@ static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
 
   // backward compatibility
   auto addInterleave = [&](auto idx, auto size) {
-    if (idx < size - 1)
+    if (static_cast<int64_t>(idx) < static_cast<int64_t>(size) - 1)
       _odsPrinter << ", ";
     return;
   };

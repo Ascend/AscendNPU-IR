@@ -27,12 +27,6 @@ namespace {
 // Helpers
 //===----------------------------------------------------------------------===//
 
-SmallVector<Type> replaceTypeAt(TypeRange tys, uint32_t idx, Type newTy) {
-  SmallVector<Type> out(tys.begin(), tys.end());
-  out[idx] = newTy;
-  return out;
-}
-
 scf::WhileOp createWhileWithExplicitBlockTypes(
     PatternRewriter &rewriter, scf::WhileOp oldWhile, ValueRange newInits,
     TypeRange newResultTypes, TypeRange newBeforeArgTypes,
@@ -52,16 +46,6 @@ scf::WhileOp createWhileWithExplicitBlockTypes(
   rewriter.createBlock(&newWhile.getAfter(), newWhile.getAfter().end(),
                        newAfterArgTypes, afterLocs);
   return newWhile;
-}
-
-void cloneOpsWithoutTerminator(PatternRewriter &rewriter, Block *src, Block *dst,
-                               IRMapping &mapping, Operation *skipOp = nullptr) {
-  rewriter.setInsertionPointToStart(dst);
-  for (Operation &op : src->without_terminator()) {
-    if (&op == skipOp)
-      continue;
-    rewriter.clone(op, mapping);
-  }
 }
 
 Value mapOrSelf(IRMapping &m, Value v) { return m.lookupOrDefault(v); }

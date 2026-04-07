@@ -56,17 +56,19 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
 
   auto srcElemType = getElementTypeOrSelf(srcShapedType);
   auto dstElemType = getElementTypeOrSelf(dstShapedType);
-  auto srcElemBytes =
-      srcElemType.getIntOrFloatBitWidth() / mlir::utils::INTR_BITS_PER_BYTE;
-  auto dstElemBytes =
-      dstElemType.getIntOrFloatBitWidth() / mlir::utils::INTR_BITS_PER_BYTE;
+  const int64_t srcElemBytes =
+      static_cast<int64_t>(srcElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
+  const int64_t dstElemBytes =
+      static_cast<int64_t>(dstElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
 
   if (srcElemBytes == 0 || dstElemBytes == 0) {
     auto sz = utils::traceToAllocMaxSize(srcVal);
     return sz.value_or(0);
   }
 
-  int64_t bytesFactor = srcElemBytes / dstElemBytes;
+  const int64_t bytesFactor = srcElemBytes / dstElemBytes;
   int64_t rank = srcShapedType.getRank();
 
   // Fallback for unexpected rank.
@@ -88,7 +90,7 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
   }
 
   uint32_t hwAlignBytes = maybeHwAlignBytes.value();
-  int64_t numElemPerBlock =
+  const int64_t numElemPerBlock =
       static_cast<int64_t>(mlir::utils::INTR_BYTES_PER_BLOCK) / srcElemBytes;
   int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
   // For example (a, b)strides<n1, 1>*i32 cast to (a, b)strides<n2, 1>*i8:
@@ -117,7 +119,8 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
       hwAlignBytes = static_cast<uint32_t>(
           numElemPerBlockForDst * numElemPerBlockForDst * bytesFactor);
     }
-    int64_t alignUnit = static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
+    const int64_t alignUnit =
+        static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
     alignedShape[0] = util::ceilFactor(dim0, alignUnit);
   } else {
     int64_t lastDim = rank - 1;
@@ -130,13 +133,13 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
     }
 
     // Align the second axis in castAlignDims.
-    int64_t alignUnitLast =
+    const int64_t alignUnitLast =
         static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
     alignedShape[lastDim] = util::ceilFactor(dimLast, alignUnitLast);
     // Align the first axis in castAlignDims.
     uint32_t hwAlignBytesFirst =
         static_cast<uint32_t>(numElemPerBlockForDst * bytesFactor);
-    int64_t alignUnitFirst =
+    const int64_t alignUnitFirst =
         static_cast<int64_t>(hwAlignBytesFirst) / srcElemBytes;
     alignedShape[firstDim] = util::ceilFactor(dimFirst, alignUnitFirst);
   }
