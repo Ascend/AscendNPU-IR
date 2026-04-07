@@ -185,7 +185,15 @@ isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
   while (!worklist.empty()) {
     Value cur = worklist.pop_back_val();
     if (cur == allowedIterArg)
-      continue; // reach only accepted leaf
+      continue; // accepted leaf
+
+    // Other block args of the loop body (induction var, other iter args)
+    // are valid leaves — they don't depend on allowedIterArg.
+    if (auto ba = dyn_cast<BlockArgument>(cur)) {
+      if (ba.getOwner() == body)
+        continue;
+      return failure();
+    }
 
     Operation *def = cur.getDefiningOp();
     if (!def)
@@ -194,45 +202,53 @@ isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
     if (def->getBlock() != body)
       return failure();
 
-    // No memory effects.
     if (!isNoEffect(def))
       return failure();
 
     visitedOps.insert(def);
     for (Value operand : def->getOperands()) {
-      if (!isInLoopBody(operand, body)) {
-        continue; // ignore outside loop constants
-      }
-
-      if (visitedVals.insert(operand).second) // avoid double visit
+      if (!isInLoopBody(operand, body))
+        continue; // loop-invariant constant
+      if (visitedVals.insert(operand).second)
         worklist.push_back(operand);
     }
   }
-  // cannot delete iter arg if used elsewhere
+
+  // Collect ops that directly use allowedIterArg — only these MUST be deleted,
+  // since the iter arg will no longer exist in the rebuilt loop.
+  SmallPtrSet<Operation *, 8> mustDelete;
   for (OpOperand &use : allowedIterArg.getUses()) {
     Operation *user = use.getOwner();
-    if (!visitedOps.contains(user)) {
-      if (!(isa<scf::YieldOp>(user) &&
-            body->getArgument(use.getOperandNumber() + 1) == allowedIterArg))
-        return failure();
+    if (isa<scf::YieldOp>(user)) {
+      // OK if yielded back at its own position; fail if used at another
+      // position
+      if (body->getArgument(use.getOperandNumber() + 1) == allowedIterArg)
+        continue;
+      return failure();
     }
+    if (!visitedOps.contains(user))
+      return failure();
+    mustDelete.insert(user);
   }
-  // visited ops to be deleted should only be used in current trace chain
-  for (Operation *op : visitedOps) {
+
+  // Verify must-delete ops can actually be deleted: all their result uses
+  // must be within mustDelete or the yield-for-allowedIterArg.
+  for (Operation *op : mustDelete) {
     for (Value res : op->getResults()) {
       for (OpOperand &use : res.getUses()) {
         Operation *user = use.getOwner();
-        if (!visitedOps.contains(user)) {
-          if (!(isa<scf::YieldOp>(user) &&
-                body->getArgument(use.getOperandNumber() + 1) ==
-                    allowedIterArg))
-            return failure();
-        }
+        if (mustDelete.contains(user))
+          continue;
+        if (isa<scf::YieldOp>(user) &&
+            body->getArgument(use.getOperandNumber() + 1) == allowedIterArg)
+          continue;
+        // Result is used outside the delete set — can't safely delete this op
+        return failure();
       }
     }
   }
 
-  tobeDeletedOps.insert(visitedOps.begin(), visitedOps.end());
+  tobeDeletedOps.insert(mustDelete.begin(), mustDelete.end());
   return success();
 }
 
