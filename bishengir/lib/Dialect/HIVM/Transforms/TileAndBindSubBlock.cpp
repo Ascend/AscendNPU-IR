@@ -77,6 +77,8 @@ using namespace mlir::hivm;
 namespace {
 static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
 static constexpr llvm::StringLiteral tiledOp = "tiled_op";
 static constexpr llvm::StringLiteral tileAndBindLeaf =
     "hivm.tile_and_bind_leaf";
@@ -1245,6 +1247,18 @@ void TileAndBindSubBlockPass::runOnOperation() {
     });
   };
 
+  auto hasImplicitTransWithAxis = [&aivFunctions]() -> bool {
+    return llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+      return aivFunc
+          .walk([](annotation::MarkOp markOp) {
+            return markOp.isAnnotatedBy(kMayImplicitTransposeWithLastAxis)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          })
+          .wasInterrupted();
+    });
+  };
+
   collectMixAicAndAivFuncs();
 
   if (!this->enableTile) {
@@ -1255,6 +1269,16 @@ void TileAndBindSubBlockPass::runOnOperation() {
   // limitUniqueSubBlockToStore vector function and skip this pass if
   // BatchMatmul is found
   if (hasBatchMatmulLoopInAic()) {
+    (void)limitAllAivToSubBlock0();
+    return;
+  }
+
+  // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
+  // loaded and extracted to use. In some cases, the extract slice is not fused
+  // into the vector function, which will lead to precision error because of the
+  // function boundary setting of one-shot-bufferize. So we don't tile cases
+  // with implicit transpose at all to avoid the problem for now.
+  if (hasImplicitTransWithAxis()) {
     (void)limitAllAivToSubBlock0();
     return;
   }
