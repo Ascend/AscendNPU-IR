@@ -102,11 +102,6 @@ struct HIVMPipelineOptions
       llvm::cl::desc("Enable print memory allocated size"),
       llvm::cl::init(false)};
 
-  PassOptions::Option<bool> disableTightlyCoupledBufferReuse{
-      *this, "disable-tightly-coupled-buffer-reuse",
-      llvm::cl::desc("Disable tightly coupled buffer reuse"),
-      llvm::cl::init(false)};
-
   PassOptions::Option<bool> enableHIVMInjectBarrierAllSync{
       *this, "enable-hivm-inject-barrier-all-sync",
       llvm::cl::desc("Enable barrier all mode for HIVM inject sync"),

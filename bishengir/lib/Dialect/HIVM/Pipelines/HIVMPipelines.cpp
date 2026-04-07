@@ -272,8 +272,6 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes (Inject-Block-Sync, Cross-Core-GSS)
@@ -288,7 +286,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(createSplitMixKernelPass());
   pm.addPass(scope::createInlineScopePass());
   TileAndBindSubBlockOptions tileOptions;
-  tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
+  tileOptions.enableTile=hivmPipelineOptions.enableAutoBindSubBlock;
   pm.addPass(createTileAndBindSubBlockPass(tileOptions));
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
@@ -422,8 +420,6 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-  planMemoryOption.disableTightlyCoupledBufferReuse =
-      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
@@ -494,8 +490,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   // all `scope.scope` ops.
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
-  pm.addPass(
-      bishengir::createInjectIRPass(hivmPipelineOptions.injectIrFromFile));
+  pm.addPass(bishengir::createInjectIRPass(hivmPipelineOptions.injectIrFromFile));
 }
 
 //===----------------------------------------------------------------------===//
