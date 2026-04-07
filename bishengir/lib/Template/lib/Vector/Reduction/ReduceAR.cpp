@@ -116,7 +116,8 @@ is_unaligned_reduce(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
   const int64_t dst_stride1 = dst->strides[1];
 
   bool is_special_scene_use_vcgadd_vcpadd = (size1 <= num_per_block && src_stride0 == size1 &&
-                                            dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM);
+                                            dst_stride0 == 1 && OP == ReduceOpTy::REDUCE_SUM &&
+                                          (std::is_same<T, half>::value || std::is_same<T, float>::value));
   bool is_stride_aligned = is32ByteAligned<T>(src_stride0) || 
                            (is_special_scene_use_vcgadd_vcpadd && (size1 & (size1 - 1)) == 0) ||
                            ((((OP == ReduceOpTy::REDUCE_XOR || OP == ReduceOpTy::REDUCE_OR ||
