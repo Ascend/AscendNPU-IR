@@ -302,8 +302,8 @@ void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   auto forBeginSeq = UpdateLinearOperation(forOp.getOperation());
   UpdateOpGenInfo(forBeginSeq, GetLiveBuffersInLoop(forOp, live));
   UpdateForOpInitArgsAlias(forOp);
-  RecursionIR(&forOp.getRegion(), live);
   UpdateForOpBufferAlias(forOp);
+  RecursionIR(&forOp.getRegion(), live);
   auto forEndSeq = UpdateLinearOperation(forOp.getOperation());
   OpKillHandle(forEndSeq, live, forOp->getBlock());
 }
