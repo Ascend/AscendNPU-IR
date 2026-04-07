@@ -112,22 +112,6 @@ struct LocalAllocOpConversion
         return failure();
       }
     }
-#if BSPRIV_DAVINCI_BISHENGIR
-    bool needBarrier = false;
-    for (Operation *user : op->getUsers()) {
-      if (auto loadOp = dyn_cast<triton::gpu::LocalLoadOp>(user)) {
-        auto resultTy = dyn_cast<RankedTensorType>(loadOp.getType());
-        if (resultTy) {
-          auto encoding = resultTy.getEncoding();
-          if (isa<triton::gpu::DotOperandEncodingAttr>(encoding)) {
-            needBarrier = true;
-          }
-        }
-      }
-    }
-    if (needBarrier)
-      rewriter.create<mlir::gpu::BarrierOp>(loc);
-#endif
     auto retVal = getStructFromSharedMemoryObject(loc, smemObj, rewriter);
     rewriter.replaceOp(op, retVal);
     return success();
