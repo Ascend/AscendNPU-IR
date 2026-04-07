@@ -635,14 +635,6 @@ public:
     return enableFusedMultiplyAddFlag;
   }
 
-  BiShengIRCompileMainConfig &disableTightlyCoupledBufferReuse(bool disable) {
-    disableTightlyCoupledBufferReuseFlag = disable;
-    return *this;
-  }
-  bool shouldDisableTightlyCoupledBufferReuse() const {
-    return disableTightlyCoupledBufferReuseFlag;
-  }
-
   BiShengIRCompileMainConfig &enableND2NZOnVector(bool compile) {
     enableND2NZOnVectorFlag = compile;
     return *this;
@@ -1021,9 +1013,6 @@ protected:
 
   /// Enable inject sync pass to use unit-flag modes for synchronization
   bool enableUnitFlagSyncFlag{false};
-
-  /// Disable plan memory pass to reuse tightly coupled buffer 
-  bool disableTightlyCoupledBufferReuseFlag{false};
 
   /// Enable global workspace reuse.
   bool enableGlobalWorkspaceReuseFlag{false};
