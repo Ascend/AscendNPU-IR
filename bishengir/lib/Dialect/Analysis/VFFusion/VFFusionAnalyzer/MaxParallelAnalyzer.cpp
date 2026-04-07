@@ -454,8 +454,8 @@ static bool parallelismCostModel(Operation *candidateOp,
   auto fusedComputeCount =
       getComputeOpCount(candidateOp) + getComputeOpCount(fusedOps);
   auto fusedLoopParallelism =
-      (1.0f * issueQueueLens * 2 / (fusedIoCountNum + fusedComputeCount)) *
-      (1.0f * fusedComputeCount / (fusedIoCountNum + fusedComputeCount));
+      (1.0f * issueQueueLens * 2 / (static_cast<int>(fusedIoCountNum) + static_cast<int>(fusedComputeCount))) *
+      (1.0f * fusedComputeCount / (static_cast<int>(fusedIoCountNum) + static_cast<int>(fusedComputeCount)));
   auto opMaxParallelism =
       std::max(getParallelism(candidateOp), getParallelism(fusedOps));
   return fusedLoopParallelism + std::numeric_limits<float>::epsilon() >
