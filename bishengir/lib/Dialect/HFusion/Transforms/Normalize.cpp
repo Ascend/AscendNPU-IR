@@ -3779,6 +3779,64 @@ public:
   }
 };
 
+// Rewrite pattern to normalize tensor.insert_slice operations with bool (i1) element type
+// Converts bool source/dest to f16 type to enable NPU hardware acceleration
+template <>
+  struct NormalizeToTargetType<bool, tensor::InsertSliceOp>
+      : public OpRewritePattern<tensor::InsertSliceOp> {
+  public:
+    using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+  
+    LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                  PatternRewriter &rewriter) const override {
+      SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+      // Check if both tensors have i1 (boolean) element type
+      // If not, skip this pattern
+      if (!hasI1ElemType(tensors))
+        return failure();
+  
+      SmallVector<Value> newTensors =
+          normalizeSrcToTargetType<bool, Float16Type>(rewriter, tensors);
+      auto newOp = rewriter.create<tensor::InsertSliceOp>(
+          op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+          op.getMixedSizes(), op.getMixedStrides());
+      // Replace the original bool result with the new f16 result
+      replaceI1ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                    rewriter,
+                                    /*enableOverflow*/ false);
+      return success();
+    }
+  };
+
+// Rewrite pattern to normalize tensor.insert_slice operations with int8 element type
+// Converts int8 source/dest to f16 type for better NPU compatibility
+template <>
+  struct NormalizeToTargetType<int8_t, tensor::InsertSliceOp>
+      : public OpRewritePattern<tensor::InsertSliceOp> {
+  public:
+    using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+  
+    LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                  PatternRewriter &rewriter) const override {
+      SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+      // Check if both tensors have i8 (int8) element type
+      // If not, skip this pattern
+      if (!hasI8ElemType(tensors))
+        return failure();
+  
+      SmallVector<Value> newTensors =
+          normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, tensors);
+      auto newOp = rewriter.create<tensor::InsertSliceOp>(
+          op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+          op.getMixedSizes(), op.getMixedStrides());
+      // Replace the original int8 result with the new f16 result 
+      replaceI8ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                    rewriter,
+                                    /*enableOverflow*/ false);
+      return success();
+    }
+  };
+
 template <>
 struct NormalizeToTargetType<bool, CompareOp>
     : public OpRewritePattern<CompareOp> {
@@ -6186,6 +6244,7 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<bool, SelectOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, tensor::ConcatOp>>(ctx);
+  patterns.add<NormalizeToTargetType<bool, tensor::InsertSliceOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, hfusion::ReduceWithIndexOp>>(ctx);
   patterns.add<NormalizeMuli1i>(ctx);
 }
@@ -6203,6 +6262,7 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<int8_t, hfusion::ReduceWithIndexOp>>(ctx);
   patterns.add<NormalizeToTargetType<int8_t, hfusion::GatherOp>>(ctx);
   patterns.add<NormalizeToTargetType<int8_t, linalg::BroadcastOp>>(ctx);
+  patterns.add<NormalizeToTargetType<int8_t, tensor::InsertSliceOp>>(ctx);
   patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumsumOp>>(ctx);
   patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumprodOp>>(ctx);
 }

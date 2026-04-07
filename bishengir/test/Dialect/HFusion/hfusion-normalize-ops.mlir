@@ -2700,3 +2700,38 @@ func.func @triton_uint8_mod(%arg0: tensor<1x64x64xi8>, %arg1: tensor<1x64x64xi8>
   bufferization.materialize_in_destination %1 in writable %arg2 : (tensor<1x64x64xi8>, memref<1x64x64xi8, strided<[4096, 64, 1]>>) -> ()
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_insert_slice_i1
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<32xi1>, %[[ARG1:.*]]: tensor<1024xi1>, %[[ARG2:.*]]: index)
+// CHECK-DAG: %[[CST_0:.*]] =  arith.constant 0.000000e+00 : f16
+// CHECK: %[[SLICE_INIT:.*]] = tensor.empty() : tensor<32xf16>
+// CHECK: %[[SLICE_CUST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[ARG0]] : tensor<32xi1>) outs(%[[SLICE_INIT]] : tensor<32xf16>) -> tensor<32xf16>
+// CHECK: %[[DEST_INIT:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[DEST_CAST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[ARG1]] : tensor<1024xi1>) outs(%[[DEST_INIT]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[INSERT:.*]] = tensor.insert_slice %[[SLICE_CUST]] into %[[DEST_CAST]][%[[ARG2]]] [32] [1] : tensor<32xf16> into tensor<1024xf16>
+// CHECK: %[[ELE_INIT:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[COMP_INIT:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[COMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[INSERT]], %[[CST_0]] : tensor<1024xf16>, f16) outs(%[[COMP_INIT]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: %[[RET:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[COMP]] : tensor<1024xi1>) outs(%[[ELE_INIT]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: return %[[RET]] : tensor<1024xi1>
+func.func @test_insert_slice_i1(%arg0: tensor<32xi1>, %arg1: tensor<1024xi1>, %args2: index) -> (tensor<1024xi1>) {
+  %ret = tensor.insert_slice %arg0 into %arg1[%args2] [32] [1] : tensor<32xi1> into tensor<1024xi1>
+  return %ret : tensor<1024xi1>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_insert_slice_i8
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<32xi8>, %[[ARG1:.*]]: tensor<1024xi8>, %[[ARG2:.*]]: index)
+// CHECK: %[[SLICE_INIT:.*]] = tensor.empty() : tensor<32xf16>
+// CHECK: %[[SLICE_CUST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[ARG0]] : tensor<32xi8>) outs(%[[SLICE_INIT]] : tensor<32xf16>) -> tensor<32xf16>
+// CHECK: %[[DEST_INIT:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[DEST_CAST:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[ARG1]] : tensor<1024xi8>) outs(%[[DEST_INIT]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[INSERT:.*]] = tensor.insert_slice %[[SLICE_CUST]] into %[[DEST_CAST]][%[[ARG2]]] [32] [1] : tensor<32xf16> into tensor<1024xf16>
+// CHECK: %[[RES_INIT:.*]] = tensor.empty() : tensor<1024xi8>
+// CHECK: %[[RET:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = false, round_mode = #hfusion.round_mode<trunc>} ins(%[[INSERT]] : tensor<1024xf16>) outs(%[[RES_INIT]] : tensor<1024xi8>) -> tensor<1024xi8>
+// CHECK: return %[[RET]] : tensor<1024xi8>
+func.func @test_insert_slice_i8(%arg0: tensor<32xi8>, %arg1: tensor<1024xi8>, %args2: index) -> (tensor<1024xi8>) {
+  %ret = tensor.insert_slice %arg0 into %arg1[%args2] [32] [1] : tensor<32xi8> into tensor<1024xi8>
+  return %ret : tensor<1024xi8>
+}
