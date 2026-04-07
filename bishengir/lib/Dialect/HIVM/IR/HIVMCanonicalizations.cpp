@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 
@@ -513,7 +514,35 @@ struct EliminateTrivialInlineBrc
   }
 };
 
+/// `hivm.hir.debug` with debugtype "assert" (from hfusion.assert) and a
+/// constant-true i1 condition is a no-op on device.
+struct FoldTrivialAssertDebugOp : public OpRewritePattern<DebugOp> {
+  using OpRewritePattern<DebugOp>::OpRewritePattern;
+
+  static constexpr llvm::StringLiteral kAssertDebugType = "assert";
+
+  LogicalResult matchAndRewrite(DebugOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getDebugtype() != kAssertDebugType)
+      return failure();
+    auto cstOp = op.getArg().getDefiningOp<arith::ConstantOp>();
+    if (!cstOp)
+      return failure();
+    auto intAttr = dyn_cast<IntegerAttr>(cstOp.getValue());
+    if (!intAttr || !cstOp.getType().isInteger(1) ||
+        !intAttr.getValue().isOne())
+      return failure();
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 } // namespace
+
+void DebugOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                          ::mlir::MLIRContext *context) {
+  results.add<FoldTrivialAssertDebugOp>(context);
+}
 
 void VPowOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
