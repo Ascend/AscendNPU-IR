@@ -32,11 +32,6 @@ namespace bishengir {
 /// BiShengIR was built.
 std::string getBiShengIRRepositoryPath();
 
-/// Retrieves the repository path from which LLVM was built.
-///
-/// This supports LLVM residing in a separate repository from BiShengIR.
-std::string getLLVMRepositoryPath();
-
 /// Retrieves the repository revision number (or identifier) from which
 /// this BiShengIR was built.
 std::string getBiShengIRRevision();
