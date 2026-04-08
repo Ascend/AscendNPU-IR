@@ -151,6 +151,7 @@ func.func @test_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
   }
   return %4 : tensor<256xf16>
 }
+
 // -----
 
 func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : tensor<256xf16>,
@@ -180,4 +181,37 @@ func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : t
   }
   return %6 : tensor<256xf16>
 }
- 
+
+// -----
+
+func.func @test_clone_if_yield_operands_defined_out_of_forOp(%arg0: i32, %arg1: tensor<256xf16>, %arg2: memref<256xf16>) {
+  %cst = arith.constant 0.000000e+00 : f16
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %0 = tensor.empty() : tensor<256xf16>
+  // CHECK: %[[ARG_1:.*]] = hivm.hir.vbrc ins({{.*}} : f16) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+  %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  %2 = scf.for %arg3 = %c0_i32 to %c0_i32 step %c1_i32 iter_args(%arg4 = %c0_i32) -> (i32)  : i32 {
+    %3 = arith.index_cast %arg4 : i32 to index
+    %4 = arith.addi %3, %c1 : index
+    %5 = arith.cmpi slt, %3, %c0 : index
+    %6 = arith.cmpi sge, %3, %c4 : index
+    %7 = arith.ori %5, %6 : i1
+    %8 = scf.if %7 -> (tensor<256xf16>) {
+      // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+      // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
+      scf.yield %1 : tensor<256xf16>
+    } else {
+      %extracted_slice = tensor.extract_slice %arg1[0] [%4] [1] : tensor<256xf16> to tensor<?xf16>
+      %inserted_slice = tensor.insert_slice %extracted_slice into %1[0] [%4] [1] : tensor<?xf16> into tensor<256xf16>
+      scf.yield %inserted_slice : tensor<256xf16>
+    }
+    bufferization.materialize_in_destination %8 in writable %arg2 : (tensor<256xf16>, memref<256xf16>) -> ()
+    %9 = arith.addi %arg4, %c1_i32 : i32
+    scf.yield %9 : i32
+  }
+  return
+}
