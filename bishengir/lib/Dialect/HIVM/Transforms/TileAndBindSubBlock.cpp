@@ -719,6 +719,9 @@ static LogicalResult tileAndSliceStore(func::FuncOp func,
         auto dstShapedType = dyn_cast<ShapedType>(storeOp.getDstOperandType());
         if (!srcShapedType || !dstShapedType)
           return true;
+        auto parentForOp = storeOp->getParentOfType<scf::ForOp>();
+        if (parentForOp && parentForOp->hasAttr("ExtractedLoadOrStore"))
+          return true;
         if (ShapedType::isDynamicShape(srcShapedType.getShape()) ||
             ShapedType::isDynamicShape(dstShapedType.getShape())) {
           auto src = storeOp.getSrc();
