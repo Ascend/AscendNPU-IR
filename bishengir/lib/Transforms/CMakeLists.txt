@@ -2,6 +2,8 @@ add_bishengir_library(BishengIRTransform
   CanonicalizeModule.cpp
   DeadFunctionElimination.cpp
   FuseReductionIntoLoop.cpp
+  AffineMinMaxValueBounds.cpp
+  EliminateSingleIterationScfFor.cpp
   InjectIR.cpp
   InjectIRInstrumentation.cpp
   LowerToCPUBackend.cpp
