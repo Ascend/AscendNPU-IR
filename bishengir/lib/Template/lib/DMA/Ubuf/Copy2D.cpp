@@ -186,6 +186,26 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
   if (!check_2d_ubuf_stride_align(src)) {
     if (!check_atomic_none(atomic_kind))
       return;
+    if ((src->sizes[1] == src->strides[0] && dst->sizes[1] == dst->strides[0] &&
+         src->strides[1] == 1 && dst->strides[1] == 1)) {
+      store_ubuf_to_gm_2d_core_with_contiguous_last_dim<T>(src, dst);
+      return;
+    }
+    if (src->sizes[0] == 1 && dst->sizes[0] == 1) {
+      memref_t<__ubuf__ T, 1> src_slice{src->allocated,
+                                        src->aligned,
+                                        src->offset,
+                                        {src->sizes[1]},
+                                        {1}};
+      memref_t<__gm__ T, 1> dst_slice{dst->allocated,
+                                      dst->aligned,
+                                      dst->offset,
+                                      {dst->sizes[1]},
+                                      {1}};
+      store_ubuf_to_gm_1d_core_with_contiguous_last_dim<T>(&src_slice,
+                                                           &dst_slice);
+      return;
+    }
     store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
     return;
   }
