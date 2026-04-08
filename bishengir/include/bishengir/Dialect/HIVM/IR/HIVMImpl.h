@@ -23,6 +23,26 @@
 
 namespace mlir {
 namespace hivm {
+
+/// Enum to control trace result matching behavior for multi-source cases
+enum class TraceResultMode {
+  // Default behaviour, insert every matched op to final result for all traced
+  // sources, which means as long as one of the sources produces matched op,
+  // final result is not empty.
+  Default,
+  // StrictSame consideres multi-source cases valid only if every traced source
+  // produces the same matched op set; otherwise this function returns an empty
+  // result.
+  StrictSame,
+  // Compared with Default, TypeMatch additionally requires the core type of
+  // every traced source matches the core type of tracing type.
+  // Note that currently we only check if sources matches non-vector core type,
+  // cases may expand later.
+  TypeMatch
+};
+
+using hivm::detail::queryCoreTypeHelper;
+
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);
 
@@ -110,7 +130,7 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
 template <typename OpType>
 void traceDefOpsImpl(Value v,
                      bool isSingleChain,
-                     bool isSameTraceResult,
+                     TraceResultMode traceMode,
                      SmallVectorImpl<Operation *> &results,
                      SmallVectorImpl<Value> &recursionStack,
                      bool &traceFailed) {
@@ -120,6 +140,20 @@ void traceDefOpsImpl(Value v,
   if (isSingleChain && getUsersNum(v) != 1) {
     traceFailed = true;
     return;
+  }
+
+  // Currently we only check if current source is defined by vector while
+  // tracing type is MmadL1 or BatchMmadL1. If so, the result treats invalid to
+  // avoid missing matmul decompose.
+  auto defOp = v.getDefiningOp();
+  if (defOp && traceMode == TraceResultMode::TypeMatch) {
+    auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
+    if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
+         std::is_same_v<OpType, hivm::BatchMmadL1Op>) && (core ==
+        TCoreType::VECTOR)) {
+          traceFailed = true;
+          return;  
+    }
   }
 
   // Avoid infinite recursion without a visited set
@@ -134,14 +168,14 @@ void traceDefOpsImpl(Value v,
     ~RecursionStackGuard() { recursionStack.pop_back(); }
   } guard{recursionStack};
 
-  auto traceSource = [isSingleChain, isSameTraceResult, &results,
+  auto traceSource = [isSingleChain, traceMode, &results,
                       &recursionStack, &traceFailed](Value source) {
-    traceDefOpsImpl<OpType>(source, isSingleChain, isSameTraceResult, results,
+    traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
                             recursionStack, traceFailed);
   };
 
   auto traceSameTraceResultSources =
-      [isSingleChain, isSameTraceResult, &results, &recursionStack,
+      [isSingleChain, traceMode, &results, &recursionStack,
        &traceFailed](ArrayRef<Value> sources) {
     if (sources.empty())
       return;
@@ -157,7 +191,7 @@ void traceDefOpsImpl(Value v,
       traceDefOpsImpl<OpType>(
           source,
           /*isSingleChain=*/isSingleChain,
-          /*isSameTraceResult=*/isSameTraceResult,
+          /*traceMode=*/traceMode,
           branchResults,
           branchRecursionStack,
           branchTraceFailed);
@@ -245,7 +279,7 @@ void traceDefOpsImpl(Value v,
             sources.push_back(initValue);
         }
 
-        if (isSameTraceResult) {
+        if (traceMode == TraceResultMode::StrictSame) {
           traceSameTraceResultSources(sources);
           return;
         }
@@ -269,7 +303,7 @@ void traceDefOpsImpl(Value v,
       Block &elseBlock = ifOp.getElseRegion().front();
       sources.push_back(elseBlock.getTerminator()->getOperand(index));
     }
-    if (isSameTraceResult) {
+    if (traceMode == TraceResultMode::StrictSame) {
       traceSameTraceResultSources(sources);
       return;
     }
@@ -280,7 +314,7 @@ void traceDefOpsImpl(Value v,
   } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
     SmallVector<Value, 2> sources{insertSliceOp.getSource(),
                                   insertSliceOp.getDest()};
-    if (isSameTraceResult) {
+    if (traceMode == TraceResultMode::StrictSame) {
       traceSameTraceResultSources(sources);
       return;
     }
@@ -302,15 +336,19 @@ void traceDefOpsImpl(Value v,
 /// the whole trace is treated as failed and this function returns an empty
 /// result.
 ///
-/// When `isSameTraceResult` is true, multi-source cases are considered valid
-/// only if every traced source produces the same matched-op set; otherwise this
-/// function returns an empty result.
+/// 'traceMode' controls trace result matching behaviour under multi-source
+/// cases(eg. result of scf.if, argument of scf.for ...). We require at
+/// least of one the source produces valid matched op. If traceMode is not
+/// Default, all paths will be checked jiontly, details can be referred in
+/// TraceResultMode's description.
 template <typename OpType>
-SmallVector<Operation *> traceDefOps(Value v, bool isSingleChain = false, bool isSameTraceResult = false) {
+SmallVector<Operation *>
+traceDefOps(Value v, bool isSingleChain = false,
+            TraceResultMode traceMode = TraceResultMode::Default) {
   SmallVector<Operation *> results;
   SmallVector<Value> recursionStack;
   bool traceFailed = false;
-  traceDefOpsImpl<OpType>(v, isSingleChain, isSameTraceResult, results,
+  traceDefOpsImpl<OpType>(v, isSingleChain, traceMode, results,
                           recursionStack, traceFailed);
   if (traceFailed)
     results.clear();
@@ -326,7 +364,7 @@ isSingleChainMmadToMmad(MmadLikeOpType op) {
   auto maybeMmadLikeOps =
       traceDefOps<MmadLikeOpType>(op.getC(),
                                   /*isSingleChain=*/true,
-                                  /*isSameTraceResult=*/false);
+                                  /*traceMode=*/TraceResultMode::TypeMatch);
   return !maybeMmadLikeOps.empty();
 }
 

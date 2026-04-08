@@ -756,3 +756,30 @@ module {
     return %0 : tensor<16x16xf32>
   }
 }
+
+// -----
+// CHECK-LABEL:   func.func @dot_bias_init_with_vec
+module {
+  func.func @dot_bias_init_with_vec() -> tensor<64x32xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<64x32xf32>
+    %alloc_b = memref.alloc() : memref<64x32xf32>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<64x32xf32>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<64x32xf32>
+    %c = hivm.hir.vmul ins(%a, %b : tensor<64x32xf32>, tensor<64x32xf32>) outs(%a : tensor<64x32xf32>) -> tensor<64x32xf32>
+    %alloc_d = memref.alloc() : memref<32x32xf32>
+    %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
+    %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
+      %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
+      // CHECK: hivm.hir.mmadL1
+      // CHECK-NEXT: tensor.empty
+      // CHECK-NEXT: hivm.hir.vadd
+      scf.yield %mmadL1 : tensor<64x32xf32>
+    }
+    return %0 : tensor<64x32xf32>
+  }
+}
