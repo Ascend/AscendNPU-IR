@@ -225,7 +225,7 @@ def ConvertProtonAscendGPUToLLVM :
   let description = [{
     Convert ProtonGPU to LLVM using Ascend-specific lowering patterns.
   }];
-  let constructor = "mlir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass()";
+  let constructor = "bishengir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass()";
 
   let dependentDialects = [
     "mlir::arith::ArithDialect",
@@ -236,6 +236,22 @@ def ConvertProtonAscendGPUToLLVM :
     "mlir::ascend_dpx::AscendDPXDialect",
     "mlir::triton::TritonDialect",
     "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::proton::ProtonDialect",
+    "mlir::triton::proton::gpu::ProtonGPUDialect"
+  ];
+}
+
+def AllocateProtonAscendGlobalScratchBufferPass :
+    Pass<"allocate-proton-ascend-global-scratch-buffer", "mlir::ModuleOp"> {
+  let summary = "Update metadata for proton global scratch buffer allocation (Ascend)";
+  let description = [{
+    Ascend-specific version of the proton global scratch buffer allocation pass.
+    This pass updates the amount of global memory used by proton intra kernel
+    profiling, using NVVM kernel attributes for function identification.
+  }];
+  let constructor = "bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass()";
+
+  let dependentDialects = [
     "mlir::triton::proton::ProtonDialect",
     "mlir::triton::proton::gpu::ProtonGPUDialect"
   ];

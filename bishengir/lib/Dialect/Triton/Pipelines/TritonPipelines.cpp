@@ -149,8 +149,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
   pm.addPass(createCSEPass());
-  pm.addPass(mlir::triton::proton::gpu::createAllocateProtonGlobalScratchBufferPass());
-  pm.addPass(mlir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass());
+  pm.addPass(bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass());
+  pm.addPass(bishengir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass());
   std::unique_ptr<OperationPass<ModuleOp>> convertTritonGPUToLLVMPass =
       mlir::triton::createConvertTritonGPUToLLVMPass(70, 73);
   pm.addPass(std::unique_ptr<mlir::Pass>(

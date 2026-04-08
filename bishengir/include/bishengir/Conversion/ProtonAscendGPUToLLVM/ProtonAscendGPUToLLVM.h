@@ -14,13 +14,16 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
-namespace mlir::triton::proton::gpu {
+namespace bishengir::triton::proton::gpu {
 
-std::unique_ptr<Pass> createConvertProtonAscendGPUToLLVMPass();
+std::unique_ptr<mlir::Pass> createConvertProtonAscendGPUToLLVMPass();
+std::unique_ptr<mlir::Pass>
+createAllocateProtonAscendGlobalScratchBufferPass();
 
 #define GEN_PASS_DECL_CONVERTPROTONASCENDGPUTOLLVM
+#define GEN_PASS_DECL_ALLOCATEPROTONASCENDGLOBALSCRATCHBUFFERPASS
 #include "bishengir/Conversion/Passes.h.inc"
 
-} // namespace mlir::triton::proton::gpu
+} // namespace bishengir::triton::proton::gpu
 
 #endif
