@@ -229,6 +229,11 @@ bool Solver::ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
               rwOp2->op)) {
         return false;
       }
+      if (isa_and_present<hivm::FixpipeOp>(rwOp2->op) &&
+          isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+              rwOp1->op)) {
+        return false;
+      }
       if (options.intraCoreIgnoreWorkSpaceFunctionArguments) {
         return true;
       }

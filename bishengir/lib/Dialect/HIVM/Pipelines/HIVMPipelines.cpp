@@ -229,7 +229,6 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Must place after plan-workspace-memory
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
   }
-  pm.addPass(mlir::createMemrefExtLoweringPass());
 
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.addPass(createInsertInferTaskTypeFuncPass());
@@ -368,6 +367,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
   // Normal sync (inject-sync, graph-sync-solver) passes.
   hivmNormSyncPipeline(pm, hivmPipelineOptions);
+  pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createAddFFTSToSyncBlockSetOpPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());

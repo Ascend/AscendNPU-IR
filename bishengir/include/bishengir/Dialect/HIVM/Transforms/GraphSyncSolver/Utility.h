@@ -143,7 +143,7 @@ struct SyncSolverOptions {
   bool useDifferentMultiBufferFlagIds{false};
 
   // Ignore workspace function arguments.
-  bool intraCoreIgnoreWorkSpaceFunctionArguments{true};
+  bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
