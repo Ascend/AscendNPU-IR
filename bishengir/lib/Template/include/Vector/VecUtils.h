@@ -1378,6 +1378,12 @@ half handle_half_operation(half src0_oprand, half src1_oprand, VectorLastAxisMod
     }
     float res_float = scalar_operation<OP, float>(src0_oprand_float, src1_oprand_float);
     return static_cast<half>(res_float);
+  } else if constexpr (OP == VectorOpTy::VRELU) {
+    float src0_oprand_float = static_cast<float>(src0_oprand);
+    if ((src0_oprand_float != src0_oprand_float)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand_float);
   } else {
     float src0_oprand_float = static_cast<float>(src0_oprand);
     float src1_oprand_float = static_cast<float>(src1_oprand);
@@ -1439,6 +1445,11 @@ float handle_float_operation(float src0_oprand, float src1_oprand, VectorLastAxi
       return NAN;
     }
     return scalar_operation<OP, float>(src0_oprand, src1_oprand);
+  } else if constexpr (OP == VectorOpTy::VRELU) {
+    if ((src0_oprand != src0_oprand)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand);
   } else {
     if (mode == VectorLastAxisMode::V) {
       return scalar_operation<OP, float>(src0_oprand);
