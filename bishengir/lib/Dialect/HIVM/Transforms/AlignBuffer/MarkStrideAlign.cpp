@@ -8,7 +8,6 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -358,15 +357,6 @@ void MarkStrideAlignPass::runOnOperation() {
   auto funcOp = getOperation();
   if (hacc::utils::isHost(funcOp))
     return;
-
-  std::optional<hivm::TFuncCoreType> funcCoreType =
-      hivm::queryFuncCoreType(funcOp);
-  if (funcCoreType.has_value()) {
-    if (funcCoreType.value() == hivm::TFuncCoreType::AIC) {
-      LDBG(funcOp.getName() << "skip stride align for AIC function");
-      return;
-    }
-  }
 
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
