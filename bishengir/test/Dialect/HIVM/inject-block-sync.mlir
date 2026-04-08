@@ -61,10 +61,23 @@ module {
     %4 = memref.alloc() : memref<256xf32, #hivm.address_space<ub>>
     hivm.hir.load ins(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
                   outs(%5 : memref<256xf32, #hivm.address_space<ub>>)
+    hivm.hir.mmadL1 ins(%0, %1, %true, %c16, %c256, %c16 : memref<16xf32, #hivm.address_space<cbuf>>,
+                        memref<16xf32, #hivm.address_space<cbuf>>, i1, index, index, index)
+                        outs(%2 : memref<256xf32, #hivm.address_space<cc>>)
+    hivm.hir.fixpipe {enable_nz2nd} ins(%2 : memref<256xf32, #hivm.address_space<cc>>)
+                     outs(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
+    // CHECK: hivm.hir.sync_block_set{{\[}}<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 0
+    // CHECK: hivm.hir.sync_block_wait{{\[}}<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 0
+    %7 = memref.alloc() : memref<256xf32, #hivm.address_space<ub>>
+    %6 = memref.alloc() : memref<256xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg2 : memref<256xf32, #hivm.address_space<gm>>)
+                  outs(%5 : memref<256xf32, #hivm.address_space<ub>>)
     hivm.hir.vadd ins(%5, %4 : memref<256xf32, #hivm.address_space<ub>>,
                   memref<256xf32, #hivm.address_space<ub>>)
                   outs(%5 : memref<256xf32, #hivm.address_space<ub>>)
     hivm.hir.store ins(%5 : memref<256xf32, #hivm.address_space<ub>>)
+                  outs(%arg3 : memref<256xf32, #hivm.address_space<gm>>)
+    hivm.hir.store ins(%7 : memref<256xf32, #hivm.address_space<ub>>)
                   outs(%arg3 : memref<256xf32, #hivm.address_space<gm>>)
     return
   }

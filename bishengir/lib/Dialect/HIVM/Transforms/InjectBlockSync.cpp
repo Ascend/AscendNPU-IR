@@ -498,7 +498,8 @@ void InjectBlockSyncAnalysis::InjectAllBlockSync() {
   });
 }
 
-void InjectBlockSyncAnalysis::InjectBlockMixSync(bool assumeAliveLoops) {
+void InjectBlockSyncAnalysis::InjectBlockMixSync(
+    bool assumeAliveLoops, bool preferUnusedBlockSyncIDs) {
   MemoryDependentAnalyzer memAnalyzer;
   SyncIRs syncIR;
   SyncOperations syncOperations;
@@ -528,7 +529,10 @@ void InjectBlockSyncAnalysis::InjectBlockMixSync(bool assumeAliveLoops) {
   LLVM_DEBUG(llvm::dbgs() << "RemoveRedundantSync\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 
-  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations);
+  SyncEventIdAllocOptions idAllocOptions{};
+  idAllocOptions.preferUnusedBlockSyncIDs = preferUnusedBlockSyncIDs;
+  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations,
+                                          idAllocOptions);
   eventIdAllocation.Allocate();
   LLVM_DEBUG(llvm::dbgs() << "SyncEventIdAllocation\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
@@ -594,7 +598,8 @@ void InjectBlockSyncPass::runOnOperation() {
     if (failed(checkWorkSpaceValidity())) {
       return signalPassFailure();
     }
-    injectBlockSyncAnalysis.InjectBlockMixSync(assumeAliveLoops);
+    injectBlockSyncAnalysis.InjectBlockMixSync(assumeAliveLoops,
+                                               preferUnusedBlockSyncIDs);
   }
 }
 

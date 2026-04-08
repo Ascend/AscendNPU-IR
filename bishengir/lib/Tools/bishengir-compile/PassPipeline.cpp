@@ -149,7 +149,7 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
       config.shouldInjectBlockAllSync();
   hivmPipelineOptions.disableAutoInjectBlockSync =
       config.shouldDisableAutoInjectBlockSync();
-  hivmPipelineOptions.enableHIVMGraphSyncSolver = 
+  hivmPipelineOptions.enableHIVMGraphSyncSolver =
       config.shouldEnableHIVMGraphSyncSolver();
   hivmPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
   hivmPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
@@ -724,7 +724,7 @@ protected:
       *this, "disable-auto-inject-block-sync",
       llvm::cl::desc("Disable auto generating sync block wait/set by "
                      "InjectBlockSync pass"),
-      llvm::cl::init(false)};
+    llvm::cl::init(false)};
   Pass::Option<bool> enableHIVMGraphSyncSolver{
       *this, "enable-hivm-graph-sync-solver",
       llvm::cl::desc("Enable HIVM Graph-Sync-Solver pass to do auto-sync."),

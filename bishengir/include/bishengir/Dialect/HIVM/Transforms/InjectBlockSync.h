@@ -26,7 +26,7 @@ public:
   void InjectBlockShallowSync();
 
   /// Inject MixCV block sync.
-  void InjectBlockMixSync(bool assumeAliveLoops);
+  void InjectBlockMixSync(bool assumeAliveLoops, bool preferUnusedBlockSyncIDs);
 
   /// Inject all block sync.
   void InjectAllBlockSync();

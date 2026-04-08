@@ -123,10 +123,12 @@ struct HIVMPipelineOptions
                      "InjectBlockSync pass"),
       llvm::cl::init(false)};
 
+
   PassOptions::Option<bool> enableHIVMGraphSyncSolver{
       *this, "enable-hivm-graph-sync-solver",
       llvm::cl::desc("Enable HIVM Graph-Sync-Solver Auto-Sync Pass"),
       llvm::cl::init(false)};
+
 
   PassOptions::Option<bool> enableUnitFlagSync{
       *this, "enable-hivm-unit-flag-sync",

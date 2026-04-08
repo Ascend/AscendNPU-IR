@@ -36,13 +36,18 @@ struct EventCyclePool {
 
 using SyncCycle = DenseMap<int, EventCyclePool>;
 
+struct SyncEventIdAllocOptions {
+  bool preferUnusedBlockSyncIDs = false;
+};
+
 class SyncEventIdAllocation {
 public:
-  SyncEventIdAllocation(SyncIRs &syncIR, SyncOperations &syncOperations)
-      : syncIR(syncIR), syncOperations(syncOperations) {
+  SyncEventIdAllocation(SyncIRs &syncIR, SyncOperations &syncOperations,
+                        SyncEventIdAllocOptions options)
+      : syncIR(syncIR), syncOperations(syncOperations), options(options) {
     // Reserved eventIds for block-all operations if needed.
     reserveBlockAllEventIds();
-  };
+  }
 
   ~SyncEventIdAllocation() = default;
 
@@ -137,11 +142,6 @@ private:
                       SmallVector<bool> eventIdLifetimeAvailableStatus,
                       SmallVector<bool> eventIdIdleStatus, size_t eventIdNum);
 
-  SmallVector<int>
-  UpdateBlockAvailableEventId(SyncOperation *sync,
-                              SmallVector<bool> eventIdLifetimeAvailableStatus,
-                              size_t eventIdNum);
-
   /// Set block sync all_cube and all_vector event id.
   void SetBlockSyncAllEventID(SyncOperation *sync);
 
@@ -178,6 +178,9 @@ private:
 
   /// Number of reserved event IDs for block synchronization.
   uint64_t reservedBlockSyncEventIdNum{0};
+
+  /// Options
+  SyncEventIdAllocOptions options;
 };
 
 } // namespace hivm
