@@ -54,6 +54,36 @@ struct SplitMixedIfConditionalsPass
 
 } // anonymous namespace
 
+// Check if an operation is a region operation (if, for, etc.)
+static bool isRegionOperation(Operation *op) { return op->getNumRegions() > 0; }
+
+static std::optional<TCoreType> getRegionOperationCoreType(Operation *op) {
+  if (!isRegionOperation(op)) {
+    return std::nullopt;
+  }
+
+  bool hasC = false, hasV = false;
+  for (Region &region : op->getRegions()) {
+    for (Block &block : region) {
+      auto [blockHasC, blockHasV] = analyzeCoreTypes(&block);
+      hasC = hasC || blockHasC;
+      hasV = hasV || blockHasV;
+    }
+  }
+
+  if (hasC && hasV) {
+    return std::nullopt;
+  }
+
+  if (hasC) {
+    return TCoreType::CUBE;
+  } else if (hasV) {
+    return TCoreType::VECTOR;
+  }
+
+  return std::nullopt;
+}
+
 struct OperationGroup {
   SmallVector<Operation *> coreOps;
   SmallVector<Operation *> nonCoreOps;
@@ -140,30 +170,6 @@ struct FinalIfContext {
   Value elseResult;
 };
 
-// Check if an operation is a region operation (if, for, etc.)
-static bool isRegionOperation(Operation *op) { return op->getNumRegions() > 0; }
-
-// Check if a region has mixed core operations
-static bool regionOpMixedCoreTypes(Operation *op) {
-  if (isa<scf::IfOp>(op)) {
-    return false;
-  }
-
-  for (Region &region : op->getRegions()) {
-    for (Block &block : region) {
-      auto [hasC, hasV] = analyzeCoreTypes(&block);
-      if (hasC && hasV)
-        return true;
-
-      for (Operation &inner : block) {
-        if (isRegionOperation(&inner) && regionOpMixedCoreTypes(&inner))
-          return true;
-      }
-    }
-  }
-  return false;
-}
-
 //===----------------------------------------------------------------------===//
 // Operation Grouping
 //===----------------------------------------------------------------------===//
@@ -179,7 +185,12 @@ groupOperations(Block *block) {
       continue;
     }
 
-    auto coreType = queryCoreTypeHelper(&op);
+    auto directCoreType = queryCoreTypeHelper(&op);
+    auto coreType = directCoreType;
+
+    if (!coreType.has_value() && isRegionOperation(&op)) {
+      coreType = getRegionOperationCoreType(&op);
+    }
 
     if (coreType.has_value()) {
       // Core-type operation
@@ -195,7 +206,11 @@ groupOperations(Block *block) {
         currentGroup->coreType = coreType;
       }
 
-      currentGroup->coreOps.push_back(&op);
+      if (directCoreType.has_value()) {
+        currentGroup->coreOps.push_back(&op);
+      } else {
+        currentGroup->nonCoreOps.push_back(&op);
+      }
       currentGroup->allOps.push_back(&op);
     } else {
       // Non-core operation
@@ -439,8 +454,10 @@ static scf::IfOp createSplitIfForGroup(const SplitIfContext &ctx) {
     };
   };
 
-  return ctx.rewriter.create<scf::IfOp>(
+  auto newIf = ctx.rewriter.create<scf::IfOp>(
       ctx.loc, ctx.cond, createBranchLogic(true), createBranchLogic(false));
+  newIf->setAttr("hivm.split_done", ctx.rewriter.getBoolAttr(true));
+  return newIf;
 }
 
 //===----------------------------------------------------------------------===//
@@ -538,15 +555,13 @@ struct SplitMixedIfConditionalsPattern : public OpRewritePattern<scf::IfOp> {
       return failure();
     }
 
-    for (Block *block : {ifOp.thenBlock(), ifOp.elseBlock()}) {
-      if (!block)
-        continue;
-      for (Operation &op : *block) {
-        if (isRegionOperation(&op) && !isa<scf::IfOp>(&op) &&
-            regionOpMixedCoreTypes(&op)) {
-          return failure();
-        }
-      }
+    if (ifOp->hasAttr("hivm.split_done")) {
+      return failure();
+    }
+
+    if (!hasOnlyIfRegionOperations(ifOp.thenBlock()) ||
+        !hasOnlyIfRegionOperations(ifOp.elseBlock())) {
+      return failure();
     }
 
     Location loc = ifOp.getLoc();
@@ -602,9 +617,11 @@ struct SplitMixedIfConditionalsPattern : public OpRewritePattern<scf::IfOp> {
       if (hasElse) {
         FinalIfContext finalCtx{rewriter, loc, cond, thenResult, elseResult};
         auto finalIf = createFinalIf(finalCtx);
+        finalIf->setAttr("hivm.split_done", rewriter.getBoolAttr(true));
         results.push_back(finalIf.getResult(0));
       } else {
         auto finalIf = createFinalIfNoElse(rewriter, loc, cond, thenResult);
+        finalIf->setAttr("hivm.split_done", rewriter.getBoolAttr(true));
         results.push_back(finalIf.getResult(0));
       }
     }
