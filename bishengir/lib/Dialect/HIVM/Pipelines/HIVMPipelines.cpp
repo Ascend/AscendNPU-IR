@@ -106,6 +106,7 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   // Mark load/store scalar operations with core-type attributes so block
   // synchronization passes recognize cross-core scalar-pipeline conflicts and
   // insert needed sync operations.
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(createMarkRealCoreTypePass());
   if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
       !hivmPipelineOptions.enableInjectBlockAllSync) {
