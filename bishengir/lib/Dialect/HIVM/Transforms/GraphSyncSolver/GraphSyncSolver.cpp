@@ -70,6 +70,8 @@ void GraphSyncSolverPass::runOnOperation() {
   SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
                             isRegBasedArch);
   options.enableUnitFlagFeature = this->enableUnitFlag;
+  options.intraCoreIgnoreWorkSpaceFunctionArguments =
+      this->ignoreWorkSpaceFunctionArguments;
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 
