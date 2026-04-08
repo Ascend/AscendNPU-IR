@@ -154,6 +154,9 @@ def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
     Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
            /*default=*/"216",
            "Dynamic ub size(KB) for simt VF, default : 216">,
+    Option<"disableTightlyCoupledBufferReuse", "disable-tightly-coupled-buffer-reuse", "bool",
+           /*default=*/"false",
+           "Disable tightly coupled buffer reuse, default : false">,
   ];
 }
 
