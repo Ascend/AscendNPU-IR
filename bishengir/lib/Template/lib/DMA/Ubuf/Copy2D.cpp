@@ -248,16 +248,7 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
     return;
   }
 
-  if (stride1_gm > 1 && stride1_ub == 1) {
-    if (!check_atomic_none(atomic_kind))
-      return;
-    // When GM's last dim stride > 1 but UB's last dim is contiguous,
-    // we cannot use the dimension-lifting trick because the gap calculation
-    // in the underlying intrinsic functions assumes contiguous last dim.
-    // Using scalar copy to avoid incorrect gap values.
-    store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
-    return;
-  }
+  // Check whether we need fall back to scalar when stride1_gm>1 and stride1_ub=1
 
   // last dimension is not contiguous,
   // view the src (size0, size1) with stride [stride0, stride1] as viewed_src

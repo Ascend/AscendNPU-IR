@@ -200,13 +200,7 @@ store_ubuf_to_gm_1d_core(memref_t<__ubuf__ T, 1> *src,
     set_store_atomic_none(atomic_kind);
     return;
   }
-
-  if (stride0_gm > 1 && stride0_ub == 1) {
-    if (!check_atomic_none(atomic_kind))
-      return;
-    store_ubuf_to_gm_1d_by_scalar<T>(src, dst);
-    return;
-  }
+  // Check whether we need fall back to scalar when stride0_gm>1 and stride0_ub=1
 
   // last dimension is not contiguous,
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
