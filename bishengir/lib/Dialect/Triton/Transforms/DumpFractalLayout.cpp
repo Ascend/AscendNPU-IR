@@ -6,11 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a debug/test pass that prints the fractal NZ shared
+// This file implements a debug/test pass that prints the fractal shared
 // memory layout mapping for a given tensor shape and element offset.
 //
 // Usage (from bishengir-opt):
-//   bishengir-opt --dump-fractal-layout="shape=64,64 probe-offset=1536" %s
+//   bishengir-opt --dump-fractal-layout="shape=64,64 layout-type=zN \
+//                                        probe-offset=1536" %s
 //
 // Output (to stdout):
 //   fractal-layout: offset=1536 -> dim0=32 dim1=16
@@ -19,8 +20,10 @@
 
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 
+#include "bishengir/Dialect/TritonExt/IR/FractalLinearLayoutConversions.h"
+#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
+
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/LinearLayoutConversions.h"
 #include "triton/Tools/LinearLayout.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -38,6 +41,7 @@ namespace {
 using namespace mlir;
 using namespace mlir::triton;
 using namespace mlir::triton::gpu;
+using namespace bishengir::triton_ext;
 
 // Parse a comma-separated string like "64,64" into a SmallVector<int64_t>.
 static SmallVector<int64_t> parseShape(StringRef s) {
@@ -59,11 +63,6 @@ public:
       : impl::DumpFractalLayoutBase<DumpFractalLayoutPass>(options) {}
 
   void runOnOperation() override {
-#ifndef BSPRIV_DAVINCI_BISHENGIR
-    getOperation().emitError("dump-fractal-layout: fractal layout support "
-                             "requires BSPRIV_DAVINCI_BISHENGIR");
-    return signalPassFailure();
-#else
     MLIRContext *ctx = &getContext();
 
     SmallVector<int64_t> shape = parseShape(shapeStr);
@@ -95,7 +94,6 @@ public:
     for (auto [name, val] : logical)
       llvm::outs() << " " << name.getValue() << "=" << val;
     llvm::outs() << "\n";
-#endif
   }
 };
 

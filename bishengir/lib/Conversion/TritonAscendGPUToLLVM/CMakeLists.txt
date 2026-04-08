@@ -6,6 +6,7 @@ add_bishengir_conversion_library(TritonAscendGPUToLLVM
   TargetInfo.cpp
   TritonAscendGPUToLLVMPass.cpp
   ElementwiseOpToLLVM.cpp
+  FractalMemoryOpToLLVM.cpp
   ${LLVM_EXTERNAL_TRITON_SOURCE_DIR}/lib/Conversion/TritonGPUToLLVM/MemoryOpToLLVM.cpp
 
   DEPENDS
@@ -20,6 +21,7 @@ add_bishengir_conversion_library(TritonAscendGPUToLLVM
   MLIRSCFDialect
   MLIRLLVMDialect
   MLIRAscendDPXDialect
+  BiShengIRTritonExtIR
   TritonAnalysis
   TritonGPUToLLVM
 )

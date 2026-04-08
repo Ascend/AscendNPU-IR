@@ -575,7 +575,6 @@ static void maybePrintCTALayout(mlir::MLIRContext *context,
 #include "triton/Dialect/TritonGPU/IR/AttrInterfaces.cpp.inc"
 #define GET_ATTRDEF_CLASSES
 #include "triton/Dialect/TritonGPU/IR/AttrDefs.cpp.inc"
-#include "triton/Dialect/TritonGPU/IR/OpsEnums.cpp.inc"
 
 //===----------------------------------------------------------------------===//
 // Blocked Encoding
@@ -1519,88 +1518,6 @@ Attribute parseSwizzledEncoding(AsmParser &parser, Type type) {
         parser.getContext(), vec, perPhase, maxPhase, order, *CTALayout);
   return {};
 }
-
-#ifdef BSPRIV_DAVINCI_BISHENGIR
-//===----------------------------------------------------------------------===//
-// FractalShared encoding
-//===----------------------------------------------------------------------===//
-Attribute FractalSharedEncodingAttr::parse(AsmParser &parser, Type type) {
-  if (parser.parseLess().failed())
-    return {};
-  DictionaryAttr dict;
-  if (parser.parseAttribute(dict).failed())
-    return {};
-  if (parser.parseGreater().failed())
-    return {};
-
-  int64_t fractalM0 = 0;
-  int64_t fractalN0 = 0;
-  std::optional<FractalLayoutType> layoutType;
-  NamedAttrList remainingAttrs;
-  for (const NamedAttribute &attr : dict) {
-    if (attr.getName() == "fractalM0") {
-      auto intAttr = mlir::dyn_cast<IntegerAttr>(attr.getValue());
-      if (!intAttr) {
-        parser.emitError(parser.getNameLoc(), "expected integer for fractalM0");
-        return {};
-      }
-      fractalM0 = intAttr.getInt();
-    } else if (attr.getName() == "fractalN0") {
-      auto intAttr = mlir::dyn_cast<IntegerAttr>(attr.getValue());
-      if (!intAttr) {
-        parser.emitError(parser.getNameLoc(), "expected integer for fractalN0");
-        return {};
-      }
-      fractalN0 = intAttr.getInt();
-    } else if (attr.getName() == "layoutType") {
-      auto strAttr = mlir::dyn_cast<StringAttr>(attr.getValue());
-      if (!strAttr) {
-        parser.emitError(parser.getNameLoc(),
-                         "expected string for layoutType");
-        return {};
-      }
-      layoutType = symbolizeFractalLayoutType(strAttr.getValue());
-      if (!layoutType) {
-        parser.emitError(parser.getNameLoc(),
-                         "unknown layoutType: expected 'zN' or 'nZ'");
-        return {};
-      }
-    } else {
-      remainingAttrs.push_back(attr);
-    }
-  }
-
-  if (!layoutType) {
-    parser.emitError(parser.getNameLoc(), "missing required 'layoutType'");
-    return {};
-  }
-
-  // Fractal layouts are inherently 2D.
-  if (auto CTALayout = parseCTAAttrs(parser, remainingAttrs, /*rank=*/2))
-    return parser.getChecked<FractalSharedEncodingAttr>(
-        parser.getContext(), fractalM0, fractalN0, *layoutType, *CTALayout);
-  return {};
-}
-
-void FractalSharedEncodingAttr::print(AsmPrinter &printer) const {
-  printer << "<{"
-          << "fractalM0 = " << getFractalM0()
-          << ", fractalN0 = " << getFractalN0()
-          << ", layoutType = \""
-          << stringifyFractalLayoutType(getLayoutType()) << "\"";
-  maybePrintCTALayout(getContext(), printer, getCTALayout(), /*rank=*/2);
-  printer << "}>";
-}
-
-LogicalResult FractalSharedEncodingAttr::verify(
-    ::llvm::function_ref<InFlightDiagnostic()> emitError, int64_t fractalM0,
-    int64_t fractalN0, FractalLayoutType layoutType,
-    CTALayoutAttr ctaLayout) {
-  if (!(llvm::isPowerOf2_32(fractalM0) && llvm::isPowerOf2_32(fractalN0)))
-    return emitError() << "fractal block must be power-of-2";
-  return success();
-}
-#endif // BSPRIV_DAVINCI_BISHENGIR
 
 //===----------------------------------------------------------------------===//
 // SwizzledShared encoding
@@ -3381,6 +3298,7 @@ void TritonGPUDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
 #include "triton/Dialect/TritonGPU/IR/Ops.cpp.inc"
+#include "triton/Dialect/TritonGPU/IR/OpsEnums.cpp.inc"
       >();
   addInterfaces<TritonInlinerInterface>();
   addInterfaces<TritonGPUOpAsmInterface>();
