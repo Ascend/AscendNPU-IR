@@ -1260,3 +1260,26 @@ func.func @load_and_store_same_GM(%arg0: tensor<64xf32>, %arg1: memref<?xf32>, %
   hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview : memref<?xf32>)
   return
 }
+
+// -----
+// CHECK-LABEL:   func.func @unstructure_store(
+// CHECK:           scf.if %[[VAL_14:.*]] {
+// CHECK:             hivm.hir.store ins(%[[VAL_10:.*]] : tensor<1xf32>) outs(%[[VAL_11:.*]] : memref<1xf32, strided<[1], offset: ?>>)
+// CHECK:           } {limit_sub_block_id0}
+// CHECK:           scf.if %[[VAL_17:.*]] {
+// CHECK:             hivm.hir.store ins(%[[VAL_2:.*]] : tensor<64xf32>) outs(%[[VAL_3:.*]] : memref<64xf32>)
+// CHECK:           } {limit_sub_block_id0}
+func.func @unstructure_store(%arg0: tensor<64xf32>, %arg1: memref<64xf32>, %arg2: tensor<64xf32>, %arg3: memref<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vln ins(%arg0 : tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  scf.for %arg4 = %c0 to %c64 step %c1 {
+    %extracted_slice = tensor.extract_slice %1[%arg4] [1] [1] : tensor<64xf32> to tensor<1xf32>
+    %subview = memref.subview %arg1[%arg4] [1] [1] : memref<64xf32> to memref<1xf32, strided<[1], offset: ?>>
+    hivm.hir.store ins(%extracted_slice : tensor<1xf32>) outs(%subview : memref<1xf32, strided<[1], offset: ?>>)
+  } {ExtractedLoadOrStore}
+  hivm.hir.store ins(%arg2 : tensor<64xf32>) outs(%arg3 : memref<64xf32>)
+  return
+}
