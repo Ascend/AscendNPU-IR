@@ -889,7 +889,8 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
 
   // Build a map of collapsed dimensions
-  auto inputType = cast<RankedTensorType>(collapseOp.getSrc().getType());
+  auto inputType = collapseOp.getSrcType();
+  auto outputType = collapseOp.getType();
   auto collapseDims = collapseOp.getReassociationIndices();
   auto extractDims = getExtractOrInsertDim(sliceOp);
   if (extractDims.size() != 1)
@@ -916,30 +917,31 @@ CollapseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   }
 
   auto inputRank = inputType.getRank();
+  auto outputRank = outputType.getRank();
 
   // Get the offsets and sizes from the slice operation
   auto outputOffsets = sliceOp.getMixedOffsets();
   auto outputSizes = sliceOp.getMixedSizes();
 
   // Compute the input offsets and sizes
-  unsigned outIdx = 0;
   SmallVector<OpFoldResult> inputOffsets(inputRank);
   SmallVector<OpFoldResult> inputSizes(inputRank);
   auto inputCollapse = collapseOp->getOperand(0);
   auto mixedSizeFinal =
       tensor::getMixedSizes(rewriter, collapseOp.getLoc(), inputCollapse);
 
-  for (unsigned inIdx = 0; inIdx < inputRank; ++inIdx) {
-    if (inIdx != newTilingDim) {
-      inputOffsets[inIdx] = rewriter.getIndexAttr(0);
-      inputSizes[inIdx] =
-          (inputType.isDynamicDim(inIdx))
-              ? mixedSizeFinal[inIdx]
-              : rewriter.getIndexAttr(inputType.getDimSize(inIdx));
-    } else {
-      inputOffsets[inIdx] = outputOffsets[outIdx];
-      inputSizes[inIdx] = outputSizes[outIdx];
-      ++outIdx;
+  for (unsigned outIdx = 0; outIdx < outputRank; ++outIdx) {
+    for (auto inIdx : collapseDims[outIdx]) {
+      if (inIdx != newTilingDim) {
+        inputOffsets[inIdx] = rewriter.getIndexAttr(0);
+        inputSizes[inIdx] =
+            (inputType.isDynamicDim(inIdx))
+                ? mixedSizeFinal[inIdx]
+                : rewriter.getIndexAttr(inputType.getDimSize(inIdx));
+      } else {
+        inputOffsets[inIdx] = outputOffsets[outIdx];
+        inputSizes[inIdx] = outputSizes[outIdx];
+      }
     }
   }
 
@@ -1253,7 +1255,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
               sliceOp, allocOp.getResult(), true, true);
 
       rewriter.replaceOp(toTensorOp, newToTensorOp);
-      
+
       LDBG("After Pattern 2:\n"
            << newCastValue << "\n"
            << newSubViewOpGM << "\n"
