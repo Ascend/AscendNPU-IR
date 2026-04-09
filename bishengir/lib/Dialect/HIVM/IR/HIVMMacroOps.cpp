@@ -650,7 +650,7 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   // mmadL1 + add.
   auto allocOps = traceDefOps<memref::AllocOp>(matmulOutput.get(),
                                                /*isSingleChain=*/false,
-                                               /*isSameTraceResult=*/true);
+                                               /*traceMode=*/TraceResultMode::StrictSame);
   bool isSameSpace = true;
   std::optional<hivm::AddressSpace> addrSpace;
   if (!allocOps.empty()) {
@@ -669,7 +669,7 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   }
   auto emptyOps = traceDefOps<tensor::EmptyOp>(matmulOutput.get(),
                                                /*isSingleChain=*/false,
-                                               /*isSameTraceResult=*/true);
+                                               /*traceMode=*/TraceResultMode::StrictSame);
   return ((isSameSpace && addrSpace == hivm::AddressSpace::L0C) ||
           !emptyOps.empty())
              ? MatmulBiasMode::NoBias
