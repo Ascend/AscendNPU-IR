@@ -30,6 +30,8 @@
 
 namespace mlir {
 namespace hivm {
+static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
+
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);
 

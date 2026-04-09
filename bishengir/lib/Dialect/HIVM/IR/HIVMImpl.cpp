@@ -55,9 +55,20 @@ static Container filterNonIgnoredOps(const Container &container) {
 }
 
 int64_t getUsersNum(Value v) {
-  return filterNonIgnoredOps(
-             DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()))
-      .size();
+  auto users = filterNonIgnoredOps(
+      DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
+  return users.size();
 }
 
 bool isLocalMatmulInit(Operation *op, Value v) {
@@ -74,6 +85,17 @@ bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp) {
   auto users = filterNonIgnoredOps(
       DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
   LDBG("Here computin for value " << v << " " << users.size());
   if (users.size() != 1)
     return false;
