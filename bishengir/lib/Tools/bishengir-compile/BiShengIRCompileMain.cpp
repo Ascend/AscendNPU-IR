@@ -83,7 +83,8 @@ runExternalHIVMC(ModuleOp &module,
                                      "inject-ir-before", "inject-ir-after",
                                      "hfusion-enable-multiple-consumer-fusion",
                                      "disable-tightly-coupled-buffer-reuse",
-                                     "enable-tree-reduce-v2"};
+                                     "enable-tree-reduce-v2",
+                                     "disable-sink-dpx-load"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());

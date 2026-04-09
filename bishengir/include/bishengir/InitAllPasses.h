@@ -30,6 +30,7 @@
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Symbol/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
@@ -107,6 +108,7 @@ inline void registerAllPasses() {
 
   bishengir::triton::registerBiShengIRTritonPasses();
   bishengir::triton::registerLowerTritonPipeline();
+  mlir::triton::ascend::registerTritonAscendGPUToLLVMPasses();
 
 }
 

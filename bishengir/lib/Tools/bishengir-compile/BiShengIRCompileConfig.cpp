@@ -383,6 +383,13 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(disableReorderInstructionFlag), cl::init(false),
         cl::cat(simtOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> disableSinkDPXLoad(
+        "disable-sink-dpx-load",
+        cl::desc("Disable post-lowering instruction scheduling that reduces "
+                 "register pressure by interleaving load-compute-store chains"),
+        cl::location(disableSinkDPXLoadFlag), cl::init(false),
+        cl::cat(simtOptCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true> enableSimtReorderInstruction(
         "enable-simt-reorder-instruction",
         cl::desc("Enable SIMT reorder instruction pass"),
