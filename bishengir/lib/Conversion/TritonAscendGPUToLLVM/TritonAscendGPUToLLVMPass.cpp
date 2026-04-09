@@ -104,6 +104,26 @@ struct ConvertTritonAscendGPUToLLVMPass
     // any of the conversion passes run.
     initSharedMemory(typeConverter);
 
+    // Insert barriers for LocalAllocOp whose users include a LocalLoadOp with
+    // DotOperandEncodingAttr. Done before LLVM lowering so the gpu::BarrierOp
+    // is handled by populateGPUOpToDPXPatterns along with other GPU ops.
+    mod.walk([](triton::gpu::LocalAllocOp op) {
+      bool needBarrier = false;
+      for (Operation *user : op->getUsers()) {
+        if (auto loadOp = dyn_cast<triton::gpu::LocalLoadOp>(user)) {
+          auto resultTy = dyn_cast<RankedTensorType>(loadOp.getType());
+          if (resultTy &&
+              isa<triton::gpu::DotOperandEncodingAttr>(resultTy.getEncoding()))
+            needBarrier = true;
+        }
+      }
+      if (needBarrier) {
+        OpBuilder builder(op);
+        builder.setInsertionPointAfter(op);
+        builder.create<mlir::gpu::BarrierOp>(op.getLoc());
+      }
+    });
+
     ModuleAxisInfoAnalysis axisInfoAnalysis(mod);
     TritonLLVMConversionTarget convTarget(*context);
     RewritePatternSet patterns(context);
