@@ -1448,311 +1448,369 @@ struct NormalizeArgMinMaxOp
   }
 };
 
-/// normalize expm1(x) to exp(x) - 1
-/// eg.
-/// y = hfusion elemwise unary {expm1} (x)
-/// is normalized to
-///  y = linalg.elemwise_unary{exp}(x) -1
-
-struct NormalizeSinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+/// normalize sinh(x) by piecewise formulas
+/// formula:
+///   sinh(x) = (exp(x) - exp(-x)) / 2
+/// piecewise implementation:
+///   1. x > 5      : sinh(x) ≈ 0.5 * exp(x)
+///   2. x < -5     : sinh(x) ≈ -0.5 * exp(-x)
+///   3. |x| < 0.25 : sinh(x) ≈ x
+///   4. otherwise  : sinh(x) = (exp(x) - exp(-x)) * 0.5
+class NormalizeHyperbolicBase : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::sinh) {
-      return failure();
-    }
-
-    Value src = op.getInputs()[0];
-    auto inType = getElementTypeOrSelf(src.getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    auto loc = op.getLoc();
-    auto srcType = cast<RankedTensorType>(src.getType());
-    auto elementType = srcType.getElementType();
-
-    auto createConstTensor = [&](double v) -> Value {
-      Value cst = rewriter.create<arith::ConstantOp>(
-          loc, elementType, rewriter.getFloatAttr(elementType, v));
-      Value empty = utils::createEmptyOp(rewriter, loc, src);
-      return rewriter.create<linalg::FillOp>(loc, ValueRange{cst},
-                                             ValueRange{empty})
-          .getResult(0);
-    };
-
-    Value minusOneTensor = createConstTensor(-1.0);
-    Value halfTensor = createConstTensor(0.5);
-    Value negHalfTensor = createConstTensor(-0.5);
-    Value posThresholdTensor = createConstTensor(5.0);
-    Value negThresholdTensor = createConstTensor(-5.0);
-    Value smallPosThresholdTensor = createConstTensor(0.25);
-    Value smallNegThresholdTensor = createConstTensor(-0.25);
-
-    // exp(x)
-    auto emptyExp0 = utils::createEmptyOp(rewriter, loc, src);
-    auto *exp0 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::exp, ValueRange{src},
-        ValueRange{emptyExp0});
-
-    // -x = x * (-1)
-    auto emptyNeg = utils::createEmptyOp(rewriter, loc, src);
-    auto *negx =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{src, minusOneTensor}, ValueRange{emptyNeg});
-
-    // exp(-x)
-    auto emptyExp1 = utils::createEmptyOp(rewriter, loc, src);
-    auto *exp1 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::exp,
-        ValueRange{negx->getResults()[0]}, ValueRange{emptyExp1});
-
-    // midRes = (exp(x) - exp(-x)) * 0.5
-    auto emptySub = utils::createEmptyOp(rewriter, loc, src);
-    auto *sub =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::sub,
-            ValueRange{exp0->getResults()[0], exp1->getResults()[0]},
-            ValueRange{emptySub});
-
-    auto emptyMid = utils::createEmptyOp(rewriter, loc, src);
-    auto *midRes =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{sub->getResults()[0], halfTensor},
-            ValueRange{emptyMid});
-
-    // large positive approximation: 0.5 * exp(x)
-    auto emptyLargePos = utils::createEmptyOp(rewriter, loc, src);
-    auto *largePos =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{exp0->getResults()[0], halfTensor},
-            ValueRange{emptyLargePos});
-
-    // large negative approximation: -0.5 * exp(-x)
-    auto emptyLargeNeg = utils::createEmptyOp(rewriter, loc, src);
-    auto *largeNeg =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{exp1->getResults()[0], negHalfTensor},
-            ValueRange{emptyLargeNeg});
-
-    // small masks: -0.25 < x < 0.25
-    Value gtSmallNegMask = rewriter.create<arith::CmpFOp>(
-        loc, arith::CmpFPredicate::OGT, src, smallNegThresholdTensor);
-
-    Value ltSmallPosMask = rewriter.create<arith::CmpFOp>(
-        loc, arith::CmpFPredicate::OLT, src, smallPosThresholdTensor);
-
-    Value smallMask = rewriter.create<arith::AndIOp>(
-        loc, gtSmallNegMask, ltSmallPosMask);
-
-    // large masks
-    Value gtMask = rewriter.create<arith::CmpFOp>(
-        loc, arith::CmpFPredicate::OGT, src, posThresholdTensor);
-
-    Value ltMask = rewriter.create<arith::CmpFOp>(
-        loc, arith::CmpFPredicate::OLT, src, negThresholdTensor);
-
-    // base = select(|x| < 0.25, x, midRes)
-    Value base = rewriter.create<arith::SelectOp>(
-        loc, smallMask, src, midRes->getResult(0));
-
-    // tmp = select(x > 5, 0.5 * exp(x), base)
-    Value tmp = rewriter.create<arith::SelectOp>(
-        loc, gtMask, largePos->getResult(0), base);
-
-    // res = select(x < -5, -0.5 * exp(-x), tmp)
-    Value res = rewriter.create<arith::SelectOp>(
-        loc, ltMask, largeNeg->getResult(0), tmp);
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    rewriter.replaceOp(op, res);
-    return success();
+protected:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+  Value createUnary(PatternRewriter &rewriter, Location loc,
+                    linalg::UnaryFn fn, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fn, ValueRange{input}, ValueRange{empty})
+        ->getResult(0);
+  }
+  Value createBinary(PatternRewriter &rewriter, Location loc,
+                     linalg::BinaryFn fn, Value lhs, Value rhs,
+                     Value outLike) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, outLike);
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                   linalg::BinaryFn, linalg::BinaryFnAttr>(
+               rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
+        ->getResult(0);
+  }
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(empty),
+                                   ValueRange{cond, t, f}, ValueRange(empty))
+        ->getResult(0);
+  }
+  Value createCmp(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  CompareFn fn) const {
+    return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
   }
 };
 
-struct NormalizeAtan2Op : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+struct NormalizeSinhOp : public NormalizeHyperbolicBase {
+public:
+  using NormalizeHyperbolicBase::NormalizeHyperbolicBase;
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::sinh) {
+      return failure();
+    }
+    Location loc = op.getLoc();
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+    bool isF16 = inTy.isF16();
+    if (!inTy.isF16() && !inTy.isF32()) {
+      return failure();
+    }
+    if (isF16) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+    // Pre-computation:
+    //   exp(x), exp(-x)
+    //   smallMask    = (-0.25 < x) && (x < 0.25)
+    //   largePosMask = x > 5
+    //   largeNegMask = x < -5
+    Value expX, expNegX, smallMask, largePosMask, largeNegMask;
+    std::tie(expX, expNegX, smallMask, largePosMask, largeNegMask) =
+        preprocess(rewriter, loc, input);
+    // Piecewise candidate values.
+    Value midRes = calculateMid(rewriter, loc, input, expX, expNegX);
+    Value largePos = calculateLargePositive(rewriter, loc, input, expX);
+    Value largeNeg = calculateLargeNegative(rewriter, loc, input, expNegX);
+    // Combine all branches.
+    Value result = combine(rewriter, loc, input, midRes, largePos, largeNeg,
+                           smallMask, largePosMask, largeNegMask);
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  // Preprocess:
+  //   exp(x), exp(-x)
+  //   smallMask    = (-0.25 < x) && (x < 0.25)
+  //   largePosMask = x > 5
+  //   largeNegMask = x < -5
+  std::tuple<Value, Value, Value, Value, Value>
+  preprocess(PatternRewriter &rewriter, Location loc, Value input) const {
+    Value expX = createUnary(rewriter, loc, linalg::UnaryFn::exp, input);
+    // -x = x * (-1)
+    Value negX = createBinary(rewriter, loc, linalg::BinaryFn::mul, input,
+                              f32Const(rewriter, loc, -1.0f), input);
+    Value expNegX = createUnary(rewriter, loc, linalg::UnaryFn::exp, negX);
+    // small range mask: -0.25 < x < 0.25
+    Value gtSmallNeg = createCmp(rewriter, loc, input,
+                                 f32Const(rewriter, loc, -0.25f),
+                                 CompareFn::vgt);
+    Value ltSmallPos = createCmp(rewriter, loc, input,
+                                 f32Const(rewriter, loc, 0.25f),
+                                 CompareFn::vlt);
+    Value smallMask =
+        createVandOp(rewriter, loc, gtSmallNeg, ltSmallPos)->getResult(0);
+    // large positive / negative masks
+    Value largePosMask = createCmp(rewriter, loc, input,
+                                   f32Const(rewriter, loc, 5.0f),
+                                   CompareFn::vgt);
+    Value largeNegMask = createCmp(rewriter, loc, input,
+                                   f32Const(rewriter, loc, -5.0f),
+                                   CompareFn::vlt);
+    return std::make_tuple(expX, expNegX, smallMask, largePosMask,
+                           largeNegMask);
+  }
+  // Middle region:
+  //   sinh(x) = (exp(x) - exp(-x)) * 0.5
+  Value calculateMid(PatternRewriter &rewriter, Location loc, Value input,
+                     Value expX, Value expNegX) const {
+    Value diff =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, expX, expNegX, input);
+    return createBinary(rewriter, loc, linalg::BinaryFn::mul, diff,
+                        f32Const(rewriter, loc, 0.5f), input);
+  }
+  // Large positive region:
+  //   sinh(x) ≈ 0.5 * exp(x)
+  Value calculateLargePositive(PatternRewriter &rewriter, Location loc,
+                               Value input, Value expX) const {
+    return createBinary(rewriter, loc, linalg::BinaryFn::mul, expX,
+                        f32Const(rewriter, loc, 0.5f), input);
+  }
+  // Large negative region:
+  //   sinh(x) ≈ -0.5 * exp(-x)
+  Value calculateLargeNegative(PatternRewriter &rewriter, Location loc,
+                               Value input, Value expNegX) const {
+    return createBinary(rewriter, loc, linalg::BinaryFn::mul, expNegX,
+                        f32Const(rewriter, loc, -0.5f), input);
+  }
+  // Combine all piecewise branches:
+  //   base = smallMask ? x : midRes
+  //   tmp  = largePosMask ? largePos : base
+  //   res  = largeNegMask ? largeNeg : tmp
+  Value combine(PatternRewriter &rewriter, Location loc, Value input,
+                Value midRes, Value largePos, Value largeNeg, Value smallMask,
+                Value largePosMask, Value largeNegMask) const {
+    Value base = createSelect(rewriter, loc, smallMask, input, midRes);
+    Value tmp = createSelect(rewriter, loc, largePosMask, largePos, base);
+    return createSelect(rewriter, loc, largeNegMask, largeNeg, tmp);
+  }
+};
+
+/// normalize atan2(y, x) by quadrant restoration
+/// formula:
+///   atan2(y, x) = angle between point (x, y) and positive x-axis
+/// range:
+///   atan2(y, x) in (-pi, pi]
+/// implementation:
+///   1. Reduce to first quadrant by t = min(|x|, |y|) / max(|x|, |y|)
+///   2. Approximate atan(t) by Horner polynomial
+///   3. Recover first-quadrant angle:
+///      a1 = swap(|y| > |x|) ? (pi/2 - a) : a
+///   4. Restore quadrant by signs of x and y
+///   5. Special case: atan2(0, 0) = 0
+class NormalizeAtan2Base : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
 
+protected:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+  Value createUnary(PatternRewriter &rewriter, Location loc,
+                    linalg::UnaryFn fn, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fn, ValueRange{input}, ValueRange{empty})
+        ->getResult(0);
+  }
+  Value createBinary(PatternRewriter &rewriter, Location loc,
+                     linalg::BinaryFn fn, Value lhs, Value rhs,
+                     Value outLike) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, outLike);
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                   linalg::BinaryFn, linalg::BinaryFnAttr>(
+               rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
+        ->getResult(0);
+  }
+  Value createCmp(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  CompareFn fn) const {
+    return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
+  }
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{empty.getType()},
+                                   ValueRange{cond, t, f}, ValueRange{empty})
+        ->getResult(0);
+  }
+  Value createVand(PatternRewriter &rewriter, Location loc, Value lhs,
+                   Value rhs) const {
+    return createVandOp(rewriter, loc, lhs, rhs)->getResult(0);
+  }
+  Value mulAdd(PatternRewriter &rewriter, Location loc, Value a, Value b,
+               Value c, Value outLike) const {
+    Value mul = createBinary(rewriter, loc, linalg::BinaryFn::mul, a, b, outLike);
+    return createBinary(rewriter, loc, linalg::BinaryFn::add, mul, c, outLike);
+  }
+};
+
+struct NormalizeAtan2Op : public NormalizeAtan2Base {
+public:
+  using NormalizeAtan2Base::NormalizeAtan2Base;
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::BinaryFn::atan2) {
       return failure();
     }
-
-    if (op.getFun() != hfusion::BinaryFn::atan2) {
-      return failure();
-    }
-
+    Location loc = op.getLoc();
     Value y = op.getInputs()[0];
     Value x = op.getInputs()[1];
-
     auto inType = getElementTypeOrSelf(y.getType());
     auto xType = getElementTypeOrSelf(x.getType());
     if ((!inType.isF16() && !inType.isF32()) || inType != xType) {
       return failure();
     }
-
-    bool castBackToF16 = inType.isF16();
-    if (castBackToF16) {
+    bool isF16 = inType.isF16();
+    if (isF16) {
       y = hfusion::castTo(rewriter, y, rewriter.getF32Type(),
                           hfusion::RoundMode::ROUND);
       x = hfusion::castTo(rewriter, x, rewriter.getF32Type(),
                           hfusion::RoundMode::ROUND);
     }
-
-    auto loc = op.getLoc();
-    auto elemType = cast<FloatType>(getElementTypeOrSelf(y.getType()));
-
-    auto f32Const = [&](float v) -> Value {
-      return rewriter.create<arith::ConstantOp>(
-          loc, elemType, rewriter.getFloatAttr(elemType, v));
-    };
-
-    auto makeUnary = [&](linalg::UnaryFn fn, Value src) -> Value {
-      auto empty = utils::createEmptyOp(rewriter, loc, src);
-      return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                    linalg::UnaryFnAttr>(
-                 rewriter, loc, fn, ValueRange{src}, ValueRange{empty})
-          ->getResult(0);
-    };
-
-    auto makeBinary = [&](linalg::BinaryFn fn, Value lhs, Value rhs,
-                          Value outLike) -> Value {
-      auto empty = utils::createEmptyOp(rewriter, loc, outLike);
-      return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                     linalg::BinaryFn, linalg::BinaryFnAttr>(
-                 rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
-          ->getResult(0);
-    };
-
-    auto makeCmp = [&](Value lhs, Value rhs, CompareFn fn) -> Value {
-      return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
-    };
-
-    auto makeSelect = [&](Value cond, Value trueVal, Value falseVal,
-                          Value outLike) -> Value {
-      auto out = utils::createEmptyOp(rewriter, loc, outLike);
-      return rewriter
-          .create<hfusion::SelectOp>(loc, TypeRange{out.getType()},
-                                     ValueRange{cond, trueVal, falseVal},
-                                     ValueRange{out})
-          .getResult(0);
-    };
-
-    // 用于 xi1 tensor 的逐元素 vand
-    auto makeVand = [&](Value lhs, Value rhs) -> Value {
-      return createVandOp(rewriter, loc, lhs, rhs)->getResult(0);
-    };
-
-    auto mulAdd = [&](Value a, Value b, Value c, Value outLike) -> Value {
-      Value mul = makeBinary(linalg::BinaryFn::mul, a, b, outLike);
-      return makeBinary(linalg::BinaryFn::add, mul, c, outLike);
-    };
-
-    Value zero = f32Const(0.0f);
-    Value one = f32Const(1.0f);
-    Value negOne = f32Const(-1.0f);
-    Value pi = f32Const(3.14159265358979323846f);
-    Value halfPi = f32Const(1.57079632679489661923f);
-
-    Value c0 = f32Const(0.99998005f);
-    Value c1 = f32Const(-0.33269410f);
-    Value c2 = f32Const(0.19401768f);
-    Value c3 = f32Const(-0.11768927f);
-    Value c4 = f32Const(0.05407583f);
-    Value c5 = f32Const(-0.01229686f);
-
-    // ax = |x|, ay = |y|
-    Value ax = makeUnary(linalg::UnaryFn::abs, x);
-    Value ay = makeUnary(linalg::UnaryFn::abs, y);
-
-    // swapMask = ay > ax
-    Value swapMask = makeCmp(ay, ax, CompareFn::vgt);
-
-    // maxv = max(ax, ay), minv = min(ax, ay)
-    Value maxv = makeSelect(swapMask, ay, ax, y);
-    Value minv = makeSelect(swapMask, ax, ay, y);
-
-    // safeMaxv = (maxv == 0) ? 1 : maxv
-    Value maxIsZero = makeCmp(maxv, zero, CompareFn::veq);
-    Value safeMaxv = makeSelect(maxIsZero, one, maxv, y);
-
-    // t = minv / safeMaxv
-    Value t = makeBinary(linalg::BinaryFn::div, minv, safeMaxv, y);
-    Value t2 = makeBinary(linalg::BinaryFn::mul, t, t, y);
-
-    // Horner:
-    // poly = c0 + t2*(c1 + t2*(c2 + t2*(c3 + t2*(c4 + t2*c5))))
-    Value poly = mulAdd(t2, c5, c4, y);
-    poly = mulAdd(t2, poly, c3, y);
-    poly = mulAdd(t2, poly, c2, y);
-    poly = mulAdd(t2, poly, c1, y);
-    poly = mulAdd(t2, poly, c0, y);
-
-    Value a = makeBinary(linalg::BinaryFn::mul, t, poly, y);
-
-    // first quadrant angle
-    Value halfPiMinusA = makeBinary(linalg::BinaryFn::sub, halfPi, a, y);
-    Value a1 = makeSelect(swapMask, halfPiMinusA, a, y);
-
-    // quadrant restore
-    Value xNeg = makeCmp(x, zero, CompareFn::vlt);
-    Value yNeg = makeCmp(y, zero, CompareFn::vlt);
-
-    Value piMinusA1 = makeBinary(linalg::BinaryFn::sub, pi, a1, y);
-    Value a1MinusPi = makeBinary(linalg::BinaryFn::sub, a1, pi, y);
-    Value negA1 = makeBinary(linalg::BinaryFn::mul, negOne, a1, y);
-
-    Value upper = makeSelect(xNeg, piMinusA1, a1, y);
-    Value lower = makeSelect(xNeg, a1MinusPi, negA1, y);
-    Value theta = makeSelect(yNeg, lower, upper, y);
-
-    // origin: x == 0 && y == 0
-    Value xZero = makeCmp(x, zero, CompareFn::veq);
-    Value yZero = makeCmp(y, zero, CompareFn::veq);
-    Value originMask = makeVand(xZero, yZero);
-
-    // if origin -> 0, else theta
-    theta = makeSelect(originMask, zero, theta, y);
-
-    if (castBackToF16) {
-      theta = hfusion::castTo(rewriter, theta, rewriter.getF16Type(),
-                              hfusion::RoundMode::ROUND);
+    // Pre-computation:
+    //   ax = |x|, ay = |y|
+    //   swapMask = ay > ax
+    //   maxv = max(ax, ay), minv = min(ax, ay)
+    //   safeMaxv = maxv == 0 ? 1 : maxv
+    Value ax, ay, swapMask, maxv, minv, safeMaxv;
+    std::tie(ax, ay, swapMask, maxv, minv, safeMaxv) =
+        preprocess(rewriter, loc, x, y);
+    // Polynomial approximation in first quadrant.
+    Value a = calculateFirstQuadrantAtan(rewriter, loc, y, minv, safeMaxv);
+    // Recover first-quadrant angle:
+    //   a1 = swapMask ? (pi/2 - a) : a
+    Value a1 = recoverFirstQuadrant(rewriter, loc, y, a, swapMask);
+    // Restore quadrant by signs of x and y.
+    Value theta = restoreQuadrant(rewriter, loc, x, y, a1);
+    // Special case:
+    //   atan2(0, 0) = 0
+    Value result = handleOrigin(rewriter, loc, x, y, theta);
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
     }
-
-    rewriter.replaceOp(op, theta);
+    rewriter.replaceOp(op, result);
     return success();
+  }
+
+private:
+  // Preprocess:
+  //   ax = |x|, ay = |y|
+  //   swapMask = ay > ax
+  //   maxv = swapMask ? ay : ax
+  //   minv = swapMask ? ax : ay
+  //   safeMaxv = maxv == 0 ? 1 : maxv
+  std::tuple<Value, Value, Value, Value, Value, Value>
+  preprocess(PatternRewriter &rewriter, Location loc, Value x, Value y) const {
+    Value ax = createUnary(rewriter, loc, linalg::UnaryFn::abs, x);
+    Value ay = createUnary(rewriter, loc, linalg::UnaryFn::abs, y);
+    Value swapMask = createCmp(rewriter, loc, ay, ax, CompareFn::vgt);
+    Value maxv = createSelect(rewriter, loc, swapMask, ay, ax);
+    Value minv = createSelect(rewriter, loc, swapMask, ax, ay);
+    Value maxIsZero =
+        createCmp(rewriter, loc, maxv, f32Const(rewriter, loc, 0.0f),
+                  CompareFn::veq);
+    Value safeMaxv =
+        createSelect(rewriter, loc, maxIsZero, f32Const(rewriter, loc, 1.0f),
+                     maxv);
+    return std::make_tuple(ax, ay, swapMask, maxv, minv, safeMaxv);
+  }
+  // First-quadrant atan approximation:
+  //   t = minv / safeMaxv
+  //   t2 = t * t
+  //   poly = c0 + t2*(c1 + t2*(c2 + t2*(c3 + t2*(c4 + t2*c5))))
+  //   a = t * poly
+  Value calculateFirstQuadrantAtan(PatternRewriter &rewriter, Location loc,
+                                   Value outLike, Value minv,
+                                   Value safeMaxv) const {
+    Value t =
+        createBinary(rewriter, loc, linalg::BinaryFn::div, minv, safeMaxv,
+                     outLike);
+    Value t2 = createBinary(rewriter, loc, linalg::BinaryFn::mul, t, t, outLike);
+    Value c0 = f32Const(rewriter, loc, 0.99998005f);
+    Value c1 = f32Const(rewriter, loc, -0.33269410f);
+    Value c2 = f32Const(rewriter, loc, 0.19401768f);
+    Value c3 = f32Const(rewriter, loc, -0.11768927f);
+    Value c4 = f32Const(rewriter, loc, 0.05407583f);
+    Value c5 = f32Const(rewriter, loc, -0.01229686f);
+    Value poly = mulAdd(rewriter, loc, t2, c5, c4, outLike);
+    poly = mulAdd(rewriter, loc, t2, poly, c3, outLike);
+    poly = mulAdd(rewriter, loc, t2, poly, c2, outLike);
+    poly = mulAdd(rewriter, loc, t2, poly, c1, outLike);
+    poly = mulAdd(rewriter, loc, t2, poly, c0, outLike);
+    return createBinary(rewriter, loc, linalg::BinaryFn::mul, t, poly, outLike);
+  }
+  // Recover first-quadrant angle:
+  //   a1 = swapMask ? (pi/2 - a) : a
+  Value recoverFirstQuadrant(PatternRewriter &rewriter, Location loc,
+                             Value outLike, Value a, Value swapMask) const {
+    Value halfPi = f32Const(rewriter, loc, 1.57079632679489661923f);
+    Value halfPiMinusA =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, halfPi, a, outLike);
+    return createSelect(rewriter, loc, swapMask, halfPiMinusA, a);
+  }
+  // Quadrant restoration:
+  //   x < 0 ? use pi-shifted branch : use direct branch
+  //   y < 0 ? choose lower half plane : choose upper half plane
+  Value restoreQuadrant(PatternRewriter &rewriter, Location loc, Value x,
+                        Value y, Value a1) const {
+    Value zero = f32Const(rewriter, loc, 0.0f);
+    Value pi = f32Const(rewriter, loc, 3.14159265358979323846f);
+    Value negOne = f32Const(rewriter, loc, -1.0f);
+    Value xNeg = createCmp(rewriter, loc, x, zero, CompareFn::vlt);
+    Value yNeg = createCmp(rewriter, loc, y, zero, CompareFn::vlt);
+    Value piMinusA1 =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, pi, a1, y);
+    Value a1MinusPi =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, a1, pi, y);
+    Value negA1 =
+        createBinary(rewriter, loc, linalg::BinaryFn::mul, negOne, a1, y);
+    Value upper = createSelect(rewriter, loc, xNeg, piMinusA1, a1);
+    Value lower = createSelect(rewriter, loc, xNeg, a1MinusPi, negA1);
+    return createSelect(rewriter, loc, yNeg, lower, upper);
+  }
+  // Origin handling:
+  //   if x == 0 && y == 0, return 0
+  Value handleOrigin(PatternRewriter &rewriter, Location loc, Value x, Value y,
+                     Value theta) const {
+    Value zero = f32Const(rewriter, loc, 0.0f);
+    Value xZero = createCmp(rewriter, loc, x, zero, CompareFn::veq);
+    Value yZero = createCmp(rewriter, loc, y, zero, CompareFn::veq);
+    Value originMask = createVand(rewriter, loc, xZero, yZero);
+    return createSelect(rewriter, loc, originMask, zero, theta);
   }
 };
 
+/// normalize expm1(x) to exp(x) - 1
+/// eg.
+/// y = hfusion elemwise unary {expm1} (x)
+/// is normalized to
+///  y = linalg.elemwise_unary{exp}(x) -1
 struct NormalizeExpM1Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
