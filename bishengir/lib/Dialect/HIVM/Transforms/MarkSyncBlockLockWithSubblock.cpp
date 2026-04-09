@@ -21,11 +21,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
+
+#include "llvm/Support/VersionTuple.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_MARKSYNCBLOCKLOCKWITHSUBBLOCK
@@ -75,6 +78,12 @@ struct MarkSyncBlockLockWithSubblockPass
 
 void MarkSyncBlockLockWithSubblockPass::runOnOperation() {
   ModuleOp module = getOperation();
+
+  std::optional<llvm::VersionTuple> hivmcVersion =
+      hacc::utils::getHIVMCVersion(module);
+  if (!hivmcVersion || *hivmcVersion < llvm::VersionTuple(0, 2, 0))
+    return;
+
   if (!isMixModule(module))
     return;
 

@@ -36,6 +36,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/VersionTuple.h"
 
 #define DEBUG_TYPE "hivm-insert-free-lock-var-before-return"
 
@@ -90,6 +91,11 @@ class InsertFreeLockVarBeforeReturnPass
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
+
+    std::optional<llvm::VersionTuple> hivmcVersion =
+        hacc::utils::getHIVMCVersion(module);
+    if (!hivmcVersion || *hivmcVersion < llvm::VersionTuple(0, 2, 0))
+      return;
 
     module.walk([&](func::FuncOp funcOp) {
       if (!hacc::utils::isDeviceEntry(funcOp)) {
