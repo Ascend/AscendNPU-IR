@@ -395,6 +395,8 @@ Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);
 
 std::pair<bool, bool> analyzeCoreTypes(Block *block);
 
+bool hasOnlyIfRegionOperations(Block *block);
+
 /// To judge whether yields of if have the same core type
 bool needsSplit(scf::IfOp ifOp);
 

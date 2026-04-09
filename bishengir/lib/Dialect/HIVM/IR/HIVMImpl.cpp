@@ -396,14 +396,49 @@ std::pair<bool, bool> analyzeCoreTypes(Block *block) {
         hasV = true;
       }
     }
+
+    if (op.getNumRegions() > 0) {
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          auto [nestedHasC, nestedHasV] = analyzeCoreTypes(&nestedBlock);
+          hasC = hasC || nestedHasC;
+          hasV = hasV || nestedHasV;
+        }
+      }
+    }
   }
   return std::pair<bool, bool>(hasC, hasV);
+}
+
+bool hasOnlyIfRegionOperations(Block *block) {
+  if (!block) {
+    return true;
+  }
+  for (Operation &op : *block) {
+    if (op.getNumRegions() > 0) {
+      if (!isa<scf::IfOp>(&op)) {
+        return false;
+      }
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          if (!hasOnlyIfRegionOperations(&nestedBlock)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
 // Termination Check
 //===----------------------------------------------------------------------===//
 bool needsSplit(scf::IfOp ifOp) {
+  if (!hasOnlyIfRegionOperations(ifOp.thenBlock()) ||
+      !hasOnlyIfRegionOperations(ifOp.elseBlock())) {
+    return false;
+  }
 
   auto [thenHasC, thenHasV] = analyzeCoreTypes(ifOp.thenBlock());
   auto [elseHasC, elseHasV] = ifOp.getElseRegion().empty()
