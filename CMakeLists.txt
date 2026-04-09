@@ -202,6 +202,7 @@ configure_file(
 
 add_subdirectory(bishengir/tools/bishengir-hfusion-ods-gen)
 if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+  add_definitions(-DBISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_subdirectory(bishengir/include/bishengir/Interfaces)
   set(STANDALONE_IR_BUILD_DIALECT
   Annotation

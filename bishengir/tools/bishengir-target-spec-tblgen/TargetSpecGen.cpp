@@ -280,9 +280,7 @@ static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
     OS << formatv("    case {0}::{1}: return \"{2}\";\n", enumName, deviceName,
                   deviceName);
   }
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
   OS << formatv("    case {0}::Unknown: return \"Unknown\";\n", enumName);
-#endif
   OS << "  }\n";
   OS << "  return \"\";\n";
   OS << "}\n\n";

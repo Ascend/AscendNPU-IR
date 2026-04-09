@@ -244,7 +244,7 @@ LogicalResult LoadOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
@@ -343,7 +343,7 @@ LogicalResult StoreOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
@@ -537,7 +537,7 @@ LogicalResult CopyOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");

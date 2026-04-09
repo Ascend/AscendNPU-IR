@@ -141,7 +141,7 @@ LogicalResult VBrcOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
@@ -712,7 +712,7 @@ LogicalResult VTransposeOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (permutation.empty()) {
     return emitOpError() << "Permutation array should not be empty.";

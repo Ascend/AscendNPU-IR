@@ -2339,7 +2339,11 @@ std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
 #endif
 GatherMaskOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> /*attrs*/) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     Value srcVal = block.getArgument(0);
     Value maskVal = block.getArgument(1);
     ValueRange initArgs = block.getArguments().drop_front(2);

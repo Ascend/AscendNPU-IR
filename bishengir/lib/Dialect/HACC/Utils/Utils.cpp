@@ -186,8 +186,13 @@ std::optional<HACCTargetDeviceSpecInterface> getNPUTargetSpec(ModuleOp op) {
 
 void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
   MLIRContext *ctx = op->getContext();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   SmallVector<DeviceIDTargetDeviceSpecPair> entries;
   entries.push_back({StringAttr::get(ctx, kNPUStr), spec});
+#else
+  SmallVector<DataLayoutEntryInterface> entries;
+  entries.push_back(DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
+#endif
   op->setAttr(TargetSystemSpecAttr::name,
               TargetSystemSpecAttr::get(ctx, entries));
 }
@@ -276,7 +281,7 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
   if (auto originalLoc =
           llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
     auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) 
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
         originalAttr.getScope(), originalAttr.getName(),
@@ -338,10 +343,10 @@ bool existEntryHost(Operation *module) {
         CallInterfaceCallable callee = callOpInf.getCallableForCallee();
 
         LLVM_DEBUG(llvm::dbgs() << "got callee name "
-                                << callee.get<SymbolRefAttr>() << "\n";);
+                                << llvm::cast<SymbolRefAttr>(callee) << "\n";);
         auto calleeOp =
             dyn_cast<HACCFunction>(SymbolTable::lookupNearestSymbolFrom(
-                func, callee.get<SymbolRefAttr>()));
+                func, llvm::cast<SymbolRefAttr>(callee)));
 
         LLVM_DEBUG(llvm::dbgs() << "got callee " << *calleeOp << "\n";);
         if (calleeOp.isDevice()) {
