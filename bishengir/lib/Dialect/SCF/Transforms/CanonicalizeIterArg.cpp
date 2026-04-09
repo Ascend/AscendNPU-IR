@@ -305,7 +305,6 @@ public:
       if (!res.use_empty())
         continue;
       BlockArgument iterArg = body->getArgument(i + 1); // iterarg[i]
-      Value yielded = yield.getOperand(i);
 
       SmallPtrSet<Operation *, 8> tobeDeletedOps;
       if (failed(

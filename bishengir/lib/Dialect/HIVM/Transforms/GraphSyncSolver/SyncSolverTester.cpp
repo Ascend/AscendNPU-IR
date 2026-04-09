@@ -367,8 +367,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
                corePipe);
         auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
         assert(!waitFlagOp->eventIds.empty());
-        auto eventId =
-            waitFlagOp->eventIds[loopIdx % waitFlagOp->eventIds.size()];
+        auto eventId = waitFlagOp->eventIds[loopIdx % static_cast<int>(
+            waitFlagOp->eventIds.size())];
         auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
           assert((*it) == eventId);
@@ -559,7 +559,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     }
     assert(!setFlagOp->eventIds.empty());
     triggeredSetFlagOps[getTriggeredGroup(setFlagOp)].insert(
-        setFlagOp->eventIds[loopIndex % setFlagOp->eventIds.size()]);
+        setFlagOp->eventIds[loopIndex %
+                            static_cast<int>(setFlagOp->eventIds.size())]);
     refreshPipeQue(corePipeDst);
   };
 

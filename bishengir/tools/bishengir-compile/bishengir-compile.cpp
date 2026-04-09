@@ -39,6 +39,12 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 
+namespace {
+// getMainExecutable needs an address inside this binary; ISO C++ forbids using
+// `main` as a normal function pointer.
+static void bishengirCompileExecutableAnchor() {}
+} // namespace
+
 /// Check if any argv is --target=VALUE or -target=VALUE where VALUE matches
 /// Ascend910_95* (Ascend910_950z, Ascend910_9579, ...) or Ascend950*.
 static bool hasAscend910_95Target(int argc, char **argv) {
@@ -116,8 +122,8 @@ int main(int argc, char **argv) {
   // Create config from command line options.
   bishengir::BiShengIRCompileMainConfig config =
       bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
-  config.setExecutablePath(
-      bishengir::getExecutablePath(argv[0], reinterpret_cast<void *>(main)));
+  config.setExecutablePath(bishengir::getExecutablePath(
+      argv[0], reinterpret_cast<void *>(&bishengirCompileExecutableAnchor)));
   // Check the validity of intput/output options
   if (failed(checkInOutOptionsValidity(config))) {
     return EXIT_FAILURE;

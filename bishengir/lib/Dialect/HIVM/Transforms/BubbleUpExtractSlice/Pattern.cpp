@@ -395,6 +395,8 @@ static std::optional<int64_t> findOnlyNonUnit(ArrayRef<int64_t> shape) {
       ret = i;
     }
   }
+  if (ret < 0)
+    return std::nullopt;
   return ret;
 }
 
@@ -432,8 +434,18 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       inputSizes(inputRank, rewriter.getIndexAttr(1)),
       inputStrides(inputRank, rewriter.getIndexAttr(1));
 
-  inputOffsets[nonUnitInput.value()] = outputOffsets[nonUnitOutput.value()];
-  inputSizes[nonUnitInput.value()] = outputSizes[nonUnitOutput.value()];
+  const int64_t inIdx = *nonUnitInput;
+  const int64_t outIdx = *nonUnitOutput;
+  const int64_t irank = static_cast<int64_t>(inputRank);
+  const int64_t orank = static_cast<int64_t>(outputOffsets.size());
+  if (inIdx < 0 || outIdx < 0 || inIdx >= irank || outIdx >= orank ||
+      static_cast<int64_t>(outputSizes.size()) != orank)
+    return failure();
+
+  inputOffsets[static_cast<size_t>(inIdx)] =
+      outputOffsets[static_cast<size_t>(outIdx)];
+  inputSizes[static_cast<size_t>(inIdx)] =
+      outputSizes[static_cast<size_t>(outIdx)];
 
   // Create the extract_slice of the input
   rewriter.setInsertionPoint(sliceOp);
@@ -1249,9 +1261,6 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto transOp = dyn_cast<hivm::VTransposeOp>(sliceOp.getSource().getDefiningOp());
   if (!transOp)
     return failure();
-  
-  auto src = transOp.getSrc();
-  auto dst = transOp.getDst();
 
   auto resultType = cast<RankedTensorType>(sliceOp.getType());
   auto resultRank = resultType.getRank();
@@ -1260,7 +1269,6 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto perm = transOp.getPermutation();
   
   rewriter.setInsertionPoint(transOp);
-  auto loc = transOp.getLoc();
   auto dstOffsets = sliceOp.getMixedOffsets();
   auto srcOffsets = SmallVector<OpFoldResult>(resultRank);
   auto srcSizes = llvm::to_vector(sliceOp.getMixedSizes());

@@ -509,7 +509,7 @@ cmake_generate() {
   if [[ "$OS_TYPE" == "Darwin" ]]; then
     COMMON_FLAGS+=" -Wno-deprecated-declarations"
   else
-    COMMON_FLAGS+=" -Wdate-time -Wframe-larger-than=8192"
+    COMMON_FLAGS+=" -Wdate-time -Wframe-larger-than=16384"
   fi
 
   C_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wstrict-prototypes"

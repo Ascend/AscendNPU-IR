@@ -67,7 +67,7 @@ void SinkOpToConsumerInLoopPass::runOnOperation() {
   patterns.add<SinkOpToConsumerInLoop<hivm::VBrcOp>,
                SinkOpToConsumerInLoop<linalg::BroadcastOp>,
                SinkOpToConsumerInLoop<linalg::FillOp>>(ctx);
-  if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }
 }

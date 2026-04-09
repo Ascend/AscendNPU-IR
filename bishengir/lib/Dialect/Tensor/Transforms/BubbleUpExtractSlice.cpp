@@ -36,6 +36,7 @@ template <typename ProducerOp>
 struct AggressiveBubbleUpExtractSlice
     : public OpRewritePattern<tensor::ExtractSliceOp> {
   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
+  ~AggressiveBubbleUpExtractSlice() override = default;
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp sliceOp,
                                 PatternRewriter &rewriter) const override {
     auto producerOp = sliceOp.getSource().getDefiningOp<ProducerOp>();

@@ -87,7 +87,6 @@ void DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
 int64_t DimensionAnalyzer::getTilingDim(Value v) {
   if (!argumentsRefPointer_.contains(v))
     return -1;
-  auto argRef = argumentsRefPointer_.at(v);
   auto rank = utils::getShapeRank(v.getType()).value_or(0);
   for (size_t i = 0; i < rank; i++) {
     auto parentIndex = solverCollapserElem_->find(getArgumentRef(v)[i]);

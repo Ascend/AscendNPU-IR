@@ -420,9 +420,9 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   Attribute valueAttr = constOp.getValue();
   T v;
   if (auto valIntAttr = dyn_cast<IntegerAttr>(valueAttr)) {
-    v = valIntAttr.getInt();
+    v = static_cast<T>(valIntAttr.getInt());
   } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
-    v = valFPAttr.getValueAsDouble();
+    v = static_cast<T>(valFPAttr.getValueAsDouble());
   } else {
     llvm_unreachable("getArithConstantOpValue supports only IntOrFloat");
   }

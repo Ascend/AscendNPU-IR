@@ -891,7 +891,7 @@ void markOpTouchingMMAD(hivm::LoadOp load, CubeLoopInfo &info) {
     if (auto reinterpretCastOp =
         dyn_cast<memref::ReinterpretCastOp>(maybeReinterpretCastOp.value())) {
       auto viewSrc = reinterpretCastOp.getViewSource();
-      if (auto blockArg = viewSrc.dyn_cast<mlir::BlockArgument>()) {
+      if (auto blockArg = dyn_cast<mlir::BlockArgument>(viewSrc)) {
         mlir::Block *ownerBlock = blockArg.getOwner();
         if (ownerBlock->isEntryBlock()) {
           isFromEntryBlock = true;

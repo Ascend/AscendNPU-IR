@@ -987,7 +987,8 @@ public:
 ///    (-72) % 8  = 0
 ///  int/fp16/bf16 types are converted to fp32 for the division to get
 ///  better numerical behavior.
-static constexpr llvm::StringLiteral normalizeModAlreadyHandle = "already_handle_mod_zero";
+static constexpr llvm::StringLiteral normalizeModAlreadyHandle =
+    "already_handle_mod_zero";
 struct NormalizeModOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -1033,7 +1034,7 @@ public:
             ->getResult(0);
 
     Value negOneValue =
-          utils::createConstantOp<float>(rewriter, loc, elemType, replaceValue);
+        utils::createConstantOp<float>(rewriter, loc, elemType, replaceValue);
 
     auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
     return rewriter
@@ -1113,8 +1114,8 @@ public:
     Operation *divOp = nullptr;
     std::optional<Operation **> divF32 = &divOp;
     auto truncDivF32 = hfusion::divWithRoundMode(
-        rewriter, loc, rewriter.getF32Type(), xF32, yF32,
-        emptyDivTensor, hfusion::RoundMode::TRUNC, divF32);
+        rewriter, loc, rewriter.getF32Type(), xF32, yF32, emptyDivTensor,
+        hfusion::RoundMode::TRUNC, divF32);
     assert((divF32 != std::nullopt) && (*divF32.value()) != nullptr &&
            "div operation cannot be null!");
 
@@ -1131,8 +1132,8 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange{y, q}, emptyMulTensor)
+                   rewriter, loc, linalg::BinaryFn::mul, ValueRange{y, q},
+                   emptyMulTensor)
                    ->getResults()[0];
 
     // step 5: res = x - mul (still in original dtype)
@@ -1140,8 +1141,8 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::sub,
-                   ValueRange{x, mul}, emptyResTensor)
+                   rewriter, loc, linalg::BinaryFn::sub, ValueRange{x, mul},
+                   emptyResTensor)
                    ->getResults()[0];
 
     if (elemType.isInteger()) {
@@ -3180,11 +3181,8 @@ SmallVector<Value> normalizeSrcToTargetType(
 }
 
 SmallVector<Value> normalizeSrcToTargetIntegerType(
-    PatternRewriter &rewriter,
-    const SmallVector<Value> &values,
-    unsigned srcBitWidth,
-    unsigned targetBitWidth,
-    hfusion::TypeFn castType) {
+    PatternRewriter &rewriter, const SmallVector<Value> &values,
+    unsigned srcBitWidth, unsigned targetBitWidth, hfusion::TypeFn castType) {
   SmallVector<Value> result;
   for (Value v : values) {
     auto shapedType = mlir::dyn_cast<ShapedType>(v.getType());
@@ -4169,7 +4167,7 @@ public:
     auto newOutputs = normalizeSrcToTargetIntegerType(
         rewriter, outputs, /*srcBitWidth=*/8, /*targetBitWidth=*/32,
         hfusion::TypeFn::cast_signed);
-    
+
     Operation *newOp = rewriter.create<CumOpType>(
         op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
         op.getReverse());
@@ -6127,7 +6125,8 @@ struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
     Value initData = op.getInit()[0];
     Value initSize = op.getInit()[1];
 
-    int srcBitWidth = srcElemTy.getIntOrFloatBitWidth();
+    const int64_t srcBitWidth =
+        static_cast<int64_t>(srcElemTy.getIntOrFloatBitWidth());
 
     if (isSrcNeedCast) {
       src = hfusion::castTo(rewriter, src, rewriter.getF16Type(),
