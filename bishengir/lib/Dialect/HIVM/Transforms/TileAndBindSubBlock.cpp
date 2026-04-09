@@ -196,9 +196,9 @@ static void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
   auto curLB = getValueOrCreateConstantIndexOp(builder, loc, offset);
   auto curUB = getValueOrCreateConstantIndexOp(builder, loc, size);
   if (getConstantIntValue(offset).value_or(ShapedType::kDynamic) == 0) {
-    lb = builder.create<arith::MinSIOp>(loc, lb, curUB);
-    curUB = builder.create<arith::SubIOp>(loc, curUB, lb);
-    curUB = builder.create<arith::MinSIOp>(loc, curUB, ub);
+    lb = builder.createOrFold<arith::MinSIOp>(loc, lb, curUB);
+    curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, lb);
+    curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
     size = curUB;
     return;
   }
@@ -248,17 +248,13 @@ public:
       return failure();
     }
 
-    // Handling special case
-    if (ShapedType::isDynamicShape(srcType.getShape())) {
-      if (failed(handleDynamicShape(storeOp, tilingDim, containingLoop,
-                                    rewriter))) {
-        storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-        return failure();
-      }
-    } else {
+    // Handling masked store
+    if (failed(
+            handleMaskedStore(storeOp, tilingDim, containingLoop, rewriter))) {
       auto *srcOpr = &storeOp.getSrcMutable();
       auto *dstOpr = &storeOp.getDstMutable();
-      if (failed(modifyStoreOp(storeOp, tilingDim, srcOpr, dstOpr,
+      if (ShapedType::isDynamicShape(srcType.getShape()) ||
+          failed(modifyStoreOp(storeOp, tilingDim, srcOpr, dstOpr,
                                containingLoop, rewriter))) {
         storeOp->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
         return failure();
@@ -274,9 +270,9 @@ public:
   }
 
 private:
-  LogicalResult handleDynamicShape(hivm::StoreOp storeOp, int64_t tilingDim,
-                                   scf::ForOp containingLoop,
-                                   PatternRewriter &rewriter) const {
+  LogicalResult handleMaskedStore(hivm::StoreOp storeOp, int64_t tilingDim,
+                                  scf::ForOp containingLoop,
+                                  PatternRewriter &rewriter) const {
     auto *srcOpr = &storeOp.getSrcMutable();
     auto *dstOpr = &storeOp.getDstMutable();
     auto src = srcOpr->get();
