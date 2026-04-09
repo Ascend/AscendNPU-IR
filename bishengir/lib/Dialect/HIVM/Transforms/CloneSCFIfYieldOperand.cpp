@@ -92,9 +92,6 @@ bool checkNeedClone(Value writeYieldValue, Value usedYieldValue,
     // It means that WriteDefOp is block argument, we will not write it until
     // yield value.
     return false;
-  } else if (isa<bufferization::ToTensorOp>(WriteDefOp)) {
-    // Whether to clone buffer need to be further discussed
-    return false;
   } else if (isa<scf::IfOp>(WriteDefOp)) {
     auto idx = cast<OpResult>(writeYieldValue).getResultNumber();
     auto overWriteIfOp = cast<scf::IfOp>(WriteDefOp);

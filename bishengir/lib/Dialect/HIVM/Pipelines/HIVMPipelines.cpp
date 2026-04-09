@@ -132,7 +132,6 @@ bufferizationPipeline(OpPassManager &pm,
         tensor::createOptimizeDpsOpWithYieldedInsertSlicePass());
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
-    pm.nest<func::FuncOp>().addPass(createCloneSCFIfYieldOperandPass());
   }
   if (hivmPipelineOptions.enableVfMergeLevel == 1) {
     MergeVecScopeOptions VfMergeOpsOpt;

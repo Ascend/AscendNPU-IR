@@ -215,3 +215,29 @@ func.func @test_clone_if_yield_operands_defined_out_of_forOp(%arg0: i32, %arg1: 
   }
   return
 }
+
+// -----
+
+func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : tensor<256xf16>,
+                                      %arg2 : tensor<256xf16>) -> tensor<256xf16> {
+  %c1_i32 = arith.constant 1 : i32
+  %cst_0 = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<256xf16, #hivm.address_space<ub>>
+  annotation.mark %alloc {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<256xf16, #hivm.address_space<ub>>
+  %0 = memref.memory_space_cast %alloc : memref<256xf16, #hivm.address_space<ub>> to memref<256xf16>
+  %1 = bufferization.to_tensor %0 restrict writable : memref<256xf16>
+   // CHECK: %[[ARG_1:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<256xf16>
+  hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 1
+  %2 = arith.cmpi eq, %arg0, %c1_i32 : i32
+  %3 = scf.if %2 -> tensor<256xf16> {
+    %4 = tensor.empty() : tensor<256xf16>
+    %5 = hivm.hir.vadd ins(%arg1, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%4 : tensor<256xf16>) -> tensor<256xf16>
+    hfusion.print " %1 " {hex = false} %1 : tensor<256xf16>
+    scf.yield %5 : tensor<256xf16>
+  } else {
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
+    scf.yield %1 : tensor<256xf16>
+  }
+  return %3 : tensor<256xf16>
+}
