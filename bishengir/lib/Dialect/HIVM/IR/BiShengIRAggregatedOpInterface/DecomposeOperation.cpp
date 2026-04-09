@@ -1039,8 +1039,13 @@ static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Val
 
   int64_t offset0, offset1;
   SmallVector<int64_t, 2> strides0, strides1;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (failed(getStridesAndOffset(type0, strides0, offset0)) ||
       failed(getStridesAndOffset(type1, strides1, offset1))) {
+#else
+  if (failed(type0.getStridesAndOffset(strides0, offset0)) ||
+      failed(type1.getStridesAndOffset(strides1, offset1))) {
+#endif
     return src0;
   }
 
