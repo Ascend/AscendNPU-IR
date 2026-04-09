@@ -5,11 +5,30 @@
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] :
 // CHECK: hivm.hir.free_lock_var lock_var(%[[LOCK]] :
 // CHECK-NEXT: return
-func.func @inserts_free_lock_before_return() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-  hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
-  hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
-  return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @inserts_free_lock_before_return() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    return
+  }
+}
+
+// -----
+
+// @inserts_free_lock_before_return, but no free_lock_var is inserted.
+// CHECK-LABEL: func.func @skips_when_hivmc_below_0_2_0
+// CHECK: hivm.hir.create_sync_block_lock
+// CHECK: hivm.hir.sync_block_lock
+// CHECK-NOT: hivm.hir.free_lock_var
+// CHECK: return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.1.0">} {
+  func.func @skips_when_hivmc_below_0_2_0() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+    return
+  }
 }
 
 // -----
@@ -18,10 +37,12 @@ func.func @inserts_free_lock_before_return() attributes {hacc.entry, hacc.functi
 // CHECK: hivm.hir.sync_block_lock
 // CHECK-NOT: hivm.hir.free_lock_var
 // CHECK: return
-func.func @skips_without_hacc_entry() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-  hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
-  return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @skips_without_hacc_entry() attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+    return
+  }
 }
 
 // -----
@@ -29,8 +50,10 @@ func.func @skips_without_hacc_entry() attributes {hacc.function_kind = #hacc.fun
 // CHECK-LABEL: func.func @skips_when_no_sync_block_lock
 // CHECK-NOT: hivm.hir.free_lock_var
 // CHECK: return
-func.func @skips_when_no_sync_block_lock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @skips_when_no_sync_block_lock() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    return
+  }
 }
 
 // -----
@@ -38,10 +61,12 @@ func.func @skips_when_no_sync_block_lock() attributes {hacc.entry, hacc.function
 // CHECK-LABEL: func.func @propagates_subblock_attr_to_free_lock_var
 // CHECK: hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock}
 // CHECK: hivm.hir.free_lock_var {hivm.sync_block_lock_with_subblock}
-func.func @propagates_subblock_attr_to_free_lock_var() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-  hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock} lock_var(%lock : memref<1xi64>)
-  return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @propagates_subblock_attr_to_free_lock_var() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock {hivm.sync_block_lock_with_subblock} lock_var(%lock : memref<1xi64>)
+    return
+  }
 }
 
 // -----
@@ -50,12 +75,14 @@ func.func @propagates_subblock_attr_to_free_lock_var() attributes {hacc.entry, h
 // CHECK-DAG: hivm.hir.free_lock_var lock_var(%{{.*}} : memref<1xi64>)
 // CHECK-DAG: hivm.hir.free_lock_var lock_var(%{{.*}} : memref<1xi64>)
 // CHECK: return
-func.func @inserts_for_each_distinct_lock_var() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %a = hivm.hir.create_sync_block_lock : memref<1xi64>
-  %b = hivm.hir.create_sync_block_lock : memref<1xi64>
-  hivm.hir.sync_block_lock lock_var(%a : memref<1xi64>)
-  hivm.hir.sync_block_lock lock_var(%b : memref<1xi64>)
-  return
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @inserts_for_each_distinct_lock_var() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %a = hivm.hir.create_sync_block_lock : memref<1xi64>
+    %b = hivm.hir.create_sync_block_lock : memref<1xi64>
+    hivm.hir.sync_block_lock lock_var(%a : memref<1xi64>)
+    hivm.hir.sync_block_lock lock_var(%b : memref<1xi64>)
+    return
+  }
 }
 
 // -----
@@ -70,18 +97,20 @@ func.func @inserts_for_each_distinct_lock_var() attributes {hacc.entry, hacc.fun
 // CHECK-DAG: hivm.hir.free_lock_var lock_var(%{{.*}} : memref<1xi64>)
 // CHECK-DAG: hivm.hir.free_lock_var lock_var(%{{.*}} : memref<1xi64>)
 // CHECK: return
-func.func @inserts_after_scf_if_else_distinct_locks(%cond: i1) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-  %lock1 = hivm.hir.create_sync_block_lock : memref<1xi64>
-  %lock2 = hivm.hir.create_sync_block_lock : memref<1xi64>
-  scf.if %cond {
-    hivm.hir.sync_block_lock lock_var(%lock1 : memref<1xi64>)
-    hivm.hir.sync_block_unlock lock_var(%lock1 : memref<1xi64>)
-    scf.yield
-  } else {
-    hivm.hir.sync_block_lock lock_var(%lock2 : memref<1xi64>)
-    hivm.hir.sync_block_unlock lock_var(%lock2 : memref<1xi64>)
-    scf.yield
+module attributes {hacc.hivmc_version = #hacc.hivmc_version<"0.2.0">} {
+  func.func @inserts_after_scf_if_else_distinct_locks(%cond: i1) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %lock1 = hivm.hir.create_sync_block_lock : memref<1xi64>
+    %lock2 = hivm.hir.create_sync_block_lock : memref<1xi64>
+    scf.if %cond {
+      hivm.hir.sync_block_lock lock_var(%lock1 : memref<1xi64>)
+      hivm.hir.sync_block_unlock lock_var(%lock1 : memref<1xi64>)
+      scf.yield
+    } else {
+      hivm.hir.sync_block_lock lock_var(%lock2 : memref<1xi64>)
+      hivm.hir.sync_block_unlock lock_var(%lock2 : memref<1xi64>)
+      scf.yield
+    }
+    return
   }
-  return
 }
 
