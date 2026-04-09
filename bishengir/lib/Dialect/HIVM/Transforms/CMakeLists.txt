@@ -57,6 +57,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InlineFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
+  InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferTaskTypeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
@@ -69,6 +70,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LowerCreateSyncBlockLock.cpp
   MarkDisableLoad.cpp
   MarkMultiBuffer.cpp
+  MarkSyncBlockLockWithSubblock.cpp
   MarkRealCoreType.cpp
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp

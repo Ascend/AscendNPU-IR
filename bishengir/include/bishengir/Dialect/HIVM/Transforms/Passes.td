@@ -631,6 +631,20 @@ def LowerCreateSyncBlockLock : Pass<"hivm-lower-create-sync-block-lock", "func::
                            "hivm::HIVMDialect"];
 }
 
+def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-return",
+                                        "ModuleOp"> {
+  let summary = "Insert FreeLockVarOp before return to prevent deadlock "
+                "when control flow skips sync_block_lock/unlock";
+  let description = [{
+    When SyncBlockLock/Unlock are in conditional branches (e.g. else block),
+    some blocks may not execute them, causing lock_var count mismatch and
+    deadlock. This pass inserts FreeLockVarOp before every return.
+    Each FreeLockVarOp lowers to one sync_block_lock / sync_block_unlock pair.
+  }];
+  let constructor = "mlir::hivm::createInsertFreeLockVarBeforeReturnPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let summary = "Auto infer buffer size";
   let description = "infer buffer size by inserting annotation.mark Op";
@@ -698,6 +712,22 @@ def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subblock",
+                                         "ModuleOp"> {
+  let summary = "Mark sync_block_lock and sync_block_unlock ops with "
+                "sync_block_lock_with_subblock tag when they are not inside "
+                "limit_sub_block_id0 if op in mix module";
+  let description = [{
+    When the module is mix type, this pass marks sync_block_lock and
+    sync_block_unlock ops that are NOT inside an scf.if op with
+    limit_sub_block_id0 attribute. The marked ops get a sync_block_lock_with_subblock
+    attribute to indicate they should use subblockid-based block_idx calculation
+    (get_block_idx * get_subblocknum + get_subblockid).
+  }];
+  let constructor = "mlir::hivm::createMarkSyncBlockLockWithSubblockPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
 }
 
 def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {

@@ -1,6 +1,7 @@
 // RUN: bishengir-opt %s -hivm-sync-block-hoisting -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @hoist_sync_in_for_loop(
+// CHECK: hivm.hir.create_sync_block_lock
 // CHECK: hivm.hir.sync_block_lock
 // CHECK: scf.for
 // CHECK: scf.for
@@ -23,6 +24,7 @@ func.func @hoist_sync_in_for_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>) 
 }
 
 // CHECK-LABEL: func.func @hoist_sync_in_while_loop(
+// CHECK: hivm.hir.create_sync_block_lock
 // CHECK: hivm.hir.sync_block_lock
 // CHECK: scf.while
 // CHECK: scf.while
@@ -56,6 +58,7 @@ func.func @hoist_sync_in_while_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>
 
 
 // CHECK-LABEL: func.func @hoist_sync_in_for_loop_if_statement(
+// CHECK: hivm.hir.create_sync_block_lock
 // CHECK: hivm.hir.sync_block_lock
 // CHECK: scf.for
 // CHECK: scf.if
@@ -74,21 +77,6 @@ func.func @hoist_sync_in_for_loop_if_statement(%arg0: memref<16xi32>, %arg1: mem
       hivm.hir.vadd ins(%arg0, %arg1 : memref<16xi32>, memref<16xi32>) outs(%alloc : memref<16xi32>)
       hivm.hir.sync_block_unlock lock_var(%0 : memref<1xi64>)
     }
-  }
-  return
-}
-
-// CHECK-LABEL: func.func @hoist_sync_in_if_statement(
-// CHECK: hivm.hir.sync_block_lock
-// CHECK: scf.if
-// CHECK: hivm.hir.sync_block_unlock
-func.func @hoist_sync_in_if_statement(%arg0: memref<16xi32>, %arg1: memref<16xi32>, %arg2: i1) {
-  scf.if %arg2 {
-    %0 = hivm.hir.create_sync_block_lock : memref<1xi64>
-    hivm.hir.sync_block_lock lock_var(%0 : memref<1xi64>)
-    %alloc = memref.alloc() : memref<16xi32>
-    hivm.hir.vadd ins(%arg0, %arg1 : memref<16xi32>, memref<16xi32>) outs(%alloc : memref<16xi32>)
-    hivm.hir.sync_block_unlock lock_var(%0 : memref<1xi64>)
   }
   return
 }

@@ -1729,6 +1729,8 @@ public:
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
+      libCallName += "_with_subblock";
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
     return success();
@@ -1788,6 +1790,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
+               SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SortOpToLibraryCallPattern,
                FlipOpToLibraryCallPattern
                >
@@ -1863,6 +1866,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::DebugOp,
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
+                      hivm::FreeLockVarOp,
                       hivm::VSortOp
                       >();
 

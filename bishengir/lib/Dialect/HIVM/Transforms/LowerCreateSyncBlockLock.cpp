@@ -73,7 +73,9 @@ public:
     auto lockResTypeWith =
         getElementTypeOrSelf(op.getMemref().getType()).getIntOrFloatBitWidth();
     auto perOffset = CEIL_DIV(lockResTypeWith, bindArgTypeWith);
-    localOffset += perOffset;
+    // To avoid more than 1 lock_vars in 1 cache-line, every lock_var will use a
+    // whole cache-line(64B, which is 8xi64), so the gap of offset should be 8
+    localOffset += perOffset * 8;
 
     rewriter.replaceOp(op, viewOp);
     return success();

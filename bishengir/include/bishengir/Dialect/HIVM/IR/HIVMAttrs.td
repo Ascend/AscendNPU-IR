@@ -611,6 +611,19 @@ def HIVM_SyncBlockInstrModeAttr : HIVM_Attr<
 }
 
 //===----------------------------------------------------------------------===//
+// Sync Block Lock Pipeline Phase (optimize-hivm-pipeline scheduling)
+//===----------------------------------------------------------------------===//
+
+def HIVM_SyncBlockLockPipelinePhase_Prepare : I32EnumAttrCase<"Prepare", 0, "prepare">;
+def HIVM_SyncBlockLockPipelinePhase_Finalize : I32EnumAttrCase<"Finalize", 1, "finalize">;
+
+def HIVM_SyncBlockLockPipelinePhaseEnum : HIVM_I32Enum<
+  "SyncBlockLockPipelinePhase", "Stage of sync-block-lock pipeline in optimize-hivm", [
+    HIVM_SyncBlockLockPipelinePhase_Prepare,
+    HIVM_SyncBlockLockPipelinePhase_Finalize,
+  ]>;
+
+//===----------------------------------------------------------------------===//
 // Reduction Op Kind
 //===----------------------------------------------------------------------===//
 
@@ -1052,6 +1065,14 @@ def HIVM_DisableAutoInjectBlockSyncAttr
     : HIVM_Attr<"DisableAutoInjectBlockSync", "disable_auto_inject_block_sync"> {
   let description = [{
     Disable auto inject block sync, skip block sync injection.
+  }];
+}
+
+def HIVM_SyncBlockLockWithSubblockAttr
+    : HIVM_Attr<"SyncBlockLockWithSubblock", "sync_block_lock_with_subblock"> {
+  let description = [{
+    Marks sync_block_lock, sync_block_unlock, and free_lock_var ops that use
+    subblock-aware block indexing in the device template.
   }];
 }
 

@@ -2,7 +2,7 @@
 // -----
 
 // CHECK: func.func @insert_infer_sync_block_lock_num_and_size_func_infer_sync_block_lock_num_function() -> i64
-// CHECK: %[[BYTE_SIZE:.*]] = arith.constant 3 : i64
+// CHECK: %[[BYTE_SIZE:.*]] = arith.constant 24 : i64
 // CHECK: return %[[BYTE_SIZE]]
 // CHECK: func.func @insert_infer_sync_block_lock_num_and_size_func_infer_sync_block_lock_init_function() -> i64
 // CHECK: %[[INIT:.*]] = arith.constant 0 : i64

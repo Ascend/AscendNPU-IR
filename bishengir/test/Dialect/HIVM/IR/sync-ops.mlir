@@ -75,3 +75,27 @@ func.func @test_sync_block_wait_flag_value() {
   hivm.hir.sync_block_wait[#hivm.tcore_type<CUBE>, #hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>] flag = %flag_id
   return
 }
+
+// -----
+// CHECK-LABEL: @test_create_sync_block_lock_alloc
+func.func @test_create_sync_block_lock_alloc() {
+  %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
+  return
+}
+
+// -----
+// CHECK-LABEL: @test_create_sync_block_lock_from_arg
+func.func @test_create_sync_block_lock_from_arg(%arg0: memref<?xi8>) {
+  %lock = hivm.hir.create_sync_block_lock from %arg0 : from memref<?xi8> to memref<1xi64>
+  return
+}
+
+// -----
+// CHECK-LABEL: @test_sync_block_lock_unlock_free_lock_var
+func.func @test_sync_block_lock_unlock_free_lock_var(%arg0: memref<?xi8>) {
+  %lock = hivm.hir.create_sync_block_lock from %arg0 : from memref<?xi8> to memref<1xi64>
+  hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
+  hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
+  hivm.hir.free_lock_var lock_var(%lock : memref<1xi64>)
+  return
+}
