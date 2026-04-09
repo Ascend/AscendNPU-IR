@@ -137,10 +137,6 @@ struct DuplicateTensorExtractForCube
  
     // only process cases with vector sources or direct load
     Value originTensor = extractOp.getTensor();
-    if (getElementTypeOrSelf(originTensor) == rewriter.getI1Type()) {
-      // TODO: handle i1 cases for every load/store in this file
-      return failure();
-    }
     Operation *definingOp = originTensor.getDefiningOp();
     if (!definingOp) {
       return failure();
@@ -195,12 +191,27 @@ struct DuplicateTensorExtractForCube
     // prepare for insertion
     Location loc = extractOp->getLoc();
     rewriter.setInsertionPointAfterValue(extractOp.getResult());
- 
+
+    // HIVM store does not support i1 element type, so convert to i8 before storing,
+    // and convert back to i1 after extraction.
+    bool isElementI1 = getElementTypeOrSelf(tensorType).isInteger(1);
+    Type storageElemType =
+        isElementI1 ? rewriter.getI8Type() : getElementTypeOrSelf(tensorType);
+    Value convertedTensor = originTensor;
+    auto roundMode =
+        rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
+    if (isElementI1) {
+      auto castOp =
+          castTo(rewriter, loc, originTensor, roundMode, rewriter.getI8Type());
+      convertedTensor = castOp->getResult(0);
+    }
+
     // insert operations
     Value workSpaceTensor = getLocalWorkSpaceTensor(
-        rewriter, loc, tensorType.getShape(), getElementTypeOrSelf(tensorType));
+        rewriter, loc, tensorType.getShape(), storageElemType);
     hivm::StoreOp storeOp = rewriter.create<hivm::StoreOp>(
-        loc, TypeRange(tensorType), originTensor, workSpaceTensor);
+        loc, TypeRange(convertedTensor.getType()), convertedTensor,
+        workSpaceTensor);
     markCoreType(rewriter, loc, storeOp.getResults()[0], TCoreType::VECTOR);
     tensor::ExtractOp newExtractOp = rewriter.create<tensor::ExtractOp>(
         loc, storeOp.getResultTensor(), extractOp.getIndices());
@@ -208,8 +219,13 @@ struct DuplicateTensorExtractForCube
                                          rewriter.getI32IntegerAttr(1));
     newExtractOp.getOperation()->setAttr(newExtractLabel,
                                          rewriter.getI32IntegerAttr(1));
+    Value finalResult = newExtractOp.getResult();
+    if (isElementI1) {
+      finalResult = rewriter.create<arith::TruncIOp>(loc, rewriter.getI1Type(),
+                                                     finalResult);
+    }
     Operation *markOpForReplacement = rewriter.create<annotation::MarkOp>(
-        loc, extractOp.getResult(), ValueRange{newExtractOp.getResult()},
+        loc, extractOp.getResult(), finalResult,
         rewriter.getArrayAttr(SmallVector<Attribute>()));
     markOpForReplacement->setAttr(replacementLabel,
                                   rewriter.getI32IntegerAttr(1));
