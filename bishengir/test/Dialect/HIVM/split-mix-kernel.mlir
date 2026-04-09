@@ -370,3 +370,45 @@ func.func @scope_loop_core_type_vector(
 }
 }
 
+// -----
+
+// CHECK-LABEL: test_extract_i1_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+// CHECK: hivm.hir.mmadL1
+// CHECK-LABEL: test_extract_i1_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+// CHECK: hivm.hir.vcmp
+// CHECK-NOT: hivm.hir.mmadL1
+module {
+  func.func @test_extract_i1(%arg0: memref<1xi16>, %arg1: memref<16x16xf32>, %arg2: memref<16x16xf32>) -> tensor<16x16xf32> attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c0_i16 = arith.constant 0 : i16
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %0 = tensor.empty() : tensor<1xi1>
+    annotation.mark %0 {logical_block_num} : tensor<1xi1>
+    %1 = bufferization.to_tensor %arg0 restrict writable : memref<1xi16>
+    %2 = hivm.hir.vcmp ins(%1, %c0_i16 : tensor<1xi16>, i16) outs(%0 : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
+    %extracted = tensor.extract %2[%c0] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi1>
+    %3 = tensor.empty() : tensor<1xi8>
+    %4 = hivm.hir.vcast ins(%2 : tensor<1xi1>) outs(%3 : tensor<1xi8>) -> tensor<1xi8>
+    %5 = memref_ext.alloc_workspace() : memref<1xi8>
+    %6 = bufferization.to_tensor %5 restrict writable : memref<1xi8>
+    %7 = hivm.hir.store ins(%4 : tensor<1xi8>) outs(%6 : tensor<1xi8>) -> tensor<1xi8>
+    annotation.mark %7 {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<1xi8>
+    %extracted_0 = tensor.extract %7[%c0] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi8>
+    %8 = arith.trunci %extracted_0 : i8 to i1
+    annotation.mark %extracted {"DuplicateTensorExtractForCube::replacementLabel" = 1 : i32} keys = [] values = [%8 : i1] : i1
+    %9 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf32>
+    %10 = bufferization.to_tensor %arg2 restrict writable : memref<16x16xf32>
+    %11 = tensor.empty() : tensor<16x16xf32>
+    %12 = arith.extui %extracted : i1 to i32
+    %13 = arith.cmpi sgt, %12, %c0_i32 : i32
+    %14 = scf.if %13 -> (tensor<16x16xf32>) {
+      %15 = hivm.hir.mmadL1 ins(%9, %10, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%11 : tensor<16x16xf32>) -> tensor<16x16xf32>
+      scf.yield %15 : tensor<16x16xf32>
+    } else {
+      scf.yield %9 : tensor<16x16xf32>
+    }
+    return %14 : tensor<16x16xf32>
+  }
+}

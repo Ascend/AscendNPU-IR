@@ -341,35 +341,62 @@ struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
 };
 
 template <typename OpType>
-void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
-  func.walk<WalkOrder::PostOrder>([&](Operation *op) {
-    if (OpType concreteOp = dyn_cast<OpType>(op)) {
-      if (concreteOp.getOperation()->hasAttr(attr)) {
-        op->erase();
+struct RemoveOpWithAttr : public OpRewritePattern<OpType> {
+  using OpRewritePattern<OpType>::OpRewritePattern;
+
+  explicit RemoveOpWithAttr(MLIRContext *ctx, StringRef attrName)
+      : OpRewritePattern<OpType>(ctx), attrName(attrName) {}
+
+  LogicalResult matchAndRewrite(OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasAttr(attrName))
+      return failure();
+
+    for (Value result : op->getResults()) {
+      if (!result.use_empty()) {
+        return failure();
       }
     }
-  });
-}
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  StringRef attrName;
+};
 
 void postProcessCubeFunc(func::FuncOp func) {
-  RewritePatternSet patterns(func.getOperation()->getContext());
+  auto ctx = func.getOperation()->getContext();
+  RewritePatternSet patterns(ctx);
   patterns.insert<PostCubeReplacement>(patterns.getContext());
   if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
     llvm::report_fatal_error("postProcessCubeFunc failed");
   }
-  removeOpWithAttrFromFunc<bufferization::ToTensorOp>(
-      "DuplicateTensorExtractForCube::cubeErasureLabel", func);
-  removeOpWithAttrFromFunc<hivm::LoadOp>(
-      "DuplicateTensorExtractForCube::cubeErasureLabel", func);
-  removeOpWithAttrFromFunc<memref::AllocOp>(
-      "DuplicateTensorExtractForCube::cubeErasureLabel", func);
+
+  RewritePatternSet removePatterns(ctx);
+  removePatterns.add<RemoveOpWithAttr<bufferization::ToTensorOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  removePatterns.add<RemoveOpWithAttr<hivm::LoadOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  removePatterns.add<RemoveOpWithAttr<memref::AllocOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  if (failed(applyPatternsGreedily(func.getOperation(),
+                                   std::move(removePatterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
 }
 
 void postProcessVectorFunc(func::FuncOp func) {
-  removeOpWithAttrFromFunc<annotation::MarkOp>(
-      "DuplicateTensorExtractForCube::replacementLabel", func);
-  removeOpWithAttrFromFunc<tensor::ExtractOp>(
-      "DuplicateTensorExtractForCube::newExtractLabel", func);
+  auto ctx = func.getOperation()->getContext();
+  RewritePatternSet patterns(ctx);
+  patterns.add<RemoveOpWithAttr<annotation::MarkOp>>(
+      ctx, "DuplicateTensorExtractForCube::replacementLabel");
+  patterns.add<RemoveOpWithAttr<tensor::ExtractOp>>(
+      ctx, "DuplicateTensorExtractForCube::newExtractLabel");
+  if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
 }
 } // namespace
 
