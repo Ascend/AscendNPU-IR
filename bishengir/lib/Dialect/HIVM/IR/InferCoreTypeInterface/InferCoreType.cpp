@@ -153,7 +153,7 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
     Operation *definingOp = arg.getDefiningOp();
     if (definingOp) {
       auto res = getCoreType(definingOp);
-      if (succeeded(res)) {
+      if (succeeded(res) && (res.value() != TCoreType::CUBE_OR_VECTOR)) {
         this->setTcoretypeAttr(
             hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
         return res.value();
