@@ -61,12 +61,69 @@ std::optional<bool> isStoreOp(Operation *dstOp) {
   return std::nullopt;
 }
 
+bool hasSameSource(Value valA, Value valB) {
+  auto maybeMmadA = traceDefOp<hivm::MmadL1Op>(valA);
+  auto maybeMmadB = traceDefOp<hivm::MmadL1Op>(valB);
+
+  auto isMatchedEmptyOrAllocOp = [](Value valA, Value valB) {
+    LDBG("Begin to find matched dst for scf.if \n  -" << valA << "\n  -" << valB);
+    auto maybeTensorA = traceDefOp<tensor::EmptyOp>(valA);
+    auto maybeTensorB = traceDefOp<tensor::EmptyOp>(valB);
+    if (maybeTensorA.has_value() && maybeTensorB.has_value() &&
+        (maybeTensorA.value() == maybeTensorB.value()))
+      return true;
+
+    auto maybeAllocA = traceDefOp<memref::AllocOp>(valA);
+    auto maybeAllocB = traceDefOp<memref::AllocOp>(valB);
+    if (maybeAllocA.has_value() && maybeAllocB.has_value() &&
+        (maybeAllocA.value() == maybeAllocB.value()))
+      return true;
+
+    if (maybeAllocA.has_value()) {
+      auto alloc = cast<memref::AllocOp>(maybeAllocA.value());
+      hivm::AddressSpace addrSpace{hivm::AddressSpace::Zero};
+      if (auto memSpaceAttr = alloc.getType().getMemorySpace()) {
+        addrSpace = dyn_cast<AddressSpaceAttr>(memSpaceAttr).getAddressSpace();
+      }
+      return (addrSpace == hivm::AddressSpace::L0C && maybeTensorB.has_value());
+    }
+
+    if (maybeAllocB.has_value()) {
+      auto alloc = cast<memref::AllocOp>(maybeAllocB.value());
+      hivm::AddressSpace addrSpace{hivm::AddressSpace::Zero};
+      if (auto memSpaceAttr = alloc.getType().getMemorySpace()) {
+        addrSpace = dyn_cast<AddressSpaceAttr>(memSpaceAttr).getAddressSpace();
+      }
+      return (addrSpace == hivm::AddressSpace::L0C && maybeTensorA.has_value());
+    }
+    LDBG("There is no matched dst for scf.if \n");
+    return false;
+  };
+  if (maybeMmadA.has_value() && maybeMmadB.has_value()) {
+    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
+    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+    return isMatchedEmptyOrAllocOp(mmadA.getC(), mmadB.getC());
+  }
+
+  if (maybeMmadA.has_value()) {
+    auto mmadA = cast<hivm::MmadL1Op>(maybeMmadA.value());
+    return isMatchedEmptyOrAllocOp(mmadA.getC(), valB);
+  }
+
+  if (maybeMmadB.has_value()) {
+    auto mmadB = cast<hivm::MmadL1Op>(maybeMmadB.value());
+    return isMatchedEmptyOrAllocOp(valA, mmadB.getC());
+  }
+  return false;
+}
+
 // ifOp except the case
+// %empty_tensor = tensor.empty
 // %if = if %condition {
-//  %mmad1 =
+//  %mmad1 = hivm.hir.mmad -> %empty_tensor
 //  yield %mmad1
 // } else {
-//  %mmad2 =
+//  %mmad2 = hivm.hir.mmad -> %empty_tensor
 //  yield %mmad2
 // }
 // %fixpipe = hivm.hir.fixpipe(%if)
@@ -80,7 +137,7 @@ bool isMixKernel(scf::IfOp ifOp, Value val) {
           findIdx(llvm::to_vector(ifOp.thenYield().getOperands()), val)) {
     if (idx.has_value()) {
       auto elseValue = ifOp.elseYield().getOperands()[idx.value()];
-      return traceDefOp<hivm::MmadL1Op>(elseValue).has_value() ? false : true;
+      return !hasSameSource(val, elseValue);
     }
   }
 
@@ -88,7 +145,7 @@ bool isMixKernel(scf::IfOp ifOp, Value val) {
           findIdx(llvm::to_vector(ifOp.elseYield().getOperands()), val)) {
     if (idx.has_value()) {
       auto thenValue = ifOp.thenYield().getOperands()[idx.value()];
-      return traceDefOp<hivm::MmadL1Op>(thenValue).has_value() ? false : true;
+      return !hasSameSource(val, thenValue);
     }
   }
 
