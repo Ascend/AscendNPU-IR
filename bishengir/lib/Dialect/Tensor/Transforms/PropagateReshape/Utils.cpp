@@ -437,7 +437,7 @@ static bool adjustSubviewExpansion(int64_t totalSize, int64_t totalSrc,
     }
     break;
   }
-  validSize &= (totalSize == 1);
+  validSize = validSize && (totalSize == 1);
   slicedRef.front() *= totalSrc;
   LDBG("Checking: " << to_string(slicedRef) << " " << totalSrc << " "
                     << totalSize);

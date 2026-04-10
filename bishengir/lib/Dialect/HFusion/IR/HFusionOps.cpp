@@ -1307,7 +1307,8 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
   using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
   template <typename T> inline T roundToOdd(T x) const {
     T rounded = std::round(x);
-    if (std::fabs(x - std::floor(x)) == 0.5) {
+    const double epsilon = 1e-9;
+    if (std::fabs(std::fabs(x - std::floor(x)) - 0.5) < epsilon) {
       if (static_cast<int>(rounded) % 2 != 0) {
         if (x > 0) {
           rounded = std::floor(x);
