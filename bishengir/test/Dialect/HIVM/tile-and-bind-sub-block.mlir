@@ -1360,3 +1360,13 @@ func.func @tile_and_bind_while(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) att
   hivm.hir.store ins(%1#0 : tensor<64xf32>) outs(%arg1 : memref<64xf32>)
   return
 }
+
+// ----
+// CHECK-LABEL:   func.func @dynamic_shape_insert_slice
+// CHECK:         {limit_sub_block_id0}
+func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x64xf32>, %arg2: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  %0 = tensor.empty() : tensor<64x64xf32>
+  %inserted_slice = tensor.insert_slice %arg0 into %0[0, 0] [64, %arg2] [1, 1] : tensor<64x?xf32> into tensor<64x64xf32>
+  hivm.hir.store ins(%inserted_slice : tensor<64x64xf32>) outs(%arg1 : memref<64x64xf32>)
+  return
+}

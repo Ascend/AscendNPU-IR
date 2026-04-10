@@ -858,6 +858,8 @@ handleExtractOfInsertDifferentDimCase(tensor::ExtractSliceOp sliceOp,
   auto parentSliceOp =
       sliceOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
   auto srcType = parentSliceOp.getSourceType();
+  if (ShapedType::isDynamicShape(srcType.getShape()))
+    return failure();
   auto parentExtractDims = getExtractOrInsertDim(parentSliceOp);
   auto extractDims = getExtractOrInsertDim(sliceOp);
   auto parentOffsets = parentSliceOp.getMixedOffsets();
