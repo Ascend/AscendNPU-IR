@@ -313,6 +313,11 @@ private:
                           return rewriter.create<ascend_dpx::RintOp>(
                               loc, elemTy, operand);
                         })
+                  .Case("__hmf_float_as_int_fp32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::FloatAsIntOp>(
+                              loc, elemTy, operand);
+                        })
                   .Default(nullptr)) {
         return unaryOp();
       }
