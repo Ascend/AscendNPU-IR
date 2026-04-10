@@ -92,9 +92,6 @@ bool checkNeedClone(Value writeYieldValue, Value usedYieldValue,
     // It means that WriteDefOp is block argument, we will not write it until
     // yield value.
     return false;
-  } else if (isa<bufferization::ToTensorOp>(WriteDefOp)) {
-    // Whether to clone buffer need to be further discussed
-    return false;
   } else if (isa<scf::IfOp>(WriteDefOp)) {
     auto idx = cast<OpResult>(writeYieldValue).getResultNumber();
     auto overWriteIfOp = cast<scf::IfOp>(WriteDefOp);
@@ -231,6 +228,15 @@ public:
     return success(modified1 || modified2);
   }
 
+  bool checkDefOutOfFor(Value usedYieldValue, scf::YieldOp currBrYieldOp) const {
+    auto *usedDefOp = usedYieldValue.getDefiningOp();
+    if (!usedDefOp) {
+      return false;
+    }
+    auto parentForOp = currBrYieldOp->getParentOfType<scf::ForOp>();
+    DominanceInfo domInfo;
+    return parentForOp && domInfo.properlyDominates(usedDefOp, parentForOp, false);
+  }
   bool copyYieldOperandUseAfterSCFIf(PatternRewriter &rewriter,
                                      scf::YieldOp writeYieldOp,
                                      scf::YieldOp currBrYieldOp) const {
@@ -261,7 +267,8 @@ public:
       // If writeYieldValue is result of IfOp, and write %c will modify %res.
       // so that checkNeedClone will find op that write %res recursively. And
       // after this Op, there should not be other op use %a
-      if (checkNeedClone(writeYieldValue, currBrYieldValue, currBrYieldOp)) {
+      if (checkDefOutOfFor(currBrYieldValue, currBrYieldOp) ||
+          checkNeedClone(writeYieldValue, currBrYieldValue, currBrYieldOp)) {
         cloneYieldValue(rewriter, currBrYieldOp, i);
         modified = true;
       }
