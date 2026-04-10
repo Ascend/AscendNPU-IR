@@ -1,6 +1,8 @@
-// RUN: bishengir-opt %s --execution-engine-convert-hfusion-to-upstream --convert-linalg-to-loops | FileCheck %s
+// REQUIRES: execution-engine
+// RUN: bishengir-opt --execution-engine-convert-hfusion-to-upstream %s --split-input-file | FileCheck %s
+// RUN: bishengir-opt --lower-for-cpu-runner-pipeline %s --split-input-file
 
-module {
+
   // ==========================================
   // 1D tensor histogram
   // ==========================================
@@ -23,11 +25,16 @@ module {
   // CHECK:   }
   // CHECK: }
   // CHECK: return %[[RES]] : tensor<4xi32>
-  func.func @histogram_kernel_1d(%arg0: memref<16xi32>) -> tensor<4xi32> {
+  func.func @histogram_kernel_1d(%arg0: memref<16xi32>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+} {
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
     %1 = hfusion.histogram %0, 4 : tensor<16xi32> -> tensor<4xi32>
     return %1 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // 2D tensor histogram 
@@ -37,11 +44,16 @@ module {
   // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[IN]] {{\[\[}}0, 1{{\]\]}} : tensor<2x16xi32> into tensor<32xi32>
   // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<4xi32>) {
   // CHECK:   tensor.extract %[[COLLAPSED]][%{{.*}}] : tensor<32xi32>
-  func.func @histogram_kernel_2d(%arg0: memref<2x16xi32>) -> tensor<4xi32> {
+  func.func @histogram_kernel_2d(%arg0: memref<2x16xi32>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x16xi32>
     %1 = hfusion.histogram %0, 4 : tensor<2x16xi32> -> tensor<4xi32>
     return %1 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // 3D tensor histogram 
@@ -50,11 +62,16 @@ module {
   // CHECK: %[[IN:.*]] = bufferization.to_tensor
   // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[IN]] {{\[\[}}0, 1, 2{{\]\]}} : tensor<2x3x16xi32> into tensor<96xi32>
   // CHECK: scf.for
-  func.func @histogram_kernel_3d(%arg0: memref<2x3x16xi32>) -> tensor<4xi32> {
+  func.func @histogram_kernel_3d(%arg0: memref<2x3x16xi32>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x3x16xi32>
     %1 = hfusion.histogram %0, 4 : tensor<2x3x16xi32> -> tensor<4xi32>
     return %1 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // Edge Case 1: Minimal input size (Size-1 Tensor)
@@ -62,11 +79,16 @@ module {
   // CHECK-LABEL: func.func @histogram_boundary_size1
   // CHECK: tensor.empty() : tensor<4xi32>
   // CHECK: scf.for
-  func.func @histogram_boundary_size1(%arg0: memref<1xi32>) -> tensor<4xi32> {
+  func.func @histogram_boundary_size1(%arg0: memref<1xi32>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<1xi32>
     %1 = hfusion.histogram %0, 4 : tensor<1xi32> -> tensor<4xi32>
     return %1 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // Edge Case 2: Extreme bin count (num_bins = 1)
@@ -74,11 +96,16 @@ module {
   // CHECK-LABEL: func.func @histogram_boundary_1_bin
   // CHECK: tensor.empty() : tensor<1xi32>
   // CHECK: scf.for
-  func.func @histogram_boundary_1_bin(%arg0: memref<16xi32>) -> tensor<1xi32> {
+  func.func @histogram_boundary_1_bin(%arg0: memref<16xi32>) -> tensor<1xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+} {
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
     %1 = hfusion.histogram %0, 1 : tensor<16xi32> -> tensor<1xi32>
     return %1 : tensor<1xi32>
   }
+
+  // -----
 
   // ==========================================
   // Test 3: Dynamic shape handling (Dynamic dimension resolution)
@@ -88,11 +115,16 @@ module {
   // CHECK: %[[IN:.*]] = bufferization.to_tensor
   // CHECK: %[[DIM:.*]] = tensor.dim %[[IN]], %[[C0]] : tensor<?xi32>
   // CHECK: scf.for %{{.*}} = %[[C0]] to %[[DIM]] step %{{.*}}
-  func.func @histogram_negative_dynamic(%arg0: memref<?xi32>) -> tensor<4xi32> {
+  func.func @histogram_negative_dynamic(%arg0: memref<?xi32>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<?xi32>
     %1 = hfusion.histogram %0, 4 : tensor<?xi32> -> tensor<4xi32>
     return %1 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // Test 4: 1D tensor histogram WITH Mask
@@ -117,13 +149,18 @@ module {
   // CHECK:     scf.yield %[[ITER]] : tensor<4xi32>
   // CHECK:   }
   // CHECK: }
-  func.func @histogram_mask_1d(%arg0: memref<16xi32>, %arg1: memref<16xi1>) -> tensor<4xi32> {
+  func.func @histogram_mask_1d(%arg0: memref<16xi32>, %arg1: memref<16xi1>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
     %1 = bufferization.to_tensor %arg1 restrict writable : memref<16xi1>
     // Note: The operator syntax now includes the optional %1 (Mask)
     %2 = hfusion.histogram %0, 4, %1 : tensor<16xi32>, tensor<16xi1> -> tensor<4xi32>
     return %2 : tensor<4xi32>
   }
+
+  // -----
 
   // ==========================================
   // Test 5: 2D tensor histogram WITH Mask (Verify both are collapsed)
@@ -136,10 +173,12 @@ module {
   // CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}}
   // CHECK:   %[[MASK_VAL:.*]] = tensor.extract %[[FLAT_MASK]][%{{.*}}] : tensor<32xi1>
   // CHECK:   arith.andi %{{.*}}, %[[MASK_VAL]] : i1
-  func.func @histogram_mask_2d(%arg0: memref<2x16xi32>, %arg1: memref<2x16xi1>) -> tensor<4xi32> {
+  func.func @histogram_mask_2d(%arg0: memref<2x16xi32>, %arg1: memref<2x16xi1>) -> tensor<4xi32> attributes {
+    hacc.function_kind = #hacc.function_kind<HOST>, 
+    hacc.host_func_type = #hacc.host_func_type<host_entry>
+}{
     %0 = bufferization.to_tensor %arg0 restrict writable : memref<2x16xi32>
     %1 = bufferization.to_tensor %arg1 restrict writable : memref<2x16xi1>
     %2 = hfusion.histogram %0, 4, %1 : tensor<2x16xi32>, tensor<2x16xi1> -> tensor<4xi32>
     return %2 : tensor<4xi32>
   }
-}
