@@ -1,0 +1,16 @@
+diff --git a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+index 36eda811d59c..6fef27b08e71 100644
+--- a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
++++ b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+@@ -4646,7 +4646,7 @@ struct TransferReadAfterWriteAndReshapeToShapecast
+ 	auto elemType = tensorType.getElementType();
+ 	auto rank = tensorType.getRank();
+ 	SmallVector<int64_t> vectorShape(rank - 1, 1);
+-	vectorShape.push_back(2048 / elemType.getIntOrFloatBitWidth());
++	vectorShape.push_back(readOp.getVectorType().getNumElements());
+ 	auto vectorType = VectorType::get(vectorShape, elemType);
+ 	Value cst0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+ 	SmallVector<Value> indices(rank, cst0);
+-- 
+2.34.1
+
