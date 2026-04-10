@@ -53,6 +53,7 @@ constexpr const int l1AlignSize = 32 * 8;
 constexpr const int l1SpaceSize = 512 * 1024 * 8;
 constexpr const int l0cAlignSize = 512 * 8;
 constexpr const int l0cSpaceSize = 128 * 1024 * 8;
+constexpr const int workSpaceAlignSize = 32 * 8;
 
 bool isReusableCastOp(hivm::VCastOp &castOp, Value output, Value input) {
   auto rank = dyn_cast<MemRefType>(output.getType()).getRank();
@@ -1179,8 +1180,9 @@ PlanStatus MemPlan::PlanMemOffsetOfWholeWorkSpace() {
     // The initial value is rootStorageEntry.
     StorageEntry *curEntry = rootStorageEntry;
     while (si.childIdx < childrenNum) {
-      curEntry->alignedConstBits =
-          static_cast<uint64_t>(curEntry->bufInfo->constBits);
+      // TODO: Alignment by type can be considered in the future.
+      curEntry->alignedConstBits = static_cast<uint64_t>(
+          AlignUp(curEntry->bufInfo->constBits, workSpaceAlignSize));
       curEntry->childIdx = si.childIdx;
       LogicalResult planResult = MultiSpecPlan(si, outline, history, curEntry);
       if (failed(planResult)) {
@@ -1198,10 +1200,14 @@ PlanStatus MemPlan::PlanMemOffsetOfWholeWorkSpace() {
 
 void MemPlan::GlobalWorkspaceNoReuse(StorageEntry *rootStorageEntry) {
   rootStorageEntry->bitsOffset = 0;
-  uint64_t offset = static_cast<uint64_t>(rootStorageEntry->bufInfo->constBits);
+  // TODO: Alignment by type can be considered in the future.
+  uint64_t offset = static_cast<uint64_t>(
+      AlignUp(rootStorageEntry->bufInfo->constBits, workSpaceAlignSize));
   for (StorageEntry *child : rootStorageEntry->mergedChildren) {
     child->bitsOffset = offset;
-    offset += static_cast<uint64_t>(child->bufInfo->constBits);
+    // TODO: Alignment by type can be considered in the future.
+    uint64_t offset = static_cast<uint64_t>(
+        AlignUp(rootStorageEntry->bufInfo->constBits, workSpaceAlignSize));
   }
 }
 
