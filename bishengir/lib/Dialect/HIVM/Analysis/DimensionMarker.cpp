@@ -20,7 +20,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -76,46 +75,21 @@ void DimensionAnalyzer::processBFS() {
     Value current = bfsQueue.front();
     bfsQueue.pop();
 
-    for (auto &use : current.getUses()) {
-      auto *user = use.getOwner();
+    for (Operation *user : current.getUsers()) {
       processOperation(user, current);
       if (isa<ShapedType>(current.getType())) {
         createDummyRefIfNotExist({current});
         auto curRef = argumentsRefPointer_.at(current);
-        if (auto forOp = dyn_cast<scf::ForOp>(user)) {
-          auto regionArg = forOp.getTiedLoopRegionIterArg(&use);
-          auto res = forOp.getTiedLoopResult(&use);
-          createDummyRefIfNotExist({regionArg, res});
-          if (visited.insert(regionArg).second) {
-            bfsQueue.push(regionArg);
+        for (auto res : user->getResults()) {
+          if (isa<ShapedType>(res.getType())) {
+            createDummyRefIfNotExist({res});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(res));
           }
-          solverGroup_->join(curRef, argumentsRefPointer_.at(regionArg));
-          solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-        } else if (auto whileOp = dyn_cast<scf::WhileOp>(user)) {
-          auto oprNum = use.getOperandNumber();
-          auto arg = whileOp.getBeforeArguments()[oprNum];
-          createDummyRefIfNotExist({arg});
-          if (visited.insert(arg).second) {
-            bfsQueue.push(arg);
-          }
-          solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
-        } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(user)) {
-          auto whileOp = cast<scf::WhileOp>(user->getParentOp());
-          auto oprNum = use.getOperandNumber() - 1;
-          for (auto arg : SmallVector<Value>{whileOp.getAfterArguments()[oprNum],
-                                     whileOp->getResult(oprNum)}) {
-            createDummyRefIfNotExist({arg});
-            if (visited.insert(arg).second) {
-              bfsQueue.push(arg);
-            }
-            solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
-          }
-        } else {
-          for (auto res : user->getResults()) {
-            if (isa<ShapedType>(res.getType())) {
-              createDummyRefIfNotExist({res});
-              solverGroup_->join(curRef, argumentsRefPointer_.at(res));
-            }
+        }
+        for (auto opr : user->getOperands()) {
+          if (isa<ShapedType>(opr.getType())) {
+            createDummyRefIfNotExist({opr});
+            solverGroup_->join(curRef, argumentsRefPointer_.at(opr));
           }
         }
       }
@@ -127,21 +101,13 @@ void DimensionAnalyzer::processBFS() {
         }
       }
       if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
-        auto *yieldParentOp = yieldOp->getParentOp();
+        auto yieldParentOp = yieldOp->getParentOp();
         LDBG("Encounter yieldOp. Parent " << *yieldParentOp);
         processOperation(yieldParentOp, current);
         for (Value result : yieldParentOp->getResults()) {
           updatePreviousType(result);
           if (visited.insert(result).second) {
             bfsQueue.push(result);
-          }
-        }
-        if (auto loopOp = dyn_cast<LoopLikeOpInterface>(yieldParentOp)) {
-          for (Value init : loopOp.getInits()) {
-            updatePreviousType(init);
-            if (visited.insert(init).second) {
-              bfsQueue.push(init);
-            }
           }
         }
       }
@@ -177,8 +143,6 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
     processYieldOp(yieldOp);
   } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
     processForOp(forOp);
-  } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(op)) {
-    processConditionOp(conditionOp);
   } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
     processReshapeOp(expandShapeOp);
   } else if (auto collapseShapeOp = dyn_cast<tensor::CollapseShapeOp>(op)) {
@@ -306,12 +270,12 @@ void DimensionAnalyzer::processVGatherMaskOp(hivm::VGatherMaskOp op) {
   auto input = op.getSrc();
   auto mask = op.getMask();
   OperandRange dstRange = op.getDst();
-  Value output = dstRange.front();
+ 	Value output = dstRange.front();
   SmallVector<Value> outputs(op.getResult());
-
+ 
   assert(outputs.size() <= 1 &&
          "result size must be 1 if tensor type and 0 if memref type");
-
+ 
   outputs.push_back(mask);
   outputs.push_back(output);
   mergeValues({input}, outputs, getMutatedDims(op),
@@ -371,7 +335,8 @@ void DimensionAnalyzer::processVPadOp(hivm::VPadOp op) {
   mergeValues({input}, outputs, paddedIndices);
 }
 
-template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
+template <typename T, typename>
+void DimensionAnalyzer::processVCumOp(T op) {
   if constexpr (std::is_same_v<T, hivm::VCumsumOp>) {
     LDBG("Processing VCumsumOp " << op);
   } else {
@@ -391,17 +356,9 @@ template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
 
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
   LDBG("Processing YieldOp " << op);
-  auto *parentOp = op->getParentOp();
+  auto parentOp = op->getParentOp();
   if (!parentOp) {
     llvm::report_fatal_error("YieldOp doesn't have a parent");
-  }
-  if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
-    for (auto [beforeArg, yieldOpResult] :
-         llvm::zip_equal(whileOp.getBeforeArguments(), op.getOperands())) {
-      if (isa<ShapedType>(beforeArg.getType()))
-        mergeValues({beforeArg}, {yieldOpResult});
-    }
-    return;
   }
   for (auto [parentResult, yieldOpResult] :
        llvm::zip_equal(parentOp->getResults(), op.getOperands())) {
@@ -419,17 +376,8 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
   }
 }
 
-void DimensionAnalyzer::processConditionOp(scf::ConditionOp op) {
-  LDBG("Processing ConditionOp " << op);
-  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
-  for (auto [afterArg, arg] :
-       llvm::zip_equal(whileOp.getAfterArguments(), op.getArgs())) {
-    if (isa<ShapedType>(afterArg.getType()))
-      mergeValues({afterArg}, {arg});
-  }
-}
-
-template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
+template <typename T, typename>
+void DimensionAnalyzer::processReshapeOp(T op) {
   if constexpr (std::is_same_v<T, tensor::ExpandShapeOp>) {
     LDBG("Processing ExpandShapeOp " << op);
   } else {
@@ -529,30 +477,16 @@ void DimensionAnalyzer::markDimensionKind() {
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    auto origType = dyn_cast<ShapedType>(sliceOp.getSource().getType());
-    auto sliceType = dyn_cast<ShapedType>(sliceOp.getResult().getType());
-    auto origRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
-    auto sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
-    if (isa<tensor::InsertSliceOp>(sliceOp.getOperation())) {
-      std::swap(origRef, sliceRef);
-      std::swap(origType, sliceType);
+    SmallVector<int64_t> sliceRef;
+    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
+      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
+    } else {
+      sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
     }
-    size_t sliceIdx = 0;
-    for (size_t i = 0; i < origRef.size(); ++i) {
+    for (size_t i = 0; i < sliceRef.size(); ++i) {
       if (droppedDimsMask[i]) {
-        tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
+        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
             TilingDimensionKind::RankReduced;
-        LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
-                    << ") is marked as RankReduced");
-      } else {
-        if (isa<tensor::InsertSliceOp>(sliceOp.getOperation()) &&
-            sliceType.getDimSize(sliceIdx) == 1) {
-          tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
-              TilingDimensionKind::Reduce;
-          LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
-                      << ") is marked as Reduce");
-        }
-        sliceIdx++;
       }
     }
   };
