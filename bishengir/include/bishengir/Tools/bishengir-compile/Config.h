@@ -587,6 +587,7 @@ public:
     enableFlattenFlag = enable;
     return *this;
   }
+
   bool shouldEnableFlatten() const { return enableFlattenFlag; }
 
   BiShengIRCompileMainConfig &enableFuseReductionIntoLoop(bool enable) {
@@ -1018,6 +1019,7 @@ protected:
 
   /// Enable HIVM Graph-Sync-Solver pass to do auto-sync.
   bool enableHIVMGraphSyncSolverFlag{false};
+
 
   /// Enable inject sync pass to use unit-flag modes for synchronization
   bool enableUnitFlagSyncFlag{false};

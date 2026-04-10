@@ -188,12 +188,16 @@ def InjectBlockSync : Pass<"hivm-inject-block-sync", "func::FuncOp"> {
   let dependentDialects = ["hacc::HACCDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect",
   ];
-  let options = [Option<"blockAllSync",
+  let options = [
+    Option<"blockAllSync",
            "block-all-sync", "bool",/*default=*/"false",
            "Enable inject all block sync for HIVM injectBlockSync.">,
-                Option<"assumeAliveLoops", "assume-alive-loops",
+    Option<"assumeAliveLoops", "assume-alive-loops",
             "bool", /*default=*/"false",
-            "Assume that all loops (forOp whileOp) will execute at least once.">
+            "Assume that all loops (forOp whileOp) will execute at least once.">,
+    Option<"preferUnusedBlockSyncIDs", "enable-prefer-unused-block-sync-ids",
+            "bool", /*default=*/"true",
+            "Prefer event IDs that are not already taken by previous block sync ops, even when not conflicting.">
   ];
 }
 

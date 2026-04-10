@@ -253,44 +253,23 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
   }
 }
 
-SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
-    SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
-    size_t eventIdNum) {
-  SmallVector<int> canAllocaEventId;
-  size_t idSize = static_cast<size_t>(sync->eventIdNum);
-  for (unsigned id = 0; id < eventIdNum; id++) {
-    if (canAllocaEventId.size() == idSize) {
-      break;
-    }
-    if (!canAllocaEventId.empty() && !eventIdLifetimeAvailableStatus[id]) {
-      canAllocaEventId.clear();
-      continue;
-    }
-    if (eventIdLifetimeAvailableStatus[id]) {
-      canAllocaEventId.push_back(id);
-    }
-  }
-  return canAllocaEventId;
-}
-
 SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
     SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
     SmallVector<bool> eventIdIdleStatus, size_t eventIdNum) {
   SmallVector<int> canAllocaEventId;
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
-  if (sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
-      sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
-    return UpdateBlockAvailableEventId(sync, eventIdLifetimeAvailableStatus,
-                                       eventIdNum);
-  }
-  for (unsigned id = 0; id < eventIdNum; id++) {
-    if (canAllocaEventId.size() == idSize) {
-      break;
-    }
-    // Prioritize using no use event ids.
-    if (eventIdLifetimeAvailableStatus[id] && eventIdIdleStatus[id]) {
-      eventIdLifetimeAvailableStatus[id] = false;
-      canAllocaEventId.push_back(id);
+  auto isBlockSync = sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
+                     sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT;
+  if (!isBlockSync || options.preferUnusedBlockSyncIDs) {
+    for (unsigned id = 0; id < eventIdNum; id++) {
+      if (canAllocaEventId.size() == idSize) {
+        break;
+      }
+      // Prioritize using no use event ids.
+      if (eventIdLifetimeAvailableStatus[id] && eventIdIdleStatus[id]) {
+        eventIdLifetimeAvailableStatus[id] = false;
+        canAllocaEventId.push_back(id);
+      }
     }
   }
 
