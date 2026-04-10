@@ -163,6 +163,18 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       return rewriter.notifyMatchFailure(
           op, "op cannot be moved to a higher place in block");
 
+    bool isOtherOp = false;
+    auto lastIt = op->getIterator();
+    for (auto it = insertPoint->getIterator(); it != lastIt; ++it) {
+      if (!isa<affine::AffineApplyOp, affine::AffineMinOp, affine::AffineMaxOp>(
+              &*it)) {
+        isOtherOp = true;
+        break;
+      }
+    }
+    if (!isOtherOp) {
+      return failure();
+    }
     rewriter.moveOpBefore(op, insertPoint);
     return success();
   }

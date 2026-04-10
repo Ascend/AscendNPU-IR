@@ -76,18 +76,17 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0))) {
+          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0)) &&
+              strictMode) {
             return WalkResult::interrupt();
-          } else {
-            return WalkResult::advance();
           }
+          return WalkResult::advance();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
             return WalkResult::interrupt();
-          } else {
-            extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
           }
+          extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
         }
       }
       return WalkResult::advance();
@@ -156,7 +155,7 @@ private:
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
-    
+
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
 };
