@@ -286,9 +286,10 @@ private:
     auto loc = op.getLoc();
     Operation *curOp = nullptr;
     for (Operation *maybeDebugOp : op.getResultTensor().getUsers()) {
-      if (isa<hivm::DebugOp>(maybeDebugOp)) {
+      if (isa<hivm::DebugOp>(maybeDebugOp) && !op->getAttr(usedForDebugOp)) {
         rewriter.setInsertionPoint(maybeDebugOp);
         FixpipeOp clonedFixpipeOp = cast<FixpipeOp>(rewriter.clone(*op));
+        clonedFixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
         Value clonedResult = clonedFixpipeOp->getResult(0);
         hivm::DebugOp debugOp = cast<hivm::DebugOp>(maybeDebugOp);
         rewriter.modifyOpInPlace(
@@ -550,9 +551,6 @@ public:
         !traceDefOp<BatchMmadL1Op>(maybeMmadRes).has_value())
       return failure();
 
-    if (!isUsedByForYieldOp(maybeMmadRes))
-      return failure();
-
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, op->getLoc(), maybeMmadRes);
     MLIRContext *ctx = rewriter.getContext();
@@ -564,6 +562,7 @@ public:
         /*dst=*/fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{},
         /*pre_quant=*/nullptr,
         /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+    fixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
     rewriter.replaceOpWithNewOp<DebugOp>(
         op, op.getDebugtype(), op.getPrefix(), op.getHex(),
         fixpipeOp.getResultTensor(),
@@ -573,9 +572,9 @@ public:
     return success();
   }
 
-  bool isUsedByForYieldOp(Value v) const {
+  bool isUsedByDebugOp(Value v) const {
     for (Operation *user : v.getUsers()) {
-      if (isa<scf::YieldOp>(user) && isa<scf::ForOp>(user->getParentOp()))
+      if (isa<DebugOp>(user))
         return true;
     }
     return false;
