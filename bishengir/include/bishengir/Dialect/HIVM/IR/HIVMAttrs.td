@@ -991,6 +991,71 @@ def DisableSizeAlignForCast
 }
 
 //===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+def HIVM_PaddingOptionAttr : HIVM_Attr<"PaddingOption", "padding_option"> {
+  let parameters = (ins EnumParameter<HIVM_PaddingOptionEnum>:$option);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Padding option.
+  }];
+}
+
+def HIVM_CacheNone : I32EnumAttrCase<"NONE", 1, "none">;
+def HIVM_CacheCA : I32EnumAttrCase<"CA", 2, "ca">;
+def HIVM_CacheCG : I32EnumAttrCase<"CG", 3, "cg">;
+def HIVM_CacheWB : I32EnumAttrCase<"WB", 4, "wb">;
+def HIVM_CacheCS : I32EnumAttrCase<"CS", 5, "cs">;
+def HIVM_CacheWT : I32EnumAttrCase<"WT", 6, "wt">;
+def HIVM_CacheCV : I32EnumAttrCase<"CV", 7, "cv">;
+def HIVM_CacheModifierEnum : HIVM_I32Enum<
+    "CacheModifier", "", [
+      HIVM_CacheNone,
+      HIVM_CacheCA,
+      HIVM_CacheCG,
+      HIVM_CacheWB,
+      HIVM_CacheCS,
+      HIVM_CacheWT,
+      HIVM_CacheCV
+    ]>;
+def HIVM_CacheModifierAttr : HIVM_Attr<"CacheModifier", "cache_modifier"> {
+  let parameters = (ins EnumParameter<HIVM_CacheModifierEnum>:$policy);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Cache modification policy.
+  }];
+}
+
+def HIVM_EvictNormal : I32EnumAttrCase<"EvictNormal", 1, "EvictNormal">;
+def HIVM_EvictFirst : I32EnumAttrCase<"EvictFirst", 2, "EvictFirst">;
+def HIVM_EvictLast : I32EnumAttrCase<"EvictLast", 3, "EvictLast">;
+def HIVM_EvictionPolicyEnum : HIVM_I32Enum<
+  "EvictionPolicy", "Eviction Policy for shared memory", [
+    HIVM_EvictNormal,
+    HIVM_EvictFirst,
+    HIVM_EvictLast
+  ]>;
+def HIVM_EvictionPolicyAttr : HIVM_Attr<"EvictionPolicy", "eviction_policy"> {
+  let parameters = (ins EnumParameter<HIVM_EvictionPolicyEnum>:$policy);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Eviction Policy for shared memory.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//
 

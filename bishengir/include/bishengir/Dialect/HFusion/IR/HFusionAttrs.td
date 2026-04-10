@@ -98,4 +98,34 @@ def HFusion_InsertSliceSourceIndexAttr : HFusion_Attr<"InsertSliceSourceIndex", 
   }];
 }
 
+def HFusion_PaddingOptionAttr : HFusion_Attr<"PaddingOption", "padding_option"> {
+  let parameters = (ins
+    EnumParameter<HFusion_PaddingOptionEnum>:$option
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Padding option.
+  }];
+}
+
+def HFusion_CacheModifierAttr : HFusion_Attr<"CacheModifier", "cache_modifier"> {
+  let parameters = (ins
+    EnumParameter<HFusion_CacheModifierEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Cache modification policy.
+  }];
+}
+
+def HFusion_EvictionPolicyAttr : HFusion_Attr<"EvictionPolicy", "eviction_policy"> {
+  let parameters = (ins
+    EnumParameter<HFusion_EvictionPolicyEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Eviction policy.
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONATTRS_TD

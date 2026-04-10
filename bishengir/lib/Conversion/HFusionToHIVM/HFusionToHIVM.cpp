@@ -39,6 +39,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -1091,6 +1092,66 @@ struct HFusionToHIVMSortOp : public OpRewritePattern<hfusion::SortOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// HFusionToHIVMGatherLoadOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMGatherLoadOp
+    : public OpRewritePattern<hfusion::GatherLoadOp> {
+  using OpRewritePattern<hfusion::GatherLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::GatherLoadOp op,
+                                PatternRewriter &rewriter) const override {
+    auto newOp = rewriter.create<hivm::GatherLoadOp>(
+        op->getLoc(), op->getResultTypes(), op->getOperands());
+
+    if (auto evict = op.getEvictAttr()) {
+      auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+    }
+    if (auto cache = op.getCacheAttr()) {
+      auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
+      newOp->setAttr("cache",
+                     hivm::CacheModifierAttr::get(op->getContext(), attrVal));
+    }
+    if (auto isVolatile = op.getIsVolatileAttr())
+      newOp->setAttr("isVolatile", isVolatile);
+
+    rewriter.replaceOp(op, newOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// HFusionToHIVMScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMScatterStoreOp
+    : public OpRewritePattern<hfusion::ScatterStoreOp> {
+  using OpRewritePattern<hfusion::ScatterStoreOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ScatterStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    auto newOp = rewriter.create<hivm::ScatterStoreOp>(
+        op->getLoc(), op->getResultTypes(), op->getOperands());
+
+    if (auto evict = op.getEvictAttr()) {
+      auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+    }
+    if (auto cache = op.getCacheAttr()) {
+      auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
+      newOp->setAttr("cache",
+                     hivm::CacheModifierAttr::get(op->getContext(), attrVal));
+    }
+
+    rewriter.replaceOp(op, newOp);
+    return success();
+  }
+};
+
 struct HFusionAttrsLowering : public OpRewritePattern<annotation::MarkOp> {
   using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(annotation::MarkOp op,
@@ -1171,6 +1232,7 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMArangeOp,
     HFusionToHIVMGatherOp,
     HFusionToHIVMGatherMaskOp,
+    HFusionToHIVMGatherLoadOp,
     HFusionPrintOpToHIVMDebugOp,
     HFusionAssertOpToHIVMDebugOp,
     HFusionToHIVMBarrierOp,
@@ -1179,6 +1241,7 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMDeinterleaveOp,
     HFusionToHIVMFlipOp,
     HFusionToHIVMSortOp,
+    HFusionToHIVMScatterStoreOp,
     HFusionToHIVMCumOp<hfusion::CumsumOp, hivm::VCumsumOp>,
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
     HFusionToHIVMAtomicCasOp,
