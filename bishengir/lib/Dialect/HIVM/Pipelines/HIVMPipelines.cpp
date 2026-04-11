@@ -204,6 +204,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     CVPipeliningOptions pipelineOptions;
     pipelineOptions.enableAutoBalance =
         hivmPipelineOptions.enableHIVMAutoCVBalance;
+    pipelineOptions.enableAutoPreload =
+        hivmPipelineOptions.enablePreload;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
   }
 

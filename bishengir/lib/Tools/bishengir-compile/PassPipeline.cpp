@@ -145,6 +145,7 @@ public:
         &enableAutoBindSubBlock,
         &enableAutoBlockifyLoop,
         &enableHIVMAutoCVBalance,
+        &enablePreload,
         &enableAutoMultiBuffer,
         &enableHIVMAutoStorageAlign,
         &enableBinRelocation,
