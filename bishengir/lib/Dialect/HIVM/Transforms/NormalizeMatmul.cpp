@@ -526,6 +526,21 @@ decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter, T op
   return success();
 }
 
+bool hasDebugUse(Value val) {
+  for (OpOperand &use : val.getUses()) {
+    Operation *userOp = use.getOwner();
+    if (isa<hivm::DebugOp>(userOp)) {
+      return true;
+    }
+    for (Value result : userOp->getResults()) {
+      if (hasDebugUse(result)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 template <typename T>
 struct DecomposeMatmulWithBiasPattern : public OpRewritePattern<T> {
 public:
@@ -556,6 +571,12 @@ public:
       LDBG("decompose matmul with mm init per channel add with split k add");
       return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
     }
+
+    Value mmadResult = op.getResults()[0];
+    if (hasDebugUse(mmadResult)) {
+      return failure();
+    }
+
     if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant()) {
       LDBG("decompose matmul with elemwise add and non-const init");
       return decomposeMatmulWithConditionalElementwiseAdd<T>(rewriter, op);
