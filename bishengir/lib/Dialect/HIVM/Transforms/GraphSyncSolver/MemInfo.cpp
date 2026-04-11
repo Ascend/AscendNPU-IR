@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -84,13 +85,14 @@ MemInfo getMemInfo(Value val) {
   if (auto *defOp = val.getDefiningOp()) {
     if (auto allocWorkSpaceOp =
             llvm::dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(defOp)) {
-      return MemInfo(val, getPointerLikeInfo(allocWorkSpaceOp));
+      return MemInfo(val, getPointerLikeInfo(allocWorkSpaceOp),
+                     /*isWorkSpace=*/true);
     }
     if (auto pointerCastOp = llvm::dyn_cast<hivm::PointerCastOp>(defOp)) {
       return MemInfo(val, getPointerLikeInfo(pointerCastOp));
     }
   }
-  return MemInfo(val);
+  return MemInfo(val, isWorkSpaceFuncArgument(val));
 }
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
@@ -102,10 +104,10 @@ MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
   return memInfo;
 }
 
-bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
-                   const PointerLikeInfo &pointerLikeInfo2,
-                   std::optional<int64_t> lcmLen,
-                   std::optional<int64_t> eventIdNum) {
+bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
+                                    const PointerLikeInfo &pointerLikeInfo2,
+                                    std::optional<int64_t> lcmLen,
+                                    std::optional<int64_t> eventIdNum) {
   if (!pointerLikeInfo1.addressSpace.has_value() ||
       !pointerLikeInfo2.addressSpace.has_value()) {
     return false;
@@ -160,27 +162,41 @@ bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
   return false;
 }
 
-bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
-                   std::optional<int64_t> lcmLen,
-                   std::optional<int64_t> eventIdNum) {
-  if (memInfo1.pointerLikeInfo && memInfo2.pointerLikeInfo) {
-    return checkConflict(memInfo1.pointerLikeInfo.value(),
-                         memInfo2.pointerLikeInfo.value(), lcmLen, eventIdNum);
+bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
+                            std::optional<int64_t> lcmLen,
+                            std::optional<int64_t> eventIdNum) {
+  if (memInfo1.pointerLikeInfo.has_value() &&
+      memInfo2.pointerLikeInfo.has_value()) {
+    return PointerLikeInfo::checkConflict(memInfo1.pointerLikeInfo.value(),
+                                          memInfo2.pointerLikeInfo.value(),
+                                          lcmLen, eventIdNum);
   }
   return memInfo1.value == memInfo2.value;
 }
 
-bool checkConflict(const llvm::SmallVector<MemInfo> &memInfoList1,
-                   const llvm::SmallVector<MemInfo> &memInfoList2,
-                   std::optional<int64_t> lcmLen,
-                   std::optional<int64_t> eventIdNum) {
-  for (auto &memInfo1 : memInfoList1) {
-    for (auto &memInfo2 : memInfoList2) {
-      if (checkConflict(memInfo1, memInfo2, lcmLen, eventIdNum)) {
-        return true;
-      }
-    }
+bool isWorkSpaceFuncArgument(Value value) {
+  auto blockArg = dyn_cast_if_present<BlockArgument>(value);
+  if (!blockArg) {
+    return false;
   }
-  return false;
+  auto *block = blockArg.getOwner();
+  if (!block) {
+    return false;
+  }
+  auto *region = block->getParent();
+  if (!region) {
+    return false;
+  }
+  auto *parentOp = region->getParentOp();
+  if (!parentOp) {
+    return false;
+  }
+  auto funcOp = dyn_cast<func::FuncOp>(parentOp);
+  if (!funcOp) {
+    return false;
+  }
+  return hacc::utils::isKernelArg(funcOp, blockArg.getArgNumber(),
+                                  hacc::KernelArgType::kWorkspace);
 }
+
 } // namespace mlir::hivm::syncsolver

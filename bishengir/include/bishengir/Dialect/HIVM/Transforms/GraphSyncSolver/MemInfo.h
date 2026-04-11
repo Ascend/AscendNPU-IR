@@ -37,16 +37,26 @@ struct PointerLikeInfo {
   explicit PointerLikeInfo(Operation *op) : op(op) {}
 
   std::string str() const;
+
+  static bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
+                            const PointerLikeInfo &pointerLikeInfo2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
 };
 
 struct MemInfo {
   Value value{nullptr};
   std::optional<PointerLikeInfo> pointerLikeInfo;
+  bool isWorkSpace{false};
 
   MemInfo() = default;
-  explicit MemInfo(Value value) : value(value) {}
-  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo)
-      : value(value), pointerLikeInfo(pointerLikeInfo) {}
+  explicit MemInfo(Value value, bool isWorkSpace = false)
+      : value(value), isWorkSpace(isWorkSpace) {}
+
+  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo,
+                   bool isWorkSpace = false)
+      : value(value), pointerLikeInfo(pointerLikeInfo),
+        isWorkSpace(isWorkSpace) {}
 
   int64_t getSz() const {
     if (pointerLikeInfo.has_value()) {
@@ -59,6 +69,10 @@ struct MemInfo {
   }
 
   std::string str() const;
+
+  static bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
 };
 
 llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs);
@@ -72,19 +86,7 @@ MemInfo getMemInfo(Value val);
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
 
-bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
-                   const PointerLikeInfo &pointerLikeInfo2,
-                   std::optional<int64_t> lcmLen = {},
-                   std::optional<int64_t> eventIdNum = {});
-
-bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
-                   std::optional<int64_t> lcmLen = {},
-                   std::optional<int64_t> eventIdNum = {});
-
-bool checkConflict(const llvm::SmallVector<MemInfo> &memInfoList1,
-                   const llvm::SmallVector<MemInfo> &memInfoList2,
-                   std::optional<int64_t> lcmLen = {},
-                   std::optional<int64_t> eventIdNum = {});
+bool isWorkSpaceFuncArgument(Value value);
 
 } // namespace mlir::hivm::syncsolver
 

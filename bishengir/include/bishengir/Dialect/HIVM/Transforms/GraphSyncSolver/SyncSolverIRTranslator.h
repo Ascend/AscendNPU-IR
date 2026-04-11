@@ -112,13 +112,12 @@ private:
                      int depth = 0, bool isUseless = false);
 
   // Collect pointer-like operands reachable from a Value.
-  llvm::SmallVector<Value> tracebackMemVals(Value val, func::FuncOp funcOp);
+  llvm::SmallVector<Value> tracebackMemVals(Value val);
   llvm::SmallVector<Value> tracebackMemValsStep(Value val);
 
   // Extract memory-related Values from a list of pointer values.
   llvm::SmallVector<Value>
-  getMemoryOps(const SmallVector<Value> &vals,
-               std::optional<func::FuncOp> funcOp = {});
+  getMemoryOps(const SmallVector<Value> &vals);
 
   // Return read and write memory operand lists for an MLIR operation.
   std::pair<llvm::SmallVector<Value>, llvm::SmallVector<Value>>
