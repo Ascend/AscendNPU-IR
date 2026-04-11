@@ -211,6 +211,7 @@ def CosOp : AscendDPX_UnaryMathOp<"cos">;
 def ErfOp : AscendDPX_UnaryMathOp<"erf">;
 def Exp2Op : AscendDPX_UnaryMathOp<"exp2">;
 def ExpOp : AscendDPX_UnaryMathOp<"exp">;
+def FloatAsIntOp : AscendDPX_UnaryMathOp<"float_as_int">;
 def FloorOp : AscendDPX_UnaryMathOp<"floor">;
 def ILogbOp : AscendDPX_UnaryMathOp<"ilogb">;
 def Log1pOp : AscendDPX_UnaryMathOp<"log1p">;
