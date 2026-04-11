@@ -18,10 +18,10 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Conversion/TritonGPUToLLVM/TypeConverter.h"
 
-namespace mlir::triton::proton::gpu {
+namespace bishengir::triton::proton::gpu {
 #define GEN_PASS_DEF_CONVERTPROTONASCENDGPUTOLLVM
 #include "bishengir/Conversion/Passes.h.inc"
-} // namespace mlir::triton::proton::gpu
+} // namespace bishengir::triton::proton::gpu
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -41,7 +41,7 @@ public:
 };
 
 struct ConvertProtonAscendGPUToLLVM
-    : public mlir::triton::proton::gpu::impl::ConvertProtonAscendGPUToLLVMBase<
+    : public bishengir::triton::proton::gpu::impl::ConvertProtonAscendGPUToLLVMBase<
           ConvertProtonAscendGPUToLLVM> {
   explicit ConvertProtonAscendGPUToLLVM() {}
 
@@ -84,10 +84,10 @@ struct ConvertProtonAscendGPUToLLVM
 
 } // namespace
 
-namespace mlir::triton::proton::gpu {
+namespace bishengir::triton::proton::gpu {
 
-std::unique_ptr<Pass> createConvertProtonAscendGPUToLLVMPass() {
+std::unique_ptr<mlir::Pass> createConvertProtonAscendGPUToLLVMPass() {
   return std::make_unique<ConvertProtonAscendGPUToLLVM>();
 }
 
-} // namespace mlir::troton::proton::gpu
+} // namespace bishengir::triton::proton::gpu

@@ -4,7 +4,7 @@
 // RUN:   -cse \
 // RUN:   -allocate-proton-shared-memory \
 // RUN:   -convert-triton-ascend-gpu-to-llvm \
-// RUN:   -allocate-proton-global-scratch-buffer \
+// RUN:   -allocate-proton-ascend-global-scratch-buffer \
 // RUN:   -convert-proton-ascend-gpu-to-llvm \
 // RUN:   -mlir-print-ir-after-all \
 // RUN:   2>&1 | FileCheck %s --check-prefixes CHECK,CHECK-NO-SAMPLING
@@ -103,7 +103,7 @@ module attributes { "ttg.num-warps" = 8, "ttg.enable-bishengir-simt-optimization
 // CHECK: %[[SEGMENT:.*]] = proton_gpu.segment_alloc %[[SMEM_OBJ]] : !ttg.memdesc<[[SEGMENT_WORDS]]xi32, #shared, #smem, mutable> -> <[[SEGMENT_BYTES]], #smem, [[granularity]][[selectIdVec]]>
 
 // ==========
-// CHECK: IR Dump After AllocateProtonGlobalScratchBufferPass
+// CHECK: IR Dump After AllocateProtonAscendGlobalScratchBufferPass
 // CHECK: module
 // CHECK-SAME: ttg.profile_scratch_memory_size = [[PROFILE_MEM_BYTES]]
 
