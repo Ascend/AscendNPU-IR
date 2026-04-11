@@ -11,6 +11,8 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
     SetBishengirSimtOptAttr.cpp
+    PopulateSharedMemoryOffsetToDPX.cpp
+    SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
     EnableAscendDPXMMA.cpp
   )
@@ -23,9 +25,11 @@ add_bishengir_dialect_library(BiShengIRTritonTransforms
 
   DEPENDS
   BiShengIRTritonTransformsIncGen
+  BiShengIRTritonOpsIncGen
   MLIRLLVMPassIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRTritonExtension
   TritonGPUIR
   BiShengIRDialectUtils
   BiShengIRSCFTransformOps

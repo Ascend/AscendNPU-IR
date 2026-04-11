@@ -10,6 +10,7 @@
 #define BISHENGIR_DIALECT_ASCENDDPX_IR_ASCENDDPX_H
 
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 //===----------------------------------------------------------------------===//
 // AscendDPX Dialect

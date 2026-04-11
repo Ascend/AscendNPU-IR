@@ -46,6 +46,10 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<bool> enableSimtReorderInstruction{
       *this, "enable-simt-reorder-instruction",
       llvm::cl::desc("enable simt reorder instruction pattern"), llvm::cl::init(false)};
+  PassOptions::Option<bool> enableSIMTFastDiv{
+      *this, "enable-simt-fast-div",
+      llvm::cl::desc("enable SIMT fast division optimization"),
+      llvm::cl::init(true)};
   PassOptions::Option<std::string> tritonMetadataOutput{
       *this, "triton-metadata-output",
       llvm::cl::desc("File to dump triton metadata. -- means stdout"),

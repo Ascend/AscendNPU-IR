@@ -153,17 +153,16 @@ namespace mlir::triton::ascend {
 void populateGPUOpToDPXPatterns(LLVMTypeConverter &converter,
                                 RewritePatternSet &patterns,
                                 PatternBenefit benefit) {
-  patterns.add<
-      gpu::index_lowering::OpLowering<gpu::ThreadIdOp, ascend_dpx::ThreadIdXOp,
-                                      ascend_dpx::ThreadIdYOp,
-                                      ascend_dpx::ThreadIdZOp>,
-      gpu::index_lowering::OpLowering<gpu::BlockDimOp, ascend_dpx::BlockDimXOp,
-                                      ascend_dpx::BlockDimYOp,
-                                      ascend_dpx::BlockDimZOp>,
-      gpu::index_lowering::OpLowering<gpu::BlockIdOp, ascend_dpx::BlockIdxXOp,
-                                      ascend_dpx::BlockIdxYOp,
-                                      ascend_dpx::BlockIdxZOp>,
-      GPUGridDimOpOpLowering, LinearBlockIdOPConversion>(converter);
+  patterns.add<mlir::gpu::index_lowering::OpLowering<
+                   mlir::gpu::ThreadIdOp, ascend_dpx::ThreadIdXOp,
+                   ascend_dpx::ThreadIdYOp, ascend_dpx::ThreadIdZOp>,
+               mlir::gpu::index_lowering::OpLowering<
+                   mlir::gpu::BlockDimOp, ascend_dpx::BlockDimXOp,
+                   ascend_dpx::BlockDimYOp, ascend_dpx::BlockDimZOp>,
+               mlir::gpu::index_lowering::OpLowering<
+                   mlir::gpu::BlockIdOp, ascend_dpx::BlockIdxXOp,
+                   ascend_dpx::BlockIdxYOp, ascend_dpx::BlockIdxZOp>,
+               GPUGridDimOpOpLowering, LinearBlockIdOPConversion>(converter);
 
   patterns.add<BarrierOPConversion>(converter, patterns.getContext(), benefit);
 }

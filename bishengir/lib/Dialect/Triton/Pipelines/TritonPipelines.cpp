@@ -129,8 +129,14 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       convertTritonToTritonGPUOpt));
   // Optimize TTGIR
   buildTritonGPUOptimizationPipeline(pm, options);
+  if (options.enableSIMTFastDiv)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
+  if (options.enableSIMTFastDiv)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());
   pm.addPass(createConvertIndexToLLVMPass());
   pm.addPass(mlir::triton::proton::createConvertProtonToProtonGPUPass(
     options.protonGPUCompileConfig.metricType,

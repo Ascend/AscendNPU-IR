@@ -1,4 +1,4 @@
-//===- AscendDPXDialect.cpp - AscendDPX dialect implementation ------------===//
+//===- TritonExtension.cpp - BishengIR Triton dialect extension -----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,83 +6,41 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
-#include "mlir/AsmParser/AsmParser.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/DialectImplementation.h"
-#include "mlir/IR/OpImplementation.h"
-#include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/TypeUtilities.h"
-#include "mlir/Interfaces/CallInterfaces.h"
+#include "bishengir/Dialect/Triton/IR/TritonExtension.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "mlir/Support/LLVM.h"
-
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/TypeSwitch.h"
-
-#include <numeric>
-
-using namespace mlir;
-using namespace mlir::ascend_dpx;
-
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXEnums.cpp.inc"
-
-#define GET_ATTRDEF_CLASSES
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXAttrs.cpp.inc"
-
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXDialect.cpp.inc"
-
-//===----------------------------------------------------------------------===//
-// AscendDPXDialect
-//===----------------------------------------------------------------------===//
-
-void ascend_dpx::AscendDPXDialect::initialize() {
-  addOperations<
-#define GET_OP_LIST
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXOps.cpp.inc"
-      >();
-
-  addAttributes<
-#define GET_ATTRDEF_LIST
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXAttrs.cpp.inc"
-      >();
-}
 
 #define GET_OP_CLASSES
-#include "bishengir/Dialect/AscendDPX/IR/AscendDPXOps.cpp.inc"
+#include "bishengir/Dialect/Triton/IR/TritonOps.cpp.inc"
 
 //===----------------------------------------------------------------------===//
-// CallScalarOp - CallOpInterface
+// CallScalarOp — CallOpInterface
 //===----------------------------------------------------------------------===//
 
-mlir::CallInterfaceCallable
-mlir::ascend_dpx::CallScalarOp::getCallableForCallee() {
+mlir::CallInterfaceCallable mlir::triton::CallScalarOp::getCallableForCallee() {
   return getCalleeAttr();
 }
 
-void mlir::ascend_dpx::CallScalarOp::setCalleeFromCallable(
+void mlir::triton::CallScalarOp::setCalleeFromCallable(
     mlir::CallInterfaceCallable callee) {
   setCalleeAttr(cast<FlatSymbolRefAttr>(callee.get<SymbolRefAttr>()));
 }
 
-mlir::Operation::operand_range
-mlir::ascend_dpx::CallScalarOp::getArgOperands() {
+mlir::Operation::operand_range mlir::triton::CallScalarOp::getArgOperands() {
   return getCallArgs();
 }
 
-mlir::MutableOperandRange
-mlir::ascend_dpx::CallScalarOp::getArgOperandsMutable() {
+mlir::MutableOperandRange mlir::triton::CallScalarOp::getArgOperandsMutable() {
   return getCallArgsMutable();
 }
 
 //===----------------------------------------------------------------------===//
-// CallScalarOp - SymbolUserOpInterface
+// CallScalarOp — SymbolUserOpInterface
 //===----------------------------------------------------------------------===//
 
-LogicalResult mlir::ascend_dpx::CallScalarOp::verifySymbolUses(
-    SymbolTableCollection &symbolTable) {
+mlir::LogicalResult mlir::triton::CallScalarOp::verifySymbolUses(
+    mlir::SymbolTableCollection &symbolTable) {
   auto *callable = symbolTable.lookupNearestSymbolFrom(*this, getCalleeAttr());
   if (!callable)
     return emitOpError() << "'" << getCallee()
@@ -115,5 +73,18 @@ LogicalResult mlir::ascend_dpx::CallScalarOp::verifySymbolUses(
              << resTypes[i] << " but got " << getResult(i).getType()
              << " for result " << i;
 
-  return success();
+  return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
+// Dialect extension registration
+//===----------------------------------------------------------------------===//
+
+void bishengir::registerTritonDialectExtension(
+    mlir::DialectRegistry &registry) {
+  // addOperations() is protected; use RegisteredOperationName::insert directly.
+  registry.addExtension(+[](mlir::MLIRContext *,
+                            mlir::triton::TritonDialect *dialect) {
+    mlir::RegisteredOperationName::insert<mlir::triton::CallScalarOp>(*dialect);
+  });
 }

@@ -14,6 +14,7 @@
 #ifndef BISHENGIR_INITALLEXTENSIONS_H_
 #define BISHENGIR_INITALLEXTENSIONS_H_
 
+#include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
@@ -21,6 +22,9 @@
 #include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 #include "mlir/IR/DialectRegistry.h"
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "bishengir/Dialect/Triton/IR/TritonExtension.h"
+#endif
 
 namespace bishengir {
 
@@ -33,6 +37,9 @@ inline void registerAllExtensions(mlir::DialectRegistry &registry) {
   bishengir::scf::registerTransformDialectExtension(registry);
   bishengir::registerBytecodeDialectExtensions(registry);
   mlir::registerOpInterfaceExtensions(registry);
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  bishengir::registerTritonDialectExtension(registry);
+#endif
 }
 
 } // namespace bishengir

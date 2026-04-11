@@ -13,6 +13,8 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/BuiltinTypeInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "bishengir/Dialect/AscendDPX/IR/AscendDPXBase.td"
 include "bishengir/Dialect/AscendDPX/IR/AscendDPXAttrs.td"
@@ -247,5 +249,29 @@ class AscendDPX_NumberCheckOp<string mnemonic>
 def IsFiniteOp : AscendDPX_NumberCheckOp<"isfinite">;
 def IsInfOp : AscendDPX_NumberCheckOp<"isinf">;
 def IsNanOp : AscendDPX_NumberCheckOp<"isnan">;
+
+//===----------------------------------------------------------------------===//
+// CallScalarOp
+//===----------------------------------------------------------------------===//
+
+def CallScalarOp : AscendDPX_Op<"call_scalar",
+    [DeclareOpInterfaceMethods<CallOpInterface>,
+     DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Call a scalar function";
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$callee,
+    Variadic<AnyType>:$call_args,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs,
+    OptionalAttr<I32Attr>:$use_shmem_offset
+  );
+
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    $callee `(` $call_args `)` attr-dict `:` functional-type($call_args, results)
+  }];
+}
 
 #endif // ASCENDDPX_OPS

@@ -54,6 +54,13 @@ std::unique_ptr<mlir::Pass> createGetTritonMetadataPass(const GetTritonMetadataO
 std::unique_ptr<mlir::Pass>
 createDumpFractalLayoutPass(const DumpFractalLayoutOptions &options = {});
 
+/// Create a pass to optimize division operations for SIMT execution.
+std::unique_ptr<mlir::Pass> createSIMTFastDivPass();
+
+/// Create a pass that propagates shared memory offsets from local_alloc to
+/// call_scalar and removes ordering-only local_load ops.
+std::unique_ptr<mlir::Pass> createPopulateSharedMemoryOffsetToDPXPass();
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
 

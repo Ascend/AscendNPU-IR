@@ -460,6 +460,12 @@ public:
     return disableDecomposeReductionFlag;
   }
 
+  BiShengIRCompileMainConfig &enableSIMTFastDiv(bool enable) {
+    enableSIMTFastDivFlag = enable;
+    return *this;
+  }
+  bool getEnableSIMTFastDiv() const { return enableSIMTFastDivFlag; }
+
   BiShengIRCompileMainConfig &disableReorderInstruction(bool disable) {
     disableReorderInstructionFlag = disable;
     return *this;
@@ -1050,6 +1056,9 @@ protected:
   std::string tritonMetadataOutputPath{""};
 
   bool useDPXFlag{false};
+
+  /// Enable SIMT fast division
+  bool enableSIMTFastDivFlag{false};
 
   /// Disable decompose reduction
   bool disableDecomposeReductionFlag{false};

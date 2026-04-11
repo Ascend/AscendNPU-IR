@@ -360,6 +360,12 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::desc("File to dump triton metadata. -- means stdout"),
         cl::location(tritonMetadataOutputPath), cl::init(""));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableSIMTFastDiv(
+        "enable-simt-fast-div",
+        cl::desc("Enable SIMT fast division optimization"),
+        cl::location(enableSIMTFastDivFlag), cl::init(true),
+        cl::cat(simtOptCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true> disableDecomposeReduction(
         "disable-decompose-reduction",
         cl::desc("Disable SIMT decompose reduction pass"),

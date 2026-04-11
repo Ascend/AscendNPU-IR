@@ -213,6 +213,7 @@ void setupLowerTritonPipelineOptions(
     const BiShengIRCompileMainConfig &config) {
   options.numWarps = config.getNumWarps();
   options.threadsPerWarp = config.getThreadsPerWarp();
+  options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();

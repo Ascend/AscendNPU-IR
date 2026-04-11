@@ -1,0 +1,5 @@
+set(LLVM_TARGET_DEFINITIONS TritonOps.td)
+mlir_tablegen(TritonOps.h.inc -gen-op-decls)
+mlir_tablegen(TritonOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(BiShengIRTritonOpsIncGen)
+add_dependencies(mlir-headers BiShengIRTritonOpsIncGen)

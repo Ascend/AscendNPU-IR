@@ -127,6 +127,27 @@ def FixFusedCat: Pass<"fix-fused-cat", "mlir::ModuleOp"> {
                              "mlir::triton::TritonDialect"];
 }
 
+def PopulateSharedMemoryOffsetToDPX : Pass<"populate-shared-memory-offset-to-dpx", "mlir::triton::FuncOp"> {
+  let summary = "Convert tt.call_scalar to ascend_dpx.call_scalar with allocation offset";
+  let constructor = "bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass()";
+  let dependentDialects = ["mlir::ascend_dpx::AscendDPXDialect",
+                           "mlir::triton::gpu::TritonGPUDialect",
+                           "mlir::triton::TritonDialect"];
+}
+
+def SIMTFastDiv : Pass<"simt-fast-div", "mlir::triton::FuncOp"> {
+  let summary = "SIMT fast division optimization";
+  let description = [{
+    Optimizes division operations for SIMT execution.
+  }];
+  let constructor = "bishengir::triton::createSIMTFastDivPass()";
+  let dependentDialects = ["mlir::ascend_dpx::AscendDPXDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::LLVM::LLVMDialect",
+                           "mlir::triton::TritonDialect",
+                           "mlir::triton::gpu::TritonGPUDialect"];
+}
+
 def GetTritonMetadata :
     Pass<"get-triton-metadata", "mlir::ModuleOp"> {
   let summary = "Get triton metadata";
