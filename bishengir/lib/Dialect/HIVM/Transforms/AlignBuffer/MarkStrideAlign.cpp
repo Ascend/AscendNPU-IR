@@ -37,6 +37,18 @@ public:
   void runOnOperation() override;
 };
 
+struct TrailingUnitRankReducedSubviewInfo {
+  Value source;
+  MemRefType sourceType;
+  MemRefType resultType;
+  llvm::SmallBitVector droppedDims;
+};
+
+struct AlignMarkDecision {
+  Value markTarget;
+  std::optional<int> alignDim;
+};
+
 } // namespace
 
 LogicalResult markAlignedDim(OpBuilder &builder, Operation *markedOp, Value arg,
@@ -275,6 +287,141 @@ filterNonHivmSpace(const SmallVectorImpl<MemRefType> &memRefTypes) {
   return resMemRefTypes;
 }
 
+static std::optional<TrailingUnitRankReducedSubviewInfo>
+getTrailingUnitRankReducedSubviewInfo(Value operand) {
+  auto subviewOp = operand.getDefiningOp<memref::SubViewOp>();
+  if (!subviewOp) {
+    LDBG("subview-recover: operand is not defined by memref.subview, operand="
+         << operand);
+    return std::nullopt;
+  }
+
+  auto sourceType = dyn_cast<MemRefType>(subviewOp.getSource().getType());
+  auto resultType = dyn_cast<MemRefType>(subviewOp.getResult().getType());
+  if (!sourceType || !resultType || !sourceType.hasRank() ||
+      !resultType.hasRank() || sourceType.getRank() <= resultType.getRank()) {
+    LDBG("subview-recover: rank-reduction precheck failed, sourceType="
+         << sourceType << ", resultType=" << resultType << ", subview="
+         << subviewOp);
+    return std::nullopt;
+  }
+
+  auto droppedDims = subviewOp.getDroppedDims();
+  if (droppedDims.none()) {
+    LDBG("subview-recover: no dropped dims, subview=" << subviewOp);
+    return std::nullopt;
+  }
+
+  int64_t firstDroppedDim = droppedDims.find_first();
+  if (firstDroppedDim < 0) {
+    LDBG("subview-recover: failed to locate first dropped dim, subview="
+         << subviewOp);
+    return std::nullopt;
+  }
+
+  for (int64_t dim = firstDroppedDim; dim < sourceType.getRank(); ++dim) {
+    if (!droppedDims.test(dim)) {
+      LDBG("subview-recover: dropped dims are not trailing, dim=" << dim
+                                                                  << ", subview="
+                                                                  << subviewOp);
+      return std::nullopt;
+    }
+  }
+
+  auto staticSizes = subviewOp.getStaticSizes();
+  for (int64_t dim = firstDroppedDim; dim < sourceType.getRank(); ++dim) {
+    if (staticSizes[dim] != 1) {
+      LDBG("subview-recover: dropped dim slice size is not static-1, dim="
+           << dim << ", staticSize=" << staticSizes[dim]
+           << ", sourceType=" << sourceType << ", subview=" << subviewOp);
+      return std::nullopt;
+    }
+  }
+
+  std::string droppedDimsStr;
+  llvm::raw_string_ostream droppedDimsOs(droppedDimsStr);
+  droppedDimsOs << '[';
+  bool first = true;
+  for (int64_t dim = 0; dim < sourceType.getRank(); ++dim) {
+    if (!droppedDims.test(dim))
+      continue;
+    if (!first)
+      droppedDimsOs << ", ";
+    droppedDimsOs << dim;
+    first = false;
+  }
+  droppedDimsOs << ']';
+  droppedDimsOs.flush();
+  LDBG("subview-recover: recognized trailing-unit rank-reduced subview, "
+       << "sourceType=" << sourceType << ", resultType=" << resultType
+       << ", droppedDims=" << droppedDimsStr);
+  return TrailingUnitRankReducedSubviewInfo{subviewOp.getSource(), sourceType,
+                                            resultType, droppedDims};
+}
+
+static std::optional<int>
+getLastNotUnitDimForMemRefType(MemRefType memRefType) {
+  if (!memRefType.hasRank())
+    return std::nullopt;
+
+  ReassociationIndices identityReassoc(memRefType.getRank());
+  for (int64_t i = 0; i < memRefType.getRank(); ++i)
+    identityReassoc[i] = i;
+  SmallVector<MemRefType> memRefTypes{memRefType};
+  return getLastNotUnitDim(memRefTypes, identityReassoc);
+}
+
+static int getPostAlignDimAfterDropLocal(
+    int prevDim, const llvm::SmallBitVector &droppedDims) {
+  int postDim = -1;
+  int curDim = droppedDims.find_first_unset();
+  while (curDim <= prevDim && curDim != -1) {
+    postDim++;
+    curDim = droppedDims.find_next_unset(curDim);
+  }
+  return postDim;
+}
+
+static AlignMarkDecision fixAlignDimForSingleUBStoreSubview(
+    Value operand, std::optional<int> alignDim,
+    const TrailingUnitRankReducedSubviewInfo &subviewInfo) {
+  auto expectedSourceAlignDim =
+      getLastNotUnitDimForMemRefType(subviewInfo.sourceType);
+  LDBG("subview-fix: sourceType=" << subviewInfo.sourceType
+                                  << ", resultType=" << subviewInfo.resultType
+                                  << ", originalAlignDim="
+                                  << alignDim.value_or(-1)
+                                  << ", expectedSourceAlignDim="
+                                  << expectedSourceAlignDim.value_or(-1));
+
+  if (!expectedSourceAlignDim.has_value())
+    return {operand, alignDim};
+
+  // If the true source-side align axis is one of the dropped dims, the current
+  // rank-reduced operand cannot represent that axis anymore. Mark the source
+  // directly so propagation sees the correct source semantic axis.
+  if (subviewInfo.droppedDims.test(expectedSourceAlignDim.value())) {
+    LDBG("subview-fix: expected source align dim "
+         << expectedSourceAlignDim.value()
+         << " is dropped in the rank-reduced result, mark source directly");
+    return {subviewInfo.source, expectedSourceAlignDim};
+  }
+
+  int mappedResultAlignDim = getPostAlignDimAfterDropLocal(
+      expectedSourceAlignDim.value(), subviewInfo.droppedDims);
+  if (mappedResultAlignDim < 0) {
+    LDBG("subview-fix: failed to map source align dim "
+         << expectedSourceAlignDim.value()
+         << " back to result rank, mark source directly");
+    return {subviewInfo.source, expectedSourceAlignDim};
+  }
+
+  LDBG("subview-fix: mapped source align dim "
+       << expectedSourceAlignDim.value() << " to result align dim "
+       << mappedResultAlignDim << ", keep marking current operand");
+  return {operand, mappedResultAlignDim};
+}
+
 // find the src memref arg used in transferwrite op
 static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   int res = -1;
@@ -405,6 +552,8 @@ void MarkStrideAlignPass::runOnOperation() {
     if (archIsRegbased) {
       // Filter memrefs not in ubspace
       auto filterMemrefTypes = filterNonHivmSpace(memrefTypes);
+      LDBG("mark-stride-align: reg-based path, filterMemrefTypes="
+           << filterMemrefTypes);
       if (filterMemrefTypes.empty())
         return WalkResult::skip();
       // In A5, the previous hfusion-flatten pass merges axes for both tensors
@@ -434,16 +583,51 @@ void MarkStrideAlignPass::runOnOperation() {
       auto flattenedAssociations = flattenResult->reassociation[0];
       auto flattenedTypes = flattenResult->getOperandTypes(DpsKind::kDpsAll);
       auto flattenedMemrefTypes = util::getMemRefTypes(flattenedTypes);
+      LDBG("mark-stride-align: non-reg-based path, flattenedMemrefTypes="
+           << flattenedMemrefTypes);
       alignDim = getLastDiscontinuousDim(flattenedMemrefTypes, memrefTypes,
                                          flattenedAssociations, isUBDMAOp,
                                          archIsRegbased, archIs950);
     }
     LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
-    for (const auto &oper : hivmOp.getTargetSpaceOperands(
-             hivm::AddressSpace::UB, false /*includeTmpBuffer*/)) {
-      auto adjustedAlignDim = adjustAlignDim(op, oper, alignDim);
+    auto ubOperands = hivmOp.getTargetSpaceOperands(
+        hivm::AddressSpace::UB, false /*includeTmpBuffer*/);
+    LDBG("mark-stride-align: UB operands count=" << ubOperands.size());
+    Value singleUbMarkTarget;
+    std::optional<int> singleUbAlignDim = alignDim;
+    bool useSingleUbMarkDecision = false;
+    if (isa<hivm::StoreOp>(op) && ubOperands.size() == 1) {
+      LDBG("mark-stride-align: single-UB store candidate, operand="
+           << ubOperands.front());
+      if (auto subviewInfo =
+              getTrailingUnitRankReducedSubviewInfo(ubOperands.front())) {
+        LDBG("mark-stride-align: before subview fix alignDim="
+             << alignDim.value_or(-1));
+        auto decision = fixAlignDimForSingleUBStoreSubview(
+            ubOperands.front(), alignDim, *subviewInfo);
+        singleUbMarkTarget = decision.markTarget;
+        singleUbAlignDim = decision.alignDim;
+        useSingleUbMarkDecision = true;
+        LDBG("mark-stride-align: after subview fix alignDim="
+             << singleUbAlignDim.value_or(-1)
+             << ", markTarget=" << singleUbMarkTarget);
+      } else {
+        LDBG("mark-stride-align: single-UB store did not match trailing-unit "
+             "rank-reduced subview pattern");
+      }
+    } else if (isa<hivm::StoreOp>(op)) {
+      LDBG("mark-stride-align: store skipped subview fix because UB operand "
+           "count=" << ubOperands.size());
+    }
+
+    for (const auto &oper : ubOperands) {
+      Value markTarget =
+          useSingleUbMarkDecision ? singleUbMarkTarget : oper;
+      auto adjustedAlignDim =
+          adjustAlignDim(op, markTarget,
+                         useSingleUbMarkDecision ? singleUbAlignDim : alignDim);
       LDBG("adjustedAlignDim " << adjustedAlignDim.value_or(-1) << "\n");
-      if (failed(markAlignedDim(builder, op, oper, adjustedAlignDim)))
+      if (failed(markAlignedDim(builder, op, markTarget, adjustedAlignDim)))
         return WalkResult::interrupt();
     }
 
