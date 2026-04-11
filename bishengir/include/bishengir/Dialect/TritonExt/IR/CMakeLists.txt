@@ -1,0 +1,11 @@
+set(LLVM_TARGET_DEFINITIONS FractalAttrDefs.td)
+mlir_tablegen(AttrDefs.h.inc -gen-attrdef-decls -attrdefs-dialect=ttgext)
+mlir_tablegen(AttrDefs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=ttgext)
+mlir_tablegen(OpsEnums.h.inc -gen-enum-decls)
+mlir_tablegen(OpsEnums.cpp.inc -gen-enum-defs)
+add_public_tablegen_target(BiShengIRTritonExtAttrDefsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS TritonExtDialect.td)
+mlir_tablegen(Dialect.h.inc -gen-dialect-decls -dialect=ttgext)
+mlir_tablegen(Dialect.cpp.inc -gen-dialect-defs -dialect=ttgext)
+add_public_tablegen_target(BiShengIRTritonExtDialectIncGen)

@@ -31,6 +31,7 @@ add_bishengir_dialect_library(BiShengIRTritonTransforms
   LINK_LIBS PUBLIC
   BiShengIRTritonExtension
   TritonGPUIR
+  BiShengIRTritonExtIR
   BiShengIRDialectUtils
   BiShengIRSCFTransformOps
   MLIRAscendDPXDialect

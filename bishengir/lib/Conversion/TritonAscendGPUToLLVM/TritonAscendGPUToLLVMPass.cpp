@@ -163,6 +163,11 @@ struct ConvertTritonAscendGPUToLLVMPass
     mlir::populateMathToLLVMConversionPatterns(typeConverter, patterns);
     triton::populateMemoryOpToLLVMPatterns(typeConverter, targetInfo, patterns,
                                            kDefaultPatternBenefit);
+    // Fractal shared memory patterns override upstream memory ops.
+    // Higher benefit ensures these match first when the memdesc uses
+    // FractalSharedEncodingAttr (ttgext dialect).
+    triton::ascend::populateFractalMemoryOpToLLVMPatterns(
+        typeConverter, targetInfo, patterns, kDefaultPatternBenefit + 1);
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns)))) {
       return signalPassFailure();
     }

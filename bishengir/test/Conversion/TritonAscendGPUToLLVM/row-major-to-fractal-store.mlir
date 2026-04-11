@@ -8,7 +8,7 @@
 // a pre-allocated fractal zN memdesc via ttg.local_store.
 
 #blocked  = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [2, 16], warpsPerCTA = [1, 4], order = [1, 0], CTAsPerCGA = [1, 1], CTASplitNum = [1, 1], CTAOrder = [1, 0]}>
-#fractal  = #ttg.fractal_shared<{fractalM0 = 16, fractalN0 = 16, layoutType = "zN"}>
+#fractal  = #ttgext.fractal_shared<{fractalM0 = 16, fractalN0 = 16, layoutType = "zN"}>
 #smem     = #ttg.shared_memory
 
 module attributes {

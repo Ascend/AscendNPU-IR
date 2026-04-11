@@ -19,6 +19,11 @@ void populateAscendElementwiseOpToLLVMPatterns(
     LLVMTypeConverter &typeConverter, RewritePatternSet &patterns,
     ModuleAxisInfoAnalysis &axisInfoAnalysis, const TargetInfoBase &targetInfo,
     PatternBenefit benefit);
+
+void populateFractalMemoryOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+                                           const TargetInfoBase &targetInfo,
+                                           RewritePatternSet &patterns,
+                                           PatternBenefit benefit);
 } // namespace mlir::triton::ascend
 
 #endif // BISHENGIR_CONVERSION_TRITONASCENDGPU_TO_LLVM_PATTERNS_TRITON_GPU_OP_TO_LLVM_H

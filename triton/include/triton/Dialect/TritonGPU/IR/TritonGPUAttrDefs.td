@@ -2,7 +2,6 @@
 #define TRITONGPU_ATTRDEFS
 
 include "mlir/IR/AttrTypeBase.td"
-include "mlir/IR/EnumAttr.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
 include "triton/Dialect/TritonGPU/IR/TritonGPUDialect.td"
 
@@ -168,46 +167,6 @@ addition, if there's only one CTA per CGA, then Triton canonicalizes CTAOrder to
   let genVerifyDecl = 1;
   let skipDefaultBuilders = 1;
 }
-
-#ifdef BSPRIV_DAVINCI_BISHENGIR
-//===----------------------------------------------------------------------===//
-// FractalSharedEncodingAttr
-//===----------------------------------------------------------------------===//
-
-def FractalLayoutType_zN : I32EnumAttrCase<"zN", 0, "zN">;
-def FractalLayoutType_nZ : I32EnumAttrCase<"nZ", 1, "nZ">;
-def FractalLayoutType : I32EnumAttr<
-    "FractalLayoutType", "Fractal layout ordering",
-    [FractalLayoutType_zN, FractalLayoutType_nZ]> {
-  let cppNamespace = "::mlir::triton::gpu";
-}
-
-def FractalSharedEncodingAttr
-    : TritonGPU_Attr<"FractalSharedEncoding", "fractal_shared_encoding",
-                     [SharedEncodingTrait, LayoutEncodingTrait]> {
-  let mnemonic = "fractal_shared";
-
-  let description = [{
-    Custom fractal shared memory layout for Huawei Ascend Cube emulation.
-
-    Supports two layout types:
-      - "zN": inner Z-shape (cols then rows), outer N-shape (M-blocks then N-blocks)
-      - "nZ": inner N-shape (rows then cols), outer Z-shape (N-blocks then M-blocks)
-  }];
-
-  let parameters = (
-    ins
-    "int64_t":$fractalM0,
-    "int64_t":$fractalN0,
-    "FractalLayoutType":$layoutType,
-    "CTALayoutAttr":$CTALayout
-  );
-
-  let hasCustomAssemblyFormat = 1;
-
-  let genVerifyDecl = 1;
-}
-#endif // BSPRIV_DAVINCI_BISHENGIR
 
 //===----------------------------------------------------------------------===//
 // Shared Layout Encoding

@@ -36,6 +36,7 @@
 #include "bishengir/Dialect/Tensor/Transforms/MeshShardingInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Conversion/Passes.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -65,7 +66,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
-                  bishengir::memref_ext::MemRefExtDialect>();
+                  bishengir::memref_ext::MemRefExtDialect,
+                bishengir::triton_ext::TritonExtDialect>();
   // clang-format on
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS

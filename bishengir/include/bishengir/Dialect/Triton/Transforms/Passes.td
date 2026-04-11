@@ -99,7 +99,10 @@ def DumpFractalLayout : Pass<"dump-fractal-layout", "mlir::ModuleOp"> {
       fractal-layout: offset=1536 -> dim0=32 dim1=16
   }];
   let constructor = "bishengir::triton::createDumpFractalLayoutPass()";
-  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect"];
+  let dependentDialects = [
+    "mlir::triton::gpu::TritonGPUDialect",
+    "bishengir::triton_ext::TritonExtDialect"
+  ];
   let options = [
     Option<"shapeStr", "shape", "std::string", "\"64,64\"",
            "Tensor shape as comma-separated integers, e.g. '64,64'">,
