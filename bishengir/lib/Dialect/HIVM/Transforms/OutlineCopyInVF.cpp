@@ -108,7 +108,7 @@ static bool canLowerToTransferPair(hivm::CopyOp copyOp) {
 
   auto srcType = dyn_cast<MemRefType>(copyOp.getSource().getType());
   auto dstType = dyn_cast<MemRefType>(copyOp.getDst().getType());
-  if (!srcType || !dstType || !srcType.hasStaticShape() || !dstType.hasStaticShape())
+  if (!srcType || !dstType)
     return false;
   if (srcType.getRank() < 1 || dstType.getRank() < 1)
     return false;
@@ -136,14 +136,12 @@ static scf::ForOp createLoopsNest(IRRewriter &rewriter, Location loc,
 }
 
 static Value createTransferMask(IRRewriter &rewriter, Location loc, Value memref,
-                                ValueRange indices, ArrayRef<int64_t> tileSizes) {
-  auto memrefType = dyn_cast<MemRefType>(memref.getType());
-  auto shape = memrefType.getShape();
+                                ValueRange shape, ValueRange indices,
+                                ArrayRef<int64_t> tileSizes) {
   auto maskType = VectorType::get(tileSizes, rewriter.getI1Type());
   SmallVector<Value> trueValues;
   for (size_t i = 0; i < tileSizes.size(); ++i) {
-    Value bound = rewriter.create<arith::ConstantIndexOp>(loc, shape[i]);
-    Value remaining = rewriter.create<arith::SubIOp>(loc, bound, indices[i]);
+    Value remaining = rewriter.create<arith::SubIOp>(loc, shape[i], indices[i]);
     Value tileSize = rewriter.create<arith::ConstantIndexOp>(loc, tileSizes[i]);
     Value maskCondition = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::slt, remaining, tileSize);
@@ -154,7 +152,8 @@ static Value createTransferMask(IRRewriter &rewriter, Location loc, Value memref
 }
 
 static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc, Value src,
-                                     Value dst, SmallVector<Value> indices,
+                                     Value dst, SmallVector<Value> shape,
+                                     SmallVector<Value> indices,
                                      SmallVector<int64_t> tileSizes,
                                      scf::ForOp loop) {
   OpBuilder::InsertionGuard guard(rewriter);
@@ -164,7 +163,7 @@ static void insertTransferPairToLoop(IRRewriter &rewriter, Location loc, Value s
   AffineMap map = rewriter.getMultiDimIdentityMap(tileSizes.size());
   Value padding = rewriter.create<arith::ConstantOp>(
       loc, elemType, rewriter.getZeroAttr(elemType));
-  Value mask = createTransferMask(rewriter, loc, src, indices, tileSizes);
+  Value mask = createTransferMask(rewriter, loc, src, shape, indices, tileSizes);
   auto inBounds = rewriter.getBoolArrayAttr(SmallVector<bool>(tileSizes.size(), false));
   auto readOp = rewriter.create<vector::TransferReadOp>(
       loc, vectorType, src, indices, map, padding, mask, inBounds);
@@ -186,13 +185,19 @@ static void tileCopyUsingForAndTransferPair(IRRewriter &rewriter,
   SmallVector<Value> lbs, ubs, steps;
   for (size_t i = 0; i < srcShape.size(); ++i) {
     lbs.push_back(rewriter.create<arith::ConstantIndexOp>(loc, 0));
-    ubs.push_back(rewriter.create<arith::ConstantIndexOp>(loc, srcShape[i]));
     steps.push_back(rewriter.create<arith::ConstantIndexOp>(loc, tileSizes[i]));
+    if (srcType.isDynamicDim(i)) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value dim = rewriter.create<memref::DimOp>(loc, src, idx);
+      ubs.push_back(dim);
+    } else {
+      ubs.push_back(rewriter.create<arith::ConstantIndexOp>(loc, srcShape[i]));
+    }
   }
   SmallVector<Value> inductionVars;
   scf::ForOp loopInsertTransfer =
       createLoopsNest(rewriter, loc, lbs, ubs, steps, inductionVars);
-  insertTransferPairToLoop(rewriter, loc, src, copyOp.getDst(),
+  insertTransferPairToLoop(rewriter, loc, src, copyOp.getDst(), ubs,
                            inductionVars, tileSizes, loopInsertTransfer);
 }
 
