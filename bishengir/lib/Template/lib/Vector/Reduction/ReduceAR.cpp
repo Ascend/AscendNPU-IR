@@ -17,6 +17,7 @@
 #include "Utils.h"
 #include "Vector/Reduction/ReductionUtils.h"
 #include "Vector/VecUtils.h"
+#include "DMA/DMAUtils.h"
 #include <type_traits>
 
 
@@ -459,16 +460,26 @@ reduce_ar_core(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
     // that intrinsic can handles.
     __ubuf__ T *tmp_buf_for_block_reduce_ptr =
         tmp_buf_ptr + size0 * num_per_repeat;
-
-    // Attach initial value to temp buffer (a, r0), here r0 is the max number
-    // per repeat that intrinsic can handles.
-    brc_scalar_core_1d(initvalue, tmp_buf_ptr, size0 * num_per_repeat);
-
+        
     memref_t<__ubuf__ T, 2> tmp_buf_2d{tmp_buf->allocated,
                                        tmp_buf->aligned,
                                        tmp_offset,
                                        {size0, num_per_repeat},
                                        {num_per_repeat, 1}};
+    memref_t<__ubuf__ T, 2> subview_src0_2d{src0->allocated,
+                                            src0->aligned,
+                                            src0->offset,
+                                            {size0, num_per_repeat},
+                                            {src0->strides[0], 1}};
+
+    // Attach initial value to temp buffer (a, r0), here r0 is the max number
+    // per repeat that intrinsic can handles.
+    if constexpr (OP == ReduceOpTy::REDUCE_OR) {
+ 	    copy_ubuf_to_ubuf_2d_core(&subview_src0_2d, &tmp_buf_2d);
+ 	  } else {
+      brc_scalar_core_1d(initvalue, tmp_buf_ptr, size0 * num_per_repeat);
+ 	  }
+
     // reduce src (a,r) to temp buffer (a,r0) by element-wise vector operation,
     // here r0 is the max number per repeat that intrinsic can handles.
     reduceARToAR0<VECOP, T>(src0, &tmp_buf_2d, xor_additional_tmp_buf);
