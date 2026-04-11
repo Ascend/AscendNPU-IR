@@ -783,3 +783,44 @@ module {
     return %0 : tensor<64x32xf32>
   }
 }
+
+// -----
+// CHECK-LABEL:   func.func @simplicial_bwd_kv1_kernel
+// CHECK-NOT: hivm.hir.vadd
+module {
+  func.func @simplicial_bwd_kv1_kernel(%arg0: tensor<1xi16>, %arg1: i32, %arg2: i32, %arg3: i32, %arg4: i32) {
+    %c1_i32 = arith.constant 1 : i32
+    %c0_i16 = arith.constant 0 : i16
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %0 = tensor.empty() : tensor<64x64xf32>
+    %1 = scf.for %arg5 = %arg1 to %arg2 step %c1_i32 iter_args(%arg6 = %0) -> (tensor<64x64xf32>)  : i32 {
+      %2 = scf.for %arg7 = %arg5 to %arg3 step %c32_i32 iter_args(%arg8 = %arg6) -> (tensor<64x64xf32>)  : i32 {
+        %alloc = memref.alloc() : memref<32x64xbf16>
+        %alloc_0 = memref.alloc() : memref<64x32xbf16>
+        %3 = bufferization.to_tensor %alloc restrict writable : memref<32x64xbf16>
+        %4 = bufferization.to_tensor %alloc_0 restrict writable : memref<64x32xbf16>
+        %5 = bufferization.alloc_tensor() : tensor<i1>
+        %6 = bufferization.alloc_tensor() : tensor<i16>
+        %7 = tensor.empty() : tensor<1xi1>
+        %8 = hivm.hir.vcmp ins(%arg0, %c0_i16 : tensor<1xi16>, i16) outs(%7 : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
+        %extracted = tensor.extract %8[%c0] : tensor<1xi1>
+        %9 = arith.extui %extracted : i1 to i32
+        %10 = arith.cmpi sgt, %9, %c0_i32 : i32
+        %11 = scf.if %10 -> (tensor<64x64xf32>) {
+          %12 = arith.cmpi eq, %9, %arg7 : i32
+          %13 = arith.cmpi eq, %arg4, %arg5 : i32
+          %14 = arith.andi %12, %13 : i1
+          %15 = hivm.hir.mmadL1 ins(%4, %3, %14, %c0, %c0, %c0 : tensor<64x32xbf16>, tensor<32x64xbf16>, i1, index, index, index) outs(%arg8 : tensor<64x64xf32>) -> tensor<64x64xf32>
+          scf.yield %15 : tensor<64x64xf32>
+        } else {
+          scf.yield %arg8 : tensor<64x64xf32>
+        }
+        scf.yield %11 : tensor<64x64xf32>
+      } {tt.num_stages = 1 : i32}
+      scf.yield %2 : tensor<64x64xf32>
+    }
+    return
+  }
+}

@@ -126,6 +126,30 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
   return std::nullopt;
 }
 
+enum class TraceDefState {
+  Failed,
+  Matched,
+  NoMatch,
+  InstOnly,
+};
+
+inline TraceDefState mergeTraceDefState(TraceDefState lhs, TraceDefState rhs) {
+  if (lhs == TraceDefState::Failed || rhs == TraceDefState::Failed)
+    return TraceDefState::Failed;
+  if (lhs == TraceDefState::Matched || rhs == TraceDefState::Matched)
+    return TraceDefState::Matched;
+  if (lhs == TraceDefState::NoMatch || rhs == TraceDefState::NoMatch)
+    return TraceDefState::NoMatch;
+  return TraceDefState::InstOnly;
+}
+
+inline bool usesTraceRootValue(Operation *op, Value traceRoot) {
+  if (!op || !traceRoot)
+    return false;
+  return llvm::any_of(op->getOperands(), [traceRoot](Value operand) {
+    return operand == traceRoot;
+  });
+}
 
 template <typename OpType>
 void traceDefOpsImpl(Value v,
@@ -133,12 +157,21 @@ void traceDefOpsImpl(Value v,
                      TraceResultMode traceMode,
                      SmallVectorImpl<Operation *> &results,
                      SmallVectorImpl<Value> &recursionStack,
-                     bool &traceFailed) {
-  if (traceFailed || !v)
+                     TraceDefState &traceDefState,
+                     Value traceRoot) {
+  if (!v) {
+    traceDefState = TraceDefState::NoMatch;
+    return;
+  }
+
+  if (!traceRoot)
+    traceRoot = v;
+
+  if (traceDefState == TraceDefState::Failed)
     return;
 
   if (isSingleChain && getUsersNum(v) != 1) {
-    traceFailed = true;
+    traceDefState = TraceDefState::Failed;
     return;
   }
 
@@ -151,15 +184,17 @@ void traceDefOpsImpl(Value v,
     if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
          std::is_same_v<OpType, hivm::BatchMmadL1Op>) && (core ==
         TCoreType::VECTOR)) {
-          traceFailed = true;
+          traceDefState = TraceDefState::Failed;
           return;  
     }
   }
 
   // Avoid infinite recursion without a visited set
   for (Value stacked : recursionStack) {
-    if (stacked == v)
+    if (stacked == v) {
+      traceDefState = TraceDefState::InstOnly;
       return;
+    }
   }
   recursionStack.push_back(v);
 
@@ -169,16 +204,33 @@ void traceDefOpsImpl(Value v,
   } guard{recursionStack};
 
   auto traceSource = [isSingleChain, traceMode, &results,
-                      &recursionStack, &traceFailed](Value source) {
+                      &recursionStack, &traceDefState,
+                      traceRoot](Value source) {
     traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
-                            recursionStack, traceFailed);
+                            recursionStack, traceDefState, traceRoot);
   };
 
-  auto traceSameTraceResultSources =
-      [isSingleChain, traceMode, &results, &recursionStack,
-       &traceFailed](ArrayRef<Value> sources) {
-    if (sources.empty())
+  auto traceSources = [isSingleChain, traceMode, &results,
+                       &recursionStack, &traceDefState,
+                       traceRoot](ArrayRef<Value> sources) {
+    TraceDefState sourceTraceDefState = traceDefState;
+    for (auto source : sources) {
+      TraceDefState targetTraceDefState = TraceDefState::NoMatch;
+      traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
+                              recursionStack, targetTraceDefState, traceRoot);
+      sourceTraceDefState =
+          mergeTraceDefState(sourceTraceDefState, targetTraceDefState);
+    }
+    traceDefState = sourceTraceDefState;
+  };
+
+  auto traceSameTraceResultSources = [isSingleChain, traceMode,
+                                      &results, &recursionStack, &traceDefState,
+                                      traceRoot](ArrayRef<Value> sources) {
+    if (sources.empty()) {
+      traceDefState = TraceDefState::NoMatch;
       return;
+    }
 
     SmallPtrSet<Operation *, 4> matchedResultSet;
     bool initialized = false;
@@ -187,47 +239,55 @@ void traceDefOpsImpl(Value v,
       SmallPtrSet<Operation *, 4> branchResultSet;
       SmallVector<Value> branchRecursionStack(recursionStack.begin(),
                                               recursionStack.end());
-      bool branchTraceFailed = false;
-      traceDefOpsImpl<OpType>(
-          source,
-          /*isSingleChain=*/isSingleChain,
-          /*traceMode=*/traceMode,
-          branchResults,
-          branchRecursionStack,
-          branchTraceFailed);
+      TraceDefState targetTraceDefState = TraceDefState::NoMatch;
+      traceDefOpsImpl<OpType>(source,
+                              /*isSingleChain=*/isSingleChain,
+                              /*traceMode=*/traceMode,
+                              branchResults, branchRecursionStack,
+                              targetTraceDefState, traceRoot);
 
-      if (branchTraceFailed) {
-        traceFailed = true;
+      if (targetTraceDefState == TraceDefState::Failed) {
+        traceDefState = TraceDefState::Failed;
         return;
       }
+
+      if (targetTraceDefState == TraceDefState::InstOnly)
+        continue;
 
       for (Operation *op : branchResults)
         branchResultSet.insert(op);
 
       if (!initialized) {
         initialized = true;
-        for (Operation *op : branchResultSet)
+        for (Operation *op : branchResults)
           matchedResultSet.insert(op);
         continue;
       }
 
       if (matchedResultSet.size() != branchResultSet.size()) {
-        traceFailed = true;
+        traceDefState = TraceDefState::Failed;
         return;
       }
       for (Operation *op : branchResultSet) {
         if (!matchedResultSet.contains(op)) {
-          traceFailed = true;
+          traceDefState = TraceDefState::Failed;
           return;
         }
       }
     }
-
-    results.append(matchedResultSet.begin(), matchedResultSet.end());
+    if (!initialized) {
+      traceDefState = TraceDefState::InstOnly;
+    } else {
+      for (auto op : matchedResultSet)
+        results.push_back(op);
+      traceDefState = matchedResultSet.empty() ? TraceDefState::NoMatch
+                                               : TraceDefState::Matched;
+    }
   };
 
   if (Operation *definingOp = v.getDefiningOp<OpType>()) {
     results.push_back(definingOp);
+    traceDefState = TraceDefState::Matched;
     return;
   } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
     traceSource(reshapeOp.getSource());
@@ -261,8 +321,10 @@ void traceDefOpsImpl(Value v,
       if (blockArg.getOwner() == scfForOp.getBody()) {
         unsigned numInduction = scfForOp.getNumInductionVars();
         unsigned argNo = blockArg.getArgNumber();
-        if (argNo < numInduction)
+        if (argNo < numInduction) {
+          traceDefState = TraceDefState::NoMatch;
           return;
+        }
 
         unsigned iterIdx = argNo - numInduction;
         SmallVector<Value, 2> sources;
@@ -284,8 +346,7 @@ void traceDefOpsImpl(Value v,
           return;
         }
 
-        for (Value source : sources)
-          traceSource(source);
+        traceSources(sources);
       }
     }
   } else if (auto forOp = v.getDefiningOp<scf::ForOp>()) {
@@ -307,8 +368,7 @@ void traceDefOpsImpl(Value v,
       traceSameTraceResultSources(sources);
       return;
     }
-    for (Value source : sources)
-      traceSource(source);
+    traceSources(sources);
   } else if (auto extractSliceOp = v.getDefiningOp<tensor::ExtractSliceOp>()) {
     traceSource(extractSliceOp.getSource());
   } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
@@ -318,10 +378,18 @@ void traceDefOpsImpl(Value v,
       traceSameTraceResultSources(sources);
       return;
     }
-    for (Value source : sources)
-      traceSource(source);
-  } else if (auto memSpaceCastOp = v.getDefiningOp<memref::MemorySpaceCastOp>()) {
+    traceSources(sources);
+  } else if (auto memSpaceCastOp =
+                 v.getDefiningOp<memref::MemorySpaceCastOp>()) {
     traceSource(memSpaceCastOp.getSource());
+  } else if (traceMode == TraceResultMode::StrictSame) {
+    if (Operation *defOp = v.getDefiningOp()) {
+      if (usesTraceRootValue(defOp, traceRoot)) {
+        traceDefState = TraceDefState::InstOnly;
+      }
+    }
+  } else {
+    traceDefState = TraceDefState::NoMatch;
   }
 }
 
@@ -347,10 +415,10 @@ traceDefOps(Value v, bool isSingleChain = false,
             TraceResultMode traceMode = TraceResultMode::Default) {
   SmallVector<Operation *> results;
   SmallVector<Value> recursionStack;
-  bool traceFailed = false;
+  TraceDefState traceDefState = TraceDefState::NoMatch;
   traceDefOpsImpl<OpType>(v, isSingleChain, traceMode, results,
-                          recursionStack, traceFailed);
-  if (traceFailed)
+                          recursionStack, traceDefState, v);
+  if (traceDefState == TraceDefState::Failed)
     results.clear();
   return results;
 }
