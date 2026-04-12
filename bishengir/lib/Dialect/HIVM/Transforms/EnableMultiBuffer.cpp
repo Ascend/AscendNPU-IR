@@ -267,6 +267,20 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
     }
 
     LoopLikeOpInterface loopOp = getParentLoop(op.getResult());
+    /// When the outmost loopOp of PointerCastOp is null ptr, it means multi
+    /// buffer can not be enabled directly. CopyOp is needed to copy yield value
+    /// (which is also the result of PointerCastOp) to iter_arg of
+    /// PointerCastOp's parent loop to enable multi buffer.
+    if (!loopOp) {
+      LoopLikeOpInterface parentLoop =
+          op->getParentOfType<LoopLikeOpInterface>();
+      if (!isa<scf::ForOp>(parentLoop)) {
+        return failure();
+      }
+      auto yieldIndex = GetParentLoopYieldIndex(parentLoop, op.getResult());
+      assert(yieldIndex.has_value());
+      InsertCopyBeforeLoopYield(rewriter, parentLoop, yieldIndex.value());
+    }
     while (loopOp) {
       if (!isa<scf::ForOp>(loopOp))
         return failure();
@@ -277,7 +291,73 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
 
 private:
   LogicalResult OptMultiBuffer(hivm::PointerCastOp op) const;
+  std::optional<size_t> GetParentLoopYieldIndex(LoopLikeOpInterface parentLoop,
+                                                Value val) const;
+  void InsertCopyBeforeLoopYield(PatternRewriter &rewriter,
+                                 LoopLikeOpInterface parentLoopOp,
+                                 size_t yieldIndex) const;
 };
+
+std::optional<size_t>
+MultiBufferPattern::GetParentLoopYieldIndex(LoopLikeOpInterface parentLoop,
+                                            Value val) const {
+  auto *valDefOp = val.getDefiningOp();
+  if (!valDefOp)
+    llvm::report_fatal_error("val should have defining op.");
+
+  // Need to determine whether val is yielded by the loop.
+  auto yieldedValues = parentLoop.getYieldedValues();
+  if (yieldedValues.empty())
+    return std::nullopt;
+
+  auto idxLoopRes = getYieldValueIdx(val, yieldedValues);
+  if (idxLoopRes.has_value()) {
+    return idxLoopRes.value();
+  }
+
+  // Need to determine whether val is yielded by if/else.
+  auto parentIf = valDefOp->getParentOfType<scf::IfOp>();
+  if (!parentIf || parentIf.getResults().empty())
+    return std::nullopt;
+
+  auto thenYieldOp = parentIf.thenYield();
+  auto thenYieldOpers = thenYieldOp.getOperands();
+
+  auto idxThenYielded = getYieldValueIdx(val, thenYieldOpers);
+  if (idxThenYielded.has_value()) {
+    // The val is yielded by ifOp, need to find yield index of ifOp's result
+    auto res = parentIf.getResults()[*idxThenYielded];
+    return GetParentLoopYieldIndex(parentLoop, res);
+  }
+
+  auto elseYieldOp = parentIf.elseYield();
+  auto elseYieldOpers = elseYieldOp.getOperands();
+  auto idxElseYielded = getYieldValueIdx(val, elseYieldOpers);
+  if (idxElseYielded.has_value()) {
+    auto res = parentIf.getResults()[*idxElseYielded];
+    return GetParentLoopYieldIndex(parentLoop, res);
+  }
+
+  return std::nullopt;
+}
+
+void MultiBufferPattern::InsertCopyBeforeLoopYield(
+    PatternRewriter &rewriter, LoopLikeOpInterface parentLoopOp,
+    size_t yieldIndex) const {
+  rewriter.setInsertionPoint(
+      parentLoopOp.getLoopRegions()[0]->front().getTerminator());
+  auto iterArgs = parentLoopOp.getRegionIterArgs();
+  auto yieldVals = parentLoopOp.getYieldedValues();
+  assert(yieldIndex < iterArgs.size() && iterArgs.size() == yieldVals.size());
+  Value iterArg = iterArgs[yieldIndex];
+  Value originYield = yieldVals[yieldIndex];
+  rewriter.create<hivm::CopyOp>(parentLoopOp->getLoc(), TypeRange{},
+                                /*src*/ originYield, /*dst*/ iterArg);
+  assert(parentLoopOp.getYieldedValuesMutable().has_value());
+  rewriter.modifyOpInPlace(parentLoopOp, [&]() {
+    parentLoopOp.getYieldedValuesMutable().value()[yieldIndex].assign(iterArg);
+  });
+}
 
 LogicalResult MultiBufferPattern::OptMultiBuffer(hivm::PointerCastOp op) const {
   auto status = MultiBufferHelper(op).extMultiBuffer();
