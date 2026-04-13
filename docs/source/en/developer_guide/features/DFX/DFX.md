@@ -216,3 +216,6 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 - Triton sanitizer and device_print cannot be enabled at the same time.
 - Supported data types for printing: bool, int8, uint8, int16, uint16, int32, uint32, int64, bfloat16, half, float32.
 - When using device_print, it is recommended to print a single tensor and place the print statement immediately next to the tensor being printed, to prevent exceptions caused by changes in the tensor's lifetime.
+- Kernel store completes, then load brings data in, but with no subsequent op using it (except Debug op) currently not supported.
+- Triton dot interface does not currently support printing when the input is in a 3D scenario.
+- The current timeout for waiting for kernel completion during printing is set to 30 seconds. For test cases that exceed 30 seconds, enabling printing will cause a timeout error.
