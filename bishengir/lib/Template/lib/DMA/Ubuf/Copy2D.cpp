@@ -342,7 +342,7 @@ copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ T, 2> *src,
       is32ByteAligned<T>(src_stride0) && is32ByteAligned<T>(dst_stride0);
 
   // Copy using 1d contiguous method since the 2d tensor is contiguous in memory
-  if (is_offset_aligned && is_unalign_collapsible_dims(src, dst)) {
+  if (is_offset_aligned && is_all_continuous(src, dst)) {
     memref_t<__ubuf__ T, 1> src_1d{
         src->allocated, src->aligned, src->offset, {size0 * size1}, {1}};
 
@@ -351,6 +351,19 @@ copy_ubuf_to_ubuf_2d_core(memref_t<__ubuf__ T, 2> *src,
 
     copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
     return;
+  }
+
+  /// For 2D copy scenarios where dst is a contiguous memory region,
+  /// and for src, all strides except the last dimension are 32B-aligned
+  /// with offset alignment, vreduceV2 can be used to avoid scalar copy
+  /// performance degradation
+  /// e.g. src sizes(128, 4) strides(8, 1) dst sizes(128, 4) strides(4, 1)
+  /// select PatternMode::ALL_ELEMENTS to copy all of elements of src
+  if constexpr (sizeof(T) == 2 || sizeof(T) == 4) {
+    if (is_offset_aligned && is_unalign_collapsible_dims<T, 2>(src, dst)) {
+      vreducev2_2d_with_pattern_mode<T, PatternMode::ALL_ELEMENTS>(src, dst);
+      return;
+    }
   }
 
   // For src and dst which have aligned high dim stride,
