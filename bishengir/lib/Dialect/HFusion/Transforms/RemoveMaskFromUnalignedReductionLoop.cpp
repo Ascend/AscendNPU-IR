@@ -29,8 +29,43 @@ public:
   void runOnOperation() override;
 };
 
-static void insertSelectBeforeReductionOp(IRRewriter& rewriter, Operation *reductionOp,
-                                          scf::ForOp reductionLoop) {
+static void removeMaskOfReadOp(IRRewriter &rewriter, Value operand, bool operandIsLhs,
+                               scf::ForOp reductionLoop, std::optional<bool> &isLhsSelected,
+                               Value &selectMask, vector::TransferWriteOp &reductionInitWriteOp,
+                               int &reductionInitIdxInLoopIterArgs) {
+  auto maskOp = dyn_cast<vector::MaskOp>(operand.getDefiningOp());
+  if (!maskOp)
+      return;
+  Operation *maskedOp = maskOp.getMaskableOp();
+  auto readOp = dyn_cast<vector::TransferReadOp>(maskedOp);
+  if (!readOp)
+    return;
+  auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(readOp.getSource().getDefiningOp());
+  if (!extractSliceOp)
+    return;
+  auto loopIterArgs = reductionLoop.getRegionIterArgs();
+  auto it = llvm::find(loopIterArgs, extractSliceOp.getSource());
+  if (it == loopIterArgs.end())
+    return;
+  reductionInitIdxInLoopIterArgs = std::distance(loopIterArgs.begin(), it);
+  Value reductionInitArg = reductionLoop.getInitArgs()[reductionInitIdxInLoopIterArgs];
+  auto writeOp = dyn_cast_or_null<vector::TransferWriteOp>(reductionInitArg.getDefiningOp());
+  if (!writeOp)
+    return;
+  isLhsSelected = !operandIsLhs;
+  selectMask = maskOp.getMask();
+  reductionInitWriteOp = writeOp;
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(maskOp);
+  auto newReadOp = rewriter.create<vector::TransferReadOp>(
+      readOp.getLoc(), readOp.getVectorType(), loopIterArgs[reductionInitIdxInLoopIterArgs],
+      readOp.getIndices(), readOp.getPermutationMap(), readOp.getPadding(), Value(),
+      readOp.getInBounds());
+  rewriter.replaceOp(maskOp, newReadOp);
+}
+
+static void insertSelectBeforeReductionAndRemoveMask(
+    IRRewriter &rewriter, Operation *reductionOp, scf::ForOp reductionLoop) {
   Value lhs = reductionOp->getOperand(0);
   Value rhs = reductionOp->getOperand(1);
   // reduction op has two operand, the one is the original data, and the other is the
@@ -38,79 +73,40 @@ static void insertSelectBeforeReductionOp(IRRewriter& rewriter, Operation *reduc
   // the lhs or the rhs is the original data.
   std::optional<bool> isLhsSelected = std::nullopt;
   Value selectMask;
-  Value reductionIterArg = reductionLoop.getRegionIterArg(0);
-  if (auto lhsMaskOp = dyn_cast<vector::MaskOp>(lhs.getDefiningOp())) {
-    Operation *lhsMaskedOp = lhsMaskOp.getMaskableOp();
-    selectMask = lhsMaskOp.getMask();
-    if (auto lhsReadOp = dyn_cast<vector::TransferReadOp>(lhsMaskedOp)) {
-      if (auto lhsExtractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
-              lhsReadOp.getSource().getDefiningOp())) {
-        isLhsSelected = lhsExtractSliceOp.getSource() != reductionIterArg;
-      }
-    }
-  }
-  if (!isLhsSelected.has_value()) {
-    if (auto rhsMaskOp = dyn_cast<vector::MaskOp>(rhs.getDefiningOp())) {
-      Operation *rhsMaskedOp = rhsMaskOp.getMaskableOp();
-      selectMask = rhsMaskOp.getMask();
-      if (auto rhsReadOp = dyn_cast<vector::TransferReadOp>(rhsMaskedOp)) {
-        if (auto rhsExtractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
-                rhsReadOp.getSource().getDefiningOp())) {
-          isLhsSelected = rhsExtractSliceOp.getSource() == reductionIterArg;
-        }
-      }
-    }
-  }
-  if (selectMask && isLhsSelected.has_value()) {
-    vector::TransferWriteOp writeOp;
-    for (Value initArg : reductionLoop.getInitArgs()) {
-      if (!initArg.getDefiningOp())
-        continue;
-      auto *defOp = initArg.getDefiningOp();
-      if (isa<vector::TransferWriteOp>(defOp)) {
-        writeOp = dyn_cast<vector::TransferWriteOp>(defOp);
-        break;
-      }
-    }
-    if (writeOp) {
-      rewriter.setInsertionPoint(reductionOp);
-      Value select = rewriter.create<arith::SelectOp>(
-          reductionOp->getLoc(), selectMask, *isLhsSelected ? lhs : rhs, writeOp.getVector());
-      reductionOp->setOperand(*isLhsSelected ? 0 : 1, select);
-    }
-  }
-}
+  vector::TransferWriteOp reductionInitWriteOp;
+  int reductionInitIdxInLoopIterArgs = -1;
+  removeMaskOfReadOp(rewriter, lhs, /*operandIsLhs*/true, reductionLoop, isLhsSelected,
+                     selectMask, reductionInitWriteOp, reductionInitIdxInLoopIterArgs);
+  if (!isLhsSelected.has_value())
+    removeMaskOfReadOp(rewriter, rhs, /*operandIsLhs*/false, reductionLoop, isLhsSelected,
+                       selectMask, reductionInitWriteOp, reductionInitIdxInLoopIterArgs);
+  assert(isLhsSelected.has_value());
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(reductionOp);
+  Value select = rewriter.create<arith::SelectOp>(
+      reductionOp->getLoc(), selectMask, *isLhsSelected ? lhs : rhs,
+      reductionInitWriteOp.getVector());
+  reductionOp->setOperand(*isLhsSelected ? 0 : 1, select);
 
-static void removeMaskForReadOrWriteOp(IRRewriter& rewriter, vector::MaskOp maskOp,
-                                       scf::ForOp reductionLoop) {
-  Operation *maskedOp = maskOp.getMaskableOp();
-  Value reductionIterArg = reductionLoop.getRegionIterArg(0);
-  if (auto readOp = dyn_cast<vector::TransferReadOp>(maskedOp)) {
-    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
-            readOp.getSource().getDefiningOp())) {
-      if (extractSliceOp.getSource() == reductionIterArg) {
-        rewriter.setInsertionPointAfter(maskOp);
-        auto newReadOp = rewriter.create<vector::TransferReadOp>(
-            readOp.getLoc(), readOp.getVectorType(), reductionIterArg,
-            readOp.getIndices(), readOp.getPermutationMap(), readOp.getPadding(),
-            Value(), readOp.getInBounds());
-        rewriter.replaceOp(maskOp, newReadOp);
-      }
-    }
-  } else if (auto writeOp = dyn_cast<vector::TransferWriteOp>(maskedOp)) {
-    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
-            writeOp.getSource().getDefiningOp())) {
-      if (extractSliceOp.getSource() == reductionIterArg) {
+  Operation *userOp = *reductionOp->getUsers().begin();
+  if (auto writeOp = dyn_cast<vector::TransferWriteOp>(userOp)) {
+    if (writeOp.isMasked()) {
+      auto maskOp = writeOp.getMaskingOp();
+      if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(
+              writeOp.getSource().getDefiningOp())) {
+        auto loopIterArgs = reductionLoop.getRegionIterArgs();
+        assert(extractSliceOp.getSource() == loopIterArgs[reductionInitIdxInLoopIterArgs]);
         Operation *insertSliceOp = *maskOp->getUsers().begin();
         if (isa<tensor::InsertSliceOp>(insertSliceOp)) {
           Operation *yieldOp = *insertSliceOp->getUsers().begin();
           if (isa<scf::YieldOp>(yieldOp)) {
             rewriter.setInsertionPointAfter(maskOp);
             auto newWriteOp = rewriter.create<vector::TransferWriteOp>(
-                writeOp.getLoc(), reductionIterArg.getType(), writeOp.getVector(),
-                reductionIterArg, writeOp.getIndices(), writeOp.getPermutationMap(),
-                Value(), writeOp.getInBounds());
-            yieldOp->setOperand(0, newWriteOp.getResult());
+                writeOp.getLoc(), loopIterArgs[reductionInitIdxInLoopIterArgs].getType(),
+                writeOp.getVector(), loopIterArgs[reductionInitIdxInLoopIterArgs],
+                writeOp.getIndices(), writeOp.getPermutationMap(), Value(),
+                writeOp.getInBounds());
+            yieldOp->setOperand(reductionInitIdxInLoopIterArgs, newWriteOp.getResult());
             rewriter.eraseOp(insertSliceOp);
             rewriter.eraseOp(maskOp);
           }
@@ -186,16 +182,14 @@ void RemoveMaskFromUnalignedReductionLoopPass::runOnOperation() {
     if (!lb || !ub || !step || (*ub - *lb) % *step == 0)
       return;
 
-    SmallVector<vector::MaskOp> maskOps;
+    SmallVector<Operation *> reductionOps;
     forOp.walk([&](Operation *op) {
-      if (vector::MaskOp maskOp = dyn_cast<vector::MaskOp>(op)) {
-        maskOps.push_back(maskOp);
-      } else if (op->hasAttr("reductionOp")) {
-        insertSelectBeforeReductionOp(rewriter, op, forOp);
+      if (op->hasAttr("reductionOp")) {
+        reductionOps.push_back(op);
       }
     });
-    for (vector::MaskOp maskOp : maskOps) {
-      removeMaskForReadOrWriteOp(rewriter, maskOp, forOp);
+    for (Operation *reductionOp : reductionOps) {
+      insertSelectBeforeReductionAndRemoveMask(rewriter, reductionOp, forOp);
     }
   });
   // handle those reductionOp not enclosed by reductionLoop
