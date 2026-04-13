@@ -16,7 +16,7 @@
 
 Before:
 
-```
+```mlir
 scf.for 0 to N step S {
     %c = Cube() : tensor<16x16xf32>
     %v = Vector(%c) : tensor<16x16xf32>
@@ -28,7 +28,7 @@ scf.for 0 to N step S {
 
 After:
 
-```
+```mlir
 scf.for 0 to N step 3*S {
     %c = scf.for 0 to 3 -> tensor<3x16x16xf32> {
         Cube();
@@ -67,7 +67,7 @@ scf.for 0 to N step 3*S {
     - 以下情况无法开启cv-pipelining: `v0` 与 `v1`无法被提取至同一Work Item (因为中间有Cube依赖), 但是`arg0`的定义在`v1`, 却被`v0`用到. 该情况CV-Pipelining不会开启
     - 若`Cube`没有用到`v0`, 那么`v0`会下沉至`v1`同一个Work Item, CV-Pipelining会生效
 
-```
+```mlir
 scf.for iter_args(%arg0 = %init) {
     %v0 = Vector(%arg0)
     %c = Cube(%v0)

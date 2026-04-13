@@ -39,7 +39,7 @@ This attribute is used to indicate the location of external functions.
 
 Syntax:
 
-```
+```mlir
 #hacc.function_kind<
   ::mlir::hacc::HACCFuncType   # function_kind
 >
@@ -57,7 +57,7 @@ HACC function type.
 
 Syntax:
 
-```
+```mlir
 #hacc.get_tiling_struct_size_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -76,7 +76,7 @@ get tiling struct size function of the device function.
 
 Syntax:
 
-```
+```mlir
 #hacc.host_func_type<
   ::mlir::hacc::HostFuncType   # host_func_type
 >
@@ -94,7 +94,7 @@ HACC host func type.
 
 Syntax:
 
-```
+```mlir
 #hacc.infer_output_shape_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -113,7 +113,7 @@ infer output shape function of the device function.
 
 Syntax:
 
-```
+```mlir
 #hacc.infer_sync_block_lock_init_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -135,7 +135,7 @@ this function is used to infer the initial value of the lock.
 
 Syntax:
 
-```
+```mlir
 #hacc.infer_sync_block_lock_num_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -157,7 +157,7 @@ and this function is used to infer how many locks the kernel needs.
 
 Syntax:
 
-```
+```mlir
 #hacc.infer_task_type_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -175,7 +175,7 @@ HACC infer core type and mix ratio.
 
 Syntax:
 
-```
+```mlir
 #hacc.infer_workspace_shape_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >
@@ -194,7 +194,7 @@ infer workspace shape function of the device function.
 
 Syntax:
 
-```
+```mlir
 #hacc.input_idx<
   unsigned   # argIdx
 >
@@ -210,7 +210,7 @@ Syntax:
 
 Syntax:
 
-```
+```mlir
 #hacc.arg_type<
   ::mlir::hacc::KernelArgType   # arg_type
 >
@@ -235,7 +235,7 @@ strictly not alias.
 
 Syntax:
 
-```
+```mlir
 #hacc.output_idx<
   unsigned   # argIdx
 >
@@ -257,7 +257,7 @@ function argument corresponds to.
 
 Syntax:
 
-```
+```mlir
 #hacc.rename_func<
   ::mlir::FlatSymbolRefAttr   # targetName
 >
@@ -276,7 +276,7 @@ renamed to the target function name.
 
 Syntax:
 
-```
+```mlir
 #hacc.target<
   StringAttr   # target
 >
@@ -296,7 +296,7 @@ An attribute to represent NPU target device specification.
 
 Syntax:
 
-```
+```mlir
 #hacc.target_device_spec<
   ::llvm::ArrayRef<DataLayoutEntryInterface>   # entries
 >
@@ -308,7 +308,7 @@ of optional hardware properties (e.g., "UB_SIZE" below).
 
 Example:
 
-```
+```mlir
 #hacc.target_device_spec<
   #dlti.dl_entry<"UB_SIZE", 196608 : i32>>
 ```
@@ -323,7 +323,7 @@ Example:
 
 Syntax:
 
-```
+```mlir
 #hacc.tiling_function<
   ::mlir::FlatSymbolRefAttr   # funcName
 >

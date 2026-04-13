@@ -5,7 +5,7 @@
 
 ### Options
 
-```
+```text
 -target : Device target name
 ```
 
