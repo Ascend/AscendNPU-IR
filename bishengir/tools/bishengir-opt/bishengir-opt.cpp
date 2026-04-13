@@ -13,6 +13,7 @@
 #include "bishengir/InitAllDialects.h"
 #include "bishengir/InitAllExtensions.h"
 #include "bishengir/InitAllPasses.h"
+#include "bishengir/Version/Version.h"
 
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/InitAllDialects.h"
@@ -37,6 +38,10 @@ void registerTestDialect(::mlir::DialectRegistry &registry);
 void registerTestTransformDialectExtension(::mlir::DialectRegistry &registry);
 } // namespace test
 
+static void printVersion(llvm::raw_ostream &os) {
+  os << bishengir::getBiShengIRToolFullVersion("bishengir-opt") << '\n';
+}
+
 int main(int argc, char **argv) {
   // Register dialects.
   mlir::DialectRegistry registry;
@@ -59,6 +64,8 @@ int main(int argc, char **argv) {
   ::test::registerTestTransformDialectExtension(registry);
 #endif
 
+  // Register version printer
+  llvm::cl::SetVersionPrinter(printVersion);
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "BiShengIR optimizer driver\n", registry));
 }
