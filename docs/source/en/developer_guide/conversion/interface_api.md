@@ -6,7 +6,7 @@
 - Fine-grained performance control interfaces for precise control of on-chip memory addresses, pipeline sync insertion, and ping-pong pipeline optimization
 - Multi-level interfaces support flexible integration of custom DSLs and frameworks for high-performance custom operators on Ascend NPU
 
-```
+```text
   Torch-MLIR / Triton       (Framework/DSL layer)
          |
          v
@@ -61,7 +61,7 @@ The following attributes mark kernel entry functions and are shared across all i
 
 Example:
 
-```
+```mlir
 func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   ...
 }

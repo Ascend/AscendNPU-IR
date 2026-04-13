@@ -33,7 +33,7 @@ The flattening algorithm operates as a **multi-stage pipeline** that progressive
 
 A reassociation map defines how original dimensions map to collapsed dimensions:
 
-```
+```text
 Original shape: [A, B, C, D, E] (rank 5)
 Reassociation:  [[0, 1], [2], [3, 4]]
 Result shape:   [A*B, C, D*E] (rank 3)
@@ -59,7 +59,7 @@ Certain dimensions cannot be collapsed together due to semantic requirements:
 
 ### Pipeline Stages
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Input Operation                              │
 │            Shape: [1, 64, 1, 128, 1, 256]                       │
@@ -113,7 +113,7 @@ Certain dimensions cannot be collapsed together due to semantic requirements:
 
 For operations with inline transpose semantics, the algorithm handles input and output reassociations **separately**:
 
-```
+```text
 Input shape:   [A, B, C, D, E, F]
 Permutation:   [2, 3, 0, 4, 1, 5]
 Output shape:  [C, D, A, E, B, F]
@@ -138,7 +138,7 @@ for each dimension i:
 
 ### Reassociation Generation from Mask
 
-```
+```text
 Input Mask: [U, C, U, N, U, C, U]
 
 Processing:

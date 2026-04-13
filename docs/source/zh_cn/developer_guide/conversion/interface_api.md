@@ -6,7 +6,7 @@
 - 提供细粒度性能控制接口，能够精准控制片上内存地址、流水同步插入位置以及是否使能乒乓流水优化等。
 - 基于多级接口支持自定义DSL/生态框架灵活对接，实现自定义算子在昇腾 NPU 上的高性能运行。
 
-```
+```text
   Torch-MLIR / Triton       (框架/DSL层)
          |
          v
@@ -61,7 +61,7 @@
 
 示例：
 
-```
+```mlir
 func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   ...
 }

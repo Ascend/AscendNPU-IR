@@ -39,7 +39,7 @@ _Device-side assert for debugging_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.assert` $msg attr-dict $cond `:` type($cond)
 ```
 
@@ -65,7 +65,7 @@ _Atomic Compare-And-Swap (CAS) Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.atomic_cas` attr-dict `ins` `(` $input `:` type($input) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`->` type($output)^)?
@@ -118,7 +118,7 @@ _Atomic RMW Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.atomic_rmw` attr-dict `ins` `(` $input `:` type($input) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `atomic_kind` `=` $atomic_kind
@@ -190,7 +190,7 @@ _Atomic Exchange Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.atomic_xchg` attr-dict `ins` `(` $input `:` type($input) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`mask` `(` $mask^ `:` type($mask) `)`)?
@@ -246,7 +246,7 @@ _Synchronizes all pipelines of a core._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.barrier` attr-dict
 ```
 
@@ -358,7 +358,7 @@ _Calculate cumulative product on a certain dim of the input tensor_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.cumprod` $input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)
 ```
 
@@ -398,7 +398,7 @@ _Calculate cumulative sum on a certain dim of the input tensor_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.cumsum` $input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)
 ```
 
@@ -438,7 +438,7 @@ _Constructs two tensors by deinterleaving an input tensor_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.deinterleave` $input custom<HFusionDeinterleave>($channelIndex) attr-dict `:` type($input) `->` type($output)
 ```
 
@@ -589,7 +589,7 @@ _Flips a tensor x along the dimension dim._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.flip` $input attr-dict `:` type($input)
               `flip_axis` `=` $flip_axis
               `->` type($output)
@@ -631,7 +631,7 @@ all but the gather axis. Corresponds to triton.language.gather.
 Given src:tensor<16x16> and index:tensor<16x4> with axis = 1, the op is
 equivalent to:
 
-```
+```text
 for i in 0 to 16 {
   for j in 0 to 4 {       // Can be tiled without consequence
     for k in 0 to 16 {    // Cannot be tiled without result potentially
@@ -695,7 +695,7 @@ _Compute histogram of an integer tensor with optional mask_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.histogram` $input `,` $num_bins (`,` $mask^)? attr-dict `:` type($input) (`,` type($mask)^)? `->` type($output)
 ```
 
@@ -733,7 +733,7 @@ _Constructs one tensor by interleaving n input tensors.
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.interleave` $input attr-dict `:` type($input) `->` type($output)
 ```
 
@@ -765,7 +765,7 @@ _Calculates whether elements of a float type tensor is finite._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.isfinite` $input attr-dict `:` type($input) `->` type($output)
 ```
 
@@ -797,7 +797,7 @@ _Calculates whether elements of a float type tensor equal positive
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.isinf` $input attr-dict `:` type($input) `->` type($output)
 ```
 
@@ -828,7 +828,7 @@ _Calculates whether elements of a float type tensor is NAN._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.isnan` $input attr-dict `:` type($input) `->` type($output)
 ```
 
@@ -880,7 +880,7 @@ _Extended signed integer multiplication operation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.mulext` $lhs `,` $rhs attr-dict `:` type($lhs)
 ```
 
@@ -914,7 +914,7 @@ _Device-side print for debugging_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.print` $prefix attr-dict $arg `:` type($arg)
 ```
 
@@ -1003,7 +1003,7 @@ _Sort Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.sort` attr-dict `ins` `(` $src `:` type($src) `)`
               `descending` `=` $descending
               `sort_axis` `=` $sort_axis
@@ -1101,7 +1101,7 @@ _Symbolic dimension reference returning an index_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 ```
 
@@ -1135,7 +1135,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 
 Syntax:
 
-```
+```mlir
 #hfusion.atomic_kind<
   ::mlir::hfusion::AtomicKind   # value
 >
@@ -1167,7 +1167,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 Syntax:
 
-```
+```mlir
 #hfusion.binary_fn<
   ::mlir::hfusion::BinaryFn   # value
 >
@@ -1206,7 +1206,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
 
 Syntax:
 
-```
+```mlir
 #hfusion.compare_fn<
   ::mlir::hfusion::CompareFn   # value
 >
@@ -1241,7 +1241,7 @@ Specific operations for bind sub block.
 
 Syntax:
 
-```
+```mlir
 #hfusion.fusion_kind<
   ::mlir::hfusion::FusionKind   # fusion_kind
 >
@@ -1277,7 +1277,7 @@ HFusion reduced composed.
 
 Syntax:
 
-```
+```mlir
 #hfusion.reduce_with_index_kind<
   ::mlir::hfusion::ReduceWithIndexKind   # reduce_with_index_kind
 >
@@ -1315,7 +1315,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6
 
 Syntax:
 
-```
+```mlir
 #hfusion.round_mode<
   ::mlir::hfusion::RoundMode   # value
 >
@@ -1340,7 +1340,7 @@ allowed 32-bit signless integer cases: 0
 
 Syntax:
 
-```
+```mlir
 #hfusion.ternary_fn<
   ::mlir::hfusion::TernaryFn   # value
 >
@@ -1362,7 +1362,7 @@ allowed 32-bit signless integer cases: 0, 1, 2
 
 Syntax:
 
-```
+```mlir
 #hfusion.type_fn<
   ::mlir::hfusion::TypeFn   # value
 >
@@ -1386,7 +1386,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 
 Syntax:
 
-```
+```mlir
 #hfusion.unary_fn<
   ::mlir::hfusion::UnaryFn   # value
 >

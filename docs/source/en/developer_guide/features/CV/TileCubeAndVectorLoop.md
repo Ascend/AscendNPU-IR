@@ -36,7 +36,7 @@ The pass walks the IR, finds CopyOut ops for Cube and Vector loops, uses them as
 
 Before:
 
-```
+```mlir
 scf.for {
   hivm.load A
   hivm.load B
@@ -47,7 +47,7 @@ scf.for {
 
 After:
 
-```
+```mlir
 scf.for {
   for {
     hivm.load slice_A

@@ -17,7 +17,7 @@ _Annotate an IR value with key-value attribute pairs_
 
 Syntax:
 
-```
+```mlir
 operation ::= `annotation.mark` $src attr-dict
               (`keys` `=` $keys^)?
               (`values` `=` `[`$values^`:`type($values) `]`)?

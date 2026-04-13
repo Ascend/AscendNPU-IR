@@ -11,7 +11,7 @@ _Atomic Compare-And-Swap (CAS) Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.atomic_cas` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -61,7 +61,7 @@ _Atomic RMW Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.atomic_rmw` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -123,7 +123,7 @@ _Atomic Exchange Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.atomic_xchg` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -176,7 +176,7 @@ _Batch Matrix Multiply and Add Op with inputs from L1 memory hierarchy._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.batchMmadL1` attr-dict `ins` `(`
               $a
               `,` $b
@@ -201,7 +201,7 @@ operation ::= `hivm.hir.batchMmadL1` attr-dict `ins` `(`
 
 The computation logic is:
 
-```
+```text
 C = C + A x B + (optional) channel_bias
 ```
 
@@ -251,7 +251,7 @@ _Reinterprets the bits of a shaped value without changing data_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.bitcast` $src `:` type($src) `->` type($result) attr-dict
 ```
 
@@ -286,7 +286,7 @@ _HIVM layout conversion operation._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.convert_layout` $source attr-dict `:` functional-type(operands, results)
 ```
 
@@ -333,7 +333,7 @@ _HIVM data copy operation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.copy` `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               attr-dict
@@ -410,7 +410,7 @@ _Create sync block lock operation._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.create_sync_block_lock` (`from` $lockArg^)?
               attr-dict `:` (`from` type($lockArg)^ `to`)? type($memref)
 ```
@@ -511,7 +511,7 @@ _Hivm dcci op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.dcci` attr-dict `(` $mode `,` $dataCacheKind (`,` $ptr^ `:` type($ptr))? `)`
 ```
 
@@ -537,7 +537,7 @@ _Device-side debugging_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.debug` attr-dict $arg `:` type($arg)
 ```
 
@@ -569,7 +569,7 @@ _Finish func for device-side debugging_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.finish_debug` attr-dict
 ```
 
@@ -581,7 +581,7 @@ _HIVM data copy operation from L0C to other memory hierarchies._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.fixpipe` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -637,7 +637,7 @@ _Get block idx of the current device thread used for parallelization._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.get_block_idx` attr-dict `->` type($result)
 ```
 
@@ -662,7 +662,7 @@ _Get block number of the current device thread used for parallelization._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.get_block_num` attr-dict `->` type($result)
 ```
 
@@ -687,7 +687,7 @@ _Get sub block idx of the current device thread used for parallelization._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.get_sub_block_idx` attr-dict `->` type($result)
 ```
 
@@ -712,7 +712,7 @@ _Get sub block number of the current device thread used for parallelization._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.get_sub_block_num` attr-dict `->` type($result)
 ```
 
@@ -737,7 +737,7 @@ _Get sys cnt of the current device_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.get_sys_cnt` attr-dict `->` type($result)
 ```
 
@@ -762,7 +762,7 @@ _Init func for device-side debugging_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.init_debug` attr-dict
 ```
 
@@ -774,7 +774,7 @@ _HIVM data load operation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.load` `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               attr-dict
@@ -842,7 +842,7 @@ _Hivm load scalar_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.load_scalar` attr-dict $addr `:` type($addr) `->` type($result)
 ```
 
@@ -864,7 +864,7 @@ _HIVM Matrix Multiply Op with inputs from global memory_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` type($b) `)`
               `outs` `(` $c `:` type($c) `)`
               (`tiling_params` `=` $tilingParams^ `:` type($tilingParams) ) ?
@@ -952,7 +952,7 @@ _HIVM (Mix) Matrix Group Multiply Op with inputs from global memory_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.mix_group_matmul` attr-dict `ins` `(` $a `,` $b `,` $tokens_per_expert `:` type($a) `,` type($b) `,` type($tokens_per_expert) `)`
               (`post_vector_func_ins` `(` $postVecFuncIns^ `:` type($postVecFuncIns) `)`) ?
               (`post_vector_func_outs` `(` $postVecFuncOuts^ `:` type($postVecFuncOuts) `)`) ?
@@ -1058,7 +1058,7 @@ _HIVM (Mix) Matrix Multiply Op with inputs from global memory_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.mix_matmul` attr-dict `ins` `(` $a `,` $b `:` type($a) `,` type($b) `)`
               (`post_vector_func_ins` `(` $postVecFuncIns^ `:` type($postVecFuncIns) `)`) ?
               (`workspace_ins` `(` $workspaceIns^ `:` type($workspaceIns) `)`) ?
@@ -1159,7 +1159,7 @@ _Matrix Multiply and Add Op with inputs from L1 memory hierarchy._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.mmadL1` attr-dict `ins` `(`
               $a
               `,` $b
@@ -1184,7 +1184,7 @@ operation ::= `hivm.hir.mmadL1` attr-dict `ins` `(`
 
 The computation logic is:
 
-```
+```text
 C = C + A x B + (optional) channel_bias
 ```
 
@@ -1233,7 +1233,7 @@ _HIVM data copy operation with on-the-fly ND to NZ layout transformation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.nd2nz` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -1282,7 +1282,7 @@ _HIVM data copy operation from L1 to Global Memory with NZ2ND conversion_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.nz2nd` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -1313,7 +1313,7 @@ _Hivm pipe barrier._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.pipe_barrier` `[` $pipe `]` attr-dict
 ```
 
@@ -1334,7 +1334,7 @@ _HIVM pointer cast op at specific i64 addr_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.pointer_cast` `(`$addrs `)` (`[` $dynamicSizes^`]`)? attr-dict `:` type($result)
 ```
 
@@ -1378,7 +1378,7 @@ _Set base addr for ffts sync machenism._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.set_ffts_base_addr` attr-dict $ffts_base_addr
 ```
 
@@ -1396,7 +1396,7 @@ _Hivm set flag._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.set_flag` `[`
               $set_pipe
               `,` $wait_pipe
@@ -1433,7 +1433,7 @@ _Hivm set mask norm_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.set_mask_norm` attr-dict
 ```
 
@@ -1443,7 +1443,7 @@ _HIVM data store operation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.store` `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               attr-dict
@@ -1498,7 +1498,7 @@ _Hivm sync block between different kernels._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.sync_block` attr-dict `[` $sync_block_mode (`,` $flag_id^)?`]`
               (`ffts_base_addr` `=` $ffts_base_addr^)?
               (`tcube_pipe` `=` $tcube_pipe^)?
@@ -1543,7 +1543,7 @@ Interfaces: `InferCoreTypeInterface`
 <tr><td><code>flag_id</code></td><td>::mlir::IntegerAttr</td><td><details><summary>An Attribute containing a integer value</summary>{{% markdown %}}
     Syntax:
 
-    ```
+    ```mlir
     integer-attribute ::= (integer-literal ( `:` (index-type | integer-type) )?)
                           | `true` | `false`
     ```
@@ -1583,7 +1583,7 @@ _Sync block lock operation._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.sync_block_lock` attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
 ```
 
@@ -1606,7 +1606,7 @@ _Hivm set block sync._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.sync_block_set` attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
               `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
               (`ffts_base_addr` `=` $ffts_base_addr^)?
@@ -1633,7 +1633,7 @@ Interfaces: `InferCoreTypeInterface`
 <tr><td><code>static_flag_id</code></td><td>::mlir::IntegerAttr</td><td><details><summary>An Attribute containing a integer value</summary>{{% markdown %}}
     Syntax:
 
-    ```
+    ```mlir
     integer-attribute ::= (integer-literal ( `:` (index-type | integer-type) )?)
                           | `true` | `false`
     ```
@@ -1671,7 +1671,7 @@ _Sync block unlock operation._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.sync_block_unlock` attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
 ```
 
@@ -1694,7 +1694,7 @@ _Hivm wait block sync._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.sync_block_wait` attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
               `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
 ```
@@ -1717,7 +1717,7 @@ Interfaces: `InferCoreTypeInterface`
 <tr><td><code>static_flag_id</code></td><td>::mlir::IntegerAttr</td><td><details><summary>An Attribute containing a integer value</summary>{{% markdown %}}
     Syntax:
 
-    ```
+    ```mlir
     integer-attribute ::= (integer-literal ( `:` (index-type | integer-type) )?)
                           | `true` | `false`
     ```
@@ -1751,7 +1751,7 @@ _Elementwise Vector Absolute Value Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vabs` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -1808,7 +1808,7 @@ _Elementwise Binary Vector Addition Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vadd` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -1866,7 +1866,7 @@ _Elementwise Binary Vector And Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vand` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -1924,7 +1924,7 @@ _Vector Arange Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.varange` attr-dict
               (`offset` `[` $offset^ `]`)?
               `strides` `[` $strides `]`
@@ -1974,7 +1974,7 @@ _Vector Broadcast Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vbrc` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2037,7 +2037,7 @@ _Elementwise Vector Type Conversion Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vcast` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2138,7 +2138,7 @@ _Elementwise Binary Vector Comparison Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vcmp` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`compare_mode` `=` $compare_mode^)?
@@ -2207,7 +2207,7 @@ _Vector Concatenation Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vconcat` `dim` `(` $dim `)` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`->` type($result)^)?
@@ -2259,7 +2259,7 @@ _Elementwise Vector Cosine Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vcos` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -2314,7 +2314,7 @@ _Vector Cumprod Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vcumprod` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `cum_dims` `=` $cum_dims
@@ -2378,7 +2378,7 @@ _Vector Cumsum Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vcumsum` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `cum_dims` `=` $cum_dims
@@ -2442,7 +2442,7 @@ _Vector Deinterleave Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vdeinterleave` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`channel_num` `=` $channel_num^)?
@@ -2484,7 +2484,7 @@ _Elementwise Binary Vector Division Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vdiv` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2542,7 +2542,7 @@ _Elementwise Vector Error function Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.verf` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -2597,7 +2597,7 @@ _Elementwise Vector Exponential Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vexp` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2654,7 +2654,7 @@ _Vector Flip Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vflip` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `flip_axis` `=` $flip_axis
@@ -2693,7 +2693,7 @@ _Vector Gather Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vgather` attr-dict `ins` `(` $src `:` type($src) `)`
               `indices` `(` $indices `:` type($indices) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -2737,7 +2737,7 @@ _Vetor Interleave Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vinterleave` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `interleave_channel_nums` `=` $interleave_channel_nums
@@ -2779,7 +2779,7 @@ _Elementwise Vector Natural Logarithm Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vln` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2836,7 +2836,7 @@ _Elementwise Binary Vector Maximum Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmax` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2894,7 +2894,7 @@ _Elementwise Binary Vector Minimum Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmin` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -2952,7 +2952,7 @@ _Elementwise Vector Mod Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmod` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -3007,7 +3007,7 @@ _Elementwise Binary Vector Multiplication Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmul` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3066,7 +3066,7 @@ _Elementwise Binary Vector Multiplication that Calculates
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmulext` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -3122,7 +3122,7 @@ _Vector Mulextended Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vmulextended` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3155,7 +3155,7 @@ _Elementwise Vector Not Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vnot` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3212,7 +3212,7 @@ _Elementwise Binary Vector Or Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vor` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3270,7 +3270,7 @@ _Vector Pad Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vpad` attr-dict
               `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
@@ -3334,7 +3334,7 @@ _Elementwise Binary Vector Power Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vpow` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3392,7 +3392,7 @@ _Elementwise Vector Reciprocal Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vrec` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3449,7 +3449,7 @@ _Vector Reduction Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vreduce` attr-dict $arith `ins` `(` $src `:` type($src) `)`
               (`indices` `(` $indices^ `:` type($indices) `)`)?
               `outs` `(` $dst `:` type($dst) `)`
@@ -3512,7 +3512,7 @@ _Elementwise Vector Rectified Linear Unit Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vrelu` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3569,7 +3569,7 @@ _Elementwise Vector Reciprocal Square Root Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vrsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3626,7 +3626,7 @@ _Elementwise Vector Selection Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vsel` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3688,7 +3688,7 @@ _Elementwise Binary Vector Shift Left Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vshl` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3746,7 +3746,7 @@ _Elementwise Binary Vector Shift Right Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vshr` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3808,7 +3808,7 @@ _Elementwise Vector Sine Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vsin` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -3863,7 +3863,7 @@ _Vector Sort Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vsort` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               `descending` `=` $descending
@@ -3928,7 +3928,7 @@ _Elementwise Vector Square Root Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vsqrt` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst  `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -3985,7 +3985,7 @@ _Elementwise Binary Vector Subtraction Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vsub` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -4043,7 +4043,7 @@ _Elementwise Vector Hyperbolic Tangent Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vtanh` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`broadcast` `=` $broadcast^)?
@@ -4098,7 +4098,7 @@ _Vector Transpose Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vtranspose` attr-dict `ins` `(` $src `:` type($src) `)`
               `outs` `(` $dst `:` type($dst) `)`
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -4154,7 +4154,7 @@ _Elementwise Binary Vector Xor Op_
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.vxor` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
               (`outs` `(` $dst^  `:` type($dst) `)`)?
               (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -4212,7 +4212,7 @@ _Hivm wait flag._
 
 Syntax:
 
-```
+```mlir
 operation ::= `hivm.hir.wait_flag` `[`
               $set_pipe
               `,` $wait_pipe
@@ -4249,7 +4249,7 @@ Interfaces: `InferCoreTypeInterface`
 
 Syntax:
 
-```
+```mlir
 #hivm.address_space<
   ::mlir::hivm::AddressSpace   # address_space
 >
@@ -4269,7 +4269,7 @@ alignment kind information
 
 Syntax:
 
-```
+```mlir
 #hivm.align_kind<
   ::mlir::hivm::AlignKind   # value
 >
@@ -4301,7 +4301,7 @@ Atomic Operation Kind for StoreOp
 
 Syntax:
 
-```
+```mlir
 #hivm.atomic_kind<
   ::mlir::hivm::AtomicKind   # value
 >
@@ -4321,7 +4321,7 @@ hivm op axis kind information
 
 Syntax:
 
-```
+```mlir
 #hivm.axis_kind<
   ::mlir::hivm::AxisKind   # value
 >
@@ -4339,7 +4339,7 @@ HIVM op axis kind attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.block<
   std::optional<int32_t>   # order
 >
@@ -4357,7 +4357,7 @@ Compare Mode for VCmpOp
 
 Syntax:
 
-```
+```mlir
 #hivm.compare_mode<
   ::mlir::hivm::CompareMode   # value
 >
@@ -4377,7 +4377,7 @@ hivm dcci mode
 
 Syntax:
 
-```
+```mlir
 #hivm.DCCIMode<
   ::mlir::hivm::DCCIMode   # value
 >
@@ -4397,7 +4397,7 @@ hivm data cache kind
 
 Syntax:
 
-```
+```mlir
 #hivm.DataCacheKind<
   ::mlir::hivm::DataCacheKind   # value
 >
@@ -4415,7 +4415,7 @@ HIVM data cache kind attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.data_layout<
   ::mlir::hivm::DataLayout,   # data_layout
   std::optional<bool>,   # transpose
@@ -4442,7 +4442,7 @@ HIVM deinterleave mode
 
 Syntax:
 
-```
+```mlir
 #hivm.deinterleave_mode<
   ::mlir::hivm::DeinterleaveMode   # value
 >
@@ -4462,7 +4462,7 @@ descale mode for matmul
 
 Syntax:
 
-```
+```mlir
 #hivm.descale_mode<
   ::mlir::hivm::DescaleMode   # value
 >
@@ -4486,7 +4486,7 @@ Disable auto inject block sync, skip block sync injection.
 
 Syntax:
 
-```
+```mlir
 #hivm.event<
   ::mlir::hivm::EVENT   # event
 >
@@ -4506,7 +4506,7 @@ HIVM fixpipe pre_quant mode
 
 Syntax:
 
-```
+```mlir
 #hivm.fixpipe_pre_quant_mode<
   ::mlir::hivm::FixpipePreQuantMode   # value
 >
@@ -4526,7 +4526,7 @@ HIVM fixpipe pre_relu mode
 
 Syntax:
 
-```
+```mlir
 #hivm.fixpipe_pre_relu_mode<
   ::mlir::hivm::FixpipePreReluMode   # value
 >
@@ -4563,7 +4563,7 @@ HIVM multi-buffer attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.padmode<
   ::mlir::hivm::PadMode   # padmode
 >
@@ -4587,7 +4587,7 @@ Specifies that marked loop can run in parallel.
 
 Syntax:
 
-```
+```mlir
 #hivm.pipe<
   ::mlir::hivm::PIPE   # pipe
 >
@@ -4605,7 +4605,7 @@ HIVM Op pipe attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.reduce_op<
   ::mlir::hivm::ReduceOperation   # reduce_op
 >
@@ -4625,7 +4625,7 @@ Round Mode for VCastOp
 
 Syntax:
 
-```
+```mlir
 #hivm.round_mode<
   ::mlir::hivm::RoundMode   # value
 >
@@ -4669,7 +4669,7 @@ HIVM stride align value in bytes.
 
 Syntax:
 
-```
+```mlir
 #hivm.sub_block<
   ::mlir::hivm::MappingId   # sub_block
 >
@@ -4687,7 +4687,7 @@ HIVM sub block mapping attribute for the cv block dim ratio of mix func.
 
 Syntax:
 
-```
+```mlir
 #hivm.sync_block_instr_mode<
   ::mlir::hivm::SyncBlockInstrMode   # sync_instr_mode
 >
@@ -4705,7 +4705,7 @@ HIVM synchronization block instruction mode attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.sync_block_mode<
   ::mlir::hivm::SyncBlockMode   # sync_mode
 >
@@ -4723,7 +4723,7 @@ HIVM synchronization block mode attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.tcore_type<
   ::mlir::hivm::TCoreType   # tcoretype
 >
@@ -4741,7 +4741,7 @@ HIVM op core type attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.tcore_type_marker<
   ::mlir::hivm::TCoreType   # tcoretype
 >
@@ -4759,7 +4759,7 @@ HIVM op core type marker attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.func_core_type<
   ::mlir::hivm::TFuncCoreType   # funcCoreType
 >
@@ -4777,7 +4777,7 @@ HIVM function core type attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.module_core_type<
   ::mlir::hivm::TModuleCoreType   # moduleCoreType
 >
@@ -4811,7 +4811,7 @@ Cast for VCastOp
 
 Syntax:
 
-```
+```mlir
 #hivm.cast<
   ::mlir::hivm::TypeFn   # value
 >
@@ -4829,7 +4829,7 @@ HIVM cast attribute.
 
 Syntax:
 
-```
+```mlir
 #hivm.unit_flag<
   ::mlir::hivm::UNIT_FLAG   # unit_flag
 >
@@ -4855,7 +4855,7 @@ HIVM VF Mode
 
 Syntax:
 
-```
+```mlir
 #hivm.vf_mode<
   ::mlir::hivm::VFMode   # value
 >

@@ -54,7 +54,7 @@ TODO:
 
 ## Lowering Process
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                          CustomOp                               │
 │    hivm.hir.custom "name" { attrs... } ins(..) outs(...)        │
@@ -264,12 +264,14 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_add_int32(
 ```
 
 Command for compiling the `.bc` file:
-```
+
+```bash
 ccec -x cce --cce-aicore-arch=dav-c220-vec --cce-aicore-only -c -emit-llvm ./add.cpp -o ./add.bc
 ```
 
 Command for Python script execution：
-```
+
+```bash
 python -m pytest -sv test_custom_op.py
 ```
 

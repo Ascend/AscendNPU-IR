@@ -199,7 +199,7 @@ func.func @bind_workspace_arg(
 
 Before：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -210,7 +210,7 @@ func.func @bind_workspace_arg(
 
 After：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -228,7 +228,7 @@ func.func @bind_workspace_arg(
 
 before：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
@@ -243,7 +243,7 @@ func.func @bind_workspace_arg(
 
 after：
 
-```
+```mlir
 func.func @bind_workspace_arg_aic(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},

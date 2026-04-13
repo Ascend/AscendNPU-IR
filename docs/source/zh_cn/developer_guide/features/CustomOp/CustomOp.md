@@ -53,7 +53,7 @@ TODO：
 
 #### 降级流程
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                          CustomOp                               │
 │    hivm.hir.custom "name" { attrs... } ins(..) outs(...)        │
@@ -263,12 +263,14 @@ __aiv__ __attribute__((always_inline)) void _mlir_ciface_custom_add_int32(
 ```
 
 编译`.bc`文件指令：
-```
+
+```bash
 ccec -x cce --cce-aicore-arch=dav-c220-vec --cce-aicore-only -c -emit-llvm ./add.cpp -o ./add.bc
 ```
 
 Python脚本执行命令：
-```
+
+```bash
 python -m pytest -sv test_custom_op.py
 ```
 

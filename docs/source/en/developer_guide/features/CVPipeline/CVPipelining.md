@@ -16,7 +16,7 @@ The pass finds suitable `scf.for` loops, splits Cube and Vector into separate wo
 
 Before:
 
-```
+```mlir
 scf.for 0 to N step S {
     %c = Cube() : tensor<16x16xf32>
     %v = Vector(%c) : tensor<16x16xf32>
@@ -27,7 +27,7 @@ scf.for 0 to N step S {
 
 After:
 
-```
+```mlir
 scf.for 0 to N step 3*S {
     %c = scf.for 0 to 3 -> tensor<3x16x16xf32> {
         Cube();
@@ -66,7 +66,7 @@ scf.for 0 to N step 3*S {
    - CV-pipelining is not applied when `v0` and `v1` cannot be in the same work item (due to a Cube between them) but `arg0` is defined in `v1` and used by `v0`.
    - If Cube does not use `v0`, `v0` is placed in the same work item as `v1` and CV-pipelining applies.
 
-```
+```mlir
 scf.for iter_args(%arg0 = %init) {
     %v0 = Vector(%arg0)
     %c = Cube(%v0)

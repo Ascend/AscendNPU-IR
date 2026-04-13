@@ -37,7 +37,7 @@ Torch IR is integrated via the `torch-backend-to-named-op-backend-pipeline` conv
 
 #### Example `torch.mlir`
 
-```
+```mlir
 func.func @torch_mul(%arg0: !torch.vtensor<[4096],f16>, %arg1: !torch.vtensor<[1,56,4096],f16>) -> !torch.vtensor<[1,56,4096],f16>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = torch.aten.mul.Tensor %arg0, %arg1 : !torch.vtensor<[4096],f16>, !torch.vtensor<[1,56,4096],f16> -> !torch.vtensor<[1,56,4096],f16>
@@ -51,7 +51,7 @@ Invocation: two methods, both share the same compile pipeline.
   - Command: `bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir`
   - **Expected output**: MLIR text file (`.mlir` format) containing the converted Linalg/HFusion IR. For example:
 
-```
+```mlir
 func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = tensor.empty() : tensor<1x56x4096xf16>
   %broadcasted = linalg.broadcast ins(%arg0 : tensor<4096xf16>) outs(%0 : tensor<1x56x4096xf16>) dimensions = [0, 1] 
@@ -150,7 +150,7 @@ Use Linalg/Tensor, HFusion, and other standard MLIR dialects for operator semant
 
 #### Example `hfusion.mlir`
 
-```
+```mlir
 func.func @hfusion_reduce_mul(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %1 = tensor.empty() : tensor<40960x1024xf32>
@@ -190,7 +190,7 @@ For fine-grained hardware control, you can write kernels directly in the HIVM di
 
 #### Example `hivm.mlir`
 
-```
+```mlir
 func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
                        %valueB: memref<16xf16, #hivm.address_space<gm>>,
                        %valueC: memref<16xf16, #hivm.address_space<gm>>)
