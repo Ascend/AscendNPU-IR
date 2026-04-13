@@ -127,6 +127,14 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
   ];
 }
 
+def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
+ 	   let summary = "tree-reduce-v2";
+ 	   let constructor = "mlir::hfusion::createTreeReduceV2Pass()";
+ 	   let dependentDialects = ["linalg::LinalgDialect",
+ 	   "arith::ArithDialect",
+ 	   "vector::VectorDialect"];
+ 	 }
+
 def OutlineVectorFunction : Pass<"outline-vector-function", "ModuleOp"> {
   let summary = "Outline vector function.";
   let constructor = "mlir::hfusion::createOutlineVectorFunctionPass()";

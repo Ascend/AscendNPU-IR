@@ -372,6 +372,9 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
+  if (hfusionOptions.enableTreeReduceV2) {
+ 	     pm.addPass(createTreeReduceV2Pass());
+  }
   pm.addPass(createPullSliceIntoVectorFunctionPass());
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(

@@ -190,6 +190,12 @@ public:
   }
   bool shouldEnableTreeReduce() const { return enableTreeReduceFlag; }
 
+  BiShengIRCompileMainConfig &treeReduceV2(bool enable) {
+ 	     enableTreeReduceV2Flag = enable;
+ 	     return *this;
+ 	   }
+ 	   bool shouldEnableTreeReduceV2() const { return enableTreeReduceV2Flag; }
+ 	
   BiShengIRCompileMainConfig &skipScope(bool skip) {
     skipScopeFlag = skip;
     return *this;
@@ -791,6 +797,8 @@ protected:
   bool enableVFFusionFlag{false};
 
   bool enableTreeReduceFlag{false};
+
+  bool enableTreeReduceV2Flag{false};
 
   /// skip passes like flattenOps when scope exists
   bool skipScopeFlag{true};

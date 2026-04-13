@@ -185,6 +185,11 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableTreeReduceFlag), cl::init(false),
         cl::cat(featCtrlCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableTreeReduceV2(
+ 	         "enable-tree-reduce-v2", cl::desc("Enable tree reduce v2"),
+ 	         cl::location(enableTreeReduceV2Flag), cl::init(false),
+ 	         cl::cat(featCtrlCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true> skipScope(
         "skip-scope", cl::desc("Skip passes like flattenOps when scope exists"),
         cl::location(skipScopeFlag), cl::init(true), cl::cat(featCtrlCategory));
