@@ -137,3 +137,23 @@ func.func @test_simplify_for_op(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>, %con
   // CHECK: return %[[ARG0]], %[[RESULT]]#1, %[[RESULT]]#2
   func.return %result#0, %result#1, %result#2: tensor<4xf32>, tensor<4xf32>, tensor<4xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @remove_dead_select_iter_arg
+// CHECK: scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %{{.*}}) -> (i32)
+// CHECK-NOT: tensor<32xi32>
+// CHECK: scf.yield {{.*}} : i32
+func.func @remove_dead_select_iter_arg(%ub: i32) -> i32 {
+  %c0 = arith.constant 0 : i32
+  %c1 = arith.constant 1 : i32
+  %empty = tensor.empty() : tensor<32xi32>
+  %res:2 = scf.for %iv = %c0 to %ub step %c1
+      iter_args(%a = %c0, %b = %empty) -> (i32, tensor<32xi32>) : i32 {
+    %a_next = arith.addi %a, %c1 : i32
+    %cmp = arith.cmpi eq, %a, %ub : i32
+    %b_next = arith.select %cmp, %empty, %b : tensor<32xi32>
+    scf.yield %a_next, %b_next : i32, tensor<32xi32>
+  }
+  return %res#0 : i32
+}
