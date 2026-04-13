@@ -46,8 +46,6 @@ using namespace mlir::hivm;
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace {
-static constexpr llvm::StringLiteral outputAlreadyNormalized =
-    "outputAlreadyNormalized";
 
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
                                   Type dstType) {
@@ -73,7 +71,7 @@ public:
 
   LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
                                 PatternRewriter &rewriter) const override {
-    
+
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
@@ -100,7 +98,7 @@ public:
       auto biasElemType = biasType.getElementType();
 
       auto biasCastType = RankedTensorType::get(biasShape, fp32Ty);
-      auto biasCastInit = 
+      auto biasCastInit =
           rewriter.create<tensor::EmptyOp>(loc, biasShape, fp32Ty);
       auto biasRoundAttr = getRoundAttr(rewriter, biasElemType, fp32Ty);
 
@@ -157,7 +155,7 @@ public:
 /// This pattern decomposes Conv1dL1 with bias into Conv1dL1(no bias) + vadd.
 /// Vadd is inserted to different position (after Conv1dL1 + vcast or directly
 /// after Conv1dL1) according to different dtype
-template <typename TargetType> 
+template <typename TargetType>
 struct DecomposeConv1dWithBiasPattern
     : public OpRewritePattern<hivm::Conv1DL1Op> {
 public:
@@ -241,9 +239,9 @@ public:
     auto expandedBias = rewriter.create<tensor::ExpandShapeOp>(
         loc, expandedType, bias, reassoc);
 
-    auto convResultElemType = 
+    auto convResultElemType =
         dyn_cast<RankedTensorType>(convResult.getType()).getElementType();
-    
+
     if (convResultElemType != biasElemType) {
       return rewriter.notifyMatchFailure(
           op, "bias type mismatch with convResult type");
@@ -257,9 +255,9 @@ public:
 
     auto broadcastAttr = rewriter.getDenseI64ArrayAttr(broadcastDims);
 
-    auto vaddInit = 
+    auto vaddInit =
         rewriter.create<tensor::EmptyOp>(loc, shape, convResultElemType);
-    
+
     auto vadd = rewriter.create<hivm::VAddOp>(
         loc, TypeRange{vaddInit.getType()},
         ValueRange{convResult, expandedBias}, ValueRange{vaddInit}, Value(),
