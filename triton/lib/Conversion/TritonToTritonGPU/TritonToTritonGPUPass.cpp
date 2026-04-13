@@ -124,7 +124,7 @@ void populateMathPatternsAndLegality(TritonGPUTypeConverter &typeConverter,
                GenericOpPattern<math::AbsIOp>, GenericOpPattern<math::SqrtOp>,
                GenericOpPattern<math::RsqrtOp>, GenericOpPattern<math::FmaOp>>(
       typeConverter, context);
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
   patterns.add<GenericOpPattern<math::TanhOp>>(typeConverter, context);
 #endif
 }
@@ -823,7 +823,7 @@ public:
     mod->setAttr(AttrNumThreadsPerWarp, b.getI32IntegerAttr(threadsPerWarp));
     mod->setAttr(AttrNumCTAsName, b.getI32IntegerAttr(numCTAs));
     mod->setAttr(AttrTargetName, b.getStringAttr(this->target.getValue()));
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     constexpr static char AttrShared[] = "ttg.shared";
     mod->setAttr(AttrShared, b.getI32IntegerAttr(shared));
 #endif

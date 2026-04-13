@@ -66,7 +66,7 @@ public:
     addLegalOp<triton::gpu::WarpYieldOp>();
     addLegalOp<triton::gpu::WarpSpecializePartitionsOp>();
     addLegalOp<triton::gpu::WarpReturnOp>();
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     addLegalDialect<scf::SCFDialect>();
 #endif    
   }
@@ -116,7 +116,7 @@ struct ConvertTritonGPUToLLVM
     int benefit = patternBenefitPrioritizeOverLLVMConversions;
     mlir::triton::NVIDIA::populateConvertLayoutOpToLLVMPatterns(
         typeConverter, targetInfo, patterns, benefit);
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
     mlir::triton::NVIDIA::populateTensorMemorySubviewOpToLLVMPattern(
         typeConverter, patterns, patternBenefitNvidiaTensorCoreSubviewPattern);
 #endif
@@ -167,7 +167,7 @@ struct ConvertTritonGPUToLLVM
                                                 targetInfo, benefit);
     mlir::triton::NVIDIA::populateMemoryOpToLLVMPatterns(
         typeConverter, targetInfo, patterns, benefit);
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
     mlir::triton::NVIDIA::populateTensorMemoryOpToLLVMPattern(
         typeConverter, patterns, benefit);
 #endif

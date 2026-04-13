@@ -26,7 +26,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
 #include "mlir/Dialect/Utils/ExpandShapeUtils.h"
 #endif
 

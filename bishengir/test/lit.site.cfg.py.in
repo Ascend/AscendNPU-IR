@@ -21,7 +21,7 @@ config.disable_cann = @BISHENGIR_DISABLE_CANN@
 config.bisheng_compiler_executable = "@BISHENG_COMPILER_EXECUTABLE@"
 config.bishengir_include_integration_tests = @MLIR_INCLUDE_INTEGRATION_TESTS@
 config.bishengir_enable_triton_compile = @BISHENGIR_ENABLE_TRITON_COMPILE@
-config.bspriv_davinci_bishengir = @BSPRIV_DAVINCI_BISHENGIR@
+config.bspriv_davinci_bishengir = @BSPUB_DAVINCI_BISHENGIR@
 
 if 'bisheng' not in config.bisheng_compiler_executable:
     config.bisheng_compiler_executable = os.path.join("@BISHENG_COMPILER_PATH@", 'bisheng')

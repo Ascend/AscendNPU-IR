@@ -42,7 +42,7 @@ public:
     }
   }
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   virtual ~ReduceOpHelper() {}
 #endif
 
@@ -61,7 +61,7 @@ public:
   unsigned getIntraWarpSizeWithUniqueData();
 
   // The shape of the shared memory space needed for the reduction.
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   virtual
 #endif
   SmallVector<unsigned> getScratchRepShape();
@@ -80,7 +80,7 @@ private:
   Attribute srcEncoding;
   SmallVector<Type> srcElementTypes;
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
 protected:
 #else
 private:

@@ -18,7 +18,7 @@ class AllocationAnalysis;
 /// some operations.
 using AllocationAnalysisScratchSizeFn = std::function<unsigned(Operation *)>;
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
 /// Callback to allow backends to specify target-specific verification on
 /// shared memory capacity.
 using AllocationSharedMemCheckFn = std::function<void(Operation *, int)>;
@@ -78,7 +78,7 @@ public:
   explicit Allocation(Operation *operation) : operation(operation) {}
 
   /// Runs allocation analysis on the given top-level operation.
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   void run(FuncAllocMapT &funcAllocMap,
            triton::AllocationAnalysisScratchSizeFn scratchSizeGetter,
            triton::AllocationSharedMemCheckFn sharedMemChecker);
@@ -234,7 +234,7 @@ class ModuleAllocation : public CallGraph<Allocation> {
 public:
   using FuncOffsetMapT = DenseMap<FunctionOpInterface, Value>;
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   ModuleAllocation(ModuleOp moduleOp,
                    triton::AllocationAnalysisScratchSizeFn scratchSizeGetter =
                        triton::defaultAllocationAnalysisScratchSizeFn,
@@ -253,7 +253,7 @@ public:
         [&](FunctionOpInterface funcOp) {
           auto [iter, inserted] = funcMap.try_emplace(funcOp, funcOp);
           if (inserted)
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
             iter->second.run(funcMap, scratchSizeGetter, sharedMemChecker);
 #else
             iter->second.run(funcMap, scratchSizeGetter);

@@ -106,7 +106,7 @@ mlir::Value PTXBuilder::launch(OpBuilder &rewriter, Location loc, Type resTy,
       getConstraints(),             // constraints
       hasSideEffect,                // has_side_effects
       isAlignStack,                 // is_align_stack
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
       LLVM::TailCallKind::None,
 #endif
       LLVM::AsmDialectAttr::get(ctx,

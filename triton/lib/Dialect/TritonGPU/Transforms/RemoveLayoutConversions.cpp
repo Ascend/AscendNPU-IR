@@ -1069,7 +1069,7 @@ static bool isExpensiveMathOp(Operation *op) {
   // lower than 16 according to the arithmetic instructions table in:
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#arithmetic-instructions
   return isa<arith::DivFOp,
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
              math::ErfcOp,
 #endif
              math::SinhOp, math::CoshOp, math::TanhOp, math::AsinhOp,

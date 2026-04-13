@@ -39,7 +39,7 @@ def ConvertTritonToTritonGPU: Pass<"convert-triton-to-tritongpu", "mlir::ModuleO
              "bool", /*default*/"false",
              "enable trivial source rematerialization">,
        //  add some guards for our own simt optimization
-       #ifdef BSPRIV_DAVINCI_BISHENGIR
+       #ifdef BSPUB_DAVINCI_BISHENGIR
        Option<"shared", "shared-memory-size",
              "int32_t", /*default*/"122880",
              "shared memory size for simt">,

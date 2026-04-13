@@ -66,7 +66,7 @@ void buildTritonGPUOptimizationPipeline(
   pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mlir::triton::gpu::createTritonGPUReduceDataDuplication());
   if (!tritonOptions.disableReorderInstruction) {
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     mlir::triton::gpu::TritonGPUReorderInstructionsOptions reorderInstructionsOptions;
     reorderInstructionsOptions.enableSimtReorderInstruction = tritonOptions.enableSimtReorderInstruction;
     pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass(reorderInstructionsOptions));
@@ -121,7 +121,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   convertTritonToTritonGPUOpt.target = "cuda:80";
   convertTritonToTritonGPUOpt.numWarps = options.numWarps;
   convertTritonToTritonGPUOpt.threadsPerWarp = options.threadsPerWarp;
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
   // max size of shared memory available for simt vf.
   convertTritonToTritonGPUOpt.shared = options.sharedDynamicSize;
 #endif

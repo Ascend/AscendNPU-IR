@@ -409,7 +409,7 @@ public:
             offset);
       }
       auto vecAddr = b.gep(sharedPtrTy, elemTy, smemBase, offset
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                            ,
                            LLVM::GEPNoWrapFlags::inbounds
 #endif

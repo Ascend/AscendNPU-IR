@@ -89,7 +89,7 @@ bool LoadStoreMemSpace::runOnModule(Module &M) {
 static PassPluginLibraryInfo getPassPluginInfo() {
   const auto callback = [](PassBuilder &PB) {
     PB.registerOptimizerLastEPCallback([&](ModulePassManager &MPM, auto
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                                            ,
                                            auto
 #endif

@@ -48,7 +48,7 @@
 #include <optional>
 #include <variant>
 
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif
 

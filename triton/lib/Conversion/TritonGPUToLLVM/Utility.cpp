@@ -268,7 +268,7 @@ Value matrixVectorProd(TritonLLVMOpBuilder &b, const LinearLayout &A, Value x) {
 
   auto orPart = treeReduce(ors, [&b](Value x, Value y) {
     return b.or_(x, y
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                  ,
                  /*disjoint=*/true
 #endif
@@ -277,7 +277,7 @@ Value matrixVectorProd(TritonLLVMOpBuilder &b, const LinearLayout &A, Value x) {
   auto xorPart =
       treeReduce(xors, [&b](Value x, Value y) { return b.xor_(x, y); });
   return b.or_(orPart, xorPart
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                ,
                /*disjoint=*/true
 #endif
@@ -673,7 +673,7 @@ SmallVector<Value> lowerLdSt(
       Value innerOffset = b.add(offset, b.i32_val(regIdxAddI8));
       auto vecAddr =
           b.gep(smemPtrTy, i8_ty, smemBase, calcPaddedOffset(innerOffset)
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                                                 ,
                 LLVM::GEPNoWrapFlags::inbounds
 #endif
@@ -818,7 +818,7 @@ bool emitTransferBetweenRegistersAndShared(
       smemOffset = b.add(smemOffset, padOffset);
     }
     auto vecAddr = b.gep(smemBase.getType(), elemLlvmTy, smemBase, smemOffset
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                          ,
                          LLVM::GEPNoWrapFlags::inbounds
 #endif
@@ -1094,7 +1094,7 @@ Value createLLVMIntegerConstant(OpBuilder &builder, Location loc, short width,
 LLVM::CallOp createLLVMCallOp(OpBuilder &builder, Location loc,
                               LLVMFuncOp funcOp, ValueRange args) {
   auto op = builder.create<LLVM::CallOp>(loc, funcOp, args);
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
   op.getProperties().setOpBundleSizes(builder.getDenseI32ArrayAttr({}));
   op.getProperties().setOperandSegmentSizes({static_cast<int>(args.size()), 0});
 #endif
@@ -1106,7 +1106,7 @@ createLLVMIntrinsicCallOp(OpBuilder &builder, Location loc, StringRef intrinsic,
                           TypeRange types, ValueRange args) {
   auto op = builder.create<LLVM::CallIntrinsicOp>(loc, types, args);
   op.getProperties().setIntrin(builder.getStringAttr(intrinsic));
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
   op.getProperties().setOpBundleSizes(builder.getDenseI32ArrayAttr({}));
   op.getProperties().setOperandSegmentSizes({static_cast<int>(args.size()), 0});
 #endif

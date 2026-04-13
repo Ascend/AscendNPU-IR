@@ -105,7 +105,7 @@ struct LLVMDIScopePass : public impl::LLVMDIScopeBase<LLVMDIScopePass> {
         context, distinctId, compileUnitAttr, fileAttr, funcNameAttr,
         funcNameAttr, fileAttr, /*line=*/line, /*scopeline=*/line,
         subprogramFlags, subroutineTypeAttr
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
         ,
         /*retainNodes=*/{},
         /*annotations=*/{}

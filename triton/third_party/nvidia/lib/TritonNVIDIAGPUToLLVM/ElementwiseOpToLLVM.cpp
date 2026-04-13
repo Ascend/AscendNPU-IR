@@ -596,7 +596,7 @@ struct SIToFPOpConversion
                                    Type elemTy, MultipleOperandsRange operands,
                                    Location loc) const {
 
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     return {rewriter.create<LLVM::SIToFPOp>(loc, elemTy, operands[0][0])};
 #else  
     Type inElemTy = getElementType(op.getIn());

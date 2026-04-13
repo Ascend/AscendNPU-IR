@@ -139,7 +139,7 @@ Value TargetInfo::ballot(RewriterBase &rewriter, Location loc, Type type,
                          Value cmp) const {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
   Value threadMask = b.int_val(type.getIntOrFloatBitWidth(), -1);
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
   return rewriter.create<NVVM::VoteSyncOp>(loc, type, threadMask, cmp,
                                            NVVM::VoteSyncKind::ballot);
 #else
@@ -159,7 +159,7 @@ void TargetInfo::barrier(Location loc, RewriterBase &rewriter,
 
 static Value mapa(RewriterBase &rewriter, Location loc, Value ptr, Value ctaid,
                   Value pred) {
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
   return rewriter.create<NVVM::MapaOp>(loc, ptr.getType(), ptr, ctaid);
 #else
   llvm_unreachable("Not implemented");
@@ -259,7 +259,7 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
     SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
     for (int i = 0; i < vec / maxVec; i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                                                           ,
                           LLVM::GEPNoWrapFlags::inbounds
 #endif
@@ -380,7 +380,7 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
     SmallVector<Value> vals;
     for (int i = 0; i < vec / maxVec; i++) {
       auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                                                           ,
                           LLVM::GEPNoWrapFlags::inbounds
 #endif
