@@ -1,6 +1,3 @@
-From d75cf20b003c805a48b05d5038d028ccea8dc635 Mon Sep 17 00:00:00 2001
-From: h00905681 <hujiajun15@huawei.com>
-Date: Mon, 13 Apr 2026 17:00:42 +0800
 diff --git a/llvm/CMakeLists.txt b/llvm/CMakeLists.txt
 index 8d0155e2e1..f6311a506f 100644
 --- a/llvm/CMakeLists.txt
@@ -1937,4 +1934,3 @@ index 3477a813c6..d03f66f86c 100644
  // RUN: echo "" | mlir-opt --show-dialects | FileCheck %s
  // CHECK: Available Dialects:
  // CHECK-SAME: acc
--- 
