@@ -555,11 +555,18 @@ bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op) {
   if (!reduceOp) {
     return false;
   }
-  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp,
-             arith::MaximumFOp, arith::MaxNumFOp, arith::MinimumFOp,
-             arith::MinNumFOp, arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp,
-             arith::MaxUIOp, arith::XOrIOp>(
-      *reduceOp);
+
+  if (isa<arith::AndIOp, arith::OrIOp>(*reduceOp)) {
+    // reduce i1 andi/ori will be normalized to i16 min/max in
+    // hfusion-normalize-ops, so it's legal to vectorize
+    auto elemType = (*reduceOp)->getOperand(0).getType();
+    return elemType.isInteger(1);
+  }
+
+  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp, arith::MaximumFOp,
+             arith::MaxNumFOp, arith::MinimumFOp, arith::MinNumFOp,
+             arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp, arith::MaxUIOp,
+             arith::XOrIOp>(*reduceOp);
 }
 
 bool isLegalReduceOp(linalg::ReduceOp op) {

@@ -226,13 +226,9 @@ private:
   template <typename OpElemType>
   bool isSupportOperand(OpType op) const = delete;
 
-  template <>
-  bool isSupportOperand<bool>(OpType op) const {
-    return false;
-  }
+  template <> bool isSupportOperand<bool>(OpType op) const { return false; }
 
-  template <>
-  bool isSupportOperand<int8_t>(OpType op) const {
+  template <> bool isSupportOperand<int8_t>(OpType op) const {
     if constexpr (std::is_same_v<OpType, linalg::FillOp> ||
                   std::is_same_v<OpType, linalg::BroadcastOp> ||
                   std::is_same_v<OpType, linalg::CopyOp> ||
@@ -257,8 +253,7 @@ private:
           return true;
         }
         if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>)
-          if (
-              op.getFun() == linalg::BinaryFn::add ||
+          if (op.getFun() == linalg::BinaryFn::add ||
               op.getFun() == linalg::BinaryFn::sub ||
               op.getFun() == linalg::BinaryFn::max_signed ||
               op.getFun() == linalg::BinaryFn::min_signed ||
@@ -322,10 +317,8 @@ private:
       }
       // should compute on f32 for high precision
       static DenseSet<linalg::BinaryFn> binarySet = {
-          linalg::BinaryFn::mul,
-          linalg::BinaryFn::div_unsigned,
-          linalg::BinaryFn::div,
-          linalg::BinaryFn::add,
+          linalg::BinaryFn::mul, linalg::BinaryFn::div_unsigned,
+          linalg::BinaryFn::div, linalg::BinaryFn::add,
           linalg::BinaryFn::sub,
       };
       return !binarySet.contains(func);
@@ -674,6 +667,108 @@ public:
     Value scalarResult = rewriter.create<tensor::FromElementsOp>(
         loc, extractedScalarI1Tensor, extracted);
     rewriter.replaceOp(reduceOp, scalarResult);
+    return success();
+  }
+};
+
+static Value createScalarFillOp(PatternRewriter &rewriter, Location loc,
+                                Type elemType, int64_t initValue) {
+  Value initConstant = rewriter.create<arith::ConstantOp>(
+      loc, elemType, rewriter.getIntegerAttr(elemType, initValue));
+  auto scalarTensorType = RankedTensorType::get({}, elemType);
+  auto allocOp = rewriter.create<bufferization::AllocTensorOp>(
+      loc, scalarTensorType, ValueRange{});
+  auto fillOp =
+      rewriter.create<linalg::FillOp>(loc, initConstant, allocOp.getResult());
+  return fillOp.getResult(0);
+}
+
+/// Convert reduce i1 and/or operations to i16 reduce with min/max operations.
+///
+/// The conversion leverages the following equivalence:
+///   - i1 and operation: 0/1 values -> min over i16 (0/1 values)
+///   - i1 or operation: 0/1 values -> max over i16 (0/1 values)
+///
+/// Before conversion (and):
+/// ```mlir
+///   %1 = linalg.fill ins(%true : i1) outs(%0 : tensor<i1>) -> tensor<i1>
+///   %reduced = reduce <andi> ins(%arg0 : tensor<Nxi1>) outs(%1 : tensor<i1>)
+/// ```
+///
+/// After conversion (and):
+/// ```mlir
+///   %input_i16 = hfusion.cast ins(%arg0 : tensor<Nxi1>) outs(...) : tensor<Nxi16>
+///   %init = linalg.fill ins(%c1_i16 : i16) outs(...) : tensor<i16>
+///   %reduced = reduce <minsi> ins(%input_i16 : tensor<Nxi16>) outs(%init : tensor<i16>)
+///   %final = hfusion.cast ins(%reduced : tensor<i16>) outs(...) : tensor<i1>
+/// ```
+///
+/// Note: The i1<->i16 cast operations are not directly supported by hardware,
+/// but other normalize patterns will optimize them into hardware-compliant
+/// instructions (e.g., NormalizeCastLoweringOp pattern).
+struct ReduceI1AndOrToI16
+    : public OpRewritePattern<linalg::ReduceOp> {
+public:
+  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ReduceOp reduceOp,
+                                PatternRewriter &rewriter) const override {
+    if (!reduceOp.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> inputs = reduceOp.getInputs();
+    SmallVector<Value> inits = reduceOp.getInits();
+    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
+      return failure();
+
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+
+    bool isAndOp = isa<arith::AndIOp>(bodyOp);
+    bool isOrOp = isa<arith::OrIOp>(bodyOp);
+    if (!isAndOp && !isOrOp)
+      return failure();
+
+    Value input = reduceOp.getInputs()[0];
+    Value init = reduceOp.getInits()[0];
+
+    auto inputType = mlir::dyn_cast<RankedTensorType>(input.getType());
+    auto initType = mlir::dyn_cast<RankedTensorType>(init.getType());
+    if (!inputType || !initType)
+      return failure();
+    if (!inputType.getElementType().isInteger(1) ||
+        !initType.getElementType().isInteger(1))
+      return failure();
+
+    Location loc = reduceOp.getLoc();
+    Type i16Type = rewriter.getI16Type();
+
+    Value inputI16 = castTo(rewriter, input, i16Type, hfusion::RoundMode::RINT);
+
+    int16_t initValue = isAndOp ? 1 : 0;
+    Value fillResult = createScalarFillOp(rewriter, loc, i16Type, initValue);
+
+    auto dimensions = reduceOp.getDimensions();
+    auto newReduce = rewriter.create<linalg::ReduceOp>(
+        loc, ValueRange{inputI16}, ValueRange{fillResult}, dimensions,
+        [&](OpBuilder &builder, Location loc, ValueRange operands) {
+          Value result;
+          if (isAndOp) {
+            result =
+                builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
+          } else {
+            result =
+                builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
+          }
+          builder.create<linalg::YieldOp>(loc, ValueRange{result});
+        });
+
+    Value reducedI16 = newReduce.getResult(0);
+    Value resultI1 = castTo(rewriter, reducedI16, rewriter.getI1Type(),
+                            hfusion::RoundMode::RINT);
+    Value oldResult = reduceOp.getResult(0);
+    rewriter.replaceAllUsesWith(oldResult, resultI1);
     return success();
   }
 };
@@ -1363,12 +1458,13 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   if (archisAscend950)
     patterns.add<ReduceI1AddToSelectMaxCompare>(ctx);
-  if (archIsRegbased){
-    patterns.add<NormalizeToTargetType<bool, hfusion::SelectOp>>(ctx);
-  }
   patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
+  if (archIsRegbased) {
+    patterns.add<NormalizeToTargetType<bool, hfusion::SelectOp>>(ctx);
+    patterns.add<ReduceI1AndOrToI16>(ctx);
+  }
   patterns.add<NormalizeToTargetType<bool, CompareOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, tensor::ConcatOp>>(ctx);
