@@ -1206,8 +1206,8 @@ void MemPlan::GlobalWorkspaceNoReuse(StorageEntry *rootStorageEntry) {
   for (StorageEntry *child : rootStorageEntry->mergedChildren) {
     child->bitsOffset = offset;
     // TODO: Alignment by type can be considered in the future.
-    uint64_t offset = static_cast<uint64_t>(
-        AlignUp(rootStorageEntry->bufInfo->constBits, workSpaceAlignSize));
+    offset += static_cast<uint64_t>(
+        AlignUp(child->bufInfo->constBits, workSpaceAlignSize));
   }
 }
 
