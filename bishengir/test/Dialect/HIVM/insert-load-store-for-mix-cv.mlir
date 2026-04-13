@@ -271,3 +271,41 @@ func.func @insert_load_between_vector_and_load(%arg0: memref<16x16xf16>, %arg1: 
   %4 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) init_out_buffer = false -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
 }
+
+// -----
+// CHECK-LABEL: @insert_store_load_between_indirect_load_and_mmad
+func.func @insert_store_load_between_indirect_load_and_mmad(%base : memref<?xf32>,
+                                                            %idx : tensor<2x32xi32>,
+                                                            %rhs : tensor<2x32xf32>) -> tensor<2x32xf32> {
+  %c32 = arith.constant 32 : index
+  %c2 = arith.constant 2 : index
+  %false = arith.constant false
+  %0 = tensor.empty() : tensor<2x32xf32>
+  %1 = hivm.hir.indirect_load ins(%base : memref<?xf32>, %idx : tensor<2x32xi32>) outs(%0 : tensor<2x32xf32>) -> tensor<2x32xf32>
+  // CHECK: %[[INDIRECT:.*]] = hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<2x32xi32>) outs(%{{.*}} : tensor<2x32xf32>) -> tensor<2x32xf32>
+  // CHECK: %[[STORE_DST:.*]] = tensor.empty() : tensor<2x32xf32>
+  // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%[[INDIRECT]] : tensor<2x32xf32>) outs(%[[STORE_DST]] : tensor<2x32xf32>) -> tensor<2x32xf32>
+  // CHECK: %[[LOAD_DST:.*]] = tensor.empty() : tensor<2x32xf32>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<2x32xf32>) outs(%[[LOAD_DST]] : tensor<2x32xf32>) -> tensor<2x32xf32>
+  // CHECK: hivm.hir.mmadL1 ins(%[[LOAD]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x32xf32>, tensor<2x32xf32>, i1, index, index, index)
+  %2 = tensor.empty() : tensor<2x32xf32>
+  %3 = hivm.hir.mmadL1 ins(%1, %rhs, %false, %c2, %c32, %c32 :
+                               tensor<2x32xf32>, tensor<2x32xf32>, i1, index, index, index)
+                         outs(%2 : tensor<2x32xf32>) -> tensor<2x32xf32>
+  return %3 : tensor<2x32xf32>
+}
+
+// -----
+// CHECK-LABEL: @insert_load_between_fixpipe_and_indirect_store
+func.func @insert_load_between_fixpipe_and_indirect_store(%src: tensor<16x16xf32>,
+                                                          %base: memref<?xf16>,
+                                                          %idx: tensor<16x16xi64>) {
+  %0 = tensor.empty() : tensor<16x16xf16>
+  %1 = hivm.hir.fixpipe ins(%src : tensor<16x16xf32>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK: %[[FIX:.*]] = hivm.hir.fixpipe ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK: %[[LOAD_DST:.*]] = tensor.empty() : tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIX]] : tensor<16x16xf16>) outs(%[[LOAD_DST]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK: hivm.hir.indirect_store ins(%[[LOAD]] : tensor<16x16xf16>, %{{.*}} : tensor<16x16xi64>) outs(%{{.*}} : memref<?xf16>)
+  hivm.hir.indirect_store ins(%1 : tensor<16x16xf16>, %idx : tensor<16x16xi64>) outs(%base : memref<?xf16>)
+  return
+}

@@ -165,6 +165,8 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
   // only 950 requires empty tensor of this two type of op sinking.
   if (isSupportExtra) {
     patterns.add<CloneTensorEmptyOperationPattern<hivm::EmbeddingGatherOp>,
+                 CloneTensorEmptyOperationPattern<hivm::IndirectLoadOp>,
+                 CloneTensorEmptyOperationPattern<hivm::IndirectStoreOp>,
                  CloneTensorEmptyOperationPattern<func::CallOp>>(
         patterns.getContext());
   }
