@@ -27,21 +27,17 @@ check_inputs_of_copy_cbuf_to_gm_4d_to_2d_core(memref_t<__cbuf__ T, 4> *src,
 }
 
 template <typename T>
-__aicore__ __attribute__((always_inline)) __gm__ T * convert_cbuf_array_to_gm(__cbuf__ T *ptr, __gm__ T *tmp, size_t count) {
-    __cbuf__ uint8_t *aligned_ptr = (__cbuf__ uint8_t *)((uint64_t)ptr & ~0xF);
-    uint32_t offset = (uint64_t)ptr - (uint64_t)aligned_ptr;
-    const int64_t unit_size = 32;
-    INTRINSIC(pipe_barrier, PIPE_ALL);
-    INTRINSIC(dcci, tmp, 0);
-    INTRINSIC(copy_cbuf_to_gm, tmp, aligned_ptr,
-              0,
-              1,
-              (sizeof(T) * count + offset) / unit_size,
-              0,
-              0
-    );
-    INTRINSIC(pipe_barrier, PIPE_ALL);
-    return (__gm__ T*)((__gm__ uint8_t*)tmp + offset);
+__aicore__ __attribute__((always_inline)) __gm__ T *
+convert_cbuf_array_to_gm(__cbuf__ T *ptr, __gm__ T *tmp, size_t count) {
+  __cbuf__ uint8_t *aligned_ptr = (__cbuf__ uint8_t *)((uint64_t)ptr & ~0xF);
+  uint32_t offset = (uint64_t)ptr - (uint64_t)aligned_ptr;
+  const int64_t unit_size = 32;
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  INTRINSIC(dcci, tmp, 0);
+  INTRINSIC(copy_cbuf_to_gm, tmp, aligned_ptr, 0, 1,
+            (sizeof(T) * count + offset) / unit_size, 0, 0);
+  INTRINSIC(pipe_barrier, PIPE_ALL);
+  return (__gm__ T *)((__gm__ uint8_t *)tmp + offset);
 };
 
 template <typename T>
@@ -55,23 +51,32 @@ copy_cbuf_to_gm_4d_to_2d_core(memref_t<__cbuf__ T, 4> *src,
 
   const int64_t max_chunk_size = 16;
 
-  if (src->strides[3] == 1 && src->sizes[3] <= max_chunk_size) [[likely]] { // keep this because check is only on when
-                                                            // ENABLE_CPU_TRACE_INTRINSIC
+  if (src->strides[3] == 1 && src->sizes[3] <= max_chunk_size)
+      [[likely]] {         // keep this because check is only on when
+                           // ENABLE_CPU_TRACE_INTRINSIC
     T tmp[max_chunk_size]; // temporary array for first items
     int64_t tmp_size = 0;
-    for (int64_t x = (dst->sizes[1] / src->sizes[3]) * src->sizes[3]; x >= 0; x = x - src->sizes[3]) {
-      for (int64_t y = dst->sizes[0] - 1; y >=0; y--) {
+    for (int64_t x = (dst->sizes[1] / src->sizes[3]) * src->sizes[3]; x >= 0;
+         x = x - src->sizes[3]) {
+      for (int64_t y = dst->sizes[0] - 1; y >= 0; y--) {
         int64_t dst_offset = y * dst->sizes[1] + x;
         int64_t a = y / src->sizes[2];
         int64_t b = y - a * src->sizes[2];
         int64_t c = x / src->sizes[3];
-        int64_t chunk_size = c == src->sizes[0] - 1 ? dst->sizes[1] - x : src->sizes[3];
-        int64_t src_offset = a * src->sizes[2] * src->sizes[3] + b * src->sizes[3] + c * src->sizes[1] * src->sizes[2] * src->sizes[3];
-        __gm__ T * converted = convert_cbuf_array_to_gm(src_ptr + src_offset, dst->aligned, src->sizes[3]);
+        int64_t chunk_size =
+            c == src->sizes[0] - 1 ? dst->sizes[1] - x : src->sizes[3];
+        int64_t src_offset = a * src->sizes[2] * src->sizes[3] +
+                             b * src->sizes[3] +
+                             c * src->sizes[1] * src->sizes[2] * src->sizes[3];
+        __gm__ T *converted = convert_cbuf_array_to_gm(
+            src_ptr + src_offset, dst->aligned, src->sizes[3]);
         for (int64_t i = chunk_size - 1; i >= 0; i--) {
           int64_t dst_address = dst_offset + i;
           if (dst_address < max_chunk_size) {
-            tmp[dst_address] = converted[i];
+            // TODO: Use % to prevent out-of-bounds runtime error (direct
+            // index sporadically exceeds max_chunk_size). The % can be deleted
+            // after the Bisheng compiler resolves this issue.
+            tmp[dst_address % max_chunk_size] = converted[i];
             if (tmp_size < dst_address + 1) {
               tmp_size = dst_address + 1;
             }
