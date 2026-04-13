@@ -427,7 +427,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op);
   std::optional<hivm::PIPE> pipe;
   if (options.isCrossCoreMode()) {
-    if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op)) {
+    if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp,
+            tensor::InsertOp>(op)) {
       if (auto pipeOpt = getInferredPipe(op, coreTypeVal, writeMemOps)) {
         pipe = pipeOpt.value();
       } else {
