@@ -342,7 +342,7 @@ Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
           return {};
         }
         auto multibufferLoop1 = memInfo1.pointerLikeInfo->parentLoop;
-        auto multibufferLoop2 = memInfo1.pointerLikeInfo->parentLoop;
+        auto multibufferLoop2 = memInfo2.pointerLikeInfo->parentLoop;
         if (multibufferLoop1 == nullptr ||
             multibufferLoop1 != multibufferLoop2) {
           return {};
