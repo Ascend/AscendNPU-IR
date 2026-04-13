@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -93,7 +94,8 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   SmallVector<int64_t> strides;
   auto successStrides = getStridesAndOffset(type, strides, offset);
   int64_t dim = type.getRank();
-  int64_t hwAlignBits = static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
+  int64_t hwAlignBits =
+      static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim == 1)
     return true;
@@ -112,7 +114,8 @@ static bool isSubLowDimStrideAlign(MemRefType type) {
   SmallVector<int64_t> strides;
   auto successStrides = getStridesAndOffset(type, strides, offset);
   int64_t dim = type.getRank();
-  int64_t hwAlignBits = static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
+  int64_t hwAlignBits =
+      static_cast<int64_t>(getHWAlignBytes(type.getMemorySpace()) * 8);
   int64_t dataWidth = type.getElementTypeBitWidth();
   if (dim <= 2)
     return true;
@@ -301,8 +304,8 @@ getTrailingUnitRankReducedSubviewInfo(Value operand) {
   if (!sourceType || !resultType || !sourceType.hasRank() ||
       !resultType.hasRank() || sourceType.getRank() <= resultType.getRank()) {
     LDBG("subview-recover: rank-reduction precheck failed, sourceType="
-         << sourceType << ", resultType=" << resultType << ", subview="
-         << subviewOp);
+         << sourceType << ", resultType=" << resultType
+         << ", subview=" << subviewOp);
     return std::nullopt;
   }
 
@@ -321,9 +324,8 @@ getTrailingUnitRankReducedSubviewInfo(Value operand) {
 
   for (int64_t dim = firstDroppedDim; dim < sourceType.getRank(); ++dim) {
     if (!droppedDims.test(dim)) {
-      LDBG("subview-recover: dropped dims are not trailing, dim=" << dim
-                                                                  << ", subview="
-                                                                  << subviewOp);
+      LDBG("subview-recover: dropped dims are not trailing, dim="
+           << dim << ", subview=" << subviewOp);
       return std::nullopt;
     }
   }
@@ -371,8 +373,9 @@ getLastNotUnitDimForMemRefType(MemRefType memRefType) {
   return getLastNotUnitDim(memRefTypes, identityReassoc);
 }
 
-static int getPostAlignDimAfterDropLocal(
-    int prevDim, const llvm::SmallBitVector &droppedDims) {
+static int
+getPostAlignDimAfterDropLocal(int prevDim,
+                              const llvm::SmallBitVector &droppedDims) {
   int postDim = -1;
   int curDim = droppedDims.find_first_unset();
   while (curDim <= prevDim && curDim != -1) {
@@ -387,12 +390,10 @@ static AlignMarkDecision fixAlignDimForSingleUBStoreSubview(
     const TrailingUnitRankReducedSubviewInfo &subviewInfo) {
   auto expectedSourceAlignDim =
       getLastNotUnitDimForMemRefType(subviewInfo.sourceType);
-  LDBG("subview-fix: sourceType=" << subviewInfo.sourceType
-                                  << ", resultType=" << subviewInfo.resultType
-                                  << ", originalAlignDim="
-                                  << alignDim.value_or(-1)
-                                  << ", expectedSourceAlignDim="
-                                  << expectedSourceAlignDim.value_or(-1));
+  LDBG("subview-fix: sourceType="
+       << subviewInfo.sourceType << ", resultType=" << subviewInfo.resultType
+       << ", originalAlignDim=" << alignDim.value_or(-1)
+       << ", expectedSourceAlignDim=" << expectedSourceAlignDim.value_or(-1));
 
   if (!expectedSourceAlignDim.has_value())
     return {operand, alignDim};
@@ -499,6 +500,368 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
   }
 }
 
+LogicalResult markAlignedDimForFixcctoub(OpBuilder &builder,
+                                         Operation *markedOp, Value arg,
+                                         std::optional<int> alignedDim,
+                                         int32_t alignByte) {
+  if (!alignedDim.has_value()) {
+    return success();
+  }
+
+  auto alignedDimValue = alignedDim.value();
+  LDBG("try to mark align " << alignedDimValue << " for " << arg);
+
+  if (isa<TensorType>(arg.getType())) {
+    return markedOp->emitError("Not bufferized.");
+  }
+
+  if (isa<MemRefType>(arg.getType())) {
+    auto memrefTy = cast<MemRefType>(arg.getType());
+    if (!memrefTy.hasRank())
+      return markedOp->emitError("UnrankedMemRef not supported.");
+    if (!memrefTy.getLayout().isIdentity() &&
+        !isa<StridedLayoutAttr>(memrefTy.getLayout()))
+      return markedOp->emitError("Non-strided-memref not supported.");
+
+    int rank = memrefTy.getRank();
+    if (alignedDimValue > rank - 1) {
+      return markedOp->emitError("align dim is too large.");
+    }
+
+    builder.setInsertionPoint(markedOp);
+    createAlignMarkOp(builder, markedOp->getLoc(), arg, {alignedDimValue},
+                      {alignByte});
+  }
+  return success();
+}
+
+enum class DataWidthType { B4, B8, B16, B32 };
+enum class ChannelSplit { CS_N, CS_Y };
+enum class NZ2ND { ND_N, ND_Y };
+enum class NZ2DN { DN_N, DN_Y };
+enum class LoopEnhance { LE_N, LE_Y };
+enum class DualDstMode { N, SplitN, SplitM };
+struct TupleHashForN {
+  template <typename... Args>
+  size_t operator()(const std::tuple<Args...> &t) const {
+    return std::hash<size_t>{}((static_cast<size_t>(std::get<0>(t)) << 24) |
+                               (static_cast<size_t>(std::get<1>(t)) << 16) |
+                               (static_cast<size_t>(std::get<2>(t)) << 8) |
+                               (static_cast<size_t>(std::get<3>(t)) << 4) |
+                               static_cast<size_t>(std::get<4>(t)));
+  }
+};
+struct TupleHashForM {
+  template <typename... Args>
+  size_t operator()(const std::tuple<Args...> &t) const {
+    return std::hash<size_t>{}((static_cast<size_t>(std::get<0>(t)) << 8) |
+                               (static_cast<size_t>(std::get<1>(t)) << 4) |
+                               static_cast<size_t>(std::get<2>(t)));
+  }
+};
+static int64_t getMsizeAlignmentRequirement(DataWidthType dtype, NZ2DN nz,
+                                            DualDstMode ddm) {
+  using Key = std::tuple<DataWidthType, NZ2DN, DualDstMode>;
+  static const std::unordered_map<Key, int, TupleHashForM> constraints = {
+      {{DataWidthType::B16, NZ2DN::DN_Y, DualDstMode::N}, 16},
+      {{DataWidthType::B8, NZ2DN::DN_Y, DualDstMode::N}, 32},
+      {{DataWidthType::B4, NZ2DN::DN_Y, DualDstMode::N}, 64},
+      {{DataWidthType::B32, NZ2DN::DN_N, DualDstMode::SplitM}, 2},
+      {{DataWidthType::B32, NZ2DN::DN_Y, DualDstMode::N}, 8},
+  };
+  Key query_key{dtype, nz, ddm};
+  if (auto it = constraints.find(query_key); it != constraints.end()) {
+    return it->second;
+  }
+  return -1;
+}
+
+static int64_t getNsizeAlignmentRequirement(DataWidthType dtype,
+                                            ChannelSplit cs, NZ2ND nz,
+                                            LoopEnhance le, DualDstMode ddm) {
+  using Key =
+      std::tuple<DataWidthType, ChannelSplit, NZ2ND, LoopEnhance, DualDstMode>;
+  static const std::unordered_map<Key, int, TupleHashForN> constraints = {
+      {{DataWidthType::B16, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B16, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_Y,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B16, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_N,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B16, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_Y,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B8, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B8, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_Y,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B8, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_N,
+        DualDstMode::N},
+       32},
+      {{DataWidthType::B8, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_Y,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B4, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B4, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_N,
+        DualDstMode::N},
+       64},
+      {{DataWidthType::B32, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::N},
+       16},
+      {{DataWidthType::B32, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_N,
+        DualDstMode::N},
+       8},
+      {{DataWidthType::B32, ChannelSplit::CS_Y, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::N},
+       8},
+      {{DataWidthType::B32, ChannelSplit::CS_N, NZ2ND::ND_N, LoopEnhance::LE_N,
+        DualDstMode::SplitN},
+       32},
+      {{DataWidthType::B32, ChannelSplit::CS_N, NZ2ND::ND_Y, LoopEnhance::LE_N,
+        DualDstMode::SplitN},
+       32}};
+
+  Key query_key{dtype, cs, nz, le, ddm};
+  if (auto it = constraints.find(query_key); it != constraints.end()) {
+    return it->second;
+  }
+  return -1;
+}
+
+std::optional<int>
+getLastMUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                ReassociationIndices reassociations) {
+  int foundCount = 0;
+  int lastFoundIndex = -1;
+  for (auto index : llvm::reverse(reassociations)) {
+    if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
+          return memRefType.getShape()[index] == 1;
+        })) {
+      continue;
+    }
+    foundCount++;
+    lastFoundIndex = index;
+    if (foundCount == 2) {
+      return lastFoundIndex;
+    }
+  }
+  // If only one non-unit dim found, return it
+  if (foundCount == 1) {
+    return lastFoundIndex;
+  }
+  return std::nullopt;
+}
+
+/// get last discontinuous dim
+std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
+    const SmallVectorImpl<MemRefType> &memRefTypes,
+    const ReassociationIndices &continuousReassociations, Operation *op,
+    int32_t &alignBytes) {
+  Value input = op->getOperand(0);
+  Value output = op->getOperand(1);
+  MemRefType inputType = input.getType().cast<MemRefType>();
+  MemRefType outputType = output.getType().cast<MemRefType>();
+  auto inputSpace = inputType.getMemorySpace();
+  auto outputSpace = outputType.getMemorySpace();
+  ArrayRef<int64_t> outputShape = outputType.getShape();
+  if (outputShape.size() != 2) {
+    return std::nullopt;
+  }
+  auto hivminputSpace = inputSpace.dyn_cast<hivm::AddressSpaceAttr>();
+  auto hivmoutputSpace = outputSpace.dyn_cast<hivm::AddressSpaceAttr>();
+  if (!hivminputSpace || !hivmoutputSpace) {
+    return std::nullopt;
+  }
+  if (hivminputSpace.getAddressSpace() != hivm::AddressSpace::L0C ||
+      hivmoutputSpace.getAddressSpace() != hivm::AddressSpace::UB) {
+    return std::nullopt;
+  }
+  auto fixpipeOp = dyn_cast<FixpipeOp>(op);
+  auto dmaModeAttr = fixpipeOp.getDmaModeAttr();
+  auto chsModeAttr = fixpipeOp.getChannelSplitAttr();
+  int64_t dataWidth = outputType.getElementTypeBitWidth();
+  DataWidthType dtype = DataWidthType::B32;
+  if (dataWidth == 16) {
+    dtype = DataWidthType::B16;
+  } else if (dataWidth == 8) {
+    dtype = DataWidthType::B8;
+  } else if (dataWidth == 4) {
+    dtype = DataWidthType::B4;
+  }
+  ChannelSplit csn = ChannelSplit::CS_N;
+  if (chsModeAttr && chsModeAttr.getValue()) {
+    csn = ChannelSplit::CS_Y;
+  }
+  NZ2ND nz2nd = NZ2ND::ND_N;
+  if (dmaModeAttr && dmaModeAttr.getValue() == FixpipeDMAMode::NZ2ND) {
+    nz2nd = NZ2ND::ND_Y;
+  }
+  LoopEnhance le = LoopEnhance::LE_N;
+  DualDstMode ddm = DualDstMode::N;
+  NZ2DN nz2dn = NZ2DN::DN_N;
+  if (dmaModeAttr && dmaModeAttr.getValue() == FixpipeDMAMode::NZ2DN) {
+    nz2dn = NZ2DN::DN_Y;
+  }
+
+  Value dst = fixpipeOp.getDst();
+  FixpipeDualDstModeAttr ddmAttr = fixpipeOp.getDualDstModeAttr();
+  if (!ddmAttr) {
+    auto maybeAllocOp = traceDefOp<memref::AllocOp>(dst);
+    if (maybeAllocOp) {
+      memref::AllocOp allocOp = cast<memref::AllocOp>(*maybeAllocOp);
+      mlir::Value allocVal = allocOp.getResult();
+      auto maybeMarkOpRaw = utils::getAnnotateOpWithAttr(
+          allocVal, hivm::HIVMTightlyCoupledBufferAttr::name.str());
+      if (maybeMarkOpRaw) {
+        auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
+        if (markOp) {
+          auto tilingDimAttr =
+              markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
+          if (tilingDimAttr) {
+            int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+            auto rank = allocOp.getType().getRank();
+            if (!(tilingDim == -1 ||
+                  (tilingDim != rank - 2 && tilingDim != rank - 1))) {
+              ddm = tilingDim == rank - 2 ? DualDstMode::SplitN
+                                          : DualDstMode::SplitM;
+            }
+          }
+        }
+      }
+    }
+  } else {
+    if (ddmAttr.getDualDstMode() == FixpipeDualDstMode::ROW_SPLIT) {
+      ddm = DualDstMode::SplitN;
+    } else if (ddmAttr.getDualDstMode() == FixpipeDualDstMode::COLUMN_SPLIT) {
+      ddm = DualDstMode::SplitM;
+    }
+  }
+  int64_t nSizeStride =
+      getNsizeAlignmentRequirement(dtype, csn, nz2nd, le, ddm);
+  if (nSizeStride != -1 && nz2dn != NZ2DN::DN_Y) {
+    alignBytes = nSizeStride * dataWidth / 8;
+    std::optional<int> alignDim =
+        getLastNotUnitDim(memRefTypes, continuousReassociations);
+    return alignDim;
+  }
+  int64_t mSizeStride = getMsizeAlignmentRequirement(dtype, nz2dn, ddm);
+  if (mSizeStride != -1) {
+    alignBytes = mSizeStride * dataWidth / 8;
+    std::optional<int> alignDim =
+        getLastMUnitDim(memRefTypes, continuousReassociations);
+    return alignDim;
+  }
+  return std::nullopt;
+}
+
+void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
+  DenseMap<Value, int> allocInfoMap;
+  struct StrideAlignInfo {
+    ArrayRef<int32_t> dims;
+    ArrayRef<int32_t> values;
+  };
+
+  DenseMap<int, StrideAlignInfo> strideAlignMap;
+  // first: collect stride_align info
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIC) {
+        return WalkResult::advance();
+      }
+      auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!tcbAttr) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      if (!allocValue) {
+        return WalkResult::advance();
+      }
+      auto maybeMarkOpRaw = utils::getAnnotateOpWithAttr(
+          allocValue, hivm::StrideAlignDimsAttr::name.str());
+      if (!maybeMarkOpRaw)
+        return WalkResult::advance();
+      auto strideAlignMarkOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
+      if (!strideAlignMarkOp)
+        return WalkResult::advance();
+
+      ArrayRef<int32_t> alignDims =
+          strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
+              hivm::StrideAlignDimsAttr::name);
+      ArrayRef<int32_t> alignBytes =
+          strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
+              hivm::StrideAlignValueInByteAttr::name);
+      StrideAlignInfo info;
+      info.dims = alignDims;
+      info.values = alignBytes;
+      strideAlignMap[tcbAttr.getId().value()] = info;
+      return WalkResult::advance();
+    });
+  }
+
+  // second: add stride align info in aiv
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&builder, strideAlignMap, funcOp](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIV) {
+        return WalkResult::advance();
+      }
+      if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+        return WalkResult::advance();
+      }
+      auto attr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!attr) {
+        return WalkResult::advance();
+      }
+      if (strideAlignMap.empty()) {
+        return WalkResult::advance();
+      }
+      int id = attr.getId().value();
+      if (strideAlignMap.find(id) == strideAlignMap.end()) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      auto maybeMarkOpRaw = utils::getAnnotateOpWithAttr(
+          allocValue, hivm::StrideAlignDimsAttr::name.str());
+      if (maybeMarkOpRaw)
+        return WalkResult::advance();
+      auto it = strideAlignMap.find(id);
+      const StrideAlignInfo &info = it->second;
+      auto newMarkOp = mlir::hivm::createAlignMarkOp(
+          builder, markOp.getLoc(), allocValue,
+          /*alignDims=*/info.dims,
+          /*alignBytes=*/info.values, hivm::StrideAlignDimsAttr::name.str(),
+          hivm::StrideAlignValueInByteAttr::name.str());
+
+      if (newMarkOp) {
+        markOp->moveAfter(*newMarkOp);
+      }
+      return WalkResult::advance();
+    });
+  }
+}
+
 void MarkStrideAlignPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto funcOp = getOperation();
@@ -508,8 +871,9 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  WalkResult result = funcOp->walk([&builder, archIsRegbased,
-                                    archIs950](Operation *op) {
+  bool isMarkStrideForAiv = false;
+  WalkResult result = funcOp->walk([&builder, archIsRegbased, archIs950,
+                                    &isMarkStrideForAiv](Operation *op) {
     LDBG("Walk operation : " << *op);
     if (!isa<HIVMStructuredOp>(op)) {
       return WalkResult::advance();
@@ -567,6 +931,23 @@ void MarkStrideAlignPass::runOnOperation() {
       // In A5, memrefTypes is already the result of flattening.
       alignDim = getLastDiscontinuousDimRegBased(filterMemrefTypes,
                                                  identityReassoc, isUBDMAOp);
+      if (isa<FixpipeOp>(op)) {
+        auto fixpipeOp = dyn_cast<FixpipeOp>(op);
+        int32_t alignByte = 32;
+        std::optional<int> alignDimUpdate =
+            getLastDiscontinuousDimRegBasedForFixcctoub(
+                filterMemrefTypes, identityReassoc, fixpipeOp, alignByte);
+        if (alignDimUpdate.has_value()) {
+          isMarkStrideForAiv = true;
+          for (const auto &oper : hivmOp.getTargetSpaceOperands(
+                   hivm::AddressSpace::UB, false /*includeTmpBuffer*/)) {
+            if (failed(markAlignedDimForFixcctoub(builder, op, oper,
+                                                  alignDimUpdate, alignByte)))
+              return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        }
+      }
     } else {
       // For A2/3
       auto hivmFlattenInterfaceOp = dyn_cast<hivm::FlattenInterface>(op);
@@ -590,8 +971,8 @@ void MarkStrideAlignPass::runOnOperation() {
                                          archIsRegbased, archIs950);
     }
     LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
-    auto ubOperands = hivmOp.getTargetSpaceOperands(
-        hivm::AddressSpace::UB, false /*includeTmpBuffer*/);
+    auto ubOperands = hivmOp.getTargetSpaceOperands(hivm::AddressSpace::UB,
+                                                    false /*includeTmpBuffer*/);
     LDBG("mark-stride-align: UB operands count=" << ubOperands.size());
     Value singleUbMarkTarget;
     std::optional<int> singleUbAlignDim = alignDim;
@@ -617,12 +998,12 @@ void MarkStrideAlignPass::runOnOperation() {
       }
     } else if (isa<hivm::StoreOp>(op)) {
       LDBG("mark-stride-align: store skipped subview fix because UB operand "
-           "count=" << ubOperands.size());
+           "count="
+           << ubOperands.size());
     }
 
     for (const auto &oper : ubOperands) {
-      Value markTarget =
-          useSingleUbMarkDecision ? singleUbMarkTarget : oper;
+      Value markTarget = useSingleUbMarkDecision ? singleUbMarkTarget : oper;
       auto adjustedAlignDim =
           adjustAlignDim(op, markTarget,
                          useSingleUbMarkDecision ? singleUbAlignDim : alignDim);
@@ -676,6 +1057,9 @@ void MarkStrideAlignPass::runOnOperation() {
     if (resultVF.wasInterrupted()) {
       return signalPassFailure();
     }
+  }
+  if (archIs950 && isMarkStrideForAiv) {
+    AddStrideAlignInfoForAiv(moduleOp, builder);
   }
   if (result.wasInterrupted()) {
     return signalPassFailure();
