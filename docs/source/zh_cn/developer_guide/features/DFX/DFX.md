@@ -216,3 +216,6 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 - 目前triton侧sanitizer和device_print不支持同时开启
 - 打印支持如下数据类型:bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
 - device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印, 防止因为打印的tensor生命周期变化而引起异常
+- kernel store完成后在load搬进来且没有后续op使用（除了Debug op）暂不支持
+- triton dot接口当输入是3维场景时暂不支持打印
+- 当前打印等待kernel结束设置的时间是30s，若超过30s的用例开启打印会导致超时报错
