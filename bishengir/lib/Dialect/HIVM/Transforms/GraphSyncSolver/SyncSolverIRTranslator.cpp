@@ -186,7 +186,8 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
     assert(defOp != nullptr);
 
     if (options.isIntraCoreMode()) {
-      if (isa<hivm::PointerCastOp, tensor::EmptyOp, memref::AllocOp>(defOp)) {
+      if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp,
+              tensor::EmptyOp, memref::AllocOp>(defOp)) {
         collectedValsSet.insert(resultVal);
         continue;
       }
