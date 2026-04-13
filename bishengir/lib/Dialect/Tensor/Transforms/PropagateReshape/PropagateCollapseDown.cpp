@@ -54,11 +54,6 @@ using namespace mlir::utils::debugger;
 
 namespace {
 
-bool isStrided(Value operand) {
-  MemRefType memrefType = dyn_cast<MemRefType>(operand.getType());
-  return memrefType && isa<StridedLayoutAttr>(memrefType.getLayout());
-}
-
 // %a = collapse_shape %arg0
 // %b = elemwise_binary(%a, %arg1), outs(%c);
 //
