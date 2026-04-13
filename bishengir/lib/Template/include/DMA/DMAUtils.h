@@ -1139,12 +1139,26 @@ store_ubuf_to_gm_initial_misalignment_nd(memref_t<__ubuf__ T, Dim> *src,
 template <typename T, size_t DIM,
           typename = typename std::enable_if<DIM == 2 || DIM == 3>::type>
 __aiv__ __attribute__((always_inline)) bool
-is_unalign_collapsible_dims(memref_t<__ubuf__ T, DIM> *src,
-                            memref_t<__ubuf__ T, DIM> *dst) {
+is_all_continuous(memref_t<__ubuf__ T, DIM> *src,
+                  memref_t<__ubuf__ T, DIM> *dst) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (dst->strides[DIM - 2] == dst->sizes[DIM - 1] &&
       src->strides[DIM - 2] == src->sizes[DIM - 1] &&
       dst->strides[DIM - 2] % num_per_block != 0) {
+    return true;
+  }
+  return false;
+}
+
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool
+is_unalign_collapsible_dims(memref_t<__ubuf__ T, DIM> *src,
+                            memref_t<__ubuf__ T, DIM> *dst) {
+  static_assert(DIM == 2 || DIM == 3);
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  if (dst->strides[DIM - 2] == dst->sizes[DIM - 1] &&
+      isSizeAlignedToBlock<T>(src->strides[DIM - 2]) &&
+      src->strides[DIM - 1] == 1) {
     return true;
   }
   return false;
