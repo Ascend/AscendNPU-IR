@@ -732,10 +732,13 @@ void SyncAnalyzer::ChangeNowPipeToVirtualMTE2(
   Value L1A = mmadL1Op.getA();
   Value L1B = mmadL1Op.getB();
   for (auto &depValue : depBaseMemInfosVec) {
-    if (depValue.second->baseBuffer == L1A) {
-      nowPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
-    } else if (depValue.second->baseBuffer == L1B) {
+    // Check L1B before L1A: when A==B, the pattern is
+    // WAIT(MTE2, MTE1) -> LoadL1->L0A -> LoadL1->L0B -> SET(MTE1, MTE2),
+    // SET must fire after LoadL0B so MTE2 waits for the last load to finish.
+    if (depValue.second->baseBuffer == L1B) {
       nowPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    } else if (depValue.second->baseBuffer == L1A) {
+      nowPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
     }
   }
 }
