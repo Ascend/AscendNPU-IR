@@ -194,34 +194,43 @@ This runs `check-mlir` and `check-bishengir`, executing the BiShengIR test suite
 **When tests pass**:
 
 ```text
--- Testing: 150 tests, 8 workers --
+-- Testing: 388 tests, 8 workers --
 ...
 
 Testing Time: 45.23s
-  Passed: 142
-  Unsupported: 6
-  Skipped: 2
+
+Total Discovered Tests: 388
+  Unsupported: 89  (22.94%)
+  Passed     : 299 (77.06)
 ```
 
 **When tests fail**:
 
 ```text
--- Testing: 150 tests, 8 workers --
-PASS: bishengir :: bishengir-compile/commandline.mlir (1 of 150)
+-- Testing: 388 tests, 8 workers --
+PASS: bishengir :: bishengir-compile/commandline.mlir (1 of 388)
 ...
-FAIL: bishengir :: test/failing-case.mlir (42 of 150)
-********************
-FAIL: bishengir :: test/failing-case.mlir
-********************
-...(failure details)...
+FAIL: bishengir :: test/failing-case.mlir (42 of 388)
+******************** TEST 'FAIL: bishengir :: test/failing-case1.mlir' FAILED ********************
+...（failure details）...
 
 ********************
-Failed Tests (1):
-  bishengir :: test/failing-case.mlir
+FAIL: bishengir :: test/failing-case.mlir (256 of 388)
+******************** TEST 'FAIL: bishengir :: test/failing-case2.mlir' FAILED ********************
+...（failure details）...
+
 ********************
+********************
+Failed Tests (2):
+  bishengir :: test/failing-case1.mlir
+  bishengir :: test/failing-case2.mlir
+
 Testing Time: 38.12s
-  Passed: 141
-  Failed: 1
+
+Total Discovered Tests: 388
+  Unsupported:  86 (22.16%)
+  Passed     : 300 (77.32%)
+  Failed     :   2 (0.52%)
   ...
 ```
 
