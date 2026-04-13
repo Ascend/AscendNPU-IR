@@ -274,7 +274,7 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
     if (!loopOp) {
       LoopLikeOpInterface parentLoop =
           op->getParentOfType<LoopLikeOpInterface>();
-      if (!isa<scf::ForOp>(parentLoop)) {
+      if (!isa_and_nonnull<scf::ForOp>(parentLoop)) {
         return failure();
       }
       auto yieldIndex = GetParentLoopYieldIndex(parentLoop, op.getResult());
