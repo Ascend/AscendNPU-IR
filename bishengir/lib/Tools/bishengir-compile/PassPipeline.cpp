@@ -104,6 +104,7 @@ void setupHFusionPipelineOptions(
       config.maxFusedOpsInAutoVectorizeV2();
   hfusionPipelineOptions.enableVFFusion = config.shouldEnableVFFusion();
   hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
+  hfusionPipelineOptions.enableTreeReduceV2 = config.shouldEnableTreeReduceV2();
   hfusionPipelineOptions.enableMultipleConsumerFusion =
       config.shouldEnableMultipleConsumerFusion();
   hfusionPipelineOptions.skipScope = config.shouldSkipScope();
@@ -351,6 +352,7 @@ public:
     enableAutoVectorizeV2 = pass.enableAutoVectorizeV2;
     maxFusedOpsInAutoVectorizeV2 = pass.maxFusedOpsInAutoVectorizeV2;
     enableVFFusion = pass.enableVFFusion;
+    enableTreeReduceV2 = pass.enableTreeReduceV2;
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
     ensureNoImplicitBroadcast = pass.ensureNoImplicitBroadcast;
 #endif
@@ -549,6 +551,9 @@ protected:
   Pass::Option<bool> enableAutoVectorizeV2{
       *this, "enable-auto-vectorize-v2",
       llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
+  Pass::Option<bool> enableTreeReduceV2{
+ 	       *this, "enable-tree-reduce-v2",
+ 	       llvm::cl::desc("Enable tree reduce v2"), llvm::cl::init(false)};
   Pass::Option<int> maxFusedOpsInAutoVectorizeV2{
       *this, "hfusion-max-fused-ops-in-auto-vectorize-v2",
       llvm::cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "

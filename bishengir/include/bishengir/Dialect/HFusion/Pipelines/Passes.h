@@ -63,6 +63,10 @@ struct HFusionPipelineOptions
       *this, "enable-tree-reduce", llvm::cl::desc("Enable tree reduce"),
       llvm::cl::init(false)};
 
+   PassOptions::Option<bool> enableTreeReduceV2{
+ 	       *this, "enable-tree-reduce-v2", llvm::cl::desc("Enable tree reduce v2"),
+ 	       llvm::cl::init(false)};
+
   PassOptions::Option<bool> enableMultipleConsumerFusion{
       *this, "enable-multiple-consumer-fusion",
       llvm::cl::desc("Enable multiple consumer fusion in AutoVectorizeV2"),

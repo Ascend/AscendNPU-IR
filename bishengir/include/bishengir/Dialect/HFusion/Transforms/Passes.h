@@ -151,6 +151,9 @@ createOutlineSingleOpPass(const OutlineSingleOpOptions &options = {});
 /// Create a pass to simplify operations.
 std::unique_ptr<Pass> createSimplifyOpsPass();
 
+/// Register Tree Reduce v2 pass
+std::unique_ptr<Pass> createTreeReduceV2Pass();
+
 /// Create a pass to normalize operations.
 std::unique_ptr<Pass>
 createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
