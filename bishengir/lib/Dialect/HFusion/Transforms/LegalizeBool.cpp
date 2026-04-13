@@ -132,44 +132,6 @@ static bool isPseudoBool(Value val) {
   return false;
 }
 
-struct ClampPseudoBoolReduceOp : public OpRewritePattern<linalg::ReduceOp> {
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op->hasAttr("is_clamped") || op.getNumDpsInputs() != 1 ||
-        op.getNumDpsInits() != 1 || !isPseudoBool(op.getInputs()[0])) {
-      return failure();
-    }
-
-    Type elemType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    if (!elemType.isInteger(8)) {
-      return failure();
-    }
-
-    Block &body = op.getCombiner().front();
-    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
-    if (!yieldOp || yieldOp.getNumOperands() != 1) {
-      return failure();
-    }
-
-    auto addOp = dyn_cast_or_null<arith::AddIOp>(
-        yieldOp.getValues()[0].getDefiningOp());
-    if (!addOp) {
-      return failure();
-    }
-
-    rewriter.setInsertionPoint(addOp);
-    auto orOp = rewriter.create<arith::OrIOp>(addOp.getLoc(), addOp.getLhs(),
-                                              addOp.getRhs());
-    orOp->setAttr("is_clamped", rewriter.getBoolAttr(true));
-    rewriter.replaceOp(addOp, orOp.getResult());
-    op->setAttr("is_clamped", rewriter.getBoolAttr(true));
-    op->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
-    return success();
-  }
-};
-
 template <typename OpTy>
 struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
   using OpRewritePattern<OpTy>::OpRewritePattern;
@@ -488,8 +450,7 @@ void LegalizeBoolPass::runOnOperation() {
   // Conditional Execution Branch
   if (this->enableClamp) {
     RewritePatternSet clampPatterns(context);
-    clampPatterns.add<ClampPseudoBoolReduceOp,
-                      ClampPseudoBoolArithOp<arith::AddIOp>,
+    clampPatterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
                       ClampPseudoBoolArithOp<arith::SubIOp>>(context);
                       
     if (failed(applyPatternsGreedily(mod, std::move(clampPatterns)))) {
