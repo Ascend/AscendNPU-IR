@@ -248,3 +248,43 @@ func.func @test_scope_tensor(%ext_tensor: tensor<128x128xf32>, %ext_val: i32) ->
   return %cube_res#0, %cube_res#1, %cube_res#2, %vec_res#0, %vec_res#1, %vec_res#2 
     : tensor<128x128xf32>, tensor<128x128xf32>, i32, tensor<128x128xf32>, tensor<128x128xf32>, i32
 }
+
+// -----
+
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // CHECK-LABEL: func.func @test_true_marks_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
+  // CHECK-LABEL: func.func @test_true_marks_mix_aiv({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix}
+  // CHECK:         %[[VADD_PRE:.*]] = hivm.hir.vadd
+  // CHECK-NOT:     annotation.mark
+  // CHECK:         scf.for {{.*}} iter_args(%[[ARG_V:.*]] = %[[VADD_PRE]]
+  // CHECK:           %[[VADD_INNER:.*]] = hivm.hir.vadd
+  // CHECK-NOT:       annotation.mark
+  // CHECK:           %[[STORE:.*]] = hivm.hir.store ins(%[[VADD_INNER]] : tensor<128x128xf32>)
+  // CHECK-NEXT:      annotation.mark %[[STORE]] : tensor<128x128xf32>
+  // CHECK-NOT:       annotation.mark
+  func.func @test_true_marks(%arg0: tensor<128x128xf32>, %arg1: tensor<128x128xf32>) 
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %cst = arith.constant 1.0 : f32
+    %true = arith.constant true
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    %c10 = arith.constant 10 : index
+    %c1 = arith.constant 1 : index
+    %empty = tensor.empty() : tensor<128x128xf32>
+    %vadd_pre = hivm.hir.vadd ins(%arg0, %cst : tensor<128x128xf32>, f32) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %loop_res:2 = scf.for %i = %c0 to %c10 step %c1 iter_args(%acc_v = %vadd_pre, %acc_c = %empty) -> (tensor<128x128xf32>, tensor<128x128xf32>) {
+      %vadd = hivm.hir.vadd ins(%acc_v, %cst : tensor<128x128xf32>, f32) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %store = hivm.hir.store ins(%vadd : tensor<128x128xf32>) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %load = hivm.hir.load ins(%store : tensor<128x128xf32>) outs(%empty : tensor<128x128xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<128x128xf32>
+      %mmad_inner = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%load, %arg1, %true, %c128, %c128, %c128 : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index, index) outs(%acc_c : tensor<128x128xf32>) -> tensor<128x128xf32>
+      %vadd_inner = hivm.hir.vadd ins(%acc_v, %cst : tensor<128x128xf32>, f32) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+      scf.yield %vadd_inner, %mmad_inner : tensor<128x128xf32>, tensor<128x128xf32>
+    }
+    %mmad1 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%loop_res#1, %arg1, %true, %c128, %c128, %c128 : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %mmad2 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%loop_res#1, %arg1, %true, %c128, %c128, %c128 : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %mmad3 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%loop_res#1, %arg1, %true, %c128, %c128, %c128 : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %mmad4 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%loop_res#1, %arg1, %true, %c128, %c128, %c128 : tensor<128x128xf32>, tensor<128x128xf32>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    %fixpipe = hivm.hir.fixpipe {enable_nz2nd} ins(%mmad4 : tensor<128x128xf32>) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    return
+  }
+}

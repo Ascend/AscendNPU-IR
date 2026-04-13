@@ -255,6 +255,30 @@ struct FoldEmptyInsertSlice : public OpRewritePattern<tensor::InsertSliceOp> {
   }
 };
 
+struct RemoveUselessMarkOps : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp markOp,
+                                PatternRewriter &rewriter) const override {
+    if (!markOp->getAttrs().empty()) {
+      return failure();
+    }
+
+    Value src = markOp.getSrc();
+
+    bool isOnlyMark = llvm::all_of(src.getUsers(), [](Operation *user) {
+      return isa<annotation::MarkOp>(user);
+    });
+
+    if (isOnlyMark) {
+      return failure();
+    }
+
+    rewriter.eraseOp(markOp);
+    return success();
+  }
+};
+
 template <typename OpType>
 void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
   func.walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -270,6 +294,7 @@ void postProcessCubeFunc(func::FuncOp func) {
   RewritePatternSet patterns(func.getOperation()->getContext());
   patterns.insert<PostCubeReplacement>(patterns.getContext());
   patterns.insert<FoldEmptyInsertSlice>(patterns.getContext());
+  patterns.insert<RemoveUselessMarkOps>(patterns.getContext());
   tensor::populateFoldTensorEmptyPatterns(patterns);
   if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
     llvm::report_fatal_error("postProcessCubeFunc failed");
@@ -283,6 +308,11 @@ void postProcessCubeFunc(func::FuncOp func) {
 }
 
 void postProcessVectorFunc(func::FuncOp func) {
+  RewritePatternSet patterns(func.getOperation()->getContext());
+  patterns.insert<RemoveUselessMarkOps>(patterns.getContext());
+  if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
   removeOpWithAttrFromFunc<annotation::MarkOp>(
       "DuplicateTensorExtractForCube::replacementLabel", func);
   removeOpWithAttrFromFunc<tensor::ExtractOp>(
