@@ -666,16 +666,16 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
     int32_t &alignBytes) {
   Value input = op->getOperand(0);
   Value output = op->getOperand(1);
-  MemRefType inputType = input.getType().cast<MemRefType>();
-  MemRefType outputType = output.getType().cast<MemRefType>();
+  MemRefType inputType = mlir::cast<MemRefType>(input.getType());
+  MemRefType outputType = mlir::cast<MemRefType>(output.getType());
   auto inputSpace = inputType.getMemorySpace();
   auto outputSpace = outputType.getMemorySpace();
   ArrayRef<int64_t> outputShape = outputType.getShape();
   if (outputShape.size() != 2) {
     return std::nullopt;
   }
-  auto hivminputSpace = inputSpace.dyn_cast<hivm::AddressSpaceAttr>();
-  auto hivmoutputSpace = outputSpace.dyn_cast<hivm::AddressSpaceAttr>();
+  auto hivminputSpace = mlir::cast<hivm::AddressSpaceAttr>(inputSpace);
+  auto hivmoutputSpace = mlir::cast<hivm::AddressSpaceAttr>(outputSpace);
   if (!hivminputSpace || !hivmoutputSpace) {
     return std::nullopt;
   }
