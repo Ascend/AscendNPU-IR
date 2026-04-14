@@ -14,14 +14,14 @@ Install the Ascend Toolkit.
 
 [Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002)，install`Ascend-cann-toolkit`.For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
 
-```shell
+```bash
 chmod +x Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run
 ./Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run --install
 ```
 
 Configure environment variables:
 
-```
+```bash
 source /path/to/install/Ascend/ascend-toolkit/set_env.sh
 ```
 
@@ -29,13 +29,13 @@ Prepare a Python environment with Python version between 3.7.*x* and 3.11.4 (inc
 
    Ascend Toolkit Installation Requirements
 
-   ```shell
+   ```bash
    pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml pathlib2 psutil protobuf==3.20.0 scipy requests absl-py
    ```
 
 Set Environment Variables
 
-```shell
+```bash
 export ACL_OP_INIT_MODE=1
 ```
 
@@ -43,7 +43,7 @@ export ACL_OP_INIT_MODE=1
 
 Pull the code
 
-```shell
+```bash
 git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 ```
 
@@ -52,7 +52,7 @@ Run the installation script
 > Note: If you environment has gtest include file but has not gtest lib file, the build process may cause some weird problem. 
 > plese remove the gtest include file or add the lib file or build gtest with tvm.
 
-```shell
+```bash
 cd tilelang-ascend
 # build AscendNPU-IR in 3rdparty
 bash install_npuir.sh
@@ -64,7 +64,7 @@ bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
 
 Then do one of the following to apply tilelang settings in your environment:
 
-```shell
+```bash
 source ~/.bashrc
 
 or
@@ -78,7 +78,7 @@ open a new terminal
 
 Install torch_npu
 
-```shell
+```bash
 pip install pybind11 torch_npu
 ```
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
 After run `python3 test_tilelang.py`, we can see the result
 
-```shell
+```bash
 Reference result (PyTorch):
 tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
 TileLang kernel result:

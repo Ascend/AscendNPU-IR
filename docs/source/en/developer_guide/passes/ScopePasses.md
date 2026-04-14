@@ -38,7 +38,7 @@ func.func @test() {
 
 ### Options
 
-```
+```text
 -force-inline : Inline scope regardless of `no_inline` attribute.
 ```
 

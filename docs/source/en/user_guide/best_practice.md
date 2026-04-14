@@ -716,7 +716,7 @@ The bitmask is highly related to the tiling logic, and the kernel itself has dif
 
 Let's say this is the original mask creation logic:
 
-```
+```python
 for i in range(numel // 8):
     byte_value = flatten_cond_i8[i]
     for bit in range(8):

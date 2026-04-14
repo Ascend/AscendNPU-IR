@@ -238,7 +238,7 @@ The Ascend supports the setting of synchronization events between computing unit
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_matmul_exp():
     #...
@@ -277,7 +277,7 @@ Ascend supports global synchronization of the entire computing block, ensuring t
 
 **Example**:
 
-```
+```python
 @triton.jit
 def test_sync_block_all():
     #...
@@ -294,7 +294,7 @@ The Ascend provides an interface to query hardware information by calling the`su
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_matmul_exp():
     #...
@@ -325,7 +325,7 @@ Currently, the OptiX RTN 910B supports a maximum of two vectoring cores.
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_add():
     #...
@@ -353,7 +353,7 @@ Ascend supports passing optimization prompts to the compiler to guide code gener
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_where_lt_case1():
     #...
@@ -375,7 +375,7 @@ def triton_where_lt_case1():
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_compile_hint():
     #...
@@ -404,7 +404,7 @@ Ascend supports scope managers, adding hint information to a section of locale c
 
 **Example**:
 
-```
+```python
 @triton.jit
 def kernel_debug_barrier():
     #...
@@ -434,7 +434,7 @@ Ascend supports inserting a tensor into another tensor based on the offset, size
 
 **Example**:
 
-```
+```python
 @triton.jit
 def triton_kernel():
     #...
@@ -460,7 +460,7 @@ Ascend supports reading a single element value at a specified index position fro
 
 **Example**:
 
-```
+```python
 @triton.jit
 def index_select_manual_kernel():
     #...
@@ -485,7 +485,7 @@ Ascend supports the sorting operation on input tensors along the specified dimen
 
 **Example**:
 
-```
+```python
 @triton.jit
 def sort_kernel_2d():
     #...
@@ -508,7 +508,7 @@ Ascend supports the flip operation on the input tensor along the specified dimen
 
 **Example**:
 
-```
+```python
 @triton.jit
 def flip_kernel_2d():
     #...
@@ -533,7 +533,7 @@ The Ascend supports the conversion of tensors to specified data types, including
 
 **Example**:
 
-```
+```python
 @triton.jit
 def cast_to_bool():
     #...
@@ -566,7 +566,7 @@ The Ascend collects data in specified dimensions based on the index UB tensor fr
 
 **Example**:
 
-```
+```python
 @triton.jit
 def select_index():
     #...
@@ -621,7 +621,7 @@ Ascend allows you to place the value tensor in the target tensor based on the in
 
 **Example**:
 
-```
+```python
 @triton.jit
 def put_index():
     #...
@@ -687,7 +687,7 @@ Ascend can collect data from scatterpoints in the GM and save the data to the UB
 
 **Example**:
 
-```
+```python
 @triton.jit
 def gather():
     #...
@@ -746,7 +746,7 @@ Ascend stores data from scatterpoints in UB to GM along a specified dimension. T
 
 **Example**:
 
-```
+```python
 @triton.jit
 def scatter():
     #...
@@ -792,7 +792,7 @@ The Ascend supports parallel index selection. Data is directly loaded to the UB 
 
 **Example**:
 
-```
+```python
 @triton.jit
 def index_select_simd():
     #...
@@ -817,7 +817,7 @@ In the A5 architecture, the Custom Op of Triton-Ascend allows users to customize
 
 The functions related to customization operations are provided by the triton Ascend extension package. User-defined customization operations can be used only after registration. You can use the`register_custom_op`Decorate a class to define and register the custom action:
 
-```
+```python
 import triton.language.extra.cann.extension as al
 
 @al.register_custom_op
@@ -839,7 +839,7 @@ To register a simplest customization operation, at least the basic attributes su
 
 Registered custom actions are available through the Ascend expansion pack`custom()`The function is invoked. The name and parameters of the customized operation must be provided.
 
-```
+```python
 import triton
 import triton.language as tl
 import triton.language.extra.cann.extension as al
@@ -863,7 +863,7 @@ If it's passed`out`If the parameter specifies the output variable, the return va
 
 The name of the built-in customization operation starts with`"__builtin_"`Start with the customized operations built in triton-ascend, which can be directly used without registration. For example:
 
-```
+```python
 import triton
 import triton.language as tl
 import triton.language.extra.cann.extension as al
@@ -884,7 +884,7 @@ Without constraint, the user can give`al.custom()`If the number of parameters an
 
 To avoid this problem and improve the user experience of the customization operation, we can provide constructors for the registered customization class to describe the parameter list and check the parameter validity. For example:
 
-```
+```python
 import triton
 import triton.language as tl
 import triton.language.extra.cann.extension as al
@@ -906,13 +906,13 @@ class my_custom_op:
 
 The parameter list of the constructor function of the registration class is the parameter list required for invoking the customization operation. When invoking the custom operation, you need to provide the parameters that meet the requirements. For example:
 
-```
+```python
 res = al.custom('my_custom_op', src_ptr, index, dim=1, out=dst)
 ```
 
 If the provided parameter is incorrect, an error will be reported during compilation. For example, the dim parameter must be an integer constant. If the dim parameter is a floating point number, the following error message is displayed:
 
-```
+```text
 ...
     res = al.custom('my_custom_op', src_ptr, index, dim=1.0, out=dst)
           ^
@@ -923,7 +923,7 @@ AssertionError('dim must be an integer')
 
 `al.custom`The output parameter specified by the out parameter is returned. For example:
 
-```
+```python
 x = al.custom('my_custom_op', src, index, out=dst)
 ```
 
@@ -931,7 +931,7 @@ dst is returned to x.
 
 The out parameter can specify multiple output parameters,`al.custom`Returns a tuple containing these output parameters:
 
-```
+```python
 x, y = al.custom('my_custom_op', src, index, out=(dst1, dst2))
 ```
 
@@ -947,7 +947,7 @@ The customization operation will eventually be converted into calling the implem
 
 If a custom operation always calls a device-side function, you can set the symbol name statically.
 
-```
+```python
 @al.register_custom_op
 class my_custom_op:
     name = 'my_custom_op'
@@ -963,7 +963,7 @@ In this way,`al.custom('my_custom_op', ...)`will fix the corresponding device si
 
 In most cases, the same customization operation needs to invoke different device functions based on the dimension and type of the input parameter. In this case, the symbol name needs to be set dynamically. Similar to the parameter validity check, you can dynamically set the symbol name in the constructor of the registered custom operation class. For example:
 
-```
+```python
 @al.register_custom_op
 class my_custom_op:
     name = 'my_custom_op'
@@ -990,7 +990,7 @@ If the functions for implementing customized operations need to be compiled from
 
 Similar to symbol names, these two attributes can be configured statically or dynamically in the registration class constructor, for example:
 
-```
+```python
 @al.register_custom_op
 class my_custom_op:
     name = 'my_custom_op'
@@ -1008,13 +1008,13 @@ class my_custom_op:
 
 Customized operations are converted into corresponding function invoking. The parameter sequence is the same as that on the Python side. The output parameter (out, if any) is always placed at the end. For example, the following Python code is used:
 
-```
+```python
 al.custom('my_custom_op', src, index, dim, out=dst)
 ```
 
 Converting to a function call is equivalent to:
 
-```
+```cpp
 my_custom_op(src, index, dim, dst);
 ```
 
@@ -1022,13 +1022,13 @@ my_custom_op(src, index, dim, dst);
 
 The tuple or list parameter on the Python side is flattened. For example:
 
-```
+```python
 al.custom('my_custom_op', src, index, offsets=(1, 2, 3), out=dst)
 ```
 
 When converted to a function call, the offsets parameter is flattened:
 
-```
+```cpp
 my_custom_op(src, index, 1, 2, 3, dst);
 ```
 
@@ -1038,7 +1038,7 @@ Customization operations support the constant parameter types of integers and fl
 
 For example, the implementation function signature for the following customized operations is available:
 
-```
+```cpp
 custom_op_impl_func(memref_t<...> *src, memref_t<...> *idx, int64_t bound);
 ```
 
@@ -1046,7 +1046,7 @@ The bound parameter must be an integer of the int64_t type.
 
 When the customization operation is invoked on the Python side, the value of the bound constant parameter is provided.
 
-```
+```python
 al.custom('my_custom_op', src, idx, bound=1024)
 ```
 
@@ -1058,7 +1058,7 @@ To avoid this problem, you are advised to implement the function parameters. For
 
 By default, integer constants are mapped to the int32_t type. If the implementation function requires an int64_t type, you can use the`al.int64`Wrap an integer, for example:
 
-```
+```python
 al.custom('my_custom_op', src, idx, bound=al.int64(1024))
 ```
 
@@ -1066,7 +1066,7 @@ al.custom('my_custom_op', src, idx, bound=al.int64(1024))
 
 In the constructor function of the registered class, you can add type annotations to the corresponding parameters. For example:
 
-```
+```python
 @al.register_custom_op
 class my_custom_op:
     name = 'my_custom_op'
@@ -1084,7 +1084,7 @@ In this way, the bound parameter is always mapped to the int64_t type.
 
 Another extreme case is that the parameter type varies depending on the other parameters. For example, the bound type must be the same as the idx data type. In this case, you can use arg_type to dynamically specify the type in the constructor. For example:
 
-```
+```python
 @al.register_custom_op
 class my_custom_op:
     name = 'my_custom_op'
@@ -1101,14 +1101,14 @@ class my_custom_op:
 
 Direct use`al.custom`Invoking a customized operation is a little troublesome, especially when there are output parameters. Therefore, you need to prepare the output parameters before invoking the operation. For example:
 
-```
+```python
 dst = tl.full(index.shape, 0, tl.float32)
 x = al.custom('my_custom_op', src, index, out=dst)
 ```
 
 We can encapsulate the customized operation into an operation function for easy use. For example:
 
-```
+```python
 @al.builtin
 def my_custom_op(src, index, _builder=None):
     dst = tl.semantic.full(index.shape, 0, src.dtype.element_ty, _builder)
@@ -1119,7 +1119,7 @@ Encapsulated operation functions need to be`al.builtin`Decorate, and pass throug
 
 The encapsulated operation function can be directly invoked like the native operation.
 
-```
+```python
 @triton.jit
 def my_kernel(...):
     ...

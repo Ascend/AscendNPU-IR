@@ -11,7 +11,7 @@ _Return operation inside of scope.scope operation_
 
 Syntax:
 
-```
+```mlir
 operation ::= `scope.return` attr-dict ($results^ `:` type($results))?
 ```
 
@@ -19,7 +19,7 @@ The `scope.return` operation as a terminator of scope.scope region.
 
 Example:
 
-```
+```mlir
 scope.return
 ```
 
@@ -44,7 +44,7 @@ operations inside the region.
 
 Example:
 
-```
+```mlir
 scope.scope : () -> () {
     scope.return
 } {tcore_type = #hivm.tcore_type<CUBE>, ...}

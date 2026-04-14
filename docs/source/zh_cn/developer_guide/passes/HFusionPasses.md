@@ -7,7 +7,7 @@ _Adapt the triton kernel_
 
 ### Options
 
-```
+```text
 -hivmc-version : Specify hivmc version to resolve backward compatibility
 ```
 
@@ -17,7 +17,7 @@ _Add ffts base address to func param and annotation_
 
 ### Options
 
-```
+```text
 -force-add-ffts-addr : Force adding FFTS base addr to the user specified param location. Default value -1 means no insertion. 0 meansinsert to the first param location.
 ```
 
@@ -27,7 +27,7 @@ _Auto schedule fused kernels._
 
 ### Options
 
-```
+```text
 -block-dim                      : Number of blocks to use
 -enable-auto-multi-buffer       : Enable auto multi buffer
 -enable-deterministic-computing : Enable deterministic computing
@@ -53,7 +53,7 @@ _Compose multi reduce optimization_
 
 ### Options
 
-```
+```text
 -max-compose   : Maximum reduce composed into single operation, -1 is limitless
 -max-dist-diff : Maximum distance difference from common ancestor
 -aggressive    : Aggressive mode will try to reshape if shape are loosely matched
@@ -197,7 +197,7 @@ _Decompose ops that implemented AggregatedOpInterface._
 
 ### Options
 
-```
+```text
 -hfusion-decompose-phase : Specify which decompose phase to apply.
 ```
 
@@ -223,7 +223,7 @@ _Flatten linalg and hfusion ops._
 
 ### Options
 
-```
+```text
 -flatten-mode        : Flatten mode, tidy mode will do an analysis on the entire function
 -skip-host           : Whether to skip the host function or not
 -multi-dynamic-shape : Whether to collapse multiple dynamic shape or not
@@ -239,7 +239,7 @@ _HFusion Fuse operations on tensors_
 
 ### Options
 
-```
+```text
 -output-mode                : Outlined function output mode (default is multi, can also use single or single-aggr)
 -fusion-mode                : Fusion kind is determined by label
 -always-inline              : Enable always inline for the outline function.
@@ -285,7 +285,7 @@ _Normalize Slice Ops._
 
 ### Options
 
-```
+```text
 -skip-aligned-slice : Skip FoldInsertSliceToConcat pattern for aligned slice.
 ```
 
@@ -295,7 +295,7 @@ _Outline single linalg ops into kernels._
 
 ### Options
 
-```
+```text
 -move-out-to-param : Whether move the tensor out to params or not
 ```
 
@@ -307,7 +307,7 @@ Pack the tiling information into a struct.
 
 ### Options
 
-```
+```text
 -include-symbols                      : Comma separated list of symbols that should apply this transformation. If empty, the default behavior is to apply transformation to all functions.
 -emit-get-tiling-struct-size-function : When enabled, a host function that returns the number of i64 tiling data is emitted.
 -pack-tiling-key                      : When enabled, the tiling key would also be packed into the tiling struct.Otherwise, the tiling key is directly written to a pointer.
@@ -331,7 +331,7 @@ _Move tensor results to function output parameters_
 
 ### Options
 
-```
+```text
 -include-symbols              : Comma separated list of symbols that should apply this transformation. If empty, the default behavior is to apply transformation to all functions.
 -enable-manage-host-resources : Enable managing resource for Host functions
 ```
@@ -348,6 +348,6 @@ This pass creates wrapper functions for host tiling func, infer shape func, etc.
 
 ### Options
 
-```
+```text
 -remove-unused-arguments : Whether to remove unused arguments in host wrapper function or not
 ```

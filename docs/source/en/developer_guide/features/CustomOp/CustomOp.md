@@ -57,7 +57,7 @@ TODO:
 
 ## Lowering Process
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                          CustomOp                               │
 │    hivm.hir.custom "name" { attrs... } ins(..) outs(...)        │
@@ -184,6 +184,7 @@ if __name__ == "__main__":
     builtin_index_select_kernel[(1,)](src, index, out)
     torch.testing.assert_close(out, ref) # ref: [[30., 31.], [10., 11.]]
 ```
+
 Lowering to MLIR
 
 ```mlir
