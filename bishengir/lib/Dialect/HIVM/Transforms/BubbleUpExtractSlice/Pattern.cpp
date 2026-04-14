@@ -1490,4 +1490,101 @@ LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool VarangeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp) {
+    return false;
+  }
+  bool isVarangeOp = dyn_cast<hivm::VArangeOp>(sourceOp);
+  return isVarangeOp;
+}
+
+LogicalResult
+VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                 PatternRewriter &rewriter) const {
+  auto varangeOp =
+      dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
+  if (!varangeOp)
+    return failure();
+
+  auto varangeOutputType =
+      dyn_cast<RankedTensorType>(varangeOp.getResult().getType());
+  if (!varangeOutputType)
+    return failure();
+
+  auto sliceOutputType =
+      dyn_cast<RankedTensorType>(sliceOp.getSource().getType());
+  if (!sliceOutputType)
+    return failure();
+
+  if (varangeOutputType.getRank() != 1 || sliceOutputType.getRank() != 1)
+    return failure();
+
+  auto loc = varangeOp.getLoc();
+
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  rewriter.setInsertionPoint(varangeOp);
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      loc, varangeOp.getDst(), offsets, sizes, strides);
+
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+
+  // get the offset value from extract_slice
+  Value sliceOffset =
+      getValueOrCreateConstantIndexOp(rewriter, loc, offsets[0]);
+  Value origVarangeOffset = varangeOp.getOffset();
+  // The new offset of varange = sliceOffset + origVarangeOffset
+  Value newVarangeOffset =
+      rewriter.create<arith::AddIOp>(loc, origVarangeOffset, sliceOffset);
+
+  rewriter.setInsertionPointAfter(varangeOp);
+  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
+      loc, sliceOp.getType(), newSliceOp.getResult(), newVarangeOffset);
+
+  rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
+  rewriter.eraseOp(varangeOp);
+
+  return success();
+}
+
+bool ScopeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto sourceOp = sliceOp.getSource().getDefiningOp<scope::ScopeOp>();
+  return sourceOp && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult ScopeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                             PatternRewriter &rewriter) const {
+  auto src = cast<OpResult>(sliceOp.getSource());
+  auto scopeOp = src.getDefiningOp<scope::ScopeOp>();
+  if (!scopeOp)
+    return failure();
+
+  auto returnIndex = src.getResultNumber();
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+  rewriter.setInsertionPoint(returnOp);
+  auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), returnOp.getResults()[returnIndex],
+      sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
+      sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+   auto &returnValueOpr = returnOp->getOpOperand(returnIndex);
+   rewriter.modifyOpInPlace(returnOp, [&returnValueOpr, &newMovedInSlice]() {
+     returnValueOpr.assign(newMovedInSlice.getResult());
+   });
+
+  rewriter.modifyOpInPlace(scopeOp, [&]() {
+    scopeOp->getResult(returnIndex).setType(sliceOp.getType());
+  });
+  rewriter.replaceAllUsesWith(sliceOp, scopeOp->getResult(returnIndex));
+  
+  return success();
+}
+
 } // namespace mlir::hivm::detail
