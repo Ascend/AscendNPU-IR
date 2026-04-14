@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-sanitizer=true %s -o %t.ll
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-sanitizer=true %s -o %t.ll
