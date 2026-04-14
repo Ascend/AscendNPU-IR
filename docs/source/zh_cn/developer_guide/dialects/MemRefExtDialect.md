@@ -11,7 +11,7 @@ _Workspace memory allocation operation._
 
 Syntax:
 
-```
+```mlir
 operation ::= `memref_ext.alloc_workspace` `(`$dynamicSize`)` (`from` $workspaceArg^)? ( `offset` `=` `[`$offset^`]`)?
               attr-dict `:` (`from` type($workspaceArg)^ `to`)? type($memref)
 ```

@@ -51,7 +51,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   - 命令：`bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir`
   - **预期产物**：MLIR 文本文件（`.mlir` 格式），内容为转换后的 Linalg/HFusion IR。例如：
 
-```
+```mlir
 func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %0 = tensor.empty() : tensor<1x56x4096xf16>
   %broadcasted = linalg.broadcast ins(%arg0 : tensor<4096xf16>) outs(%0 : tensor<1x56x4096xf16>) dimensions = [0, 1] 
@@ -150,7 +150,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 #### 用例 `hfusion.mlir`
 
-```
+```mlir
 func.func @hfusion_reduce_mul(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
 attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
   %1 = tensor.empty() : tensor<40960x1024xf32>
@@ -190,7 +190,7 @@ Linalg/HFusion IR 接入后，HFusion 编译流程会对符合融合条件的算
 
 #### 用例 `hivm.mlir`
 
-```
+```mlir
 func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
                        %valueB: memref<16xf16, #hivm.address_space<gm>>,
                        %valueC: memref<16xf16, #hivm.address_space<gm>>)

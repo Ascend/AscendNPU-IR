@@ -51,7 +51,7 @@ Ascend 910B NPU 采用异构计算架构，主要包含：
 
 before:
 
-```
+```mlir
 %2 = ops // not 0 const
 %3 = hivm.hir.mmadL1 ins(*)
        outs(%2 : tensor<16x32xf32>) -> tensor<16x32xf32>
@@ -59,7 +59,7 @@ before:
 
 after
 
-```
+```mlir
 %2 = ops
 %3 = tensor.empty() : tensor<16x32xf32>
 %4 = hivm.hir.mmadL1 ins(*)
@@ -76,13 +76,13 @@ after
 
 before:
 
-```
+```mlir
 mmadL1 -> store
 ```
 
 after
 
-```
+```mlir
 mmadL1 -> fixpipe
 ```
 
@@ -96,14 +96,14 @@ InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试i
 
 before:
 
-```
+```mlir
 batchmmadL1 a : [batch, m ,k], b[batch, k, n]
 fixpipe workspace : [batch, m, n]
 ```
 
 after
 
-```
+```mlir
 for batch_idx in range(batch):
   mmadL1(extract_slice(a), extract_slice(b))
   fixpipe(extract_slice(workspace))
@@ -118,7 +118,7 @@ for batch_idx in range(batch):
 
 before:
 
-```
+```mlir
 mmadL1
 fixpipe
 vadd
@@ -126,7 +126,7 @@ vadd
 
 after
 
-```
+```mlir
 mmadL1
 fixpipe
 load
@@ -142,7 +142,7 @@ vadd
 
 before：
 
-```
+```mlir
 %1 = mmadL1
 %2 = tensor.empty() 
 %3 = fixpipe ins(%1) outs(%2)
@@ -152,7 +152,7 @@ vadd (%4)
 
 after：
 
-```
+```mlir
 %1 = mmadL1
 %2 = memref_ext.alloc_workspace()
 %3 =  bufferization.to_tensor(%2)
@@ -170,7 +170,7 @@ vadd (%5)
 
 before：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -181,7 +181,7 @@ func.func @bind_workspace_arg(
 
 after：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -198,7 +198,7 @@ func.func @bind_workspace_arg(
 
 before：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -209,7 +209,7 @@ func.func @bind_workspace_arg(
 
 after：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}){
@@ -226,7 +226,7 @@ func.func @bind_workspace_arg(
 
 before：
 
-```
+```mlir
 func.func @bind_workspace_arg(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
@@ -241,7 +241,7 @@ func.func @bind_workspace_arg(
 
 after：
 
-```
+```mlir
 func.func @bind_workspace_arg_aic(
               %arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>},
               %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},

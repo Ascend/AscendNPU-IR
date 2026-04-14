@@ -42,7 +42,7 @@ flowchart LR
 
 将`func.call @triton_print_*`接口转换成 `hfusion.print` 接口
 
-```
+```mlir
 // Before AdaptTritonKernel
 %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
 %alloc = memref.alloc() : memref<8xi64>

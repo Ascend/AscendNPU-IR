@@ -916,7 +916,7 @@ class my_custom_op:
 
 如果提供的参数不对，则编译时会报错。比如这里dim参数要求是一个整数常量，如果给定是一个浮点数，则会有如下报错：
 
-```bash
+```text
     ...
     res = al.custom('my_custom_op', src_ptr, index, dim=1.0, out=dst)
           ^
@@ -1021,7 +1021,7 @@ al.custom('my_custom_op', src, index, dim, out=dst)
 
 转换为函数调用相当于：
 
-```C++
+```cpp
 my_custom_op(src, index, dim, dst);
 ```
 
@@ -1035,7 +1035,7 @@ al.custom('my_custom_op', src, index, offsets=(1, 2, 3), out=dst)
 
 转换为函数调用时，offsets参数会被展平：
 
-```C++
+```cpp
 my_custom_op(src, index, 1, 2, 3, dst);
 ```
 
@@ -1045,7 +1045,7 @@ my_custom_op(src, index, 1, 2, 3, dst);
 
 例如，有如下定制操作的实现函数签名：
 
-```C++
+```cpp
 custom_op_impl_func(memref_t<...> *src, memref_t<...> *idx, int64_t bound);
 ```
 
@@ -1128,7 +1128,7 @@ def my_custom_op(src, index, _builder=None):
 
 封装好的操作函数可以类似原生操作一样直接调用：
 
-```
+```python
 @triton.jit
 def my_kernel(...):
     ...

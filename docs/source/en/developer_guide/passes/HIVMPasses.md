@@ -23,7 +23,7 @@ _Cube and vector core pipelining for multi-buffer'ed mix-cv ops_
 
 ### Options
 
-```
+```text
 -enable-auto-balance : Enable balancing of vector subtasks during pipelining.
 ```
 
@@ -39,7 +39,7 @@ _Decompose hivm ops that use hivm AggregatedOpInterface_
 
 ### Options
 
-```
+```text
 -decompose-phase : Specify which decompose phase to apply.
 ```
 
@@ -120,7 +120,7 @@ _Graph sync solver_
 
 ### Options
 
-```
+```text
 -enable-unit-flag : Enable unit-flag modes for synchronization
 ```
 
@@ -146,7 +146,7 @@ _Auto inject block sync_
 
 ### Options
 
-```
+```text
 -block-all-sync                 : Enable inject all block sync for HIVM injectBlockSync.
 -assume-alive-loops             : Assume that all loops (forOp whileOp) will execute at least once.
 -disable-auto-inject-block-sync : Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp
@@ -158,7 +158,7 @@ _Auto inject sync_
 
 ### Options
 
-```
+```text
 -sync-mode          : injetc sync mode (default is inject normal)
 -enable-unit-flag   : Enable unit-flag modes for synchronization
 -assume-alive-loops : Assume that all loops (forOp whileOp) will execute at least once.
@@ -254,7 +254,7 @@ If enable-auto is false, do nothing.
 
 ### Options
 
-```
+```text
 -enable-auto                                   : Mark multi buffer automatically.
 -limit-auto-multi-buffer-only-for-local-buffer : Disable multi-buffer mark on workspace
 -limit-auto-multi-buffer-of-local-buffer       : Limit local buffer auto multi buffer
@@ -268,7 +268,7 @@ _Mark scalar operations with core-type attribute._
 
 ### Options
 
-```
+```text
 -remove-core-type-attrs : Remove all core type attributes. If set to true, this pass becomes a cleanup pass.
 ```
 
@@ -307,7 +307,7 @@ _Plan memory for HIVM Ops_
 
 ### Options
 
-```
+```text
 -mem-plan-mode                 : plan mem mode (default is LOCAL_MEM_PLAN)
 -enable-global-workspace-reuse : Enable global workspace reuse ,default : false
 -restrict-inplace-as-isa       : restrict memory inplace as isa, default : false
@@ -385,7 +385,7 @@ local buffer because:
 
 ### Options
 
-```
+```text
 -tile-mix-vector-loop : The trip count of the tiled vector loop for mix kernels
 -tile-mix-cube-loop   : The trip count of the tiled cube loop for mix kernels
 ```

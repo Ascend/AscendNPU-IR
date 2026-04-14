@@ -11,7 +11,7 @@ _An exponent components of a floating-point number_
 
 Syntax:
 
-```
+```mlir
 operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
               attr-dict `:` type($result)
 ```
@@ -62,7 +62,7 @@ _A fractional components of a floating-point number_
 
 Syntax:
 
-```
+```mlir
 operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
               attr-dict `:` type($result)
 ```

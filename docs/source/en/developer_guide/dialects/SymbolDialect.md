@@ -18,7 +18,7 @@ symbols.
 
 Example:
 
-```
+```mlir
 symbol.bind_symbolic_shape %arg0, [%0, %1], affine_map<()[s0, s1] -> (s0, s1, 3)> : tensor<?x?x3xf32>
 symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0, s1 * 2 + s2, 3)> : tensor<?x?x3xf32>
 ```
@@ -30,7 +30,7 @@ symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0
 <tr><td><code>shape_expressions</code></td><td>::mlir::AffineMapAttr</td><td><details><summary>An Attribute containing an AffineMap object</summary>{{% markdown %}}
     Syntax:
 
-    ```
+    ```mlir
     affine-map-attribute ::= `affine_map` `<` affine-map `>`
     ```
 
@@ -64,7 +64,7 @@ other symbolic integer values that have known constraints.
 
 Example:
 
-```
+```mlir
 %0 = symbol.symbolic_int @s0 {min_val = 5, max_val = 10} : index
 %1 = symbol.symbolic_int @s1 {min_val = 2, max_val = 20} : index
 %2 = symbol.symbolic_int @s2 [%0, %1], affine_map<()[s1, s2] -> (s1 * s2)> {min_val = 2, max_val = 20} : index
