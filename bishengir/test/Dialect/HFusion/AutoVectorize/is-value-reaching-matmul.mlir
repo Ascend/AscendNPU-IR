@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt --hfusion-pre-vectorization-fusion --debug-only="hfusion-utils" -split-input-file %s | FileCheck %s
 
 // Fill directly used by matmul - should NOT be converted to generic

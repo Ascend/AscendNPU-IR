@@ -1,3 +1,4 @@
+// REQUIRES: hivmc-a5
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s | FileCheck %s
 
 // CHECK: LLVMDialectModule
