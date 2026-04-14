@@ -1149,9 +1149,9 @@ bool LoopArgsBubbleUpStrategy::isSupportedOperation(
   auto whileOp = dyn_cast_or_null<scf::WhileOp>(sliceOp->getParentOp());
   if (!whileOp)
     return false;
-  return llvm::any_of(whileOp.getBeforeArguments(), [&blockArg](auto beforeArg) {
-    return blockArg == beforeArg;
-  });
+  return llvm::any_of(
+      whileOp.getBeforeArguments(),
+      [&blockArg](auto beforeArg) { return blockArg == beforeArg; });
 }
 
 LogicalResult
@@ -1318,15 +1318,13 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     // Pattern 2: This deals with the pattern: memref.alloc() ->
     // bufferization.to_tensor, with Subview Op + Load Op
     if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
-      if (!subViewOp->hasOneUse() || !subViewOp.hasZeroOffset() ||
-          !subViewOp.hasUnitStride())
+      if (!subViewOp->hasOneUse() || !subViewOp.hasUnitStride())
         continue;
       auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
       if (!loadOp)
         continue;
       auto subViewOpGM = loadOp.getSrc().getDefiningOp<memref::SubViewOp>();
-      if (!subViewOpGM || !subViewOpGM.hasZeroOffset() ||
-          !subViewOpGM.hasUnitStride())
+      if (!subViewOpGM || !subViewOpGM.hasUnitStride())
         continue;
       auto castOp =
           subViewOpGM.getSource().getDefiningOp<memref::ReinterpretCastOp>();
@@ -1344,33 +1342,29 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       rewriter.setInsertionPoint(subViewOpGM);
 
       // Compute new size
-      auto newSizes = subViewOpGM.getMixedSizes();
+      auto newOffsets = subViewOp.getMixedOffsets();
+      auto newOffsetsGM = subViewOpGM.getMixedOffsets();
+      auto newSizes = subViewOp.getMixedSizes();
+      auto newSizesGM = subViewOpGM.getMixedSizes();
       auto extractDims = getExtractOrInsertDim(sliceOp);
       if (extractDims.size() != 1)
         continue;
       auto tilingDim = *extractDims.begin();
-      auto offsetVal = getValueOrCreateConstantIndexOp(
-          rewriter, sliceOp.getLoc(), offsets[tilingDim]);
-      auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                     newSizes[tilingDim]);
-      rewriter.setInsertionPointAfterValue(sizeVal);
-      auto tilingSize = getValueOrCreateConstantIndexOp(
-          rewriter, sliceOp.getLoc(), sizes[tilingDim]);
-      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal,
-                                                  sizeVal);
-      sizeVal =
-          rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal,
-                                                tilingSize);
-      newSizes[tilingDim] = sizeVal;
+      rewriter.setInsertionPoint(subViewOp);
+      handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
+                             offsets[tilingDim], sizes[tilingDim],
+                             subViewOp.getLoc(), rewriter);
 
       // Rewrite operations
       rewriter.setInsertionPoint(subViewOpGM);
+      handleExtractOfExtract(newOffsetsGM[tilingDim], newSizesGM[tilingDim],
+                             offsets[tilingDim], sizes[tilingDim],
+                             subViewOpGM.getLoc(), rewriter);
       auto newCastValue = rewriter.create<memref::SubViewOp>(
           castOp.getLoc(), castOp, offsets, sizes, strides);
       auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
-          subViewOpGM.getLoc(), newCastValue, subViewOpGM.getMixedOffsets(),
-          newSizes, subViewOpGM.getMixedStrides());
+          subViewOpGM.getLoc(), newCastValue, newOffsetsGM, newSizesGM,
+          subViewOpGM.getMixedStrides());
       rewriter.setInsertionPoint(allocOp);
       auto resultType =
           dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
@@ -1379,7 +1373,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           MemRefType::get(resultType.getShape(), resultType.getElementType()));
       rewriter.setInsertionPoint(subViewOp);
       auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-          subViewOp.getLoc(), allocOp, subViewOp.getMixedOffsets(), newSizes,
+          subViewOp.getLoc(), allocOp, newOffsets, newSizes,
           subViewOp.getMixedStrides());
 
       rewriter.modifyOpInPlace(loadOp, [&]() {
