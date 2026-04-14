@@ -211,3 +211,21 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: hivm.module_core_type = #hivm.module_core_type<AIV>
+module {
+  // CHECK: @INDIRECT_LOAD{{.*}}hivm.func_core_type = #hivm.func_core_type<AIV>
+  func.func @INDIRECT_LOAD(%base: memref<?xf32>, %idx: tensor<2x32xi32>) {
+    %dst = tensor.empty() : tensor<2x32xf32>
+    %0 = hivm.hir.indirect_load ins(%base : memref<?xf32>, %idx : tensor<2x32xi32>) outs(%dst : tensor<2x32xf32>) -> tensor<2x32xf32>
+    return
+  }
+
+  // CHECK: @INDIRECT_STORE{{.*}}hivm.func_core_type = #hivm.func_core_type<AIV>
+  func.func @INDIRECT_STORE(%base: memref<?xf32>, %idx: tensor<2x32xi32>, %src: tensor<2x32xf32>) {
+    hivm.hir.indirect_store ins(%src : tensor<2x32xf32>, %idx : tensor<2x32xi32>) outs(%base : memref<?xf32>)
+    return
+  }
+}

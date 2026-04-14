@@ -308,9 +308,12 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
   registerOne<func::CallOp>(patterns);
+  registerOne<hivm::IndirectLoadOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
+      patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::IndirectStoreOp>>(
       patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>>(
       patterns.getContext());

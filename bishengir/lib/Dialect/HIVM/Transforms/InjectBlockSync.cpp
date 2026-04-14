@@ -491,7 +491,8 @@ void InjectBlockSyncAnalysis::InjectAllBlockSync() {
   func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
     opBuilder.setInsertionPointAfter(op);
     if (isa<hivm::LoadOp, hivm::MmadL1Op, hivm::FixpipeOp, hivm::StoreOp,
-            hivm::CopyOp, tensor::InsertSliceOp>(op)) {
+            hivm::CopyOp, tensor::InsertSliceOp, hivm::IndirectLoadOp,
+            hivm::IndirectStoreOp>(op)) {
       insertBlockAll(op, /*insertBefore=*/true);
       insertBlockAll(op);
     }

@@ -329,6 +329,7 @@ def EmbeddingGatherOp : HIVM_Op<"embedding_gather", [
     DestinationStyleOpInterface,
     OpPipeInterface,
     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+    HIVMCoreTypeInterface, VectorCoreTypeTrait,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     DeclareOpInterfaceMethods<LibraryFunctionOpInterface>
 ]> {
@@ -521,13 +522,12 @@ def LocalStoreOp : HIVM_Op<"local_store", [
 // IndirectLoadOp
 //===----------------------------------------------------------------------===//
 
-def IndirectLoadOp : HIVM_Op<"indirect_load",[
+def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
                             StaticMaxRankTrait<5>,
-                            DestinationStyleOpInterface,
-                            OpPipeInterface,
-                            SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+                            SinglePipeOpTrait,
+                            OpPipeTrait<"PIPE::PIPE_V">,
+                            VectorCoreTypeTrait,
                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-                            DeclareOpInterfaceMethods<LibraryFunctionOpInterface>,
                             AttrSizedOperandSegments
                             ]> {
   let summary = [{
@@ -595,13 +595,12 @@ def IndirectLoadOp : HIVM_Op<"indirect_load",[
 // IndirectStoreOp
 //===----------------------------------------------------------------------===//
 
-def IndirectStoreOp : HIVM_Op<"indirect_store",[
+def IndirectStoreOp : HIVM_StructuredOp<"indirect_store",[
                             StaticMaxRankTrait<5>,
-                            DestinationStyleOpInterface,
-                            OpPipeInterface,
-                            SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
-                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-                            DeclareOpInterfaceMethods<LibraryFunctionOpInterface>,
+                            SinglePipeOpTrait,
+                            OpPipeTrait<"PIPE::PIPE_V">,
+                            VectorCoreTypeTrait,
+                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
                             ]> {
   let summary = [{
     Performs indirect memory storing with SIMT template.
@@ -669,6 +668,7 @@ def GatherTOp : HIVM_Op<"gatherT",[
                             DestinationStyleOpInterface,
                             OpPipeInterface,
                             SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+                            HIVMCoreTypeInterface, VectorCoreTypeTrait,
                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
                             DeclareOpInterfaceMethods<LibraryFunctionOpInterface>
                             ]> {
@@ -750,6 +750,7 @@ def IndexPutOp : HIVM_Op<"index_put",[
                             DestinationStyleOpInterface,
                             OpPipeInterface,
                             SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+                            HIVMCoreTypeInterface, VectorCoreTypeTrait,
                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
                             DeclareOpInterfaceMethods<LibraryFunctionOpInterface>
                             ]> {
@@ -832,6 +833,7 @@ def ScatterTOp : HIVM_Op<"scatterT",[
                             DestinationStyleOpInterface,
                             OpPipeInterface,
                             SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+                            HIVMCoreTypeInterface, VectorCoreTypeTrait,
                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
                             DeclareOpInterfaceMethods<LibraryFunctionOpInterface>,
                             AttrSizedOperandSegments

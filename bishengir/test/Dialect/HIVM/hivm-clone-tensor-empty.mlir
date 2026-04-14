@@ -70,3 +70,18 @@ func.func @test_sink_empty() -> tensor<16xf32>{
   
   return %ret : tensor<16xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_clone_indirect_load_empty
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<2x32xf32>
+// CHECK: %[[INDIRECT:.*]] = hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<2x32xi32>) outs(%[[EMPTY0]] : tensor<2x32xf32>) -> tensor<2x32xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<2x32xf32>
+// CHECK: %[[VADD:.*]] = hivm.hir.vadd ins(%[[INDIRECT]], %{{.*}} : tensor<2x32xf32>, tensor<2x32xf32>) outs(%[[EMPTY1]] : tensor<2x32xf32>) -> tensor<2x32xf32>
+func.func @test_clone_indirect_load_empty(%base: memref<?xf32>,
+                                          %idx: tensor<2x32xi32>,
+                                          %rhs: tensor<2x32xf32>) -> tensor<2x32xf32> {
+  %empty = tensor.empty() : tensor<2x32xf32>
+  %0 = hivm.hir.indirect_load ins(%base : memref<?xf32>, %idx : tensor<2x32xi32>) outs(%empty : tensor<2x32xf32>) -> tensor<2x32xf32>
+  %1 = hivm.hir.vadd ins(%0, %rhs : tensor<2x32xf32>, tensor<2x32xf32>) outs(%empty : tensor<2x32xf32>) -> tensor<2x32xf32>
+  return %1 : tensor<2x32xf32>
+}

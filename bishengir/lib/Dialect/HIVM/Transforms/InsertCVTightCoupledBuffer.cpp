@@ -611,6 +611,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   registerAllVectorOp<InsertMoveL1BetweenVectorAndCube>(patterns);
   registerOne<func::CallOp>(patterns);
   registerOne<mlir::scf::ForOp>(patterns);
+  registerOne<hivm::IndirectLoadOp>(patterns);
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
@@ -619,6 +620,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::IndirectStoreOp>>(patterns.getContext());
 }
 
 void InsertCVTightCoupledBufferPass::runOnOperation() {
