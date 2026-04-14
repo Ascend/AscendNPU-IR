@@ -729,8 +729,8 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
             auto rank = allocOp.getType().getRank();
             if (!(tilingDim == -1 ||
                   (tilingDim != rank - 2 && tilingDim != rank - 1))) {
-              ddm = tilingDim == rank - 2 ? DualDstMode::SplitN
-                                          : DualDstMode::SplitM;
+              ddm = tilingDim == rank - 2 ? DualDstMode::SplitM
+                                          : DualDstMode::SplitN;
             }
           }
         }
@@ -738,14 +738,14 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
     }
   } else {
     if (ddmAttr.getDualDstMode() == FixpipeDualDstMode::ROW_SPLIT) {
-      ddm = DualDstMode::SplitN;
-    } else if (ddmAttr.getDualDstMode() == FixpipeDualDstMode::COLUMN_SPLIT) {
       ddm = DualDstMode::SplitM;
+    } else if (ddmAttr.getDualDstMode() == FixpipeDualDstMode::COLUMN_SPLIT) {
+      ddm = DualDstMode::SplitN;
     }
   }
   int64_t nSizeStride =
       getNsizeAlignmentRequirement(dtype, csn, nz2nd, le, ddm);
-  if (nSizeStride != -1 && nz2dn != NZ2DN::DN_Y) {
+  if (nSizeStride != -1 && nz2dn != NZ2DN::DN_Y && ddm != DualDstMode::SplitM) {
     alignBytes = nSizeStride * dataWidth / 8;
     std::optional<int> alignDim =
         getLastNotUnitDim(memRefTypes, continuousReassociations);
