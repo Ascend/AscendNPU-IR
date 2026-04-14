@@ -320,7 +320,7 @@ def TritonGPUOptimizeThreadLocality : Pass<"tritongpu-optimize-thread-locality",
 def TritonGPUReorderInstructions: Pass<"tritongpu-reorder-instructions", "mlir::ModuleOp"> {
   let summary = "Reorder instructions";
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   let constructor = "mlir::triton::gpu::createTritonGPUReorderInstructionsPass()";
 #endif
 
@@ -330,7 +330,7 @@ def TritonGPUReorderInstructions: Pass<"tritongpu-reorder-instructions", "mlir::
 
   let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
                            "mlir::triton::TritonDialect"];
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
   let options = [
     Option<"enableSimtReorderInstruction", "enable-simt-reorder-instruction",
            "bool", /*default*/"false",

@@ -1,4 +1,4 @@
-// REQUIRES: bspriv_davinci_bishengir
+// REQUIRES: bspub_davinci_bishengir
 // RUN: echo "" | mlir-opt --show-dialects | FileCheck %s
 // CHECK: Available Dialects:
 // CHECK-SAME: acc

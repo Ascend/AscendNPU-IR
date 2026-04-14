@@ -337,7 +337,7 @@ LogicalResult lowerLdStMatrix(
       auto regIdxAddI8 = regIdxAdd * (bitwidth / 8);
       Value innerOffset = b.add(offset, b.i32_val(regIdxAddI8));
       auto vecAddr = b.gep(smemPtrTy, i8_ty, smemBase, innerOffset
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                            ,
                            LLVM::GEPNoWrapFlags::inbounds
 #endif
@@ -354,7 +354,7 @@ LogicalResult lowerLdStMatrix(
           }
           inputs.push_back(b.bitcast(input, i32_ty));
         }
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
         // FIXME: We don't support cube yet?
         rewriter.create<NVVM::StMatrixOp>(
             loc, vecAddr, inputs, layout,

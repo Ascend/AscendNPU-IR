@@ -218,7 +218,7 @@ void setupLowerTritonPipelineOptions(
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedDynamicSize() < 122880 ||
       config.getSharedDynamicSize() > 221184)
     llvm::report_fatal_error(

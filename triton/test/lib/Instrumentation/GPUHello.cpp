@@ -63,7 +63,7 @@ bool GpuHello::runOnModule(Module &module) {
 PassPluginLibraryInfo getPassPluginInfo() {
   const auto callback = [](PassBuilder &pb) {
     pb.registerOptimizerLastEPCallback([&](ModulePassManager &mpm, auto
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                                            ,
                                            auto
 #endif

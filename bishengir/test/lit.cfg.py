@@ -94,5 +94,5 @@ if ('bisheng' in config.bisheng_compiler_executable and os.path.isfile(config.bi
 if config.bishengir_enable_triton_compile:
     config.available_features.add('enable_triton_ir_compile')
 
-if config.bspriv_davinci_bishengir:
-    config.available_features.add("bspriv_davinci_bishengir")
+if config.bspub_davinci_bishengir:
+    config.available_features.add("bspub_davinci_bishengir")

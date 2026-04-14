@@ -1,0 +1,1936 @@
+diff --git a/llvm/CMakeLists.txt b/llvm/CMakeLists.txt
+index 8d0155e2e1..f6311a506f 100644
+--- a/llvm/CMakeLists.txt
++++ b/llvm/CMakeLists.txt
+@@ -498,14 +498,14 @@ set(LLVM_ALL_EXPERIMENTAL_TARGETS
+   Xtensa
+ )
+ 
+-option(LLVM_BSPRIV_DAVINCI_BISHENGIR "Enable BiShengIR features for BiSheng" OFF)
+-if(LLVM_BSPRIV_DAVINCI_BISHENGIR)
+-  option(BSPRIV_DAVINCI_BISHENGIR CACHE ON)
++option(LLVM_BSPUB_DAVINCI_BISHENGIR "Enable BiShengIR features for BiSheng" OFF)
++if(LLVM_BSPUB_DAVINCI_BISHENGIR)
++  option(BSPUB_DAVINCI_BISHENGIR CACHE ON)
+   # BiShengIR project depends on HiIPU target
+-  option(LLVM_BSPRIV_DAVINCI CACHE ON)
+-  add_definitions( -DBSPRIV_DAVINCI )
++  option(LLVM_BSPUB_DAVINCI CACHE ON)
++  add_definitions( -DBSPUB_DAVINCI )
+ else()
+-  option(BSPRIV_DAVINCI_BISHENGIR CACHE OFF)
++  option(BSPUB_DAVINCI_BISHENGIR CACHE OFF)
+ endif()
+ 
+ # List of targets with JIT support:
+diff --git a/llvm/include/llvm/AsmParser/LLToken.h b/llvm/include/llvm/AsmParser/LLToken.h
+index 40f42b7527..22ebee41d5 100644
+--- a/llvm/include/llvm/AsmParser/LLToken.h
++++ b/llvm/include/llvm/AsmParser/LLToken.h
+@@ -154,7 +154,7 @@ enum Kind {
+   kw_avr_signalcc,
+   kw_ptx_kernel,
+   kw_ptx_device,
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+   kw_ptc_kernel,
+   kw_ptc_vector,
+   kw_ptc_device,
+diff --git a/llvm/include/llvm/CodeGen/ValueTypes.td b/llvm/include/llvm/CodeGen/ValueTypes.td
+index d9d3f0bfa0..fb11074608 100644
+--- a/llvm/include/llvm/CodeGen/ValueTypes.td
++++ b/llvm/include/llvm/CodeGen/ValueTypes.td
+@@ -293,7 +293,7 @@ def aarch64svcount
+               : ValueType<16,  203>;  // AArch64 predicate-as-counter
+ def spirvbuiltin : ValueType<0, 204>; // SPIR-V's builtin type
+ 
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ def v256bf16 : ValueType<4096,  205>;  // 256 x bf16 vector value
+ def v2hif8   : ValueType<16,    206>;  //   2 x hif8 vector value
+ def v256hif8 : ValueType<2048,  207>;  // 256 x hif8 vector value
+diff --git a/llvm/include/llvm/IR/CMakeLists.txt b/llvm/include/llvm/IR/CMakeLists.txt
+index ce8dd7d79a..916e640349 100644
+--- a/llvm/include/llvm/IR/CMakeLists.txt
++++ b/llvm/include/llvm/IR/CMakeLists.txt
+@@ -10,7 +10,7 @@ tablegen(LLVM IntrinsicsARM.h -gen-intrinsic-enums -intrinsic-prefix=arm)
+ tablegen(LLVM IntrinsicsBPF.h -gen-intrinsic-enums -intrinsic-prefix=bpf)
+ tablegen(LLVM IntrinsicsDirectX.h -gen-intrinsic-enums -intrinsic-prefix=dx)
+ tablegen(LLVM IntrinsicsHexagon.h -gen-intrinsic-enums -intrinsic-prefix=hexagon)
+-if (LLVM_BSPRIV_DAVINCI)
++if (LLVM_BSPUB_DAVINCI)
+   tablegen(LLVM IntrinsicsHIVM.h -gen-intrinsic-enums -intrinsic-prefix=hivm)
+   tablegen(LLVM IntrinsicsHiTPE.h -gen-intrinsic-enums -intrinsic-prefix=hivm)
+ endif()
+diff --git a/llvm/include/llvm/IR/CallingConv.h b/llvm/include/llvm/IR/CallingConv.h
+index 94c63822bb..1d40239b7a 100644
+--- a/llvm/include/llvm/IR/CallingConv.h
++++ b/llvm/include/llvm/IR/CallingConv.h
+@@ -270,7 +270,7 @@ namespace CallingConv {
+     /// Preserve X1-X15, X19-X29, SP, Z0-Z31, P0-P15.
+     AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1 = 111,
+ 
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+     PTC_SimdVf = 112,
+     TPE_SIMTEntry = 113,
+     TPE_SIMTCallable = 114,
+diff --git a/llvm/include/llvm/IR/FixedMetadataKinds.def b/llvm/include/llvm/IR/FixedMetadataKinds.def
+index f94fd79dec..782710e4ea 100644
+--- a/llvm/include/llvm/IR/FixedMetadataKinds.def
++++ b/llvm/include/llvm/IR/FixedMetadataKinds.def
+@@ -70,7 +70,7 @@ LLVM_FIXED_MD_KIND(MD_llccachemisses, "llccachemisses", 48)
+ LLVM_FIXED_MD_KIND(MD_gep_type, "gep.type", 49)
+ LLVM_FIXED_MD_KIND(MD_gep_index, "gep.index", 50)
+ #endif
+-#if defined(BSPRIV_DAVINCI)
++#if defined(BSPUB_DAVINCI)
+ LLVM_FIXED_MD_KIND(MD_immutable, "immutable", 41)
+ #endif
+ #if defined(BSPRIV_COMMON_NESTEDCONTAINERFLATTENING)
+diff --git a/llvm/include/llvm/IR/Intrinsics.td b/llvm/include/llvm/IR/Intrinsics.td
+index 2a6d03fe32..092534b109 100644
+--- a/llvm/include/llvm/IR/Intrinsics.td
++++ b/llvm/include/llvm/IR/Intrinsics.td
+@@ -563,7 +563,7 @@ def llvm_v4f16_ty      : LLVMType<v4f16>;    //  4 x half (__fp16)
+ def llvm_v8f16_ty      : LLVMType<v8f16>;    //  8 x half (__fp16)
+ def llvm_v16f16_ty     : LLVMType<v16f16>;   // 16 x half (__fp16)
+ def llvm_v32f16_ty     : LLVMType<v32f16>;   // 32 x half (__fp16)
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ def llvm_v256f8e4m3_ty : LLVMType<v256f8e4m3>;  //  256 x f8e4m3
+ def llvm_v256f8e5m2_ty : LLVMType<v256f8e5m2>;  //  256 x f8e5m2
+ def llvm_v64f16_ty     : LLVMType<v64f16>;   // 64 x half (__fp16)  // Not target
+@@ -585,7 +585,7 @@ def llvm_v4f32_ty      : LLVMType<v4f32>;    //  4 x float
+ def llvm_v8f32_ty      : LLVMType<v8f32>;    //  8 x float
+ def llvm_v16f32_ty     : LLVMType<v16f32>;   // 16 x float
+ def llvm_v32f32_ty     : LLVMType<v32f32>;   // 32 x float
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ def llvm_v64f32_ty     : LLVMType<v64f32>;   // 64 x float
+ #endif
+ def llvm_v1f64_ty      : LLVMType<v1f64>;    //  1 x double
+@@ -2770,7 +2770,7 @@ include "llvm/IR/IntrinsicsARM.td"
+ include "llvm/IR/IntrinsicsAArch64.td"
+ include "llvm/IR/IntrinsicsXCore.td"
+ include "llvm/IR/IntrinsicsHexagon.td"
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ include "llvm/IR/IntrinsicsHIVM.td"
+ include "llvm/IR/IntrinsicsHiTPE.td"
+ #endif
+diff --git a/llvm/include/llvm/IR/IntrinsicsHIVM.td b/llvm/include/llvm/IR/IntrinsicsHIVM.td
+index 9a19ef966d..c321328bf0 100644
+--- a/llvm/include/llvm/IR/IntrinsicsHIVM.td
++++ b/llvm/include/llvm/IR/IntrinsicsHIVM.td
+@@ -8,7 +8,7 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ 
+ def llvm_ptr_ty1 : LLVMQualPointerType<1>; // __gm__
+ def llvm_ptr_ty2 : LLVMQualPointerType<2>; // __cbuf__
+@@ -2502,5 +2502,5 @@ let TargetPrefix = "hivm" in {
+     Intrinsic<[llvm_v256i1_ty], [llvm_v64i32_ty, llvm_i32_ty], [IntrNoMem]>;
+ }
+ 
+-#endif // BSPRIV_DAVINCI
++#endif // BSPUB_DAVINCI
+ 
+diff --git a/llvm/include/llvm/IR/IntrinsicsHiTPE.td b/llvm/include/llvm/IR/IntrinsicsHiTPE.td
+index f315adeaed..847c36546f 100644
+--- a/llvm/include/llvm/IR/IntrinsicsHiTPE.td
++++ b/llvm/include/llvm/IR/IntrinsicsHiTPE.td
+@@ -7,7 +7,7 @@
+ // This file defines all of the HiTPE-specific intrinsics for use with HiTPE.
+ //
+ //===----------------------------------------------------------------------===//
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ class TPE_SHFL_INFO<string mode, string type, bit return_pred> {
+   string Suffix = mode # "_"
+                   # type
+diff --git a/llvm/lib/IR/AsmWriter.cpp b/llvm/lib/IR/AsmWriter.cpp
+index 2379748d33..dadc1b1f0e 100644
+--- a/llvm/lib/IR/AsmWriter.cpp
++++ b/llvm/lib/IR/AsmWriter.cpp
+@@ -364,7 +364,7 @@ static void PrintCallingConv(unsigned cc, raw_ostream &Out) {
+     Out << "amdgpu_cs_chain_preserve";
+     break;
+   case CallingConv::AMDGPU_KERNEL: Out << "amdgpu_kernel"; break;
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+   case CallingConv::PTC_SimdVf:
+     Out << "ptc_simdvf";
+     break;
+diff --git a/llvm/lib/IR/Function.cpp b/llvm/lib/IR/Function.cpp
+index 003cc76c5a..fa0b675497 100644
+--- a/llvm/lib/IR/Function.cpp
++++ b/llvm/lib/IR/Function.cpp
+@@ -38,9 +38,9 @@
+ #include "llvm/IR/IntrinsicsBPF.h"
+ #include "llvm/IR/IntrinsicsDirectX.h"
+ #include "llvm/IR/IntrinsicsHexagon.h"
+-#ifdef BSPRIV_DAVINCI
++#ifdef BSPUB_DAVINCI
+ #include "llvm/IR/IntrinsicsHIVM.h"
+-#endif // BSPRIV_DAVINCI
++#endif // BSPUB_DAVINCI
+ #include "llvm/IR/IntrinsicsLoongArch.h"
+ #include "llvm/IR/IntrinsicsMips.h"
+ #include "llvm/IR/IntrinsicsNVPTX.h"
+diff --git a/mlir/include/mlir/Config/mlir-config.h.cmake b/mlir/include/mlir/Config/mlir-config.h.cmake
+index 3514f6b95b..ea7cf71faf 100644
+--- a/mlir/include/mlir/Config/mlir-config.h.cmake
++++ b/mlir/include/mlir/Config/mlir-config.h.cmake
+@@ -44,6 +44,6 @@
+ #cmakedefine01 MLIR_ENABLE_ROCM_CONVERSIONS
+ 
+ /* If set, enables BiShengIR extention to MLIR. */
+-#cmakedefine01 BSPRIV_DAVINCI_BISHENGIR
++#cmakedefine01 BSPUB_DAVINCI_BISHENGIR
+ 
+ #endif
+diff --git a/mlir/include/mlir/Conversion/LLVMCommon/LoweringOptions.h b/mlir/include/mlir/Conversion/LLVMCommon/LoweringOptions.h
+index e5f22b02a5..09bc688ec4 100644
+--- a/mlir/include/mlir/Conversion/LLVMCommon/LoweringOptions.h
++++ b/mlir/include/mlir/Conversion/LLVMCommon/LoweringOptions.h
+@@ -35,7 +35,7 @@ public:
+ 
+   bool useBarePtrCallConv = false;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   /// If true, only function arguments/results with `llvm.bareptr` attribute
+   /// will be converted according to the bare ptr calling convention.
+   ///
+diff --git a/mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h b/mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h
+index 5b5587ab61..684288853e 100644
+--- a/mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h
++++ b/mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h
+@@ -58,7 +58,7 @@ public:
+                                 bool useBarePtrCallConv,
+                                 SignatureConversion &result) const;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   /// Convert a function type. The arguments and results are converted one by
+   /// one and results are packed into a wrapped LLVM IR structure type. `result`
+   /// is populated with argument mapping.
+diff --git a/mlir/include/mlir/Dialect/CommonFolders.h b/mlir/include/mlir/Dialect/CommonFolders.h
+index 02c7dcd3bb..697adaec00 100644
+--- a/mlir/include/mlir/Dialect/CommonFolders.h
++++ b/mlir/include/mlir/Dialect/CommonFolders.h
+@@ -68,7 +68,7 @@ Attribute constFoldBinaryOpConditional(ArrayRef<Attribute> operands,
+ 
+     return AttrElementT::get(resultType, *calRes);
+   }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   // If input is arith.constant dense array(but values are not same),
+   // do not fold
+   if ((isa<DenseElementsAttr>(operands[0]) &&
+diff --git a/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td b/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
+index 7ef9388060..b1a1a23001 100644
+--- a/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
++++ b/mlir/include/mlir/Dialect/GPU/IR/GPUOps.td
+@@ -241,7 +241,7 @@ def GPU_ThreadIdOp : GPU_IndexOp<"thread_id"> {
+   }];
+ }
+ 
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+ def GPU_LinearBlockIdOp : GPU_Op<"linear_block_id", [Pure]> {
+   let description = [{
+     Returns the linear block id within the grid.
+diff --git a/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td b/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
+index 403f6f6fa9..2f8127033d 100644
+--- a/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
++++ b/mlir/include/mlir/Dialect/Linalg/IR/LinalgStructuredOps.td
+@@ -382,7 +382,7 @@ def ReduceOp : LinalgStructuredBase_Op<"reduce", [
+ 
+   let hasCustomAssemblyFormat = 1;
+   let hasVerifier = 1;
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   let hasCanonicalizer = 1;
+ #endif
+ }
+diff --git a/mlir/include/mlir/Dialect/Linalg/Passes.td b/mlir/include/mlir/Dialect/Linalg/Passes.td
+index 3aa52b989c..5806e919d3 100644
+--- a/mlir/include/mlir/Dialect/Linalg/Passes.td
++++ b/mlir/include/mlir/Dialect/Linalg/Passes.td
+@@ -61,7 +61,7 @@ def ConvertLinalgToParallelLoopsPass
+ def LinalgFoldUnitExtentDimsPass : Pass<"linalg-fold-unit-extent-dims", ""> {
+   let summary = "Remove unit-extent dimension in Linalg ops on tensors";
+   let options = [
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+     Option<"foldRankReducingSlices", "fold-rank-reducing-slices", "bool",
+            /*default=*/"true",
+            "Include fold rank-reducing slices using reassociative reshapes">,
+diff --git a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+index 5f9e3fe3ab..7743914eb3 100644
+--- a/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
++++ b/mlir/include/mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.td
+@@ -347,7 +347,7 @@ def FuseIntoContainingOp :
+   }];
+ 
+   let arguments = (ins TransformHandleTypeInterface:$producer_op,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+                        TransformHandleTypeInterface:$containing_op,
+                        DefaultValuedAttr<BoolAttr, "false">:
+                            $merge_multiple_extract_uses);
+@@ -609,7 +609,7 @@ def MatchOp : Op<Transform_Dialect, "structured.match",
+                        OptionalAttr<StrArrayAttr>:$ops,
+                        OptionalAttr<MatchInterfaceEnum>:$interface,
+                        OptionalAttr<DictionaryAttr>:$op_attrs,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+                        OptionalAttr<DictionaryAttr>:$optional_op_attrs,
+ #endif
+                        OptionalAttr<TypeAttr>:$filter_result_type,
+@@ -620,7 +620,7 @@ def MatchOp : Op<Transform_Dialect, "structured.match",
+   let builders = [
+     OpBuilder<(ins "Value":$target, "ArrayRef<StringRef>":$opNames)>,
+     OpBuilder<(ins "TypeRange":$resultTypes, "Value":$target, "ArrayRef<StringRef>":$opNames)>
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+    ,
+    OpBuilder<(ins "Value":$target, "ArrayAttr":$ops,
+                   "DictionaryAttr":$op_attrs, "DictionaryAttr":$optional_op_attrs)>,
+@@ -632,7 +632,7 @@ def MatchOp : Op<Transform_Dialect, "structured.match",
+     (`ops` `{` $ops^ `}`)?
+     (`interface` `{` $interface^ `}`)?
+     (`attributes` $op_attrs^)? }] #
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   [{
+     (`optional_attributes` $optional_op_attrs^)?
+   }] #
+@@ -1642,7 +1642,7 @@ def SplitReductionOp : Op<Transform_Dialect, "structured.split_reduction",
+ 
+ def TileReductionUsingForOp : Op<Transform_Dialect, "structured.tile_reduction_using_for",
+        [FunctionalStyleTransformOpTrait,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+ #else
+   MemoryEffectsOpInterface, TransformEachOpTrait,
+@@ -1718,7 +1718,7 @@ def TileReductionUsingForOp : Op<Transform_Dialect, "structured.tile_reduction_u
+     ```
+   }];
+ 
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   let arguments = (ins TransformHandleTypeInterface:$target,
+                    Variadic<Transform_AnyHandleOrParamType>:$tile_sizes,
+                    DefaultValuedOptionalAttr<DenseI64ArrayAttr, "{}">:$static_tile_sizes);
+@@ -2002,7 +2002,7 @@ def TileUsingForOp : Op<Transform_Dialect, "structured.tile_using_for",
+   }];
+ 
+   let arguments = (ins TransformHandleTypeInterface:$target,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+                    Variadic<Transform_AnyHandleOrParamType>:$dynamic_sizes,
+ #else
+                    Variadic<TransformAnyParamTypeOrAnyHandle>:$dynamic_sizes,
+diff --git a/mlir/include/mlir/Dialect/Linalg/Transforms/Transforms.h b/mlir/include/mlir/Dialect/Linalg/Transforms/Transforms.h
+index ee8d78aaf9..e49953dc67 100644
+--- a/mlir/include/mlir/Dialect/Linalg/Transforms/Transforms.h
++++ b/mlir/include/mlir/Dialect/Linalg/Transforms/Transforms.h
+@@ -476,7 +476,7 @@ struct ControlDropUnitDims {
+   RankReductionStrategy rankReductionStrategy =
+       RankReductionStrategy::ReassociativeReshape;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   bool foldRankReducingSlices = true;
+   bool enableExperimentalDropping = false;
+   bool avoidZeroRanks = false;
+@@ -484,7 +484,7 @@ struct ControlDropUnitDims {
+ 
+   using ControlFnTy = std::function<SmallVector<unsigned>(Operation *)>;
+   ControlFnTy controlFn = [](Operation *op) {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (auto linalgOp = dyn_cast_or_null<LinalgOp>(op)) {
+       return llvm::to_vector(llvm::seq<unsigned>(0, linalgOp.getNumLoops()));
+     }
+@@ -500,7 +500,7 @@ struct ControlDropUnitDims {
+     return SmallVector<unsigned>{};
+   };
+ };
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct DropUnitDimsResult {
+   linalg::LinalgOp resultOp;
+   SmallVector<Value> replacements;
+@@ -1748,7 +1748,7 @@ void populateMoveInitOperandsToInputPattern(RewritePatternSet &patterns);
+ /// Patterns that are used to inline constant operands into linalg generic ops.
+ void populateInlineConstantOperandsPatterns(RewritePatternSet &patterns);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct BubbleUpExtractSliceOptions {
+   bool aggressive{false};
+ };
+diff --git a/mlir/include/mlir/Dialect/MemRef/IR/MemRefOps.td b/mlir/include/mlir/Dialect/MemRef/IR/MemRefOps.td
+index 88ef5dbd0a..fa4edfadda 100644
+--- a/mlir/include/mlir/Dialect/MemRef/IR/MemRefOps.td
++++ b/mlir/include/mlir/Dialect/MemRef/IR/MemRefOps.td
+@@ -1407,7 +1407,7 @@ def MemRef_ReinterpretCastOp
+       "OpFoldResult":$offset, "ArrayRef<OpFoldResult>":$sizes,
+       "ArrayRef<OpFoldResult>":$strides,
+       CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)>,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+     OpBuilder<(ins "MemRefType":$resultType, "Value":$source,
+       "ArrayRef<OpFoldResult>":$offsets,
+       "ArrayRef<OpFoldResult>":$sizes,
+diff --git a/mlir/include/mlir/Dialect/SCF/TransformOps/SCFTransformOps.td b/mlir/include/mlir/Dialect/SCF/TransformOps/SCFTransformOps.td
+index 980d06f5f2..ecb8a75c9d 100644
+--- a/mlir/include/mlir/Dialect/SCF/TransformOps/SCFTransformOps.td
++++ b/mlir/include/mlir/Dialect/SCF/TransformOps/SCFTransformOps.td
+@@ -430,7 +430,7 @@ def LoopFuseSiblingOp : Op<Transform_Dialect, "loop.fuse_sibling",
+   }];
+ 
+   let arguments = (ins TransformHandleTypeInterface:$target,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+                        TransformHandleTypeInterface:$source,
+                        DefaultValuedAttr<BoolAttr, "false">:$fuse_inner_sibling_loops);
+ #else
+diff --git a/mlir/include/mlir/Dialect/Tensor/Transforms/Transforms.h b/mlir/include/mlir/Dialect/Tensor/Transforms/Transforms.h
+index 873b688390..30228b9bce 100644
+--- a/mlir/include/mlir/Dialect/Tensor/Transforms/Transforms.h
++++ b/mlir/include/mlir/Dialect/Tensor/Transforms/Transforms.h
+@@ -56,7 +56,7 @@ void populateFoldTensorSubsetIntoVectorTransferPatterns(
+ /// bufferization is sensitive to IR structure, particularly those
+ /// tensor.extract_slice and tensor.insert_slice ops for creating the slices.
+ void populateMergeConsecutiveInsertExtractSlicePatterns(
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     RewritePatternSet &patterns, PatternBenefit benefit = 0);
+ #else
+     RewritePatternSet &patterns);
+diff --git a/mlir/include/mlir/Dialect/Tensor/Utils/Utils.h b/mlir/include/mlir/Dialect/Tensor/Utils/Utils.h
+index f0ab03af25..120c67676c 100644
+--- a/mlir/include/mlir/Dialect/Tensor/Utils/Utils.h
++++ b/mlir/include/mlir/Dialect/Tensor/Utils/Utils.h
+@@ -60,7 +60,7 @@ bool isCastLikeInsertSliceOp(InsertSliceOp op);
+ /// unit dimensions of the source tensor or extracts the entire source tensor.
+ bool isCastLikeExtractSliceOp(ExtractSliceOp op);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ bool isOffsetBytesAligned(ExtractSliceOp op, int64_t bytesToAlign);
+ #endif
+ 
+diff --git a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
+index 4756610549..eda2b97630 100644
+--- a/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
++++ b/mlir/include/mlir/Dialect/Transform/IR/TransformOps.td
+@@ -334,7 +334,7 @@ def ApplyPatternsOp : TransformDialectOp<"apply_patterns",
+     TransformHandleTypeInterface:$target, UnitAttr:$apply_cse,
+     DefaultValuedAttr<I64Attr, "static_cast<uint64_t>(-1)">:$max_iterations,
+     DefaultValuedAttr<I64Attr, "static_cast<uint64_t>(-1)">:$max_num_rewrites
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+     ,OptionalAttr<StrArrayAttr>:$disable_patterns);
+ #else
+     );
+diff --git a/mlir/include/mlir/Dialect/Utils/ReshapeOpsUtils.h b/mlir/include/mlir/Dialect/Utils/ReshapeOpsUtils.h
+index 5f812e0a9c..3ba20db301 100644
+--- a/mlir/include/mlir/Dialect/Utils/ReshapeOpsUtils.h
++++ b/mlir/include/mlir/Dialect/Utils/ReshapeOpsUtils.h
+@@ -265,7 +265,7 @@ struct ComposeCollapseOfExpandOp : public OpRewritePattern<CollapseOpTy> {
+     ShapedType srcType = expandOp.getSrcType();
+     ShapedType resultType = collapseOp.getResultType();
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     // expand `memref<?xf32, strided<[1]>>` with output_shape `[1, %x]` will get
+     // `memref<1x?xf32, strided<[?, 1]>>`, although not identity layout, it can
+     // still be safely combined with collapse op with same reassociations.
+@@ -331,7 +331,7 @@ struct ComposeCollapseOfExpandOp : public OpRewritePattern<CollapseOpTy> {
+     }
+     return success();
+   }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   // treat collapse and expand op identitical, if they have the same
+   // reassociations, and the expanded shapes within each single reassociation
+   // group all equal to one (with at most one dynamic shape)
+@@ -427,7 +427,7 @@ private:
+       auto resultSubShape =
+           resultShape.slice(resultIndices.front(), resultIndices.size());
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       // After backport two commits (e8b23ab0 and 271c7969) from mlir
+       // upstream, the community code will not fold reshapes if there exists
+       // more than two dynamic dims, which causes compilation errors. To handle
+@@ -626,7 +626,7 @@ struct PackingMetadata {
+ // repeated N^2 counts).
+ PackingMetadata computePackingMetadata(int64_t packedRank,
+                                        ArrayRef<int64_t> innerDimPos);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ void putInExpandShape(int64_t shape, SmallVector<int64_t> &newExpandShape,
+                       ReassociationIndices &bottomIndices);
+ 
+diff --git a/mlir/include/mlir/Dialect/Utils/StructuredOpsUtils.td b/mlir/include/mlir/Dialect/Utils/StructuredOpsUtils.td
+index 80ccc5a2b8..bc6a891c86 100644
+--- a/mlir/include/mlir/Dialect/Utils/StructuredOpsUtils.td
++++ b/mlir/include/mlir/Dialect/Utils/StructuredOpsUtils.td
+@@ -15,7 +15,7 @@ include "mlir/IR/EnumAttr.td"
+ def IteratorType : I32EnumAttr<"IteratorType", "Iterator type", [
+   I32EnumAttrCase<"parallel", 0>,
+   I32EnumAttrCase<"reduction", 1>
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   ,
+   I32EnumAttrCase<"concat", 2>,
+   I32EnumAttrCase<"gather", 3>
+diff --git a/mlir/include/mlir/InitAllDialects.h b/mlir/include/mlir/InitAllDialects.h
+index 3e63fa6ba9..7c999d0101 100644
+--- a/mlir/include/mlir/InitAllDialects.h
++++ b/mlir/include/mlir/InitAllDialects.h
+@@ -130,7 +130,7 @@ inline void registerAllDialects(DialectRegistry &registry) {
+                   mesh::MeshDialect,
+                   ml_program::MLProgramDialect,
+                   mpi::MPIDialect,
+-#if !BSPRIV_DAVINCI_BISHENGIR
++#if !BSPUB_DAVINCI_BISHENGIR
+ // TODO: nvgpu dialect is also defined in Triton. So when we build triton and
+ // bishengir at the same time, we have to disable MLIR upstream's nvgpu
+ // dialect.
+diff --git a/mlir/include/mlir/Interfaces/DestinationStyleOpInterface.td b/mlir/include/mlir/Interfaces/DestinationStyleOpInterface.td
+index 033937c057..6455d641b1 100644
+--- a/mlir/include/mlir/Interfaces/DestinationStyleOpInterface.td
++++ b/mlir/include/mlir/Interfaces/DestinationStyleOpInterface.td
+@@ -114,7 +114,7 @@ def DestinationStyleOpInterface : OpInterface<"DestinationStyleOpInterface"> {
+           $_op.getDpsInputOperands(), [](OpOperand *o) { return o->get(); }));
+     }
+   }] #
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+   [{
+     /// Return the `i`-th DPS input operand.
+     ::mlir::OpOperand *getDpsInputOperand(int64_t i) {
+diff --git a/mlir/include/mlir/Interfaces/ViewLikeInterface.h b/mlir/include/mlir/Interfaces/ViewLikeInterface.h
+index 6ce028c7b0..505d447963 100644
+--- a/mlir/include/mlir/Interfaces/ViewLikeInterface.h
++++ b/mlir/include/mlir/Interfaces/ViewLikeInterface.h
+@@ -61,7 +61,7 @@ class OpWithOffsetSizesAndStridesConstantArgumentFolder final
+ public:
+   using OpRewritePattern<OpType>::OpRewritePattern;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   OpWithOffsetSizesAndStridesConstantArgumentFolder(
+       MLIRContext *context, StringRef name = StringRef())
+       : OpRewritePattern<OpType>(context) {
+diff --git a/mlir/include/mlir/Transforms/Passes.h b/mlir/include/mlir/Transforms/Passes.h
+index 04cb7b4ed2..26492db968 100644
+--- a/mlir/include/mlir/Transforms/Passes.h
++++ b/mlir/include/mlir/Transforms/Passes.h
+@@ -52,7 +52,7 @@ class GreedyRewriteConfig;
+ /// settings (which can be overridden by pass options on the command line).
+ std::unique_ptr<Pass> createCanonicalizerPass();
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ std::unique_ptr<Pass>
+ createCanonicalizerPass(const CanonicalizerOptions &options);
+ #endif
+diff --git a/mlir/include/mlir/Transforms/Passes.td b/mlir/include/mlir/Transforms/Passes.td
+index 0e5c16eaf7..320d820a23 100644
+--- a/mlir/include/mlir/Transforms/Passes.td
++++ b/mlir/include/mlir/Transforms/Passes.td
+@@ -50,7 +50,7 @@ def Canonicalizer : Pass<"canonicalize"> {
+            "Max. number of pattern rewrites within an iteration">,
+     Option<"testConvergence", "test-convergence", "bool", /*default=*/"false",
+            "Test only: Fail pass on non-convergence to detect cyclic pattern">,
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+     Option<"enableExtendedPattern", "enable-extended-patterns", "bool", /*default=*/"false",
+            "Indicate if enable custom pattern">
+ #endif
+diff --git a/mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp b/mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp
+index a0cef41f57..10feb9e356 100644
+--- a/mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp
++++ b/mlir/lib/Conversion/FuncToLLVM/FuncToLLVM.cpp
+@@ -71,7 +71,7 @@ static bool shouldUseBarePtrCallConv(Operation *op,
+          typeConverter->getOptions().useBarePtrCallConv;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// Return `true` if the `op`'s argument at `argIdx` should use bare pointer
+ /// calling convention.
+ static bool
+@@ -304,7 +304,7 @@ mlir::convertFuncOpToLLVMFuncOp(FunctionOpInterface funcOp,
+   // LLVMTypeConverter provided to this legalization pattern.
+   auto varargsAttr = funcOp->getAttrOfType<BoolAttr>(varargsAttrName);
+   TypeConverter::SignatureConversion result(funcOp.getNumArguments());
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   Type llvmType;
+   if (!converter.getOptions().onDemandBarePtrCallConv)
+     llvmType = converter.convertFunctionSignature(
+@@ -410,7 +410,7 @@ mlir::convertFuncOpToLLVMFuncOp(FunctionOpInterface funcOp,
+       }
+       auto mapping = result.getInputMapping(i);
+       assert(mapping && "unexpected deletion of function argument");
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       // Only attach the new argument attributes to the first mapped.
+       newArgAttrs[mapping->inputNo] =
+           DictionaryAttr::get(rewriter.getContext(), convertedAttrs);
+@@ -533,7 +533,7 @@ struct CallOpInterfaceLowering : public ConvertOpToLLVMPattern<CallOpType> {
+         return failure();
+     }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (this->getTypeConverter()->getOptions().useBarePtrCallConv) {
+       auto canUseBarePtr =
+           llvm::all_of(callOp->getOperands(), [&](mlir::Value operand) {
+diff --git a/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp b/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
+index 689c8b47ba..e404ebdf64 100644
+--- a/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
++++ b/mlir/lib/Dialect/Bufferization/Transforms/OneShotAnalysis.cpp
+@@ -303,7 +303,7 @@ static bool isReachable(Block *from, Block *to, ArrayRef<Block *> except) {
+   return false;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// Finds a common extract slice that defines both the read and write operand
+ static tensor::ExtractSliceOp findCommonExtractSlice(OpOperand *uRead,
+                                                      OpOperand *uWrite) {
+@@ -810,7 +810,7 @@ static bool canUseOpDominance(OpOperand *uRead, OpOperand *uWrite,
+                               const SetVector<Value> &definitions,
+                               AnalysisState &state) {
+   return
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       canUseOpDominanceDueToLoops(uRead, uWrite, definitions, state) ||
+ #endif
+       (canUseOpDominanceDueToRegions(uRead, uWrite, definitions, state) &&
+diff --git a/mlir/lib/Dialect/Linalg/IR/CMakeLists.txt b/mlir/lib/Dialect/Linalg/IR/CMakeLists.txt
+index 3c88fdb420..496aba7512 100644
+--- a/mlir/lib/Dialect/Linalg/IR/CMakeLists.txt
++++ b/mlir/lib/Dialect/Linalg/IR/CMakeLists.txt
+@@ -1,7 +1,7 @@
+ set(BS_FEAT_LINK_LIBS)
+ set(BS_FEAT_OPTIONS)
+ list(APPEND BS_FEAT_OPTIONS PARTIAL_SOURCES_INTENDED)
+-if(BSPRIV_DAVINCI_BISHENGIR)
++if(BSPUB_DAVINCI_BISHENGIR)
+   add_mlir_dialect_library(BiShengIRLinalgDialectExt
+     LinalgExtensions.cpp
+  
+diff --git a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
+index cc3c2158d3..a65d0d9dd1 100644
+--- a/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
++++ b/mlir/lib/Dialect/Linalg/IR/LinalgOps.cpp
+@@ -45,7 +45,7 @@
+ #include "llvm/Support/raw_ostream.h"
+ #include <optional>
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
+ #endif
+ 
+@@ -383,7 +383,7 @@ public:
+ 
+   // Build the unary functions defined by OpDSL.
+   Value buildUnaryFn(UnaryFn unaryFn, Value arg) {
+-#ifdef BSPRIV_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+     if (!isFloatingPoint(arg))
+       switch (unaryFn) {
+       case UnaryFn::abs:
+@@ -633,7 +633,7 @@ namespace {
+ /// type of the tensor.expand/collapse_shape op.
+ template <typename TensorReshapeOp>
+ struct FoldFillWithTensorReshape : OpRewritePattern<TensorReshapeOp> {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   template <typename... Args>
+   FoldFillWithTensorReshape(Args &&...args)
+       : OpRewritePattern<TensorReshapeOp>(std::forward<Args>(args)...) {
+@@ -1757,7 +1757,7 @@ LogicalResult ReduceOp::verify() {
+   return success();
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct MergeConsecutiveReduceOp : OpRewritePattern<linalg::ReduceOp> {
+   using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+   LogicalResult matchAndRewrite(linalg::ReduceOp op,
+@@ -1849,7 +1849,7 @@ void ReduceOp::getCanonicalizationPatterns(RewritePatternSet &results,
+   results.add<RefactorRedundantReduceLikeOp<linalg::ReduceOp>>(context);
+ }
+ 
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ 
+ //===----------------------------------------------------------------------===//
+ // TransposeOp
+@@ -2108,7 +2108,7 @@ struct SwapTransposeWithBroadcast : OpRewritePattern<linalg::TransposeOp> {
+   }
+ };
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ 
+ static SmallVector<SmallVector<int64_t, 2>>
+ getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank) {
+@@ -2317,14 +2317,14 @@ struct FoldTransposeWithExpand : OpRewritePattern<linalg::TransposeOp> {
+   }
+ };
+ 
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ 
+ void TransposeOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                               MLIRContext *context) {
+   results.add<FoldTransposeWithTranspose, SwapTransposeWithBroadcast>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<FoldTransposeWithExpand, FoldTransposeSingleElement>(context);
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ }
+ 
+ //===----------------------------------------------------------------------===//
+@@ -2448,7 +2448,7 @@ void BroadcastOp::getEffects(
+   getGenericEffectsImpl(effects, cast<LinalgOp>(getOperation()));
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ namespace {
+ class NormalizeBroadcastDenseSplatToFillConstant
+     : public OpRewritePattern<linalg::BroadcastOp> {
+@@ -2507,7 +2507,7 @@ struct FoldBroadcastFill : OpRewritePattern<BroadcastOp> {
+ void BroadcastOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                               MLIRContext *context) {
+   results.add<EraseIdentityLinalgOp<BroadcastOp>>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<NormalizeBroadcastDenseSplatToFillConstant, FoldBroadcastFill>(
+       context);
+ #endif
+@@ -3348,7 +3348,7 @@ LogicalResult WinogradOutputTransformOp::verify() {
+ 
+ void LinalgDialect::getCanonicalizationPatterns(
+     RewritePatternSet &results) const {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<EraseDeadLinalgOp, FoldTensorCastConsumerOp,
+               InferStaticShapeOfOperands,
+               SimplifySplatDenseForBinary<linalg::ElemwiseBinaryOp>,
+diff --git a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+index e26ef465fb..411921cbb6 100644
+--- a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
++++ b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+@@ -56,7 +56,7 @@ using namespace mlir::transform;
+ #define DBGSNL() (llvm::dbgs() << "\n")
+ #define LDBG(X) LLVM_DEBUG(DBGS() << (X) << "\n")
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/Dialect/Index/IR/IndexOps.h"
+ #define ONLY_ONE_TRUE(x, y, z) ((x) ^ (y) ^ (z)) && !((x) && (y) && (z))
+ #endif
+@@ -684,7 +684,7 @@ static Operation *replaceForAllWithNewSignature(
+   return newforallOp;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ static void replaceInnerForWithNewSignature(
+     RewriterBase &rewriter, std::deque<scf::ForOp> &oldInnerForOps,
+     scf::ForOp oldForOp, scf::ForOp newForOp, TilingResult &tileAndFuseResult,
+@@ -950,7 +950,7 @@ tileAndFuseFirstExtractUse(RewriterBase &rewriter, Diagnostic &diag,
+   rewriter.replaceOp(sliceOpToTile, *maybeRankReduced);
+ 
+   // Add new outputs to containing op, if required
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   Operation *newContainingOp = nullptr;
+   if (isa<scf::ForallOp>(containingOp))
+     newContainingOp = replaceForAllWithNewSignature(
+@@ -1131,7 +1131,7 @@ bool transform::FuseIntoContainingOp::allowsRepeatedHandleOperands() {
+   return true;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ static bool isValidSliceOpInContainingOp(tensor::ExtractSliceOp sliceOp,
+                                          Operation *containingOp) {
+   if (!sliceOp || !containingOp->isProperAncestor(sliceOp)) {
+@@ -1342,7 +1342,7 @@ transform::FuseIntoContainingOp::apply(transform::TransformRewriter &rewriter,
+     results.set(cast<OpResult>(getNewContainingOp()), {containingOp});
+     return DiagnosedSilenceableFailure::success();
+   }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (getMergeMultipleExtractUses()) {
+     for (Operation *producerOp : producerOps) {
+       // merge all extract uses to make sure producer op is fused only once.
+@@ -1611,7 +1611,7 @@ void transform::MatchOp::build(OpBuilder &builder, OperationState &result,
+   result.addTypes(resultTypes);
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ void transform::MatchOp::build(OpBuilder &builder, OperationState &result,
+                                Value target, ArrayAttr ops,
+                                DictionaryAttr op_attrs,
+@@ -1688,7 +1688,7 @@ transform::MatchOp::apply(transform::TransformRewriter &rewriter,
+       }
+     }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     // Check if at least one of the optional attributes match.
+     if (getOptionalOpAttrs().has_value() &&
+         !getOptionalOpAttrs().value().empty()) {
+@@ -3047,7 +3047,7 @@ void transform::TileReductionUsingForOp::build(
+         /*tile_sizes=*/staticTileSizesAttr);
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ 
+ void transform::TileReductionUsingForOp::build(
+     OpBuilder &builder, OperationState &result, Value target,
+@@ -3459,7 +3459,7 @@ LogicalResult transform::TileUsingForOp::verify() {
+   return success();
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ 
+ DiagnosedSilenceableFailure
+ transform::TileUsingForOp::apply(transform::TransformRewriter &rewriter,
+diff --git a/mlir/lib/Dialect/Linalg/Transforms/BubbleUpExtractSlice.cpp b/mlir/lib/Dialect/Linalg/Transforms/BubbleUpExtractSlice.cpp
+index 92d9cf9e7a..b944c8173e 100644
+--- a/mlir/lib/Dialect/Linalg/Transforms/BubbleUpExtractSlice.cpp
++++ b/mlir/lib/Dialect/Linalg/Transforms/BubbleUpExtractSlice.cpp
+@@ -50,7 +50,7 @@ struct BubbleUpExtractSliceOpPattern
+     : OpRewritePattern<tensor::ExtractSliceOp> {
+   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ private:
+   BubbleUpExtractSliceOptions options;
+ 
+@@ -198,7 +198,7 @@ public:
+                                          "expected source to be linalg op");
+     }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (!linalgOp->hasOneUse() &&
+         (!options.aggressive || tensor::isOffsetBytesAligned(sliceOp, 32))) {
+       return rewriter.notifyMatchFailure(
+@@ -231,7 +231,7 @@ public:
+       return rewriter.notifyMatchFailure(sliceOp, "expected no rank reduction");
+     }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (isa<linalg::BroadcastOp>(linalgOp)) {
+       return bubbleUpBroadcast(sliceOp, rewriter);
+     }
+@@ -291,7 +291,7 @@ public:
+ };
+ } // namespace
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ void mlir::linalg::populateBubbleUpExtractSliceOpPatterns(
+     RewritePatternSet &patterns, const BubbleUpExtractSliceOptions &options) {
+   auto *context = patterns.getContext();
+diff --git a/mlir/lib/Dialect/Linalg/Transforms/DropUnitDims.cpp b/mlir/lib/Dialect/Linalg/Transforms/DropUnitDims.cpp
+index b5032673e6..57d4e19da2 100644
+--- a/mlir/lib/Dialect/Linalg/Transforms/DropUnitDims.cpp
++++ b/mlir/lib/Dialect/Linalg/Transforms/DropUnitDims.cpp
+@@ -234,7 +234,7 @@ struct MoveInitOperandsToInput : public OpRewritePattern<GenericOp> {
+ /// }
+ 
+ /// Update the index accesses of linalg operations having index semantics.
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ template <typename LinalgOpType>
+ static void
+ replaceUnitDimIndexOps(LinalgOpType linalgOp,
+@@ -314,7 +314,7 @@ static Value collapseValue(
+         rankReductionStrategy ==
+             ControlDropUnitDims::RankReductionStrategy::ReassociativeReshape &&
+         "unknown rank reduction strategy");
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     return rewriter.create<memref::CollapseShapeOp>(loc, operand,
+                                                     reassociation);
+ #else
+@@ -339,7 +339,7 @@ static Value collapseValue(
+         rankReductionStrategy ==
+             ControlDropUnitDims::RankReductionStrategy::ReassociativeReshape &&
+         "unknown rank reduction strategy");
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     return rewriter.create<tensor::CollapseShapeOp>(loc, operand,
+                                                     reassociation);
+ #else
+@@ -363,7 +363,7 @@ struct UnitExtentReplacementInfo {
+   SmallVector<int64_t> targetShape;
+ };
+ static UnitExtentReplacementInfo dropUnitExtentFromOperandMetadata(
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     MLIRContext *context, LinalgOp linalgOp, OpOperand *opOperand,
+     std::optional<unsigned> keepConstantExpr,
+ #else
+@@ -374,7 +374,7 @@ static UnitExtentReplacementInfo dropUnitExtentFromOperandMetadata(
+   UnitExtentReplacementInfo info;
+   ReassociationIndices reassociationGroup;
+   SmallVector<AffineExpr> newIndexExprs;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   AffineMap indexingMap = linalgOp.getMatchingIndexingMap(opOperand);
+   ArrayRef<int64_t> operandShape = linalgOp.getShape(opOperand);
+ #else
+@@ -393,7 +393,7 @@ static UnitExtentReplacementInfo dropUnitExtentFromOperandMetadata(
+     // constant 0.
+     if (operandShape[dim] == 1) {
+       auto constAffineExpr = dyn_cast<AffineConstantExpr>(exprs[dim]);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       return constAffineExpr && constAffineExpr.getValue() == 0 &&
+              keepConstantExpr != dim;
+ #else
+@@ -426,7 +426,7 @@ static UnitExtentReplacementInfo dropUnitExtentFromOperandMetadata(
+   return info;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct NewOperands {
+   TypeRange resultTypes;
+   SmallVector<Value> inputs;
+@@ -565,10 +565,10 @@ LinalgOp createReplacementOp(RewriterBase &rewriter, LinalgOp op,
+     return cloneToReplaceOp(rewriter, op, newOperands);
+   }
+ }
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ 
+ FailureOr<DropUnitDimsResult>
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ linalg::dropUnitDims(RewriterBase &rewriter, LinalgOp linalgOp,
+                      const ControlDropUnitDims &options) {
+   LDBG("Input op: " << linalgOp);
+@@ -586,35 +586,35 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+   //    tensor/memref.
+   AffineMap invertedMap = inversePermutation(concatAffineMaps(indexingMaps));
+   if (!invertedMap) {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     return rewriter.notifyMatchFailure(linalgOp,
+ #else
+     return rewriter.notifyMatchFailure(genericOp,
+ #endif
+                                        "invalid indexing maps for operation");
+   }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   SmallVector<int64_t> dims = linalgOp.getStaticShape();
+ #else
+   SmallVector<int64_t> dims = genericOp.getStaticShape();
+ #endif
+ 
+   // 1a. Get the allowed list of dimensions to drop from the `options`.
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   SmallVector<unsigned> oriAllowedUnitDims = options.controlFn(linalgOp);
+ #else
+   SmallVector<unsigned> oriAllowedUnitDims = options.controlFn(genericOp);
+ #endif
+   if (oriAllowedUnitDims.empty()) {
+     return rewriter.notifyMatchFailure(
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+         linalgOp, "control function returns no allowed unit dims to prune");
+ #else
+         genericOp, "control function returns no allowed unit dims to prune");
+ #endif
+   }
+   SmallVector<unsigned> allowedUnitDims{};
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   bool hasGatherIterator = false;
+   SmallVector<utils::IteratorType> iterators = linalgOp.getIteratorTypesArray();
+   for (auto iter : iterators) {
+@@ -651,7 +651,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+     }
+   }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   // Greedily restore one unit dim in case all dims will be dropped. Iterate
+   // over the operands according to nondecreasing rank order.
+   SmallVector<std::optional<unsigned>> keepConstantExpr(
+@@ -744,7 +744,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+   llvm::SmallDenseMap<unsigned, unsigned> oldDimToNewDimMap;
+   SmallVector<AffineExpr> dimReplacements;
+   unsigned newDims = 0;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   for (auto [index, attr] : llvm::enumerate(linalgOp.getIteratorTypesArray())) {
+ #else
+   for (auto [index, attr] :
+@@ -753,7 +753,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+     if (unitDims.count(index)) {
+       dimReplacements.push_back(
+           getAffineConstantExpr(0, rewriter.getContext()));
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       LDBG("Index " << index << " will be merged with " << newDims);
+ #endif
+     } else {
+@@ -780,7 +780,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+   SmallVector<SmallVector<ReassociationIndices>> reassociations;
+   SmallVector<SmallVector<int64_t>> targetShapes;
+   SmallVector<bool> collapsed;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   auto hasCollapsibleType = [&options](OpOperand &operand) {
+     Type operandType = operand.get().getType();
+     if (auto memrefOperandType = dyn_cast_or_null<MemRefType>(operandType)) {
+@@ -805,7 +805,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+     return false;
+   };
+ #endif
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   for (OpOperand &opOperand : linalgOp->getOpOperands()) {
+     auto indexingMap = linalgOp.getMatchingIndexingMap(&opOperand);
+     ArrayRef<int64_t> shape = linalgOp.getShape(&opOperand);
+@@ -824,7 +824,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+       continue;
+     }
+     auto replacementInfo = dropUnitExtentFromOperandMetadata(
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+         rewriter.getContext(), linalgOp, &opOperand,
+         keepConstantExpr[opOperand.getOperandNumber()], oldDimToNewDimMap,
+         dimReplacements);
+@@ -845,7 +845,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+       !inversePermutation(concatAffineMaps(newIndexingMaps)))
+     return failure();
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   Location loc = linalgOp.getLoc();
+ #else
+   Location loc = genericOp.getLoc();
+@@ -855,7 +855,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+   //    either through use of reshapes or rank-reducing slices as
+   //    specified in `options`.
+   SmallVector<Value> newOperands;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   for (OpOperand &opOperand : linalgOp->getOpOperands()) {
+ #else
+   for (OpOperand &opOperand : genericOp->getOpOperands()) {
+@@ -865,7 +865,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+       newOperands.push_back(opOperand.get());
+       continue;
+     }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     LDBG("Collapsing operand #" << opOperand.getOperandNumber());
+ #endif
+     newOperands.push_back(collapseValue(rewriter, loc, opOperand.get(),
+@@ -873,7 +873,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+                                         options.rankReductionStrategy));
+   }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   // 5. Create the replacement operation with the new operands,
+   //    indexing maps, iterator types and result types.
+   SmallVector<Value> newInputs(
+@@ -915,7 +915,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+   // original
+   //    type to the new type.
+   SmallVector<Value> resultReplacements;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   for (auto [index, result] : llvm::enumerate(replacementOp->getResults())) {
+     unsigned opOperandIndex = index + replacementOp.getNumDpsInputs();
+     Value origDest = linalgOp.getDpsInitOperand(index)->get();
+@@ -928,7 +928,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+       resultReplacements.push_back(result);
+       continue;
+     }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     LDBG("Expanding result #" << index);
+ #endif
+     Value expandedValue = expandValue(rewriter, loc, result, origDest,
+@@ -941,7 +941,7 @@ linalg::dropUnitDims(RewriterBase &rewriter, GenericOp genericOp,
+ }
+ 
+ namespace {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ template <typename OpTy>
+ struct DropUnitDims : public OpRewritePattern<OpTy> {
+   using OpRewritePattern<OpTy>::OpRewritePattern;
+@@ -1221,7 +1221,7 @@ static void
+ populateFoldUnitExtentDimsViaReshapesPatterns(RewritePatternSet &patterns,
+                                               ControlDropUnitDims &options) {
+   auto *context = patterns.getContext();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (options.enableExperimentalDropping)
+     patterns.add<DropUnitDims<LinalgOp>>(context, options);
+   else {
+@@ -1259,7 +1259,7 @@ static void
+ populateFoldUnitExtentDimsViaSlicesPatterns(RewritePatternSet &patterns,
+                                             ControlDropUnitDims &options) {
+   auto *context = patterns.getContext();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   patterns.add<DropUnitDims<GenericOp>>(context, options);
+   patterns.add<DropUnitDims<BroadcastOp>>(context, options);
+   patterns.add<DropUnitDims<ReduceOp>>(context, options);
+@@ -1303,7 +1303,7 @@ struct LinalgFoldUnitExtentDimsPass
+   using impl::LinalgFoldUnitExtentDimsPassBase<
+       LinalgFoldUnitExtentDimsPass>::LinalgFoldUnitExtentDimsPassBase;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   explicit LinalgFoldUnitExtentDimsPass(
+       const LinalgFoldUnitExtentDimsPassOptions &options)
+       : LinalgFoldUnitExtentDimsPassBase(options) {}
+@@ -1317,14 +1317,14 @@ struct LinalgFoldUnitExtentDimsPass
+       options.rankReductionStrategy = linalg::ControlDropUnitDims::
+           RankReductionStrategy::ExtractInsertSlice;
+     }
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     options.foldRankReducingSlices = foldRankReducingSlices;
+     options.enableExperimentalDropping = enableExperimentalDropping;
+     options.avoidZeroRanks = avoidZeroRanks;
+ #endif
+     linalg::populateFoldUnitExtentDimsPatterns(patterns, options);
+     populateMoveInitOperandsToInputPattern(patterns);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     SmallVector<std::string> disabledPatterns;
+     if (enableExperimentalDropping)
+       disabledPatterns.push_back("FoldFillWithTensorReshape");
+diff --git a/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp b/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
+index 26fd165113..83a559199f 100644
+--- a/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
++++ b/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
+@@ -340,7 +340,7 @@ struct LinalgOpPartialReductionInterface
+         return op->emitOpError("Failed to anaysis the reduction operation.");
+ 
+       Operation *reductionOp = combinerOps[0];
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       reductionOp->setAttr("reductionOp", b.getUnitAttr());
+ #endif
+       std::optional<TypedAttr> identity = arith::getNeutralElement(reductionOp);
+@@ -492,7 +492,7 @@ struct LinalgOpPartialReductionInterface
+             SmallVector<Operation *, 4> combinerOps;
+             matchReduction(linalgOp.getRegionOutputArgs(), idx, combinerOps);
+             Operation *clonedReductionOp = b.clone(*combinerOps[0]);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+             clonedReductionOp->setAttr("withoutInitMergeOp", b.getUnitAttr());
+ #endif
+             // Combine the input at idx and output at numInits + idx.
+diff --git a/mlir/lib/Dialect/Linalg/Transforms/Vectorization.cpp b/mlir/lib/Dialect/Linalg/Transforms/Vectorization.cpp
+index 2054cef28f..ff62b78cc3 100644
+--- a/mlir/lib/Dialect/Linalg/Transforms/Vectorization.cpp
++++ b/mlir/lib/Dialect/Linalg/Transforms/Vectorization.cpp
+@@ -579,7 +579,7 @@ static Operation *buildMultiDimReduce(OpBuilder &b, Operation *reduceOp,
+                                       ArrayRef<bool> dimsToMask) {
+   auto maybeKind = getCombinerOpKind(reduceOp);
+   assert(maybeKind && "Failed precondition: could not get reduction kind");
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   Operation *multiDimReduce = b.create<vector::MultiDimReductionOp>(
+       reduceOp->getLoc(), valueToReduce, acc, dimsToMask, *maybeKind);
+   if (reduceOp->hasAttr("withoutInitMergeOp"))
+diff --git a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
+index 0e5e7cf7d5..7687cc7379 100644
+--- a/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
++++ b/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
+@@ -23,7 +23,7 @@
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/SmallBitVector.h"
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/Dialect/Utils/ExpandShapeUtils.h"
+ #endif
+ 
+@@ -71,7 +71,7 @@ Type mlir::memref::getTensorTypeFromMemRefType(Type type) {
+ OpFoldResult memref::getMixedSize(OpBuilder &builder, Location loc, Value value,
+                                   int64_t dim) {
+   auto memrefType = llvm::cast<MemRefType>(value.getType());
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (auto reifiableOp = dyn_cast_if_present<ReifyRankedShapedTypeOpInterface>(value.getDefiningOp())) {
+     OpResult resultOp = cast<OpResult>(value);
+     ReifiedRankedShapedTypeDims resultShapedType;
+@@ -848,7 +848,7 @@ struct FoldSelfCopy : public OpRewritePattern<CopyOp> {
+   }
+ };
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ 
+ /// 1. fold `copy A B; copy B C` to `copy A C`
+ /// 2. fold `copy A B; B0 = reshape(B); copy B0 C`
+@@ -1002,7 +1002,7 @@ struct FoldEmptyCopy final : public OpRewritePattern<CopyOp> {
+ 
+ void CopyOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                          MLIRContext *context) {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<FoldRedundantCopy>(context);
+ #endif
+   results.add<FoldCopyOfCast, FoldEmptyCopy, FoldSelfCopy>(context);
+@@ -1981,7 +1981,7 @@ void ReinterpretCastOp::build(OpBuilder &b, OperationState &result,
+         b.getDenseI64ArrayAttr(staticStrides));
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ void ReinterpretCastOp::build(OpBuilder &b, OperationState &result,
+                               MemRefType resultType, Value source,
+                               ArrayRef<OpFoldResult> offsets,
+@@ -2238,7 +2238,7 @@ public:
+ };
+ } // namespace
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// Return the canonical type of the result of a ReinterpretCastOp.
+ struct ReinterpretCastReturnTypeCanonicalizer {
+   MemRefType operator()(ReinterpretCastOp op,
+@@ -2273,7 +2273,7 @@ struct ReinterpretCastCanonicalizer {
+ void ReinterpretCastOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+   results.add<ReinterpretCastOpExtractStridedMetadataFolder>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<OpWithOffsetSizesAndStridesConstantArgumentFolder<
+       ReinterpretCastOp, ReinterpretCastReturnTypeCanonicalizer,
+       ReinterpretCastCanonicalizer>>(context,
+@@ -2584,7 +2584,7 @@ LogicalResult ExpandShapeOp::verify() {
+ void ExpandShapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                 MLIRContext *context) {
+   results.add<
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       FoldConstantDimOfOutputShape<ExpandShapeOp, CastOp>,
+ #endif
+       ComposeReassociativeReshapeOps<ExpandShapeOp, ReshapeOpKind::kExpand>,
+@@ -2619,7 +2619,7 @@ computeCollapsedLayoutMap(MemRefType srcType,
+     ArrayRef<int64_t> ref = llvm::ArrayRef(reassoc);
+     while (srcShape[ref.back()] == 1 && ref.size() > 1)
+       ref = ref.drop_back();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     auto precedingRef = ref.drop_back();
+     bool allUnitPreceding = llvm::all_of(
+         precedingRef, [&srcShape](int idx) { return srcShape[idx] == 1; });
+diff --git a/mlir/lib/Dialect/MemRef/Utils/MemRefUtils.cpp b/mlir/lib/Dialect/MemRef/Utils/MemRefUtils.cpp
+index 0b02f61cd5..944f649d2e 100644
+--- a/mlir/lib/Dialect/MemRef/Utils/MemRefUtils.cpp
++++ b/mlir/lib/Dialect/MemRef/Utils/MemRefUtils.cpp
+@@ -15,7 +15,7 @@
+ #include "mlir/Dialect/Arith/Utils/Utils.h"
+ #include "mlir/IR/OpDefinition.h"
+ #include "mlir/Interfaces/ControlFlowInterfaces.h"
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #endif
+ #include "mlir/Dialect/MemRef/IR/MemRef.h"
+@@ -134,7 +134,7 @@ static bool resultIsNotRead(Operation *op, std::vector<Operation *> &uses) {
+   for (OpOperand &use : op->getUses()) {
+     Operation *useOp = use.getOwner();
+     // Handle potentially dangerous operations
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (isa<func::CallOp>(useOp) || useOp->hasTrait<OpTrait::ReturnLike>() ||
+         useOp->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+         useOp->hasTrait<OpTrait::AutomaticAllocationScope>() ||
+diff --git a/mlir/lib/Dialect/SCF/IR/SCF.cpp b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+index 0f52bc5f3d..d02b266eb8 100644
+--- a/mlir/lib/Dialect/SCF/IR/SCF.cpp
++++ b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+@@ -935,7 +935,7 @@ static std::optional<APInt> computeConstDiff(Value l, Value u) {
+ struct SimplifyTrivialLoops : public OpRewritePattern<ForOp> {
+   using OpRewritePattern<ForOp>::OpRewritePattern;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   SimplifyTrivialLoops(MLIRContext *context) : OpRewritePattern(context) {
+     this->setDebugName("SimplifyTrivialLoops");
+   }
+@@ -1063,7 +1063,7 @@ replaceTensorCastForOpIterArg(PatternRewriter &rewriter, OpOperand &operand,
+   return newResults;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ static memref::CastOp traceCast(Value init) {
+   if (auto initCastOp =
+           dyn_cast_if_present<memref::CastOp>(init.getDefiningOp())) {
+@@ -1252,7 +1252,7 @@ void ForOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                         MLIRContext *context) {
+   results.add<ForOpIterArgsFolder, SimplifyTrivialLoops, ForOpTensorCastFolder>(
+       context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<MoveOutLoopMemRefCast>(context);
+ #endif
+ }
+@@ -2941,7 +2941,7 @@ struct CombineNestedIfs : public OpRewritePattern<IfOp> {
+   }
+ };
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ // Pattern to move outside memref.cast operation
+ struct MoveOutMemRefCast : public OpRewritePattern<IfOp> {
+   using OpRewritePattern<IfOp>::OpRewritePattern;
+@@ -2997,7 +2997,7 @@ struct MoveOutMemRefCast : public OpRewritePattern<IfOp> {
+ };
+ #endif
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ // Pattern to move in tensor cast operation.
+ // Example of possible optimization after moving in:
+ // ```mlir
+@@ -3093,7 +3093,7 @@ struct MoveInTensorCast : public OpRewritePattern<IfOp> {
+     return success();
+   }
+ };
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ 
+ } // namespace
+ 
+@@ -3103,9 +3103,9 @@ void IfOp::getCanonicalizationPatterns(RewritePatternSet &results,
+               ConvertTrivialIfToSelect, RemoveEmptyElseBranch,
+               RemoveStaticCondition, RemoveUnusedResults,
+               ReplaceIfYieldWithConditionOrValue>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<MoveInTensorCast, MoveOutMemRefCast>(context);
+-#endif // BSPRIV_DAVINCI_BISHENGIR
++#endif // BSPUB_DAVINCI_BISHENGIR
+ }
+ 
+ Block *IfOp::thenBlock() { return &getThenRegion().back(); }
+@@ -4642,7 +4642,7 @@ struct FoldConstantCase : OpRewritePattern<scf::IndexSwitchOp> {
+   }
+ };
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct HoistSameYieldsFromSwitchCases : public OpRewritePattern<IndexSwitchOp> {
+   using OpRewritePattern<IndexSwitchOp>::OpRewritePattern;
+ 
+@@ -4744,7 +4744,7 @@ private:
+ void IndexSwitchOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                 MLIRContext *context) {
+   results.add<FoldConstantCase
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+               ,
+               HoistSameYieldsFromSwitchCases
+ #endif
+diff --git a/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp b/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
+index d0dac9c911..a1a8bc2faf 100644
+--- a/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
++++ b/mlir/lib/Dialect/SCF/TransformOps/SCFTransformOps.cpp
+@@ -181,7 +181,7 @@ static scf::ExecuteRegionOp wrapInExecuteRegion(RewriterBase &b,
+   return executeRegionOp;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ static Operation *buildCopyOpForValue(Location loc, Value from,
+                                       transform::TransformRewriter &rewriter) {
+   auto ty = dyn_cast<RankedTensorType>(from.getType());
+@@ -229,7 +229,7 @@ transform::LoopOutlineOp::apply(transform::TransformRewriter &rewriter,
+   SmallVector<Operation *> calls;
+   DenseMap<Operation *, SymbolTable> symbolTables;
+   for (Operation *target : state.getPayloadOps(getTarget())) {
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     // FIXME: when outline loop as VF, some reused values inside this loop will cause
+     // memref.alloc and memref.copy which is illegal inside VF after bufferization.
+     // Here we duplicate these reused values to avoid this. See issue:
+@@ -506,7 +506,7 @@ void transform::TakeAssumedBranchOp::getEffects(
+ // LoopFuseSiblingOp
+ //===----------------------------------------------------------------------===//
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ 
+ static bool isProducerConsumedImpl(Operation *target, Operation *source,
+                                    DenseSet<Value> &visited) {
+@@ -562,7 +562,7 @@ static DiagnosedSilenceableFailure isOpSibling(Operation *target,
+     // Since `target` is before `source`, all users of results of `target`
+     // need to be dominated by `source`.
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (!isProducerConsumed(/*producer=*/target, /*consumer=*/source)) {
+       return DiagnosedSilenceableFailure::success();
+     }
+@@ -578,7 +578,7 @@ static DiagnosedSilenceableFailure isOpSibling(Operation *target,
+   } else {
+     // Since `target` is after `source`, all values used by `target` need
+     // to dominate `source`.
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (!isProducerConsumed(/*producer=*/source, /*consumer=*/target)) {
+       return DiagnosedSilenceableFailure::success();
+     }
+@@ -657,7 +657,7 @@ static bool isForWithIdenticalConfiguration(Operation *target,
+          targetOp.getStep() == sourceOp.getStep();
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// If two inner loop have proportional-scaling lower bound, upper bound and step,
+ /// use the one with the smaller value as their same lb/ub and step.
+ /// for example:
+@@ -800,7 +800,7 @@ transform::LoopFuseSiblingOp::apply(transform::TransformRewriter &rewriter,
+ 
+   results.set(cast<OpResult>(getFusedLoop()), {fusedLoop});
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   // We have already fused the outermost loop, now we try to fuse the inner sibling
+   // loops. For example:
+   // before fusing inner sibling loops:
+diff --git a/mlir/lib/Dialect/SCF/Utils/Utils.cpp b/mlir/lib/Dialect/SCF/Utils/Utils.cpp
+index 8126d8e480..448c4a0f87 100644
+--- a/mlir/lib/Dialect/SCF/Utils/Utils.cpp
++++ b/mlir/lib/Dialect/SCF/Utils/Utils.cpp
+@@ -31,7 +31,7 @@
+ #include "llvm/Support/MathExtras.h"
+ #include <cstdint>
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/IR/Dominance.h"
+ #endif
+ 
+@@ -900,7 +900,7 @@ LogicalResult mlir::coalescePerfectlyNestedSCFForLoops(scf::ForOp op) {
+   SmallVector<scf::ForOp> loops;
+   getPerfectlyNestedLoops(loops, op);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (loops.size() == 1) {
+     return success();
+   }
+@@ -1282,7 +1282,7 @@ TileLoops mlir::extractFixedOuterLoops(scf::ForOp rootForOp,
+   return tileLoops;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// Check if all target users properly dominate source op.
+ static bool isTargetUsersProperlyDominateSource(Operation *target,
+                                                 Operation *source) {
+@@ -1392,7 +1392,7 @@ scf::ForallOp mlir::fuseIndependentSiblingForallLoops(scf::ForallOp target,
+   // Create a new scf.forall op.
+   // If source loop before target, the fused loop will be after target loop.
+   // If target loop before source, the fused loop will be after source loop.
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (source->isBeforeInBlock(target)) {
+     rewriter.setInsertionPointAfter(target);
+   } else if (target->isBeforeInBlock(source)) {
+@@ -1434,7 +1434,7 @@ scf::ForallOp mlir::fuseIndependentSiblingForallLoops(scf::ForallOp target,
+   for (Operation &op : sourceTerm.getYieldingOps())
+     rewriter.clone(op, mapping);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (source->isBeforeInBlock(target))
+     adjustProducerLoopUsers(/*producer=*/source, /*consumer=*/target, fusedLoop,
+                             rewriter, mapping);
+@@ -1469,7 +1469,7 @@ scf::ForOp mlir::fuseIndependentSiblingForLoops(scf::ForOp target,
+   // (without arguments) only in case its init_args is empty).
+   // If source loop before target, the fused loop will be after target loop.
+   // If target loop before source, the fused loop will be after source loop.
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (source->isBeforeInBlock(target)) {
+     rewriter.setInsertionPointAfter(target);
+   } else if (target->isBeforeInBlock(source)) {
+@@ -1509,7 +1509,7 @@ scf::ForOp mlir::fuseIndependentSiblingForLoops(scf::ForOp target,
+   if (!yieldResults.empty())
+     rewriter.create<scf::YieldOp>(source.getLoc(), yieldResults);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   if (source->isBeforeInBlock(target))
+     adjustProducerLoopUsers(/*producer=*/source, /*consumer=*/target, fusedLoop,
+                             rewriter, mapping);
+diff --git a/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp b/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp
+index 53e5b21947..ed62b1c2e7 100644
+--- a/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp
++++ b/mlir/lib/Dialect/Tensor/IR/TensorOps.cpp
+@@ -33,7 +33,7 @@
+ #include <algorithm>
+ #include <optional>
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ #include "mlir/Dialect/Utils/ExpandShapeUtils.h"
+ #endif
+ 
+@@ -1977,7 +1977,7 @@ struct FoldDimOfExpandShape : public OpRewritePattern<DimOp> {
+     // Find reassociation group that contains this result dimension.
+     int64_t srcDim = expandShapeOp.getCorrespondingSourceDim(*dim);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     int64_t product = 1;
+     ReassociationIndices grp = expandShapeOp.getReassociationIndices()[srcDim];
+     bool multiDynamicDim = false;
+@@ -2066,7 +2066,7 @@ struct FoldDimOfCollapseShape : public OpRewritePattern<DimOp> {
+ void ExpandShapeOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                 MLIRContext *context) {
+   results.add<
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+       FoldConstantDimOfOutputShape<ExpandShapeOp, CastOp>,
+       ComposeReshapeLoosely<ExpandShapeOp, CollapseShapeOp, ExpandShapeOp,
+                             CollapseShapeOp>,
+@@ -2483,7 +2483,7 @@ private:
+   ControlConstantExtractSliceFusionFn controlFn;
+ };
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ struct Segment {
+   int64_t start{-1};
+   int64_t end{-1};
+@@ -2640,7 +2640,7 @@ void ExtractSliceOp::getCanonicalizationPatterns(RewritePatternSet &results,
+       OpWithOffsetSizesAndStridesConstantArgumentFolder<
+           ExtractSliceOp, SliceReturnTypeCanonicalizer, SliceCanonicalizer>,
+       ExtractSliceOpCastFolder>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<ExtractFromSingleConcatSegment>(context);
+ #endif
+ }
+diff --git a/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp b/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
+index e0ebbdc186..22c414186f 100644
+--- a/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
++++ b/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
+@@ -336,7 +336,7 @@ struct ExpandShapeOpInterface
+     if (failed(buffer))
+       return failure();
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     auto memrefType = cast<MemRefType>(buffer->getType());
+     // Deduce memref expand shape type
+     FailureOr<MemRefType> maybeResultType =
+diff --git a/mlir/lib/Dialect/Tensor/Transforms/MergeConsecutiveInsertExtractSlicePatterns.cpp b/mlir/lib/Dialect/Tensor/Transforms/MergeConsecutiveInsertExtractSlicePatterns.cpp
+index 445000b680..69f6f32179 100644
+--- a/mlir/lib/Dialect/Tensor/Transforms/MergeConsecutiveInsertExtractSlicePatterns.cpp
++++ b/mlir/lib/Dialect/Tensor/Transforms/MergeConsecutiveInsertExtractSlicePatterns.cpp
+@@ -22,7 +22,7 @@ namespace {
+ // TODO: move to FoldTensorSubsetOps and unify APIs with FoldMemRefAliasOps.
+ struct MergeConsecutiveExtractSlice : public OpRewritePattern<ExtractSliceOp> {
+   using OpRewritePattern::OpRewritePattern;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   MergeConsecutiveExtractSlice(MLIRContext *context, PatternBenefit benefit = 0)
+       : OpRewritePattern<ExtractSliceOp>(context, benefit) {};
+ #endif
+@@ -51,7 +51,7 @@ struct MergeConsecutiveExtractSlice : public OpRewritePattern<ExtractSliceOp> {
+ template <typename OpTy>
+ struct MergeConsecutiveInsertSlice : public OpRewritePattern<OpTy> {
+   using OpRewritePattern<OpTy>::OpRewritePattern;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   MergeConsecutiveInsertSlice(MLIRContext *context, PatternBenefit benefit = 0)
+       : OpRewritePattern<OpTy>(context, benefit) {};
+ #endif
+@@ -236,7 +236,7 @@ struct DropRedundantRankExpansionOnInsertSliceOfExtractSlice final
+ } // namespace
+ 
+ void mlir::tensor::populateMergeConsecutiveInsertExtractSlicePatterns(
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     RewritePatternSet &patterns, PatternBenefit benefit) {
+   patterns.add<MergeConsecutiveExtractSlice>(patterns.getContext(), benefit);
+   patterns.add<MergeConsecutiveInsertSlice<InsertSliceOp>>(
+diff --git a/mlir/lib/Dialect/Tensor/Utils/Utils.cpp b/mlir/lib/Dialect/Tensor/Utils/Utils.cpp
+index 98f9812401..d5a2cea00c 100644
+--- a/mlir/lib/Dialect/Tensor/Utils/Utils.cpp
++++ b/mlir/lib/Dialect/Tensor/Utils/Utils.cpp
+@@ -176,7 +176,7 @@ bool mlir::tensor::isCastLikeExtractSliceOp(ExtractSliceOp op) {
+   return true;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ static bool hasNonOneStride(const SmallVector<OpFoldResult> &strides) {
+   return llvm::any_of(strides, [](OpFoldResult ofr) {
+     auto intMaybe = getConstantIntValue(ofr);
+diff --git a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
+index 1f528816b2..b5037689ee 100644
+--- a/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
++++ b/mlir/lib/Dialect/Transform/IR/TransformOps.cpp
+@@ -396,7 +396,7 @@ DiagnosedSilenceableFailure transform::ApplyPatternsOp::applyToOne(
+   config.listener =
+       static_cast<RewriterBase::Listener *>(rewriter.getListener());
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   SmallVector<std::string> disablePatterns;
+   if (getDisablePatterns()) {
+     for (Attribute attr : cast<ArrayAttr>(*getDisablePatterns()))
+diff --git a/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp b/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
+index 66884352b8..61138bf589 100644
+--- a/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
++++ b/mlir/lib/Dialect/Utils/ReshapeOpsUtils.cpp
+@@ -484,7 +484,7 @@ PackingMetadata mlir::computePackingMetadata(int64_t packedRank,
+   return res;
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ void mlir::putInExpandShape(int64_t shape, SmallVector<int64_t> &newExpandShape,
+                             ReassociationIndices &bottomIndices) {
+   size_t currentIndex = newExpandShape.size();
+diff --git a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+index 6fef27b08e..8f3ce2db62 100644
+--- a/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
++++ b/mlir/lib/Dialect/Vector/IR/VectorOps.cpp
+@@ -4239,7 +4239,7 @@ void TransferReadOp::getEffects(
+                          SideEffects::DefaultResource::get());
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ namespace {
+ /// Store to load forwarding for transfer operations without permuation maps.
+ /// Replace the transfer_read + transfer_write by vector.shapecast.
+@@ -4388,7 +4388,7 @@ struct TransferReadAfterWriteToBroadcast
+     : public OpRewritePattern<TransferReadOp> {
+   using OpRewritePattern::OpRewritePattern;
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   /// Example:
+   /// ```
+   /// %7 = vector.multi_reduction <maximumf>, %5, %6 [1] :
+@@ -4440,7 +4440,7 @@ struct TransferReadAfterWriteToBroadcast
+     auto defWrite = readOp.getSource().getDefiningOp<vector::TransferWriteOp>();
+     if (!defWrite)
+       return failure();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (!checkPatternWithOneMask(readOp, defWrite)) {
+ #endif
+       // TODO: If the written transfer chunk is a superset of the read transfer
+@@ -4456,7 +4456,7 @@ struct TransferReadAfterWriteToBroadcast
+       if (readOp.getIndices() != defWrite.getIndices() ||
+           readOp.getMask() != defWrite.getMask())
+         return failure();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     }
+ #endif
+     Value vec = defWrite.getVector();
+@@ -4497,7 +4497,7 @@ struct TransferReadAfterWriteToBroadcast
+ };
+ } // namespace
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ namespace {
+ /// Store to load forwarding for transfer operations without permuation maps.
+ /// Replace transfer_read + transfer_write by vector.extract + vector.broadcast.
+@@ -4858,7 +4858,7 @@ struct ForwardWriteEmptyToRead : public OpRewritePattern<TransferReadOp> {
+ void TransferReadOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                  MLIRContext *context) {
+   results.add<TransferReadAfterWriteToBroadcast>(context);
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   results.add<TransferReadAfterWriteToExtractAndBroadcast>(context);
+   results.add<TransferReadAfterWriteAndReshapeToShapecast>(context);
+   results.add<ForwardScalarBroadcast>(context);
+diff --git a/mlir/lib/Dialect/Vector/Transforms/VectorTransferOpTransforms.cpp b/mlir/lib/Dialect/Vector/Transforms/VectorTransferOpTransforms.cpp
+index 24f085a065..f3f075473e 100644
+--- a/mlir/lib/Dialect/Vector/Transforms/VectorTransferOpTransforms.cpp
++++ b/mlir/lib/Dialect/Vector/Transforms/VectorTransferOpTransforms.cpp
+@@ -352,7 +352,7 @@ createMaskDropNonScalableUnitDims(PatternRewriter &rewriter, Location loc,
+ 
+ namespace {
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ /// Rewrites vector.constant_mask 'op' to drop non-scalable one dimensions.
+ /// before conversion:
+ /// %4 = vector.constant_mask [1, 1, 1, 1, 6] : vector<1x1x1x1x64xi1>
+@@ -446,7 +446,7 @@ class TransferReadDropUnitDimsPattern
+       return failure();
+ 
+     Value maskOp = transferReadOp.getMask();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (maskOp) {
+       auto reducedMask = dropNonScalableUnitDimsForMask(rewriter, loc, maskOp);
+       if (failed(reducedMask))
+@@ -522,7 +522,7 @@ class TransferWriteDropUnitDimsPattern
+       return failure();
+ 
+     Value maskOp = transferWriteOp.getMask();
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (maskOp) {
+       auto reducedMask = dropNonScalableUnitDimsForMask(rewriter, loc, maskOp);
+       if (failed(reducedMask))
+diff --git a/mlir/lib/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.cpp b/mlir/lib/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.cpp
+index bdb8378519..b2d2a8839a 100644
+--- a/mlir/lib/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.cpp
+@@ -54,7 +54,7 @@ static llvm::Intrinsic::ID getReduxIntrinsicId(llvm::Type *resultType,
+     return llvm::Intrinsic::nvvm_redux_sync_max;
+   case NVVM::ReduxKind::MIN:
+     return llvm::Intrinsic::nvvm_redux_sync_min;
+-#if !BSPRIV_DAVINCI_BISHENGIR
++#if !BSPUB_DAVINCI_BISHENGIR
+   case NVVM::ReduxKind::FMIN:
+     return GET_REDUX_F32_ID(min, hasAbs, hasNaN);
+   case NVVM::ReduxKind::FMAX:
+@@ -62,7 +62,7 @@ static llvm::Intrinsic::ID getReduxIntrinsicId(llvm::Type *resultType,
+ #else
+   case NVVM::ReduxKind::FMIN:
+   case NVVM::ReduxKind::FMAX:
+-    // FMIN/FMAX are not unsupported when BSPRIV_DAVINCI_BISHENGIR enabled.
++    // FMIN/FMAX are not unsupported when BSPUB_DAVINCI_BISHENGIR enabled.
+     break;
+ #endif
+   }
+diff --git a/mlir/lib/Transforms/Canonicalizer.cpp b/mlir/lib/Transforms/Canonicalizer.cpp
+index fad870652f..3fa9630ebc 100644
+--- a/mlir/lib/Transforms/Canonicalizer.cpp
++++ b/mlir/lib/Transforms/Canonicalizer.cpp
+@@ -37,12 +37,12 @@ struct Canonicalizer : public impl::CanonicalizerBase<Canonicalizer> {
+     this->maxNumRewrites = config.maxNumRewrites;
+     this->disabledPatterns = disabledPatterns;
+     this->enabledPatterns = enabledPatterns;
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     this->enableExtendedPattern = enableExtendedPattern;
+ #endif
+   }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+   Canonicalizer(const CanonicalizerOptions &options)
+       : impl::CanonicalizerBase<Canonicalizer>(options) {}
+ #endif
+@@ -62,7 +62,7 @@ struct Canonicalizer : public impl::CanonicalizerBase<Canonicalizer> {
+     for (RegisteredOperationName op : context->getRegisteredOperations())
+       op.getCanonicalizationPatterns(owningPatterns, context);
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+     if (!enableExtendedPattern) {
+       disabledPatterns.push_back("ReinterpretCastConstantArgumentFolder");
+     }
+@@ -98,7 +98,7 @@ mlir::createCanonicalizerPass(const GreedyRewriteConfig &config,
+                                          enabledPatterns);
+ }
+ 
+-#if BSPRIV_DAVINCI_BISHENGIR
++#if BSPUB_DAVINCI_BISHENGIR
+ std::unique_ptr<Pass>
+ mlir::createCanonicalizerPass(const CanonicalizerOptions &options) {
+   return std::make_unique<Canonicalizer>(options);
+diff --git a/mlir/test/Conversion/NVGPUToNVVM/lit.local.cfg b/mlir/test/Conversion/NVGPUToNVVM/lit.local.cfg
+index dc2bd3556f..0302ac155c 100644
+--- a/mlir/test/Conversion/NVGPUToNVVM/lit.local.cfg
++++ b/mlir/test/Conversion/NVGPUToNVVM/lit.local.cfg
+@@ -1,2 +1,2 @@
+-if config.bspriv_davinci_bishengir:
++if config.bspub_davinci_bishengir:
+     config.unsupported = True
+diff --git a/mlir/test/Dialect/Linalg/drop-unit-extent-dims.mlir b/mlir/test/Dialect/Linalg/drop-unit-extent-dims.mlir
+index 549200fe8b..bea8afd834 100644
+--- a/mlir/test/Dialect/Linalg/drop-unit-extent-dims.mlir
++++ b/mlir/test/Dialect/Linalg/drop-unit-extent-dims.mlir
+@@ -1,7 +1,7 @@
+ // RUN: mlir-opt %s -linalg-fold-unit-extent-dims -split-input-file | FileCheck %s
+ // RUN: mlir-opt %s -linalg-fold-unit-extent-dims="use-rank-reducing-slices" -cse -split-input-file | FileCheck %s --check-prefix=CHECK-SLICES
+ 
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ 
+ #accesses = [
+   affine_map<(i, j, k, l, m) -> (i, k, m)>,
+diff --git a/mlir/test/Dialect/MemRef/extract-address-computations.mlir b/mlir/test/Dialect/MemRef/extract-address-computations.mlir
+index d01a39fced..dfdf181087 100644
+--- a/mlir/test/Dialect/MemRef/extract-address-computations.mlir
++++ b/mlir/test/Dialect/MemRef/extract-address-computations.mlir
+@@ -1,4 +1,4 @@
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ // RUN: mlir-opt -transform-interpreter %s --split-input-file --verify-diagnostics | FileCheck %s
+ 
+ // Simple test: check that we extract the address computation of a load into
+diff --git a/mlir/test/Dialect/MemRef/fold-memref-alias-ops.mlir b/mlir/test/Dialect/MemRef/fold-memref-alias-ops.mlir
+index 52e2ed15e9..aae7dae672 100644
+--- a/mlir/test/Dialect/MemRef/fold-memref-alias-ops.mlir
++++ b/mlir/test/Dialect/MemRef/fold-memref-alias-ops.mlir
+@@ -1,4 +1,4 @@
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ // RUN: mlir-opt -fold-memref-alias-ops -split-input-file %s | FileCheck %s
+ 
+ func.func @fold_static_stride_subview_with_load(%arg0 : memref<12x32xf32>, %arg1 : index, %arg2 : index, %arg3 : index, %arg4 : index) -> f32 {
+diff --git a/mlir/test/Dialect/NVGPU/lit.local.cfg b/mlir/test/Dialect/NVGPU/lit.local.cfg
+index dc2bd3556f..0302ac155c 100644
+--- a/mlir/test/Dialect/NVGPU/lit.local.cfg
++++ b/mlir/test/Dialect/NVGPU/lit.local.cfg
+@@ -1,2 +1,2 @@
+-if config.bspriv_davinci_bishengir:
++if config.bspub_davinci_bishengir:
+     config.unsupported = True
+diff --git a/mlir/test/Dialect/SCF/transform-loop-fuse-sibling.mlir b/mlir/test/Dialect/SCF/transform-loop-fuse-sibling.mlir
+index 57af82feb0..8d91fa77d2 100644
+--- a/mlir/test/Dialect/SCF/transform-loop-fuse-sibling.mlir
++++ b/mlir/test/Dialect/SCF/transform-loop-fuse-sibling.mlir
+@@ -1,7 +1,7 @@
+ // RUN: mlir-opt %s -transform-interpreter --cse --canonicalize -split-input-file -verify-diagnostics | FileCheck %s
+ // RUN: mlir-opt %s -transform-interpreter -split-input-file -verify-diagnostics | FileCheck %s --check-prefix CHECK-NOCLEANUP
+ 
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ 
+ // CHECK: func.func @fuse_1st_for_into_2nd([[A:%.*]]: {{.*}}, [[B:%.*]]: {{.*}}
+ func.func @fuse_1st_for_into_2nd(%A: tensor<128xf32>, %B: tensor<128xf32>) -> (tensor<128xf32>, tensor<128xf32>) {
+diff --git a/mlir/test/Dialect/Tensor/bufferize.mlir b/mlir/test/Dialect/Tensor/bufferize.mlir
+index 4908d4c604..e7d15bcbb3 100644
+--- a/mlir/test/Dialect/Tensor/bufferize.mlir
++++ b/mlir/test/Dialect/Tensor/bufferize.mlir
+@@ -1,6 +1,6 @@
+ // RUN: mlir-opt %s --one-shot-bufferize="dialect-filter=tensor,bufferization copy-before-write unknown-type-conversion=identity-layout-map" -cse -split-input-file | FileCheck %s
+ 
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ 
+ // CHECK-LABEL:   func @dim(
+ // CHECK-SAME:              %[[TENSOR:.*]]: tensor<*xf32>,
+diff --git a/mlir/test/Dialect/Tensor/canonicalize.mlir b/mlir/test/Dialect/Tensor/canonicalize.mlir
+index 4d144dbce8..12df96d1c1 100644
+--- a/mlir/test/Dialect/Tensor/canonicalize.mlir
++++ b/mlir/test/Dialect/Tensor/canonicalize.mlir
+@@ -1,6 +1,6 @@
+ // RUN: mlir-opt %s -split-input-file -canonicalize="test-convergence" | FileCheck %s
+ 
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ 
+ // CHECK-LABEL: expand_shape_identity_fold
+ // CHECK-NEXT: return
+diff --git a/mlir/test/Pass/run-reproducer.mlir b/mlir/test/Pass/run-reproducer.mlir
+index 40635bc9e1..275513b763 100644
+--- a/mlir/test/Pass/run-reproducer.mlir
++++ b/mlir/test/Pass/run-reproducer.mlir
+@@ -1,7 +1,7 @@
+ // RUN: mlir-opt %s --run-reproducer -dump-pass-pipeline 2>&1 | FileCheck %s
+ // RUN: mlir-opt %s --run-reproducer -mlir-print-ir-before=cse 2>&1 | FileCheck -check-prefix=BEFORE %s
+ 
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ 
+ func.func @foo() {
+   %0 = arith.constant 0 : i32
+diff --git a/mlir/test/Target/LLVMIR/nvvmir.mlir b/mlir/test/Target/LLVMIR/nvvmir.mlir
+index 855c37177e..0c6401e8a7 100644
+--- a/mlir/test/Target/LLVMIR/nvvmir.mlir
++++ b/mlir/test/Target/LLVMIR/nvvmir.mlir
+@@ -1,4 +1,4 @@
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ // RUN: mlir-translate -mlir-to-llvmir %s  -split-input-file --verify-diagnostics | FileCheck %s
+ 
+ // CHECK-LABEL: @nvvm_special_regs
+diff --git a/mlir/test/lit.cfg.py b/mlir/test/lit.cfg.py
+index c17074d62e..141cabd59a 100644
+--- a/mlir/test/lit.cfg.py
++++ b/mlir/test/lit.cfg.py
+@@ -256,5 +256,5 @@ if config.run_rocm_tests:
+ if config.arm_emulator_executable:
+     config.available_features.add("arm-emulator")
+ 
+-if config.bspriv_davinci_bishengir:
+-    config.available_features.add("bspriv_davinci_bishengir")
++if config.bspub_davinci_bishengir:
++    config.available_features.add("bspub_davinci_bishengir")
+diff --git a/mlir/test/lit.site.cfg.py.in b/mlir/test/lit.site.cfg.py.in
+index 714c5b5698..a781cd16cf 100644
+--- a/mlir/test/lit.site.cfg.py.in
++++ b/mlir/test/lit.site.cfg.py.in
+@@ -66,7 +66,7 @@ config.riscv_vector_emulator_executable = "@RISCV_VECTOR_EMULATOR_EXECUTABLE@"
+ config.riscv_vector_emulator_options = "@RISCV_VECTOR_EMULATOR_OPTIONS@"
+ config.riscv_emulator_lli_executable = "@RISCV_EMULATOR_LLI_EXECUTABLE@"
+ config.riscv_emulator_utils_lib_dir = "@RISCV_EMULATOR_UTILS_LIB_DIR@"
+-config.bspriv_davinci_bishengir = @BSPRIV_DAVINCI_BISHENGIR@
++config.bspub_davinci_bishengir = @BSPUB_DAVINCI_BISHENGIR@
+ 
+ import lit.llvm
+ lit.llvm.initialize(lit_config, config)
+diff --git a/mlir/test/mlir-opt/commandline.mlir b/mlir/test/mlir-opt/commandline.mlir
+index 3477a813c6..d03f66f86c 100644
+--- a/mlir/test/mlir-opt/commandline.mlir
++++ b/mlir/test/mlir-opt/commandline.mlir
+@@ -1,4 +1,4 @@
+-// UNSUPPORTED: bspriv_davinci_bishengir
++// UNSUPPORTED: bspub_davinci_bishengir
+ // RUN: echo "" | mlir-opt --show-dialects | FileCheck %s
+ // CHECK: Available Dialects:
+ // CHECK-SAME: acc

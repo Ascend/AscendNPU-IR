@@ -111,7 +111,7 @@ unsigned defaultAllocationAnalysisScratchSizeFn(Operation *op) {
   return 0;
 }
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
 void defaultAllocationSharedMemCheckFn(Operation *op, int allocatedSharedMemorySize) {
   // do nothing by default.
 }
@@ -601,7 +601,7 @@ private:
 
 } // namespace triton
 
-#ifdef BSPRIV_DAVINCI_BISHENGIR
+#ifdef BSPUB_DAVINCI_BISHENGIR
 void Allocation::run(
     FuncAllocMapT &funcAllocMap,
     triton::AllocationAnalysisScratchSizeFn scratchSizeGetter,

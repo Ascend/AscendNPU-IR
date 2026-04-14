@@ -468,7 +468,7 @@ struct ElementwiseInlineAsmOpConversion
                 /*constraints=*/op.getConstraints(),
                 /*has_side_effects=*/!op.getPure(),
                 /*is_align_stack=*/false,
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
                 LLVM::TailCallKind::None,
 #endif
                 /*asm_dialect=*/

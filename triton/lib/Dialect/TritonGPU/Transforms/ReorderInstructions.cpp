@@ -19,7 +19,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
 #include "triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h"
 #endif
 namespace mlir {
@@ -45,7 +45,7 @@ class TritonGPUReorderInstructionsPass
     : public impl::TritonGPUReorderInstructionsBase<
           TritonGPUReorderInstructionsPass> {
 public:
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
   explicit TritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options)
     : TritonGPUReorderInstructionsBase(options) {}
 #else
@@ -67,7 +67,7 @@ public:
 
   void runOnOperation() override {
     ModuleOp m = getOperation();
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     if (enableSimtReorderInstruction) {
       ReorderInstructionsImpl impl;
       impl.commonInstructionReorder(m, &getContext());
@@ -153,7 +153,7 @@ public:
 } // namespace triton
 } // namespace mlir
 
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
 std::unique_ptr<::mlir::Pass> mlir::triton::gpu::createTritonGPUReorderInstructionsPass(
   const TritonGPUReorderInstructionsOptions &options) {
   return std::make_unique<TritonGPUReorderInstructionsPass>(options);

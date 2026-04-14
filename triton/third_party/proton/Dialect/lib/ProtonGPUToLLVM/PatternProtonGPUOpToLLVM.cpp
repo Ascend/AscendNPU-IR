@@ -16,7 +16,7 @@ namespace {
 
 Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
   auto b = TritonLLVMOpBuilder(loc, rewriter);
-#if BSPRIV_DAVINCI_BISHENGIR
+#if BSPUB_DAVINCI_BISHENGIR
     Value linearId = rewriter.create<arith::IndexCastOp>(
       loc, i32_ty,
       rewriter.create<mlir::gpu::LinearBlockIdOp>(loc));

@@ -1629,7 +1629,7 @@ LogicalResult PaddedSharedEncodingAttr::verify(
   if (!llvm::all_of(paddings, llvm::isPowerOf2_32))
     return emitError() << "padding values must all be power of two";
 
-#if !BSPRIV_DAVINCI_BISHENGIR
+#if !BSPUB_DAVINCI_BISHENGIR
   llvm::SmallSet<unsigned, 4> intervalValues(intervals.begin(),
                                              intervals.end());
 #else
