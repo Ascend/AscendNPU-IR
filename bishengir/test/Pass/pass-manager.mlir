@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false \
 // RUN:   -bishengir-print-ir-after='hivm-inject-sync' \

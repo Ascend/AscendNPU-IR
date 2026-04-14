@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile --enable-hfusion-compile=true \
 // RUN:                   --enable-triton-kernel-compile=true \
