@@ -160,7 +160,7 @@ void MarkStrideAlignPass::runOnOperation() {
       return WalkResult::interrupt();
     }
 
-    if (isa<CustomOp>(op)) {
+    if (isa<CustomOp, CustomMacroOp>(op)) {
       ArrayAttr argAttrs =
           op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
       if (!argAttrs)

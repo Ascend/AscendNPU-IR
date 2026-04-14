@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace mlir {
@@ -1626,15 +1627,22 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
   }
 };
 
-class CustomOpToLibraryCallPattern : public OpRewritePattern<hivm::CustomOp> {
-  using OpRewritePattern<hivm::CustomOp>::OpRewritePattern;
+template <typename CustomOpT>
+class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
+  using OpRewritePattern<CustomOpT>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(hivm::CustomOp op,
+  LogicalResult matchAndRewrite(CustomOpT op,
                                 PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams;
+    if constexpr (std::is_same_v<CustomOpT, hivm::CustomMacroOp>) {
+      libParams = op.getLibraryCallOperands(rewriter);
+    } else {
+      libParams.assign(op.getOperands().begin(), op.getOperands().end());
+    }
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op.getOperands(), op.getResultTypes());
+                       libParams, op.getResultTypes());
     return success();
   }
 };
@@ -1844,7 +1852,8 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
-               CustomOpToLibraryCallPattern,
+               CustomOpToLibraryCallPattern<hivm::CustomOp>,
+               CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
@@ -1888,6 +1897,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::MatmulOp,
                       hivm::CopyOp,
                       hivm::CustomOp,
+                      hivm::CustomMacroOp,
                       hivm::LoadOp,
                       hivm::StoreOp,
                       hivm::IndirectStoreOp,

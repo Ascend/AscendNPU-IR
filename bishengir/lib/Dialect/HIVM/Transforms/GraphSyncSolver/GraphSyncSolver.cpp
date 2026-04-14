@@ -90,7 +90,17 @@ void GraphSyncSolverPass::runOnOperation() {
     }
   });
 
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
+
   solver->solve();
+
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
 
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateResultOps();

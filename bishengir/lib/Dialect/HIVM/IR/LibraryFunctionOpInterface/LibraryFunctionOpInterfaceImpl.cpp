@@ -175,7 +175,8 @@ std::string getVCastOpLibraryCallName(VCastOp concreteOp,
         disableSizeAlignForCast = true;
       }
     }
-    // Disable size align for overflow cast only when the cast is I32 to I8 or I16 to I8
+    // Disable size align for overflow cast only when the cast is I32 to I8 or
+    // I16 to I8
     if (disableSizeAlignForCast && (isI32ToI8 || isI16ToI8))
       ss << "_no_size_align";
   } else {
@@ -1133,19 +1134,14 @@ std::string InferMaxRankExternalModel<VTransposeOp>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
-// CustomOp
+// CustomOp / CustomMacroOp
 //===----------------------------------------------------------------------===//
 
-template <>
-int InferMaxRankExternalModel<CustomOp>::inferOpLibraryMaxRank(
-    Operation *op) const {
-  return cast<CustomOp>(op).getMaxRank();
-}
-
-template <>
-std::string InferMaxRankExternalModel<CustomOp>::getOpLibraryCallName(
-    Operation *op, std::optional<bool> isOpsAligned) const {
-  auto concreteOp = cast<CustomOp>(op);
+namespace {
+template <typename CustomOpT>
+std::string inferCustomOpMaxRank(Operation *op,
+                                 std::optional<bool> isOpsAligned) {
+  auto concreteOp = cast<CustomOpT>(op);
 
   // TODO: add support for built-in template library
   using InferBuiltinMaxRankFuncTy =
@@ -1175,6 +1171,24 @@ std::string InferMaxRankExternalModel<CustomOp>::getOpLibraryCallName(
   }
   return prefix + callNameMangleSuffix(op);
 }
+} // namespace
+
+#define DEFINE_CUSTOM_OP_INFER_MAX_RANK(OP)                                    \
+  template <>                                                                  \
+  int InferMaxRankExternalModel<OP>::inferOpLibraryMaxRank(Operation *op)      \
+      const {                                                                  \
+    return cast<OP>(op).getMaxRank();                                          \
+  }                                                                            \
+  template <>                                                                  \
+  std::string InferMaxRankExternalModel<OP>::getOpLibraryCallName(             \
+      Operation *op, std::optional<bool> isOpsAligned) const {                 \
+    return inferCustomOpMaxRank<OP>(op, isOpsAligned);                         \
+  }
+
+DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomOp)
+DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomMacroOp)
+
+#undef DEFINE_CUSTOM_OP_INFER_MAX_RANK
 
 #define REGISTER_STATIC_MAX_RANK(OP, MAX_RANK)                                 \
   OP::attachInterface<StaticMaxRankExternalModel<OP, /*MaxRank=*/MAX_RANK>>(   \
@@ -1199,6 +1213,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_INFER_MAX_RANK(VTransposeOp);
 
     REGISTER_INFER_MAX_RANK(CustomOp);
+    REGISTER_INFER_MAX_RANK(CustomMacroOp);
 
     REGISTER_STATIC_MAX_RANK(VExpOp, 3);
     REGISTER_STATIC_MAX_RANK(VAbsOp, 3);

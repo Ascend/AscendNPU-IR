@@ -241,8 +241,18 @@ EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
 
 llvm::SmallVector<int64_t>
 EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
+  // Honor a user-pinned id carried on the originating conflict pair.
+  if (node->initConflictPair && node->initConflictPair->pinnedEventId &&
+      node->eventIdNum == 1) {
+    return {*node->initConflictPair->pinnedEventId};
+  }
+
   llvm::SmallVector<int64_t> chosenEventIds;
   llvm::SmallVector<int64_t> usedEventIds = getAdjNodesUsedEventIds(node);
+  usedEventIds.append(reservedEventIds.begin(), reservedEventIds.end());
+  llvm::sort(usedEventIds);
+  usedEventIds.erase(std::unique(usedEventIds.begin(), usedEventIds.end()),
+                     usedEventIds.end());
   if (!node->reversePriority) {
     int64_t curEventId = 0;
     auto *it = usedEventIds.begin();
@@ -290,6 +300,24 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
   assert(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));
   assert(llvm::is_sorted(chosenEventIds));
   return chosenEventIds;
+}
+
+std::optional<int64_t>
+EventIdSolver::allocateUnusedEventId(int64_t eventIdMax) {
+  llvm::SmallVector<int64_t> usedEventIds;
+  for (auto &node : nodes)
+    llvm::append_range(usedEventIds, node->getEventIds());
+  llvm::append_range(usedEventIds, reservedEventIds);
+  llvm::sort(usedEventIds);
+  usedEventIds.erase(std::unique(usedEventIds.begin(), usedEventIds.end()),
+                     usedEventIds.end());
+  for (int64_t eventId = 0; eventId < eventIdMax; ++eventId) {
+    if (!llvm::is_contained(usedEventIds, eventId)) {
+      reserveEventId(eventId);
+      return eventId;
+    }
+  }
+  return std::nullopt;
 }
 
 void EventIdSolver::calcEventIds() {

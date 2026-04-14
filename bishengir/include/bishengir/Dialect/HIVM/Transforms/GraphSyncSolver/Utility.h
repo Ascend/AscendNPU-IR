@@ -303,6 +303,9 @@ struct ConflictPair {
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
+  // When set, GraphSyncSolver must assign this event id for the conflict
+  // (from CustomMacroOp sync_event_slots with an optional pinned event).
+  std::optional<int64_t> pinnedEventId;
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
@@ -348,6 +351,7 @@ struct ConflictPair {
     clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
+    clonedConflictPair->pinnedEventId = pinnedEventId;
     return clonedConflictPair;
   }
 

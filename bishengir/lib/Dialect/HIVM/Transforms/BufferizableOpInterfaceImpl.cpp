@@ -198,9 +198,10 @@ struct NDNZConversionOpInterface
   }
 };
 
+template <typename CustomOpT>
 struct HIVMCustomOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMCustomOpInterface,
-                                                     hivm::CustomOp> {
+    : public DstBufferizableOpInterfaceExternalModel<
+          HIVMCustomOpInterface<CustomOpT>, CustomOpT> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
@@ -576,7 +577,8 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
-    CustomOp::attachInterface<HIVMCustomOpInterface>(*ctx);
+    CustomOp::attachInterface<HIVMCustomOpInterface<CustomOp>>(*ctx);
+    CustomMacroOp::attachInterface<HIVMCustomOpInterface<CustomMacroOp>>(*ctx);
     LoadOp::attachInterface<HIVMLoadOpInterface>(*ctx);
     StoreOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::StoreOp>>(*ctx);
     IndirectStoreOp::attachInterface<IndirectStoreOpInterface>(*ctx);

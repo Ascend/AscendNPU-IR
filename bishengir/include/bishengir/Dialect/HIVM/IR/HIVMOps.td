@@ -189,7 +189,7 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
     /// Check if this operation has pure tensor semantics
     bool hasPureTensorSemantics() {
       return isa<TensorType>(getSource().getType()) &&
-             isa<TensorType>(getResult().getType());
+        isa<TensorType>(getResult().getType());
     }
 
     /// Return the output shape as a list of OpFoldResult (mixing static and dynamic)
@@ -210,17 +210,12 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
   }];
 
   let builders = [
-    // Convenience builder with mixed OpFoldResult shape
-    OpBuilder<(ins "Type":$resultType,
-                   "Value":$source,
-                   "DataLayoutAttr":$srcLayout,
-                   "DataLayoutAttr":$dstLayout,
-                   "ArrayRef<OpFoldResult>":$outputShape)>,
-    OpBuilder<(ins "Type":$resultType,
-                   "Value":$source,
-                   "DataLayoutAttr":$srcLayout,
-                   "DataLayoutAttr":$dstLayout)>
-  ];
+      // Convenience builder with mixed OpFoldResult shape
+      OpBuilder<(ins "Type":$resultType, "Value":$source,
+          "DataLayoutAttr":$srcLayout, "DataLayoutAttr":$dstLayout,
+          "ArrayRef<OpFoldResult>":$outputShape)>,
+      OpBuilder<(ins "Type":$resultType, "Value":$source,
+          "DataLayoutAttr":$srcLayout, "DataLayoutAttr":$dstLayout)>];
 
   let hasVerifier = 1;
   let hasCanonicalizer = 1;
@@ -412,32 +407,30 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
 // ScatterStoreOp
 //===----------------------------------------------------------------------===//
 
-def ScatterStoreOp : HIVM_Op<"scatter_store", [
-    DestinationStyleOpInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    SameVariadicOperandSize,
-    AllElementTypesMatch<["base", "data"]>,
-    AllRanksMatch<["indices", "data"]>,
-    AllShapesMatch<["indices", "data"]>
-]> {
+def ScatterStoreOp
+    : HIVM_Op<
+          "scatter_store", [DestinationStyleOpInterface,
+                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                            SameVariadicOperandSize,
+                            AllElementTypesMatch<["base", "data"]>,
+                            AllRanksMatch<["indices", "data"]>,
+                            AllShapesMatch<["indices", "data"]>]> {
   let summary = [{
     Performs sparse memory storing with optional mask
   }];
 
   let description = [{
-    This operation takes a source tensor and a tensor of offsets from UB,
+          This operation takes a source tensor and a tensor of offsets from UB,
     and stores elements from the source into the destination GM buffer
     at the specified offset positions. The operation supports masking to
     conditionally control which elements are stored.
     The meanings of the arguments are the same as these of the gather_load.
   }];
   let arguments = (ins RankedTensorOf<[I32, I64]>:$indices,
-                       AnyRankedTensor:$data,
-                       AnyTypeOf<[I32, I64]>:$burst_len,
-                       Optional<RankedTensorOf<[I1]>>:$mask,
-                       TensorOrMemref:$base,
-                       OptionalAttr<HIVM_CacheModifierAttr>:$cache,
-                       OptionalAttr<HIVM_EvictionPolicyAttr>:$evict);
+      AnyRankedTensor:$data, AnyTypeOf<[I32, I64]>:$burst_len,
+      Optional<RankedTensorOf<[I1]>>:$mask, TensorOrMemref:$base,
+      OptionalAttr<HIVM_CacheModifierAttr>:$cache,
+      OptionalAttr<HIVM_EvictionPolicyAttr>:$evict);
   let results = (outs Optional<AnyRankedTensor>:$result);
 
   let assemblyFormat = [{
@@ -462,26 +455,28 @@ def ScatterStoreOp : HIVM_Op<"scatter_store", [
 // CustomOp
 //===----------------------------------------------------------------------===//
 
-def CustomOp
+class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
     : HIVM_StructuredOp<
-          "custom",
-          [AttrSizedOperandSegments, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-           SinglePipeOpTrait, DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
-           DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-                                     ["getIteratorTypesArray",
-                                      "getIndexingMaps"]>,
-           DeclareOpInterfaceMethods<
-               HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
-  let summary = [{
-    Custom operation is a generic op interface for users to write their own custom implementation.
+          mnemonic,
+          !listconcat([AttrSizedOperandSegments,
+                       DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                       DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
+                       DeclareOpInterfaceMethods<
+                           HIVMStructuredOpInterface, ["getIteratorTypesArray",
+                                                       "getIndexingMaps"]>,
+                       DeclareOpInterfaceMethods<
+                           HIVMInferCoreTypeInterface, ["inferCoreType"]>],
+                      traits)> {
 
+  string customOpSummary = [{
+    Custom operation is a generic op interface for users to write their own custom implementation.
     Scenarios:
       1. Existing operations could not fulfill the desired functionality.
       2. Existing operations could fulfill the functionality, but overall performance is not optimal.
       3. Desire for private operation.
   }];
 
-  let description = [{
+  string customOpDescription = [{
     General interface for custom op, where:
       - name : unique op name.
 
@@ -495,84 +490,130 @@ def CustomOp
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
                   of the operation or the init locations to which the results of the op will be written.
+  }];
 
+  string customOpAttrsDescription = [{
     In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
     to retreive necessary information, required informations are:
       - CoreType : which core type to execute on, refer to TCoreTypeAttr.
-      - Pipe     : which pipe to execute on, refer to PipeAttr.
       - VFMode   : which mode to run on vector units, refer to VFModeAttr.
-                   this attribute is ignored when core type is cube.
-
-                   Note : for builtins, user could specify these informations or not,
-                          compiler will help to check the correctness and canonicalize.
-
-    TODO:
-      - Multi Pipe : custom op wants to use multiple pipes, which is a MacroOp in HIVM's context.
+                   Required when requiresVFMode() is true.
   }];
 
-  let arguments = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
-      Variadic<AnyType>:$outputs, Variadic<AnyType>:$temp_buffers, UnitAttr:$no_side_effect);
+  dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
+      Variadic<AnyType>:$outputs, Variadic<AnyType>:$temp_buffers,
+      UnitAttr:$no_side_effect);
 
-  let results = (outs Variadic<AnyType>:$results);
+  dag res = (outs Variadic<AnyType>:$results);
 
-  let builders = [
-    // Convenience builder with empty temp_buffers.
-    OpBuilder<(ins "StringRef":$name,
-                   "TypeRange":$resultTypes,
-                   "ValueRange":$inputs,
-                   "ValueRange":$outputs)>
-  ];
-
-  let extraClassDeclaration = [{
-      PIPE getPipe();
+  code customOpBaseDecl = [{
 
       ::mlir::MutableOperandRange getDpsInitsMutable() {
           return getOutputsMutable();
       }
 
-      // Helper functions
-      void setPipe(PIPE);
+      std::optional<TCoreType> getCoreType() {
+        if (const auto coreTypeAttr =
+                getOperation()->template getAttrOfType<TCoreTypeAttr>(
+                    TCoreTypeAttr::name)) {
+          return coreTypeAttr.getTcoretype();
+        }
+        return {};
+      }
 
-      std::optional<TCoreType> getCoreType();
-      void setCoreType(TCoreType);
+      void setCoreType(TCoreType coreType) {
+        getOperation()->setAttr(TCoreTypeAttr::name,
+                                TCoreTypeAttr::get(getContext(), coreType));
+      }
 
-      std::optional<VFMode> getVFMode();
-      void setVFMode(VFMode);
+      std::optional<VFMode> getVFMode() {
+        if (const auto vfModeAttr =
+                getOperation()->template getAttrOfType<VFModeAttr>(
+                    VFModeAttr::name)) {
+          return vfModeAttr.getValue();
+        }
+        return {};
+      }
 
-      bool isBuiltin();
+      void setVFMode(VFMode vfMode) {
+        getOperation()->setAttr(VFModeAttr::name,
+                                VFModeAttr::get(getContext(), vfMode));
+      }
+
+      // Returns true when VFMode attribute must be present (see HIVMOps.cpp).
+      bool requiresVFMode();
+
+      bool isBuiltin() { return kBuiltins.contains(getName()); }
 
       static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
-
-      SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo();
-
       static constexpr StringLiteral kIteratorTypesName = "iterator_types";
-
       static constexpr StringLiteral kIndexingMapName = "indexing_map";
-
       static constexpr StringLiteral kArgAttrsName = "arg_attrs";
-
       static constexpr StringLiteral kAlignDimName = "align_dim";
-
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
-      int getMaxRank();
+
+      int getMaxRank() {
+        if (auto maxRankAttr =
+                getOperation()->template getAttrOfType<IntegerAttr>(kMaxRankAttrName))
+          return static_cast<int>(maxRankAttr.getValue().getSExtValue());
+
+        static constexpr int defaultMaxRank = 5;
+        return defaultMaxRank;
+      }
+
       static constexpr StringLiteral kSymbolAttrName = "symbol";
-      std::string getSymbol();
+        std::string getSymbol() {
+            if (auto attr =
+                getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
+          return attr.str();
+        emitOpError() << "Missing implementation function name";
+        return "";
+      }
 
-      // Builtins helpers
-      struct BuiltinInfo {
-        TCoreType coreType;
-        PIPE pipe;
-        VFMode vfMode;
-      };
+      SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo() const;
 
-      // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE}
-      static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
+  }];
+}
+
+def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
+  let summary = customOpSummary;
+
+  let description = customOpDescription#customOpAttrsDescription#[{
+      - Pipe     : which pipe to execute on, refer to PipeAttr.
+  }];
+
+  let arguments = args;
+  let results = res;
+
+  let extraClassDeclaration = customOpBaseDecl#[{
+    PIPE getPipe();
+    void setPipe(PIPE);
+
+    // Builtins helpers
+    struct BuiltinInfo {
+      TCoreType coreType;
+      PIPE pipe;
+      VFMode vfMode;
+    };
+
+    // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE}
+    static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
   }];
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
   let hasCanonicalizer = 1;
+
+  let builders = [
+      // Convenience builder with empty temp_buffers.
+      OpBuilder<(ins "StringRef":$name, "TypeRange":$resultTypes,
+          "ValueRange":$inputs, "ValueRange":$outputs)>,
+      OpBuilder<(ins "ValueRange":$inputs, "ValueRange":$outputs), [{
+      build($_builder, $_state, /*result=*/ TypeRange{},
+            /*name=*/ StringAttr(), inputs, outputs,
+            /*temp_buffers=*/ ValueRange{}, /*no_side_effect=*/ UnitAttr{});
+    }]>];
 }
 
 //===----------------------------------------------------------------------===//
@@ -646,6 +687,78 @@ def IndirectStoreOp : HIVM_StructuredOp<"indirect_store",[
   let hasVerifier = 1;
 }
 
-// TODO: Add CustomMacroOp
+def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
+  let summary = customOpSummary;
+
+  let description = customOpDescription#customOpAttrsDescription#[{
+      - InPipe   : which input pipe to execute on, refer to PipeAttr.
+      - OutPipe  : which output pipe to execute on, refer to PipeAttr.
+      - sync_event_slots : optional (set_pipe, wait_pipe, macro_sync) slots for
+                           synchronization. macro_sync is `internal` when the
+                           macro only needs a GraphSyncSolver-allocated event id
+                           without boundary set_flag/wait_flag injection
+                           (default), `wait` when the kernel calls wait_flag on
+                           the slot, or `set` when it calls set_flag. set_pipe
+                           and wait_pipe are required for `wait`/`set` and
+                           optional for `internal`. An optional event field pins
+                           a static event id.
+      - sync_related_args : i64 operands filled by GraphSyncSolver, one per
+                            sync_event_slots entry.
+  }];
+
+  let arguments = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
+      Variadic<AnyType>:$outputs, Variadic<AnyType>:$temp_buffers,
+      Arg<Variadic<I64>, [{
+        i64 operands passed to the custom macro kernel for synchronization.
+        GraphSyncSolver fills one operand per sync_event_slots entry.
+      }]>:$sync_related_args,
+      UnitAttr:$no_side_effect);
+  let results = res;
+
+  let extraClassDeclaration = customOpBaseDecl#[{
+    static constexpr StringLiteral inPipeName = "hivm.pipe_in";
+    static constexpr StringLiteral outPipeName = "hivm.pipe_out";
+    static constexpr StringLiteral kSyncEventSlotsName = "sync_event_slots";
+
+    PIPE getInPipe();
+    void setInPipe(PIPE);
+
+    PIPE getOutPipe();
+    void setOutPipe(PIPE);
+
+    int getNumSyncRelatedArgs();
+    SmallVector<SyncEventSlotAttr> getUserSyncEventSlots() const;
+    SmallVector<SyncEventSlotAttr> getSyncEventSlots();
+    // Returns a user-pinned event id for (setPipe, waitPipe) when the matching
+    // sync_event_slots entry carries an optional #hivm.event<...> attribute.
+    std::optional<int64_t> getUserPinnedEventId(PIPE setPipe, PIPE waitPipe) const;
+    void ensureSyncRelatedArgsFilled(PatternRewriter &rewriter);
+    SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
+
+    // Reserved for future __builtin.* custom macros (see CustomOp::kBuiltins).
+    struct BuiltinInfo {
+      TCoreType coreType;
+      PIPE inPipe;
+      PIPE outPipe;
+      VFMode vfMode;
+    };
+
+    // Map <builtin in name> <-> {CORE_TYPE, PIPE, PIPE, VF_MODE}
+    static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
+  }];
+
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let hasCanonicalizer = 1;
+
+  let builders = [OpBuilder<(ins "ValueRange":$inputs, "ValueRange":$outputs),
+                            [{
+      build($_builder, $_state, /*result=*/ TypeRange{},
+            /*name=*/ StringAttr(), inputs, outputs,
+            /*temp_buffers=*/ ValueRange{},
+            /*sync_related_args=*/ ValueRange{},
+            /*no_side_effect=*/ UnitAttr());
+    }]>];
+}
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

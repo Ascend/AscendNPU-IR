@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // RUN: bishengir-compile %s --enable-auto-multi-buffer=True --enable-auto-bind-sub-block=False --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true -o %t.o
 
 module attributes {hacc.target = #hacc.target<"Ascend910B4">, hivm.disable_auto_tile_and_bind_subblock} {

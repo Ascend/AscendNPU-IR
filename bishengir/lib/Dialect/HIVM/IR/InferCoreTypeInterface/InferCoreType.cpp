@@ -150,6 +150,18 @@ static TCoreType getPreCoreTypeForNotifyOp(Operation *notifyOp) {
   return preCoreType;
 }
 
+namespace {
+template <typename CustomOpT>
+std::optional<TCoreType> inferCustomOpCoreTypeFromAttr(CustomOpT op) {
+  if (auto coreTypeAttr =
+          static_cast<Operation *>(op)->template getAttrOfType<TCoreTypeAttr>(
+              TCoreTypeAttr::name)) {
+    return coreTypeAttr.getTcoretype();
+  }
+  return {};
+}
+} // namespace
+
 std::optional<TCoreType> CustomOp::inferCoreType() {
   // Handle shmemIntp notify ops: infer coreType based on preceding ops
   if (shmemIntp.contains(this->getName())) {
@@ -160,12 +172,11 @@ std::optional<TCoreType> CustomOp::inferCoreType() {
     }
     return preCoreType;
   }
-  if (auto coreTypeAttr = getOperation()->template getAttrOfType<TCoreTypeAttr>(
-          TCoreTypeAttr::name)) {
-    return coreTypeAttr.getTcoretype();
-  }
+  return inferCustomOpCoreTypeFromAttr(*this);
+}
 
-  return {};
+std::optional<TCoreType> CustomMacroOp::inferCoreType() {
+  return inferCustomOpCoreTypeFromAttr(*this);
 }
 
 std::optional<TCoreType> ConvertLayoutOp::inferCoreType() {

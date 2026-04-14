@@ -48,9 +48,19 @@ struct MarkRealCoreTypePass
   void runOnOperation() override;
 
   bool isOpTypeToBeMarked(Operation *op) {
-    return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-               affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
-               hivm::LoadOp>(op);
+    // scalar-pipe operations.
+    if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
+            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
+      return true;
+    }
+    if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
+      return false;
+    }
+    if (isa<hivm::InferCoreTypeInterface>(op)) {
+      return true;
+    }
+    return false;
   }
 };
 

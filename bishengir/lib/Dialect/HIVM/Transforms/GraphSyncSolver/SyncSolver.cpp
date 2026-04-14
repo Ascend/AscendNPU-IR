@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
@@ -69,6 +70,11 @@ void Solver::reset(bool resetEventIdRanOutOpts) {
   insertedBarrierAllBefore.clear();
   eventIdSolver.clear();
   resetUnitFlag();
+  customMacroSync.applyReservedEventIds(
+      [&](hivm::PIPE pipeSrc,
+          hivm::PIPE pipeDst) -> std::unique_ptr<EventIdSolver> & {
+        return getEventIdSolverRef(pipeSrc, pipeDst);
+      });
 }
 
 void Solver::resetUnitFlag() {
@@ -1651,6 +1657,13 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
   conflictPair->eventIdInfo = eventIdInfo;
 
+  applyCustomMacroPinnedEventId(*conflictPair, rwOp1, rwOp2, corePipeSrc.pipe,
+                                corePipeDst.pipe);
+  if (conflictPair->pinnedEventId &&
+      conflictPair->eventIdInfo.eventIdNum != 1) {
+    conflictPair->eventIdInfo = EventIdInfo(1);
+  }
+
   if (conflictPair->isInnerBackward) {
     auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
     assert(parOcc1 != nullptr && parOcc2 != nullptr);
@@ -1976,6 +1989,7 @@ void Solver::calcAllEventIds() {
     assert(llvm::succeeded(result));
     assert(eventIdSolver->isColorable());
   }
+  customMacroSync.validatePinnedAssignments(chosenConflictedPairs);
 }
 
 void Solver::collectBackwardSyncEventIds() {
@@ -2358,6 +2372,12 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
       syncMapAfter[scopeOp].push_front(std::move(waitOp));
     }
   }
+  customMacroSync.injectBoundarySync(
+      syncMapBefore, syncMapAfter, funcOp, funcIr.get(), options,
+      [&](hivm::PIPE pipeSrc,
+          hivm::PIPE pipeDst) -> std::unique_ptr<EventIdSolver> & {
+        return getEventIdSolverRef(pipeSrc, pipeDst);
+      });
   return std::make_pair(std::move(syncMapBefore), std::move(syncMapAfter));
 }
 
@@ -2613,6 +2633,9 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
 }
 
 void Solver::solve() {
+  if (customMacroSync.hasConflict())
+    return;
+
   if (llvm::succeeded(runSolver())) {
     return;
   }

@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // RUN: bishengir-compile %s
 
 module @M attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {

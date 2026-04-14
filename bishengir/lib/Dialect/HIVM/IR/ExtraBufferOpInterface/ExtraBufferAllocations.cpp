@@ -116,11 +116,10 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
           numElemPerBlockForDst);
       hwAlignBytes = newAlignBytes;
     } else {
-      hwAlignBytes = static_cast<uint32_t>(
-          numElemPerBlockForDst * numElemPerBlockForDst * bytesFactor);
+      hwAlignBytes = static_cast<uint32_t>(numElemPerBlockForDst *
+                                           numElemPerBlockForDst * bytesFactor);
     }
-    const int64_t alignUnit =
-        static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
+    const int64_t alignUnit = static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
     alignedShape[0] = util::ceilFactor(dim0, alignUnit);
   } else {
     int64_t lastDim = rank - 1;
@@ -155,7 +154,7 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
   if (isa<OpType>(op)) {                                                       \
     auto concreteOp = dyn_cast<OpType>(op);                                    \
     return concreteOp.shouldLowerToScalarLoops();                              \
-  } 
+  }
 
 bool shouldSkipAllocExtraBuffer(Operation *op) {
   CHECK_OP(VMulOp)
@@ -285,7 +284,8 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
       extraBufSizes = {srcAllocTotalSize.value() * 2};
     } else {
       int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
-      // Reserve 3 times the "aligned src size" for subsequent template conversion.
+      // Reserve 3 times the "aligned src size" for subsequent template
+      // conversion.
       extraBufSizes = {alignedSrcSize * 3};
     }
     extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes, eleType);
@@ -445,9 +445,10 @@ LogicalResult VReduceOp::allocExtraBuffersIfPossible() {
   }
 
   if (this->shouldLowerToScalarLoops()) {
-      // if decompose to scalar later, there is no need to allocate an extra buffer.
-      return success();
-    }
+    // if decompose to scalar later, there is no need to allocate an extra
+    // buffer.
+    return success();
+  }
 
   MemRefType srcVecType = cast<MemRefType>(this->getSrc().getType());
   auto bufSizeMaybe = hivm::util::getExtraBufferSizeForReduceOp(
@@ -602,18 +603,29 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
 // CustomOp
 //===----------------------------------------------------------------------===//
 
-LogicalResult CustomOp::allocExtraBuffersIfPossible() {
-  if (!llvm::to_vector(this->getTempBuffers()).empty()) {
-    this->emitWarning("already has extra temp buffers");
+namespace {
+template <typename CustomOpT>
+LogicalResult allocExtraBuffersForCustomOp(CustomOpT op) {
+  if (!llvm::to_vector(op.getTempBuffers()).empty()) {
+    op.emitWarning("already has extra temp buffers");
     return success();
   }
 
   SmallVector<Value> buffs;
-  for (const auto &[type, size] : getExtraBuffersInfo()) {
-    Value extraBuf = allocExtraBuffer(getOperation(), {size}, type);
+  for (const auto &[type, size] : op.getExtraBuffersInfo()) {
+    Value extraBuf = allocExtraBuffer(op.getOperation(), {size}, type);
     buffs.push_back(extraBuf);
   }
 
-  this->getTempBuffersMutable().assign(buffs);
+  op.getTempBuffersMutable().assign(buffs);
   return success();
+}
+} // namespace
+
+LogicalResult CustomOp::allocExtraBuffersIfPossible() {
+  return allocExtraBuffersForCustomOp(*this);
+}
+
+LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {
+  return allocExtraBuffersForCustomOp(*this);
 }

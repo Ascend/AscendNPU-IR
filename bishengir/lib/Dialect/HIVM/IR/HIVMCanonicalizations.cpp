@@ -611,24 +611,36 @@ void mlir::hivm::HIVMDialect::getCanonicalizationPatterns(
   results.add<EliminateTrivialInlineBrc>(getContext());
 }
 
-struct CustomOpCanonicalizer : public OpRewritePattern<CustomOp> {
-  using OpRewritePattern<CustomOp>::OpRewritePattern;
+template <typename CustomOpT>
+struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
+  using OpRewritePattern<CustomOpT>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(CustomOp customOp,
+  LogicalResult matchAndRewrite(CustomOpT customOp,
                                 PatternRewriter &rewriter) const final {
     if (!customOp.isBuiltin())
       return failure();
 
-    const auto &builtinInfo = CustomOp::kBuiltins.at(customOp.getName());
+    const auto &builtinInfo = CustomOpT::kBuiltins.at(customOp.getName());
     const auto &coreType = customOp.getCoreType();
     if (!coreType || *coreType != builtinInfo.coreType) {
       customOp.setCoreType(builtinInfo.coreType);
       return success();
     }
 
-    if (customOp.getPipe() != builtinInfo.pipe) {
-      customOp.setPipe(builtinInfo.pipe);
-      return success();
+    if constexpr (std::is_same_v<CustomOpT, CustomOp>) {
+      if (customOp.getPipe() != builtinInfo.pipe) {
+        customOp.setPipe(builtinInfo.pipe);
+        return success();
+      }
+    } else if constexpr (std::is_same_v<CustomOpT, CustomMacroOp>) {
+      if (customOp.getInPipe() != builtinInfo.inPipe) {
+        customOp.setInPipe(builtinInfo.inPipe);
+        return success();
+      }
+      if (customOp.getOutPipe() != builtinInfo.outPipe) {
+        customOp.setOutPipe(builtinInfo.outPipe);
+        return success();
+      }
     }
 
     const auto &vfMode = customOp.getVFMode();
@@ -643,5 +655,10 @@ struct CustomOpCanonicalizer : public OpRewritePattern<CustomOp> {
 
 void CustomOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                            ::mlir::MLIRContext *context) {
-  results.add<CustomOpCanonicalizer>(context);
+  results.add<CustomOpCanonicalizer<CustomOp>>(context);
+}
+
+void CustomMacroOp::getCanonicalizationPatterns(
+    ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
+  results.add<CustomOpCanonicalizer<CustomMacroOp>>(context);
 }

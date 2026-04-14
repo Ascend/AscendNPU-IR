@@ -210,10 +210,10 @@ SmallVector<hivm::IteratorType> VGatherMaskOp::getIteratorTypesArray() {
   OperandRange dstRange = getDst();
   Value dst = dstRange.front();
   int64_t rank = getRankFromShapedTypeValue(dst);
-  auto iteratorTypes = SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
+  auto iteratorTypes =
+      SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
   return iteratorTypes;
 }
-
 
 //===----------------------------------------------------------------------===//
 // VFlip
@@ -843,19 +843,42 @@ SmallVector<hivm::IteratorType> Conv3DL1Op::getIteratorTypesArray() {
   }
 }
 
-ArrayAttr CustomOp::getIndexingMaps() {
-  if (auto attr = getOperation()->getAttrOfType<ArrayAttr>(kIndexingMapName))
+//===----------------------------------------------------------------------===//
+// CustomOp / CustomMacroOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+template <typename CustomOpT> ArrayAttr getCustomOpIndexingMaps(CustomOpT op) {
+  if (auto attr = op.getOperation()->template getAttrOfType<ArrayAttr>(
+          CustomOpT::kIndexingMapName))
     return attr;
-  return ArrayAttr::get(getContext(), {});
+  return ArrayAttr::get(op.getContext(), {});
 }
 
-SmallVector<hivm::IteratorType> CustomOp::getIteratorTypesArray() {
-  if (!getOperation()->hasAttr(kIteratorTypesName))
+template <typename CustomOpT>
+SmallVector<hivm::IteratorType> getCustomOpIteratorTypesArray(CustomOpT op) {
+  if (!op.getOperation()->hasAttr(CustomOpT::kIteratorTypesName))
     return {};
 
-  return llvm::to_vector(llvm::map_range(
-      getOperation()->getAttrOfType<ArrayAttr>(kIteratorTypesName),
-      [](Attribute attr) {
-        return cast<hivm::IteratorTypeAttr>(attr).getValue();
-      }));
+  return llvm::to_vector(
+      llvm::map_range(op.getOperation()->template getAttrOfType<ArrayAttr>(
+                          CustomOpT::kIteratorTypesName),
+                      [](Attribute attr) {
+                        return cast<hivm::IteratorTypeAttr>(attr).getValue();
+                      }));
+}
+} // namespace
+
+ArrayAttr CustomOp::getIndexingMaps() { return getCustomOpIndexingMaps(*this); }
+
+SmallVector<hivm::IteratorType> CustomOp::getIteratorTypesArray() {
+  return getCustomOpIteratorTypesArray(*this);
+}
+
+ArrayAttr CustomMacroOp::getIndexingMaps() {
+  return getCustomOpIndexingMaps(*this);
+}
+
+SmallVector<hivm::IteratorType> CustomMacroOp::getIteratorTypesArray() {
+  return getCustomOpIteratorTypesArray(*this);
 }

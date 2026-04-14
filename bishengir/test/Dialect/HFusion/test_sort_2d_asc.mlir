@@ -1,3 +1,4 @@
+// REQUIRES: execution-engine
 // RUN: bishengir-opt %s \
 // RUN:   --hfusion-decompose="hfusion-decompose-phase=before-lower-to-loops" \
 // RUN:   --convert-linalg-to-loops \
@@ -8,8 +9,8 @@
 // RUN:   --convert-func-to-llvm \
 // RUN:   --reconcile-unrealized-casts | \
 // RUN: mlir-cpu-runner -e main -entry-point-result=void \
-// RUN:   -shared-libs=%S/../../../../build/lib/libmlir_runner_utils.so \
-// RUN:   -shared-libs=%S/../../../../build/lib/libmlir_c_runner_utils.so | \
+// RUN:   -shared-libs=%S/../../../../build/lib/libmlir_runner_utils%shlibext \
+// RUN:   -shared-libs=%S/../../../../build/lib/libmlir_c_runner_utils%shlibext | \
 // RUN: FileCheck %s
 
 // CHECK: [1, inf, nan, -inf]

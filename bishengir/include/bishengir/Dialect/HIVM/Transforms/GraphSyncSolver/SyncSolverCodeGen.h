@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERCODEGEN_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERCODEGEN_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
@@ -67,6 +68,8 @@ private:
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
   llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
 
+  CustomMacroSyncCodegenState customMacroCodegen;
+
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
@@ -86,6 +89,8 @@ public:
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
     unitFlagFeaturedOps = std::move(solver->unitFlagFeaturedOps);
+    customMacroCodegen.setResolvedSlotEventIds(
+        std::move(solver->customMacroSync.resolvedSlotEventIds()));
   }
 
   // Insert sync ops into func-ir.

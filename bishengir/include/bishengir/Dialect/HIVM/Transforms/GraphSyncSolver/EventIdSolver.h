@@ -166,6 +166,7 @@ private:
   llvm::DenseMap<EventIdNode *, int64_t> sumAdjListSizes;
   llvm::DenseMap<ConflictPair *, EventIdNode *> conflictPair2Node;
   std::stack<std::unique_ptr<Action>> actionsStack;
+  llvm::DenseSet<int64_t> reservedEventIds;
 
 public:
   EventIdSolver(int64_t eventIdNumMax) : eventIdsNumMax(eventIdNumMax) {}
@@ -196,6 +197,14 @@ public:
   void undoActions();
 
   void debugPrint();
+
+  std::optional<int64_t> allocateUnusedEventId(int64_t eventIdMax);
+
+  void reserveEventId(int64_t eventId) {
+    // Pre-reserve a user-pinned id so EventIdSolver will not assign it
+    // elsewhere.
+    reservedEventIds.insert(eventId);
+  }
 
 private:
   int64_t getEventIdsNum(bool dontCalcEventIds = false);
