@@ -373,7 +373,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
   // memory
   if (is_offset_aligned && is32ByteAligned<T>(src_stride0) &&
       is32ByteAligned<T>(dst_stride0) &&
-      is_unalign_collapsible_dims(src, dst)) {
+      is_all_continuous(src, dst)) {
     for (int i = 0; i < size0; ++i) {
       memref_t<__ubuf__ T, 1> src_1d{src->allocated,
                                      src->aligned,
@@ -390,6 +390,20 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
       copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
     }
     return;
+  }
+
+  /// For 3D copy scenarios where last 2 dims of dst is a contiguous memory region,
+  /// and for src, all strides except the last dimension are 32B-aligned with offset
+  /// alignment, vreduceV2 can be used to avoid scalar copy performance degradation.
+  /// e.g. src sizes(8, 128, 4) strides(1024, 8, 1) dst sizes(8, 128, 4) strides(512, 4, 1)
+  /// select PatternMode::ALL_ELEMENTS to copy all of elements of src
+  if constexpr (sizeof(T) == 2 || sizeof(T) == 4) {
+    if (is_offset_aligned && is32ByteAligned<T>(src_stride0) &&
+      is32ByteAligned<T>(dst_stride0) &&
+      is_unalign_collapsible_dims<T, 3>(src, dst)) {
+      copy_with_last_two_dims_collapsed<T>(src, dst);
+      return;
+    }
   }
 
   // For src and dst which have aligned high dim stride,
