@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false -enable-static-bare-ptr=false %s -o %t.ll
 // RUN: FileCheck --input-file=%t.ll %s

@@ -3,6 +3,7 @@
 import os
 import platform
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -106,3 +107,6 @@ if ('bisheng' in config.bisheng_compiler_executable and os.path.isfile(config.bi
     config.available_features.add('enable-lir-compile')
     llvm_config.with_environment('BISHENG_INSTALL_PATH', os.path.dirname(
         config.bisheng_compiler_executable), append_path=True)
+
+if shutil.which('hivmc'):
+    config.available_features.add('hivmc')

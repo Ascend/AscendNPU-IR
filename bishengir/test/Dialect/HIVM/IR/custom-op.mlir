@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: mkdir -p %t/impl/
 // RUN: rm -f %t/impl/*

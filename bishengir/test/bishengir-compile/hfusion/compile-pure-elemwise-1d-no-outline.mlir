@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-hivm-inject-barrier-all-sync  -block-dim=20 %s -o %t.ll
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s -o %t.ll

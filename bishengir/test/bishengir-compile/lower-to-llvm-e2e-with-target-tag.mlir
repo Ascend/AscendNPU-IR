@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 
 // RUN: bishengir-opt %s \
