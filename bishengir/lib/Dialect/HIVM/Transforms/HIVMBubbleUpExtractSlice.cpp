@@ -155,6 +155,7 @@ private:
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }

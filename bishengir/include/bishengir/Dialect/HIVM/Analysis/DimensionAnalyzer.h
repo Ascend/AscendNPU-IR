@@ -20,6 +20,7 @@
 
 #include "bishengir/Dialect/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 namespace mlir {
 namespace hivm {
@@ -125,6 +126,7 @@ protected:
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
                             std::is_same_v<T, tensor::CollapseShapeOp>>>
   void processReshapeOp(T op);
+  void processScopeOp(scope::ScopeOp op);
 
   //===--------------------------------------------------------------------===//
   // Helper function

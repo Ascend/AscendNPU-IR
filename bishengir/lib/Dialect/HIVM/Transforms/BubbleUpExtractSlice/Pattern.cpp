@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1492,6 +1493,41 @@ LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.modifyOpInPlace(
       ifOp, [&]() { ifOp.getResult(yieldIndex).setType(sliceOp.getType()); });
   rewriter.replaceAllUsesWith(sliceOp, ifOp->getResult(yieldIndex));
+
+  return success();
+}
+
+bool ScopeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto sourceOp = sliceOp.getSource().getDefiningOp<scope::ScopeOp>();
+  return sourceOp && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult ScopeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                             PatternRewriter &rewriter) const {
+  auto src = cast<OpResult>(sliceOp.getSource());
+  auto scopeOp = src.getDefiningOp<scope::ScopeOp>();
+  if (!scopeOp)
+    return failure();
+
+  auto returnIndex = src.getResultNumber();
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+  rewriter.setInsertionPoint(returnOp);
+  auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), returnOp.getResults()[returnIndex],
+      sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
+      sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+   auto &returnValueOpr = returnOp->getOpOperand(returnIndex);
+   rewriter.modifyOpInPlace(returnOp, [&returnValueOpr, &newMovedInSlice]() {
+     returnValueOpr.assign(newMovedInSlice.getResult());
+   });
+
+  rewriter.modifyOpInPlace(scopeOp, [&]() {
+    scopeOp->getResult(returnIndex).setType(sliceOp.getType());
+  });
+  rewriter.replaceAllUsesWith(sliceOp, scopeOp->getResult(returnIndex));
 
   return success();
 }

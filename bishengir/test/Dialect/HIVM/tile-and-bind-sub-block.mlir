@@ -1361,7 +1361,7 @@ func.func @tile_and_bind_while(%arg0: tensor<64xf32>, %arg1: memref<64xf32>) att
   return
 }
 
-// ----
+// -----
 // CHECK-LABEL:   func.func @dynamic_shape_insert_slice
 // CHECK:         {limit_sub_block_id0}
 func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x64xf32>, %arg2: index) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
@@ -1369,4 +1369,75 @@ func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x
   %inserted_slice = tensor.insert_slice %arg0 into %0[0, 0] [64, %arg2] [1, 1] : tensor<64x?xf32> into tensor<64x64xf32>
   hivm.hir.store ins(%inserted_slice : tensor<64x64xf32>) outs(%arg1 : memref<64x64xf32>)
   return
+}
+
+
+// -----
+// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 16)>
+// CHECK: #[[$ATTR_1:.+]] = affine_map<()[s0] -> (s0 * 32)>
+// CHECK-LABEL:   func.func @tile_and_bind_scope(
+// CHECK-SAME:                                   %[[VAL_0:.*]]: memref<?xf32>,
+// CHECK-SAME:                                   %[[VAL_1:.*]]: tensor<64xf32>,
+// CHECK-SAME:                                   %[[VAL_2:.*]]: tensor<64xf32>)
+// CHECK:           %[[VAL_3:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_5:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %[[VAL_6:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] {
+// CHECK:             %[[VAL_7:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_6]]]
+// CHECK:             %[[VAL_8:.*]] = affine.apply #[[$ATTR_1]](){{\[}}%[[VAL_6]]]
+// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %[[VAL_1]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_10:.*]] = tensor.extract_slice %[[VAL_2]]{{\[}}%[[VAL_8]]] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:             %[[VAL_11:.*]] = scope.scope : () -> tensor<32xf32> {
+// CHECK:               %[[VAL_12:.*]] = tensor.empty() : tensor<32xf32>
+// CHECK:               %[[VAL_13:.*]] = scf.for %[[VAL_14:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] iter_args(%[[VAL_15:.*]] = %[[VAL_12]]) -> (tensor<32xf32>) {
+// CHECK:                 %[[VAL_16:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_14]]]
+// CHECK:                 %[[VAL_17:.*]] = affine.apply #[[$ATTR_1]](){{\[}}%[[VAL_14]]]
+// CHECK:                 %[[VAL_18:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_17]]], sizes: [32], strides: [1] : memref<?xf32> to memref<32xf32, strided<[1], offset: ?>>
+// CHECK:                 %[[VAL_19:.*]] = memref.alloc() : memref<16xf32>
+// CHECK:                 %[[VAL_20:.*]] = memref.subview %[[VAL_18]]{{\[}}%[[VAL_7]]] [16] [1] : memref<32xf32, strided<[1], offset: ?>> to memref<16xf32, strided<[1], offset: ?>>
+// CHECK:                 hivm.hir.load ins(%[[VAL_20]] : memref<16xf32, strided<[1], offset: ?>>) outs(%[[VAL_19]] : memref<16xf32>) init_out_buffer = false
+// CHECK:                 %[[VAL_21:.*]] = bufferization.to_tensor %[[VAL_19]] restrict writable : memref<16xf32>
+// CHECK:                 %[[VAL_22:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK:                 %[[VAL_23:.*]] = hivm.hir.vln ins(%[[VAL_21]] : tensor<16xf32>) outs(%[[VAL_22]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK:                 %[[VAL_24:.*]] = tensor.insert_slice %[[VAL_23]] into %[[VAL_15]]{{\[}}%[[VAL_16]]] [16] [1] : tensor<16xf32> into tensor<32xf32>
+// CHECK:                 scf.yield %[[VAL_24]] : tensor<32xf32>
+// CHECK:               }
+// CHECK:               %[[VAL_25:.*]] = hivm.hir.store ins(%[[VAL_13]] : tensor<32xf32>) outs(%[[VAL_9]] : tensor<32xf32>) {tiled_op} -> tensor<32xf32>
+// CHECK:               annotation.mark %[[VAL_25]] : tensor<32xf32>
+// CHECK:               scope.return %[[VAL_13]] : tensor<32xf32>
+// CHECK:             }
+// CHECK:             %[[VAL_26:.*]] = hivm.hir.store ins(%[[VAL_11]] : tensor<32xf32>) outs(%[[VAL_10]] : tensor<32xf32>) {tiled_op} -> tensor<32xf32>
+// CHECK:             annotation.mark %[[VAL_26]] : tensor<32xf32>
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+// CHECK:           return
+// CHECK:         }
+#map = affine_map<()[s0] -> (s0 * 32)>
+module {
+  func.func @tile_and_bind_scope(%arg0: memref<?xf32>, %arg1: tensor<64xf32>, %arg2: tensor<64xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %0 = tensor.empty() : tensor<64xf32>
+    %1 = tensor.empty() : tensor<32xf32>
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %2 = scope.scope : () -> tensor<64xf32> {
+      %4 = scf.for %arg3 = %c0 to %c2 step %c1 iter_args(%arg4 = %0) -> (tensor<64xf32>) {
+        %6 = affine.apply #map()[%arg3]
+        %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%6], sizes: [32], strides: [1] : memref<?xf32> to memref<32xf32, strided<[1], offset: ?>>
+        %alloc = memref.alloc() : memref<32xf32>
+        hivm.hir.load ins(%reinterpret_cast : memref<32xf32, strided<[1], offset: ?>>) outs(%alloc : memref<32xf32>) init_out_buffer = false
+        %7 = bufferization.to_tensor %alloc restrict writable : memref<32xf32>
+        %8 = hivm.hir.vln ins(%7 : tensor<32xf32>) outs(%1 : tensor<32xf32>) -> tensor<32xf32>
+        %inserted_slice = tensor.insert_slice %8 into %arg4[%6] [32] [1] : tensor<32xf32> into tensor<64xf32>
+        scf.yield %inserted_slice : tensor<64xf32>
+      }
+      %5 = hivm.hir.store ins(%4 : tensor<64xf32>) outs(%arg1 : tensor<64xf32>) -> tensor<64xf32>
+      annotation.mark %5 : tensor<64xf32>
+      scope.return %4 : tensor<64xf32>
+    }
+    %3 = hivm.hir.store ins(%2 : tensor<64xf32>) outs(%arg2 : tensor<64xf32>) -> tensor<64xf32>
+    annotation.mark %3 : tensor<64xf32>
+    return
+  }
 }
