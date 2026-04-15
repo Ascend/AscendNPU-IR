@@ -1271,7 +1271,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
   } else {
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (leafNodeGroup.size() > maxFusedOps)
+      if (leafNodeGroup.size() > maxFusedOps || isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the common axis and do not conflict
       // with each other.

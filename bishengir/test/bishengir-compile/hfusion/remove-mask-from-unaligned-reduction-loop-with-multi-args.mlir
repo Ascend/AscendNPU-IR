@@ -54,12 +54,11 @@ module {
 // CHECK-NEXT:     %extracted_slice_2 = tensor.extract_slice %arg12[0, 0] [1, %7] [1, 1] : tensor<1x64xf32> to tensor<1x?xf32>
 // CHECK-NEXT:     %8 = vector.create_mask %c1, %7 : vector<1x64xi1>
 // CHECK-NEXT:     %9 = vector.mask %8 { vector.transfer_read %extracted_slice_1[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x?xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
-// CHECK-NEXT:     %10 = vector.mask %8 { vector.transfer_read %extracted_slice_2[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x?xf32>, vector<1x64xf32> } : vector<1x64xi1> -> vector<1x64xf32>
+// CHECK-NEXT:     %10 = vector.transfer_read %arg12[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x64xf32>, vector<1x64xf32>
 // CHECK-NEXT:     %11 = arith.select %8, %9, %cst : vector<1x64xi1>, vector<1x64xf32>
 // CHECK-NEXT:     %12 = arith.addf %11, %10 {reductionOp} : vector<1x64xf32>
-// CHECK-NEXT:     %13 = vector.mask %8 { vector.transfer_write %12, %extracted_slice_2[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x?xf32> } : vector<1x64xi1> -> tensor<1x?xf32>
-// CHECK-NEXT:     %inserted_slice_3 = tensor.insert_slice %13 into %arg12[0, 0] [1, %7] [1, 1] : tensor<1x?xf32> into tensor<1x64xf32>
-// CHECK-NEXT:     scf.yield %arg11, %inserted_slice_3 : index, tensor<1x64xf32>
+// CHECK-NEXT:     %13 = vector.transfer_write %12, %arg12[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf32>, tensor<1x64xf32>
+// CHECK-NEXT:     scf.yield %arg11, %13 : index, tensor<1x64xf32>
 // CHECK-NEXT:   } {reductionLoop}
 // CHECK-NEXT:   %3 = vector.transfer_read %2#1[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x64xf32>, vector<1x64xf32>
 // CHECK-NEXT:   %4 = vector.transfer_read %extracted_slice[%c0], %cst_0 {in_bounds = [true]} : tensor<1xf32>, vector<1xf32>
