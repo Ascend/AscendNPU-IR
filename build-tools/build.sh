@@ -57,70 +57,85 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ] || \
     exit 1
 fi
 
-OS_TYPE=$(uname -s)
-GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-if [ -z "$GIT_ROOT" ]; then
-    echo "Error: Not in a git repository" >&2
-    exit 1
-fi
+# Define all script-level variables (call again with "post_parse" after parse_arguments)
+init_variables() {
+  if [[ "${1:-}" == "post_parse" ]]; then
+    if [[ -z "${INSTALL_PREFIX}" ]]; then
+      readonly INSTALL_PREFIX="${BUILD_DIR}/install"
+    fi
+    return
+  fi
 
-THIRD_PARTY_FOLDER="$GIT_ROOT/third-party"
-SCRIPT_ROOT="$(get_script_root)"
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly ENABLE_PROJECTS="mlir"
+  readonly ENABLE_PROJECTS="mlir"
+  readonly SCRIPT_NAME="$(basename "$0")"
 
-# Initialize variables
-BUILD_TYPE="Release"
-# Default compiler by OS: system clang on macOS to avoid LLD/libc++ conflicts; clang on Linux
-if [[ "$OS_TYPE" == "Darwin" ]]; then
-  if [ -x "/usr/bin/clang" ] && [ -x "/usr/bin/clang++" ]; then
-    C_COMPILER="/usr/bin/clang"
-    CXX_COMPILER="/usr/bin/clang++"
+  export BISHENG_INSTALL_PATH
+  export PATCH_CMD
+
+  OS_TYPE=$(uname -s)
+  GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$GIT_ROOT" ]; then
+      echo "Error: Not in a git repository" >&2
+      exit 1
+  fi
+
+  THIRD_PARTY_FOLDER="$GIT_ROOT/third-party"
+  SCRIPT_ROOT="$(get_script_root)"
+
+  BUILD_TYPE="Release"
+  # Default compiler by OS: system clang on macOS to avoid LLD/libc++ conflicts; clang on Linux
+  if [[ "$OS_TYPE" == "Darwin" ]]; then
+    if [ -x "/usr/bin/clang" ] && [ -x "/usr/bin/clang++" ]; then
+      C_COMPILER="/usr/bin/clang"
+      CXX_COMPILER="/usr/bin/clang++"
+    else
+      C_COMPILER="clang"
+      CXX_COMPILER="clang++"
+    fi
   else
     C_COMPILER="clang"
     CXX_COMPILER="clang++"
   fi
-else
-  C_COMPILER="clang"
-  CXX_COMPILER="clang++"
-fi
-BUILD_DIR="${GIT_ROOT}/build"
-BUILD_SCRIPTS=(
-  "apply_patches.sh"
-  "patches"
-  "build.sh"
-)
-BUILD_BISHENGIR_DOC="OFF"
-LLVM_SOURCE_DIR="$THIRD_PARTY_FOLDER/llvm-project"
-TORCH_MLIR_SOURCE_DIR="$THIRD_PARTY_FOLDER/torch-mlir"
-BISHENGIR_SOURCE_DIR="$GIT_ROOT"
-ENABLE_ASSERTION="OFF"
-PYTHON_BINDING="OFF"
-BUILD_TORCH_MLIR="OFF"
-CCACHE_BUILD="ON"
-SAFETY_OPTIONS=""
-SAFETY_LD_OPTIONS=""
-BISHENGIR_PUBLISH="ON"
-LLVM_BUILD_TARGETS="host"
-BISHENGIR_BUILD_TEMPLATE="OFF"
-BISHENG_COMPILER=""
-APPLY_PATCHES=""
-BUILD_TEST=""
-NO_INSTALL=""
-REBUILD=""
-SKIP_RPATH_OPTION="FALSE"
-CMAKE_OPTIONS=""
-INSTALL_PREFIX=""
-BUILD_BISHENGIR_A5="OFF"
+  BUILD_DIR="${GIT_ROOT}/build"
+  BUILD_SCRIPTS=(
+    "apply_patches.sh"
+    "patches"
+    "build.sh"
+  )
+  BUILD_BISHENGIR_DOC="OFF"
+  LLVM_SOURCE_DIR="$THIRD_PARTY_FOLDER/llvm-project"
+  TORCH_MLIR_SOURCE_DIR="$THIRD_PARTY_FOLDER/torch-mlir"
+  BISHENGIR_SOURCE_DIR="$GIT_ROOT"
+  ENABLE_ASSERTION="OFF"
+  PYTHON_BINDING="OFF"
+  BUILD_TORCH_MLIR="OFF"
+  CCACHE_BUILD="ON"
+  SAFETY_OPTIONS=""
+  SAFETY_LD_OPTIONS=""
+  BISHENGIR_PUBLISH="ON"
+  LLVM_BUILD_TARGETS="host"
+  BISHENGIR_BUILD_TEMPLATE="OFF"
+  BISHENG_COMPILER=""
+  APPLY_PATCHES=""
+  BUILD_TEST=""
+  NO_INSTALL=""
+  REBUILD=""
+  SKIP_RPATH_OPTION="FALSE"
+  CMAKE_OPTIONS=""
+  INSTALL_PREFIX=""
+  BUILD_BISHENGIR_A5="OFF"
 
-# Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
-if [[ "$OS_TYPE" == "Darwin" ]]; then
-  NCPU=$(sysctl -n hw.ncpu 2>/dev/null) || NCPU=1
-else
-  NCPU=$(grep -c "processor" /proc/cpuinfo 2>/dev/null) || NCPU=1
-fi
-THREADS=$((NCPU * 3 / 4))
-(( THREADS > 1 )) || THREADS=1
+  # Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
+  if [[ "$OS_TYPE" == "Darwin" ]]; then
+    NCPU=$(sysctl -n hw.ncpu 2>/dev/null) || NCPU=1
+  else
+    NCPU=$(grep -c "processor" /proc/cpuinfo 2>/dev/null) || NCPU=1
+  fi
+  THREADS=$((NCPU * 3 / 4))
+  (( THREADS > 1 )) || THREADS=1
+}
+
+init_variables
 
 # Help message
 usage() {
@@ -408,6 +423,7 @@ parse_arguments() {
 }
 
 parse_arguments "$@"
+init_variables post_parse
 
 # Check required tools and environment
 check_dependencies() {
@@ -456,10 +472,6 @@ clean_build_dir() {
   fi
 }
 
-if [[ -z "${INSTALL_PREFIX}" ]]; then
-  readonly INSTALL_PREFIX="${BUILD_DIR}/install"
-fi
-
 cmake_generate() {
   local torch_mlir_option=""
   local enable_external_projects="bishengir"
@@ -468,7 +480,7 @@ cmake_generate() {
     if [ ! -d "$BISHENG_COMPILER" ]; then
         echo "Path to bisheng compiler "$BISHENG_COMPILER" does not exist"
       else
-        export BISHENG_INSTALL_PATH="${BISHENG_COMPILER}"
+        BISHENG_INSTALL_PATH="${BISHENG_COMPILER}"
     fi
   fi
 
@@ -622,7 +634,7 @@ main() {
     echo "Applying patches..."
     if [[ -f "${SCRIPT_ROOT}/apply_patches.sh" ]]; then
       if [[ "$OS_TYPE" == "Darwin" ]] && command -v gpatch >/dev/null 2>&1; then
-        export PATCH_CMD="gpatch"
+        PATCH_CMD="gpatch"
         echo "Using gpatch for patching"
       fi
       # Invoke in subshell so apply_patches.sh does not receive build.sh arguments
