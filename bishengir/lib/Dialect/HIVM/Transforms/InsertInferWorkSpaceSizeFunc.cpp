@@ -84,7 +84,8 @@ calculateWorkspaceByte(ArrayRef<Operation *> allocWorkspaceOps) {
       return op->emitOpError("illegal op when calculate workspace size");
 
     assert(!allocWorkspaceOp.getOffset().empty() &&
-           allocWorkspaceOp.getOffset().size() <= 2 &&
+           (allocWorkspaceOp.getOffset().size() <= 2 ||
+           allocWorkspaceOp.getOffset().size() == 4) &&
            "Offset could only be either single or double when infer size");
     std::optional<SmallVector<int64_t>> offsets = getConstantIntValues(
         SmallVector<OpFoldResult>{allocWorkspaceOp.getOffset()});
