@@ -1,0 +1,449 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 47a0f3b17..c63ac8470 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -20,11 +20,22 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+ # Options
+ option(TRITON_BUILD_PYTHON_MODULE "Build Python Triton bindings" OFF)
+ option(TRITON_BUILD_PROTON "Build the Triton Proton profiler" ON)
+-option(TRITON_BUILD_UT "Build C++ Triton Unit Tests" ON)
++option(TRITON_BUILD_UT "Build C++ Triton Unit Tests" OFF)
+ option(TRITON_BUILD_WITH_CCACHE "Build with ccache (if available)" ON)
+-set(TRITON_CODEGEN_BACKENDS "" CACHE STRING "Enable different codegen backends")
++
++# Build Triton when "triton" project is enabled.
++if("triton" IN_LIST LLVM_EXTERNAL_PROJECTS)
++  set(BISHENGIR_ENABLE_TRITON_COMPILE 1)
++  # BiShengIR requires building nvidia backend
++  set(TRITON_CODEGEN_BACKENDS "nvidia" CACHE STRING "Enable different codegen backends")
++else()
++  set(BISHENGIR_ENABLE_TRITON_COMPILE 0)
++  set(TRITON_CODEGEN_BACKENDS "" CACHE STRING "Enable different codegen backends")
++endif()
+ 
+ if(TRITON_BUILD_WITH_CCACHE)
++  unset(CCACHE_PROGRAM CACHE)
++  unset(CCACHE_PROGRAM)
+   find_program(CCACHE_PROGRAM ccache)
+   if(CCACHE_PROGRAM)
+     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}"
+@@ -102,10 +113,12 @@ if(NOT LLD_DIR)
+ endif()
+ 
+ # MLIR
+-find_package(MLIR REQUIRED CONFIG PATHS ${MLIR_DIR})
+-
++set(MLIR_MAIN_SRC_DIR ${LLVM_MAIN_SRC_DIR}/../mlir)
++set(MLIR_MAIN_INCLUDE_DIR ${MLIR_MAIN_SRC_DIR}/include)
++set(MLIR_CMAKE_DIR ${MLIR_MAIN_SRC_DIR}/cmake/modules)
++set(MLIR_INCLUDE_DIR ${LLVM_BINARY_DIR}/tools/mlir/include)
++set(MLIR_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/../mlir)
+ list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+ 
+ include(TableGen) # required by AddMLIR
+ include(AddLLVM)
+@@ -133,7 +146,11 @@ endfunction(add_triton_object)
+ set_property(GLOBAL PROPERTY TRITON_LIBS "")
+ function(add_triton_library name)
+   set_property(GLOBAL APPEND PROPERTY TRITON_LIBS ${name})
+-  add_triton_object(${name} ${ARGN})
++  if(BISHENGIR_ENABLE_TRITON_COMPILE)
++    add_mlir_library(${name} ${ARGN})
++  else()
++    add_triton_object(${name} ${ARGN})
++  endif()
+   llvm_update_compile_flags(${name})
+ endfunction()
+ 
+@@ -145,14 +162,18 @@ endfunction()
+ 
+ 
+ # Disable warnings that show up in external code (gtest;pybind11)
+-if(NOT MSVC)
+-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wno-covered-switch-default -fvisibility=hidden")
+-else()
+-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4244 /wd4624 /wd4715 /wd4530")
++# TODO: There is some compile warnings that needs to be resolved.
++if (NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++  if(NOT MSVC)
++    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wno-covered-switch-default -fvisibility=hidden")
++  else()
++    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4244 /wd4624 /wd4715 /wd4530")
++  endif()
+ endif()
+ 
+ include_directories(".")
+-include_directories(${MLIR_INCLUDE_DIRS})
++include_directories(${MLIR_INCLUDE_DIR})
++include_directories(${MLIR_MAIN_INCLUDE_DIR})
+ include_directories(${LLVM_INCLUDE_DIRS})
+ include_directories(${PROJECT_SOURCE_DIR}/include)
+ include_directories(${PROJECT_BINARY_DIR}/include) # Tablegen'd files
+@@ -166,7 +187,8 @@ add_subdirectory(lib)
+ # TODO: Figure out which target is sufficient to fix errors; triton is
+ # apparently not enough. Currently set linking libstdc++fs for all targets
+ # to support some old version GCC compilers like 8.3.0.
+-if (NOT WIN32 AND NOT APPLE AND NOT BSD)
++# GCC >= 9.0 and clang >= 9.0 don't require linking with stdc++fs.
++if (NOT WIN32 AND NOT APPLE AND NOT BSD AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
+   link_libraries(stdc++fs)
+ endif()
+ 
+@@ -207,9 +229,11 @@ if(TRITON_BUILD_PYTHON_MODULE)
+   if (TRITON_BUILD_PROTON)
+     add_subdirectory(third_party/proton)
+   endif()
+-  # We always build proton dialect
+-  list(APPEND TRITON_PLUGIN_NAMES "proton")
+-  add_subdirectory(third_party/proton/Dialect)
++  if (NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++    # We always build proton dialect
++    list(APPEND TRITON_PLUGIN_NAMES "proton")
++    add_subdirectory(third_party/proton/Dialect)
++  endif()
+ 
+   get_property(triton_libs GLOBAL PROPERTY TRITON_LIBS)
+   get_property(triton_plugins GLOBAL PROPERTY TRITON_PLUGINS)
+diff --git a/bin/CMakeLists.txt b/bin/CMakeLists.txt
+index cc0b4fa15..c47f4ee36 100644
+--- a/bin/CMakeLists.txt
++++ b/bin/CMakeLists.txt
+@@ -2,6 +2,16 @@ get_property(triton_libs GLOBAL PROPERTY TRITON_LIBS)
+ 
+ add_llvm_executable(triton-opt triton-opt.cpp PARTIAL_SOURCES_INTENDED)
+ 
++set(TRITON_LINK_LIBS)
++if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++  list(APPEND TRITON_LINK_LIBS
++    TritonAMDGPUTestAnalysis
++    TritonTestProton
++    MLIRRegisterAllDialects
++    MLIRRegisterAllPasses
++  )
++endif()
++
+ # TODO: what's this?
+ llvm_update_compile_flags(triton-opt)
+ target_link_libraries(triton-opt PRIVATE
+@@ -9,14 +19,11 @@ target_link_libraries(triton-opt PRIVATE
+   # tests
+   TritonTestAnalysis
+   TritonTestDialect
+-  TritonAMDGPUTestAnalysis
+-  TritonTestProton
+   # MLIR core
+   MLIROptLib
+   MLIRPass
+-  MLIRRegisterAllDialects
+-  MLIRRegisterAllPasses
+   MLIRTransforms
++  ${TRITON_LINK_LIBS}
+ )
+ 
+ mlir_check_all_link_libraries(triton-opt)
+@@ -30,14 +37,11 @@ target_link_libraries(triton-reduce PRIVATE
+   # tests
+   TritonTestAnalysis
+   TritonTestDialect
+-  TritonAMDGPUTestAnalysis
+-  TritonTestProton
+   # MLIR core
+   MLIRReduceLib
+   MLIRPass
+-  MLIRRegisterAllDialects
+-  MLIRRegisterAllPasses
+   MLIRTransforms
++  ${TRITON_LINK_LIBS}
+ )
+ 
+ mlir_check_all_link_libraries(triton-reduce)
+@@ -50,19 +54,17 @@ target_link_libraries(triton-lsp PRIVATE
+   # tests
+   TritonTestAnalysis
+   TritonTestDialect
+-  TritonAMDGPUTestAnalysis
+-  TritonTestProton
+   # MLIR core
+   MLIRLspServerLib
+   MLIRPass
+-  MLIRRegisterAllDialects
+-  MLIRRegisterAllPasses
+   MLIRTransforms
++  ${TRITON_LINK_LIBS}
+ )
+ 
+ mlir_check_all_link_libraries(triton-lsp)
+ 
+ 
++if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
+ add_llvm_executable(triton-llvm-opt
+   triton-llvm-opt.cpp
+ 
+@@ -81,6 +83,7 @@ target_link_libraries(triton-llvm-opt PRIVATE
+   LLVMCodeGen
+   )
+ export_executable_symbols_for_plugins(triton-llvm-opt)
++endif()
+ 
+ 
+ add_llvm_executable(triton-tensor-layout triton-tensor-layout.cpp PARTIAL_SOURCES_INTENDED)
+@@ -88,9 +91,6 @@ target_link_libraries(triton-tensor-layout PRIVATE
+   ${triton_libs}
+   TritonTestAnalysis
+   TritonTestDialect
+-  TritonTestProton
+-  TritonAMDGPUTestAnalysis
+-  MLIRRegisterAllDialects
+-  MLIRRegisterAllPasses
++  ${TRITON_LINK_LIBS}
+   MLIRTransforms
+   )
+diff --git a/bin/RegisterTritonDialects.h b/bin/RegisterTritonDialects.h
+index a70b5e72e..1a833c60b 100644
+--- a/bin/RegisterTritonDialects.h
++++ b/bin/RegisterTritonDialects.h
+@@ -1,25 +1,36 @@
+ #pragma once
++#include "mlir/Config/mlir-config.h"
++
++#if !BSPUB_DAVINCI_BISHENGIR
+ #include "amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
+ #include "amd/include/TritonAMDGPUTransforms/Passes.h"
++#endif
++
+ #include "nvidia/include/Dialect/NVGPU/IR/Dialect.h"
+ #include "nvidia/include/Dialect/NVWS/IR/Dialect.h"
++
+ #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/Passes.h"
++#if !BSPUB_DAVINCI_BISHENGIR
+ #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/ProtonAMDGPUToLLVM/Passes.h"
+ #include "proton/Dialect/include/Conversion/ProtonGPUToLLVM/ProtonNvidiaGPUToLLVM/Passes.h"
++#endif
+ #include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+ #include "proton/Dialect/include/Dialect/Proton/IR/Dialect.h"
+ #include "proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h"
+ #include "proton/Dialect/include/Dialect/ProtonGPU/Transforms/Passes.h"
++
+ #include "triton/Dialect/Gluon/Transforms/Passes.h"
+ #include "triton/Dialect/Triton/IR/Dialect.h"
+ #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+ #include "triton/Dialect/TritonInstrument/IR/Dialect.h"
+ #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+ 
++#if !BSPUB_DAVINCI_BISHENGIR
+ // Below headers will allow registration to ROCm passes
+ #include "TritonAMDGPUToLLVM/Passes.h"
+ #include "TritonAMDGPUTransforms/Passes.h"
+ #include "TritonAMDGPUTransforms/TritonGPUConversion.h"
++#endif
+ 
+ #include "triton/Dialect/Triton/Transforms/Passes.h"
+ #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+@@ -42,11 +53,15 @@ namespace mlir {
+ namespace test {
+ void registerTestAliasPass();
+ void registerTestAlignmentPass();
++#if !BSPUB_DAVINCI_BISHENGIR
+ void registerAMDTestAlignmentPass();
++#endif
+ void registerTestAllocationPass();
+ void registerTestMembarPass();
++#if !BSPUB_DAVINCI_BISHENGIR
+ void registerTestAMDGPUMembarPass();
+ void registerTestTritonAMDGPURangeAnalysis();
++#endif
+ void registerTestLoopPeelingPass();
+ namespace proton {
+ void registerTestScopeIdAllocationPass();
+@@ -55,7 +70,10 @@ void registerTestScopeIdAllocationPass();
+ } // namespace mlir
+ 
+ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
++#if !BSPUB_DAVINCI_BISHENGIR
++  // This is also called in bishengir, so we have to disable it here.
+   mlir::registerAllPasses();
++#endif
+   mlir::triton::registerTritonPasses();
+   mlir::triton::gpu::registerTritonGPUPasses();
+   mlir::triton::nvidia_gpu::registerTritonNvidiaGPUPasses();
+@@ -63,12 +81,16 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
+   mlir::triton::gluon::registerGluonPasses();
+   mlir::test::registerTestAliasPass();
+   mlir::test::registerTestAlignmentPass();
++#if !BSPUB_DAVINCI_BISHENGIR
+   mlir::test::registerAMDTestAlignmentPass();
++#endif
+   mlir::test::registerTestAllocationPass();
+   mlir::test::registerTestMembarPass();
+   mlir::test::registerTestLoopPeelingPass();
++#if !BSPUB_DAVINCI_BISHENGIR
+   mlir::test::registerTestAMDGPUMembarPass();
+   mlir::test::registerTestTritonAMDGPURangeAnalysis();
++#endif
+   mlir::triton::registerConvertTritonToTritonGPUPass();
+   mlir::triton::registerRelayoutTritonGPUPass();
+   mlir::triton::gpu::registerAllocateSharedMemoryPass();
+@@ -80,6 +102,8 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
+   mlir::triton::registerAllocateSharedMemoryNvPass();
+   mlir::registerLLVMDIScope();
+ 
++#if !BSPUB_DAVINCI_BISHENGIR
++  // Currently, we don't build AMD backed.
+   // TritonAMDGPUToLLVM passes
+   mlir::triton::registerAllocateAMDGPUSharedMemory();
+   mlir::triton::registerConvertTritonAMDGPUToLLVM();
+@@ -101,6 +125,7 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
+   mlir::triton::registerTritonAMDGPUInsertInstructionSchedHints();
+   mlir::triton::registerTritonAMDGPULowerInstructionSchedHints();
+   mlir::registerTritonAMDFoldTrueCmpI();
++#endif
+ 
+   // NVWS passes
+   mlir::triton::registerNVWSTransformsPasses();
+@@ -109,14 +134,20 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
+   mlir::registerNVHopperTransformsPasses();
+ 
+   // Proton passes
++#if !BSPUB_DAVINCI_BISHENGIR
+   mlir::test::proton::registerTestScopeIdAllocationPass();
++#endif
+   mlir::triton::proton::registerConvertProtonToProtonGPU();
++#if !BSPUB_DAVINCI_BISHENGIR
+   mlir::triton::proton::gpu::registerConvertProtonNvidiaGPUToLLVM();
+   mlir::triton::proton::gpu::registerConvertProtonAMDGPUToLLVM();
++#endif
+   mlir::triton::proton::gpu::registerAllocateProtonSharedMemoryPass();
+   mlir::triton::proton::gpu::registerAllocateProtonGlobalScratchBufferPass();
++#if !BSPUB_DAVINCI_BISHENGIR
+   mlir::triton::proton::gpu::registerScheduleBufferStorePass();
+   mlir::triton::proton::gpu::registerAddSchedBarriersPass();
++#endif
+ 
+   registry.insert<
+       mlir::triton::TritonDialect, mlir::cf::ControlFlowDialect,
+@@ -126,8 +157,10 @@ inline void registerTritonDialects(mlir::DialectRegistry &registry) {
+       mlir::math::MathDialect, mlir::arith::ArithDialect, mlir::scf::SCFDialect,
+       mlir::gpu::GPUDialect, mlir::LLVM::LLVMDialect, mlir::NVVM::NVVMDialect,
+       mlir::triton::nvgpu::NVGPUDialect, mlir::triton::nvws::NVWSDialect,
++#if !BSPUB_DAVINCI_BISHENGIR
+       mlir::triton::amdgpu::TritonAMDGPUDialect,
++#endif
+       mlir::triton::proton::ProtonDialect,
+-      mlir::triton::proton::gpu::ProtonGPUDialect, mlir::ROCDL::ROCDLDialect,
+-      mlir::triton::gluon::GluonDialect>();
++      mlir::triton::proton::gpu::ProtonGPUDialect,
++      mlir::ROCDL::ROCDLDialect, mlir::triton::gluon::GluonDialect>();
+ }
+diff --git a/lib/Conversion/TritonToTritonGPU/CMakeLists.txt b/lib/Conversion/TritonToTritonGPU/CMakeLists.txt
+index ed879c7dd..2f479f844 100644
+--- a/lib/Conversion/TritonToTritonGPU/CMakeLists.txt
++++ b/lib/Conversion/TritonToTritonGPU/CMakeLists.txt
+@@ -11,6 +11,6 @@ add_triton_library(TritonToTritonGPU
+     MLIRPass
+     MLIRTransforms
+     TritonIR
+-    ProtonIR
++    # ProtonIR
+     TritonGPUIR
+ )
+diff --git a/lib/Dialect/TritonGPU/Transforms/CMakeLists.txt b/lib/Dialect/TritonGPU/Transforms/CMakeLists.txt
+index f3e0e2acf..1001e9241 100644
+--- a/lib/Dialect/TritonGPU/Transforms/CMakeLists.txt
++++ b/lib/Dialect/TritonGPU/Transforms/CMakeLists.txt
+@@ -1,3 +1,10 @@
++set(BS_SOURCE_FILES)
++if(LLVM_BSPUB_DAVINCI_BISHENGIR)
++  list(APPEND BS_SOURCE_FILES
++    ReorderInstructionsImpl.cpp
++  )
++endif()
++
+ add_triton_library(TritonGPUTransforms
+   AccelerateMatmul.cpp
+   Coalesce.cpp
+@@ -35,6 +42,7 @@ add_triton_library(TritonGPUTransforms
+   WarpSpecialization/PartitionLoops.cpp
+   WarpSpecialization/PartitionScheduling.cpp
+   WarpSpecialization/RewritePartitionDependencies.cpp
++  ${BS_SOURCE_FILES}
+   DEPENDS
+   TritonGPUTransformsIncGen
+ 
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 03cd4a020..783782244 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -14,9 +14,12 @@ configure_lit_site_cfg(
+ set(TRITON_TEST_DEPENDS
+   triton-opt
+   triton-tensor-layout
+-  triton-llvm-opt
+ )
+ 
++if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++  list(APPEND TRITON_TEST_DEPENDS triton-llvm-opt)
++endif()
++
+ set(FILECHECK_PATH "${LLVM_LIBRARY_DIR}/../bin/FileCheck")
+ set(LIT_ARGS "-Dfilecheck=${FILECHECK_PATH}")
+ 
+diff --git a/test/lib/CMakeLists.txt b/test/lib/CMakeLists.txt
+index ae9229519..489306f4e 100644
+--- a/test/lib/CMakeLists.txt
++++ b/test/lib/CMakeLists.txt
+@@ -1,4 +1,6 @@
+ add_subdirectory(Analysis)
+ add_subdirectory(Dialect)
+ add_subdirectory(Instrumentation)
+-add_subdirectory(Proton)
++if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++  add_subdirectory(Proton)
++endif()
+diff --git a/test/lit.cfg.py b/test/lit.cfg.py
+index 0890e609b..29ea8bf11 100644
+--- a/test/lit.cfg.py
++++ b/test/lit.cfg.py
+@@ -57,7 +57,6 @@ for d in tool_dirs:
+     llvm_config.with_environment('PATH', d, append_path=True)
+ tools = [
+     'triton-opt',
+-    'triton-llvm-opt',
+     'mlir-translate',
+     'llc',
+     ToolSubst('%PYTHON', config.python_executable, unresolved='ignore'),
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt
+index cd84bf57d..faeb20a9f 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/CMakeLists.txt
+@@ -1,4 +1,13 @@
++set(BS_SOURCE_FILES)
++if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
++  list(APPEND BS_SOURCE_FILES
++    TensorMemoryToLLVM.cpp
++  )
++endif()
++
+ add_triton_library(TritonNVIDIAGPUToLLVM
++    PARTIAL_SOURCES_INTENDED
++
+     ConvertLayoutOpToLLVM.cpp
+     ConvertWarpSpecializeToLLVM.cpp
+     MemoryOpToLLVM.cpp
+@@ -12,7 +21,6 @@ add_triton_library(TritonNVIDIAGPUToLLVM
+     TritonGPUToLLVM.cpp
+     TMAToLLVM.cpp
+     SPMDOpToLLVM.cpp
+-    TensorMemoryToLLVM.cpp
+     TensorPtrOpsToLLVM.cpp
+     ClusterOpsToLLVM.cpp
+     PTXAsmFormat.cpp
+@@ -20,6 +28,7 @@ add_triton_library(TritonNVIDIAGPUToLLVM
+     Fp4ToFpOpToLLVM.cpp
+     TargetInfo.cpp
+     Allocation.cpp
++    ${BS_SOURCE_FILES}
+ 
+     DEPENDS
+     TritonNVIDIAGPUConversionPassIncGen
+

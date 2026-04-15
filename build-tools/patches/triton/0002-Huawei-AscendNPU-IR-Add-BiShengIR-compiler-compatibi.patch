@@ -1,0 +1,1037 @@
+diff --git a/include/triton/Analysis/Allocation.h b/include/triton/Analysis/Allocation.h
+index 413a86e14..caae18dc4 100644
+--- a/include/triton/Analysis/Allocation.h
++++ b/include/triton/Analysis/Allocation.h
+@@ -18,6 +18,14 @@ class AllocationAnalysis;
+ /// some operations.
+ using AllocationAnalysisScratchSizeFn = std::function<unsigned(Operation *)>;
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++/// Callback to allow backends to specify target-specific verification on
++/// shared memory capacity.
++using AllocationSharedMemCheckFn = std::function<void(Operation *, int)>;
++
++void defaultAllocationSharedMemCheckFn(Operation *op, int allocatedSharedMemorySize);
++#endif
++
+ unsigned defaultAllocationAnalysisScratchSizeFn(Operation *op);
+ 
+ unsigned getNumScratchElemsSwizzledCvt(RankedTensorType srcTy,
+@@ -70,8 +78,14 @@ public:
+   explicit Allocation(Operation *operation) : operation(operation) {}
+ 
+   /// Runs allocation analysis on the given top-level operation.
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  void run(FuncAllocMapT &funcAllocMap,
++           triton::AllocationAnalysisScratchSizeFn scratchSizeGetter,
++           triton::AllocationSharedMemCheckFn sharedMemChecker);
++#else
+   void run(FuncAllocMapT &funcAllocMap,
+            triton::AllocationAnalysisScratchSizeFn scratchSizeGetter);
++#endif
+ 
+   /// Returns the operation this analysis was constructed from.
+   Operation *getOperation() const { return operation; }
+@@ -220,9 +234,17 @@ class ModuleAllocation : public CallGraph<Allocation> {
+ public:
+   using FuncOffsetMapT = DenseMap<FunctionOpInterface, Value>;
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  ModuleAllocation(ModuleOp moduleOp,
++                   triton::AllocationAnalysisScratchSizeFn scratchSizeGetter =
++                       triton::defaultAllocationAnalysisScratchSizeFn,
++                   triton::AllocationSharedMemCheckFn sharedMemChecker =
++                       triton::defaultAllocationSharedMemCheckFn)
++#else
+   ModuleAllocation(ModuleOp moduleOp,
+                    triton::AllocationAnalysisScratchSizeFn scratchSizeGetter =
+                        triton::defaultAllocationAnalysisScratchSizeFn)
++#endif
+       : CallGraph<Allocation>(moduleOp) {
+     walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
+         // Pre-order edge walk callback
+@@ -231,7 +253,11 @@ public:
+         [&](FunctionOpInterface funcOp) {
+           auto [iter, inserted] = funcMap.try_emplace(funcOp, funcOp);
+           if (inserted)
++#ifdef BSPUB_DAVINCI_BISHENGIR
++            iter->second.run(funcMap, scratchSizeGetter, sharedMemChecker);
++#else
+             iter->second.run(funcMap, scratchSizeGetter);
++#endif
+         });
+   }
+ 
+diff --git a/include/triton/Analysis/AxisInfo.h b/include/triton/Analysis/AxisInfo.h
+index 15d4a3c7f..4697d304b 100644
+--- a/include/triton/Analysis/AxisInfo.h
++++ b/include/triton/Analysis/AxisInfo.h
+@@ -206,16 +206,14 @@ public:
+                                   axisinfo::CallbackType callback = nullptr)
+       : CallGraph<AxisInfoMapT>(moduleOp) {
+     SmallVector<FunctionOpInterface> funcs;
+-    for (auto root : getRoots()) {
+-      walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
+-          // Pre-order edge walk callback
+-          [](CallOpInterface callOp, FunctionOpInterface funcOp) {},
+-          // Post-order node walk callback
+-          [&](FunctionOpInterface funcOp) {
+-            funcs.push_back(funcOp);
+-            funcMap.try_emplace(funcOp, AxisInfoMapT{});
+-          });
+-    }
++    walk<WalkOrder::PreOrder, WalkOrder::PostOrder>(
++        // Pre-order edge walk callback
++        [](CallOpInterface callOp, FunctionOpInterface funcOp) {},
++        // Post-order node walk callback
++        [&](FunctionOpInterface funcOp) {
++          funcs.push_back(funcOp);
++          funcMap.try_emplace(funcOp, AxisInfoMapT{});
++        });
+     SetVector<FunctionOpInterface> sortedFuncs(funcs.begin(), funcs.end());
+     SymbolTableCollection symbolTable;
+     for (auto funcOp : llvm::reverse(sortedFuncs)) {
+diff --git a/include/triton/Analysis/Utility.h b/include/triton/Analysis/Utility.h
+index ef5853131..51a21db6f 100644
+--- a/include/triton/Analysis/Utility.h
++++ b/include/triton/Analysis/Utility.h
+@@ -42,6 +42,10 @@ public:
+     }
+   }
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  virtual ~ReduceOpHelper() {}
++#endif
++
+   ArrayRef<int64_t> getSrcShape() { return srcShape; }
+ 
+   Attribute getSrcLayout() { return srcEncoding; }
+@@ -57,6 +61,9 @@ public:
+   unsigned getIntraWarpSizeWithUniqueData();
+ 
+   // The shape of the shared memory space needed for the reduction.
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  virtual
++#endif
+   SmallVector<unsigned> getScratchRepShape();
+ 
+   SmallVector<unsigned> getOrderWithAxisAtBeginning();
+@@ -70,9 +77,15 @@ public:
+ private:
+   triton::ReduceOp op;
+   RankedTensorType srcTy;
+-  ArrayRef<int64_t> srcShape;
+   Attribute srcEncoding;
+   SmallVector<Type> srcElementTypes;
++
++#ifdef BSPUB_DAVINCI_BISHENGIR
++protected:
++#else
++private:
++#endif
++  ArrayRef<int64_t> srcShape;
+   int axis;
+ };
+ 
+diff --git a/include/triton/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVMBase.h b/include/triton/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVMBase.h
+index 656f2bfca..301c403bb 100644
+--- a/include/triton/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVMBase.h
++++ b/include/triton/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVMBase.h
+@@ -102,11 +102,11 @@ public:
+       // axis info (e.g., constancy) not available
+       return resultVals;
+     SmallVector<unsigned> contigPerThread = getContigPerThread(rtType);
+-    if (rank != contigPerThread.size())
++    if (static_cast<size_t>(rank) != contigPerThread.size())
+       return resultVals;
+ 
+     SmallVector<int64_t> constancy = axisInfo->getConstancy();
+-    if (rank != constancy.size())
++    if (static_cast<size_t>(rank) != constancy.size())
+       return resultVals;
+     bool hasConstancy = false;
+     for (int i = 0; i < rank; ++i) {
+@@ -136,7 +136,7 @@ public:
+       // reorder the shape and constancy vectors by the axis order:
+       // from the fastest-changing to the smallest-changing axis
+       SmallVector<unsigned> order = getOrder(rtType);
+-      if (rank != order.size())
++      if (static_cast<size_t>(rank) != order.size())
+         return resultVals;
+       elemsPerThread = applyPermutation(elemsPerThread, order);
+       constancy = applyPermutation(constancy, order);
+@@ -148,7 +148,7 @@ public:
+     }
+     SmallVector<Value> dedupResultVals;
+     dedupResultVals.reserve(resultVals.size());
+-    for (int i = 0; i < resultVals.size(); ++i) {
++    for (size_t i = 0; i < resultVals.size(); ++i) {
+       // each coordinate of the orig_idx is "coarsened" using the
+       // constancy along this dimension: the resulting dedup_idx
+       // points to the reused value in the original resultsVal
+@@ -174,7 +174,6 @@ public:
+     Type elemTy = this->getTypeConverter()->convertType(resultElementTy);
+     SmallVector<SmallVector<Value>> allOperands;
+     for (auto operand : adaptor.getOperands()) {
+-      auto argTy = op->getOperand(0).getType();
+       auto subOperands = unpackLLElements(loc, operand, rewriter);
+       allOperands.resize(subOperands.size());
+       for (auto v : llvm::enumerate(subOperands))
+diff --git a/include/triton/Conversion/TritonGPUToLLVM/Utility.h b/include/triton/Conversion/TritonGPUToLLVM/Utility.h
+index 50d6677ea..bbc3487ab 100644
+--- a/include/triton/Conversion/TritonGPUToLLVM/Utility.h
++++ b/include/triton/Conversion/TritonGPUToLLVM/Utility.h
+@@ -382,7 +382,7 @@ public:
+ 
+   // TODO(Keren): deprecate the method once AMD backend has cleaned up
+   Value getCSwizzleOffset(int dim) const {
+-    assert(dim >= 0 && dim < offsets.size());
++    assert(dim >= 0 && dim < ssize_t(offsets.size()));
+     return offsets[dim];
+   }
+ 
+diff --git a/include/triton/Conversion/TritonToTritonGPU/Passes.td b/include/triton/Conversion/TritonToTritonGPU/Passes.td
+index 2449637eb..5a183ef46 100644
+--- a/include/triton/Conversion/TritonToTritonGPU/Passes.td
++++ b/include/triton/Conversion/TritonToTritonGPU/Passes.td
+@@ -38,6 +38,12 @@ def ConvertTritonToTritonGPU: Pass<"convert-triton-to-tritongpu", "mlir::ModuleO
+       Option<"enableSourceRemat", "enable-source-remat",
+              "bool", /*default*/"false",
+              "enable trivial source rematerialization">,
++       //  add some guards for our own simt optimization
++       #ifdef BSPUB_DAVINCI_BISHENGIR
++       Option<"shared", "shared-memory-size",
++             "int32_t", /*default*/"122880",
++             "shared memory size for simt">,
++       #endif
+    ];
+ }
+ 
+diff --git a/include/triton/Dialect/TritonGPU/IR/Dialect.h b/include/triton/Dialect/TritonGPU/IR/Dialect.h
+index d7dee83f5..bd2bd5ccb 100644
+--- a/include/triton/Dialect/TritonGPU/IR/Dialect.h
++++ b/include/triton/Dialect/TritonGPU/IR/Dialect.h
+@@ -61,7 +61,7 @@ int lookupNumCTAs(OpBuilder &rewriter);
+ template <typename Key, typename Value> class Cache {
+ public:
+   std::optional<Value> get(const Key &key) {
+-    std::shared_lock lock(mutex);
++    std::shared_lock<MutexType> lock(mutex);
+     auto it = cache.find(key);
+     if (it != cache.end()) {
+       return it->second;
+@@ -70,13 +70,14 @@ public:
+   }
+ 
+   void set(Key key, Value result) {
+-    std::scoped_lock lock(mutex);
++    std::scoped_lock<MutexType> lock(mutex);
+     cache.emplace(std::move(key), std::move(result));
+   }
+ 
+ private:
++  using MutexType = llvm::sys::SmartRWMutex<true>;
+   std::unordered_map<Key, Value> cache;
+-  llvm::sys::SmartRWMutex<true> mutex;
++  MutexType mutex;
+ };
+ 
+ using LinearLayoutCache = Cache<CacheKey, LinearLayout>;
+diff --git a/include/triton/Dialect/TritonGPU/Transforms/Utility.h b/include/triton/Dialect/TritonGPU/Transforms/Utility.h
+index 1d9fe192d..9f2b81ef3 100644
+--- a/include/triton/Dialect/TritonGPU/Transforms/Utility.h
++++ b/include/triton/Dialect/TritonGPU/Transforms/Utility.h
+@@ -90,6 +90,7 @@ bool isNoop(Operation *op);
+  */
+ class GraphDumper {
+ public:
++  virtual ~GraphDumper() = default;
+   using NodeInfo = std::map<std::string, std::string>;
+ 
+   // Override this function to mark specific Values
+diff --git a/lib/Analysis/Allocation.cpp b/lib/Analysis/Allocation.cpp
+index 313dbd41b..885018cba 100644
+--- a/lib/Analysis/Allocation.cpp
++++ b/lib/Analysis/Allocation.cpp
+@@ -111,6 +111,12 @@ unsigned defaultAllocationAnalysisScratchSizeFn(Operation *op) {
+   return 0;
+ }
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++void defaultAllocationSharedMemCheckFn(Operation *op, int allocatedSharedMemorySize) {
++  // do nothing by default.
++}
++#endif
++
+ class AllocationAnalysis {
+ public:
+   AllocationAnalysis(Operation *operation,
+@@ -595,12 +601,23 @@ private:
+ 
+ } // namespace triton
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++void Allocation::run(
++    FuncAllocMapT &funcAllocMap,
++    triton::AllocationAnalysisScratchSizeFn scratchSizeGetter,
++    triton::AllocationSharedMemCheckFn sharedMemChecker) {
++  triton::AllocationAnalysis(getOperation(), &funcAllocMap, this,
++                             scratchSizeGetter);
++  sharedMemChecker(getOperation(), sharedMemorySize);
++}
++#else
+ void Allocation::run(
+     FuncAllocMapT &funcAllocMap,
+     triton::AllocationAnalysisScratchSizeFn scratchSizeGetter) {
+   triton::AllocationAnalysis(getOperation(), &funcAllocMap, this,
+                              scratchSizeGetter);
+ }
++#endif
+ 
+ std::map<Operation *, SmallVector<Allocation::BufferId>>
+ Allocation::getLiveBuffers() {
+diff --git a/lib/Analysis/AxisInfo.cpp b/lib/Analysis/AxisInfo.cpp
+index 2b0da17f0..223e45cab 100644
+--- a/lib/Analysis/AxisInfo.cpp
++++ b/lib/Analysis/AxisInfo.cpp
+@@ -192,6 +192,26 @@ public:
+   }
+ };
+ 
++class UnrealizedConversionCastOpAxisInfoVisitor final
++    : public AxisInfoVisitorImpl<mlir::UnrealizedConversionCastOp> {
++public:
++  using AxisInfoVisitorImpl<
++      mlir::UnrealizedConversionCastOp>::AxisInfoVisitorImpl;
++
++  AxisInfo
++  getAxisInfo(mlir::UnrealizedConversionCastOp op,
++              ArrayRef<const dataflow::Lattice<AxisInfo> *> operands) override {
++    auto tensorType = dyn_cast<RankedTensorType>(op.getResultTypes()[0]);
++    if (tensorType &&
++        tensorType.getRank() != operands[0]->getValue().getRank()) {
++      // Do not propagate AxisInfo with incorrect rank. This can cause a crash
++      // in future visitor applications.
++      return AxisInfo::getPessimisticValueState(op->getResult(0));
++    }
++    return operands[0]->getValue();
++  }
++};
++
+ class MakeRangeOpAxisInfoVisitor final
+     : public AxisInfoVisitorImpl<triton::MakeRangeOp> {
+ public:
+@@ -1000,11 +1020,11 @@ AxisInfoAnalysis::AxisInfoAnalysis(DataFlowSolver &solver,
+   // This is needed by TritonGPUToLLVM, to get AxisInfo when the graph is
+   // in the process of a PartialConversion, where UnrealizedConversionCast
+   // may exist
++  visitors.append<UnrealizedConversionCastOpAxisInfoVisitor>();
+   visitors.append<CastOpAxisInfoVisitor<arith::ExtSIOp>,
+                   CastOpAxisInfoVisitor<arith::ExtUIOp>,
+                   CastOpAxisInfoVisitor<arith::TruncIOp>,
+                   CastOpAxisInfoVisitor<triton::gpu::ConvertLayoutOp>,
+-                  CastOpAxisInfoVisitor<mlir::UnrealizedConversionCastOp>,
+                   CastOpAxisInfoVisitor<triton::BitcastOp>>();
+   visitors.append<MakeRangeOpAxisInfoVisitor>();
+   visitors.append<PoisonOpAxisInfoVisitor>();
+@@ -1362,7 +1382,10 @@ void ModuleAxisInfoAnalysis::update(CallOpInterface callOp,
+       callee.setArgAttr(index, attrName, attr);
+     };
+     auto axisInfo = axisInfoMap->lookup(value);
+-    assert(axisInfo.getRank() == 1 && "only scalar arguments are supported");
++    // Only scalar arguments are supported. Do not forward multi-dimensional
++    // AxisInfo to the callee.
++    if (axisInfo.getRank() != 1)
++      continue;
+     setAttrFn("tt.contiguity", axisInfo.getContiguity(0));
+     setAttrFn("tt.divisibility", axisInfo.getDivisibility(0));
+     setAttrFn("tt.constancy", axisInfo.getConstancy(0));
+diff --git a/lib/Conversion/TritonGPUToLLVM/ControlFlowOpToLLVM.cpp b/lib/Conversion/TritonGPUToLLVM/ControlFlowOpToLLVM.cpp
+index cc58e9d28..0866c7c17 100644
+--- a/lib/Conversion/TritonGPUToLLVM/ControlFlowOpToLLVM.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/ControlFlowOpToLLVM.cpp
+@@ -125,10 +125,12 @@ private:
+     auto newCallOp = rewriter.create<LLVM::CallOp>(
+         callOp.getLoc(), packedResult ? TypeRange(packedResult) : TypeRange(),
+         promotedOperands, callOp->getAttrs());
++#if !BSPUB_DAVINCI_BISHENGIR
+     newCallOp.getProperties().setOpBundleSizes(
+         rewriter.getDenseI32ArrayAttr({}));
+     newCallOp.getProperties().setOperandSegmentSizes(
+         {static_cast<int>(promotedOperands.size()), 0});
++#endif
+     return newCallOp;
+   }
+ 
+diff --git a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+index 37f20547c..11a96b89d 100644
+--- a/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/ElementwiseOpToLLVM.cpp
+@@ -298,7 +298,10 @@ struct ElementwiseInlineAsmOpConversion
+                 /*asm_string=*/op.getAsmString(),
+                 /*constraints=*/op.getConstraints(),
+                 /*has_side_effects=*/!op.getPure(),
+-                /*is_align_stack=*/false, LLVM::TailCallKind::None,
++                /*is_align_stack=*/false,
++#if !BSPUB_DAVINCI_BISHENGIR
++                LLVM::TailCallKind::None,
++#endif
+                 /*asm_dialect=*/
+                 LLVM::AsmDialectAttr::get(rewriter.getContext(),
+                                           LLVM::AsmDialect::AD_ATT),
+diff --git a/lib/Conversion/TritonGPUToLLVM/Utility.cpp b/lib/Conversion/TritonGPUToLLVM/Utility.cpp
+index 8677c51f4..38ec26eb1 100644
+--- a/lib/Conversion/TritonGPUToLLVM/Utility.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/Utility.cpp
+@@ -266,11 +266,22 @@ Value matrixVectorProd(TritonLLVMOpBuilder &b, const LinearLayout &A, Value x) {
+     return terms[0];
+   };
+ 
+-  auto orPart = treeReduce(
+-      ors, [&b](Value x, Value y) { return b.or_(x, y, /*disjoint=*/true); });
++  auto orPart = treeReduce(ors, [&b](Value x, Value y) {
++    return b.or_(x, y
++#if !BSPUB_DAVINCI_BISHENGIR
++                 ,
++                 /*disjoint=*/true
++#endif
++    );
++  });
+   auto xorPart =
+       treeReduce(xors, [&b](Value x, Value y) { return b.xor_(x, y); });
+-  return b.or_(orPart, xorPart, /*disjoint=*/true);
++  return b.or_(orPart, xorPart
++#if !BSPUB_DAVINCI_BISHENGIR
++               ,
++               /*disjoint=*/true
++#endif
++  );
+ }
+ 
+ } // namespace triton::gpu
+@@ -661,8 +672,12 @@ SmallVector<Value> lowerLdSt(
+       auto regIdxAddI8 = regIdxAdd * (bitwidth / 8);
+       Value innerOffset = b.add(offset, b.i32_val(regIdxAddI8));
+       auto vecAddr =
+-          b.gep(smemPtrTy, i8_ty, smemBase, calcPaddedOffset(innerOffset),
+-                LLVM::GEPNoWrapFlags::inbounds);
++          b.gep(smemPtrTy, i8_ty, smemBase, calcPaddedOffset(innerOffset)
++#if !BSPUB_DAVINCI_BISHENGIR
++                                                ,
++                LLVM::GEPNoWrapFlags::inbounds
++#endif
++          );
+       llvm::append_range(outVals,
+                          lowerInst(rewriter, loc, vals, vecAddr, i + j, vecTy));
+     }
+@@ -802,8 +817,12 @@ bool emitTransferBetweenRegistersAndShared(
+                                     smemOffset, /*offsetInBytes=*/false);
+       smemOffset = b.add(smemOffset, padOffset);
+     }
+-    auto vecAddr = b.gep(smemBase.getType(), elemLlvmTy, smemBase, smemOffset,
+-                         LLVM::GEPNoWrapFlags::inbounds);
++    auto vecAddr = b.gep(smemBase.getType(), elemLlvmTy, smemBase, smemOffset
++#if !BSPUB_DAVINCI_BISHENGIR
++                         ,
++                         LLVM::GEPNoWrapFlags::inbounds
++#endif
++    );
+     vecAddrVec.push_back(vecAddr);
+   }
+ 
+@@ -1075,8 +1094,10 @@ Value createLLVMIntegerConstant(OpBuilder &builder, Location loc, short width,
+ LLVM::CallOp createLLVMCallOp(OpBuilder &builder, Location loc,
+                               LLVMFuncOp funcOp, ValueRange args) {
+   auto op = builder.create<LLVM::CallOp>(loc, funcOp, args);
++#if !BSPUB_DAVINCI_BISHENGIR
+   op.getProperties().setOpBundleSizes(builder.getDenseI32ArrayAttr({}));
+   op.getProperties().setOperandSegmentSizes({static_cast<int>(args.size()), 0});
++#endif
+   return op;
+ }
+ 
+@@ -1085,8 +1106,10 @@ createLLVMIntrinsicCallOp(OpBuilder &builder, Location loc, StringRef intrinsic,
+                           TypeRange types, ValueRange args) {
+   auto op = builder.create<LLVM::CallIntrinsicOp>(loc, types, args);
+   op.getProperties().setIntrin(builder.getStringAttr(intrinsic));
++#if !BSPUB_DAVINCI_BISHENGIR
+   op.getProperties().setOpBundleSizes(builder.getDenseI32ArrayAttr({}));
+   op.getProperties().setOperandSegmentSizes({static_cast<int>(args.size()), 0});
++#endif
+   return op;
+ }
+ 
+diff --git a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+index 71b28420a..1dc68086a 100644
+--- a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
++++ b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+@@ -124,6 +124,9 @@ void populateMathPatternsAndLegality(TritonGPUTypeConverter &typeConverter,
+                GenericOpPattern<math::AbsIOp>, GenericOpPattern<math::SqrtOp>,
+                GenericOpPattern<math::RsqrtOp>, GenericOpPattern<math::FmaOp>>(
+       typeConverter, context);
++#if BSPUB_DAVINCI_BISHENGIR
++  patterns.add<GenericOpPattern<math::TanhOp>>(typeConverter, context);
++#endif
+ }
+ 
+ //
+@@ -820,10 +823,12 @@ public:
+     mod->setAttr(AttrNumThreadsPerWarp, b.getI32IntegerAttr(threadsPerWarp));
+     mod->setAttr(AttrNumCTAsName, b.getI32IntegerAttr(numCTAs));
+     mod->setAttr(AttrTargetName, b.getStringAttr(this->target.getValue()));
+-
++#if BSPUB_DAVINCI_BISHENGIR
++    constexpr static char AttrShared[] = "ttg.shared";
++    mod->setAttr(AttrShared, b.getI32IntegerAttr(shared));
++#endif
+     if (failed(applyPartialConversion(mod, target, std::move(patterns))))
+       return signalPassFailure();
+   }
+ };
+-
+ } // namespace
+diff --git a/lib/Dialect/TritonGPU/IR/Dialect.cpp b/lib/Dialect/TritonGPU/IR/Dialect.cpp
+index 2517d93d2..c880fe9d8 100644
+--- a/lib/Dialect/TritonGPU/IR/Dialect.cpp
++++ b/lib/Dialect/TritonGPU/IR/Dialect.cpp
+@@ -23,6 +23,7 @@
+ #include "triton/Tools/StrUtil.h"
+ #include "llvm/ADT/SmallSet.h"
+ #include "llvm/ADT/TypeSwitch.h"
++#include "llvm/Support/Casting.h"
+ #include "llvm/Support/MathExtras.h"
+ 
+ // Include TableGen'erated code
+@@ -1375,7 +1376,7 @@ void SliceEncodingAttr::print(mlir::AsmPrinter &printer) const {
+ LogicalResult
+ SliceEncodingAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                           unsigned dim, DistributedEncodingTrait parent) {
+-  unsigned rank = cast<LayoutEncodingTrait>(parent).getRank();
++  unsigned rank = mlir::cast<LayoutEncodingTrait>(parent).getRank();
+   if (rank <= 1)
+     return emitError() << "parent layout must have at least rank >= 2";
+   if (dim >= rank) {
+@@ -1628,8 +1629,13 @@ LogicalResult PaddedSharedEncodingAttr::verify(
+   if (!llvm::all_of(paddings, llvm::isPowerOf2_32))
+     return emitError() << "padding values must all be power of two";
+ 
++#if !BSPUB_DAVINCI_BISHENGIR
+   llvm::SmallSet<unsigned, 4> intervalValues(intervals.begin(),
+                                              intervals.end());
++#else
++  llvm::SmallSet<unsigned, 4> intervalValues;
++#endif
++  intervalValues.insert(intervals.begin(), intervals.end());
+   if (intervalValues.size() != intervals.size())
+     return emitError() << "interval values cannot have duplicates";
+ 
+diff --git a/lib/Dialect/TritonGPU/IR/Types.cpp b/lib/Dialect/TritonGPU/IR/Types.cpp
+index ba09a4508..599a32212 100644
+--- a/lib/Dialect/TritonGPU/IR/Types.cpp
++++ b/lib/Dialect/TritonGPU/IR/Types.cpp
+@@ -4,6 +4,7 @@
+ #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+ #include "triton/Tools/LayoutUtils.h"
+ #include "llvm/ADT/TypeSwitch.h" // required by `Types.cpp.inc`
++#include "llvm/Support/Casting.h"
+ 
+ using namespace mlir;
+ using namespace mlir::triton::gpu;
+@@ -97,7 +98,7 @@ LogicalResult MemDescType::verify(function_ref<InFlightDiagnostic()> emitError,
+   }
+   // Every dimension but the first (to allow for pipelining) must be a power of
+   // 2
+-  if (!(isa<PaddedSharedEncodingAttr>(encoding) ||
++  if (!(mlir::isa<PaddedSharedEncodingAttr>(encoding) ||
+         llvm::all_of(shape.drop_front(1), [](int64_t dim) {
+           return llvm::isPowerOf2_64(dim) && dim > 0;
+         })))
+@@ -114,7 +115,8 @@ LogicalResult MemDescType::verify(function_ref<InFlightDiagnostic()> emitError,
+                        << "shape = " << shape
+                        << ", allocShape = " << allocShape;
+   auto ctx = encoding.getContext();
+-  if (auto enc = dyn_cast<nvidia_gpu::TensorMemoryEncodingAttr>(encoding)) {
++  if (auto enc =
++          mlir::dyn_cast<nvidia_gpu::TensorMemoryEncodingAttr>(encoding)) {
+     if (memorySpace != nvidia_gpu::TensorMemorySpaceAttr::get(ctx)) {
+       return emitError() << "memorySpace must be TensorMemorySpace";
+     }
+@@ -146,14 +148,15 @@ LogicalResult MemDescType::verify(function_ref<InFlightDiagnostic()> emitError,
+                          << ll.getOutDimSize(dims[0]) << "x"
+                          << ll.getOutDimSize(dims[1]);
+     }
+-  } else if (auto enc = dyn_cast<SharedEncodingTrait>(encoding)) {
++  } else if (auto enc = mlir::dyn_cast<SharedEncodingTrait>(encoding)) {
+     if (memorySpace != SharedMemorySpaceAttr::get(ctx)) {
+       return emitError()
+              << "memorySpace must be SharedMemorySpace for shared encoding. "
+              << "Got " << memorySpace;
+     }
+-  } else if (auto enc = dyn_cast<nvidia_gpu::TensorMemoryScalesEncodingAttr>(
+-                 encoding)) {
++  } else if (auto enc =
++                 mlir::dyn_cast<nvidia_gpu::TensorMemoryScalesEncodingAttr>(
++                     encoding)) {
+     if (memorySpace != nvidia_gpu::TensorMemorySpaceAttr::get(ctx)) {
+       return emitError() << "memorySpace must be TensorMemorySpace";
+     }
+diff --git a/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp b/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp
+index 7fcc5b5e0..61337d76d 100644
+--- a/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/RemoveLayoutConversions.cpp
+@@ -1,4 +1,5 @@
+ #include "mlir/Analysis/SliceAnalysis.h"
++#include "mlir/Config/mlir-config.h"
+ #include "mlir/Dialect/SCF/IR/SCF.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/Dominance.h"
+@@ -1067,14 +1068,18 @@ static bool isExpensiveMathOp(Operation *op) {
+   // These operations are either multiple instructions or have throughput
+   // lower than 16 according to the arithmetic instructions table in:
+   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#arithmetic-instructions
+-  return isa<arith::DivFOp, math::ErfcOp, math::SinhOp, math::CoshOp,
+-             math::TanhOp, math::AsinhOp, math::AcoshOp, math::AtanhOp,
+-             math::CtPopOp, math::CountLeadingZerosOp,
+-             math::CountTrailingZerosOp, math::ExpOp, math::Exp2Op,
+-             math::ExpM1Op, math::LogOp, math::Log2Op, math::Log10Op,
+-             math::Log1pOp, math::SinOp, math::CosOp, math::TanOp, math::AsinOp,
+-             math::AcosOp, math::AtanOp, math::Atan2Op, math::PowFOp,
+-             math::SqrtOp, math::RsqrtOp, math::ErfOp, math::CbrtOp>(op);
++  return isa<arith::DivFOp,
++#if !BSPUB_DAVINCI_BISHENGIR
++             math::ErfcOp,
++#endif
++             math::SinhOp, math::CoshOp, math::TanhOp, math::AsinhOp,
++             math::AcoshOp, math::AtanhOp, math::CtPopOp,
++             math::CountLeadingZerosOp, math::CountTrailingZerosOp, math::ExpOp,
++             math::Exp2Op, math::ExpM1Op, math::LogOp, math::Log2Op,
++             math::Log10Op, math::Log1pOp, math::SinOp, math::CosOp,
++             math::TanOp, math::AsinOp, math::AcosOp, math::AtanOp,
++             math::Atan2Op, math::PowFOp, math::SqrtOp, math::RsqrtOp,
++             math::ErfOp, math::CbrtOp>(op);
+ }
+ 
+ static int64_t getByteCount(Value result, int64_t minElementCount = 0,
+diff --git a/lib/Dialect/TritonGPU/Transforms/Utility.cpp b/lib/Dialect/TritonGPU/Transforms/Utility.cpp
+index c40f220a0..d72b2f70a 100644
+--- a/lib/Dialect/TritonGPU/Transforms/Utility.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/Utility.cpp
+@@ -723,7 +723,7 @@ scf::WhileOp replaceWhileOpWithNewSignature(
+   rewriter.createBlock(&newLoop.getAfter(), {}, resultTypes, bbArgLocsAfter);
+ 
+   // Copy regions
+-  for (int i = 0; i < loop.getNumRegions(); ++i)
++  for (unsigned int i = 0; i < loop.getNumRegions(); ++i)
+     newLoop->getRegion(i).front().getOperations().splice(
+         newLoop->getRegion(i).front().getOperations().begin(),
+         loop->getRegion(i).front().getOperations());
+@@ -1561,7 +1561,7 @@ replaceUsesWithLocalLoad(OpBuilder &builder, OpResult old,
+   // If there are some uses that were not local_allocs, we need to create a
+   // local_load for them.
+   ttg::LocalLoadOp maybeLocalLoad;
+-  if (std::distance(old.getUsers().begin(), old.getUsers().end()) >
++  if (static_cast<size_t>(std::distance(old.getUsers().begin(), old.getUsers().end())) >
+       allocsToErase.size()) {
+     auto loc = old.getOwner()->getLoc();
+     maybeLocalLoad = builder.template create<ttg::LocalLoadOp>(
+diff --git a/lib/Instrumentation/PrintLoadStoreMemSpaces.cpp b/lib/Instrumentation/PrintLoadStoreMemSpaces.cpp
+index 7e2945d3d..1a3c51ac0 100644
+--- a/lib/Instrumentation/PrintLoadStoreMemSpaces.cpp
++++ b/lib/Instrumentation/PrintLoadStoreMemSpaces.cpp
+@@ -1,3 +1,4 @@
++#include "mlir/Config/mlir-config.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/IR/PassManager.h"
+ #include "llvm/Passes/PassBuilder.h"
+@@ -87,7 +88,12 @@ bool LoadStoreMemSpace::runOnModule(Module &M) {
+ 
+ static PassPluginLibraryInfo getPassPluginInfo() {
+   const auto callback = [](PassBuilder &PB) {
+-    PB.registerOptimizerLastEPCallback([&](ModulePassManager &MPM, auto, auto) {
++    PB.registerOptimizerLastEPCallback([&](ModulePassManager &MPM, auto
++#if !BSPUB_DAVINCI_BISHENGIR
++                                           ,
++                                           auto
++#endif
++                                       ) {
+       MPM.addPass(LoadStoreMemSpace());
+       return true;
+     });
+@@ -95,7 +101,7 @@ static PassPluginLibraryInfo getPassPluginInfo() {
+ 
+   return {LLVM_PLUGIN_API_VERSION, "print-mem-space", LLVM_VERSION_STRING,
+           callback};
+-};
++}
+ 
+ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
+   return getPassPluginInfo();
+diff --git a/lib/Target/LLVMIR/LLVMDIScope.cpp b/lib/Target/LLVMIR/LLVMDIScope.cpp
+index 47cf55904..4e5fb887e 100644
+--- a/lib/Target/LLVMIR/LLVMDIScope.cpp
++++ b/lib/Target/LLVMIR/LLVMDIScope.cpp
+@@ -104,8 +104,13 @@ struct LLVMDIScopePass : public impl::LLVMDIScopeBase<LLVMDIScopePass> {
+     auto subprogramAttr = LLVM::DISubprogramAttr::get(
+         context, distinctId, compileUnitAttr, fileAttr, funcNameAttr,
+         funcNameAttr, fileAttr, /*line=*/line, /*scopeline=*/line,
+-        subprogramFlags, subroutineTypeAttr, /*retainNodes=*/{},
+-        /*annotations=*/{});
++        subprogramFlags, subroutineTypeAttr
++#if !BSPUB_DAVINCI_BISHENGIR
++        ,
++        /*retainNodes=*/{},
++        /*annotations=*/{}
++#endif
++    );
+     funcOp->setLoc(FusedLoc::get(context, {loc}, subprogramAttr));
+   }
+ 
+diff --git a/python/src/gluon_ir.cc b/python/src/gluon_ir.cc
+index 34dc9fd29..18453d88c 100644
+--- a/python/src/gluon_ir.cc
++++ b/python/src/gluon_ir.cc
+@@ -24,8 +24,8 @@ namespace ttag = mlir::triton::amdgpu;
+ 
+ // Helper to check if an MLIR type or attribute has a verifier method.
+ template <typename AttrOrType>
+-static constexpr auto hasVerifier(AttrOrType t)
+-    -> decltype(t.verifyInvariants, true) {
++static constexpr auto hasVerifier(AttrOrType t) -> decltype(t.verifyInvariants,
++                                                            true) {
+   return true;
+ }
+ static constexpr auto hasVerifier(...) { return false; }
+diff --git a/test/Analysis/test-alignment.mlir b/test/Analysis/test-alignment.mlir
+index 5d13104e3..910e4c367 100644
+--- a/test/Analysis/test-alignment.mlir
++++ b/test/Analysis/test-alignment.mlir
+@@ -915,3 +915,40 @@ tt.func @test_warp_specialize_propagation(%arg0: !tt.ptr<f16> {tt.divisibility =
+   } : (!tt.ptr<f16>, i32) -> ()
+   tt.return
+ }
++
++// -----
++
++tt.func @unrealized_conversion_cast(%arg0: tensor<128x128xi32> {tt.contiguity = dense<[16, 32]> : tensor<2xi32>}) {
++  // Case 1: AxisInfo is propagated through a sequence of
++  // unrealized_conversion_cast ops.
++  // expected-remark @below {{contiguity = [16, 32], divisibility = [1, 1], constancy = [1, 1], constant_value = <none>}}
++  %0 = builtin.unrealized_conversion_cast %arg0 : tensor<128x128xi32> to !llvm.struct<(i32, i32, i32, i32)>
++  // expected-remark @below {{contiguity = [16, 32], divisibility = [1, 1], constancy = [1, 1], constant_value = <none>}}
++  %1 = builtin.unrealized_conversion_cast %0 : !llvm.struct<(i32, i32, i32, i32)> to tensor<128x128xi32>
++
++  // Case 2: AxisInfo is falling back to the pessimistic state if the
++  // propagated AxisInfo would be invalid.
++  // expected-remark @below {{contiguity = [1], divisibility = [1], constancy = [1], constant_value = <none>}}
++  %2 = llvm.mlir.undef : !llvm.struct<(i32, i32, i32, i32)>
++  // expected-remark @below {{contiguity = [1, 1], divisibility = [1, 1], constancy = [1, 1], constant_value = <none>}}
++  %3 = builtin.unrealized_conversion_cast %2 : !llvm.struct<(i32, i32, i32, i32)> to tensor<128x128xi32>
++  // expected-remark @below {{contiguity = [1, 1], divisibility = [1, 1], constancy = [1, 1], constant_value = <none>}}
++  %4 = tt.trans %3 {order = array<i32: 1, 0>} : tensor<128x128xi32> -> tensor<128x128xi32>
++  tt.return
++}
++
++// -----
++
++// Axis analysis does not support multi-dimensional function arguments. Make
++// sure that we don't crash.
++tt.func @callee(%arg0: tensor<128x1xi32>) {
++  tt.return
++}
++
++tt.func @caller() {
++  %0 = tt.make_range {end = 128 : i32, start = 0 : i32} : tensor<128xi32>
++  // expected-remark @below {{contiguity = [128, 1], divisibility = [1073741824, 1], constancy = [1, 1], constant_value = <none>}}
++  %1 = tt.expand_dims %0 {axis = 1: i32} : tensor<128xi32> -> tensor<128x1xi32>
++  tt.call @callee(%1) : (tensor<128x1xi32>) -> ()
++  tt.return
++}
+diff --git a/test/lib/Instrumentation/GPUHello.cpp b/test/lib/Instrumentation/GPUHello.cpp
+index 7880e4010..7ef47a37f 100644
+--- a/test/lib/Instrumentation/GPUHello.cpp
++++ b/test/lib/Instrumentation/GPUHello.cpp
+@@ -1,3 +1,4 @@
++#include "mlir/Config/mlir-config.h"
+ #include "llvm/IR/IRBuilder.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/IR/PassManager.h"
+@@ -59,16 +60,21 @@ bool GpuHello::runOnModule(Module &module) {
+   return modifiedCodeGen;
+ }
+ 
+-static PassPluginLibraryInfo getPassPluginInfo() {
++PassPluginLibraryInfo getPassPluginInfo() {
+   const auto callback = [](PassBuilder &pb) {
+-    pb.registerOptimizerLastEPCallback([&](ModulePassManager &mpm, auto, auto) {
++    pb.registerOptimizerLastEPCallback([&](ModulePassManager &mpm, auto
++#if !BSPUB_DAVINCI_BISHENGIR
++                                           ,
++                                           auto
++#endif
++                                       ) {
+       mpm.addPass(GpuHello());
+       return true;
+     });
+   };
+ 
+   return {LLVM_PLUGIN_API_VERSION, "gpu-hello", LLVM_VERSION_STRING, callback};
+-};
++}
+ 
+ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
+ llvmGetPassPluginInfo() {
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp
+index ad7c6bccf..5926059ab 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp
+@@ -1,5 +1,6 @@
+ #include "Analysis/AMDGPUAllocation.h"
+ #include "PatternTritonGPUOpToLLVM.h"
++#include "mlir/Config/mlir-config.h"
+ #include "triton/Conversion/TritonGPUToLLVM/PatternTritonGPUOpToLLVM.h"
+ #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
+ #include "triton/Tools/LayoutUtils.h"
+@@ -407,8 +408,12 @@ public:
+             b.shl(b.lshr(offset, b.i32_val(rshiftVal)), b.i32_val(lshiftVal)),
+             offset);
+       }
+-      auto vecAddr = b.gep(sharedPtrTy, elemTy, smemBase, offset,
+-                           LLVM::GEPNoWrapFlags::inbounds);
++      auto vecAddr = b.gep(sharedPtrTy, elemTy, smemBase, offset
++#if !BSPUB_DAVINCI_BISHENGIR
++                           ,
++                           LLVM::GEPNoWrapFlags::inbounds
++#endif
++      );
+       return vecAddr;
+     };
+ 
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ElementwiseOpToLLVM.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ElementwiseOpToLLVM.cpp
+index 270a2fc91..37368ab0b 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ElementwiseOpToLLVM.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/ElementwiseOpToLLVM.cpp
+@@ -595,6 +595,10 @@ struct SIToFPOpConversion
+                                    ConversionPatternRewriter &rewriter,
+                                    Type elemTy, MultipleOperandsRange operands,
+                                    Location loc) const {
++
++#if BSPUB_DAVINCI_BISHENGIR
++    return {rewriter.create<LLVM::SIToFPOp>(loc, elemTy, operands[0][0])};
++#else  
+     Type inElemTy = getElementType(op.getIn());
+     Type outElemTy = getElementType(op.getOut());
+     if (outElemTy.isBF16() && inElemTy.isInteger(8) && operands.size() >= 4) {
+@@ -610,6 +614,7 @@ struct SIToFPOpConversion
+     } else {
+       return {rewriter.create<LLVM::SIToFPOp>(loc, elemTy, operands[0][0])};
+     }
++#endif
+   }
+ 
+ private:
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
+index 27ab8f267..394f81727 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/PTXAsmFormat.cpp
+@@ -1,4 +1,5 @@
+ #include "TritonNVIDIAGPUToLLVM/PTXAsmFormat.h"
++#include "mlir/Config/mlir-config.h"
+ #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/Transforms/DialectConversion.h"
+ #include "triton/Conversion/TritonGPUToLLVM/AsmFormat.h"
+@@ -105,7 +106,9 @@ mlir::Value PTXBuilder::launch(OpBuilder &rewriter, Location loc, Type resTy,
+       getConstraints(),             // constraints
+       hasSideEffect,                // has_side_effects
+       isAlignStack,                 // is_align_stack
++#if !BSPUB_DAVINCI_BISHENGIR
+       LLVM::TailCallKind::None,
++#endif
+       LLVM::AsmDialectAttr::get(ctx,
+                                 LLVM::AsmDialect::AD_ATT), // asm_dialect
+       ArrayAttr::get(ctx, attrs)                           // operand_attrs
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp
+index bd661f26a..f30dee620 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.cpp
+@@ -2,6 +2,7 @@
+ #include "Dialect/NVGPU/IR/Dialect.h"
+ #include "TritonNVIDIAGPUToLLVM/PTXAsmFormat.h"
+ #include "Utility.h"
++#include "mlir/Config/mlir-config.h"
+ #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+ #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+@@ -138,8 +139,12 @@ Value TargetInfo::ballot(RewriterBase &rewriter, Location loc, Type type,
+                          Value cmp) const {
+   auto b = TritonLLVMOpBuilder(loc, rewriter);
+   Value threadMask = b.int_val(type.getIntOrFloatBitWidth(), -1);
++#if !BSPUB_DAVINCI_BISHENGIR
+   return rewriter.create<NVVM::VoteSyncOp>(loc, type, threadMask, cmp,
+                                            NVVM::VoteSyncKind::ballot);
++#else
++  llvm_unreachable("Not implemented");
++#endif
+ }
+ 
+ void TargetInfo::barrier(Location loc, RewriterBase &rewriter,
+@@ -154,7 +159,11 @@ void TargetInfo::barrier(Location loc, RewriterBase &rewriter,
+ 
+ static Value mapa(RewriterBase &rewriter, Location loc, Value ptr, Value ctaid,
+                   Value pred) {
++#if !BSPUB_DAVINCI_BISHENGIR
+   return rewriter.create<NVVM::MapaOp>(loc, ptr.getType(), ptr, ctaid);
++#else
++  llvm_unreachable("Not implemented");
++#endif
+ }
+ 
+ static std::string getConstraintForBitwidth(unsigned bitwidth) {
+@@ -249,8 +258,12 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
+     auto newVecTy = vec_ty(elemTy, maxVec);
+     SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
+     for (int i = 0; i < vec / maxVec; i++) {
+-      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec),
+-                          LLVM::GEPNoWrapFlags::inbounds);
++      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
++#if !BSPUB_DAVINCI_BISHENGIR
++                                                          ,
++                          LLVM::GEPNoWrapFlags::inbounds
++#endif
++      );
+       storeDShared(
+           rewriter, loc, newPtr, ctaId,
+           packLLVector(loc, ArrayRef(vals).slice(i * maxVec, maxVec), rewriter),
+@@ -366,8 +379,12 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
+ 
+     SmallVector<Value> vals;
+     for (int i = 0; i < vec / maxVec; i++) {
+-      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec),
+-                          LLVM::GEPNoWrapFlags::inbounds);
++      auto newPtr = b.gep(ptr.getType(), elemTy, ptr, b.i32_val(i * maxVec)
++#if !BSPUB_DAVINCI_BISHENGIR
++                                                          ,
++                          LLVM::GEPNoWrapFlags::inbounds
++#endif
++      );
+       auto newVal = loadDShared(rewriter, loc, newPtr, ctaId,
+                                 vec_ty(elemTy, maxVec), pred);
+       for (Value v : unpackLLVector(loc, newVal, rewriter)) {
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h
+index 4aed67d15..11d47e7f0 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TargetInfo.h
+@@ -27,8 +27,13 @@ public:
+                     std::optional<Value> ctaId, Type elemTy, Value pred,
+                     Operation *localLoadOp = nullptr) const override;
+ 
++#if !BSPUB_DAVINCI_BISHENGIR
+   bool supportLdMatrix() const override { return computeCapability >= 75; }
+   bool supportStMatrix() const override { return computeCapability >= 90; }
++#else
++  bool supportLdMatrix() const override { return false; }
++  bool supportStMatrix() const override { return false; }
++#endif
+ 
+   Value shuffleXor(RewriterBase &rewriter, Location loc, Value val,
+                    int i) const override;
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp
+index 3bb71f809..b3d695515 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/TritonGPUToLLVM.cpp
+@@ -10,6 +10,7 @@
+ #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+ #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
++#include "mlir/Dialect/SCF/IR/SCF.h"
+ #include "mlir/Pass/Pass.h"
+ #include "triton/Analysis/Allocation.h"
+ #include "triton/Analysis/AxisInfo.h"
+@@ -65,6 +66,9 @@ public:
+     addLegalOp<triton::gpu::WarpYieldOp>();
+     addLegalOp<triton::gpu::WarpSpecializePartitionsOp>();
+     addLegalOp<triton::gpu::WarpReturnOp>();
++#if BSPUB_DAVINCI_BISHENGIR
++    addLegalDialect<scf::SCFDialect>();
++#endif    
+   }
+ };
+ 
+@@ -112,8 +116,10 @@ struct ConvertTritonGPUToLLVM
+     int benefit = patternBenefitPrioritizeOverLLVMConversions;
+     mlir::triton::NVIDIA::populateConvertLayoutOpToLLVMPatterns(
+         typeConverter, targetInfo, patterns, benefit);
++#if !BSPUB_DAVINCI_BISHENGIR
+     mlir::triton::NVIDIA::populateTensorMemorySubviewOpToLLVMPattern(
+         typeConverter, patterns, patternBenefitNvidiaTensorCoreSubviewPattern);
++#endif
+     mlir::triton::NVIDIA::populateTMAToLLVMPatterns(typeConverter, targetInfo,
+                                                     patterns, benefit);
+     populateDotOpToLLVMPatterns(typeConverter, patterns, computeCapability,
+@@ -161,8 +167,10 @@ struct ConvertTritonGPUToLLVM
+                                                 targetInfo, benefit);
+     mlir::triton::NVIDIA::populateMemoryOpToLLVMPatterns(
+         typeConverter, targetInfo, patterns, benefit);
++#if !BSPUB_DAVINCI_BISHENGIR
+     mlir::triton::NVIDIA::populateTensorMemoryOpToLLVMPattern(
+         typeConverter, patterns, benefit);
++#endif
+     mlir::triton::populateMakeRangeOpToLLVMPattern(typeConverter, targetInfo,
+                                                    patterns, benefit);
+     mlir::triton::NVIDIA::populateTCGen5MMAOpToLLVMPattern(typeConverter,
+@@ -209,6 +217,15 @@ private:
+     OpBuilder b(mod.getBodyRegion());
+     auto loc = mod.getLoc();
+     auto elemTy = typeConverter.convertType(b.getIntegerType(8));
++
++    // Because we are temporarily using this pass as a backup for
++    // TritonAscendGPUToLLVM, the global_smem stack pointer for shared
++    // memory would have already been created there. So if it was, doing it again
++    // causes an assertion. Thus, check for existence. In the long run, when this
++    // version of TritonGPUToLLVM is no longer needed, this check can be removed.
++    auto smemSymbol = mod.lookupSymbol("global_smem");
++    if (smemSymbol)
++      return;
+     // Set array size 0 and external linkage indicates that we use dynamic
+     // shared allocation to allow a larger shared memory size for each kernel.
+     //
+diff --git a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.cpp b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.cpp
+index 4b893a35d..05c1cedda 100644
+--- a/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.cpp
++++ b/third_party/nvidia/lib/TritonNVIDIAGPUToLLVM/Utility.cpp
+@@ -1,5 +1,6 @@
+ #include "Utility.h"
+ #include "Dialect/NVGPU/IR/Dialect.h"
++#include "mlir/Config/mlir-config.h"
+ #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+ #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
+ #include "triton/Tools/LayoutUtils.h"
+@@ -335,8 +336,12 @@ LogicalResult lowerLdStMatrix(
+           reps.apply({{kReg, i2}, {kLane, 0}, {kWarp, 0}})[0].second;
+       auto regIdxAddI8 = regIdxAdd * (bitwidth / 8);
+       Value innerOffset = b.add(offset, b.i32_val(regIdxAddI8));
+-      auto vecAddr = b.gep(smemPtrTy, i8_ty, smemBase, innerOffset,
+-                           LLVM::GEPNoWrapFlags::inbounds);
++      auto vecAddr = b.gep(smemPtrTy, i8_ty, smemBase, innerOffset
++#if !BSPUB_DAVINCI_BISHENGIR
++                           ,
++                           LLVM::GEPNoWrapFlags::inbounds
++#endif
++      );
+       auto layout = transpose ? NVVM::MMALayout::col : NVVM::MMALayout::row;
+       if (isStore) {
+         // Pack into vector of i32
+@@ -349,10 +354,13 @@ LogicalResult lowerLdStMatrix(
+           }
+           inputs.push_back(b.bitcast(input, i32_ty));
+         }
++#if !BSPUB_DAVINCI_BISHENGIR
++        // FIXME: We don't support cube yet?
+         rewriter.create<NVVM::StMatrixOp>(
+             loc, vecAddr, inputs, layout,
+             NVVM::LdStMatrixShapeAttr::get(ctx, 8, 8),
+             NVVM::LdStMatrixEltType::B16);
++#endif
+       } else {
+         Type matTy = nVecs == 1
+                          ? i32_ty
+

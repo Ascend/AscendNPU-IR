@@ -1,0 +1,82 @@
+diff --git a/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h b/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h
+index ed45cbedf..93efa05be 100644
+--- a/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h
++++ b/third_party/proton/Dialect/include/Dialect/ProtonGPU/IR/Dialect.h
+@@ -21,11 +21,11 @@ namespace triton {
+ namespace proton {
+ namespace gpu {
+ 
+-const int getBytesPerClockEntry();
++int getBytesPerClockEntry();
+ 
+-const int getCircularHeaderSize();
++int getCircularHeaderSize();
+ 
+-const int getTotalNumWarps(ModuleOp mod);
++int getTotalNumWarps(ModuleOp mod);
+ 
+ } // namespace gpu
+ } // namespace proton
+diff --git a/third_party/proton/Dialect/lib/Dialect/ProtonGPU/IR/Dialect.cpp b/third_party/proton/Dialect/lib/Dialect/ProtonGPU/IR/Dialect.cpp
+index 4a1942c36..cc7fc2e97 100644
+--- a/third_party/proton/Dialect/lib/Dialect/ProtonGPU/IR/Dialect.cpp
++++ b/third_party/proton/Dialect/lib/Dialect/ProtonGPU/IR/Dialect.cpp
+@@ -9,8 +9,8 @@
+ 
+ using namespace mlir;
+ 
+-const int mlir::triton::proton::gpu::getBytesPerClockEntry() { return 8; }
+-const int mlir::triton::proton::gpu::getCircularHeaderSize() { return 16; }
++int mlir::triton::proton::gpu::getBytesPerClockEntry() { return 8; }
++int mlir::triton::proton::gpu::getCircularHeaderSize() { return 16; }
+ 
+ void mlir::triton::proton::gpu::ProtonGPUDialect::initialize() {
+   registerTypes();
+@@ -24,7 +24,7 @@ void mlir::triton::proton::gpu::ProtonGPUDialect::initialize() {
+       >();
+ }
+ 
+-const int mlir::triton::proton::gpu::getTotalNumWarps(ModuleOp mod) {
++int mlir::triton::proton::gpu::getTotalNumWarps(ModuleOp mod) {
+   int numWarps = mlir::triton::gpu::lookupNumWarps(mod);
+   if (auto totalNumWarps =
+           mod->getAttrOfType<IntegerAttr>("ttg.total-num-warps"))
+diff --git a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/CMakeLists.txt b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/CMakeLists.txt
+index e3d89b8c5..b17b52ee7 100644
+--- a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/CMakeLists.txt
++++ b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/CMakeLists.txt
+@@ -13,5 +13,7 @@ add_triton_library(ProtonGPUToLLVM
+     ProtonAnalysis
+ )
+ 
++if(NOT LLVM_BSPUB_DAVINCI_BISHENGIR)
+ add_subdirectory(ProtonNvidiaGPUToLLVM)
+ add_subdirectory(ProtonAMDGPUToLLVM)
++endif()
+\ No newline at end of file
+diff --git a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/PatternProtonGPUOpToLLVM.cpp b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/PatternProtonGPUOpToLLVM.cpp
+index a7d52109f..4363e9f00 100644
+--- a/third_party/proton/Dialect/lib/ProtonGPUToLLVM/PatternProtonGPUOpToLLVM.cpp
++++ b/third_party/proton/Dialect/lib/ProtonGPUToLLVM/PatternProtonGPUOpToLLVM.cpp
+@@ -16,6 +16,12 @@ namespace {
+ 
+ Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
+   auto b = TritonLLVMOpBuilder(loc, rewriter);
++#if BSPUB_DAVINCI_BISHENGIR
++    Value linearId = rewriter.create<arith::IndexCastOp>(
++      loc, i32_ty,
++      rewriter.create<mlir::gpu::LinearBlockIdOp>(loc));
++    return linearId;
++#else
+   // Note:
+   // 1. We compute use i64 data type to compute and then truncate to i32
+   // to support various backend intrinsics (e.g. amd).
+@@ -41,6 +47,7 @@ Value getLinearId(Location loc, ConversionPatternRewriter &rewriter) {
+       b.trunc(i32_ty, b.add(b.add(pidX, b.mul(pidY, gridDimX)),
+                             b.mul(pidZ, b.mul(gridDimX, gridDimY))));
+   return linearId;
++#endif
+ }
+ 
+ struct ReadCounterOpConversion
+

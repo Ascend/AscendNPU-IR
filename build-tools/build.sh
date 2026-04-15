@@ -342,7 +342,7 @@ cmake_generate() {
   local triton_options=""
   if [ "${BUILD_TRITON}" = "ON" ]; then
     enable_external_projects="${enable_external_projects};triton"
-    triton_options="-DLLVM_EXTERNAL_TRITON_SOURCE_DIR=../triton"
+    triton_options="-DLLVM_EXTERNAL_TRITON_SOURCE_DIR=../third-party/triton"
   fi
 
   # set the default for CCACHE_BUILD to off if ccache is not installed

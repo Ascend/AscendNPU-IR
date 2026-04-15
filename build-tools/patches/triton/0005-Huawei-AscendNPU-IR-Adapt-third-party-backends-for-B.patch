@@ -1,0 +1,1926 @@
+diff --git a/third_party/amd/backend/include/hip/amd_detail/amd_device_functions.h b/third_party/amd/backend/include/hip/amd_detail/amd_device_functions.h
+index c4837ad64..6b94fbbd8 100644
+--- a/third_party/amd/backend/include/hip/amd_detail/amd_device_functions.h
++++ b/third_party/amd/backend/include/hip/amd_detail/amd_device_functions.h
+@@ -266,16 +266,16 @@ __device__ static inline int __mul24(int x, int y) {
+ }
+ 
+ __device__ static inline long long __mul64hi(long long int x, long long int y) {
+-    unsigned long long x0 = (unsigned long long)x & 0xffffffffUL;
+-    long long x1 = x >> 32;
+-    unsigned long long y0 = (unsigned long long)y & 0xffffffffUL;
+-    long long y1 = y >> 32;
+-    unsigned long long z0 = x0*y0;
+-    long long t = x1*y0 + (z0 >> 32);
+-    long long z1 = t & 0xffffffffL;
+-    long long z2 = t >> 32;
+-    z1 = x0*y1 + z1;
+-    return x1*y1 + z2 + (z1 >> 32);
++  unsigned long long x0 = (unsigned long long)x & 0xffffffffUL;
++  long long x1 = x >> 32;
++  unsigned long long y0 = (unsigned long long)y & 0xffffffffUL;
++  long long y1 = y >> 32;
++  unsigned long long z0 = x0 * y0;
++  long long t = x1 * y0 + (z0 >> 32);
++  long long z1 = t & 0xffffffffL;
++  long long z2 = t >> 32;
++  z1 = x0 * y1 + z1;
++  return x1 * y1 + z2 + (z1 >> 32);
+ }
+ 
+ __device__ static inline int __mulhi(int x, int y) {
+@@ -300,16 +300,16 @@ __device__ static inline int __umul24(unsigned int x, unsigned int y) {
+ 
+ __device__
+ static inline unsigned long long __umul64hi(unsigned long long int x, unsigned long long int y) {
+-    unsigned long long x0 = x & 0xffffffffUL;
+-    unsigned long long x1 = x >> 32;
+-    unsigned long long y0 = y & 0xffffffffUL;
+-    unsigned long long y1 = y >> 32;
+-    unsigned long long z0 = x0*y0;
+-    unsigned long long t = x1*y0 + (z0 >> 32);
+-    unsigned long long z1 = t & 0xffffffffUL;
+-    unsigned long long z2 = t >> 32;
+-    z1 = x0*y1 + z1;
+-    return x1*y1 + z2 + (z1 >> 32);
++  unsigned long long x0 = x & 0xffffffffUL;
++  unsigned long long x1 = x >> 32;
++  unsigned long long y0 = y & 0xffffffffUL;
++  unsigned long long y1 = y >> 32;
++  unsigned long long z0 = x0 * y0;
++  unsigned long long t = x1 * y0 + (z0 >> 32);
++  unsigned long long z1 = t & 0xffffffffUL;
++  unsigned long long z2 = t >> 32;
++  z1 = x0 * y1 + z1;
++  return x1 * y1 + z2 + (z1 >> 32);
+ }
+ 
+ __device__ static inline unsigned int __umulhi(unsigned int x, unsigned int y) {
+@@ -845,10 +845,10 @@ int __syncthreads_or(int predicate)
+ #if (defined(__GFX10__) || defined(__GFX11__))
+   #define HW_ID_WGP_ID_SIZE   4
+   #define HW_ID_WGP_ID_OFFSET 10
+-  #if (defined(__AMDGCN_CUMODE__))
+-    #define HW_ID_CU_ID_SIZE    1
+-    #define HW_ID_CU_ID_OFFSET  8
+-  #endif
++#if (defined(__AMDGCN_CUMODE__))
++#define HW_ID_CU_ID_SIZE 1
++#define HW_ID_CU_ID_OFFSET 8
++#endif
+ #else
+   #define HW_ID_CU_ID_SIZE    4
+   #define HW_ID_CU_ID_OFFSET  8
+@@ -905,35 +905,35 @@ unsigned __smid(void)
+             GETREG_IMMED(HW_ID_WGP_ID_SIZE - 1, HW_ID_WGP_ID_OFFSET, HW_ID));
+       unsigned sa_id = __builtin_amdgcn_s_getreg(
+             GETREG_IMMED(HW_ID_SA_ID_SIZE - 1, HW_ID_SA_ID_OFFSET, HW_ID));
+-      #if (defined(__AMDGCN_CUMODE__))
+-        unsigned cu_id = __builtin_amdgcn_s_getreg(
+-            GETREG_IMMED(HW_ID_CU_ID_SIZE - 1, HW_ID_CU_ID_OFFSET, HW_ID));
+-      #endif
+-    #else
+-      #if (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
+-      unsigned xcc_id = __builtin_amdgcn_s_getreg(
+-            GETREG_IMMED(XCC_ID_XCC_ID_SIZE - 1, XCC_ID_XCC_ID_OFFSET, XCC_ID));
+-      #endif
++#if (defined(__AMDGCN_CUMODE__))
+       unsigned cu_id = __builtin_amdgcn_s_getreg(
+-            GETREG_IMMED(HW_ID_CU_ID_SIZE - 1, HW_ID_CU_ID_OFFSET, HW_ID));
+-    #endif
+-    #if (defined(__GFX10__) || defined(__GFX11__))
++          GETREG_IMMED(HW_ID_CU_ID_SIZE - 1, HW_ID_CU_ID_OFFSET, HW_ID));
++#endif
++#else
++#if (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
++    unsigned xcc_id = __builtin_amdgcn_s_getreg(
++        GETREG_IMMED(XCC_ID_XCC_ID_SIZE - 1, XCC_ID_XCC_ID_OFFSET, XCC_ID));
++#endif
++    unsigned cu_id = __builtin_amdgcn_s_getreg(
++        GETREG_IMMED(HW_ID_CU_ID_SIZE - 1, HW_ID_CU_ID_OFFSET, HW_ID));
++#endif
++#if (defined(__GFX10__) || defined(__GFX11__))
+       unsigned temp = se_id;
+       temp = (temp << HW_ID_SA_ID_SIZE) | sa_id;
+       temp = (temp << HW_ID_WGP_ID_SIZE) | wgp_id;
+-      #if (defined(__AMDGCN_CUMODE__))
+-        temp = (temp << HW_ID_CU_ID_SIZE) | cu_id;
+-      #endif
+-      return temp;
+-      //TODO : CU Mode impl
+-    #elif (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
+-      unsigned temp = xcc_id;
+-      temp = (temp << HW_ID_SE_ID_SIZE) | se_id;
++#if (defined(__AMDGCN_CUMODE__))
+       temp = (temp << HW_ID_CU_ID_SIZE) | cu_id;
++#endif
+       return temp;
+-    #else
+-      return (se_id << HW_ID_CU_ID_SIZE) + cu_id;
+-    #endif
++      // TODO : CU Mode impl
++#elif (defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__))
++    unsigned temp = xcc_id;
++    temp = (temp << HW_ID_SE_ID_SIZE) | se_id;
++    temp = (temp << HW_ID_CU_ID_SIZE) | cu_id;
++    return temp;
++#else
++    return (se_id << HW_ID_CU_ID_SIZE) + cu_id;
++#endif
+ }
+ 
+ /**
+diff --git a/third_party/amd/backend/include/hip/amd_detail/amd_hip_atomic.h b/third_party/amd/backend/include/hip/amd_detail/amd_hip_atomic.h
+index d6e4d8186..89b1bfbef 100644
+--- a/third_party/amd/backend/include/hip/amd_detail/amd_hip_atomic.h
++++ b/third_party/amd/backend/include/hip/amd_detail/amd_hip_atomic.h
+@@ -618,8 +618,8 @@ float atomicMin(float* addr, float val) {
+   } u_hold_t;
+   u_hold_t u{val};
+   bool neg_zero = 0x80000000U == u.b;
+-  #if __has_builtin(__hip_atomic_load) && \
+-      __has_builtin(__hip_atomic_compare_exchange_strong)
++#if __has_builtin(__hip_atomic_load) &&                                        \
++    __has_builtin(__hip_atomic_compare_exchange_strong)
+   float value = __hip_atomic_load(addr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   bool done = false;
+   while (!done && (value > val || (neg_zero && value == 0.0f))) {
+@@ -627,16 +627,17 @@ float atomicMin(float* addr, float val) {
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   }
+   return value;
+-  #else
++#else
+   unsigned int *uaddr = (unsigned int *)addr;
+   unsigned int value = __atomic_load_n(uaddr, __ATOMIC_RELAXED);
+   bool done = false;
+-  while (!done && (__uint_as_float(value) > val || (neg_zero && __uint_as_float(value) == 0.0f))) {
++  while (!done && (__uint_as_float(value) > val ||
++                   (neg_zero && __uint_as_float(value) == 0.0f))) {
+     done = __atomic_compare_exchange_n(uaddr, &value, __float_as_uint(val), false,
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+   }
+   return __uint_as_float(value);
+-  #endif
++#endif
+ #endif
+ }
+ 
+@@ -670,26 +671,26 @@ double atomicMin(double* addr, double val) {
+   } u_hold_t;
+   u_hold_t u{val};
+   bool neg_zero = 0x8000000000000000ULL == u.b;
+-  #if __has_builtin(__hip_atomic_load) && \
+-      __has_builtin(__hip_atomic_compare_exchange_strong)
++#if __has_builtin(__hip_atomic_load) &&                                        \
++    __has_builtin(__hip_atomic_compare_exchange_strong)
+   double value = __hip_atomic_load(addr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   bool done = false;
+-  while (!done && (value > val || (neg_zero && value == 0.0)))  {
++  while (!done && (value > val || (neg_zero && value == 0.0))) {
+     done = __hip_atomic_compare_exchange_strong(addr, &value, val,
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   }
+   return value;
+-  #else
++#else
+   unsigned long long *uaddr = (unsigned long long *)addr;
+   unsigned long long value = __atomic_load_n(uaddr, __ATOMIC_RELAXED);
+   bool done = false;
+-  while (!done &&
+-         (__longlong_as_double(value) > val || (neg_zero && __longlong_as_double(value) == 0.0))) {
++  while (!done && (__longlong_as_double(value) > val ||
++                   (neg_zero && __longlong_as_double(value) == 0.0))) {
+     done = __atomic_compare_exchange_n(uaddr, &value, __double_as_longlong(val), false,
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+   }
+   return __longlong_as_double(value);
+-  #endif
++#endif
+ #endif
+ }
+ 
+@@ -875,8 +876,8 @@ float atomicMax(float* addr, float val) {
+   } u_hold_t;
+   u_hold_t u{val};
+   bool neg_zero = 0x80000000U == u.b;
+-  #if __has_builtin(__hip_atomic_load) && \
+-      __has_builtin(__hip_atomic_compare_exchange_strong)
++#if __has_builtin(__hip_atomic_load) &&                                        \
++    __has_builtin(__hip_atomic_compare_exchange_strong)
+   float value = __hip_atomic_load(addr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   bool done = false;
+   while (!done && (value < val || (neg_zero && value == 0.0f))) {
+@@ -884,16 +885,17 @@ float atomicMax(float* addr, float val) {
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   }
+   return value;
+-  #else
++#else
+   unsigned int *uaddr = (unsigned int *)addr;
+   unsigned int value = __atomic_load_n(uaddr, __ATOMIC_RELAXED);
+   bool done = false;
+-  while (!done && (__uint_as_float(value) < val || (neg_zero && __uint_as_float(value) == 0.0f))) {
++  while (!done && (__uint_as_float(value) < val ||
++                   (neg_zero && __uint_as_float(value) == 0.0f))) {
+     done = __atomic_compare_exchange_n(uaddr, &value, __float_as_uint(val), false,
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+   }
+   return __uint_as_float(value);
+-  #endif
++#endif
+ #endif
+ }
+ 
+@@ -927,8 +929,8 @@ double atomicMax(double* addr, double val) {
+   } u_hold_t;
+   u_hold_t u{val};
+   bool neg_zero = 0x8000000000000000ULL == u.b;
+-  #if __has_builtin(__hip_atomic_load) && \
+-      __has_builtin(__hip_atomic_compare_exchange_strong)
++#if __has_builtin(__hip_atomic_load) &&                                        \
++    __has_builtin(__hip_atomic_compare_exchange_strong)
+   double value = __hip_atomic_load(addr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   bool done = false;
+   while (!done && (value < val || (neg_zero && value == 0.0))) {
+@@ -936,17 +938,17 @@ double atomicMax(double* addr, double val) {
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
+   }
+   return value;
+-  #else
++#else
+   unsigned long long *uaddr = (unsigned long long *)addr;
+   unsigned long long value = __atomic_load_n(uaddr, __ATOMIC_RELAXED);
+   bool done = false;
+-  while (!done &&
+-         (__longlong_as_double(value) < val || (neg_zero && __longlong_as_double(value) == 0.0))) {
++  while (!done && (__longlong_as_double(value) < val ||
++                   (neg_zero && __longlong_as_double(value) == 0.0))) {
+     done = __atomic_compare_exchange_n(uaddr, &value, __double_as_longlong(val), false,
+                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+   }
+   return __longlong_as_double(value);
+-  #endif
++#endif
+ #endif
+ }
+ 
+@@ -1003,7 +1005,6 @@ unsigned int atomicDec(unsigned int* address, unsigned int val)
+ #else
+   return __builtin_amdgcn_atomic_dec32(address, val, __ATOMIC_RELAXED, "agent");
+ #endif // __gfx941__
+-    
+ }
+ 
+ __device__
+diff --git a/third_party/amd/backend/include/hip/amd_detail/amd_hip_bf16.h b/third_party/amd/backend/include/hip/amd_detail/amd_hip_bf16.h
+index cfaa5412a..7f15c16f4 100644
+--- a/third_party/amd/backend/include/hip/amd_detail/amd_hip_bf16.h
++++ b/third_party/amd/backend/include/hip/amd_detail/amd_hip_bf16.h
+@@ -84,13 +84,15 @@
+ /**
+  * \defgroup HIP_INTRINSIC_BFLOAT16_RAW Bfloat16 Raw Struct
+  * \ingroup HIP_INTRINSIC_BFLOAT16
+- * To use these functions, include the header file \p hip_bf16.h in your program.
++ * To use these functions, include the header file \p hip_bf16.h in your
++ * program.
+  */
+ 
+ /**
+  * \defgroup HIP_INTRINSIC_BFLOAT162_RAW Bfloat162 Raw Struct
+  * \ingroup HIP_INTRINSIC_BFLOAT16
+- * To use these functions, include the header file \p hip_bf16.h in your program.
++ * To use these functions, include the header file \p hip_bf16.h in your
++ * program.
+  */
+ 
+ #ifndef _HIP_INCLUDE_HIP_AMD_DETAIL_HIP_BF16_H_
+@@ -116,7 +118,8 @@
+ #define __BF16_DEVICE_STATIC__ __BF16_DEVICE__ static inline
+ #define __BF16_HOST_DEVICE_STATIC__ __BF16_HOST_DEVICE__ static inline
+ 
+-#if defined(__AVX512VL__) and defined(__AVX512BF16__) and not defined(__HIP_DEVICE_COMPILE__)
++#if defined(__AVX512VL__) and defined(__AVX512BF16__) and                      \
++    not defined(__HIP_DEVICE_COMPILE__)
+ // Enable with -mavx512vl -mavx512bf16
+ #if defined(__MINGW64__)
+ #include <intrin.h>
+@@ -170,7 +173,7 @@ typedef struct __attribute__((aligned(4))) {
+  * @{
+  */
+ struct __attribute__((aligned(2))) __hip_bfloat16 {
+- private:
++private:
+   __BF16_HOST_DEVICE_STATIC__ float bfloatraw_2_float(unsigned short val) {
+ #if HIP_BF16_AVX512_OP
+     union {
+@@ -216,7 +219,7 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+       // When the bfloat16 value has an exponent of 0xFE and a mantissa of 0x7F,
+       // incrementing it causes it to become an exponent of 0xFF and a mantissa
+       // of 0x00, which is Inf, the next higher value to the unrounded value.
+-      u.u32 += 0x7fff + ((u.u32 >> 16) & 1);  // Round to nearest, round to even
++      u.u32 += 0x7fff + ((u.u32 >> 16) & 1); // Round to nearest, round to even
+     } else if (u.u32 & 0xffff) {
+       // When all of the exponent bits are 1, the value is Inf or NaN.
+       // Inf is indicated by a zero mantissa. NaN is indicated by any nonzero
+@@ -226,7 +229,7 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+       // lower 16 bits of the mantissa are 1, we set the least significant bit
+       // of the bfloat16 mantissa, in order to preserve signaling NaN in case
+       // the bloat16's mantissa bits are all 0.
+-      u.u32 |= 0x10000;  // Preserve signaling NaN
++      u.u32 |= 0x10000; // Preserve signaling NaN
+     }
+     return static_cast<unsigned short>(u.u32 >> 16);
+ #endif
+@@ -248,11 +251,11 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+     return float_2_bfloatraw(u.fp32);
+   }
+ 
+- protected:
++protected:
+   /*! \brief raw representation of bfloat16 */
+   unsigned short __x;
+ 
+- public:
++public:
+   // TODO: SWDEV-452411
+   // Need to add constructor of __hip_bfloat16 from
+   // unsigned long long
+@@ -278,62 +281,83 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+       : __x(float_2_bfloatraw(static_cast<float>(val))) {}
+ 
+   /*! \brief create __hip_bfloat16 from a double */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16(const double val) : __x(double_2_bfloatraw(val)) {}
++  __BF16_HOST_DEVICE__ __hip_bfloat16(const double val)
++      : __x(double_2_bfloatraw(val)) {}
+ 
+   /*! \brief create __hip_bfloat16 from a float */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16(const float val) : __x(float_2_bfloatraw(val)) {}
++  __BF16_HOST_DEVICE__ __hip_bfloat16(const float val)
++      : __x(float_2_bfloatraw(val)) {}
+ 
+   /*! \brief create __hip_bfloat16 from a __hip_bfloat16_raw */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16(const __hip_bfloat16_raw& val) : __x(val.x) {}
++  __BF16_HOST_DEVICE__ __hip_bfloat16(const __hip_bfloat16_raw &val)
++      : __x(val.x) {}
+ 
+   /*! \brief default constructor */
+   __BF16_HOST_DEVICE__ __hip_bfloat16() = default;
+ 
+   /*! \brief return a __hip_bfloat16_raw */
+-  __BF16_HOST_DEVICE__ operator __hip_bfloat16_raw() const { return __hip_bfloat16_raw{__x}; }
++  __BF16_HOST_DEVICE__ operator __hip_bfloat16_raw() const {
++    return __hip_bfloat16_raw{__x};
++  }
+ 
+   /*! \brief return a __hip_bfloat16_raw cv qualifier */
+   __BF16_HOST_DEVICE__ operator __hip_bfloat16_raw() const volatile {
+     return __hip_bfloat16_raw{__x};
+   }
+ 
+-  /*! \brief return false if bfloat value is +0.0 or -0.0, returns true otherwise */
++  /*! \brief return false if bfloat value is +0.0 or -0.0, returns true
++   * otherwise */
+   __BF16_HOST_DEVICE__ operator bool() const {
+     auto val = bfloatraw_2_float(__x);
+     return val != 0.0f && val != -0.0f;
+   }
+ 
+   /*! \brief return a casted char from underlying float val */
+-  __BF16_HOST_DEVICE__ operator char() const { return static_cast<char>(bfloatraw_2_float(__x)); }
++  __BF16_HOST_DEVICE__ operator char() const {
++    return static_cast<char>(bfloatraw_2_float(__x));
++  }
+ 
+   /*! \brief return a float */
+   __BF16_HOST_DEVICE__ operator float() const { return bfloatraw_2_float(__x); }
+ 
+-  /*! \brief return a casted int casted from float of underlying bfloat16 value */
+-  __BF16_HOST_DEVICE__ operator int() const { return static_cast<int>(bfloatraw_2_float(__x)); }
++  /*! \brief return a casted int casted from float of underlying bfloat16 value
++   */
++  __BF16_HOST_DEVICE__ operator int() const {
++    return static_cast<int>(bfloatraw_2_float(__x));
++  }
+ 
+-  /*! \brief return a casted long casted from float of underlying bfloat16 value */
+-  __BF16_HOST_DEVICE__ operator long() const { return static_cast<long>(bfloatraw_2_float(__x)); }
++  /*! \brief return a casted long casted from float of underlying bfloat16 value
++   */
++  __BF16_HOST_DEVICE__ operator long() const {
++    return static_cast<long>(bfloatraw_2_float(__x));
++  }
+ 
+-  /*! \brief return a casted long long casted from float of underlying bfloat16 value */
++  /*! \brief return a casted long long casted from float of underlying bfloat16
++   * value */
+   __BF16_HOST_DEVICE__ operator long long() const {
+     return static_cast<long long>(bfloatraw_2_float(__x));
+   }
+ 
+-  /*! \brief return a casted short casted from float of underlying bfloat16 value */
+-  __BF16_HOST_DEVICE__ operator short() const { return static_cast<short>(bfloatraw_2_float(__x)); }
++  /*! \brief return a casted short casted from float of underlying bfloat16
++   * value */
++  __BF16_HOST_DEVICE__ operator short() const {
++    return static_cast<short>(bfloatraw_2_float(__x));
++  }
+ 
+-  /*! \brief return a casted signed char from float of underlying bfloat16 value */
++  /*! \brief return a casted signed char from float of underlying bfloat16 value
++   */
+   __BF16_HOST_DEVICE__ operator signed char() const {
+     return static_cast<signed char>(bfloatraw_2_float(__x));
+   }
+ 
+-  /*! \brief return a casted unsigned char casted from float of underlying bfloat16 value */
++  /*! \brief return a casted unsigned char casted from float of underlying
++   * bfloat16 value */
+   __BF16_HOST_DEVICE__ operator unsigned char() const {
+     return static_cast<unsigned char>(bfloatraw_2_float(__x));
+   }
+ 
+-  /*! \brief return a casted unsigned int casted from float of underlying bfloat16 value */
++  /*! \brief return a casted unsigned int casted from float of underlying
++   * bfloat16 value */
+   __BF16_HOST_DEVICE__ operator unsigned int() const {
+     return static_cast<unsigned int>(bfloatraw_2_float(__x));
+   }
+@@ -343,69 +367,73 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+     return static_cast<unsigned long>(bfloatraw_2_float(__x));
+   }
+ 
+-  /*! \brief return a casted unsigned long long from float of underlying bfloat16 value */
++  /*! \brief return a casted unsigned long long from float of underlying
++   * bfloat16 value */
+   __BF16_HOST_DEVICE__ operator unsigned long long() const {
+     return static_cast<unsigned long long>(bfloatraw_2_float(__x));
+   }
+ 
+-  /*! \brief return a casted unsigned short from float of underlying bfloat16 value */
++  /*! \brief return a casted unsigned short from float of underlying bfloat16
++   * value */
+   __BF16_HOST_DEVICE__ operator unsigned short() const {
+     return static_cast<unsigned short>(bfloatraw_2_float(__x));
+   }
+ 
+-  // TODO: SWDEV-452411 add operator which converts unsigned long long and long long to bfloat
++  // TODO: SWDEV-452411 add operator which converts unsigned long long and long
++  // long to bfloat
+ 
+   /*! \brief assign value from an unsigned int */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(unsigned int val) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(unsigned int val) {
+     __x = float_2_bfloatraw(static_cast<float>(val));
+     return *this;
+   }
+ 
+   /*! \brief assign value from a int */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(int val) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(int val) {
+     __x = float_2_bfloatraw(static_cast<float>(val));
+     return *this;
+   }
+ 
+   /*! \brief assign value from an unsigned short */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(unsigned short val) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(unsigned short val) {
+     __x = float_2_bfloatraw(static_cast<float>(val));
+     return *this;
+   }
+ 
+   /*! \brief assign value from a short int */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(short val) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(short val) {
+     __x = float_2_bfloatraw(static_cast<float>(val));
+     return *this;
+   }
+ 
+   /*! \brief assign value from a double */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(const double f) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(const double f) {
+     __x = float_2_bfloatraw(static_cast<float>(f));
+     return *this;
+   }
+ 
+   /*! \brief assign value from a float */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(const float f) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(const float f) {
+     __x = float_2_bfloatraw(f);
+     return *this;
+   }
+ 
+   /*! \brief assign value from a __hip_bfloat16_raw */
+-  __BF16_HOST_DEVICE__ __hip_bfloat16& operator=(const __hip_bfloat16_raw& hr) {
++  __BF16_HOST_DEVICE__ __hip_bfloat16 &operator=(const __hip_bfloat16_raw &hr) {
+     __x = hr.x;
+     return *this;
+   }
+ 
+   /*! \brief assign value from a __hip_bfloat16_raw volatile */
+-  __BF16_HOST_DEVICE__ volatile __hip_bfloat16& operator=(const __hip_bfloat16_raw& hr) volatile {
++  __BF16_HOST_DEVICE__ volatile __hip_bfloat16 &
++  operator=(const __hip_bfloat16_raw &hr) volatile {
+     __x = hr.x;
+     return *this;
+   }
+ 
+   /*! \brief assign value from a __hip_bfloat16_raw cv qualifier */
+-  __BF16_HOST_DEVICE__ volatile __hip_bfloat16& operator=(
+-      const volatile __hip_bfloat16_raw& hr) volatile {
++  __BF16_HOST_DEVICE__ volatile __hip_bfloat16 &
++  operator=(const volatile __hip_bfloat16_raw &hr) volatile {
+     __x = hr.x;
+     return *this;
+   }
+@@ -419,26 +447,26 @@ struct __attribute__((aligned(2))) __hip_bfloat16 {
+  * @{
+  */
+ struct __attribute__((aligned(4))) __hip_bfloat162 {
+- public:
++public:
+   __hip_bfloat16 x; /*! \brief raw representation of bfloat16 */
+   __hip_bfloat16 y; /*! \brief raw representation of bfloat16 */
+ 
+-
+- public:
++public:
+   /*! \brief create __hip_bfloat162 from __hip_bfloat162_raw */
+-  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat162_raw& h2r)
++  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat162_raw &h2r)
+       : x(__hip_bfloat16(__hip_bfloat16_raw{h2r.x})),
+         y(__hip_bfloat16(__hip_bfloat16_raw{h2r.y})) {}
+ 
+   /*! \brief copy constructor of __hip_bfloat162 */
+-  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat162& val) {
++  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat162 &val) {
+     __hip_bfloat162_raw hr = val;
+     x = __hip_bfloat16_raw{hr.x};
+     y = __hip_bfloat16_raw{hr.y};
+   }
+ 
+   /*! \brief create __hip_bfloat162 from two __hip_bfloat16 */
+-  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat16& a, const __hip_bfloat16& b)
++  __BF16_HOST_DEVICE__ __hip_bfloat162(const __hip_bfloat16 &a,
++                                       const __hip_bfloat16 &b)
+       : x(a), y(b) {}
+ 
+   /*! \brief default constructor of __hip_bfloat162 */
+@@ -470,14 +498,15 @@ struct __attribute__((aligned(4))) __hip_bfloat162 {
+   }
+ 
+   /*! \brief assign value from __hip_bfloat162_raw */
+-  __BF16_HOST_DEVICE__ __hip_bfloat162& operator=(const __hip_bfloat162_raw& h2r) {
++  __BF16_HOST_DEVICE__ __hip_bfloat162 &
++  operator=(const __hip_bfloat162_raw &h2r) {
+     x = __hip_bfloat16(__hip_bfloat16_raw{h2r.x});
+     y = __hip_bfloat16(__hip_bfloat16_raw{h2r.y});
+     return *this;
+   }
+ 
+   /*! \brief assign value from __hip_bfloat162 */
+-  __BF16_HOST_DEVICE__ __hip_bfloat162& operator=(const __hip_bfloat162& src) {
++  __BF16_HOST_DEVICE__ __hip_bfloat162 &operator=(const __hip_bfloat162 &src) {
+     __hip_bfloat162_raw hr = src;
+     x = __hip_bfloat16(__hip_bfloat16_raw{hr.x});
+     y = __hip_bfloat16(__hip_bfloat16_raw{hr.y});
+@@ -517,7 +546,8 @@ __BF16_HOST_DEVICE_STATIC__ float2 __bfloat1622float2(const __hip_bfloat162 a) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Moves bfloat16 value to bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __bfloat162bfloat162(const __hip_bfloat16 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__bfloat162bfloat162(const __hip_bfloat16 a) {
+   return __hip_bfloat162(a, a);
+ }
+ 
+@@ -525,7 +555,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __bfloat162bfloat162(const __hip_bfl
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Reinterprets bits in a __hip_bfloat16 as a signed short integer
+  */
+-__BF16_HOST_DEVICE_STATIC__ short int __bfloat16_as_short(const __hip_bfloat16 h) {
++__BF16_HOST_DEVICE_STATIC__ short int
++__bfloat16_as_short(const __hip_bfloat16 h) {
+   short ret = h;
+   return ret;
+ }
+@@ -534,7 +565,8 @@ __BF16_HOST_DEVICE_STATIC__ short int __bfloat16_as_short(const __hip_bfloat16 h
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Reinterprets bits in a __hip_bfloat16 as an unsigned signed short integer
+  */
+-__BF16_HOST_DEVICE_STATIC__ unsigned short int __bfloat16_as_ushort(const __hip_bfloat16 h) {
++__BF16_HOST_DEVICE_STATIC__ unsigned short int
++__bfloat16_as_ushort(const __hip_bfloat16 h) {
+   unsigned short ret = h;
+   return ret;
+ }
+@@ -552,7 +584,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __double2bfloat16(const double a) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Convert float2 to __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __float22bfloat162_rn(const float2 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__float22bfloat162_rn(const float2 a) {
+   return __hip_bfloat162{__float2bfloat16(a.x), __float2bfloat16(a.y)};
+ }
+ 
+@@ -560,8 +593,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __float22bfloat162_rn(const float2 a
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Combine two __hip_bfloat16 to __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __halves2bfloat162(const __hip_bfloat16 a,
+-                                                               const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__halves2bfloat162(const __hip_bfloat16 a, const __hip_bfloat16 b) {
+   return __hip_bfloat162(a, b);
+ }
+ 
+@@ -569,7 +602,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __halves2bfloat162(const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Returns high 16 bits of __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __high2bfloat16(const __hip_bfloat162 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16
++__high2bfloat16(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr = a;
+   return __hip_bfloat16(__hip_bfloat16_raw{hr.y});
+ }
+@@ -578,7 +612,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __high2bfloat16(const __hip_bfloat162
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Returns high 16 bits of __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __high2bfloat162(const __hip_bfloat162 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__high2bfloat162(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr = a;
+   return __hip_bfloat162(__hip_bfloat16_raw{hr.y}, __hip_bfloat16_raw{hr.y});
+ }
+@@ -596,8 +631,8 @@ __BF16_HOST_DEVICE_STATIC__ float __high2float(const __hip_bfloat162 a) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Extracts high 16 bits from each and combines them
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __highs2bfloat162(const __hip_bfloat162 a,
+-                                                              const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__highs2bfloat162(const __hip_bfloat162 a, const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162(__hip_bfloat162_raw{hr_a.y, hr_b.y});
+@@ -607,7 +642,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __highs2bfloat162(const __hip_bfloat
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Returns low 16 bits of __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __low2bfloat16(const __hip_bfloat162 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16
++__low2bfloat16(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr = a;
+   return __hip_bfloat16(hr.x);
+ }
+@@ -616,7 +652,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __low2bfloat16(const __hip_bfloat162
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Returns low 16 bits of __hip_bfloat162
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __low2bfloat162(const __hip_bfloat162 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__low2bfloat162(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr = a;
+   return __hip_bfloat162(hr.x, hr.x);
+ }
+@@ -634,7 +671,8 @@ __BF16_HOST_DEVICE_STATIC__ float __low2float(const __hip_bfloat162 a) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Swaps both halves
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __lowhigh2highlow(const __hip_bfloat162 a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__lowhigh2highlow(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr = a;
+   return __hip_bfloat162(__hip_bfloat162_raw{hr.y, hr.x});
+ }
+@@ -643,8 +681,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __lowhigh2highlow(const __hip_bfloat
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Extracts low 16 bits from each and combines them
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __lows2bfloat162(const __hip_bfloat162 a,
+-                                                             const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++__lows2bfloat162(const __hip_bfloat162 a, const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162(__hip_bfloat162_raw{hr_a.x, hr_b.x});
+@@ -654,7 +692,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __lows2bfloat162(const __hip_bfloat1
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Reinterprets short int into a bfloat16
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __short_as_bfloat16(const short int a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16
++__short_as_bfloat16(const short int a) {
+   return __hip_bfloat16(a);
+ }
+ 
+@@ -662,7 +701,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __short_as_bfloat16(const short int a
+  * \ingroup HIP_INTRINSIC_BFLOAT162_CONV
+  * \brief Reinterprets unsigned short int into a bfloat16
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __ushort_as_bfloat16(const unsigned short int a) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16
++__ushort_as_bfloat16(const unsigned short int a) {
+   return __hip_bfloat16(a);
+ }
+ 
+@@ -670,7 +710,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __ushort_as_bfloat16(const unsigned s
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Adds two bfloat16 values
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hadd(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hadd(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+   return __float2bfloat16(__bfloat162float(a) + __bfloat162float(b));
+ }
+ 
+@@ -678,7 +719,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hadd(const __hip_bfloat16 a, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Subtracts two bfloat16 values
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hsub(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hsub(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+   return __float2bfloat16(__bfloat162float(a) - __bfloat162float(b));
+ }
+ 
+@@ -686,7 +728,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hsub(const __hip_bfloat16 a, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Divides two bfloat16 values
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hdiv(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hdiv(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+   return __float2bfloat16(__bfloat162float(a) / __bfloat162float(b));
+ }
+ 
+@@ -694,7 +737,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hdiv(const __hip_bfloat16 a, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Performs FMA of given bfloat16 values
+  */
+-__BF16_DEVICE_STATIC__ __hip_bfloat16 __hfma(const __hip_bfloat16 a, const __hip_bfloat16 b,
++__BF16_DEVICE_STATIC__ __hip_bfloat16 __hfma(const __hip_bfloat16 a,
++                                             const __hip_bfloat16 b,
+                                              const __hip_bfloat16 c) {
+   return __float2bfloat16(
+       __ocml_fma_f32(__bfloat162float(a), __bfloat162float(b), __bfloat162float(c)));
+@@ -704,7 +748,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat16 __hfma(const __hip_bfloat16 a, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Multiplies two bfloat16 values
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmul(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmul(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+   return __float2bfloat16(__bfloat162float(a) * __bfloat162float(b));
+ }
+ 
+@@ -736,10 +781,11 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __h2div(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__float2bfloat16(__bfloat162float(__hip_bfloat16_raw{hr_a.x}) /
+-                                          __bfloat162float(__hip_bfloat16_raw{hr_b.x})),
+-                         __float2bfloat16(__bfloat162float(__hip_bfloat16_raw{hr_a.y}) /
+-                                          __bfloat162float(__hip_bfloat16_raw{hr_b.y})));
++  return __hip_bfloat162(
++      __float2bfloat16(__bfloat162float(__hip_bfloat16_raw{hr_a.x}) /
++                       __bfloat162float(__hip_bfloat16_raw{hr_b.x})),
++      __float2bfloat16(__bfloat162float(__hip_bfloat16_raw{hr_a.y}) /
++                       __bfloat162float(__hip_bfloat16_raw{hr_b.y})));
+ }
+ 
+ /**
+@@ -748,7 +794,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __h2div(const __hip_bfloat162 a,
+  */
+ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __habs2(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr_a = a;
+-  return __hip_bfloat162(__habs(__hip_bfloat16_raw{hr_a.x}), __habs(__hip_bfloat16_raw{hr_a.y}));
++  return __hip_bfloat162(__habs(__hip_bfloat16_raw{hr_a.x}),
++                         __habs(__hip_bfloat16_raw{hr_a.y}));
+ }
+ 
+ /**
+@@ -759,22 +806,26 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hadd2(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__hadd(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
+-                         __hadd(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
++  return __hip_bfloat162(
++      __hadd(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
++      __hadd(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Performs FMA of given bfloat162 values
+  */
+-__BF16_DEVICE_STATIC__ __hip_bfloat162 __hfma2(const __hip_bfloat162 a, const __hip_bfloat162 b,
++__BF16_DEVICE_STATIC__ __hip_bfloat162 __hfma2(const __hip_bfloat162 a,
++                                               const __hip_bfloat162 b,
+                                                const __hip_bfloat162 c) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   __hip_bfloat162_raw hr_c = c;
+   return __hip_bfloat162(
+-      __hfma(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}, __hip_bfloat16_raw{hr_c.x}),
+-      __hfma(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}, __hip_bfloat16_raw{hr_c.y}));
++      __hfma(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x},
++             __hip_bfloat16_raw{hr_c.x}),
++      __hfma(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y},
++             __hip_bfloat16_raw{hr_c.y}));
+ }
+ 
+ /**
+@@ -785,8 +836,9 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hmul2(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__hmul(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
+-                         __hmul(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
++  return __hip_bfloat162(
++      __hmul(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
++      __hmul(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+@@ -795,7 +847,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hmul2(const __hip_bfloat162 a,
+  */
+ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hneg2(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr_a = a;
+-  return __hip_bfloat162(__hneg(__hip_bfloat16_raw{hr_a.x}), __hneg(__hip_bfloat16_raw{hr_a.y}));
++  return __hip_bfloat162(__hneg(__hip_bfloat16_raw{hr_a.x}),
++                         __hneg(__hip_bfloat16_raw{hr_a.y}));
+ }
+ 
+ /**
+@@ -806,16 +859,17 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hsub2(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__hsub(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
+-                         __hsub(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
++  return __hip_bfloat162(
++      __hsub(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
++      __hsub(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to multiply two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator*(const __hip_bfloat16& l,
+-                                                     const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator*(const __hip_bfloat16 &l,
++                                                     const __hip_bfloat16 &r) {
+   return __hmul(l, r);
+ }
+ 
+@@ -823,7 +877,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator*(const __hip_bfloat16& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to multiply-assign two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator*=(__hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &
++operator*=(__hip_bfloat16 &l, const __hip_bfloat16 &r) {
+   l = __hmul(l, r);
+   return l;
+ }
+@@ -832,14 +887,16 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator*=(__hip_bfloat16& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to unary+ on a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator+(const __hip_bfloat16& l) { return l; }
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator+(const __hip_bfloat16 &l) {
++  return l;
++}
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to add two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator+(const __hip_bfloat16& l,
+-                                                     const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator+(const __hip_bfloat16 &l,
++                                                     const __hip_bfloat16 &r) {
+   return __hadd(l, r);
+ }
+ 
+@@ -847,14 +904,16 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator+(const __hip_bfloat16& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to negate a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator-(const __hip_bfloat16& l) { return __hneg(l); }
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator-(const __hip_bfloat16 &l) {
++  return __hneg(l);
++}
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to subtract two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator-(const __hip_bfloat16& l,
+-                                                     const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator-(const __hip_bfloat16 &l,
++                                                     const __hip_bfloat16 &r) {
+   return __hsub(l, r);
+ }
+ 
+@@ -862,7 +921,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator-(const __hip_bfloat16& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to post increment a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator++(__hip_bfloat16& l, const int) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator++(__hip_bfloat16 &l,
++                                                      const int) {
+   auto ret = l;
+   l = __hadd(l, HIPRT_ONE_BF16);
+   return ret;
+@@ -872,7 +932,7 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator++(__hip_bfloat16& l, const i
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to pre increment a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator++(__hip_bfloat16& l) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &operator++(__hip_bfloat16 &l) {
+   l = __hadd(l, HIPRT_ONE_BF16);
+   return l;
+ }
+@@ -881,7 +941,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator++(__hip_bfloat16& l) {
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to post decrement a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator--(__hip_bfloat16& l, const int) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator--(__hip_bfloat16 &l,
++                                                      const int) {
+   auto ret = l;
+   l = __hsub(l, HIPRT_ONE_BF16);
+   return ret;
+@@ -891,7 +952,7 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator--(__hip_bfloat16& l, const i
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to pre decrement a __hip_bfloat16 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator--(__hip_bfloat16& l) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &operator--(__hip_bfloat16 &l) {
+   l = __hsub(l, HIPRT_ONE_BF16);
+   return l;
+ }
+@@ -900,7 +961,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator--(__hip_bfloat16& l) {
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to add-assign two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator+=(__hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &
++operator+=(__hip_bfloat16 &l, const __hip_bfloat16 &r) {
+   l = __hadd(l, r);
+   return l;
+ }
+@@ -909,7 +971,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator+=(__hip_bfloat16& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to subtract-assign two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator-=(__hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &
++operator-=(__hip_bfloat16 &l, const __hip_bfloat16 &r) {
+   l = __hsub(l, r);
+   return l;
+ }
+@@ -918,8 +981,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator-=(__hip_bfloat16& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to divide two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator/(const __hip_bfloat16& l,
+-                                                     const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator/(const __hip_bfloat16 &l,
++                                                     const __hip_bfloat16 &r) {
+   return __hdiv(l, r);
+ }
+ 
+@@ -927,7 +990,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 operator/(const __hip_bfloat16& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT16_ARITH
+  * \brief Operator to divide-assign two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator/=(__hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 &
++operator/=(__hip_bfloat16 &l, const __hip_bfloat16 &r) {
+   l = __hdiv(l, r);
+   return l;
+ }
+@@ -936,8 +1000,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16& operator/=(__hip_bfloat16& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to multiply two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator*(const __hip_bfloat162& l,
+-                                                      const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator*(const __hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   return __hmul2(l, r);
+ }
+ 
+@@ -945,8 +1009,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator*(const __hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to multiply-assign two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator*=(__hip_bfloat162& l,
+-                                                        const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &
++operator*=(__hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   l = __hmul2(l, r);
+   return l;
+ }
+@@ -955,14 +1019,17 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator*=(__hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to unary+ on a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator+(const __hip_bfloat162& l) { return l; }
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator+(const __hip_bfloat162 &l) {
++  return l;
++}
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to add two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator+(const __hip_bfloat162& l,
+-                                                      const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator+(const __hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   return __hadd2(l, r);
+ }
+ 
+@@ -970,7 +1037,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator+(const __hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to negate a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator-(const __hip_bfloat162& l) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator-(const __hip_bfloat162 &l) {
+   return __hneg2(l);
+ }
+ 
+@@ -978,8 +1046,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator-(const __hip_bfloat162& l)
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to subtract two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator-(const __hip_bfloat162& l,
+-                                                      const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator-(const __hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   return __hsub2(l, r);
+ }
+ 
+@@ -987,7 +1055,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator-(const __hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to post increment a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator++(__hip_bfloat162& l, const int) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator++(__hip_bfloat162 &l,
++                                                       const int) {
+   auto ret = l;
+   l = __hadd2(l, {HIPRT_ONE_BF16, HIPRT_ONE_BF16});
+   return ret;
+@@ -997,7 +1066,7 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator++(__hip_bfloat162& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to pre increment a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator++(__hip_bfloat162& l) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &operator++(__hip_bfloat162 &l) {
+   l = __hadd2(l, {HIPRT_ONE_BF16, HIPRT_ONE_BF16});
+   return l;
+ }
+@@ -1006,7 +1075,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator++(__hip_bfloat162& l) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to post decrement a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator--(__hip_bfloat162& l, const int) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator--(__hip_bfloat162 &l,
++                                                       const int) {
+   auto ret = l;
+   l = __hsub2(l, {HIPRT_ONE_BF16, HIPRT_ONE_BF16});
+   return ret;
+@@ -1016,7 +1086,7 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator--(__hip_bfloat162& l, const
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to pre decrement a __hip_bfloat162 number
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator--(__hip_bfloat162& l) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &operator--(__hip_bfloat162 &l) {
+   l = __hsub2(l, {HIPRT_ONE_BF16, HIPRT_ONE_BF16});
+   return l;
+ }
+@@ -1025,8 +1095,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator--(__hip_bfloat162& l) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to add-assign two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator+=(__hip_bfloat162& l,
+-                                                        const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &
++operator+=(__hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   l = __hadd2(l, r);
+   return l;
+ }
+@@ -1035,8 +1105,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator+=(__hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to subtract-assign two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator-=(__hip_bfloat162& l,
+-                                                        const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &
++operator-=(__hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   l = __hsub2(l, r);
+   return l;
+ }
+@@ -1045,8 +1115,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator-=(__hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to divide two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator/(const __hip_bfloat162& l,
+-                                                      const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162
++operator/(const __hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   return __h2div(l, r);
+ }
+ 
+@@ -1054,8 +1124,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 operator/(const __hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT162_ARITH
+  * \brief Operator to divide-assign two __hip_bfloat162 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator/=(__hip_bfloat162& l,
+-                                                        const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 &
++operator/=(__hip_bfloat162 &l, const __hip_bfloat162 &r) {
+   l = __h2div(l, r);
+   return l;
+ }
+@@ -1064,7 +1134,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162& operator/=(__hip_bfloat162& l,
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __heq(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __heq(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) == __bfloat162float(b);
+ }
+ 
+@@ -1072,7 +1143,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __heq(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hequ(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hequ(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) < __bfloat162float(b)) &&
+       !(__bfloat162float(a) > __bfloat162float(b));
+ }
+@@ -1081,7 +1153,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hequ(const __hip_bfloat16 a, const __hip_bflo
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - greater than
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hgt(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hgt(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) > __bfloat162float(b);
+ }
+ 
+@@ -1089,7 +1162,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hgt(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered greater than
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hgtu(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hgtu(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) <= __bfloat162float(b));
+ }
+ 
+@@ -1097,7 +1171,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hgtu(const __hip_bfloat16 a, const __hip_bflo
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - greater than equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hge(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hge(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) >= __bfloat162float(b);
+ }
+ 
+@@ -1105,7 +1180,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hge(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered greater than equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hgeu(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hgeu(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) < __bfloat162float(b));
+ }
+ 
+@@ -1113,7 +1189,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hgeu(const __hip_bfloat16 a, const __hip_bflo
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - not equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hne(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hne(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) != __bfloat162float(b);
+ }
+ 
+@@ -1121,7 +1198,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hne(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered not equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hneu(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hneu(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) == __bfloat162float(b));
+ }
+ 
+@@ -1129,7 +1207,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hneu(const __hip_bfloat16 a, const __hip_bflo
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - return max
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmax(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmax(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+ #if __HIP_DEVICE_COMPILE__
+   return __float2bfloat16(__ocml_fmax_f32(__bfloat162float(a), __bfloat162float(b)));
+ #else
+@@ -1141,7 +1220,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmax(const __hip_bfloat16 a, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - return min
+  */
+-__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmin(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmin(const __hip_bfloat16 a,
++                                                  const __hip_bfloat16 b) {
+ #if __HIP_DEVICE_COMPILE__
+   return __float2bfloat16(__ocml_fmin_f32(__bfloat162float(a), __bfloat162float(b)));
+ #else
+@@ -1153,7 +1233,8 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat16 __hmin(const __hip_bfloat16 a, const
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - less than operator
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hlt(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hlt(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) < __bfloat162float(b);
+ }
+ 
+@@ -1161,7 +1242,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hlt(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered less than
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hltu(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hltu(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) >= __bfloat162float(b));
+ }
+ 
+@@ -1169,7 +1251,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hltu(const __hip_bfloat16 a, const __hip_bflo
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - less than equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hle(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hle(const __hip_bfloat16 a,
++                                       const __hip_bfloat16 b) {
+   return __bfloat162float(a) <= __bfloat162float(b);
+ }
+ 
+@@ -1177,7 +1260,8 @@ __BF16_HOST_DEVICE_STATIC__ bool __hle(const __hip_bfloat16 a, const __hip_bfloa
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Compare two bfloat162 values - unordered less than equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hleu(const __hip_bfloat16 a, const __hip_bfloat16 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hleu(const __hip_bfloat16 a,
++                                        const __hip_bfloat16 b) {
+   return !(__bfloat162float(a) > __bfloat162float(b));
+ }
+ 
+@@ -1203,133 +1287,146 @@ __BF16_HOST_DEVICE_STATIC__ bool __hisnan(const __hip_bfloat16 a) {
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Checks if two numbers are equal
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbeq2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbeq2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __heq(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __heq(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __heq(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Checks if two numbers are equal - unordered
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbequ2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbequ2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hequ(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hequ(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hequ(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a >= b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbge2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbge2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hge(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hge(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hge(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a >= b - unordered
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbgeu2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbgeu2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hgeu(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hgeu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hgeu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a > b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbgt2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbgt2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hgt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hgt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hgt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a > b - unordered
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbgtu2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbgtu2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hgtu(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hgtu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hgtu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a <= b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hble2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hble2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hle(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hle(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hle(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a <= b - unordered
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbleu2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbleu2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hleu(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hleu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hleu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a < b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hblt2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hblt2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hlt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hlt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hlt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a < b - unordered
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbltu2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbltu2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hltu(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) &&
+-      __hltu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hltu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a != b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbne2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbne2(const __hip_bfloat162 a,
++                                         const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hne(__hip_bfloat16(__hip_bfloat16_raw{hr_a.x}),
+                __hip_bfloat16(__hip_bfloat16_raw{hr_b.x})) &&
+-      __hne(__hip_bfloat16(__hip_bfloat16_raw{hr_a.y}), __hip_bfloat16(__hip_bfloat16_raw{hr_b.y}));
++         __hne(__hip_bfloat16(__hip_bfloat16_raw{hr_a.y}),
++               __hip_bfloat16(__hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Check for a != b
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool __hbneu2(const __hip_bfloat162 a, const __hip_bfloat162 b) {
++__BF16_HOST_DEVICE_STATIC__ bool __hbneu2(const __hip_bfloat162 a,
++                                          const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hneu(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ||
+-      __hneu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
++         __hneu(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y});
+ }
+ 
+ /**
+@@ -1341,10 +1438,12 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __heq2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__heq(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__heq(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16}};
++      {__heq(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__heq(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16}};
+ }
+ 
+ /**
+@@ -1356,10 +1455,12 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hge2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__hge(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__hge(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16}};
++      {__hge(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__hge(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16}};
+ }
+ 
+ /**
+@@ -1371,10 +1472,12 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hgt2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__hgt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__hgt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ONE_BF16}};
++      {__hgt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__hgt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ONE_BF16}};
+ }
+ 
+ /**
+@@ -1383,8 +1486,9 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hgt2(const __hip_bfloat162 a,
+  */
+ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hisnan2(const __hip_bfloat162 a) {
+   __hip_bfloat162_raw hr_a = a;
+-  return __hip_bfloat162{{__hisnan(__hip_bfloat16_raw{hr_a.x}) ? HIPRT_ONE_BF16 : HIPRT_ZERO_BF16},
+-                         {__hisnan(__hip_bfloat16_raw{hr_a.y}) ? HIPRT_ONE_BF16 : HIPRT_ONE_BF16}};
++  return __hip_bfloat162{
++      {__hisnan(__hip_bfloat16_raw{hr_a.x}) ? HIPRT_ONE_BF16 : HIPRT_ZERO_BF16},
++      {__hisnan(__hip_bfloat16_raw{hr_a.y}) ? HIPRT_ONE_BF16 : HIPRT_ONE_BF16}};
+ }
+ 
+ /**
+@@ -1396,10 +1500,12 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hle2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__hle(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__hle(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16}};
++      {__hle(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__hle(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16}};
+ }
+ 
+ /**
+@@ -1411,10 +1517,12 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hlt2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__hlt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__hlt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16}};
++      {__hlt(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__hlt(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16}};
+ }
+ 
+ /**
+@@ -1425,8 +1533,9 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hmax2(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__hmax(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
+-                         __hmax(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
++  return __hip_bfloat162(
++      __hmax(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
++      __hmax(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+@@ -1437,8 +1546,9 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hmin2(const __hip_bfloat162 a,
+                                                     const __hip_bfloat162 b) {
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+-  return __hip_bfloat162(__hmin(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
+-                         __hmin(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
++  return __hip_bfloat162(
++      __hmin(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}),
++      __hmin(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}));
+ }
+ 
+ /**
+@@ -1450,17 +1560,20 @@ __BF16_HOST_DEVICE_STATIC__ __hip_bfloat162 __hne2(const __hip_bfloat162 a,
+   __hip_bfloat162_raw hr_a = a;
+   __hip_bfloat162_raw hr_b = b;
+   return __hip_bfloat162{
+-      {__hne(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16},
+-      {__hne(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y}) ? HIPRT_ONE_BF16
+-                                                                     : HIPRT_ZERO_BF16}};
++      {__hne(__hip_bfloat16_raw{hr_a.x}, __hip_bfloat16_raw{hr_b.x})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16},
++      {__hne(__hip_bfloat16_raw{hr_a.y}, __hip_bfloat16_raw{hr_b.y})
++           ? HIPRT_ONE_BF16
++           : HIPRT_ZERO_BF16}};
+ }
+ 
+ /**
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform an equal compare on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat16 &l,
++                                            const __hip_bfloat16 &r) {
+   return __heq(l, r);
+ }
+ 
+@@ -1468,7 +1581,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat16& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a not equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat16 &l,
++                                            const __hip_bfloat16 &r) {
+   return __hne(l, r);
+ }
+ 
+@@ -1476,7 +1590,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat16& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a less than on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat16 &l,
++                                           const __hip_bfloat16 &r) {
+   return __hlt(l, r);
+ }
+ 
+@@ -1484,7 +1599,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat16& l, const __hip_
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a less than equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat16 &l,
++                                            const __hip_bfloat16 &r) {
+   return __hle(l, r);
+ }
+ 
+@@ -1492,7 +1608,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat16& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a greater than on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat16 &l,
++                                           const __hip_bfloat16 &r) {
+   return __hgt(l, r);
+ }
+ 
+@@ -1500,7 +1617,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat16& l, const __hip_
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a greater than equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator>=(const __hip_bfloat16& l, const __hip_bfloat16& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator>=(const __hip_bfloat16 &l,
++                                            const __hip_bfloat16 &r) {
+   return __hge(l, r);
+ }
+ 
+@@ -1508,7 +1626,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator>=(const __hip_bfloat16& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Operator to perform an equal compare on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat162 &l,
++                                            const __hip_bfloat162 &r) {
+   float2 ret = __heq2(l, r);
+   return ret.x != 0.0f && ret.y != 0.0f;
+ }
+@@ -1517,7 +1636,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator==(const __hip_bfloat162& l, const __hi
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Operator to perform a not equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat162 &l,
++                                            const __hip_bfloat162 &r) {
+   return !(l == r);
+ }
+ 
+@@ -1525,7 +1645,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator!=(const __hip_bfloat162& l, const __hi
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Operator to perform a less than on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat162 &l,
++                                           const __hip_bfloat162 &r) {
+   float2 fl = l, fr = r;
+   return fl.x < fr.x && fl.x < fr.y;
+ }
+@@ -1534,7 +1655,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator<(const __hip_bfloat162& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Operator to perform a less than equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat162 &l,
++                                            const __hip_bfloat162 &r) {
+   float2 fl = l, fr = r;
+   return fl.x <= fr.x && fl.x <= fr.y;
+ }
+@@ -1543,7 +1665,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator<=(const __hip_bfloat162& l, const __hi
+  * \ingroup HIP_INTRINSIC_BFLOAT162_COMP
+  * \brief Operator to perform a greater than on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat162 &l,
++                                           const __hip_bfloat162 &r) {
+   float2 fl = l, fr = r;
+   return fl.x > fr.x && fl.x > fr.y;
+ }
+@@ -1552,7 +1675,8 @@ __BF16_HOST_DEVICE_STATIC__ bool operator>(const __hip_bfloat162& l, const __hip
+  * \ingroup HIP_INTRINSIC_BFLOAT16_COMP
+  * \brief Operator to perform a greater than equal on two __hip_bfloat16 numbers
+  */
+-__BF16_HOST_DEVICE_STATIC__ bool operator>=(const __hip_bfloat162& l, const __hip_bfloat162& r) {
++__BF16_HOST_DEVICE_STATIC__ bool operator>=(const __hip_bfloat162 &l,
++                                            const __hip_bfloat162 &r) {
+   float2 fl = l, fr = r;
+   return fl.x >= fr.x && fl.x >= fr.y;
+ }
+@@ -1683,7 +1807,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat16 htrunc(const __hip_bfloat16 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2ceil(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hceil(__hip_bfloat16_raw{hr.x}), hceil(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hceil(__hip_bfloat16_raw{hr.x}),
++                         hceil(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1692,7 +1817,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2ceil(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2cos(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hcos(__hip_bfloat16_raw{hr.x}), hcos(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hcos(__hip_bfloat16_raw{hr.x}),
++                         hcos(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1701,7 +1827,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2cos(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hexp(__hip_bfloat16_raw{hr.x}), hexp(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hexp(__hip_bfloat16_raw{hr.x}),
++                         hexp(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1710,7 +1837,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp10(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hexp10(__hip_bfloat16_raw{hr.x}), hexp10(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hexp10(__hip_bfloat16_raw{hr.x}),
++                         hexp10(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1719,7 +1847,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp10(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp2(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hexp2(__hip_bfloat16_raw{hr.x}), hexp2(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hexp2(__hip_bfloat16_raw{hr.x}),
++                         hexp2(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1728,7 +1857,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2exp2(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2floor(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hfloor(__hip_bfloat16_raw{hr.x}), hfloor(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hfloor(__hip_bfloat16_raw{hr.x}),
++                         hfloor(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1737,7 +1867,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2floor(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hlog(__hip_bfloat16_raw{hr.x}), hlog(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hlog(__hip_bfloat16_raw{hr.x}),
++                         hlog(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1746,7 +1877,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log10(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hlog10(__hip_bfloat16_raw{hr.x}), hlog10(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hlog10(__hip_bfloat16_raw{hr.x}),
++                         hlog10(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1755,7 +1887,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log10(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log2(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hlog2(__hip_bfloat16_raw{hr.x}), hlog2(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hlog2(__hip_bfloat16_raw{hr.x}),
++                         hlog2(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1764,7 +1897,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2log2(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rcp(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hrcp(__hip_bfloat16_raw{hr.x}), hrcp(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hrcp(__hip_bfloat16_raw{hr.x}),
++                         hrcp(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1773,7 +1907,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rcp(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rint(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hrint(__hip_bfloat16_raw{hr.x}), hrint(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hrint(__hip_bfloat16_raw{hr.x}),
++                         hrint(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1782,7 +1917,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rint(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rsqrt(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hrsqrt(__hip_bfloat16_raw{hr.x}), hrsqrt(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hrsqrt(__hip_bfloat16_raw{hr.x}),
++                         hrsqrt(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1791,7 +1927,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2rsqrt(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2sin(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hsin(__hip_bfloat16_raw{hr.x}), hsin(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hsin(__hip_bfloat16_raw{hr.x}),
++                         hsin(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1800,7 +1937,8 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2sin(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2sqrt(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(hsqrt(__hip_bfloat16_raw{hr.x}), hsqrt(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(hsqrt(__hip_bfloat16_raw{hr.x}),
++                         hsqrt(__hip_bfloat16_raw{hr.y}));
+ }
+ 
+ /**
+@@ -1809,6 +1947,7 @@ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2sqrt(const __hip_bfloat162 h) {
+  */
+ __BF16_DEVICE_STATIC__ __hip_bfloat162 h2trunc(const __hip_bfloat162 h) {
+   __hip_bfloat162_raw hr = h;
+-  return __hip_bfloat162(htrunc(__hip_bfloat16_raw{hr.x}), htrunc(__hip_bfloat16_raw{hr.y}));
++  return __hip_bfloat162(htrunc(__hip_bfloat16_raw{hr.x}),
++                         htrunc(__hip_bfloat16_raw{hr.y}));
+ }
+ #endif
+diff --git a/third_party/amd/backend/include/hip/amd_detail/amd_hip_cooperative_groups.h b/third_party/amd/backend/include/hip/amd_detail/amd_hip_cooperative_groups.h
+index c01039a7e..3bc2a62b1 100644
+--- a/third_party/amd/backend/include/hip/amd_detail/amd_hip_cooperative_groups.h
++++ b/third_party/amd/backend/include/hip/amd_detail/amd_hip_cooperative_groups.h
+@@ -216,13 +216,15 @@ class thread_block : public thread_group {
+     if (!tile_size || (tile_size > __AMDGCN_WAVEFRONT_SIZE) || !pow2) {
+       __hip_assert(false && "invalid tile size");
+     }
+- 
++
+     auto block_size = size();
+     auto rank = thread_rank();
+     auto partitions = (block_size + tile_size - 1) / tile_size;
+     auto tail = (partitions * tile_size) - block_size;
+-    auto partition_size = tile_size - tail * (rank >= (partitions - 1) * tile_size);
+-    thread_group tiledGroup = thread_group(internal::cg_tiled_group, partition_size);
++    auto partition_size =
++        tile_size - tail * (rank >= (partitions - 1) * tile_size);
++    thread_group tiledGroup =
++        thread_group(internal::cg_tiled_group, partition_size);
+ 
+     tiledGroup.coalesced_info.tiled_info.size = tile_size;
+     tiledGroup.coalesced_info.tiled_info.is_tiled = true;
+diff --git a/third_party/nvidia/include/Dialect/NVGPU/IR/CMakeLists.txt b/third_party/nvidia/include/Dialect/NVGPU/IR/CMakeLists.txt
+index f8932cdc4..f8e903ea2 100644
+--- a/third_party/nvidia/include/Dialect/NVGPU/IR/CMakeLists.txt
++++ b/third_party/nvidia/include/Dialect/NVGPU/IR/CMakeLists.txt
+@@ -1,8 +1,8 @@
+ set(MLIR_BINARY_DIR ${CMAKE_BINARY_DIR})
+ 
+ set(LLVM_TARGET_DEFINITIONS NVGPUOps.td)
+-mlir_tablegen(Dialect.h.inc -gen-dialect-decls -dialect=nvgpu)
+-mlir_tablegen(Dialect.cpp.inc -gen-dialect-defs -dialect=nvgpu)
++mlir_tablegen(Dialect.h.inc -gen-dialect-decls -dialect=triton_nvgpu)
++mlir_tablegen(Dialect.cpp.inc -gen-dialect-defs -dialect=triton_nvgpu)
+ mlir_tablegen(OpsConversions.inc -gen-llvmir-conversions)
+ mlir_tablegen(Ops.h.inc -gen-op-decls)
+ mlir_tablegen(Ops.cpp.inc -gen-op-defs)
+diff --git a/third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUDialect.td b/third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUDialect.td
+index 6978173d4..6a364c45f 100644
+--- a/third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUDialect.td
++++ b/third_party/nvidia/include/Dialect/NVGPU/IR/NVGPUDialect.td
+@@ -25,7 +25,7 @@
+ include "mlir/IR/OpBase.td"
+ 
+ def NVGPU_Dialect : Dialect {
+-  let name = "nvgpu";
++  let name = "triton_nvgpu";
+   let cppNamespace = "::mlir::triton::nvgpu";
+ 
+   let description = [{
+
+

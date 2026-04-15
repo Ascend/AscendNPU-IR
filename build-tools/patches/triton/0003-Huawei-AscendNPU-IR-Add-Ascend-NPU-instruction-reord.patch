@@ -1,0 +1,602 @@
+diff --git a/include/triton/Dialect/TritonGPU/Transforms/Passes.h b/include/triton/Dialect/TritonGPU/Transforms/Passes.h
+index ee02a134f..35b410f82 100644
+--- a/include/triton/Dialect/TritonGPU/Transforms/Passes.h
++++ b/include/triton/Dialect/TritonGPU/Transforms/Passes.h
+@@ -13,6 +13,11 @@ namespace gpu {
+ #define GEN_PASS_DECL
+ #include "triton/Dialect/TritonGPU/Transforms/Passes.h.inc"
+ 
++#if BSPUB_DAVINCI_BISHENGIR
++std::unique_ptr<mlir::Pass>
++createTritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options = {});
++#endif
++
+ /// Generate the code for registering passes.
+ #define GEN_PASS_REGISTRATION
+ #include "triton/Dialect/TritonGPU/Transforms/Passes.h.inc"
+diff --git a/include/triton/Dialect/TritonGPU/Transforms/Passes.td b/include/triton/Dialect/TritonGPU/Transforms/Passes.td
+index 661ba2407..673037642 100644
+--- a/include/triton/Dialect/TritonGPU/Transforms/Passes.td
++++ b/include/triton/Dialect/TritonGPU/Transforms/Passes.td
+@@ -320,12 +320,23 @@ def TritonGPUOptimizeThreadLocality : Pass<"tritongpu-optimize-thread-locality",
+ def TritonGPUReorderInstructions: Pass<"tritongpu-reorder-instructions", "mlir::ModuleOp"> {
+   let summary = "Reorder instructions";
+ 
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  let constructor = "mlir::triton::gpu::createTritonGPUReorderInstructionsPass()";
++#endif
++
+   let description = "This pass reorder instructions so as to (1) decrease register pressure (e.g., by moving "
+                     "conversions from shared memory before their first use) and (2) promote LLVM instruction "
+                     "order more friendly to `ptxas`.";
+ 
+   let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect",
+                            "mlir::triton::TritonDialect"];
++#ifdef BSPUB_DAVINCI_BISHENGIR
++  let options = [
++    Option<"enableSimtReorderInstruction", "enable-simt-reorder-instruction",
++           "bool", /*default*/"false",
++           "enable reorder instruction pattern">
++  ];
++#endif
+ }
+ 
+ def TritonGPUReduceDataDuplication: Pass<"tritongpu-reduce-data-duplication", "mlir::ModuleOp"> {
+diff --git a/include/triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h b/include/triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h
+new file mode 100644
+index 000000000..132880f69
+--- /dev/null
++++ b/include/triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h
+@@ -0,0 +1,87 @@
++//===-------- ReorderInstructionImpl.h - Impl. of instruction reorder -----===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef BISHENGIR_DIALECT_TRITON_REORDERINSTRUCTION_H
++#define BISHENGIR_DIALECT_TRITON_REORDERINSTRUCTION_H
++
++#include "mlir/Analysis/SliceAnalysis.h"
++#include "mlir/IR/Block.h"
++#include "mlir/IR/Builders.h"
++#include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/Dominance.h"
++#include "mlir/IR/IRMapping.h"
++#include "mlir/IR/MLIRContext.h"
++#include "mlir/IR/OpDefinition.h"
++#include "mlir/IR/Value.h"
++#include "mlir/IR/Verifier.h"
++#include "mlir/IR/Visitors.h"
++#include "mlir/Pass/PassManager.h"
++#include "mlir/Support/LLVM.h"
++#include "mlir/Support/LogicalResult.h"
++#include "triton/Dialect/Triton/IR/Dialect.h"
++#include "triton/Dialect/TritonGPU/Transforms/Utility.h"
++#include "llvm/ADT/DenseMap.h"
++#include "llvm/ADT/DenseSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include <cstdint>
++#include <utility>
++
++namespace mlir {
++namespace triton {
++class ReorderInstructionsImpl {
++public:
++  ReorderInstructionsImpl() = default;
++
++  void commonInstructionReorder(ModuleOp m, MLIRContext *ctx);
++
++private:
++  Value traceToPtr(Value val, FuncOp funcOp);
++
++  Value traceToBlockOperand(BlockArgument arg, Operation *parentOp);
++
++  LogicalResult visit(LoadOp loadOp);
++
++  LogicalResult visit(StoreOp storeOp);
++
++  LogicalResult getOpMemoryEffects(Operation *op);
++
++  void constructTopoGraph(Block &block,
++                          llvm::DenseMap<Operation *, int64_t> &outDegree,
++                          llvm::DenseSet<Operation *> &tailNodes);
++
++  int64_t
++  calculateRegisterUsage(Operation *op,
++                         llvm::DenseMap<Operation *, int64_t> outDegree);
++
++  bool isReadConflict(Operation *op, llvm::DenseSet<Operation *> &reorderedOps);
++
++  bool isWriteConflict(Operation *op,
++                       llvm::DenseSet<Operation *> &reorderedOps);
++
++  Operation *greedySelectSubgraph(
++      llvm::SmallVector<std::pair<int64_t, Operation *>> &registerUsage,
++      llvm::DenseSet<Operation *> &reorderedOps);
++
++  void recursiveInsertOpTree(OpBuilder &builder, IRMapping &mapping,
++                             Operation *curNode,
++                             llvm::DenseSet<Operation *> &reorderedOps);
++
++  void reorderInstructions(Block &block,
++                           llvm::DenseMap<Operation *, int64_t> &outDegree,
++                           llvm::DenseSet<Operation *> &tailNodes,
++                           OpBuilder &builder);
++
++  llvm::DenseMap<Operation *, llvm::DenseSet<Value>> memReadOps;
++  llvm::DenseMap<Operation *, llvm::DenseSet<Value>> memWriteOps;
++  llvm::DenseMap<Value, llvm::DenseSet<Operation *>> ptrReadByOps;
++  llvm::DenseMap<Value, llvm::DenseSet<Operation *>> ptrWriteByOps;
++};
++} // namespace triton
++} // namespace mlir
++
++#endif // BISHENGIR_DIALECT_TRITON_REORDERINSTRUCTION_H
+diff --git a/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp b/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp
+index da6afb9a6..a477727c1 100644
+--- a/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/ReorderInstructions.cpp
+@@ -19,7 +19,9 @@
+ #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+ #include "triton/Dialect/TritonGPU/Transforms/TritonGPUConversion.h"
+ #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
+-
++#if BSPUB_DAVINCI_BISHENGIR
++#include "triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h"
++#endif
+ namespace mlir {
+ namespace triton {
+ namespace gpu {
+@@ -43,7 +45,12 @@ class TritonGPUReorderInstructionsPass
+     : public impl::TritonGPUReorderInstructionsBase<
+           TritonGPUReorderInstructionsPass> {
+ public:
++#if BSPUB_DAVINCI_BISHENGIR
++  explicit TritonGPUReorderInstructionsPass(const TritonGPUReorderInstructionsOptions &options)
++    : TritonGPUReorderInstructionsBase(options) {}
++#else
+   TritonGPUReorderInstructionsPass() = default;
++#endif
+ 
+   Operation *getFirstUse(Operation *op) {
+     std::vector<Operation *> users;
+@@ -60,6 +67,12 @@ public:
+ 
+   void runOnOperation() override {
+     ModuleOp m = getOperation();
++#if BSPUB_DAVINCI_BISHENGIR
++    if (enableSimtReorderInstruction) {
++      ReorderInstructionsImpl impl;
++      impl.commonInstructionReorder(m, &getContext());
++    }
++#endif
+     mlir::DominanceInfo dom(m);
+     // sink conversion after the last dealloc
+     // before the first use ancestor in its block
+@@ -139,3 +152,10 @@ public:
+ } // namespace gpu
+ } // namespace triton
+ } // namespace mlir
++
++#if BSPUB_DAVINCI_BISHENGIR
++std::unique_ptr<::mlir::Pass> mlir::triton::gpu::createTritonGPUReorderInstructionsPass(
++  const TritonGPUReorderInstructionsOptions &options) {
++  return std::make_unique<TritonGPUReorderInstructionsPass>(options);
++}
++#endif
+\ No newline at end of file
+diff --git a/lib/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.cpp b/lib/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.cpp
+new file mode 100644
+index 000000000..ae792cf44
+--- /dev/null
++++ b/lib/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.cpp
+@@ -0,0 +1,405 @@
++#include "triton/Dialect/TritonGPU/Transforms/ReorderInstructionsImpl.h"
++#include "mlir/Dialect/SCF/IR/SCF.h"
++#include "mlir/IR/Value.h"
++#include "mlir/IR/Visitors.h"
++#include "triton/Dialect/Triton/IR/Utility.h"
++#include "triton/Dialect/TritonGPU/IR/Dialect.h"
++#include "llvm/ADT/DenseSet.h"
++#include "llvm/ADT/SmallVector.h"
++#include "llvm/Support/Casting.h"
++#include <iterator>
++
++namespace mlir {
++namespace triton {
++
++Value ReorderInstructionsImpl::traceToBlockOperand(BlockArgument arg,
++                                                   Operation *parentOp) {
++  auto argIndex = arg.getArgNumber();
++  if (auto forOp = llvm::dyn_cast<scf::ForOp>(parentOp)) {
++    return forOp.getInitArgs()[argIndex - 1];
++  } else if (auto whileOp = llvm::dyn_cast<scf::WhileOp>(parentOp)) {
++    if (arg.getOwner()->getParent() == &whileOp.getBefore()) {
++      return whileOp.getInits()[argIndex];
++    }
++    auto condOp = llvm::dyn_cast<scf::ConditionOp>(
++        whileOp.getBefore().front().getTerminator());
++    return condOp.getArgs()[argIndex];
++  }
++  return nullptr;
++}
++
++Value ReorderInstructionsImpl::traceToPtr(Value val, FuncOp funcOp) {
++  if (!val) {
++    return nullptr;
++  }
++  if (!val.getDefiningOp()) {
++    if (llvm::isa<PointerType>(val.getType()) &&
++        llvm::is_contained(funcOp.getArguments(), val)) {
++      return val;
++    }
++    if (auto blockArg = llvm::dyn_cast<BlockArgument>(val)) {
++      auto blockOperand = traceToBlockOperand(
++          blockArg, blockArg.getParentRegion()->getParentOp());
++      return traceToPtr(blockOperand, funcOp);
++    }
++  } else if (auto addPtr = llvm::dyn_cast<AddPtrOp>(val.getDefiningOp())) {
++    return traceToPtr(addPtr.getPtr(), funcOp);
++  } else if (auto splatOp = llvm::dyn_cast<SplatOp>(val.getDefiningOp())) {
++    return traceToPtr(splatOp.getSrc(), funcOp);
++  } else if (auto broadcastOp =
++                 llvm::dyn_cast<BroadcastOp>(val.getDefiningOp())) {
++    return traceToPtr(broadcastOp.getSrc(), funcOp);
++  } else if (auto bitcastOp = llvm::dyn_cast<BitcastOp>(val.getDefiningOp())) {
++    return traceToPtr(bitcastOp.getSrc(), funcOp);
++  } else if (auto advanceOp = llvm::dyn_cast<AdvanceOp>(val.getDefiningOp())) {
++    return traceToPtr(advanceOp.getPtr(), funcOp);
++  } else if (auto expandDimsOp =
++                 llvm::dyn_cast<ExpandDimsOp>(val.getDefiningOp())) {
++    return traceToPtr(expandDimsOp.getSrc(), funcOp);
++  } else if (auto reshapeOp = llvm::dyn_cast<ReshapeOp>(val.getDefiningOp())) {
++    return traceToPtr(reshapeOp.getSrc(), funcOp);
++  } else if (auto convertLayoutOp =
++                 llvm::dyn_cast<triton::gpu::ConvertLayoutOp>(
++                     val.getDefiningOp())) {
++    return traceToPtr(convertLayoutOp.getSrc(), funcOp);
++  }
++  return nullptr;
++}
++
++LogicalResult ReorderInstructionsImpl::visit(LoadOp loadOp) {
++  auto ptr = traceToPtr(loadOp.getPtr(), loadOp->getParentOfType<FuncOp>());
++  if (!ptr) {
++    return failure();
++  }
++  if (!llvm::is_contained(ptrReadByOps, ptr)) {
++    ptrReadByOps[ptr] = llvm::DenseSet<Operation *>();
++  }
++  ptrReadByOps[ptr].insert(loadOp);
++  memReadOps[loadOp].insert(ptr);
++  return success();
++}
++
++LogicalResult ReorderInstructionsImpl::visit(StoreOp storeOp) {
++  auto ptr = traceToPtr(storeOp.getPtr(), storeOp->getParentOfType<FuncOp>());
++  if (!ptr) {
++    return failure();
++  }
++  if (!llvm::is_contained(ptrWriteByOps, ptr)) {
++    ptrWriteByOps[ptr] = llvm::DenseSet<Operation *>();
++  }
++  ptrWriteByOps[ptr].insert(storeOp);
++  memWriteOps[storeOp].insert(ptr);
++  return success();
++}
++
++LogicalResult ReorderInstructionsImpl::getOpMemoryEffects(Operation *op) {
++  llvm::DenseSet<Value> memReadVals, memWriteVals;
++  for (auto &region : op->getRegions()) {
++    for (auto &block : region) {
++      for (auto &nestedOp : block) {
++        memReadVals.insert_range(memReadOps[&nestedOp]);
++        memWriteVals.insert_range(memWriteOps[&nestedOp]);
++      }
++    }
++  }
++  memReadOps[op] = memReadVals;
++  memWriteOps[op] = memWriteVals;
++  if (auto loadOp = llvm::dyn_cast<LoadOp>(op)) {
++    if (failed(visit(loadOp))) {
++      return failure();
++    }
++  } else if (auto storeOp = llvm::dyn_cast<StoreOp>(op)) {
++    if (failed(visit(storeOp))) {
++      return failure();
++    }
++  } else {
++    auto memEffectsInterface = llvm::dyn_cast<MemoryEffectOpInterface>(op);
++    if (memEffectsInterface) {
++      SmallVector<MemoryEffects::EffectInstance, 1> effects;
++      memEffectsInterface.getEffects(effects);
++      if (effects.size() > 0) {
++        return failure();
++      }
++    }
++  }
++  return success();
++}
++
++void ReorderInstructionsImpl::constructTopoGraph(
++    Block &block, llvm::DenseMap<Operation *, int64_t> &outDegree,
++    llvm::DenseSet<Operation *> &tailNodes) {
++  for (auto &nestedOp : block) {
++    outDegree[&nestedOp] =
++        std::distance(nestedOp.getUsers().begin(), nestedOp.getUsers().end());
++    if (outDegree[&nestedOp] == 0) {
++      tailNodes.insert(&nestedOp);
++    }
++  }
++}
++
++int64_t ReorderInstructionsImpl::calculateRegisterUsage(
++    Operation *op, llvm::DenseMap<Operation *, int64_t> outDegree) {
++  int64_t registerUsage = 0;
++  llvm::DenseSet<Operation *> curOps{op};
++  llvm::DenseSet<Operation *> operands;
++  while (!curOps.empty()) {
++    for (auto curOp : curOps) {
++      for (auto operand : curOp->getOperands()) {
++        auto defOp = operand.getDefiningOp();
++        if (!defOp || defOp->getBlock() != curOp->getBlock()) {
++          continue;
++        }
++        outDegree[defOp]--;
++        operands.insert(defOp);
++        if (outDegree[curOp] == 0) {
++          continue;
++        }
++        for (auto res : curOp->getResults()) {
++          if (auto tensorType =
++                  llvm::dyn_cast<RankedTensorType>(res.getType())) {
++            auto enc = tensorType.getEncoding();
++            if (auto distributedEnc =
++                    llvm::dyn_cast<mlir::triton::gpu::DistributedEncodingTrait>(
++                        enc)) {
++              registerUsage += product(
++                  distributedEnc.getElemsPerThread(tensorType.getShape()));
++            } else {
++              // unsupport layout
++              return -1;
++            }
++          } else {
++            registerUsage++;
++          }
++        }
++      }
++    }
++    curOps.clear();
++    std::swap(curOps, operands);
++  }
++  return registerUsage;
++}
++
++bool ReorderInstructionsImpl::isReadConflict(
++    Operation *op, llvm::DenseSet<Operation *> &reorderedOps) {
++  // check RAW
++  // if read after write, we should maintain the order after reorder
++  // instructions.
++  for (auto ptr : memReadOps[op]) {
++    for (auto maybeConflictOp : ptrWriteByOps[ptr]) {
++      if (maybeConflictOp->getBlock() != op->getBlock()) {
++        continue;
++      }
++      if (maybeConflictOp->isBeforeInBlock(op) &&
++          !llvm::is_contained(reorderedOps, maybeConflictOp)) {
++        return true;
++      }
++    }
++  }
++  return false;
++}
++
++bool ReorderInstructionsImpl::isWriteConflict(
++    Operation *op, llvm::DenseSet<Operation *> &reorderedOps) {
++  for (auto ptr : memWriteOps[op]) {
++    // check write-write
++    // we should maintain write ops relative order, which write to the same
++    // ptr.
++    for (auto maybeConflictOp : ptrWriteByOps[ptr]) {
++      if (maybeConflictOp->getBlock() != op->getBlock()) {
++        continue;
++      }
++      if (maybeConflictOp->isBeforeInBlock(op) &&
++          !llvm::is_contained(reorderedOps, maybeConflictOp)) {
++        return true;
++      }
++    }
++    // check RAW
++    for (auto maybeConflictOp : ptrReadByOps[ptr]) {
++      if (maybeConflictOp->getBlock() != op->getBlock()) {
++        continue;
++      }
++      if (maybeConflictOp->isBeforeInBlock(op) &&
++          !llvm::is_contained(reorderedOps, maybeConflictOp)) {
++        return true;
++      }
++    }
++  }
++  return false;
++}
++
++Operation *ReorderInstructionsImpl::greedySelectSubgraph(
++    llvm::SmallVector<std::pair<int64_t, Operation *>> &registerUsage,
++    llvm::DenseSet<Operation *> &reorderedOps) {
++  // Prefer to select the subgraph use lowest registerNum
++  for (auto [registerNum, tailNode] : registerUsage) {
++    llvm::DenseSet<Operation *> curOps{tailNode};
++    llvm::DenseSet<Operation *> operands;
++    bool isConflict = false;
++    while (!curOps.empty()) {
++      for (auto curOp : curOps) {
++        if (llvm::is_contained(memReadOps, curOp) &&
++            isReadConflict(curOp, reorderedOps)) {
++          isConflict = true;
++          break;
++        }
++        if (llvm::is_contained(memWriteOps, curOp) &&
++            isWriteConflict(curOp, reorderedOps)) {
++          isConflict = true;
++          break;
++        }
++        for (auto operand : curOp->getOperands()) {
++          auto defOp = operand.getDefiningOp();
++          if (defOp && defOp->getBlock() == curOp->getBlock()) {
++            operands.insert(defOp);
++          }
++        }
++      }
++      if (isConflict) {
++        break;
++      }
++      curOps.clear();
++      std::swap(curOps, operands);
++    }
++    if (!isConflict) {
++      return tailNode;
++    }
++  }
++  return nullptr;
++}
++
++void ReorderInstructionsImpl::recursiveInsertOpTree(
++    OpBuilder &builder, IRMapping &mapping, Operation *curNode,
++    llvm::DenseSet<Operation *> &reorderedOps) {
++  if (reorderedOps.contains(curNode)) {
++    return;
++  }
++  // First visit curNode's operands
++  for (auto operand : curNode->getOperands()) {
++    auto defOp = operand.getDefiningOp();
++    if (defOp && defOp->getBlock() == curNode->getBlock()) {
++      recursiveInsertOpTree(builder, mapping, defOp, reorderedOps);
++    }
++  }
++  // if curNode has subRegion, walk it and if subRegion use outer variable,
++  // visit it.
++  curNode->walk(
++      [curNode, &reorderedOps, &builder, &mapping, this](Operation *op) {
++        if (op == curNode) {
++          return;
++        }
++        for (auto operand : op->getOperands()) {
++          auto defOp = operand.getDefiningOp();
++          if (defOp && defOp->getBlock() == curNode->getBlock() &&
++              !llvm::is_contained(reorderedOps, defOp)) {
++            recursiveInsertOpTree(builder, mapping, defOp, reorderedOps);
++          }
++        }
++      });
++  // copy and insert it to new block.
++  reorderedOps.insert(curNode);
++  builder.clone(*curNode, mapping);
++}
++
++void ReorderInstructionsImpl::reorderInstructions(
++    Block &block, llvm::DenseMap<Operation *, int64_t> &outDegree,
++    llvm::DenseSet<Operation *> &tailNodes, OpBuilder &builder) {
++  llvm::SmallVector<std::pair<int64_t, Operation *>> registerUsage;
++  llvm::DenseSet<Operation *> reorderedOps;
++  IRMapping mapping;
++  Block cloned;
++  Operation *terminator = nullptr;
++  for (auto tailNode : tailNodes) {
++    if (tailNode->hasTrait<OpTrait::IsTerminator>()) {
++      // one block should have only one terminator
++      if (terminator != nullptr) {
++        return;
++      }
++      terminator = tailNode;
++    }
++  }
++  // terminator should be inserted finally.
++  tailNodes.erase(terminator);
++  builder.setInsertionPointToStart(&cloned);
++  while (!tailNodes.empty()) {
++    for (auto tailNode : tailNodes) {
++      auto registerNum = calculateRegisterUsage(tailNode, outDegree);
++      if (registerNum == -1) {
++        return;
++      }
++      registerUsage.emplace_back(std::make_pair(registerNum, tailNode));
++    }
++    llvm::sort(registerUsage);
++    auto tailNode = greedySelectSubgraph(registerUsage, reorderedOps);
++    if (tailNode == nullptr) {
++      return;
++    }
++    recursiveInsertOpTree(builder, mapping, tailNode, reorderedOps);
++    tailNodes.erase(tailNode);
++    registerUsage.clear();
++  }
++  recursiveInsertOpTree(builder, mapping, terminator, reorderedOps);
++  llvm::SmallVector<Operation *> opToDelete;
++  for (auto op = block.getOperations().rbegin();
++       op != block.getOperations().rend(); op++) {
++    opToDelete.emplace_back(&(*op));
++  }
++  for (size_t i = 0; i < opToDelete.size(); i++) {
++    opToDelete[i]->erase();
++  }
++  block.getOperations().splice(block.begin(), cloned.getOperations());
++}
++
++void ReorderInstructionsImpl::commonInstructionReorder(ModuleOp m,
++                                                       MLIRContext *ctx) {
++  /* reorder instructions and short register life cycle
++  we consider this:
++  %0 = tt.load ... use 1 register
++  %1 = tt.load ... use 2 registers
++  tt.store %0 ...use 1 registers
++  tt.store %1 ...use 0 registers
++
++  after reorder:
++  %0 = tt.load ... use 1 register
++  tt.store %0 ... use 0 register
++  %1 = tt.load ... use 1 register
++  tt.store %1 ... use 0 register
++  */
++  bool hasMultiBasicBlock = false;
++  m->walk([&hasMultiBasicBlock](Operation *op) {
++    for (auto &region : op->getRegions()) {
++      if (!region.hasOneBlock() && !region.empty()) {
++        hasMultiBasicBlock = true;
++        break;
++      }
++    }
++  });
++  if (hasMultiBasicBlock) {
++    // not support multiple basic block
++    return;
++  }
++  OpBuilder builder(ctx);
++  llvm::SmallVector<Operation *> workQueue;
++  m->walk<WalkOrder::PostOrder>([this, m, &workQueue](Operation *op) {
++    if (op == m) {
++      return WalkResult::advance();
++    }
++    if (succeeded(getOpMemoryEffects(op))) {
++      workQueue.emplace_back(op);
++      return WalkResult::advance();
++    }
++    return WalkResult::interrupt();
++  });
++  for (auto op : workQueue) {
++    for (auto &region : op->getRegions()) {
++      for (auto &block : region) {
++        llvm::DenseMap<Operation *, int64_t> outDegree;
++        llvm::DenseSet<Operation *> tailNodes;
++        constructTopoGraph(block, outDegree, tailNodes);
++        reorderInstructions(block, outDegree, tailNodes, builder);
++      }
++    }
++  }
++}
++
++} // namespace triton
++} // namespace mlir
+
