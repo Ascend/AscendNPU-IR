@@ -41,6 +41,8 @@ usage_and_exit() {
 }
 
 apply_patches() {
+  local i
+  local folder_name
   echo "Applying patches to submodules"
   cd $THIRD_PARTY_FOLDER
   for (( i=0; i<${#SUBMODULES[@]}; i++ )); do
@@ -57,6 +59,8 @@ apply_patches() {
 }
 
 clean_up_patches() {
+  local i
+  local folder_name
   for (( i=0; i<${#SUBMODULES[@]}; i++ )); do
     # get folder name
     folder_name=${SUBMODULES[i]}
