@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -75,9 +76,9 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
   auto propagateFn = [&](OpOperand &user) -> LogicalResult {
     Operation *userDefiningOp = user.getOwner();
     return TypeSwitch<Operation *, LogicalResult>(userDefiningOp)
-        .Case<scf::YieldOp>([&](scf::YieldOp op) {
+        .Case<scf::YieldOp, scope::ReturnOp>([&](Operation *op) {
           Operation *parentOp = op->getParentOp();
-          auto yieldResult = op.getOperand(user.getOperandNumber());
+          auto yieldResult = op->getOperand(user.getOperandNumber());
           auto parentResult = parentOp->getResult(user.getOperandNumber());
 
           Type yieldType = yieldResult.getType();

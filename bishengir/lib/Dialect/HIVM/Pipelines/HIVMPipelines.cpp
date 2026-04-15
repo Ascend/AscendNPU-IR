@@ -369,6 +369,9 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
+  if (hivmPipelineOptions.enablePreload) {
+    pm.addPass(createCreatePreloadPass());
+  }
   // Normal sync (inject-sync, graph-sync-solver) passes.
   hivmNormSyncPipeline(pm, hivmPipelineOptions);
   pm.addPass(mlir::createMemrefExtLoweringPass());
