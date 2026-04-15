@@ -25,23 +25,12 @@ symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0
 
 #### Attributes
 
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>shape_expressions</code></td><td>::mlir::AffineMapAttr</td><td><details><summary>An Attribute containing an AffineMap object</summary>{{% markdown %}}
-    Syntax:
+| Attribute          | MLIR Type               | Description |
+|--------------------|-------------------------|-------------|
+| `shape_expressions` | ::mlir::AffineMapAttr | An Attribute containing an AffineMap object<br><br>Syntax:<br>`affine-map-attribute ::= affine_map<affine-map>`<br><br>Examples:<br>`affine_map<(d0) -> (d0)>`<br>`affine_map<(d0, d1, d2) -> (d0, d1)>`|
 
-    ```mlir
-    affine-map-attribute ::= `affine_map` `<` affine-map `>`
-    ```
 
-    Examples:
 
-    ```mlir
-    affine_map<(d0) -> (d0)>
-    affine_map<(d0, d1, d2) -> (d0, d1)>
-    ```
-  {{% /markdown %}}</details></td></tr>
-</table>
 
 #### Operands
 
@@ -78,26 +67,15 @@ Effects: `MemoryEffects::Effect{}`
 
 #### Attributes
 
-<table>
-<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
-<tr><td><code>symbol_name</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
-<tr><td><code>min_val</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
-<tr><td><code>max_val</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
-<tr><td><code>int_expressions</code></td><td>::mlir::AffineMapAttr</td><td><details><summary>An Attribute containing an AffineMap object</summary>{{% markdown %}}
-    Syntax:
+| Attribute | MLIR Type | Description |
+|-----------|-----------|-------------|
+| `symbol_name` | ::mlir::FlatSymbolRefAttr | flat symbol reference attribute |
+| `min_val` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+| `max_val` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
+| `int_expressions` | ::mlir::AffineMapAttr | An Attribute containing an AffineMap object<br><br>Syntax:<br>`affine-map-attribute ::= affine_map<affine-map>`<br><br>Examples:<br>`affine_map<(d0) -> (d0)>`<br>`affine_map<(d0, d1, d2) -> (d0, d1)>` |
 
-    ```
-    affine-map-attribute ::= `affine_map` `<` affine-map `>`
-    ```
 
-    Examples:
 
-    ```mlir
-    affine_map<(d0) -> (d0)>
-    affine_map<(d0, d1, d2) -> (d0, d1)>
-    ```
-  {{% /markdown %}}</details></td></tr>
-</table>
 
 #### Operands
 
