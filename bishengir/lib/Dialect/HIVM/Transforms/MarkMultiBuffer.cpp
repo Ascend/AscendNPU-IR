@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -96,7 +97,7 @@ static bool isMarked(Operation *op) {
 }
 
 static void mark(mlir::Operation *op, PatternRewriter &rewriter,
-                 unsigned numBuffer = 2) {
+                 unsigned numBuffer = 2, bool isPreload = false) {
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(op);
   // result of allocOp or memref_ext::AllocWorkspaceOp
@@ -104,7 +105,64 @@ static void mark(mlir::Operation *op, PatternRewriter &rewriter,
   auto markOp = rewriter.create<annotation::MarkOp>(op->getLoc(), mem);
   markOp->setAttr(hivm::MultiBufferAttr::name,
                   rewriter.getI32IntegerAttr(numBuffer));
+  if (isPreload) {
+    markOp->setAttr(hivm::PreloadLocalBufferAttr::name,
+                    rewriter.getI32IntegerAttr(1));
+  }
 }
+
+template <typename CopyOpType>
+struct MarkScopeMultiBuffer : public OpRewritePattern<CopyOpType> {
+  using OpRewritePattern<CopyOpType>::OpRewritePattern;
+
+  explicit MarkScopeMultiBuffer(MLIRContext *ctx)
+      : OpRewritePattern<CopyOpType>(ctx) {}
+
+  LogicalResult matchAndRewrite(CopyOpType copyLikeOp,
+                                PatternRewriter &rewriter) const override {
+    // Step 1: Get Return Op of Scope
+    auto scopeOp = cast<scope::ScopeOp>(copyLikeOp);
+    if (!scopeOp)
+      return failure();
+    // Filter preload_num == 0
+    auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr || preloadNumAttr.getInt() == 0)
+      return failure();
+    // Filter cube scope since cube's output will be saved on GM
+    auto tCoreType = scopeOp->template getAttrOfType<hivm::TCoreTypeAttr>(
+        hivm::kPipelinedLoopCoreTypeAttrName);
+    if (!tCoreType || tCoreType.getTcoretype() == hivm::TCoreType::CUBE)
+      return failure();
+    Block &block = scopeOp.getRegion().front();
+    auto returnOp = cast<scope::ReturnOp>(block.getTerminator());
+    //Step 2: Get output of returnOp, and mark multibuffer=4
+    int32_t operandIndex = -1;
+    for (auto resultOp : returnOp->getOperands()) {
+      // Only buffer used by V1 should be set multibuffer=4
+      operandIndex++;
+      auto scopeRes = scopeOp->getResult(operandIndex);
+      bool isUsedByV1 = false;
+      for (auto *scopeResUser : scopeRes.getUsers()) {
+        if (isa<scope::ScopeOp>(scopeResUser) || isa<scope::ScopeOp>(scopeResUser->getParentOp()))
+          isUsedByV1 = true;
+      }
+      if (!isUsedByV1)
+        continue;
+      if (isa<memref::AllocOp>(resultOp.getDefiningOp())) {
+        auto *allocOpPtr = resultOp.getDefiningOp();
+        auto resultType = allocOpPtr->getResult(0).getType();
+        if (getHIVMAddressSpace(resultType) != hivm::AddressSpace::GM) {
+          if (isMarked(allocOpPtr))
+            return failure();
+          mark(allocOpPtr, rewriter, 4, true); // fixed value 4, need to be changed later
+        }
+      } else {
+        continue;
+      }
+    }
+    return success();
+  }
+};
 
 template <typename CopyOpType>
 struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
@@ -228,6 +286,7 @@ void MarkMultiBufferPass::runOnOperation() {
       funcCoreType.has_value() &&
       (funcCoreType.value() == TFuncCoreType::MIX ||
        funcOp->getAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name));
+  patterns.insert<MarkScopeMultiBuffer<scope::ScopeOp>>(patterns.getContext());
   if (!isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR)) {
     patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
