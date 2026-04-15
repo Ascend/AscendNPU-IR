@@ -216,8 +216,11 @@ protected:
                              CorePipeInfo corePipeSrc,
                              CorePipeInfo corePipeDst);
 
-  std::optional<EventIdInfo> checkCVMultiBufferEventIdInfo(RWOperation *rwOp1,
-                                                           RWOperation *rwOp2);
+  std::optional<EventIdInfo>
+  checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2);
+  std::optional<EventIdInfo>
+  checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2);
+
   std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,
                                                          Occurrence *occ2,
                                                          RWOperation *rwOp1,

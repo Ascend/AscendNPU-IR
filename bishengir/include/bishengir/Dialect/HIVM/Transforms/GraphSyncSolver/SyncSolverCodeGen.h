@@ -55,12 +55,12 @@ private:
 
   // Per-multibuffer loop cached helper: nested index modular counters created
   // during codegen and reused to select between multi-buffer event ids.
-  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>, Value>
+  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t, int64_t>, Value>
       nestedIndexModularMem;
 
   // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
   // that chooses which buffer/event id to use at runtime.
-  llvm::DenseMap<LoopLikeOpInterface,
+  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>,
                  std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
@@ -126,8 +126,14 @@ private:
                                           OperationBase *opBase,
                                           SyncOp *syncOp);
 
-  Value getNestedIndexModular(IRRewriter &rewriter, SetWaitOp *syncOp);
+  Value getNestedIndexModular(IRRewriter &rewriter,
+                              LoopLikeOpInterface multibufferLoop,
+                              int64_t eventIdNum, int64_t preloadOffset);
+
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
+
+  Value getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                          SetWaitOp *syncOp);
 
   Value getCVMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
