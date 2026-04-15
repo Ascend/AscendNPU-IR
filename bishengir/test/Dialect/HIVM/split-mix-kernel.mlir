@@ -412,3 +412,61 @@ module {
     return %14 : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: gather_and_matmul_mix_aic(
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: hivm.hir.gather_load
+// CHECK-LABEL: gather_and_matmul_mix_aiv(
+// CHECK: hivm.hir.gather_load
+// CHECK-NOT: hivm.hir.matmul
+module {
+  func.func @gather_and_matmul(%base : memref<?xf32>,
+                               %indices : tensor<8xi64>,
+                               %gather_dst : tensor<8xf32>,
+                               %lhs : tensor<8x8xf16>,
+                               %rhs : tensor<8x8xf16>,
+                               %matmul_dst : tensor<8x8xf16>)
+      -> (tensor<8xf32>, tensor<8x8xf16>)
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c1_i32 = arith.constant 1 : i32
+    %0 = hivm.hir.gather_load ins(%base : memref<?xf32>,
+                                  %indices : tensor<8xi64>,
+                                  %c1_i32 : i32)
+         outs(%gather_dst : tensor<8xf32>) -> tensor<8xf32>
+    %1 = hivm.hir.matmul
+         ins(%lhs, %rhs : tensor<8x8xf16>, tensor<8x8xf16>)
+         outs(%matmul_dst : tensor<8x8xf16>) -> tensor<8x8xf16>
+    return %0, %1 : tensor<8xf32>, tensor<8x8xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: scatter_and_matmul_mix_aic(
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: hivm.hir.scatter_store
+// CHECK-LABEL: scatter_and_matmul_mix_aiv(
+// CHECK: hivm.hir.scatter_store
+// CHECK-NOT: hivm.hir.matmul
+module {
+  func.func @scatter_and_matmul(%base : memref<?xf32>,
+                                %indices : tensor<8xi64>,
+                                %data : tensor<8xf32>,
+                                %lhs : tensor<8x8xf16>,
+                                %rhs : tensor<8x8xf16>,
+                                %matmul_dst : tensor<8x8xf16>)
+      -> tensor<8x8xf16>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    %c1_i32 = arith.constant 1 : i32
+    hivm.hir.scatter_store ins(%indices : tensor<8xi64>,
+                               %data : tensor<8xf32>,
+                               %c1_i32 : i32)
+                           outs(%base : memref<?xf32>)
+    %0 = hivm.hir.matmul
+         ins(%lhs, %rhs : tensor<8x8xf16>, tensor<8x8xf16>)
+         outs(%matmul_dst : tensor<8x8xf16>) -> tensor<8x8xf16>
+    return %0 : tensor<8x8xf16>
+  }
+}

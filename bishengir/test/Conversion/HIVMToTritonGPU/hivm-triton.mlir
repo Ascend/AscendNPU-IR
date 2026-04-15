@@ -5,13 +5,14 @@
 // CHECK-NEXT: %1 = tt.splat %arg0 : !tt.ptr<i64> -> tensor<8x!tt.ptr<i64>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<8x!tt.ptr<i64>>, tensor<8xi32>
 // CHECK-NEXT: %3 = tt.load %2 evictionPolicy = evict_first : tensor<8x!tt.ptr<i64>>
-// CHECK-NEXT: %4 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %3 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
-// CHECK-NEXT: %6 = tt.load %5 : tensor<8x!tt.ptr<f32>>
-// CHECK-NEXT: %7 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
-// CHECK-NEXT: %8 = tt.splat %arg16 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
-// CHECK-NEXT: %9 = tt.addptr %8, %7 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
-// CHECK-NEXT: tt.store %9, %6 : tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %4 = tensor.empty() : tensor<8xf32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %3 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
+// CHECK-NEXT: %7 = tt.load %6 evictionPolicy = evict_last : tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %8 = tt.make_range {end = 8 : i32, start = 0 : i32} : tensor<8xi32>
+// CHECK-NEXT: %9 = tt.splat %arg16 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: %10 = tt.addptr %9, %8 : tensor<8x!tt.ptr<f32>>, tensor<8xi32>
+// CHECK-NEXT: tt.store %10, %7 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
 
 module {
@@ -19,8 +20,9 @@ module {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
-    %1 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %0 : tensor<8xi64>, %arg3 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
-    hivm.hir.local_store ins(%arg4 : memref<8xf32>, %1 : tensor<8xf32>)
+    %1 = tensor.empty() : tensor<8xf32>
+    %2 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %0 : tensor<8xi64>, %arg3 : i32) outs(%1 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+    hivm.hir.local_store ins(%arg4 : memref<8xf32>, %2 : tensor<8xf32>)
     return
   }
 }
@@ -37,7 +39,7 @@ module {
 // CHECK-NEXT: %7 = tt.load %6 : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %8 = tt.splat %arg15 : !tt.ptr<f32> -> tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: %9 = tt.addptr %8, %3 : tensor<8x!tt.ptr<f32>>, tensor<8xi64>
-// CHECK-NEXT: tt.store %9, %7 : tensor<8x!tt.ptr<f32>>
+// CHECK-NEXT: tt.store %9, %7 evictionPolicy = evict_last : tensor<8x!tt.ptr<f32>>
 // CHECK-NEXT: tt.return
 
 module {
@@ -46,7 +48,7 @@ module {
     hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%arg1 : memref<8xi64>) eviction_policy = <EvictFirst>
     %0 = bufferization.to_tensor %arg1 restrict writable : memref<8xi64>
     %1 = hivm.hir.local_load ins(%arg2 : memref<8xf32>) -> tensor<8xf32>
-    hivm.hir.scatter_store ins(%arg3 : memref<?xf32>, %0 : tensor<8xi64>, %1 : tensor<8xf32>, %arg4 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
+    hivm.hir.scatter_store ins(%0 : tensor<8xi64>, %1 : tensor<8xf32>, %arg4 : i32) outs(%arg3 : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
     return
   }
 }

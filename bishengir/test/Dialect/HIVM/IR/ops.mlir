@@ -335,7 +335,8 @@ module {
   // CHECK: hivm.hir.gather_load
   func.func @gather_load_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: f32) {
     %c1_i64 = arith.constant 1 : i64
-    %output = hivm.hir.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: f32) { boundaryCheck = array<i32: 1>, padding = 2 : i32, cache = 1 : i32, evictionpolicy = 2 : i32, isVolatile = false } -> tensor<16x400xf32>
+    %init = tensor.empty() : tensor<16x400xf32>
+    %output = hivm.hir.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: f32) outs(%init : tensor<16x400xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<16x400xf32>
     return
   }
 }
@@ -346,7 +347,7 @@ module {
   // CHECK: hivm.hir.scatter_store
   func.func @scatter_store_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %data: tensor<16x400xf32>, %mask: tensor<16x400xi1>) {
     %c1_i64 = arith.constant 1 : i64
-    hivm.hir.scatter_store  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %data: tensor<16x400xf32>, %c1_i64: i64, %mask: tensor<16x400xi1>) { boundaryCheck = array<i32: 1>, cache = 1 : i32, evictionpolicy = 2 : i32 }
+    hivm.hir.scatter_store  ins(%indices: tensor<16x400xi32>, %data: tensor<16x400xf32>, %c1_i64: i64, %mask: tensor<16x400xi1>) outs(%base : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
     return
   }
 }

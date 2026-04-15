@@ -257,4 +257,44 @@ def Hfusion_CumOpTypeEnum :
   let cppNamespace = "::mlir::hfusion";
 }
 
+def HFUSION_PADDING_OPTION_PAD_ZERO : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HFUSION_PADDING_OPTION_PAD_NAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+
+def HFusion_PaddingOptionEnum :
+  HFusion_I32Enum<"PaddingOption", "Padding option", [
+  HFUSION_PADDING_OPTION_PAD_ZERO,
+  HFUSION_PADDING_OPTION_PAD_NAN,
+]> {}
+
+def HFUSION_CACHE_MODIFIER_NONE : I32EnumAttrCase<"NONE", 1, "none">;
+def HFUSION_CACHE_MODIFIER_CA : I32EnumAttrCase<"CA", 2, "ca">;
+def HFUSION_CACHE_MODIFIER_CG : I32EnumAttrCase<"CG", 3, "cg">;
+def HFUSION_CACHE_MODIFIER_WB : I32EnumAttrCase<"WB", 4, "wb">;
+def HFUSION_CACHE_MODIFIER_CS : I32EnumAttrCase<"CS", 5, "cs">;
+def HFUSION_CACHE_MODIFIER_WT : I32EnumAttrCase<"WT", 6, "wt">;
+def HFUSION_CACHE_MODIFIER_CV : I32EnumAttrCase<"CV", 7, "cv">;
+
+def HFusion_CacheModifierEnum :
+  HFusion_I32Enum<"CacheModifier", "Cache modification policy", [
+  HFUSION_CACHE_MODIFIER_NONE,
+  HFUSION_CACHE_MODIFIER_CA,
+  HFUSION_CACHE_MODIFIER_CG,
+  HFUSION_CACHE_MODIFIER_WB,
+  HFUSION_CACHE_MODIFIER_CS,
+  HFUSION_CACHE_MODIFIER_WT,
+  HFUSION_CACHE_MODIFIER_CV,
+]> {}
+
+def HFUSION_EVICTION_POLICY_NORMAL : I32EnumAttrCase<"NORMAL", 1, "EvictNormal">;
+def HFUSION_EVICTION_POLICY_EVICT_FIRST : I32EnumAttrCase<"EVICT_FIRST", 2, "EvictFirst">;
+def HFUSION_EVICTION_POLICY_EVICT_LAST : I32EnumAttrCase<"EVICT_LAST", 3, "EvictLast">;
+
+def HFusion_EvictionPolicyEnum :
+  HFusion_I32Enum<"EvictionPolicy", "Eviction policy", [
+  HFUSION_EVICTION_POLICY_NORMAL,
+  HFUSION_EVICTION_POLICY_EVICT_FIRST,
+  HFUSION_EVICTION_POLICY_EVICT_LAST,
+]> {}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONENUMS_TD

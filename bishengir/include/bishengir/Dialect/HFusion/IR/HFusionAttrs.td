@@ -83,38 +83,34 @@ def HFusion_ReturnOperandNumAttr : HFusion_Attr<"ReturnOperandNum", "return_oper
   }];
 }
 
-def HFusion_PaddingOptionAttr : I32EnumAttr<
-    "PaddingOption", "",
-    [
-        I32EnumAttrCase<"PAD_ZERO", 1, "zero">,
-        // We can not set the string value to "NAN" because it is a keyword in C++
-        I32EnumAttrCase<"PAD_NAN", 2, "nan">
-    ]> {
-    let cppNamespace = "::mlir::hfusion";
+def HFusion_PaddingOptionAttr : HFusion_Attr<"PaddingOption", "padding_option"> {
+  let parameters = (ins
+    EnumParameter<HFusion_PaddingOptionEnum>:$option
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Padding option.
+  }];
 }
 
-def HFusion_CacheModifierAttr : I32EnumAttr<
-    "CacheModifier", "",
-    [
-        I32EnumAttrCase<"NONE", 1, "none">,
-        I32EnumAttrCase<"CA", 2, "ca">,
-        I32EnumAttrCase<"CG", 3, "cg">,
-        I32EnumAttrCase<"WB", 4, "wb">,
-        I32EnumAttrCase<"CS", 5, "cs">,
-        I32EnumAttrCase<"WT", 6, "wt">,
-        I32EnumAttrCase<"CV", 7, "cv">,
-    ]> {
-    let cppNamespace = "::mlir::hfusion";
+def HFusion_CacheModifierAttr : HFusion_Attr<"CacheModifier", "cache_modifier"> {
+  let parameters = (ins
+    EnumParameter<HFusion_CacheModifierEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Cache modification policy.
+  }];
 }
 
-def HFusion_EvictionPolicyAttr : I32EnumAttr<
-    "EvictionPolicy", "",
-    [
-        I32EnumAttrCase<"NORMAL", 1, "evict_normal">,
-        I32EnumAttrCase<"EVICT_FIRST", 2, "evict_first">,
-        I32EnumAttrCase<"EVICT_LAST", 3, "evict_last">
-    ]> {
-    let cppNamespace = "::mlir::hfusion";
+def HFusion_EvictionPolicyAttr : HFusion_Attr<"EvictionPolicy", "eviction_policy"> {
+  let parameters = (ins
+    EnumParameter<HFusion_EvictionPolicyEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Eviction policy.
+  }];
 }
 
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONATTRS_TD

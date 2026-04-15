@@ -704,30 +704,22 @@ void EmbeddingGatherOp::getEffects(
 // GatherLoadOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult GatherLoadOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    GatherLoadOp::Adaptor adaptor,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  auto dstType = dyn_cast<RankedTensorType>(adaptor.getDst().getType());
+  if (dstType)
+    inferredReturnTypes.push_back(dstType);
+  return success();
+}
+
 LogicalResult GatherLoadOp::verify() {
-  auto inputType = getBase().getType();
-  auto inputElemType = inputType.getElementType();
   auto indicesType = getIndices().getType();
-  auto outputType = getResult().getType();
-  auto outputElemType = outputType.getElementType();
-  if (inputElemType != outputElemType) {
-    return emitOpError("output of hivm::GatherLoadOp must have the same "
-                       "element type as base");
-  }
-  if (indicesType.getRank() != outputType.getRank()) {
-    return emitOpError("indices of hivm::GatherLoadOp must have the same "
-                       "rank as output");
-  }
   if (auto mask = getMask()) {
     if (mask.getType().getShape() != indicesType.getShape()) {
       return emitOpError("mask of hivm::GatherLoadOp must have the same "
                          "shape and rank as indices");
-    }
-  }
-  if (auto other = getOther()) {
-    if (other.getType() != inputElemType) {
-      return emitOpError("other of hivm::GatherLoadOp must have the same "
-                         "element type as base");
     }
   }
   return success();
@@ -737,6 +729,8 @@ void GatherLoadOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Read::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
                        SideEffects::DefaultResource::get());
 }
 
@@ -770,22 +764,10 @@ void LocalLoadOp::getEffects(
 //===----------------------------------------------------------------------===//
 
 LogicalResult ScatterStoreOp::verify() {
-  auto inputType = getBase().getType();
-  auto inputElemType = inputType.getElementType();
-  auto indicesType = getIndices().getType();
   auto dataType = getData().getType();
-  auto dataElemType = dataType.getElementType();
-  if (inputElemType != dataElemType) {
-    return emitOpError("data of hfusion::ScatterStoreOp must have the same "
-                       "element type as base");
-  }
-  if (indicesType.getRank() != dataType.getRank()) {
-    return emitOpError("indices of hfusion::ScatterStoreOp must have the same "
-                       "rank as data");
-  }
   if (auto mask = getMask()) {
     if (mask.getType().getShape() != dataType.getShape()) {
-      return emitOpError("mask of hfusion::ScatterStoreOp must have the same "
+      return emitOpError("mask of hivm::ScatterStoreOp must have the same "
                          "shape and rank as data");
     }
   }

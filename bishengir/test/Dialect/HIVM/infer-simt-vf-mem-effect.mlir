@@ -8,8 +8,9 @@ module {
     %0 = tensor.empty() : tensor<8xi64>
     %1 = bufferization.to_memref %0 : memref<8xi64>
     hivm.hir.load ins(%arg0 : memref<8xi64>) outs(%1 : memref<8xi64>)
-    %2 = hivm.hir.gather_load ins(%arg1 : memref<?xf32>, %0 : tensor<8xi64>, %arg2 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>, isVolatile = false} -> tensor<8xf32>
-    hivm.hir.store ins(%2 : tensor<8xf32>) outs(%arg3 : memref<8xf32>)
+    %2 = tensor.empty() : tensor<8xf32>
+    %3 = hivm.hir.gather_load ins(%arg1 : memref<?xf32>, %0 : tensor<8xi64>, %arg2 : i32) outs(%2 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+    hivm.hir.store ins(%3 : tensor<8xf32>) outs(%arg3 : memref<8xf32>)
     return
   }
 }
@@ -25,8 +26,7 @@ module {
     %2 = tensor.empty() : tensor<8xi64>
     %3 = bufferization.to_memref %2 : memref<8xi64>
     hivm.hir.load ins(%arg1 : memref<8xi64>) outs(%3 : memref<8xi64>)
-    hivm.hir.scatter_store ins(%arg2 : memref<?xf32>, %2 : tensor<8xi64>, %0 : tensor<8xf32>, %arg3 : i32) {cache = 1 : i32, evict = #hivm.evictionpolicy<EvictLast>}
+    hivm.hir.scatter_store ins(%2 : tensor<8xi64>, %0 : tensor<8xf32>, %arg3 : i32) outs(%arg2 : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
     return
   }
 }
-

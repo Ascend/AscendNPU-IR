@@ -904,23 +904,61 @@ module {
   }
 }
 
+  // -----
 module {
   // CHECK-LABEL: func.func @gather_load_test
   // CHECK: hivm.hir.gather_load
+  // CHECK-SAME: cache = #hivm.cache_modifier<none>
+  // CHECK-SAME: evict = #hivm.eviction_policy<EvictNormal>
+  // CHECK-SAME: isVolatile = false
   func.func @gather_load_test(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %arg2: tensor<16x400xi1>, %arg3: f32) -> tensor<16x400xf32>{
     %c1_i64 = arith.constant 1 : i64
-    %0 = hfusion.gather_load ins(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %c1_i64: i64, %arg2: tensor<16x400xi1>, %arg3: f32) { boundaryCheck = array<i32: 1>, padding = 2 : i32, cache = 1 : i32, evict = 1 : i32, isVolatile = false } -> tensor<16x400xf32>
+    %init = tensor.empty() : tensor<16x400xf32>
+    %0 = hfusion.gather_load ins(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %c1_i64: i64, %arg2: tensor<16x400xi1>, %arg3: f32) outs(%init : tensor<16x400xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>, isVolatile = false} -> tensor<16x400xf32>
     return %0 : tensor<16x400xf32>
   }
 }
 
+// -----
+module {
+  // CHECK-LABEL: func.func @gather_load_buffer_test
+  // CHECK: hivm.hir.gather_load
+  // CHECK-SAME: outs(%arg4 : memref<16x400xf32>)
+  func.func @gather_load_buffer_test(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %arg2: tensor<16x400xi1>, %arg3: f32,
+                                     %arg4 : memref<16x400xf32>) {
+    %c1_i64 = arith.constant 1 : i64
+    hfusion.gather_load ins(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %c1_i64: i64, %arg2: tensor<16x400xi1>, %arg3: f32)
+                        outs(%arg4 : memref<16x400xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>, isVolatile = false}
+    return
+  }
+}
+
+// -----
 module {
   // CHECK-LABEL: func.func @scatter_store_test
   // CHECK: hivm.hir.scatter_store
+  // CHECK-SAME: cache = #hivm.cache_modifier<none>
+  // CHECK-SAME: evict = #hivm.eviction_policy<EvictNormal>
   func.func @scatter_store_test(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>, %arg3: tensor<16x400xi1>) {
     %c1_i64 = arith.constant 1 : i64
-    hfusion.scatter_store ins(%arg0 : memref<?xf32>, %arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>, %c1_i64: i64, %arg3: tensor<16x400xi1>) { boundaryCheck = array<i32: 1>, cache = 1 : i32, evict = 1 : i32 }
+    hfusion.scatter_store ins(%arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>, %c1_i64: i64, %arg3: tensor<16x400xi1>) outs(%arg0 : memref<?xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>}
     return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @scatter_store_tensor_test
+  // CHECK: hivm.hir.scatter_store
+  // CHECK-SAME: outs(%arg0 : tensor<16x400xf32>)
+  // CHECK-SAME: -> tensor<16x400xf32>
+  func.func @scatter_store_tensor_test(%arg0 : tensor<16x400xf32>, %arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>,
+                                       %arg3: tensor<16x400xi1>) -> tensor<16x400xf32> {
+    %c1_i64 = arith.constant 1 : i64
+    %0 = hfusion.scatter_store ins(%arg1: tensor<16x400xi32>, %arg2: tensor<16x400xf32>, %c1_i64: i64, %arg3: tensor<16x400xi1>)
+                               outs(%arg0 : tensor<16x400xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>}
+                               -> tensor<16x400xf32>
+    return %0 : tensor<16x400xf32>
   }
 }
 
