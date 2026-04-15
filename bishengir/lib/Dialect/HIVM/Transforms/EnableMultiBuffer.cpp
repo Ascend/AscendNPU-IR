@@ -275,6 +275,7 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
       LoopLikeOpInterface parentLoop =
           op->getParentOfType<LoopLikeOpInterface>();
       if (!isa_and_nonnull<scf::ForOp>(parentLoop)) {
+        LLVM_DEBUG(DBGS() << " PointerCastOp op has no parent for loop!\n");
         return failure();
       }
       auto yieldIndex = GetParentLoopYieldIndex(parentLoop, op.getResult());
