@@ -16,21 +16,31 @@
 
 set -e
 
-GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-THIRD_PARTY_FOLDER=$GIT_ROOT/third-party
-readonly PATCH_FOLDER=$GIT_ROOT/build-tools/patches
-readonly OPTION="${1:-}"
+# All script-level variables are defined here (invoke with "$@" after functions are defined).
+init_variables() {
+  GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$GIT_ROOT" ]; then
+    echo "Error: We're not in the AscendNPU IR repo" >&2
+    exit 1
+  fi
 
-# will be inside third-party folder with basename as the submodule folder name
-readonly SUBMODULES=(
-  "torch-mlir"
-  "llvm-project"
-)
+  THIRD_PARTY_FOLDER="$GIT_ROOT/third-party"
+  readonly PATCH_FOLDER="$GIT_ROOT/build-tools/patches"
+  OPTION="${1:-}"
 
-readonly SUBMODULE_INCLUDES=(
-  ""
-  "--include=mlir/* --include=llvm/*"
-)
+  # will be inside third-party folder with basename as the submodule folder name
+  readonly SUBMODULES=(
+    "torch-mlir"
+    "llvm-project"
+  )
+
+  readonly SUBMODULE_INCLUDES=(
+    ""
+    "--include=mlir/* --include=llvm/*"
+  )
+
+  export PATCH_CMD
+}
 
 usage_and_exit() {
   echo "Usage:"
@@ -40,44 +50,45 @@ usage_and_exit() {
 }
 
 apply_patches() {
+  local i
+  local folder_name
+
   echo "Applying patches to submodules"
-  cd $THIRD_PARTY_FOLDER
+  cd "$THIRD_PARTY_FOLDER" || exit 1
   for (( i=0; i<${#SUBMODULES[@]}; i++ )); do
-    # get folder name
     folder_name=${SUBMODULES[i]}
-    cd $THIRD_PARTY_FOLDER/$folder_name
-    echo "Applying patches for $submodule_url"
-    for patch_file in $PATCH_FOLDER/$folder_name/*.patch; do
+    cd "$THIRD_PARTY_FOLDER/$folder_name" || exit 1
+    echo "Applying patches for $folder_name"
+    for patch_file in "$PATCH_FOLDER/$folder_name"/*.patch; do
       ${PATCH_CMD:-patch} -p1 --merge < "$patch_file"
     done
   done
   echo "Finished applying patches"
-  cd $GIT_ROOT
+  cd "$GIT_ROOT" || exit 1
 }
 
 clean_up_patches() {
+  local i
+  local folder_name
+
   for (( i=0; i<${#SUBMODULES[@]}; i++ )); do
-    # get folder name
     folder_name=${SUBMODULES[i]}
-    echo "Resetting" ${folder_name} "submodule patches."
+    echo "Resetting" "${folder_name}" "submodule patches."
     echo "[Warning] This will also reset changes you made to the submodule!"
-    cd $THIRD_PARTY_FOLDER/$folder_name
+    cd "$THIRD_PARTY_FOLDER/$folder_name" || exit 1
     git reset --hard HEAD
     git clean -df
   done
 }
 
-if [ -z "$GIT_ROOT" ]; then
-  echo "Error: We're not in the AscendNPU IR repo" >&2
-  exit 1
-fi
+init_variables "$@"
 
 if [[ -n "$OPTION" ]]; then
   if [[ "$OPTION" == "--clean-up" ]]; then
     clean_up_patches
     exit 0
   else
-    echo "Unknown flag: $1"
+    echo "Unknown flag: $OPTION"
     echo
     usage_and_exit
   fi
