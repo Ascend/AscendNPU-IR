@@ -1277,6 +1277,8 @@ bool isArgminOrArgmax(ReduceOperation op) {
 
 void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {
   auto attr = attrDict.get(hivm::MultiBufferAttr::name);
+  if (!attr)
+    return;
   mlir::IntegerAttr intAttr = mlir::dyn_cast<mlir::IntegerAttr>(attr);
   if (!intAttr) {
     llvm::report_fatal_error("MultiBufferAttr illegal!!!");
