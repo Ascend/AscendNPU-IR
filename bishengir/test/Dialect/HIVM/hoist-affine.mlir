@@ -303,3 +303,21 @@ func.func @test_hoistaffine_7(%arg0: tensor<512xf32>, %arg1: memref<256xf32>) at
   } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
   return
 }
+
+// -----
+// CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0] -> (s0 * 4)>
+// CHECK: #[[$ATTR_1:.+]] = affine_map<()[s0] -> (s0 * 8)>
+// CHECK-LABEL:   func.func @test_hoistaffine_8(
+// CHECK-SAME:                                         %[[VAL_0:.*]]: index,
+// CHECK-SAME:                                         %[[VAL_1:.*]]: index) -> index {
+// CHECK:           %[[VAL_2:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_0]]]
+// CHECK:           %[[VAL_3:.*]] = affine.apply #[[$ATTR_1]](){{\[}}%[[VAL_1]]]
+// CHECK:           %[[VAL_4:.*]] = arith.addi %[[VAL_2]], %[[VAL_3]] : index
+// CHECK:           return %[[VAL_4]] : index
+// CHECK:         }
+func.func @test_hoistaffine_8(%arg0: index, %arg1: index) -> index {
+  %0 = affine.apply affine_map<()[s0] -> (s0 * 4)>()[%arg0]
+  %1 = affine.apply affine_map<()[s0] -> (s0 * 8)>()[%arg1]
+  %sum = arith.addi %0, %1 : index
+  return %sum : index
+}
