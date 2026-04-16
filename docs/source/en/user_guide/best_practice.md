@@ -382,7 +382,7 @@ no error after executing means it works correctly
 
 - **Usage**: When rewriting operators, simply add the compile_hint to the data involved in load/store operations. Refer to the following code snippet:
 
-For versions prior to triton-adaptor 3.2.0:
+For versions prior to triton-ascend 3.2.0:
 
 ```python
 # For load operations, compile_hint should be added to the loaded value
@@ -394,7 +394,7 @@ tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-For versions after triton-adaptor 3.4.0, the following modification is required:
+For versions after triton-ascend 3.4.0, the following modification is required:
 
 ```python
 # For load operations, compile_hint should be added to the loaded value
@@ -628,14 +628,14 @@ On Ascend, boolean (i1) tensors are stored in GM as i8 (one byte). Triton Ascend
 #### Usage
 
 Add the hint on the condition used in `tl.where`:
-For versions prior to triton-adaptor 3.2.0:
+For versions prior to triton-ascend 3.2.0:
 
 ```python
 mask = tl.where(cond, value1, value2)
 tl.compile_hint(cond, "bitwise_mask")
 ```
 
-For versions after triton-adaptor 3.4.0, it needs to be changed to:
+For versions after triton-ascend 3.4.0, it needs to be changed to:
 
 ```python
 mask = tl.where(cond, value1, value2)
@@ -649,11 +649,11 @@ Mask pointer offsets must be computed correctly for the bitmask layout.
 ![image](../../images/user_guide/best_practice2.png)
 
 ```{note}
-When using compile_hint, please pay attention to the triton-adaptor version.
+When using compile_hint, please pay attention to the triton-ascend version.
 
-Before triton-adaptor 3.2.0: tl.compile_hint(cond, "bitwise_mask")
+Before triton-ascend 3.2.0: tl.compile_hint(cond, "bitwise_mask")
 
-After triton-adaptor 3.4.0: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+After triton-ascend 3.4.0: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
 
 The bitmask feature is only available in versions after CANN 9.0.
 ```
@@ -684,9 +684,9 @@ def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: 
         in1 = tl.load(in_ptr1 + xindex, xmask)
         cond = tl.load(cond_ptr + xindex, xmask)
         res = tl.where(cond, in1, in0)
-        # versions after triton-adaptor 3.4.0
+        # versions after triton-ascend 3.4.0
         # tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
-        # versions before triton-adaptor 3.2.0
+        # versions before triton-ascend 3.2.0
         tl.compile_hint(cond, "bitwise_mask")
         tl.store(out_ptr0 + (xindex), res, xmask)
 
@@ -777,9 +777,9 @@ def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
     cond = tl.load(cond_ptr + offset)
     # bitwise where and store
     mask = tl.where(cond, in0, in1)
-    # versions after triton-adaptor 3.4.0
+    # versions after triton-ascend 3.4.0
     # tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
-    # versions before triton-adaptor 3.2.0
+    # versions before triton-ascend 3.2.0
     tl.compile_hint(mask, "bitwise_mask")
     tl.store(out_ptr0 + offset, mask)
 
