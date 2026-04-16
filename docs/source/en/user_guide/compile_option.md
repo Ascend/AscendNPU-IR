@@ -42,62 +42,33 @@
 
 ### BiShengIR Target Options
 
-| Option          | Value               | Status |
-| --------------- | ------------------- | ------ |
-| --target=       | Target device name. | In use |
-| =Ascend910B1    | Ascend910B1         | In use |
-| =Ascend910B2    | Ascend910B2         | In use |
-| =Ascend910B3    | Ascend910B3         | In use |
-| =Ascend910B4    | Ascend910B4         | In use |
-| =Ascend910B4-1  | Ascend910B4-1       | In use |
-| =Ascend910B2C   | Ascend910B2C        | In use |
-| =Ascend910_9362 | Ascend910_9362      | In use |
-| =Ascend910_9372 | Ascend910_9372      | In use |
-| =Ascend910_9381 | Ascend910_9381      | In use |
-| =Ascend910_9382 | Ascend910_9382      | In use |
-| =Ascend910_9391 | Ascend910_9391      | In use |
-| =Ascend910_9392 | Ascend910_9392      | In use |
-| =Ascend910_950z | Ascend910_950z      | In use |
-| =Ascend910_9579 | Ascend910_9579      | In use |
-| =Ascend910_957b | Ascend910_957b      | In use |
-| =Ascend910_957d | Ascend910_957d      | In use |
-| =Ascend910_9581 | Ascend910_9581      | In use |
-| =Ascend910_9589 | Ascend910_9589      | In use |
-| =Ascend910_958a | Ascend910_958a      | In use |
-| =Ascend910_958b | Ascend910_958b      | In use |
-| =Ascend910_9599 | Ascend910_9599      | In use |
-| =Unknown        | Unknown             | In use |
+The compilation option `--target=Ascend<Name>` is used to specify the target platform for MLIR compilation. `<Name>` is a placeholder, and its specific content varies by AI processor model, which can be acquired through dedicated query commands.
 
-## bishengir-hivm-compile options
+The AI processor models and corresponding query methods are described below:
 
-### BiShengIR HIVM Optimization Options
+**Method 1: Query with the command `npu-smi info`**
 
-| Option                                     | Description                                                                                                                | Type                | Default   | Status         |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------- | -------------- |
-| --limit-auto-multi-buffer-of-local-buffer= | When enable-auto-multi-buffer = true, limit local buffer mode. Value=<no-limit/no-l0c>                                     | MultiBufferStrategy | no-l0c    | In use         |
-| --limit-auto-multi-buffer-buffer=          | When enable-auto-multi-buffer = true, limit to only cube, only vector, or no limit. Value=<no-limit/only-cube/only-vector> | MultiBufferStrategy | only-cube | In use         |
-| --enable-auto-bind-sub-block               | Enable auto bind sub block.                                                                                                | bool                | true      | In use         |
-| --enable-code-motion                       | Enable code-motion/subset-hoist.                                                                                           | bool                | true      | In use         |
-| --enable-hivm-unit-flag-sync               | Use unit-flag modes for sync in inject sync pass.                                                                          | bool                | false     | In use         |
-| --enable-hivm-assume-alive-loops           | Assume all loops (forOp, whileOp) execute at least once.                                                                   | bool                | false     | In use         |
-| --enable-hivm-inject-block-all-sync        | Enable inject all block sync for HIVM inject block sync.                                                                   | bool                | false     | In use         |
-| --enable-hivm-inject-barrier-all-sync      | Enable barrier-all mode for HIVM inject sync.                                                                              | bool                | false     | In use         |
-| --set-workspace-multibuffer=               | Override number of multibuffers for workspace (default 2).                                                                 | unsigned            | 2         | In use         |
-| --enable-hivm-global-workspace-reuse       | Enable global workspace reuse.                                                                                             | bool                | false     | In use         |
-| --enable-hivm-auto-cv-balance              | Enable balancing during cv-pipelining.                                                                                     | bool                | false     | Deprecated     |
-| --enable-hivm-auto-storage-align           | Enable mark/enable storage align.                                                                                          | bool                | true      | In use         |
-| --enable-hivm-nd2nz-on-vector              | Enable nd2nz on vector.                                                                                                    | bool                | false     | In development |
-| --enable-auto-blockify-loop                | Enable auto loop on blocks for all parallel.                                                                               | bool                | false     | In use         |
-| --tile-mix-vector-loop=                    | Trip count of tiled vector loop for mix kernels.                                                                           | unsigned            | 1         | In use         |
-| --tile-mix-cube-loop=                      | Trip count of tiled cube loop for mix kernels.                                                                             | unsigned            | 1         | In use         |
+**Applicable Products**:
 
-### Options shared with bishengir-hivm-compile
+- Atlas A2 Training Series / Atlas A2 Inference Series
+- Atlas 200I/500 A2 Inference Product
+- Atlas Inference Series
+- Atlas Training Series
 
-| Option                                | Description                                                   | Type | Default | Status |
-| ------------------------------------- | ------------------------------------------------------------- | ---- | ------- | ------ |
-| --enable-static-bare-ptr              | Enable bare ptr calling convention for static-shaped kernels. | bool | true    | In use |
-| --enable-bin-relocation               | Enable binary relocation.                                     | bool | true    | In use |
-| --enable-lir-compile                  | Enable BiShengLIR compilation.                                | bool | true    | In use |
-| --enable-sanitizer                    | Enable ascend sanitizer.                                      | bool | false   | In use |
-| --enable-debug-info                   | Enable debug info.                                            | bool | false   | In use |
-| --enable-hivm-inject-barrier-all-sync | Enable barrier-all mode for HIVM inject sync.                 | bool | false   | In use |
+Run this command on the server equipped with the AI processor to get the value of `<Name>`. The full configuration value is `Ascend<Name>`.
+Example: If `<Name>` is `xxx`, the configuration value is `Ascendxxx`.
+
+**Method 2: Query with the command `npu-smi info -t board -i id -c chip_id`**
+
+**Applicable Products**:
+
+- Atlas 350 Accelerator Card
+- Atlas A3 Training Series / Atlas A3 Inference Series
+
+Execute this command on the server with the AI processor to obtain the **Chip Name** and **NPU Name**. The actual configuration value is formatted as `<Chip Name>_<NPU Name>`.
+Example: If the Chip Name is `Ascendxxx` and the NPU Name is `yyy`, the configuration value is `Ascendxxx_yyy`.
+
+Command Parameter Description:
+
+- `id`: Device ID, namely the NPU ID queried by the `npu-smi info -l` command.
+- `chip_id`: Chip ID, namely the Chip ID queried by the `npu-smi info -m` command.

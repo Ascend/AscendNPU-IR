@@ -41,7 +41,7 @@ make html-all
 open docs/_build/en/index.html
 
 # Chinese
-open docs/_build/zh_cn/index_zh.html
+open docs/_build/zh_cn/index.html
 
 # Or serve with HTTP (e.g. port 8080 for English, 8081 for Chinese)
 cd docs/_build/en && python3 -m http.server 8080

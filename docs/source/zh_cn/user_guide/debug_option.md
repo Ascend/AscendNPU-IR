@@ -14,8 +14,8 @@
 
 AscendNPU IR侧依赖毕昇编译器提供的`cce::printf`接口进行打印，要想开启打印需要满足以下两个条件：
 
-1. 需要启用宏`__CCE_ENABLE_PRINT__`(以triton为例, 通过export TRITON_DEVICE_PRINT=1来启用该选项)
-2. AscendNPU IR meta op库(将逻辑代码映射成对应硬件指令的地方)编译的时候需要开启--cce-enable-print(当前默认一直开启)
+1. 需要启用宏`__CCE_ENABLE_PRINT__`（以triton为例，通过export TRITON_DEVICE_PRINT=1来启用该选项）
+2. AscendNPU IR meta op库（将逻辑代码映射成对应硬件指令的地方）编译的时候需要开启--cce-enable-print（当前默认一直开启）
 
 #### hfusion层调试：PrintOp
 
@@ -332,11 +332,11 @@ if __name__ == "__main__":
     output_triton = add(x, y)
 ```
 
-执行mssanitizer python3 test_add.py产生如下屏幕输出信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B(10 * float32)的空间
+执行mssanitizer python3 test_add.py产生如下屏幕输出信息，可以看到mssanitizer检测发现当前test_add.py文件中执行到tl.load结点时检测发现GM异常读了40B（10 * float32）的空间
 
 ![image](../../images/user_guide/debug_option5.png)
 
-注: 想了解更多mssanitizer的检测情况可以参考[详见MindStdudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
+注：想了解更多mssanitizer的检测情况可以参考[详见MindStdudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
 ### msprof
 
@@ -423,5 +423,5 @@ if __name__ == "__main__":
 
 执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成带着时间戳的OPPROF文件夹
 
-取出simulator下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图(trace.json/visualize_data.bin)都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
+取出simulator下的visualize_data.bin用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图（trace.json/visualize_data.bin）都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
 ![image](../../images/user_guide/debug_option9.png)

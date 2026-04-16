@@ -344,9 +344,11 @@ msprof --output=xxx --application=""
 # --aic-metrics: enable metrics (Roofline, Occupancy, MemoryDetail, etc.)
 msprof op --output=xxx --application="" --kernel-name=xxx --aic-metrics=xxx
 
-# Single-operator simulator profiling
-# --core-id: logical core id(s) to profile
-# --soc-version: simulator type (e.g. Ascend910B4)
+# Single Operator Simulation Tuning
+# --core-id - Specify the IDs of partial logical cores to parse simulation data of designated cores
+# --kernel-name - Specify the name of the operator to be collected; fuzzy matching by operator name prefix is supported
+# --soc-version - Specify the simulator type
+# --output - Storage path for collected performance data; data is saved in the current directory by default
 msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --output=xxx
 ```
 

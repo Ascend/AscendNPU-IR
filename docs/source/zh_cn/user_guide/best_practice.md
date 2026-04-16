@@ -14,7 +14,7 @@
 out = torch.gather(x, dim=1, index=idx)
 ```
 
-输入:
+输入：
 
 | Input | Shape  |
 |-------|--------|
@@ -123,13 +123,13 @@ BLOCK_K = 128
 
 ### 定界
 
-- **现象** 算子选项规避超时报错,导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
+- **现象** 算子选项规避超时报错，导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
 - **写法样例**
 
 | 编译选项 | 数值 | 说明 |
 |--------|------|------|
-| **inject_barrier_all** | false(default). | 前端尝试打开为true,如果卡死问题消失，证明核内同步有问题,适用mix/aic/aiv三类kernel |
-| **inject_block_all**|  false(default). | 前端尝试打开为true,如果卡死问题消失，证明核间同步有问题,适用mix类kernel | 
+| **inject_barrier_all** | false(default). | 前端尝试打开为true，如果卡死问题消失，证明核内同步有问题，适用mix/aic/aiv三类kernel |
+| **inject_block_all**|  false(default). | 前端尝试打开为true，如果卡死问题消失，证明核间同步有问题，适用mix类kernel | 
 
 以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码写法样例调用如下：
 
@@ -200,7 +200,7 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
 - 分析：
 
-    第1行，原始的数据大小为256x9x11xi8，保存在GM中(kernel的参数%arg3)；
+    第1行，原始的数据大小为256x9x11xi8，保存在GM中（kernel的参数%arg3）；
 
     第2行，申请一块大小为256x32x11x1xi8的UB空间，用于从GM中COPY数据到UB，这里对第1轴进行了32字节对齐操作，同时尾轴增加一维；
 
@@ -238,7 +238,7 @@ mlir代码如下：
 
 - 分析
 
-    第1行，原始的数据大小为65536xi8，保存在GM中(kernel的参数%arg3)；
+    第1行，原始的数据大小为65536xi8，保存在GM中（kernel的参数%arg3）；
 
     第2行，申请一块大小为65536xi8的UB空间；
 
@@ -761,7 +761,7 @@ test_where_lt_case1()
 
 #### 切分逻辑
 
-bitmask和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于 (1) CV场景下使能1:2性能优化 (2) 融轴 (3) broadcast场景 (4)非硬件支撑的数据类型 (5) triton算子输入非1的grid切块 等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组mask例子(由i8 bitmask组出i1的标杆mask)供你参考，这个组mask逻辑不考虑场景，是从bitmask结果的误差推导组mask逻辑的
+bitmask和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于 (1) CV场景下使能1:2性能优化 (2) 融轴 (3) broadcast场景 (4)非硬件支撑的数据类型 (5) triton算子输入非1的grid切块 等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组mask例子（由i8 bitmask组出i1的标杆mask）供你参考，这个组mask逻辑不考虑场景，是从bitmask结果的误差推导组mask逻辑的
 
 假设这是本来的组mask逻辑
 
@@ -778,7 +778,7 @@ for i in range(numel // 8):
 而在同一场景下，shape为(3，X，X，X)时，vimdiff结果为
 ![image](../../images/user_guide/bitmask2.png)
 
-由此感知，当shape为(A, X, X, X)时，上述场景的切分逻辑是按首轴(即`A`)处理，错误的组mask逻辑导致只有首轴的首个切分精度对齐，而剩下的有(A-1)/A的数据则有偏差，如此，精度验证的标杆组mask逻辑就需要考虑A了，见以下代码：
+由此感知，当shape为(A, X, X, X)时，上述场景的切分逻辑是按首轴（即`A`）处理，错误的组mask逻辑导致只有首轴的首个切分精度对齐，而剩下的有(A-1)/A的数据则有偏差，如此，精度验证的标杆组mask逻辑就需要考虑A了，见以下代码：
 
 ```python
 for sub_A in range(A):

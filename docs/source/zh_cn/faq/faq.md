@@ -78,7 +78,7 @@ bishengir-compile input.mlir -enable-hivm-compile -o kernel.o
 torch_npu.profiler.profile
 是昇腾AI处理器上用于PyTorch训练/推理任务性能分析的核心API接口。它的主要功能是采集并解析模型运行时的性能数据，帮助开发者定位瓶颈并进行优化
 
-核心功能与定位:
+核心功能与定位：
 该接口通过代码注入的方式，在模型执行过程中全面采集CPU和NPU（昇腾AI处理器）的性能数据。采集的数据非常丰富，主要包括：
 PyTorch层信息：框架侧算子调用、内存占用、调用栈等。
 CANN层信息：昇腾计算语言接口层的调度和执行情况。
@@ -190,7 +190,7 @@ func.func @test_normalize_rec_i32_to_f32(%arg0 : tensor<1x2xi32>) -> tensor<1x2x
 }
 ```
 
-单独执行 hfusion-normalize-ops pass 后:
+单独执行 hfusion-normalize-ops pass 后：
 
 ```c++
 // after hfusion-normalize-ops
@@ -217,8 +217,8 @@ module {
 
 为什么会有精度损失？
 计算机使用二进制表示小数，很多十进制小数（如 0.1）无法被有限长度的二进制精确表示，只能取近似值。float32 和 float64 的精度差异巨大：
-float32 (单精度)：约 7 位有效数字。内存占用 4 字节。
-float64 (双精度)：约 15-16 位有效数字。内存占用 8 字节。
+float32（单精度）：约 7 位有效数字。内存占用 4 字节。
+float64（双精度）：约 15-16 位有效数字。内存占用 8 字节。
 
 为什么需要三方对比？
 CPU (float64)：作为参考基准，提供最高精度的计算结果。

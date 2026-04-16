@@ -2,7 +2,7 @@
 
 ## Hardware background
 
-This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Ascend 910B: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
+This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Altas A2/A3: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
 
 ### Terms and background (read first)
 
@@ -26,9 +26,9 @@ Most CV passes run in the **pre-bufferization** phase (`hivmPreBufferizationOpti
 
 ### Architecture
 
-Ascend 910B NPU uses a heterogeneous architecture with:
+Ascend NPU uses a heterogeneous architecture with:
 
-| Component | Description | Typical (910B1) |
+| Component | Description | Typical (Example) |
 |-----------|-------------|------------------|
 | **Cube** | Matrix unit; runs `mmadL1`, `batchMmadL1`, etc. | 24 AI Cores |
 | **Vector** | Vector unit; runs `vadd`, `vcast`, `vreduce`, etc. | 48 AI Cores |
@@ -197,7 +197,7 @@ func.func @bind_workspace_arg(
 - **Goal**: On a given workspace base, assign offsets by liveness and inplace rules to maximize reuse and minimize total workspace size.
 - **Typical transforms**: Multiple alloc_workspace mapped to different offsets in the same workspace; conflicting buffers get different offsets.
 
-Before：
+Before:
 
 ```mlir
 func.func @bind_workspace_arg(
@@ -208,7 +208,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-After：
+After:
 
 ```mlir
 func.func @bind_workspace_arg(
@@ -226,7 +226,7 @@ func.func @bind_workspace_arg(
 - **Goal**: The backend can schedule AIC/AIV to Cube/Vector cores separately for pipelining and sync.
 - **Typical transforms**: Traverse IR by core type; put Cube code in AIC and Vector in AIV; use `annotation.mark` for tensors passed across cores.
 
-before：
+before:
 
 ```mlir
 func.func @bind_workspace_arg(
@@ -241,7 +241,7 @@ func.func @bind_workspace_arg(
 }
 ```
 
-after：
+after:
 
 ```mlir
 func.func @bind_workspace_arg_aic(
