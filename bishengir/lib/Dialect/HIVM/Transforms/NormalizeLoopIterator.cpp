@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -195,6 +196,40 @@ bool existIterArgUseAfterYieldValInit(Value iterArg, Operation *yieldInit) {
   return false;
 }
 
+void replaceReturnValueByIterArg(scope::ScopeOp &scopeOp,
+                                 PatternRewriter &rewriter, size_t index,
+                                 Value iterArg, Value originYield) {
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+  rewriter.setInsertionPoint(returnOp);
+  size_t resultIndex = 0;
+  for (size_t i = 0; i < scopeOp.getNumResults(); ++i) {
+    if (scopeOp.getResult(i) == originYield) {
+      resultIndex = i;
+      break;
+    }
+  }
+  Value originReturn = returnOp.getOperand(resultIndex);
+  rewriter.create<hivm::CopyOp>(scopeOp->getLoc(), TypeRange{},
+                                /*src*/ originReturn, /*dst*/ iterArg);
+  assert(returnOp.getNumOperands() != 0);
+  rewriter.modifyOpInPlace(
+      returnOp, [&]() { returnOp.setOperand(resultIndex, iterArg); });
+}
+
+void replaceLoopYieldValueByIterArg(PatternRewriter &rewriter,
+                                    LoopLikeOpInterface &loopOp, size_t index,
+                                    Value iterArg, Value originYield) {
+  rewriter.setInsertionPoint(
+      loopOp.getLoopRegions()[0]->front().getTerminator());
+  rewriter.create<hivm::CopyOp>(loopOp->getLoc(), TypeRange{},
+                                /*src*/ originYield, /*dst*/ iterArg);
+  assert(loopOp.getYieldedValuesMutable().has_value());
+  rewriter.modifyOpInPlace(loopOp, [&]() {
+    loopOp.getYieldedValuesMutable().value()[index].assign(iterArg);
+  });
+}
+
 class NormalizeIterUseAfterYieldInit
     : public OpInterfaceRewritePattern<LoopLikeOpInterface> {
   using OpInterfaceRewritePattern<
@@ -239,18 +274,15 @@ class NormalizeIterUseAfterYieldInit
     if (candidate.empty())
       return failure();
 
-    rewriter.setInsertionPoint(
-        loopOp.getLoopRegions()[0]->front().getTerminator());
     for (auto index : candidate) {
-      Value iterArg = iterArgs[index];
-      Value originYield = yieldVals[index];
-      rewriter.create<hivm::CopyOp>(loopOp->getLoc(), TypeRange{},
-                                    /*src*/ originYield, /*dst*/ iterArg);
-
-      assert(loopOp.getYieldedValuesMutable().has_value());
-      rewriter.modifyOpInPlace(loopOp, [&]() {
-        loopOp.getYieldedValuesMutable().value()[index].assign(iterArg);
-      });
+      if (auto scopeOp =
+              dyn_cast<scope::ScopeOp>(yieldVals[index].getDefiningOp())) {
+        replaceReturnValueByIterArg(scopeOp, rewriter, index, iterArgs[index],
+                                    yieldVals[index]);
+        continue;
+      }
+      replaceLoopYieldValueByIterArg(rewriter, loopOp, index, iterArgs[index],
+                                     yieldVals[index]);
     }
     return success();
   }
