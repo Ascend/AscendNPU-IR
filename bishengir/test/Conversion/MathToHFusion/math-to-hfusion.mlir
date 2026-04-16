@@ -90,6 +90,18 @@ func.func @test_acos(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
   return %0 : tensor<10x20xf32>
 }
 
+// -----
+
+// CHECK-LABEL: func @test_asin
+// CHECK-SAME: (%[[ARG:.*]]: tensor<10x20xf32>) -> tensor<10x20xf32>
+func.func @test_asin(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
+  // CHECK: %[[DEST:.*]] = tensor.empty
+  // CHECK: %[[ASIN:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<asin>} ins(%[[ARG]] : tensor<10x20xf32>) outs(%[[DEST]] : tensor<10x20xf32>)
+  // CHECK: return %[[ASIN]]
+  %0 = math.asin %arg0 : tensor<10x20xf32>
+  return %0 : tensor<10x20xf32>
+}
+
 
 // -----
 

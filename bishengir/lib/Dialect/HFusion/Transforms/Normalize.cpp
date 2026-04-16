@@ -812,6 +812,159 @@ private:
   }
 };
 
+/// asin(x)
+/// 1. x_in = |a|<0.5 ? |a| : sqrt((1-|a|)/2)
+/// 2. t = x_in², Horner P(t), asin_x = x_in + x_in*t*P
+/// 3. |a|<0.5: result = asin_x
+///    |a|>=0.5: result = π/2 - 2*asin_x
+/// 4. result = sign(a) * result
+struct NormalizeAsinOp : public NormalizeInvTrigBase {
+  using NormalizeInvTrigBase::NormalizeInvTrigBase;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::asin) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+    bool isF16 = inTy.isF16();
+
+    if (isF16) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    // -------------------------------------------------------------
+    // Pre-computation for polynomial
+    // -------------------------------------------------------------
+    Value xAbs, isSmall, xIn;
+    std::tie(xAbs, isSmall, xIn) = preprocess(rewriter, loc, input);
+
+    // -------------------------------------------------------------
+    // Polynomial approximation for asin(x)
+    // -------------------------------------------------------------
+    Value asinX = calculateAsinApproximation(rewriter, loc, xIn);
+
+    // -------------------------------------------------------------
+    // Combine results based on input ranges
+    // -------------------------------------------------------------
+    Value result = combine(rewriter, loc, input, asinX, isSmall);
+
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  // Pre-process input: calculate |a|, isSmall condition, and x_in for poly
+  std::tuple<Value, Value, Value> preprocess(PatternRewriter &rewriter,
+                                             Location loc, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // |a|
+    Value xAbs =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
+    // z = (1 - |a|) * 0.5
+    Value oneMinusAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, 1.0f), xAbs}, empty)
+            ->getResult(0);
+    Value z = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                      linalg::BinaryFn, linalg::BinaryFnAttr>(
+                  rewriter, loc, linalg::BinaryFn::mul,
+                  ValueRange{oneMinusAbs, f32Const(rewriter, loc, 0.5f)}, empty)
+                  ->getResult(0);
+    // s = sqrt(z)
+    Value s = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                     hfusion::UnaryFnAttr>(
+                  rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z}, empty)
+                  ->getResult(0);
+    // isSmall = |a| < 0.5
+    Value isSmall = createCmpOp(rewriter, loc, xAbs,
+                                f32Const(rewriter, loc, 0.5f), CompareFn::vlt)
+                        ->getResult(0);
+    // x_in = isSmall ? |a| : s
+    Value xIn = createSelect(rewriter, loc, isSmall, xAbs, s);
+    return std::make_tuple(xAbs, isSmall, xIn);
+  }
+
+  // Calculate asin(x_in) ≈ x_in + x_in*t*P(t), where t = x_in²
+  Value calculateAsinApproximation(PatternRewriter &rewriter, Location loc,
+                                   Value xIn) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xIn);
+    // t = x_in * x_in
+    Value t =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, xIn}, empty)
+            ->getResult(0);
+    // Horner: p = P(t)
+    Value p = calculateHornerPolyP(rewriter, loc, t);
+    // x_in * t
+    Value xT =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, t}, empty)
+            ->getResult(0);
+    // x_in * t * P
+    Value xTP =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xT, p}, empty)
+            ->getResult(0);
+    // asin_x = x_in + x_in*t*P
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{xIn, xTP},
+               empty)
+        ->getResult(0);
+  }
+
+  // Combine results for the two cases of asin and apply sign
+  Value combine(PatternRewriter &rewriter, Location loc, Value input,
+                Value asinX, Value isSmall) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // 2 * asin_x
+    Value twoAsinX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{asinX, f32Const(rewriter, loc, 2.0f)}, empty)
+            ->getResult(0);
+    // π/2 - 2*asin_x
+    Value bigResult =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, trig::PI_O_2), twoAsinX}, empty)
+            ->getResult(0);
+    // resultAbs = isSmall ? asin_x : bigResult
+    Value resultAbs = createSelect(rewriter, loc, isSmall, asinX, bigResult);
+    // Apply sign: result = a < 0 ? -resultAbs : resultAbs
+    Value negResultAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{resultAbs, f32Const(rewriter, loc, -1.0f)}, empty)
+            ->getResult(0);
+    Value isNeg = createCmpOp(rewriter, loc, input,
+                              f32Const(rewriter, loc, 0.0f), CompareFn::vlt)
+                      ->getResult(0);
+    return createSelect(rewriter, loc, isNeg, negResultAbs, resultAbs);
+  }
+};
+
 /// normalize the specific cmp pattern to cast op in the non-bool scenario.
 /// eg.
 ///  scalar = const 0
@@ -6294,6 +6447,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   populateNormalizeF16ToF32Patterns(patterns);
   patterns.add<NormalizeSinOp>(patterns.getContext());
   patterns.add<NormalizeCosOp>(patterns.getContext());
+  patterns.add<NormalizeAsinOp>(patterns.getContext());
   patterns.add<NormalizeAcosOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
   patterns.add<NormalizeTanOp>(patterns.getContext());
