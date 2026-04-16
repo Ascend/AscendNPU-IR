@@ -440,7 +440,7 @@ y = transpose(x)
 - **现象** 导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
 - **写法样例**
 改写算子时，只需在load/store操作的数据上加上`compile_hint`即可，参考以下代码段：
-triton-adaptor 3.2.0之前的版本
+triton-ascend 3.2.0之前的版本
 
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
@@ -452,7 +452,7 @@ tl.compile_hint(value, "mayDiscretememaccess")
 tl.store(pointer, value)
 ```
 
-triton-adaptor 3.4.0之后的版本需要改成
+triton-ascend 3.4.0之后的版本需要改成
 
 ```python
 # 若为load操作，compile_hint需加在加载出的value中
@@ -700,9 +700,9 @@ tl.compile_hint(cond, "bitwise_mask")
 ```{note}
 使用 compile_hint 需要注意本地的 TA 版本。
 
-triton-adaptor 3.2.0之前的版本: tl.compile_hint(cond, "bitwise_mask")
+triton-ascend 3.2.0之前的版本: tl.compile_hint(cond, "bitwise_mask")
 
-triton-adaptor 3.4.0 之后的版本需要改成: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
+triton-ascend 3.4.0 之后的版本需要改成: tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
 
 bitmask 功能 cann9.0 之后的版本才有，因此需要下载 cann.9.0 之后的版本。
 ```
@@ -733,9 +733,9 @@ def triton_where_lt_case1(in_ptr0, in_ptr1, cond_ptr, out_ptr0, xnumel, XBLOCK: 
         in1 = tl.load(in_ptr1 + xindex, xmask)
         cond = tl.load(cond_ptr + xindex, xmask)
         res = tl.where(cond, in1, in0)
-        # versions after triton-adaptor 3.4.0
+        # versions after triton-ascend 3.4.0
         # tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")
-        # versions before triton-adaptor 3.2.0
+        # versions before triton-ascend 3.2.0
         tl.compile_hint(cond, "bitwise_mask")
         tl.store(out_ptr0 + (xindex), res, xmask)
 
@@ -826,9 +826,9 @@ def triton_bitmask(in_ptr0, in_ptr1, cond_ptr, out_ptr0,
     cond = tl.load(cond_ptr + offset)
     # bitwise where and store
     mask = tl.where(cond, in0, in1)
-    # versions after triton-adaptor 3.4.0
+    # versions after triton-ascend 3.4.0
     # tl.extra.cann.extension.compile_hint(mask, "bitwise_mask")
-    # versions before triton-adaptor 3.2.0
+    # versions before triton-ascend 3.2.0
     tl.compile_hint(mask, "bitwise_mask")
     tl.store(out_ptr0 + offset, mask)
 
