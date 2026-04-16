@@ -22,7 +22,6 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       // CHECK-CUBE-NOT: memref.alloc
       // CHECK-CUBE-NOT: hivm.hir.load
       // CHECK-CUBE: scf.for
-      // CHECK-CUBE: memref.alloc
       // CHECK-CUBE: hivm.hir.load
 
       // Load B
@@ -120,6 +119,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // -----
 
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  // CHECK-CUBE-LABEL: func @nop
+  // CHECK-VECTOR-LABEL: func @nop
   func.func @nop(%gm_offset: index, %gm_a: memref<?xf16>) {
     %c1 = arith.constant 1 : index
     %c498 = arith.constant 498 : index
@@ -129,9 +130,41 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %c64 = arith.constant 64 : index
     %gm_a_tile = memref.reinterpret_cast %gm_a to offset: [%gm_offset], sizes: [128, 64], strides: [64, 1] : memref<?xf16> to memref<128x64xf16, strided<[64, 1], offset: ?>>
     %a = memref.alloc() : memref<128x64xf16>
+    // CHECK-CUBE-NOT: scf.for
     // CHECK-CUBE: hivm.hir.load
+    // CHECK-VECTOR-NOT: scf.for
     // CHECK-VECTOR: hivm.hir.load
     hivm.hir.load ins(%gm_a_tile : memref<128x64xf16, strided<[64, 1], offset: ?>>) outs(%a : memref<128x64xf16>) init_out_buffer = false
     return
+  }
+}
+
+// -----
+ 	 
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  // CHECK-CUBE-LABEL: func @test_scope
+  // CHECK-VECTOR-LABEL: func @test_scope
+  func.func @test_scope(%lb: index, %ub: index, %gm_b: memref<?xf16>, %gm_offset: index, %gm_src: tensor<4x128x498xf32>, %gm_dst: memref<4x128x498xf16>) -> (tensor<128xf32>) {
+    %c1 = arith.constant 1 : index
+    %accum = tensor.empty() : tensor<128xf32>
+    %res:1 = scope.scope : () -> (tensor<128xf32>) {
+      // CHECK-VECTOR: scf.for
+      // CHECK-VECTOR: hivm.hir.load
+      %empty = tensor.empty() : tensor<128x498xf32>
+      %extracted_slice = tensor.extract_slice %gm_src[%gm_offset, 0, 0] [1, 128, 498] [1, 1, 1] : tensor<4x128x498xf32> to tensor<128x498xf32>
+      %load = hivm.hir.load ins(%extracted_slice : tensor<128x498xf32>) outs(%empty : tensor<128x498xf32>) init_out_buffer = false -> tensor<128x498xf32>
+      %empty1 = tensor.empty() : tensor<128x1xf32>
+      %reduced = hivm.hir.vreduce <max> ins(%load : tensor<128x498xf32>) outs(%empty1 : tensor<128x1xf32>) reduce_dims = [1] -> tensor<128x1xf32>
+      %collapsed = tensor.collapse_shape %reduced [[0, 1]] : tensor<128x1xf32> into tensor<128xf32>
+      %empty2 = tensor.empty() : tensor<128x498xf16>
+      // tensor yields
+      %cast = hivm.hir.vcast ins(%load : tensor<128x498xf32>) outs(%empty2 : tensor<128x498xf16>) -> tensor<128x498xf16>
+      %subview = memref.subview %gm_dst[%gm_offset, 0, 0] [1, 128, 498] [1, 1, 1] : memref<4x128x498xf16> to memref<1x128x498xf16, strided<[63744, 498, 1], offset: ?>>
+      %collapse_shape = memref.collapse_shape %subview [[0, 1], [2]] : memref<1x128x498xf16, strided<[63744, 498, 1], offset: ?>> into memref<128x498xf16, strided<[498, 1], offset: ?>>
+      // memref store
+      hivm.hir.store ins(%cast : tensor<128x498xf16>) outs(%collapse_shape : memref<128x498xf16, strided<[498, 1], offset: ?>>)
+      scope.return %collapsed : tensor<128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>}
+    return %res : tensor<128xf32>
   }
 }

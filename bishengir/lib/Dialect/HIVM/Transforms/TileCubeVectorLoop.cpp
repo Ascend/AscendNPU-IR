@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
@@ -292,10 +293,30 @@ public:
   }
 };
 
+struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
+public:
+  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::AllocOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasOneUse())
+      return failure();
+    auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(*op->user_begin());
+    if (!toTensorOp)
+      return failure();
+    auto tensorType = toTensorOp.getType();
+    rewriter.replaceOpWithNewOp<tensor::EmptyOp>(
+        toTensorOp, tensorType.getShape(), tensorType.getElementType());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 LogicalResult liftMemRefLoadsInLoop(ModuleOp module) {
   MLIRContext *ctx = module.getContext();
   RewritePatternSet patterns(ctx);
   patterns.add<LiftToTensor>(ctx);
+  patterns.add<CanonicalizeAllocToTensor>(ctx);
   return applyPatternsGreedily(module, std::move(patterns));
 }
 
@@ -732,8 +753,9 @@ public:
 private:
   /// Main entry to collect loop information.
   void collectLoopInfo(ModuleOp topLevelModule);
-  LogicalResult collectCubeLoopInfo(scf::ForOp cubeLoop);
-  LogicalResult collectVectorLoopInfo(scf::ForOp vectorLoop);
+  template <typename OpType> WalkResult processCandidateLoop(OpType candidateLoop);
+  template <typename OpType> LogicalResult collectCubeLoopInfo(OpType cubeLoop);
+  template <typename OpType> LogicalResult collectVectorLoopInfo(OpType vectorLoop);
   std::optional<TilingParams> calculateFixpipeTiling(CubeLoopInfo &info) const;
 
   /// Main entry to apply transformation
@@ -785,10 +807,11 @@ tryCollectTilingInfoForStore(hivm::StoreOp storeOp, VectorLoopInfo &info,
 ///   a) the yielded value does not have tensor type.
 ///   b) the yielded value is not produced by a HIVM Structured Op.
 ///   c) dimension analyzer failed to analyze tiling dimension.
+template <typename TerminateType>
 LogicalResult
-tryCollectTilingInfoForYield(scf::YieldOp yieldOp, Value yieldedVal,
-                             VectorLoopInfo &info,
-                             hivm::detail::DimensionAnalyzer &analyzer) {
+tryCollectTilingInfoForTerminate(TerminateType terminateOp, Value yieldedVal,
+                                 VectorLoopInfo &info,
+                                 hivm::detail::DimensionAnalyzer &analyzer) {
   if (!isRankedTensor(yieldedVal.getType())) {
     LDBG("Yielding non-tensor values, skip");
     return failure();
@@ -797,7 +820,7 @@ tryCollectTilingInfoForYield(scf::YieldOp yieldOp, Value yieldedVal,
   // Try to find the immediate HIVM producer
   // Note: Currently we assume that all vector computations are done in
   // tensor.
-  SmallVector<Operation *> trace = {yieldOp, yieldedVal.getDefiningOp()};
+  SmallVector<Operation *> trace = {terminateOp, yieldedVal.getDefiningOp()};
   Operation *tracedProducer =
       traceProducerTo<HIVMStructuredOp>(yieldedVal.getDefiningOp(), trace);
   if (!tracedProducer) {
@@ -975,27 +998,35 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   return result;
 }
 
+template <typename OpType>
+WalkResult TileCubeVectorLoopPass::processCandidateLoop(OpType candidateLoop) {
+  auto maybeLoopCoreType = candidateLoop->template getAttrOfType<hivm::TCoreTypeAttr>(
+      hivm::kPipelinedLoopCoreTypeAttrName);
+
+  if (!maybeLoopCoreType)
+    return WalkResult::advance();
+
+  // No need to walk inside loop.
+  if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::CUBE) {
+    LDBG("Collecting cube loop info");
+    (void)collectCubeLoopInfo(candidateLoop);
+    return WalkResult::skip();
+  }
+  if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::VECTOR) {
+    LDBG("Collecting vector loop info");
+    (void)collectVectorLoopInfo(candidateLoop);
+    return WalkResult::skip();
+  }
+
+  return WalkResult::advance();
+}
+
 void TileCubeVectorLoopPass::collectLoopInfo(ModuleOp topLevelModule) {
   topLevelModule->walk([this](scf::ForOp candidateLoop) {
-    auto maybeLoopCoreType = candidateLoop->getAttrOfType<hivm::TCoreTypeAttr>(
-        hivm::kPipelinedLoopCoreTypeAttrName);
-
-    if (!maybeLoopCoreType)
-      return WalkResult::advance();
-
-    // No need to walk inside loop.
-    if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::CUBE) {
-      LDBG("Collecting cube loop info");
-      (void)collectCubeLoopInfo(candidateLoop);
-      return WalkResult::skip();
-    }
-    if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::VECTOR) {
-      LDBG("Collecting vector loop info");
-      (void)collectVectorLoopInfo(candidateLoop);
-      return WalkResult::skip();
-    }
-
-    return WalkResult::advance();
+    return processCandidateLoop(candidateLoop);
+  });
+  topLevelModule->walk([this](scope::ScopeOp candidateLoop) {
+    return processCandidateLoop(candidateLoop);
   });
 }
 
@@ -1042,8 +1073,9 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
 /// ```
 /// Note that the yielded values may not be stored. So we have to tile
 /// both the store and the yielded values.
+template <typename OpType>
 LogicalResult
-TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
+TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
   VectorLoopInfo info(loopsToTile.size(),
                       static_cast<int64_t>(this->tiledMixVectorLoopNumber));
   if (info.getTripCount() == 1)
@@ -1090,15 +1122,18 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
     return vectorLoop.emitOpError("Failed to collect vector loop tiling info");
 
   // Visit yield op next because it will generate dummy store op
-  auto yieldOp = dyn_cast<scf::YieldOp>(vectorLoop.getBody()->getTerminator());
-  if (!yieldOp)
-    llvm_unreachable("scf.for must have a scf.yield terminator");
-
-  for (auto yieldedVal : yieldOp.getOperands())
-    if (failed(
-            tryCollectTilingInfoForYield(yieldOp, yieldedVal, info, analyzer)))
-      return vectorLoop.emitOpError(
-          "Failed to collect vector loop tiling info");
+  if (!isa<scf::ForOp>(vectorLoop) && !isa<scope::ScopeOp>(vectorLoop)) {
+    return vectorLoop.emitOpError(
+            "Collect vector loop tiling info only support ForOp and ScopeOp.");
+  } else {
+    auto terminateOp = vectorLoop.getBody()->getTerminator();
+    for (auto terminateOpVal : terminateOp->getOperands()) {
+      if (failed(tryCollectTilingInfoForTerminate(terminateOp, terminateOpVal, info,
+                                                  analyzer)))
+        return vectorLoop.emitOpError(
+            "Failed to collect vector loop tiling info");
+    }
+  }
 
   if (info.getOpTileInfo().empty())
     return failure();
@@ -1109,7 +1144,8 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
   return success();
 }
 
-std::optional<int64_t> getMixCubeLoopNumber(scf::ForOp cubeLoop, CubeLoopInfo &info) {
+template <typename OpType>
+std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop, CubeLoopInfo &info) {
   std::optional<int64_t> tileCubeLoopNum;
   cubeLoop->walk([&tileCubeLoopNum](hivm::MmadL1Op op) {
     if (op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
@@ -1139,7 +1175,8 @@ std::optional<int64_t> getMixCubeLoopNumber(scf::ForOp cubeLoop, CubeLoopInfo &i
 /// }
 /// ```
 /// Note that the load of matrix A/B are not necessarily in the loop.
-LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(scf::ForOp cubeLoop) {
+template <typename OpType>
+LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
   CubeLoopInfo info(loopsToTile.size(),
                     static_cast<int64_t>(this->tiledMixCubeLoopNumber));
   if (info.getTripCount() == 1)
