@@ -80,6 +80,19 @@ func.func @test_cos(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
 
 // -----
 
+// CHECK-LABEL: func @test_acos
+// CHECK-SAME: (%[[ARG:.*]]: tensor<10x20xf32>) -> tensor<10x20xf32>
+func.func @test_acos(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
+  // CHECK: %[[DEST:.*]] = tensor.empty
+  // CHECK: %[[ACOS:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<acos>} ins(%[[ARG]] : tensor<10x20xf32>) outs(%[[DEST]] : tensor<10x20xf32>)
+  // CHECK: return %[[ACOS]]
+  %0 = math.acos %arg0 : tensor<10x20xf32>
+  return %0 : tensor<10x20xf32>
+}
+
+
+// -----
+
 // CHECK-LABEL: func.func @test_erf
 func.func @test_erf(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()

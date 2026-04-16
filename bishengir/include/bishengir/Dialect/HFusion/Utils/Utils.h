@@ -342,6 +342,22 @@ const float COS_PI_DOWN = 1.57079637050628662e+00f;
 const float COS_PI_RESDOWN_ADDS_NEG = -4.37113900018937e-08f;
 const float COS_CLIP_LOW = -1.0f;
 const float COS_CLIP_HIGH = 1.0f;
+
+/// Add constants for acos/asin
+const float PI = 3.14159265358979323846f;
+const float PI_O_2 = 1.57079632679489661923f;
+
+// Minimax polynomial for asin/acos
+// Single polynomial P(t), both branches share same coefficients.
+// Preprocess: x_in = |a|<0.5 ? |a| : sqrt((1-|a|)/2)
+// t = x_in² always in [0, 0.25]
+// P(t) = P0 + t*(P1 + t*P2), (asin(√t)-√t)/t^1.5 on [0,0.25]
+// asin(x_in) = x_in + x_in*t*P(t)
+// max |error| < 5.6e-6
+// Note: asin and acos share the SAME polynomial
+const float INVTRIG_P0 = 0.16668899232596927f;
+const float INVTRIG_P1 = 0.073496900982905745f;
+const float INVTRIG_P2 = 0.059274584886282809f;
 } // namespace trig
 } // namespace hfusion
 } // namespace mlir
