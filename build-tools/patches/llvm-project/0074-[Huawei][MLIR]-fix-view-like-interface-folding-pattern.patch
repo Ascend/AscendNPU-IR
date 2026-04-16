@@ -1,0 +1,15 @@
+diff --git a/mlir/include/mlir/Interfaces/ViewLikeInterface.h b/mlir/include/mlir/Interfaces/ViewLikeInterface.h
+index 505d4479631e..c7aa3f7eb41d 100644
+--- a/mlir/include/mlir/Interfaces/ViewLikeInterface.h
++++ b/mlir/include/mlir/Interfaces/ViewLikeInterface.h
+@@ -90,6 +90,10 @@ public:
+     auto newOp =
+         rewriter.create<OpType>(op.getLoc(), resultType, op.getSource(),
+                                 mixedOffsets, mixedSizes, mixedStrides);
++    for (auto attr : op->getAttrs()) {
++      if (!newOp->hasAttr(attr.getName()))
++        newOp->setAttr(attr.getName(), attr.getValue());
++    }
+     CastOpFunc()(rewriter, op, newOp);
+ 
+     return success();
