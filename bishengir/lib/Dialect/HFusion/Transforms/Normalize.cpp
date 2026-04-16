@@ -965,6 +965,231 @@ private:
   }
 };
 
+
+/// acosh(x)
+/// Three-path piecewise implementation for x >= 1:
+/// 1. x >= 1e8 (large): acosh(x) ≈ log(x) + log(2)
+/// 2. 2 <= x < 1e8 (medium): acosh(x) = log(x + sqrt((x-1)(x+1)))
+/// 3. 1 <= x < 2 (small): acosh(x) = log1p(z + sqrt(z²+2z)), where z=x-1
+/// Handles domain errors (x < 1 -> NaN) and boundary (x=1 -> 0).
+struct NormalizeAcoshOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::acosh) {
+      return failure();
+    }
+
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+
+    // FP16 -> FP32 for precision
+    if (inTy.isF16()) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    Location loc = op.getLoc();
+    Value finalRes = calculateAcosh(rewriter, loc, input);
+
+    // FP32 -> FP16
+    if (inTy.isF16()) {
+      finalRes = hfusion::castTo(rewriter, finalRes, rewriter.getF16Type(),
+                                 hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, finalRes);
+    return success();
+  }
+
+private:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f, Value init) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(init), ValueRange{cond, t, f},
+                                   ValueRange(init))
+        ->getResult(0);
+  }
+
+  // Path 1: x >= 1e8, acosh(x) ~= log(x) + log(2)
+  Value pathLarge(PatternRewriter &rewriter, Location loc, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    Value log2 = f32Const(rewriter, loc, 0.69314718056f); // M_LN2
+    // log(x)
+    Value logX =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::log, ValueRange{input}, empty)
+            ->getResult(0);
+    // log(x) + log(2)
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{logX, log2},
+               empty)
+        ->getResult(0);
+  }
+
+  // Path 2: 2.0 <= x < 1e8, acosh(x) = log(x + sqrt((x - 1)(x + 1)))
+  Value pathMedium(PatternRewriter &rewriter, Location loc, Value input,
+                   Value one) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // x - 1
+    Value xMinus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub, ValueRange{input, one}, empty)
+            ->getResult(0);
+    // x + 1
+    Value xPlus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{input, one}, empty)
+            ->getResult(0);
+    // (x-1)*(x+1)
+    Value termMedium =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xMinus1, xPlus1},
+            empty)
+            ->getResult(0);
+    // sqrt(...)
+    Value sqrtMedium =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{termMedium},
+            empty)
+            ->getResult(0);
+    // x + sqrt(...)
+    Value argMedium =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{input, sqrtMedium},
+            empty)
+            ->getResult(0);
+    // log(...)
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, linalg::UnaryFn::log, ValueRange{argMedium},
+               empty)
+        ->getResult(0);
+  }
+
+  // Path 3: 1 <= x < 2.0, acosh(x) = log1p(z + sqrt(z*z + 2z)) where z = x-1
+  Value pathSmall(PatternRewriter &rewriter, Location loc, Value xMinus1,
+                  Value two) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xMinus1);
+    Value z = xMinus1;
+    // z*z
+    Value zSq =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{z, z}, empty)
+            ->getResult(0);
+    // 2*z
+    Value twoZ =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{two, z}, empty)
+            ->getResult(0);
+    // z^2 + 2z
+    Value innerSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{zSq, twoZ}, empty)
+            ->getResult(0);
+    // sqrt(...)
+    Value sqrtSmall =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{innerSmall},
+            empty)
+            ->getResult(0);
+    // z + sqrt(...)
+    Value argSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{z, sqrtSmall},
+            empty)
+            ->getResult(0);
+    // log1p(...)
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{argSmall},
+               empty)
+        ->getResult(0);
+  }
+
+  // Main calculation logic for acosh
+  Value calculateAcosh(PatternRewriter &rewriter, Location loc,
+                       Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // Constants
+    Value one = f32Const(rewriter, loc, 1.0f);
+    Value two = f32Const(rewriter, loc, 2.0f);
+    Value largeThresh = f32Const(rewriter, loc, 1.0e8f);
+
+    // -------------------------------------------------------------
+    // Path 1: x >= 1e8
+    // -------------------------------------------------------------
+    Value resLarge = pathLarge(rewriter, loc, input);
+
+    // -------------------------------------------------------------
+    // Path 2: 2.0 <= x < 1e8
+    // -------------------------------------------------------------
+    Value resMedium = pathMedium(rewriter, loc, input, one);
+
+    // -------------------------------------------------------------
+    // Path 3: 1 <= x < 2.0
+    // -------------------------------------------------------------
+    Value xMinus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub, ValueRange{input, one}, empty)
+            ->getResult(0);
+    Value resSmall = pathSmall(rewriter, loc, xMinus1, two);
+
+    // -------------------------------------------------------------
+    // Combine Results
+    // -------------------------------------------------------------
+    // x >= 2.0 ?
+    Value condMedium =
+        createCmpOp(rewriter, loc, input, two, CompareFn::vge)->getResult(0);
+    Value res1 =
+        createSelect(rewriter, loc, condMedium, resMedium, resSmall, empty);
+    // x >= 1e8 ?
+    Value condLarge =
+        createCmpOp(rewriter, loc, input, largeThresh, CompareFn::vge)
+            ->getResult(0);
+    Value resultAbs =
+        createSelect(rewriter, loc, condLarge, resLarge, res1, empty);
+
+    // -------------------------------------------------------------
+    // Handle Domain Error (x < 1.0) and Exact 1.0
+    // -------------------------------------------------------------
+    Value nanVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32Type(),
+        rewriter.getFloatAttr(rewriter.getF32Type(),
+                              std::numeric_limits<float>::quiet_NaN()));
+    Value condDomain =
+        createCmpOp(rewriter, loc, input, one, CompareFn::vlt)->getResult(0);
+    Value resWithNan =
+        createSelect(rewriter, loc, condDomain, nanVal, resultAbs, empty);
+
+    Value zero = f32Const(rewriter, loc, 0.0f);
+    Value condOne =
+        createCmpOp(rewriter, loc, input, one, CompareFn::veq)->getResult(0);
+    return createSelect(rewriter, loc, condOne, zero, resWithNan, empty);
+  }
+};
+
 /// normalize the specific cmp pattern to cast op in the non-bool scenario.
 /// eg.
 ///  scalar = const 0
@@ -6893,6 +7118,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeCosOp>(patterns.getContext());
   patterns.add<NormalizeAsinOp>(patterns.getContext());
   patterns.add<NormalizeAcosOp>(patterns.getContext());
+  patterns.add<NormalizeAcoshOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
   patterns.add<NormalizeAtan2Op>(patterns.getContext());
   patterns.add<NormalizeTanOp>(patterns.getContext());

@@ -996,6 +996,77 @@ func.func @test_hfusion_acos_ops(%arg0 : tensor<32xf32>) -> tensor<32xf32> {
   return %1 : tensor<32xf32>
 }
 
+// -----
+// CHECK-LABEL: func.func @test_hfusion_acosh_ops(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<32xf32>) -> tensor<32xf32> {
+// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG: %[[NAN:.*]] = arith.constant 0x7FC00000 : f32
+// CHECK-DAG: %[[LOG2:.*]] = arith.constant 0.693147182 : f32
+// CHECK-DAG: %[[LARGE_THRESH:.*]] = arith.constant 1.000000e+08 : f32
+// CHECK-DAG: %[[TWO:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK-DAG: %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
+
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<32xf32>
+
+// Path 1: x >= 1e8
+// log(x) + log(2)
+// CHECK: %[[LOG_X:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[ARG0]] : tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// CHECK: %[[RES_LARGE:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[LOG_X]], %[[LOG2]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xf32>)
+
+// Path 2: 2.0 <= x < 1e8
+// x - 1
+// CHECK: %[[X_MINUS_1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ONE]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xf32>)
+// x + 1
+// CHECK: %[[X_PLUS_1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0]], %[[ONE]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xf32>)
+// term = (x-1)*(x+1)
+// CHECK: %[[TERM_MED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[X_MINUS_1]], %[[X_PLUS_1]] : tensor<32xf32>, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// sqrt(term)
+// CHECK: %[[SQRT_MED:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[TERM_MED]] : tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// x + sqrt
+// CHECK: %[[ARG_MED:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG0]], %[[SQRT_MED]] : tensor<32xf32>, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// log(...)
+// CHECK: %[[RES_MED:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[ARG_MED]] : tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+
+// Path 3: 1 <= x < 2.0
+// z = x - 1
+// CHECK: %[[Z:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[ARG0]], %[[ONE]] : tensor<32xf32>, f32) outs(%[[EMPTY]] : tensor<32xf32>)
+// z*z
+// CHECK: %[[Z_SQ:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[Z]], %[[Z]] : tensor<32xf32>, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// 2*z
+// CHECK: %[[TWO_Z:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[TWO]], %[[Z]] : f32, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// z^2 + 2z
+// CHECK: %[[INNER_SMALL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[Z_SQ]], %[[TWO_Z]] : tensor<32xf32>, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// sqrt(...)
+// CHECK: %[[SQRT_SMALL:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[INNER_SMALL]] : tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// z + sqrt(...)
+// CHECK: %[[ARG_SMALL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[Z]], %[[SQRT_SMALL]] : tensor<32xf32>, tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+// log1p(argSmall) -> log(argSmall + 1)
+// CHECK: %[[ARG_SMALL_PLUS_1:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[ARG_SMALL]], %[[ONE]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xf32>)
+// CHECK: %[[RES_SMALL:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%[[ARG_SMALL_PLUS_1]] : tensor<32xf32>) outs(%{{.*}} : tensor<32xf32>)
+
+// Combine Results
+// x >= 2.0 ?
+// CHECK: %[[COND_MED:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[ARG0]], %[[TWO]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xi1>)
+// CHECK: %[[RES1:.*]] = hfusion.select ins(%[[COND_MED]], %[[RES_MED]], %[[RES_SMALL]] : tensor<32xi1>, tensor<32xf32>, tensor<32xf32>) outs(%[[EMPTY]] : tensor<32xf32>)
+
+// x >= 1e8 ?
+// CHECK: %[[COND_LARGE:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vge>} ins(%[[ARG0]], %[[LARGE_THRESH]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xi1>)
+// CHECK: %[[RES_ABS:.*]] = hfusion.select ins(%[[COND_LARGE]], %[[RES_LARGE]], %[[RES1]] : tensor<32xi1>, tensor<32xf32>, tensor<32xf32>) outs(%[[EMPTY]] : tensor<32xf32>)
+
+// Domain Error: x < 1.0
+// CHECK: %[[COND_DOMAIN:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%[[ARG0]], %[[ONE]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xi1>)
+// CHECK: %[[RES_NAN:.*]] = hfusion.select ins(%[[COND_DOMAIN]], %[[NAN]], %[[RES_ABS]] : tensor<32xi1>, f32, tensor<32xf32>) outs(%[[EMPTY]] : tensor<32xf32>)
+
+// Exact 1.0: x == 1.0
+// CHECK: %[[COND_ONE:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[ARG0]], %[[ONE]] : tensor<32xf32>, f32) outs(%{{.*}} : tensor<32xi1>)
+// CHECK: %[[FINAL:.*]] = hfusion.select ins(%[[COND_ONE]], %[[ZERO]], %[[RES_NAN]] : tensor<32xi1>, f32, tensor<32xf32>) outs(%[[EMPTY]] : tensor<32xf32>)
+// CHECK: return %[[FINAL]] : tensor<32xf32>
+// CHECK: }
+func.func @test_hfusion_acosh_ops(%arg0 : tensor<32xf32>) -> tensor<32xf32> {
+  %0 = tensor.empty() : tensor<32xf32>
+  %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<acosh>} ins(%arg0 : tensor<32xf32>) outs(%0 : tensor<32xf32>) -> tensor<32xf32>
+  return %1 : tensor<32xf32>
+}
 
 // -----
 // CHECK-LABEL: func.func @test_hfusion_cos_ops(
