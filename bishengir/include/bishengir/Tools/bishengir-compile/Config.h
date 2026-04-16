@@ -480,6 +480,14 @@ public:
     return disableReorderInstructionFlag;
   }
 
+  BiShengIRCompileMainConfig &disableSinkDPXLoad(bool disable) {
+    disableSinkDPXLoadFlag = disable;
+    return *this;
+  }
+  bool getDisableSinkDPXLoad() const {
+    return disableSinkDPXLoadFlag;
+  }
+
   BiShengIRCompileMainConfig &enableSimtReorderInstruction(bool enable) {
     enableSimtReorderInstructionFlag = enable;
     return *this;
@@ -1073,6 +1081,9 @@ protected:
 
   /// Disable reorder instruction
   bool disableReorderInstructionFlag{false};
+
+  /// Disable sink DPX load
+  bool disableSinkDPXLoadFlag{false};
 
   /// Enable SIMT reorder instruction pattern
   bool enableSimtReorderInstructionFlag{false};

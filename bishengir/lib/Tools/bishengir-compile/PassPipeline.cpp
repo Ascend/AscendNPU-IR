@@ -217,6 +217,7 @@ void setupLowerTritonPipelineOptions(
   options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
+  options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedDynamicSize() < 122880 ||

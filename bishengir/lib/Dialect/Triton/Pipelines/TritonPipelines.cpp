@@ -154,6 +154,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(createCSEPass());
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
+  if (!options.disableSinkDPXLoad)
+    pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
   pm.addPass(createCSEPass());
   pm.addPass(bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass());
   pm.addPass(bishengir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass());
