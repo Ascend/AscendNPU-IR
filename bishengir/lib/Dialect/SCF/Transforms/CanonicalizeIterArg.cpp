@@ -88,7 +88,8 @@ static bool isIterArgUnchanged(LoopLikeOpInterface loop, BlockArgument arg,
   equivalenceSet.insert(arg);
   equivalenceSet.insert(initVal);
   Value resultVal = loop.getTiedLoopResult(arg);
-  equivalenceSet.insert(resultVal);
+  if (resultVal)
+    equivalenceSet.insert(resultVal);
 
   // Used to trace within nested scf structures
   SmallVector<Value> dfsStack;
@@ -259,7 +260,7 @@ public:
       Value resultVal = op.getTiedLoopResult(arg);
       // Additional check to make sure we didn't clean this already
       if (yieldVal == initVal) {
-        if (resultVal.use_empty())
+        if (!resultVal || resultVal.use_empty())
           continue;
         resultVal.replaceAllUsesWith(initVal);
         changed = true;
