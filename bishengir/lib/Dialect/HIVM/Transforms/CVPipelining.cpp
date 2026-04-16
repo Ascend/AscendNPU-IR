@@ -388,8 +388,10 @@ void CVPipeliningPass::printWorkList(
 static int getMultibufferCount(annotation::MarkOp marker) {
   auto attrDict = marker->getAttrDictionary();
   hivm::util::validateMultiBufferAttr(attrDict);
-  auto multibufferAttr = llvm::cast_if_present<IntegerAttr>(
+  auto multibufferAttr = llvm::dyn_cast_if_present<IntegerAttr>(
     marker->getAttr(MultiBufferAttr::name));
+  if (!multibufferAttr)
+    return -1;
   return multibufferAttr.getInt();
 }
 
