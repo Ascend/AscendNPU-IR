@@ -205,7 +205,7 @@ int main() {
 ```bash
 # 先加载 CANN 环境（若已写入 shell 配置可省略）；路径以实际安装为准，参见《构建安装》
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-# 配置相应的头文件路径与链接路径, 若 CANN 安装在自定义路径，请将 ASCEND_HOME_PATH 替换为实际路径，或使用 set_env.sh 所设置的环境变量名
+# 配置相应的头文件路径与链接路径，若 CANN 安装在自定义路径，请将 ASCEND_HOME_PATH 替换为实际路径，或使用 set_env.sh 所设置的环境变量名
 RT_INC=${ASCEND_HOME_PATH}/include
 PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
 PKG_INC=${ASCEND_HOME_PATH}/pkg_inc

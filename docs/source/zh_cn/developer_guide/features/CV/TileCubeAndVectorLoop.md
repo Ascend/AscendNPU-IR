@@ -10,7 +10,7 @@
 
 ![Effect of using Tile Cube and Vector Loop](../../../../images/developer_guide/TileCubeAndVectorLoop.png)
 
-对MIX算子中已经完成软件流水（CV Pipelining）的 Cube 循环和 Vector 循环，再做一次Tiling切分，把原来一次迭代干完的一整块计算，拆成多次迭代、每次处理更小的一块。这样做的目的主要有两点：
+对MIX算子中已经完成软件流水（CV Pipelining）的 Cube 循环和 Vector 循环，再做一次Tiling切分，把原来一次迭代完成的一整块计算，拆成多次迭代、每次处理更小的一块。这样做的目的主要有两点：
 
 1. **减少核间同步**：每次迭代处理的数据更小，更可能被限制在本地 buffer（L0C、UB 等）内，从而减少跨核同步的开销。
 2. **增大切分粒度**：在满足硬件约束的前提下，有机会使用更大的 tile size，有利于访存与计算效率：

@@ -19,7 +19,7 @@ func.func @example() -> tensor<1x10x10xf32> {
   return %0 : tensor<1x10x10xf32>
 }
 """
-output_path = "exmaple.o"
+output_path = "example.o"
 options = [
     "-enable-hfusion-compile=true",
     "-enable-triton-kernel-compile",

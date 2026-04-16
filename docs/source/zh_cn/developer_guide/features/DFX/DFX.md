@@ -197,7 +197,7 @@ triton-ascend 产生的 host 侧 launcher调用 bisheng 编译器编好的 kerne
 
 ### 接口说明
 
-通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能，开启后triton ascend侧会设置相关宏信息__CCE_ENABLE_PRINT__，该宏信息在毕昇编译器侧会影响是否开启打印，其次编译meta op库的时候需要开启--cce-enable-print(当前默认一直开启)以确保开启打印
+通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能，开启后triton ascend侧会设置相关宏信息__CCE_ENABLE_PRINT__，该宏信息在毕昇编译器侧会影响是否开启打印，其次编译meta op库的时候需要开启--cce-enable-print（当前默认一直开启）以确保开启打印
 
 ```mlir
 // hfusion op接口
@@ -214,5 +214,5 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 - 仅支持tensor和scalar的打印
 - 当前device_print打印的大小固定为16k
 - 目前triton侧sanitizer和device_print不支持同时开启
-- 打印支持如下数据类型:bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
-- device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印, 防止因为打印的tensor生命周期变化而引起异常
+- 打印支持如下数据类型：bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
+- device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印，防止因为打印的tensor生命周期变化而引起异常

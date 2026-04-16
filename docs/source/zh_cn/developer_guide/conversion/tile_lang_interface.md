@@ -49,7 +49,7 @@ git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 
 运行安装脚本：
 
-> 注意: 如果环境中有gtest头文件但没有gtest的库文件，编译过程可能会引发异常。
+> 注意： 如果环境中有gtest头文件但没有gtest的库文件，编译过程可能会引发异常。
 > 可以通过临时移除环境中的gtest头文件或者添加库文件，或者tvm联合gtest一同编译来进行解决。
 
 ```bash

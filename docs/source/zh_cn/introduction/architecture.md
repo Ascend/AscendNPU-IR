@@ -52,7 +52,7 @@ AscendNPU IR是基于MLIR生态构建的，MLIR原生社区代码是作为third-
     └── torch-mlir
 ```
 
-bishengir目录结构和mlir目录结构保持一致，其中include下存放声明文件，包括C++头文件(.h, .hpp)，TableGen定义文件(.td)，在build构建目录的include下还包含由TableGen自动生成的代码(.h.inc, .cpp.inc)；lib下存放实现代码，包括源文件(.cpp)、私有头文件(仅AscendNPU IR内部使用)，lib目录结构与include目录基本是保持一致的。
+bishengir目录结构和mlir目录结构保持一致：`include`下存放声明文件，包括C++头文件（`.h`, `.hpp`）和TableGen定义文件（`.td`），构建目录`build/include`中包含TableGen自动生成的文件（`.h.inc`, `.cpp.inc`）；`lib`目录存放实现代码（`.cpp`），其目录结构与`include`基本是保持一致。
 
 ```text
 .
@@ -70,7 +70,7 @@ bishengir目录结构和mlir目录结构保持一致，其中include下存放声
 ```
 
 IR中主要由Conversion、Dialect、tools三部分组成，其中Conversion承载不同方言间转换的能力，Dialect下是不同方言的定义和实现，tools目录下定义编译工具链。
-Conversion中既包括三方生态对接转换（如TorchToHFusion）也包括AscendNPU IR内部方言间转换（如HFusionToHIVM）；Dialect下既包括自研方言也包括社区方言（内部是对社区方言的扩展增强）；tools中bishengir-compile是AscendNPU IR编译器的命令行驱动程序。
+Conversion中既包括三方生态对接转换（如TorchToHFusion）也包括AscendNPU IR内部方言间转换（如HFusionToHIVM）；Dialect下既包括自研方言也包括社区方言；tools中bishengir-compile是AscendNPU IR编译器的命令行驱动程序。
 
 ## 编译流程
 
