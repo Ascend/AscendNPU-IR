@@ -1113,6 +1113,15 @@ def HIVM_FuncDynMemrefArgsAttr
   }];
 }
 
+def HIVM_TightlyCoupledBufferAttr
+    : HIVM_Attr<"HIVMTightlyCoupledBuffer", "tightly_coupled_buffer"> {
+  let parameters = (ins OptionalParameter<"std::optional<int32_t>">:$id);
+  let assemblyFormat =  "`<` params `>`";
+  let description = [{
+    HIVM tightly coupled buffer for cv.
+  }];
+}
+
 def HIVM_InsertSliceSourceIndexAttr
     : HIVM_Attr<"InsertSliceSourceIndex", "insert_slice_source_index"> {
   let description = [{
