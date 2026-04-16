@@ -508,6 +508,14 @@ def CustomOp
 
   let results = (outs Variadic<AnyType>:$results);
 
+  let builders = [
+    // Convenience builder with empty temp_buffers.
+    OpBuilder<(ins "StringRef":$name,
+                   "TypeRange":$resultTypes,
+                   "ValueRange":$inputs,
+                   "ValueRange":$outputs)>
+  ];
+
   let extraClassDeclaration = [{
       PIPE getPipe();
 
@@ -529,6 +537,8 @@ def CustomOp
       static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
 
+      SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo();
+
       static constexpr StringLiteral kIteratorTypesName = "iterator_types";
 
       static constexpr StringLiteral kIndexingMapName = "indexing_map";
@@ -539,7 +549,6 @@ def CustomOp
 
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       int getMaxRank();
-
       static constexpr StringLiteral kSymbolAttrName = "symbol";
       std::string getSymbol();
 

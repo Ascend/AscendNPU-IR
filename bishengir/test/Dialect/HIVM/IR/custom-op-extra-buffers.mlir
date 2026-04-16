@@ -39,3 +39,22 @@ func.func @test_custom_op_alloc_extra_buffers_multi(%arg0 : memref<2x2xf32>) att
        outs(%empty : tensor<2x2xf32>) -> tensor<2x2xf32>
   return
 }
+
+// -----
+
+// CustomOp without extra_buffers_types / extra_buffers_sizes should pass through unchanged.
+// CHECK-LABEL: func.func @test_custom_op_no_extra_buffer_attrs
+// CHECK: hivm.hir.custom
+// CHECK-NOT: tmps
+func.func @test_custom_op_no_extra_buffer_attrs(%arg0 : memref<4xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  %empty = tensor.empty() : tensor<4xf32>
+  %0 = hivm.hir.custom
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+         hivm.pipe = #hivm.pipe<PIPE_V>,
+         hivm.vf_mode = #hivm.vf_mode<SIMD>,
+         symbol = "foo_no_extra" }
+       "my_custom_op"
+       ins(%arg0 : memref<4xf32>)
+       outs(%empty : tensor<4xf32>) -> tensor<4xf32>
+  return
+}
