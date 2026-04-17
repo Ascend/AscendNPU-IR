@@ -215,6 +215,7 @@ void setupLowerTritonPipelineOptions(
   options.numWarps = config.getNumWarps();
   options.threadsPerWarp = config.getThreadsPerWarp();
   options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
+  options.useDPX = config.shouldUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();

@@ -56,6 +56,10 @@ struct LowerTritonPipelineOptions
       *this, "enable-simt-fast-div",
       llvm::cl::desc("enable SIMT fast division optimization"),
       llvm::cl::init(true)};
+  PassOptions::Option<bool> useDPX{
+      *this, "use-dpx",
+      llvm::cl::desc("enable SIMT lowering through DPX Dialect"),
+      llvm::cl::init(true)};
   PassOptions::Option<std::string> tritonMetadataOutput{
       *this, "triton-metadata-output",
       llvm::cl::desc("File to dump triton metadata. -- means stdout"),
