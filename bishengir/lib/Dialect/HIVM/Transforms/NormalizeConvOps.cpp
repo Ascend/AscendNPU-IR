@@ -127,16 +127,16 @@ struct NormalizeConvOpsPass
 };
 
 /// Helper trait to get base dimensions from Conv Op type
-template <typename ConvOpType> struct ConvBaseDim;
+template <typename ConvOpType> struct ConvBaseDims;
 
-template <> struct ConvBaseDim<hivm::Conv1DL1Op> {
+template <> struct ConvBaseDims<hivm::Conv1DL1Op> {
   // the base dimension for Conv1DL1Op is 2 (CW)
-  static constexpr int64_t value = 2;
+  static constexpr int64_t dim = 2;
 };
 
-template <> struct ConvBaseDim<hivm::Conv2DL1Op> {
-  // the base dimension for Conv2DL1Op is 2 (CHW)
-  static constexpr int64_t value = 3;
+template <> struct ConvBaseDims<hivm::Conv2DL1Op> {
+  // the base dimension for Conv2DL1Op is 3 (CHW)
+  static constexpr int64_t dim = 3;
 };
 
 static constexpr llvm::StringLiteral outputAlreadyNormalized =
@@ -172,10 +172,10 @@ LogicalResult expandToBatch(ConvOpType op, PatternRewriter &rewriter) {
   auto elementType = inputType.getElementType();
   const int64_t batch = 1;
 
-  static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
   SmallVector<int64_t> originalDims;
-  for (int64_t i = 0; i <= baseDim - 1; i++) {
+  for (int64_t i = 0; i <= baseDims - 1; i++) {
     originalDims.push_back(inputType.getDimSize(i));
   }
 
@@ -191,7 +191,7 @@ LogicalResult expandToBatch(ConvOpType op, PatternRewriter &rewriter) {
 
   reassoc.push_back({0, 1});
 
-  for (int64_t i = 2; i <= baseDim; i++) {
+  for (int64_t i = 2; i <= baseDims; i++) {
     reassoc.push_back({static_cast<int64_t>(i)});
   }
 
@@ -211,13 +211,13 @@ LogicalResult padForInput(ConvOpType op, PatternRewriter &rewriter,
   auto inputType = cast<ShapedType>(input.getType());
   auto elementType = inputType.getElementType();
 
-  static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
   int64_t batch = inputType.getDimSize(0);
   int64_t iC = inputType.getDimSize(1);
 
   SmallVector<int64_t> spatialSizes;
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     spatialSizes.push_back(inputType.getDimSize(2 + i));
   }
 
@@ -234,7 +234,7 @@ LogicalResult padForInput(ConvOpType op, PatternRewriter &rewriter,
   // Reassociation: {0}, {1, 2}, {3}, {4}, ...
   expandReassoc.push_back({0});    // N
   expandReassoc.push_back({1, 2}); // G, C/G
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     expandReassoc.push_back({static_cast<int64_t>(3 + i)}); // spatial dims
   }
 
@@ -285,7 +285,7 @@ LogicalResult padForInput(ConvOpType op, PatternRewriter &rewriter,
   // Reassociation: {0}, {1, 2}, {3}, {4}, ...
   collapseReassoc.push_back({0});    // N
   collapseReassoc.push_back({1, 2}); // G, C/G -> C
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     collapseReassoc.push_back({static_cast<int64_t>(3 + i)}); // spatial dims
   }
 
@@ -305,13 +305,13 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
   auto inputType = cast<ShapedType>(input.getType());
   Type elementType = inputType.getElementType();
 
-  static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
   auto batch = inputType.getDimSize(0);
   int64_t iC = inputType.getDimSize(1);
 
   SmallVector<int64_t> spatialSizes;
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     spatialSizes.push_back(inputType.getDimSize(2 + i));
   }
 
@@ -327,7 +327,7 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
   // Step 2: For 2D, collapse spatial dimensions [N, C, iH, iW] -> [N, C, iHW]
   Value currentInput = input;
   int64_t iHW = 1;
-  if (baseDim == 3) {
+  if (baseDims == 3) {
     for (auto size : spatialSizes) {
       iHW *= size;
     }
@@ -363,10 +363,10 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
 
   // Step 5: Expand spatial dimensions back
   SmallVector<int64_t> finalShape;
-  if (baseDim == 2) {
+  if (baseDims == 2) {
     // For 1D: [N, C1, iHW, C0] -> [N, C1, 1, iW, C0]
     finalShape = {batch, C1, 1, iHW, C0};
-  } else if (baseDim == 3) {
+  } else if (baseDims == 3) {
     // For 2D: [N, C1, iHW, C0] -> [N, C1, iH, iW, C0]
     finalShape.push_back(batch);
     finalShape.push_back(C1);
@@ -391,7 +391,7 @@ LogicalResult padForWeight(ConvOpType op, PatternRewriter &rewriter,
   auto weightType = cast<ShapedType>(weight.getType());
   auto elementType = weightType.getElementType();
 
-  static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
   // Weight shape for 1D: [oC, iC/G, kW]
   // Weight shape for 2D: [oC, iC/G, kH, kW]
@@ -399,7 +399,7 @@ LogicalResult padForWeight(ConvOpType op, PatternRewriter &rewriter,
   int64_t channelsPerGroup = weightType.getDimSize(1);
 
   SmallVector<int64_t> kernelSizes;
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     kernelSizes.push_back(weightType.getDimSize(2 + i));
   }
 
@@ -447,13 +447,13 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
   auto weightType = cast<ShapedType>(weight.getType());
   auto elementType = weightType.getElementType();
 
-  static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+  static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
   auto oC = weightType.getDimSize(0);
   auto channelsPerGroup = weightType.getDimSize(1);
 
   SmallVector<int64_t> kernelSizes;
-  for (int i = 0; i < baseDim - 1; i++) {
+  for (int i = 0; i < baseDims - 1; i++) {
     kernelSizes.push_back(weightType.getDimSize(2 + i));
   }
 
@@ -469,7 +469,7 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
   // C/groups, wHW]
   Value currentWeight = weight;
   int64_t wHW = 1;
-  if (baseDim == 3) {
+  if (baseDims == 3) {
     for (auto size : kernelSizes) {
       wHW *= size;
     }
@@ -525,10 +525,10 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
 
   // Step 7: Expand spatial dimensions back
   SmallVector<int64_t> finalShape;
-  if (baseDim == 2) {
+  if (baseDims == 2) {
     // For 1D: [C1/groups, wHW, oC, C0] -> [C1/groups, 1, wW, oC, C0]
     finalShape = {newChannelsPerGroup, 1, wHW, oC, C0};
-  } else if (baseDim == 3) {
+  } else if (baseDims == 3) {
     // For 2D: [C1/groups, wHW, oC, C0] -> [C1/groups, wH, wW, oC, C0]
     finalShape.push_back(newChannelsPerGroup);
     finalShape.insert(finalShape.end(), kernelSizes.begin(), kernelSizes.end());
@@ -562,7 +562,7 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
 ///
 /// Rewrite steps:
 ///   1. Calculate alignment factor C0 based on element type (32-byte alignment)
-///   2. Add batch dimension if missing (rank == baseDim)
+///   2. Add batch dimension if missing (rank == baseDims)
 ///   3. For 2D, collapse spatial dimensions:
 ///        Input:  [B, iC, iH, iW] -> [B, iC, iHW]
 ///        Weight: [oC, iC/groups, wH, wW] -> [oC, iC/groups, wHW]
@@ -650,9 +650,9 @@ public:
       rewriter.setInsertionPoint(outDefOp);
     }
 
-    static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+    static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
-    if (inputType.getRank() == baseDim) {
+    if (inputType.getRank() == baseDims) {
       if (failed(expandToBatch<ConvOpType>(op, rewriter))) {
         return rewriter.notifyMatchFailure(op, "Failed to expand to batch");
       }
@@ -813,13 +813,13 @@ public:
       return failure();
     }
 
-    static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
+    static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
     int64_t rank = resultType.getRank();
     // For 1D conv: rank should be 2 (CW) or 3 (NCW)
     // For 2D conv: rank should be 3 (CHW) or 4 (NCHW)
-    int64_t expectedMinRank = baseDim;
-    int64_t expectedMaxRank = baseDim + 1;
+    int64_t expectedMinRank = baseDims;
+    int64_t expectedMaxRank = baseDims + 1;
     if (rank != expectedMinRank && rank != expectedMaxRank) {
       return failure();
     }
@@ -854,24 +854,24 @@ public:
     Value convResult = newConv.getResultTensors()[0];
 
     // Output channel dimension position depends on rank
-    // For rank = baseDim: format is oCxSpatial (no batch)
-    // For rank = baseDim + 1: format is NxoCxSpatial (with batch)
-    int64_t outputChannelDim = (rank == baseDim) ? 0 : 1;
+    // For rank = baseDims: format is oCxSpatial (no batch)
+    // For rank = baseDims + 1: format is NxoCxSpatial (with batch)
+    int64_t outputChannelDim = (rank == baseDims) ? 0 : 1;
     int64_t oC = resultType.getDimSize(outputChannelDim);
 
     SmallVector<int64_t> expandedShape;
     SmallVector<SmallVector<int64_t, 2>> reassoc;
 
-    if (rank == baseDim) {
+    if (rank == baseDims) {
       // No batch dimension: [oC, spatial_dims...]
       // For 1D: expandedShape = {oC, 1}, reassoc = {{0, 1}}
       // For 2D: expandedShape = {oC, 1, 1}, reassoc = {{0, 1, 2}}
       expandedShape.push_back(oC);
-      for (int64_t i = 0; i < baseDim - 1; i++) {
+      for (int64_t i = 0; i < baseDims - 1; i++) {
         expandedShape.push_back(1);
       }
       SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i <= baseDim - 1; i++) {
+      for (int64_t i = 0; i <= baseDims - 1; i++) {
         reassocIndices.push_back(i);
       }
       reassoc.push_back(reassocIndices);
@@ -881,11 +881,11 @@ public:
       // For 2D: expandedShape = {1, oC, 1, 1}, reassoc = {{0, 1, 2, 3}}
       expandedShape.push_back(1);
       expandedShape.push_back(oC);
-      for (int64_t i = 0; i < baseDim - 1; i++) {
+      for (int64_t i = 0; i < baseDims - 1; i++) {
         expandedShape.push_back(1);
       }
       SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i <= baseDim; i++) {
+      for (int64_t i = 0; i <= baseDims; i++) {
         reassocIndices.push_back(i);
       }
       reassoc.push_back(reassocIndices);
@@ -904,11 +904,11 @@ public:
     }
 
     SmallVector<int64_t> broadcastDims;
-    if (rank == baseDim) {
+    if (rank == baseDims) {
       // No batch: broadcast over all spatial dimensions
       // For 1D: broadcastDims = {1}
       // For 2D: broadcastDims = {1, 2}
-      for (int64_t i = 1; i <= baseDim - 1; i++) {
+      for (int64_t i = 1; i <= baseDims - 1; i++) {
         broadcastDims.push_back(i); // spatial dimensions
       }
     } else {
@@ -916,7 +916,7 @@ public:
       // For 1D: broadcastDims = {0, 2}
       // For 2D: broadcastDims = {0, 2, 3}
       broadcastDims.push_back(0); // batch dimension
-      for (int64_t i = 2; i <= baseDim; i++) {
+      for (int64_t i = 2; i <= baseDims; i++) {
         broadcastDims.push_back(i); // spatial dimensions
       }
     }
@@ -1006,9 +1006,9 @@ public:
 
     // For 1D conv: rank should be 2 (CW) or 3 (NCW)
     // For 2D conv: rank should be 3 (CHW) or 4 (NCHW)
-    static constexpr int64_t baseDim = ConvBaseDim<ConvOpType>::value;
-    int64_t expectedMinRank = baseDim;
-    int64_t expectedMaxRank = baseDim + 1;
+    static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
+    int64_t expectedMinRank = baseDims;
+    int64_t expectedMaxRank = baseDims + 1;
 
     auto convResult = op.getResultTensors()[0];
     auto resultType = dyn_cast<RankedTensorType>(convResult.getType());
@@ -1029,7 +1029,7 @@ public:
     int64_t oH = 1;
     int64_t oC, oW;
 
-    if (baseDim == 2) {
+    if (baseDims == 2) {
       // 1D convolution
       if (!hasBatch) {
         // [oC, oW]
@@ -1041,7 +1041,7 @@ public:
         oC = resultType.getDimSize(1);
         oW = resultType.getDimSize(2);
       }
-    } else if (baseDim == 3) {
+    } else if (baseDims == 3) {
       // 2D convolution
       if (!hasBatch) {
         // [oC, oH, oW]
@@ -1256,7 +1256,7 @@ public:
     }
 
     // === batch reshape and oHW split ===
-    if (baseDim == 2) {
+    if (baseDims == 2) {
       if (hasBatch) {
         auto finalType = RankedTensorType::get({batch, oC, oHW}, newTargetType);
 
@@ -1268,7 +1268,7 @@ public:
         newResult = rewriter.create<tensor::ExpandShapeOp>(loc, finalType,
                                                            newResult, reassoc);
       }
-    } else if (baseDim == 3) {
+    } else if (baseDims == 3) {
       if (hasBatch) {
         auto finalType =
             RankedTensorType::get({batch, oC, oH, oW}, newTargetType);
