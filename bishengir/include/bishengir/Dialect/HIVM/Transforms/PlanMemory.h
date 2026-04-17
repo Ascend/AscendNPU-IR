@@ -61,7 +61,8 @@ constexpr const int SPEC_LEVEL_0 = 0;
 /// continuous instructions caused by plan, offset = 1.
 constexpr const int SPEC_LEVEL_1 = 1;
 
-/// do not reuse the buffer in same loop when pipe conflicts between vector and dma.
+/// do not reuse the buffer in same loop when pipe conflicts between vector and
+/// dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
 /// do not reuse buffer when pipe conflicts.
@@ -292,6 +293,9 @@ public:
   /// record inplace pair list.
   SmallVector<ValuePair> inplacePairList;
 
+  /// record marked buffer used in multi scope operations.
+  SmallVector<Value> preloadBuffers;
+
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
 
@@ -343,7 +347,8 @@ private:
   void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
 
   /// Update buffer alias information for scopeop.
-  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp, scope::ReturnOp returnOp);
+  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
+                                scope::ReturnOp returnOp);
 
   /// Update and obtain op info information.
   OpInfo *UpdateLinearOperation(Operation *op);
@@ -431,6 +436,28 @@ private:
   /// Determine whether two operation are in the same block or op2 is the
   /// ancestor of op1.
   bool isParentOpDominate(Operation *op1, Operation *op2) const;
+
+  /// Check whether operand is marked buffer used in multi scope operations.
+  bool IsPreloadBuffer(Value operand);
+
+  /// Check whether operand is marked buffer used in multi scope operations.
+  void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
+
+  /// Update Gen information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+
+  /// Update Kill information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Process mark op and update buffer's gen and kill.
+  void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
+                     Liveness live);
+
+  /// If buffer is used by multi vector scope, update buffer's gen and kill to
+  /// the start and end of `for` op which is the parent op of `scope` op.
+  void UpdatePreloadBuffersGenKillMap();
 
   /// Generate buffer's life time.
   void GenerateBufferLife();
@@ -530,14 +557,15 @@ public:
   }
 
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
-      GetMemscope2rootFailStorageEntry() {
+  GetMemscope2rootFailStorageEntry() {
     return memscope2rootFailStorageEntry;
   }
 
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
-      GetMemscope2rootSuccessStorageEntry() {
+  GetMemscope2rootSuccessStorageEntry() {
     return memscope2rootSuccessStorageEntry;
   }
+
 private:
   /// different mode for mem plan.
   MemPlanMode planMode;
@@ -722,7 +750,8 @@ private:
                                const StorageEntry *e) const;
 
   /// Assign otherbuffer storage entry address(es). Assigns
-  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each i.
+  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each
+  /// i.
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
@@ -820,10 +849,12 @@ private:
   llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
-  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootFailStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+      memscope2rootFailStorageEntry;
 
   /// when plan memory success, map from each scope to its root StorageEntry.
-  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootSuccessStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+      memscope2rootSuccessStorageEntry;
 };
 
 } // namespace hivm

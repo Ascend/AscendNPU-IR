@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -104,6 +105,12 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
 #else
         return getMemRefAlloc(op.getBuffer());
 #endif
+      })
+      .Case<scope::ScopeOp>([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        return getMemRefAlloc(
+            returnOp->getOperands()[result.getResultNumber()]);
       })
       .Default([&](Operation *op) {
         LDBG("Unsupported op for finding the root alloc.");
@@ -922,6 +929,14 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
       })
       .Case([&](tensor::ExtractSliceOp op) {
         result.emplace_back(op.getResult(), op.getSource());
+      })
+      .Case([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        for (auto [res, arg] :
+             llvm::zip_equal(scopeOp->getResults(), returnOp->getOperands())) {
+          result.emplace_back(res, arg);
+        }
       });
   return result;
 }
