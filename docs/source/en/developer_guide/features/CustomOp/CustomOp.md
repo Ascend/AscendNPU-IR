@@ -29,7 +29,7 @@ Generic interface for custom op as following:
                 which comes together within bishengir-compile.
 
                 For normal names/cases, user needs to specify implementation location/compilation commands,
-                and all ther necessary informations.
+                and all the necessary information.
 
 - inputs : input parameters.
 - outputs : output results, designated "init" operands, which act as initial values for the results
@@ -43,7 +43,7 @@ to retrieve necessary information:
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
              this attribute is ignored when core type is cube.
 
-             Note : for builtins, user could specify these informations or not,
+             Note : for builtins, user could specify these information or not,
                     compiler will help to check the correctness and canonicalize.
 - Symbol   : Implementation function name
 
@@ -85,7 +85,7 @@ TODO:
 | **Pipe**                        | Custom op execution pipe.                                    |
 | **VFMode**                      | Custom op running mode on vector core, SIMT/SIMD/MIX.        |
 | **Symbol**                      | User provided implementation function name                   |
-| **Buitlins**                    | Set of builtins (name reserved).                             |
+| **Builtins**                    | Set of builtins (name reserved).                             |
 
 #### ⚠️ Limitations
 
@@ -128,7 +128,7 @@ TODO:
 
 #### TRITON CustomOp Lowering Example
 
-Python script：`test_custom_op.py`
+Python script: `test_custom_op.py`
 
 ```python
 # For more detail of Triton custom op design, please refer to
@@ -195,7 +195,7 @@ def test_custom(DT, L):
     torch.testing.assert_close(out, ref)
 ```
 
-CPP API definition：`add.cpp`
+CPP API definition: `add.cpp`
 
 ```C++
 #define __aiv__ [aicore]
@@ -269,13 +269,13 @@ Command for compiling the `.bc` file:
 ccec -x cce --cce-aicore-arch=dav-c220-vec --cce-aicore-only -c -emit-llvm ./add.cpp -o ./add.bc
 ```
 
-Command for Python script execution：
+Command for Python script execution:
 
 ```bash
 python -m pytest -sv test_custom_op.py
 ```
 
-Lowering to MLIR：
+Lowering to MLIR:
 
 ```mlir
 module attributes {hacc.target = #hacc.target<"Ascend910B3">} {

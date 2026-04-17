@@ -83,7 +83,7 @@ This pass clone different tensor.empty to hivmOp output### `-hivm-constantize-bu
 
 _Try to constantize dynamic shape buffers._
 
-This pass tries to constantize dyanmic shape buffers by upper-bounding
+This pass tries to constantize dynamic shape buffers by upper-bounding
 their original shape.
 If successful, a new, static shaped alloc will be created and subviewed to
 the original shape for further use.
@@ -159,7 +159,7 @@ _Auto inject sync_
 ### Options
 
 ```text
--sync-mode          : injetc sync mode (default is inject normal)
+-sync-mode          : inject sync mode (default is inject normal)
 -enable-unit-flag   : Enable unit-flag modes for synchronization
 -assume-alive-loops : Assume that all loops (forOp whileOp) will execute at least once.
 ```
@@ -218,7 +218,7 @@ if the last dim is not contiguous.
 
 Exceptions: MacroOp and VArangeOp.
 
-For exmaple, the type of operand is memref<16xf16, strided<[8]>>,
+For example, the type of operand is memref<16xf16, strided<[8]>>,
 after LiftLowestStride, the type would be
 memref<16x1xf32, strided<[8, 1]>> with contiguous last dim.
 
@@ -315,9 +315,9 @@ _Plan memory for HIVM Ops_
 
 ## `-hivm-recognize-deinterleave-op`
 
-_Optimize uncontinuous access to deinterleave._
+_Optimize discontinuous access to deinterleave._
 
-This pass optimize uncontinuous memory access using deinterleave.
+This pass optimize discontinuous memory access using deinterleave.
 
 ## `-hivm-reduce-rank-subview`
 
@@ -329,7 +329,7 @@ _Reduce rank using subview_
 
 _Split Mix device functions into AICube and AIVector functions._
 
-Split mix kernels into sperate AICube and AIVector kernels, and mark the
+Split mix kernels into separate AICube and AIVector kernels, and mark the
 parent module as a Mix module.
 
 Note:
@@ -376,7 +376,7 @@ _Insert workspace for mix cv_
 
 _Tile cube and vector loops on local buffer_
 
-This pass will attemp to tile cube and vector ops again on the
+This pass will attempt to tile cube and vector ops again on the
 local buffer because:
 
   1. we can reduce the amount of inter-core synchronizations,

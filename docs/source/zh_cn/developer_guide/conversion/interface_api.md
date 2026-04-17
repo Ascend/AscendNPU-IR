@@ -7,19 +7,19 @@
 - 基于多级接口支持自定义DSL/生态框架灵活对接，实现自定义算子在昇腾 NPU 上的高性能运行。
 
 ```text
-  Torch-MLIR / Triton       (框架/DSL层)
+  Torch-MLIR / Triton      （框架/DSL层）
          |
          v
-  Linalg / Tensor            (通用张量代数层)
+  Linalg / Tensor           （通用张量代数层）
          |
          v
-  HFusion                    (硬件感知融合调度层)
+  HFusion                   （硬件感知融合调度层）
          |
          v
-  HIVM                       (NPU指令层)
+  HIVM                      （NPU指令层）
          |
          v
-  LIR -> Binary              (机器码生成)
+  LIR -> Binary             （机器码生成）
 ```
 
 - **Linalg / Tensor层**：使用标准MLIR dialect表达算子语义，支持Elemwise、Broadcast、Reduce、Transpose、Concat等运算，HFusion自动完成算子融合、切分和调度。
@@ -36,18 +36,14 @@
 
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
-| `-target` | `Ascend910B1` | 目标设备，用于获取核数、片上内存大小等硬件规格 |
+| `-target` | `Ascend<Name>` | 目标设备，用于获取核数、片上内存大小等硬件规格，可通过查询`npu-smi info` |
 | `-block-dim` | `1` | 指定使用的block数量，编译后kernel携带`hacc.block_dim`属性 |
 | `-enable-hfusion-compile` | `false` | 使能HFusion编译流程（融合、调度、切分） |
 | `-enable-hivm-compile` | `true` | 使能HIVM编译流程（转换到HIVM指令并优化） |
 | `-enable-torch-compile` | `false` | 使能Torch-MLIR编译流程 |
 | `-enable-triton-kernel-compile` | `false` | 使能Triton kernel编译流程 |
 
-支持的目标设备：
-
-- Ascend910B系列：`Ascend910B1`、`Ascend910B2`、`Ascend910B3`、`Ascend910B4`等
-- Ascend910_93系列：`Ascend910_9362`、`Ascend910_9372`、`Ascend910_9381`等
-- Ascend910_95系列：`Ascend910_950z`、`Ascend910_9579`、`Ascend910_9589`等
+支持的目标设备包括 Atlas A2/A3、Ascend 950PR/Ascend 950DT系列。
 
 ### 函数属性
 

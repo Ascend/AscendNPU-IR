@@ -2,7 +2,7 @@
 
 ## 硬件背景
 
-本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Ascend 910B 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
+本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Altas A2/A3 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
 ### 术语与背景知识（阅读前必读）
 
@@ -26,9 +26,9 @@ CV 相关 pass 多数在 **预 bufferization** 阶段（`hivmPreBufferizationOpt
 
 ### 芯片架构
 
-Ascend 910B NPU 采用异构计算架构，主要包含：
+Ascend NPU 采用异构计算架构，主要包含：
 
-| 组件 | 说明 | 典型规格（910B1） |
+| 组件 | 说明 | 典型规格（举例） |
 |------|------|-------------------|
 | **Cube** | 矩阵乘单元，执行 `mmadL1`、`batchMmadL1` 等矩阵运算 | 24 个 AI Core |
 | **Vector** | 向量运算单元，执行 `vadd`、`vcast`、`vreduce` 等向量运算 | 48 个 AI Core |
@@ -86,7 +86,7 @@ after
 mmadL1 -> fixpipe
 ```
 
-InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试inline op,如hivm.vcast/hivm.vrelu/hivm.store。
+InlineFixpipe 负责插入 fixpipe, 站在新增的fixpipe的基础上，尝试inline op，如hivm.vcast/hivm.vrelu/hivm.store。
 
 ### createTileBatchMMIntoLoopPass
 

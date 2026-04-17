@@ -42,62 +42,31 @@
 
 ### BiShengIR Target Options
 
-| 选项名 | 数值 | 状态 |
-|--------|------|------|
-| --target=\<value>  |Target device name. | In use  |
-| =Ascend910B1 | Ascend910B1 | In use  |
-| =Ascend910B2 | Ascend910B2 | In use  |
-| =Ascend910B3 | Ascend910B3 | In use  |
-| =Ascend910B4 | Ascend910B4 | In use  |
-| =Ascend910B4-1 | Ascend910B4-1 | In use  |
-| =Ascend910B2C | Ascend910B2C | In use  |
-| =Ascend910_9362 | Ascend910_9362 | In use  |
-| =Ascend910_9372 | Ascend910_9372 | In use  |
-| =Ascend910_9381 | Ascend910_9381 | In use  |
-| =Ascend910_9382 | Ascend910_9382 | In use  |
-| =Ascend910_9391 | Ascend910_9391 | In use  |
-| =Ascend910_9392 | Ascend910_9392 | In use  |
-| =Ascend910_950z | Ascend910_950z | In use  |
-| =Ascend910_9579 | Ascend910_9579 | In use  |
-| =Ascend910_957b | Ascend910_957b | In use  |
-| =Ascend910_957d | Ascend910_957d | In use  |
-| =Ascend910_9581 | Ascend910_9581 | In use  |
-| =Ascend910_9589 | Ascend910_9589 | In use  |
-| =Ascend910_958a | Ascend910_958a | In use  |
-| =Ascend910_958b | Ascend910_958b | In use  |
-| =Ascend910_9599 | Ascend910_9599 | In use  |
-| =Unknown | Unknown | In use  |
+编译选项名 `--target=Ascend<Name>`，用于指定将MLIR编译至的平台，其中`<Name>`为占位标识，具体内容需结合AI处理器型号，通过对应查询命令获取。
 
-## bishengir-hivm-compile编译选项
+AI处理器型号及对应查询方式如下：
 
-### BiShengIR HIVM Optimization Options
+**方式一：通过 `npu-smi info` 命令查询**
 
-| 选项名 | 描述 | 类型 | 默认值 | 状态 |
-|--------|------|------|--------|--------|
-| --limit-auto-multi-buffer-of-local-buffer=\<value> | When enable-auto-multi-buffer = true, limit local buffer mode. Value=<no-limit/no-l0c> | MultiBufferStrategy  | no-l0c  | In use  |
-| --limit-auto-multi-buffer-buffer=\<value> | When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.Value=<no-limit/only-cube/only-vector> | MultiBufferStrategy  | only-cube | In use  |
-| --enable-auto-bind-sub-block | Enable auto bind sub block. | bool | true | In use  |
-| --enable-code-motion | Enable code-motion/subset-hoist. | bool | true | In use  |
-| --enable-hivm-unit-flag-sync | Enable inject sync pass to use unit-flag modes for synchronization. | bool | false | In use  |
-| --enable-hivm-assume-alive-loops | Assume that all loops (forOp whileOp) will execute at least once. | bool | false | In use |
-| --enable-hivm-inject-block-all-sync | Enable inject all block sync for HIVM inject block sync. | bool | false | In use  |
-| --enable-hivm-inject-barrier-all-sync | Enable barrier all mode for HIVM inject sync. | bool | false | In use  |
-| --set-workspace-multibuffer=\<uint> | Override number of multibuffers for workspace, defaults to 2. | unsigned | 2 | In use  |
-| --enable-hivm-global-workspace-reuse | Enable global workspace reuse. | bool | false | In use  |
-| --enable-hivm-auto-cv-balance  | Enable balancing during cv-pipelining. | bool | false | Deprecated  |
-| --enable-hivm-auto-storage-align | Enable mark/enable storage align. | bool | true | In use |
-| --enable-hivm-nd2nz-on-vector | Enable nd2nz on vector. | bool | false | In development |
-| --enable-auto-blockify-loop  | Enable auto loop on blocks for all parallel. | bool | false | In use |
-| --tile-mix-vector-loop=\<uint> | The trip count of the tiled vector loop for mix kernels. | unsigned | 1 | In use |
-| --tile-mix-cube-loop=\<uint> | The trip count of the tiled cube loop for mix kernels. | unsigned | 1 | In use |
+**适用产品**：
 
-### Options Shared with bishengir-hivm-compile
+- Atlas A2 训练系列产品 / Atlas A2 推理系列产品
+- Atlas 200I/500 A2 推理产品
+- Atlas 推理系列产品
+- Atlas 训练系列产品
 
-| 选项名 | 描述 | 类型 | 默认值 | 状态 |
-|--------|------|------|--------|----------|
-| --enable-static-bare-ptr | Enable generating bare ptr calling convention for static shaped kernels. | bool | true | In use |
-| --enable-bin-relocation | Enable binary relocation. | bool | true | In use |
-| --enable-lir-compile | Enable BiShengLIR compilation. | bool | true | In use |
-| --enable-sanitizer | Enable ascend sanitizer. | bool | false | In use |
-| --enable-debug-info| Enable debug info. | bool | false | In use |
-| --enable-hivm-inject-barrier-all-sync  | Enable barrier all mode for HIVM inject sync. | bool | false | In use |
+在安装AI处理器的服务器执行命令，查询获取`<Name>`对应内容，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。
+
+**方式二：通过 `npu-smi info -t board -i id -c chip_id` 命令查询**
+
+**适用产品**：
+
+- Atlas 350 加速卡
+- Atlas A3 训练系列产品 / Atlas A3 推理系列产品
+
+在安装AI处理器的服务器执行命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
+
+命令参数说明：
+
+- `id`：设备id，通过`npu-smi info -l`命令查出的NPU ID即为设备id。
+- `chip_id`：芯片id，通过`npu-smi info -m`命令查出的Chip ID即为芯片id。

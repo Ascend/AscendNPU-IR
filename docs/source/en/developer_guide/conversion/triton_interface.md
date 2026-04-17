@@ -321,7 +321,7 @@ Ascend extends the Python standard`range`capability, adding parallel execution s
 
 **Restriction**:
 
-Currently, the OptiX RTN 910B supports a maximum of two vectoring cores.
+Currently, the OptiX RTN `Altas A2` supports a maximum of two vectoring cores.
 
 **Example**:
 
@@ -393,7 +393,7 @@ Ascend supports scope managers, adding hint information to a section of locale c
 
 | Parameter name | Type | Description                                                                                                                                   |
 | -------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core_mode`    | str  | Core type, which specifies the computing core used by operations in a block. Only the core type is accepted.`"cube"`or the`"vector"`Two modes |
+| `core_mode`    | str  | Core type, which specifies the computing core used by operations in a block. Only `"cube"` and `"vector"` are supported. |
 
 **Core Mode Options**:
 
@@ -612,8 +612,8 @@ Ascend allows you to place the value tensor in the target tensor based on the in
 
 **Constraints**:
 
- * `ptr`And to the`value`Must have the same rank.
- * `ptr.dtype`Currently, only the`float16`,`bfloat16`,`float32`.
+ * `ptr` and `value` must have the same rank.
+ * `ptr.dtype` Currently, only supports `float16`,`bfloat16`,`float32`.
  * `index`Must be an integer tensor. If`index.rank`! = 1, will be remodeled as 1D.
  * `index.numel`Must be equal to`value.shape[dim]`.
  * `value`Supports two to five-dimensional tensors.
@@ -780,10 +780,10 @@ The Ascend supports parallel index selection. Data is directly loaded to the UB 
 
 **Constraints**:
 
- * `read_shape[dim]`Must be for the`-1`.
- * `src_offset[dim]`Can be used for`-1`(will be ignored).
- * Boundary processing: when`src_offset + read_shape > src_shape`is automatically truncated to`src_shape`Borders.
- * **No check is performed.**`index`Indicates whether to contain out-of-bounds values.
+ * `read_shape[dim]` must be `-1`.
+ * `src_offset[dim]` can be `-1`(which  will be ignored).
+ * Boundary processing: when `src_offset + read_shape > src_shape`, the data will be automatically truncated to the `src_shape` boundary.
+ * **No check is performed**  on whether the `index` contains out-of-bounds values.
 
 **Return Value**:
 
@@ -851,7 +851,7 @@ def my_kernel(...):
     ...
 ```
 
-`custom()`The parameters of the include the operation name, input parameters, and optional output parameters.
+The parameters of the `custom()` include the operation name, input parameters, and optional output parameters.
 
  * **Operation name: The value must be the same as the registered operation name.**
  * **Input parameter: Different operations have different input parameters.**
@@ -880,7 +880,7 @@ For details about the built-in customization operations, see the documentation o
 
 ### Parameter Validity Check
 
-Without constraint, the user can give`al.custom()`If the number of parameters and parameter types are not the expected ones, an error occurs during the running.
+Without constraint, the user can give`al.custom()`If the number of parameters and parameter types are not the expected ones, an error occurs during the runtime.
 
 To avoid this problem and improve the user experience of the customization operation, we can provide constructors for the registered customization class to describe the parameter list and check the parameter validity. For example:
 

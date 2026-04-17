@@ -514,7 +514,7 @@ def LiftLowestStride : Pass<"hivm-lift-lowest-stride", "func::FuncOp"> {
 
     Exceptions: MacroOp and VArangeOp.
 
-    For exmaple, the type of operand is memref<16xf16, strided<[8]>>,
+    For example, the type of operand is memref<16xf16, strided<[8]>>,
     after LiftLowestStride, the type would be
     memref<16x1xf32, strided<[8, 1]>> with contiguous last dim.
   }];
