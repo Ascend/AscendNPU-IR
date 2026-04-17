@@ -8,9 +8,9 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_SINKOPTOCONSUMERINLOOP
@@ -35,22 +35,49 @@ public:
       return rewriter.notifyMatchFailure(op, "doesn't only have one result");
 
     auto users = op.getOperation()->getResult(0).getUsers();
-    if (!llvm::hasSingleElement(users))
-      return rewriter.notifyMatchFailure(op, "has more than one user");
+    if (llvm::hasSingleElement(users)) {
+      Operation *singleUser = *users.begin();
+      auto scfParent =
+          dyn_cast_if_present<scf::ForOp>(singleUser->getParentOp());
+      auto scfIf = dyn_cast_if_present<scf::IfOp>(singleUser->getParentOp());
+      if (!scfParent && !scfIf)
+        return rewriter.notifyMatchFailure(op, "the user is not in a loop");
 
-    Operation *singleUser = *users.begin();
-    auto scfParent = dyn_cast_if_present<scf::ForOp>(singleUser->getParentOp());
-    if (!scfParent)
-      return rewriter.notifyMatchFailure(op, "the user is not in a loop");
+      if (op->getBlock() == singleUser->getBlock())
+        return rewriter.notifyMatchFailure(op, "already in the same block");
 
-    if (op->getBlock() == singleUser->getBlock())
-      return rewriter.notifyMatchFailure(op, "already in the same block");
-
-    rewriter.setInsertionPoint(singleUser);
-    IRMapping map;
-    Operation *newBrcOp = rewriter.clone(*op.getOperation(), map);
-    rewriter.replaceOp(op, newBrcOp);
-    return success();
+      rewriter.setInsertionPoint(singleUser);
+      IRMapping map;
+      Operation *newBrcOp = rewriter.clone(*op.getOperation(), map);
+      rewriter.replaceOp(op, newBrcOp);
+      return success();
+    }
+    SmallVector<OpOperand *> uses;
+    for (OpOperand &use : op.getOperation()->getResult(0).getUses()) {
+      uses.push_back(&use);
+    }
+    if (uses.empty())
+      return failure();
+    Operation *firstUser = uses[0]->getOwner();
+    auto forOp = firstUser->getParentOfType<scf::ForOp>();
+    if (!forOp)
+      return failure();
+    for (OpOperand *use : uses) {
+      auto userForOp = use->getOwner()->getParentOfType<scf::ForOp>();
+      if (userForOp != forOp)
+        return failure();
+    }
+    for (OpOperand *use : uses) {
+      rewriter.setInsertionPoint(use->getOwner());
+      IRMapping map;
+      Operation *newBrcOp = rewriter.clone(*op.getOperation(), map);
+      use->set(newBrcOp->getResult(0));
+    }
+    if (op.getOperation()->getResult(0).getUses().empty()) {
+      op->erase();
+      return success();
+    }
+    return failure();
   }
 };
 
