@@ -80,7 +80,9 @@ bool isVec(Value v) {
   return canTraceTo<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-  >(v);
+             >(v) ||
+         traceDefOp<tensor::InsertOp>(v).has_value() ||
+         traceDefOp<tensor::InsertSliceOp>(v).has_value();
 }
 
 void markToAvoidDCE(PatternRewriter &rewriter, Location location, Value value) {
@@ -209,6 +211,7 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
                                 PatternRewriter &rewriter) const override {
     if (!isa<hivm::HIVMStructuredOp>(op.getOperation()) &&
         !isa<tensor::ExtractOp>(op.getOperation()) &&
+        !isa<tensor::InsertOp>(op.getOperation()) &&
         !isa<tensor::InsertSliceOp>(op.getOperation())) {
       return failure();
     }
@@ -850,6 +853,7 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
   registerOne<tensor::InsertSliceOp>(patterns);
+  registerOne<tensor::InsertOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
