@@ -1,0 +1,16 @@
+diff --git a/lib/Conversion/TritonGPUToLLVM/TypeConverter.cpp b/lib/Conversion/TritonGPUToLLVM/TypeConverter.cpp
+index f220ad317..c28cbc4a0 100644
+--- a/lib/Conversion/TritonGPUToLLVM/TypeConverter.cpp
++++ b/lib/Conversion/TritonGPUToLLVM/TypeConverter.cpp
+@@ -35,8 +35,8 @@ TritonGPUToLLVMTypeConverter::TritonGPUToLLVMTypeConverter(
+     return convertAsyncTokenType(type);
+   });
+ 
+-  convertFP8Type<mlir::Float8E4M3FNUZType, mlir::Float8E4M3FNType,
+-                 mlir::Float8E5M2Type, mlir::Float8E5M2FNUZType>();
++  // Remove conversions from fp8 to i8
++  
+ }
+ 
+ Type TritonGPUToLLVMTypeConverter::convertTritonTensorType(
+

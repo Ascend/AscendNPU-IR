@@ -97,6 +97,7 @@ def AscendDPX_CastKind : I32EnumAttr<"AscendDPXCastKind",
       I32EnumAttrCase<"UNSIGNED_TO_FLOAT", 1, "ui_to_fp">,
       I32EnumAttrCase<"FLOAT_TO_SIGNED", 2, "fp_to_si">,
       I32EnumAttrCase<"FLOAT_TO_UNSIGNED", 3, "fp_to_ui">,
+      I32EnumAttrCase<"FLOAT_TO_FLOAT", 4, "fp_to_fp">,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "mlir::ascend_dpx";

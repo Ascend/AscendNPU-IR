@@ -48,7 +48,8 @@ int getNumElementsPerThreads(Type type,
 }
 
 struct AscendSIToFPOpConversion
-    : public ElementwiseOpConversionBase<arith::SIToFPOp, AscendSIToFPOpConversion> {
+    : public ElementwiseOpConversionBase<arith::SIToFPOp,
+                                         AscendSIToFPOpConversion> {
   using Base =
       ElementwiseOpConversionBase<arith::SIToFPOp, AscendSIToFPOpConversion>;
   using Adaptor = typename Base::OpAdaptor;
@@ -67,7 +68,7 @@ struct AscendSIToFPOpConversion
     SmallVector<Value> outVals;
     for (size_t i = 0; i < operands.size(); i++) {
       outVals.push_back(
-         rewriter.create<LLVM::SIToFPOp>(loc, outElemTy, operands[i][0]));
+          rewriter.create<LLVM::SIToFPOp>(loc, outElemTy, operands[i][0]));
     }
     return outVals;
   };
@@ -213,7 +214,8 @@ struct ExternElementwiseOpConversion
                                    Location loc) const {
     StringRef funcName = op.getSymbol();
     if (funcName.empty())
-      LLVM_DEBUG(llvm::dbgs() << "ExternElementwiseOpConversion funcName is empty");
+      LLVM_DEBUG(llvm::dbgs()
+                 << "ExternElementwiseOpConversion funcName is empty");
 
     if (auto ascendOp =
             tryCreateAscendDPXOp(funcName, rewriter, loc, elemTy, operands))
@@ -527,8 +529,7 @@ struct ElementwiseInlineAsmOpConversion
     if (numElemsPerThread % packedElement != 0) {
       // Pad with the undef for each operand to have a multiple of
       // packedElement elements.
-      int numPaddedValue =
-          packedElement - numElemsPerThread % packedElement;
+      int numPaddedValue = packedElement - numElemsPerThread % packedElement;
       for (auto &operands : unpackedOperands) {
         operands.append(numPaddedValue, b.undef(operands[0].getType()));
       }
@@ -747,8 +748,9 @@ struct MapElementwiseOpConversion
 
   using Base::Base;
 
-  LogicalResult matchAndRewrite(MapElementwiseOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(MapElementwiseOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
     auto typeConverter = getTypeConverter();
 
@@ -806,6 +808,83 @@ struct MapElementwiseOpConversion
           packLLElements(loc, typeConverter, vals, rewriter, op.getType(iOut));
     }
     rewriter.replaceOp(op, packedOutputs);
+    return success();
+  }
+};
+
+/// Lowering tt.fp_to_fp to ascend_dpx.cast
+struct TritonFpToFpConversion
+    : public ConvertOpToLLVMPattern<triton::FpToFpOp> {
+  using Base = ConvertOpToLLVMPattern<triton::FpToFpOp>;
+  using Adaptor = typename Base::OpAdaptor;
+  using Base::Base;
+
+  LogicalResult
+  matchAndRewrite(triton::FpToFpOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    auto typeConverter = getTypeConverter();
+
+    SmallVector<SmallVector<Value>> unpackedOperands;
+    for (auto operand : adaptor.getOperands()) {
+      auto subOperands = unpackLLElements(loc, operand, rewriter);
+      unpackedOperands.push_back(subOperands);
+    }
+    assert(unpackedOperands.size() == 1);
+
+    int numElemsPerThread =
+        getNumElementsPerThreads(op->getResult(0).getType(), typeConverter);
+
+    /// Determine the target LLVM element type for the result.
+    /// No need to using typeConverter to cast result type.
+    Type resElemTy = getElementType(op.getResult());
+
+    /// There are only v2-intrinsics.
+    const int packedElement = 2;
+    if (numElemsPerThread % packedElement != 0) {
+      /// Pad with the undef for v2 operands.
+      int numPaddedValue = packedElement - numElemsPerThread % packedElement;
+      for (auto &operands : unpackedOperands) {
+        operands.append(numPaddedValue, b.undef(operands[0].getType()));
+      }
+    }
+
+    Type packedResTy = vec_ty(resElemTy, packedElement);
+    SmallVector<Value> unpackedResults;
+    for (int i = 0; i < numElemsPerThread; i += packedElement) {
+      SmallVector<Value> block;
+      for (auto &operands : unpackedOperands) {
+        Type elemTy = getElementType(operands[i]);
+        Type t = vec_ty(typeConverter->convertType(elemTy), packedElement);
+        Value packed = b.undef(t);
+        for (int k = 0; k < packedElement; ++k) {
+          packed = b.insert_element(packed, operands[i + k], b.i32_val(k));
+        }
+        block.push_back(packed);
+      }
+
+      auto res = rewriter
+                     .create<ascend_dpx::CastOp>(
+                         loc, packedResTy, block[0],
+                         ascend_dpx::AscendDPXCastKindAttr::get(
+                             rewriter.getContext(),
+                             ascend_dpx::AscendDPXCastKind::FLOAT_TO_FLOAT))
+                     ->getResult(0);
+
+      /// Drop padded elems.
+      int numElem = numElemsPerThread - i;
+      if (numElem > packedElement)
+        numElem = packedElement;
+
+      for (int k = 0; k < numElem; ++k) {
+        unpackedResults.push_back(b.extract_element(res, b.i32_val(k)));
+      }
+    }
+
+    auto ret = packLLElements(loc, typeConverter, unpackedResults, rewriter,
+                              op->getResult(0).getType());
+    rewriter.replaceOp(op, ret);
     return success();
   }
 };
@@ -905,4 +984,5 @@ void mlir::triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
   // custom pattern
   patterns.add<AscendSIToFPOpConversion>(typeConverter, axisInfoAnalysis,
                                          benefit);
+  patterns.add<TritonFpToFpConversion>(typeConverter, benefit);
 }
