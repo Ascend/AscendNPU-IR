@@ -151,6 +151,39 @@ def SIMTFastDiv : Pass<"simt-fast-div", "mlir::triton::FuncOp"> {
                            "mlir::triton::gpu::TritonGPUDialect"];
 }
 
+def ConvertSharedPtrToMemDesc
+    : Pass<"convert-shared-ptr-to-memdesc", "mlir::ModuleOp"> {
+  let summary = "Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store with memdesc";
+  let description = [{
+    Runs after ConvertTritonToTritonGPU.  Finds tt.load / tt.store operations
+    whose pointer tensors use address-space 6 (shared memory / UB) and rewrites
+    them to ttg.local_load / ttg.local_store with ttg.memdesc types.  The
+    corresponding function arguments are changed from !tt.ptr<T, 6> to
+    !ttg.memdesc<...>.
+  }];
+  let constructor = "bishengir::triton::createConvertSharedPtrToMemDescPass()";
+  let dependentDialects = [
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::TritonDialect",
+    "bishengir::triton_ext::TritonExtDialect"
+  ];
+}
+
+def FlattenMemDescArgs
+    : Pass<"flatten-memdesc-args", "mlir::ModuleOp"> {
+  let summary = "Replace memdesc struct function args with bare pointers";
+  let description = [{
+    After ConvertTritonAscendGPUToLLVM, memdesc function arguments become
+    llvm.struct<(ptr<AS>, i32, ...)>.  This pass replaces each such argument
+    with the bare pointer, rewriting extractvalue %arg[0] to use the pointer
+    directly and erroring on extractvalue %arg[N>0].
+  }];
+  let constructor = "bishengir::triton::createFlattenMemDescArgsPass()";
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+  ];
+}
+
 def GetTritonMetadata :
     Pass<"get-triton-metadata", "mlir::ModuleOp"> {
   let summary = "Get triton metadata";

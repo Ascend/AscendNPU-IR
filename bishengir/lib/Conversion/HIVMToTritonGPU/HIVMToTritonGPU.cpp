@@ -72,7 +72,8 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
                        triton::gpu::TritonGPUDialect, func::FuncDialect>();
   stage1Target.addIllegalDialect<hivm::HIVMDialect>();
   stage1Target.addIllegalOp<memref::ReinterpretCastOp>();
-  stage1Target.addLegalOp<bufferization::ToTensorOp, mlir::UnrealizedConversionCastOp>();
+  stage1Target.addIllegalOp<bufferization::ToTensorOp>();
+  stage1Target.addLegalOp<mlir::UnrealizedConversionCastOp>();
 
   RewritePatternSet stage1Patterns(&ctx);
 
@@ -82,6 +83,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   populateHIVMToTensorPatterns(stage1Patterns);
   populateReinterpretCastToUnrealizedCastPatterns(stage1Patterns);
   populateHIVMToTritonPatterns(stage1Patterns);
+  populateBufferizationToTritonPatterns(stage1Patterns);
 
   if (failed(applyPartialConversion(module, stage1Target,
                                     std::move(stage1Patterns)))) {

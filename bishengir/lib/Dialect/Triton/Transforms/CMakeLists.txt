@@ -15,6 +15,8 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
     EnableAscendDPXMMA.cpp
+    ConvertSharedPtrToMemDesc.cpp
+    FlattenMemDescArgs.cpp
   )
 endif()
 

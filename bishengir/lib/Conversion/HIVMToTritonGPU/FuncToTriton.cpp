@@ -36,6 +36,8 @@ public:
     // Note: The function can only be simt vf, and no return value.
     SmallVector<Type> newInputTypes;
     std::optional<int> sharedIdx = std::nullopt;
+    // Collect fractal layout attributes to propagate to expanded args.
+    SmallVector<std::pair<int, Attribute>> fractalArgAttrs;
     int newArgCounter = 0;
     static constexpr int FixCount = 3;
     for (auto [idx, inputTy] : llvm::enumerate(oldFuncTy.getInputs())) {
@@ -64,6 +66,10 @@ public:
           }
           sharedIdx = newArgCounter;
         }
+        // Record fractal layout attribute for propagation.
+        if (auto fractalAttr = op.getArgAttr(idx, "hivm.fractal_layout")) {
+          fractalArgAttrs.push_back({newArgCounter, fractalAttr});
+        }
         newArgCounter += FixCount;
         newArgCounter += rank;
         newArgCounter += rank;
@@ -80,6 +86,9 @@ public:
     if (sharedIdx) {
       newFunc.setArgAttr(*sharedIdx, SharedMemoryAttr::name,
                          rewriter.getUnitAttr());
+    }
+    for (auto &[argIdx, attr] : fractalArgAttrs) {
+      newFunc.setArgAttr(argIdx, "hivm.fractal_layout", attr);
     }
     auto *newEntryBlock = newFunc.addEntryBlock();
 

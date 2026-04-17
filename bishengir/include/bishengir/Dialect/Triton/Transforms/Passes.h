@@ -57,6 +57,13 @@ createDumpFractalLayoutPass(const DumpFractalLayoutOptions &options = {});
 /// Create a pass to optimize division operations for SIMT execution.
 std::unique_ptr<mlir::Pass> createSIMTFastDivPass();
 
+/// Create a pass that converts tt.load/tt.store with ptr<6> to
+/// ttg.local_load/ttg.local_store with memdesc types.
+std::unique_ptr<mlir::Pass> createConvertSharedPtrToMemDescPass();
+
+/// Create a pass to flatten memdesc struct args to bare pointers.
+std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();
+
 /// Create a pass that propagates shared memory offsets from local_alloc to
 /// call_scalar and removes ordering-only local_load ops.
 std::unique_ptr<mlir::Pass> createPopulateSharedMemoryOffsetToDPXPass();
