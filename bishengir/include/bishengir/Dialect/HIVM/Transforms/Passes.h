@@ -284,6 +284,9 @@ std::unique_ptr<Pass> createNormalizeConvOpsPass();
 /// Create a pass to create preload for CV pipelining
 std::unique_ptr<Pass> createCreatePreloadPass();
 
+/// Create a pass to remove HIVM data layout annotation.
+std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

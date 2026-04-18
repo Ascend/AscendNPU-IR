@@ -91,6 +91,14 @@ private:
   /// is different than before.
   bool updateLayoutIfChanged(Value value, const LayoutInfo &info);
 
+  /// Populate the layout info for all the values.
+  void populateLayout(ValueRange values, const LayoutInfo &info,
+                      SmallVector<Value> &changed);
+  /// Populate the layout info for the input value if it is absent. Return true
+  /// if the layout was populated, false if the value already had layout
+  /// information and was not modified.
+  bool populateLayoutIfAbsent(Value value, const LayoutInfo &info);
+
   /// Check whether the layout conversion is supported.
   bool isConversionValid(const LayoutInfo &info);
 
