@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -379,7 +380,31 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
       op->getLoc(), RankedTensorType::get(finalShape, elementType),
       vtransposeOp->getResults()[0], finalReassoc);
 
-  op->replaceUsesOfWith(input, expandShapeOp1->getResult(0));
+  // Step 6: insert store + load
+  Value finalVal = expandShapeOp1->getResult(0);
+  Type type = finalVal.getType();
+  Type elemType = getElementTypeOrSelf(type);
+
+  Value storeInit = utils::createEmptyOp(rewriter, op->getLoc(), finalVal);
+
+  auto storeOp = rewriter.create<hivm::StoreOp>(op->getLoc(), TypeRange{type},
+                                                finalVal, storeInit);
+
+  auto NC1HWC0Layout =
+      DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::NC1HWC0);
+
+  auto markOp =
+      rewriter.create<annotation::MarkOp>(op->getLoc(), storeOp->getResult(0));
+
+  markOp->setAttr("layout", NC1HWC0Layout);
+
+  Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
+      rewriter, op->getLoc(), finalVal, elemType, std::nullopt);
+
+  auto loadOp = rewriter.create<hivm::LoadOp>(op->getLoc(), TypeRange{type},
+                                              storeOp->getResult(0), loadInit);
+
+  op->replaceUsesOfWith(input, loadOp->getResult(0));
 
   return success();
 }
@@ -539,8 +564,33 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
   auto expandShapeOp1 = rewriter.create<tensor::ExpandShapeOp>(
       op->getLoc(), RankedTensorType::get(finalShape, elementType),
       vtransposeOp2.getResult()[0], finalReassoc);
+  
+  // Step 8: insert store + load & mark with layout
+  Value finalVal = expandShapeOp1->getResult(0);
+  Type type = finalVal.getType();
+  Type elemType = getElementTypeOrSelf(type);
 
-  op->replaceUsesOfWith(weight, expandShapeOp1->getResult(0));
+  Value storeInit = utils::createEmptyOp(rewriter, op->getLoc(), finalVal);
+
+  auto storeOp = rewriter.create<hivm::StoreOp>(op->getLoc(), TypeRange{type},
+                                                finalVal, storeInit);
+
+  auto C1HWNC0Layout =
+      DataLayoutAttr::get(rewriter.getContext(), hivm::DataLayout::C1HWNC0);
+
+  auto markOp =
+      rewriter.create<annotation::MarkOp>(op->getLoc(), storeOp->getResult(0));
+
+  markOp->setAttr("layout", C1HWNC0Layout);
+
+  Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
+      rewriter, op->getLoc(), finalVal, elemType, std::nullopt);
+
+  auto loadOp = rewriter.create<hivm::LoadOp>(op->getLoc(), TypeRange{type},
+                                              storeOp->getResult(0), loadInit);
+
+  op->replaceUsesOfWith(weight, loadOp->getResult(0));
+
   return success();
 }
 
@@ -596,11 +646,17 @@ public:
   using OpRewritePattern<ConvOpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(ConvOpType op,
                                 PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
     if (op->getNumOperands() < 3) {
       return op.emitError() << "Operation " << op->getName()
                             << " requires at least 3 operands, but got "
                             << op->getNumOperands();
     }
+
     auto input = op.getInput();
     auto weight = op.getWeight();
 
@@ -990,6 +1046,10 @@ public:
 
   LogicalResult matchAndRewrite(ConvOpType op,
                                 PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
 
     if (op->getAttr(outputAlreadyNormalized)) {
       return failure();

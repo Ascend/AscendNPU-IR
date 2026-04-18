@@ -291,7 +291,7 @@ LogicalResult hivm::inferAndPropagateMemScopeForConv1DL1(hivm::Conv1DL1Op op) {
 
   auto l1SpaceAttr =
     AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
-  auto l0SpaceAttr =
+  auto l0cSpaceAttr =
     AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
   
   MemScopeInferAndPropagateHelper helper;
@@ -303,15 +303,15 @@ LogicalResult hivm::inferAndPropagateMemScopeForConv1DL1(hivm::Conv1DL1Op op) {
   LDBG("IR after setting mem scope for input:\n"
     << *(op->getParentOfType<ModuleOp>()));
   
-  // For Conv1dL1Op, operand weight should be in L1.
+  // For Conv1DL1Op, operand weight should be in L1.
   if (failed(helper.Run(*allocWeight, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for weight");
   }
   LDBG("IR after setting mem scope for weight:\n"
     << *(op->getParentOfType<ModuleOp>()));
   
-  // For Conv1dL1Op, operand output should be in L0C.
-  if (failed(helper.Run(*allocOutput, l0SpaceAttr))) {
+  // For Conv1DL1Op, operand output should be in L0C.
+  if (failed(helper.Run(*allocOutput, l0cSpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for output");
   }
   LDBG("IR after setting mem scope for output:\n"

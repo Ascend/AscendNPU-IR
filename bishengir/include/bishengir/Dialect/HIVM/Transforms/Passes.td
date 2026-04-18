@@ -56,7 +56,9 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
 def NormalizeConvOps : Pass<"hivm-normalize-convops"> {
   let summary = "Normalize hivm conv op";
   let constructor = "mlir::hivm::createNormalizeConvOpsPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect"];
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect", "annotation::AnnotationDialect",
+  ];
 }
 
 def NormalizeBitwiseSelect : Pass<"hivm-normalize-bitwise-select"> {
