@@ -6858,6 +6858,211 @@ struct NormalizeMatMulBase : public OpRewritePattern<MatmulOpType> {
   }
 };
 
+// Lowers erfinv(x) with the same piecewise approximation used before:
+//   w = -log(1 - x^2)
+//   t = w - 2.5            if w < 5
+//     = sqrt(w) - 3.0      otherwise
+//   P_lo(t) = ((((((((a0 * t + a1) * t + a2) * t + a3) * t + a4) * t + a5) *
+//                 t + a6) * t + a7) * t + a8)
+//   P_hi(t) = ((((((((b0 * t + b1) * t + b2) * t + b3) * t + b4) * t + b5) *
+//                 t + b6) * t + b7) * t + b8)
+//   erfinv(x) ~= x * (w < 5 ? P_lo(t) : P_hi(t))
+//   erfinv(+/-1) = +/-inf
+struct NormalizeErfInvOp : public OpRewritePattern<hfusion::ErfInvOp> {
+  using OpRewritePattern<hfusion::ErfInvOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ErfInvOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    auto inType = getElementTypeOrSelf(input.getType());
+    if (!inType.isF16() && !inType.isF32()) {
+      return failure();
+    }
+
+    if (inType.isF16()) {
+      // for high precision, cast src to fp32 and compute and then cast it back
+      // TODO: remove cast after enable automatical high precision computing
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op->getLoc();
+    auto elemType = getElementTypeOrSelf(input.getType());
+    auto f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    auto i1Empty = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                                          rewriter.getI1Type());
+    Value res = buildTensorErfInvApproximation(rewriter, loc, elemType, input,
+                                               f32Empty, i1Empty);
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  static constexpr std::array<float, 9> kErfInvWLessThan5Constants = {
+      2.81022636e-08f,  3.43273939e-07f, -3.5233877e-06f,
+      -4.39150654e-06f, 0.00021858087f,  -0.00125372503f,
+      -0.00417768164f,  0.246640727f,    1.50140941f};
+
+  static constexpr std::array<float, 9> kErfInvWGreaterThan5Constants = {
+      -0.000200214257f, 0.000100950558f, 0.00134934322f,
+      -0.00367342844f,  0.00573950773f,  -0.0076224613f,
+      0.00943887047f,   1.00167406f,     2.83297682f};
+
+  Value buildTensorErfInvApproximation(PatternRewriter &rewriter, Location loc,
+                                       Type elemType, Value input,
+                                       Value f32Empty, Value i1Empty) const {
+    Value w = computeW(rewriter, loc, elemType, input, f32Empty);
+    Value wLessThanFive = createCompareOp(
+        rewriter, loc, w, createFloatConst(rewriter, loc, elemType, 5.0),
+        hfusion::CompareFn::vlt, i1Empty);
+    Value adjustedW =
+        createAdjustedW(rewriter, loc, elemType, w, wLessThanFive, f32Empty);
+    Value polynomial = createPiecewisePolynomial(
+        rewriter, loc, elemType, adjustedW, wLessThanFive, f32Empty);
+    Value approximation = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                      polynomial, input, f32Empty);
+    return applyInfinityEdgeCase(rewriter, loc, elemType, input, approximation,
+                                 i1Empty, f32Empty);
+  }
+
+  Value computeW(PatternRewriter &rewriter, Location loc, Type elemType,
+                 Value input, Value outputLike) const {
+    Value negOne = createFloatConst(rewriter, loc, elemType, -1.0);
+    Value one = createFloatConst(rewriter, loc, elemType, 1.0);
+    Value xSquare = createBinOp(rewriter, loc, linalg::BinaryFn::mul, input,
+                                input, outputLike);
+    Value negXSquare = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                   xSquare, negOne, outputLike);
+    Value oneMinusXSquare = createBinOp(rewriter, loc, linalg::BinaryFn::add,
+                                        negXSquare, one, outputLike);
+    Value logOneMinusXSquare = createUnaryOp(
+        rewriter, loc, linalg::UnaryFn::log, oneMinusXSquare, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, logOneMinusXSquare,
+                       negOne, outputLike);
+  }
+
+  Value createAdjustedW(PatternRewriter &rewriter, Location loc, Type elemType,
+                        Value w, Value wLessThanFive, Value outputLike) const {
+    Value wMinusTwoPointFive = createBinOp(
+        rewriter, loc, linalg::BinaryFn::add, w,
+        createFloatConst(rewriter, loc, elemType, -2.5), outputLike);
+    Value sqrtW = createHFusionUnaryOp(rewriter, loc, hfusion::UnaryFn::sqrt, w,
+                                       outputLike);
+    Value sqrtWMinusThree = createBinOp(
+        rewriter, loc, linalg::BinaryFn::add, sqrtW,
+        createFloatConst(rewriter, loc, elemType, -3.0), outputLike);
+    return createSelectOp(rewriter, loc, wLessThanFive, wMinusTwoPointFive,
+                          sqrtWMinusThree, outputLike);
+  }
+
+  Value createPiecewisePolynomial(PatternRewriter &rewriter, Location loc,
+                                  Type elemType, Value adjustedW,
+                                  Value wLessThanFive, Value outputLike) const {
+    Value polynomial =
+        createSelectOp(rewriter, loc, wLessThanFive,
+                       createFloatConst(rewriter, loc, elemType,
+                                        kErfInvWLessThan5Constants[0]),
+                       createFloatConst(rewriter, loc, elemType,
+                                        kErfInvWGreaterThan5Constants[0]),
+                       outputLike);
+
+    for (size_t i = 1; i < kErfInvWLessThan5Constants.size(); ++i) {
+      Value coefficient =
+          createSelectOp(rewriter, loc, wLessThanFive,
+                         createFloatConst(rewriter, loc, elemType,
+                                          kErfInvWLessThan5Constants[i]),
+                         createFloatConst(rewriter, loc, elemType,
+                                          kErfInvWGreaterThan5Constants[i]),
+                         outputLike);
+      Value polynomialMulAdjustedW =
+          createBinOp(rewriter, loc, linalg::BinaryFn::mul, polynomial,
+                      adjustedW, outputLike);
+      polynomial = createBinOp(rewriter, loc, linalg::BinaryFn::add,
+                               polynomialMulAdjustedW, coefficient, outputLike);
+    }
+    return polynomial;
+  }
+
+  Value applyInfinityEdgeCase(PatternRewriter &rewriter, Location loc,
+                              Type elemType, Value input, Value approximation,
+                              Value i1Empty, Value outputLike) const {
+    Value one = createFloatConst(rewriter, loc, elemType, 1.0);
+    Value inf = createFloatConst(rewriter, loc, elemType,
+                                 std::numeric_limits<double>::infinity());
+    Value absInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, input, outputLike);
+    Value absEqOne = createCompareOp(rewriter, loc, absInput, one,
+                                     hfusion::CompareFn::veq, i1Empty);
+    Value signedInf = createBinOp(rewriter, loc, linalg::BinaryFn::mul, input,
+                                  inf, outputLike);
+    return createSelectOp(rewriter, loc, absEqOne, signedInf, approximation,
+                          outputLike);
+  }
+
+  Value createBinOp(PatternRewriter &rewriter, Location loc,
+                    linalg::BinaryFn fun, Value lhs, Value rhs,
+                    Value outputLike) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createUnaryOp(PatternRewriter &rewriter, Location loc,
+                      linalg::UnaryFn fun, Value input,
+                      Value outputLike) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             hfusion::UnaryFn fun, Value input,
+                             Value outputLike) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createSelectOp(PatternRewriter &rewriter, Location loc, Value cond,
+                       Value trueValue, Value falseValue,
+                       Value outputLike) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{outputLike},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createCompareOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                        Value rhs, CompareFn compareFn,
+                        Value outputLike) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(
+            loc, TypeRange{outputLike}, ValueRange{lhs, rhs},
+            ValueRange{outputLike}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -6974,6 +7179,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
+  patterns.add<NormalizeErfInvOp>(patterns.getContext());
 }
 
 namespace {

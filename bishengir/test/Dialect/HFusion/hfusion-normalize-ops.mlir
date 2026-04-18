@@ -2945,3 +2945,85 @@ func.func @test_matmul_f32_output(%arg0: tensor<16x32xf16>, %arg1: tensor<32x16x
   %1 = linalg.matmul ins(%arg0, %arg1 : tensor<16x32xf16>, tensor<32x16xf16>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %1 : tensor<16x16xf32>
 }
+
+
+// -----
+// CHECK-LABEL: module {
+// CHECK-NEXT:   func.func @test_hfusion_erfinv_ops(%arg0: tensor<5x1xf16>) -> tensor<5x1xf16> {
+// CHECK-NEXT:     %cst = arith.constant 0x7F800000 : f32
+// CHECK-NEXT:     %cst_0 = arith.constant 2.83297682 : f32
+// CHECK-NEXT:     %cst_1 = arith.constant 1.50140941 : f32
+// CHECK-NEXT:     %cst_2 = arith.constant 1.00167406 : f32
+// CHECK-NEXT:     %cst_3 = arith.constant 0.246640727 : f32
+// CHECK-NEXT:     %cst_4 = arith.constant 0.00943887047 : f32
+// CHECK-NEXT:     %cst_5 = arith.constant -0.00417768164 : f32
+// CHECK-NEXT:     %cst_6 = arith.constant -0.0076224613 : f32
+// CHECK-NEXT:     %cst_7 = arith.constant -0.00125372503 : f32
+// CHECK-NEXT:     %cst_8 = arith.constant 0.00573950773 : f32
+// CHECK-NEXT:     %cst_9 = arith.constant 2.1858087E-4 : f32
+// CHECK-NEXT:     %cst_10 = arith.constant -0.00367342844 : f32
+// CHECK-NEXT:     %cst_11 = arith.constant -4.39150654E-6 : f32
+// CHECK-NEXT:     %cst_12 = arith.constant 0.00134934322 : f32
+// CHECK-NEXT:     %cst_13 = arith.constant -3.5233877E-6 : f32
+// CHECK-NEXT:     %cst_14 = arith.constant 1.00950558E-4 : f32
+// CHECK-NEXT:     %cst_15 = arith.constant 3.43273939E-7 : f32
+// CHECK-NEXT:     %cst_16 = arith.constant -2.00214257E-4 : f32
+// CHECK-NEXT:     %cst_17 = arith.constant 2.81022636E-8 : f32
+// CHECK-NEXT:     %cst_18 = arith.constant -3.000000e+00 : f32
+// CHECK-NEXT:     %cst_19 = arith.constant -2.500000e+00 : f32
+// CHECK-NEXT:     %cst_20 = arith.constant 5.000000e+00 : f32
+// CHECK-NEXT:     %cst_21 = arith.constant 1.000000e+00 : f32
+// CHECK-NEXT:     %cst_22 = arith.constant -1.000000e+00 : f32
+// CHECK-NEXT:     %0 = tensor.empty() : tensor<5x1xf32>
+// CHECK-NEXT:     %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg0 : tensor<5x1xf16>) outs(%0 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %2 = tensor.empty() : tensor<5x1xf32>
+// CHECK-NEXT:     %3 = tensor.empty() : tensor<5x1xi1>
+// CHECK-NEXT:     %4 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%1, %1 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %5 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%4, %cst_22 : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %6 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%5, %cst_21 : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %7 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>} ins(%6 : tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %8 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%7, %cst_22 : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %9 = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>} ins(%8, %cst_20 : tensor<5x1xf32>, f32) outs(%3 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %10 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%8, %cst_19 : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %11 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%8 : tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %12 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%11, %cst_18 : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %13 = hfusion.select ins(%9, %10, %12 : tensor<5x1xi1>, tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %14 = hfusion.select ins(%9, %cst_17, %cst_16 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %15 = hfusion.select ins(%9, %cst_15, %cst_14 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %16 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%14, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %17 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%16, %15 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %18 = hfusion.select ins(%9, %cst_13, %cst_12 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %19 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%17, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %20 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%19, %18 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %21 = hfusion.select ins(%9, %cst_11, %cst_10 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %22 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%20, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %23 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%22, %21 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %24 = hfusion.select ins(%9, %cst_9, %cst_8 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %25 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%23, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %26 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%25, %24 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %27 = hfusion.select ins(%9, %cst_7, %cst_6 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %28 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%26, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %29 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%28, %27 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %30 = hfusion.select ins(%9, %cst_5, %cst_4 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %31 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%29, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %32 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%31, %30 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %33 = hfusion.select ins(%9, %cst_3, %cst_2 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %34 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%32, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %35 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%34, %33 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %36 = hfusion.select ins(%9, %cst_1, %cst_0 : tensor<5x1xi1>, f32, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %37 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%35, %13 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %38 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%37, %36 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %39 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%38, %1 : tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %40 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%1 : tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %41 = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%40, %cst_21 : tensor<5x1xf32>, f32) outs(%3 : tensor<5x1xi1>) -> tensor<5x1xi1>
+// CHECK-NEXT:     %42 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%1, %cst : tensor<5x1xf32>, f32) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %43 = hfusion.select ins(%41, %42, %39 : tensor<5x1xi1>, tensor<5x1xf32>, tensor<5x1xf32>) outs(%2 : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK-NEXT:     %44 = tensor.empty() : tensor<5x1xf16>
+// CHECK-NEXT:     %45 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%43 : tensor<5x1xf32>) outs(%44 : tensor<5x1xf16>) -> tensor<5x1xf16>
+// CHECK-NEXT:     return %45 : tensor<5x1xf16>
+// CHECK-NEXT:   }
+// CHECK-NEXT: }
+func.func @test_hfusion_erfinv_ops(%arg0 : tensor<5x1xf16>) -> tensor<5x1xf16> {
+  %ret = hfusion.erfinv %arg0 : tensor<5x1xf16> -> tensor<5x1xf16>
+  return %ret : tensor<5x1xf16>
+}

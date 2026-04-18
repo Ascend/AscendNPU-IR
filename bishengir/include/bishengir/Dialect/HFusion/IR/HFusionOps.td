@@ -697,4 +697,22 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
   }];
 }
 
+def ErfInvOp : HFusion_Op<"erfinv", [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise inverse error function
+  }];
+
+  let description = [{
+    Computes the inverse error function of the input tensor.
+    The input and output must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins RankedTensorOf<[F16, F32]>:$input);
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD
