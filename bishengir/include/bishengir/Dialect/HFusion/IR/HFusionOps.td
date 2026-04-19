@@ -715,4 +715,24 @@ def ErfInvOp : HFusion_Op<"erfinv", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
+def CylBesselI0Op : HFusion_Op<"cyl_bessel_i0",
+                               [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise modified Bessel function of the first kind
+  }];
+
+  let description = [{
+    Computes the modified Bessel function of the first kind of order zero
+    for the input tensor.
+    The input and output must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins RankedTensorOf<[F16, F32]>:$input);
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

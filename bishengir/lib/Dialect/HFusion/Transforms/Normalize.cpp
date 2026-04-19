@@ -7467,6 +7467,247 @@ private:
   }
 };
 
+// Lowers cyl_bessel_i0(x) with the Cephes i0e approximation:
+//   z = abs(x)
+//   cyl_bessel_i0(x) = exp(z) * i0e(z)
+//   i0e(z) = chbevl(z / 2 - 2, A)                  if z <= 8
+//          = chbevl(32 / z - 2, B) / sqrt(z)       otherwise
+//   chbevl(t, c) is evaluated with the Clenshaw recurrence:
+//     b0 = c0, b1 = 0, b2 = 0
+//     if N > 1:
+//       b1 = b0
+//       b0 = t * b0 + c1
+//     for i = 2 .. N - 1:
+//       b2 = b1
+//       b1 = b0
+//       b0 = t * b1 - b2 + c[i]
+//     chbevl(t, c) = 0.5 * (b0 - b2)
+// The implementation below folds the first recurrence step but computes the
+// same value.
+struct NormalizeCylBesselI0Op
+    : public OpRewritePattern<hfusion::CylBesselI0Op> {
+  using OpRewritePattern<hfusion::CylBesselI0Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::CylBesselI0Op op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    auto inType = getElementTypeOrSelf(input.getType());
+    if (!inType.isF16() && !inType.isF32()) {
+      return failure();
+    }
+
+    if (inType.isF16()) {
+      // for high precision, cast src to fp32 and compute and then cast it back
+      // TODO: remove cast after enable automatical high precision computing
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op->getLoc();
+    auto elemType = getElementTypeOrSelf(input.getType());
+    auto f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    auto i1Empty = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                                          rewriter.getI1Type());
+    Value res = buildTensorCylBesselI0Approximation(rewriter, loc, elemType,
+                                                    input, f32Empty, i1Empty);
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  static constexpr std::array<double, 30> kI0eCoeffsA = {
+      -4.41534164647933937950E-18, 3.33079451882223809783E-17,
+      -2.43127984654795469359E-16, 1.71539128555513303061E-15,
+      -1.16853328779934516808E-14, 7.67618549860493561688E-14,
+      -4.85644678311192946090E-13, 2.95505266312963983461E-12,
+      -1.72682629144155570723E-11, 9.67580903537323691224E-11,
+      -5.18979560163526290666E-10, 2.65982372468238665035E-9,
+      -1.30002500998624804212E-8,  6.04699502254191894932E-8,
+      -2.67079385394061173391E-7,  1.11738753912010371815E-6,
+      -4.41673835845875056359E-6,  1.64484480707288970893E-5,
+      -5.75419501008210370398E-5,  1.88502885095841655729E-4,
+      -5.76375574538582365885E-4,  1.63947561694133579842E-3,
+      -4.32430999505057594430E-3,  1.05464603945949983183E-2,
+      -2.37374148058994688156E-2,  4.93052842396707084878E-2,
+      -9.49010970480476444210E-2,  1.71620901522208775349E-1,
+      -3.04682672343198398683E-1,  6.76795274409476084995E-1};
+
+  static constexpr std::array<double, 25> kI0eCoeffsB = {
+      -7.23318048787475395456E-18, -4.83050448594418207126E-18,
+      4.46562142029675999901E-17,  3.46122286769746109310E-17,
+      -2.82762398051658348494E-16, -3.42548561967721913462E-16,
+      1.77256013305652638360E-15,  3.81168066935262242075E-15,
+      -9.55484669882830764870E-15, -4.15056934728722208663E-14,
+      1.54008621752140982691E-14,  3.85277838274214270114E-13,
+      7.18012445138366623367E-13,  -1.79417853150680611778E-12,
+      -1.32158118404477131188E-11, -3.14991652796324136454E-11,
+      1.18891471078464383424E-11,  4.94060238822496958910E-10,
+      3.39623202570838634515E-9,   2.26666899049817806459E-8,
+      2.04891858946906374183E-7,   2.89137052083475648297E-6,
+      6.88975834691682398426E-5,   3.36911647825569408990E-3,
+      8.04490411014108831608E-1};
+
+  Value buildTensorCylBesselI0Approximation(PatternRewriter &rewriter,
+                                            Location loc, Type elemType,
+                                            Value input, Value f32Empty,
+                                            Value i1Empty) const {
+    Value absInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, input, f32Empty);
+    Value half = createFloatConst(rewriter, loc, elemType, 0.5);
+    Value two = createFloatConst(rewriter, loc, elemType, 2.0);
+    Value eight = createFloatConst(rewriter, loc, elemType, 8.0);
+    Value thirtyTwo = createFloatConst(rewriter, loc, elemType, 32.0);
+
+    Value zLe8 = buildSmallMagnitudeApproximation(
+        rewriter, loc, elemType, absInput, half, two, f32Empty);
+    Value zLe8Mask = createCompareOp(rewriter, loc, absInput, eight,
+                                     hfusion::CompareFn::vle, i1Empty);
+    Value safeAbsInput =
+        createSelectOp(rewriter, loc, zLe8Mask, eight, absInput, f32Empty);
+    Value zGt8 = buildLargeMagnitudeApproximation(
+        rewriter, loc, elemType, safeAbsInput, half, two, thirtyTwo, f32Empty);
+
+    Value i0e = createSelectOp(rewriter, loc, zLe8Mask, zLe8, zGt8, f32Empty);
+    Value expAbsInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::exp, absInput, f32Empty);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, expAbsInput, i0e,
+                       f32Empty);
+  }
+
+  Value buildSmallMagnitudeApproximation(PatternRewriter &rewriter,
+                                         Location loc, Type elemType,
+                                         Value absInput, Value half, Value two,
+                                         Value outputLike) const {
+    Value zHalf = createBinOp(rewriter, loc, linalg::BinaryFn::mul, absInput,
+                              half, outputLike);
+    Value zHalfMinusTwo = createBinOp(rewriter, loc, linalg::BinaryFn::sub,
+                                      zHalf, two, outputLike);
+    return evaluateChebyshev(rewriter, loc, elemType, zHalfMinusTwo,
+                             kI0eCoeffsA, half, outputLike);
+  }
+
+  Value buildLargeMagnitudeApproximation(PatternRewriter &rewriter,
+                                         Location loc, Type elemType,
+                                         Value safeAbsInput, Value half,
+                                         Value two, Value thirtyTwo,
+                                         Value outputLike) const {
+    Value thirtyTwoDivZ = createBinOp(rewriter, loc, linalg::BinaryFn::div,
+                                      thirtyTwo, safeAbsInput, outputLike);
+    Value thirtyTwoDivZMinusTwo = createBinOp(
+        rewriter, loc, linalg::BinaryFn::sub, thirtyTwoDivZ, two, outputLike);
+    Value zGt8 =
+        evaluateChebyshev(rewriter, loc, elemType, thirtyTwoDivZMinusTwo,
+                          kI0eCoeffsB, half, outputLike);
+    Value sqrtAbsInput = createHFusionUnaryOp(
+        rewriter, loc, hfusion::UnaryFn::sqrt, safeAbsInput, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::div, zGt8, sqrtAbsInput,
+                       outputLike);
+  }
+
+  Value createBinOp(PatternRewriter &rewriter, Location loc,
+                    linalg::BinaryFn fun, Value lhs, Value rhs,
+                    Value outputLike) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createUnaryOp(PatternRewriter &rewriter, Location loc,
+                      linalg::UnaryFn fun, Value operand,
+                      Value outputLike) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{operand}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             hfusion::UnaryFn fun, Value operand,
+                             Value outputLike) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{operand}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createSelectOp(PatternRewriter &rewriter, Location loc, Value cond,
+                       Value trueValue, Value falseValue,
+                       Value outputLike) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{outputLike},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createCompareOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                        Value rhs, CompareFn compareFn,
+                        Value outputLike) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(
+            loc, TypeRange{outputLike}, ValueRange{lhs, rhs},
+            ValueRange{outputLike}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+
+  template <size_t N>
+  Value evaluateChebyshev(PatternRewriter &rewriter, Location loc,
+                          Type elemType, Value chebyInput,
+                          const std::array<double, N> &coefficients, Value half,
+                          Value outputLike) const {
+    static_assert(N > 0, "coefficients should not be empty");
+
+    Value b0 = createFloatConst(rewriter, loc, elemType, coefficients[0]);
+    Value b1 = createFloatConst(rewriter, loc, elemType, 0.0);
+    Value b2 = b1;
+
+    if constexpr (N > 1) {
+      auto inputMulB0 = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                    chebyInput, b0, outputLike);
+      b1 = b0;
+      b0 = createBinOp(
+          rewriter, loc, linalg::BinaryFn::add, inputMulB0,
+          createFloatConst(rewriter, loc, elemType, coefficients[1]),
+          outputLike);
+    }
+
+    for (size_t i = 2; i < N; ++i) {
+      b2 = b1;
+      b1 = b0;
+      auto inputMulB1 = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                    chebyInput, b1, outputLike);
+      auto inputMulB1MinusB2 = createBinOp(rewriter, loc, linalg::BinaryFn::sub,
+                                           inputMulB1, b2, outputLike);
+      b0 = createBinOp(
+          rewriter, loc, linalg::BinaryFn::add, inputMulB1MinusB2,
+          createFloatConst(rewriter, loc, elemType, coefficients[i]),
+          outputLike);
+    }
+
+    auto b0MinusB2 =
+        createBinOp(rewriter, loc, linalg::BinaryFn::sub, b0, b2, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, b0MinusB2, half,
+                       outputLike);
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -7586,6 +7827,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
   patterns.add<NormalizeErfInvOp>(patterns.getContext());
+  patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());
 }
 
 namespace {
