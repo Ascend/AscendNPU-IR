@@ -19,6 +19,164 @@ func.func @triton_where_2d_outlined_merged_vf_0(%arg0: memref<13xi32, #hivm.addr
 
 // -----
 
+// (32, 16): restricted write uses mask[32]; second write uses mask[16].
+// Both masks are explicit in MLIR, so %shared accumulates two different mask
+// indices and the existing size()>1 guard erases its annotation without
+// needing the hasUnmaskedUser fix. Unaffected by the new fix.
+// CHECK-LABEL: mask_32_and_16
+// CHECK: %[[SHARED:.*]] = arith.addi
+// CHECK-NOT: annotation.mark %[[SHARED]]
+func.func @mask_32_and_16(
+    %arg0: memref<32xi32, #hivm.address_space<ub>>,
+    %arg1: memref<16xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<32> : vector<64xi32>
+  %mask32 = vector.constant_mask [32] : vector<64xi1>
+  %mask16 = vector.constant_mask [16] : vector<64xi1>
+  %shared = arith.addi %cst, %offset : vector<64xi32>
+  %val_a = arith.addi %shared, %offset : vector<64xi32>
+  vector.transfer_write %val_a, %arg0[%c0], %mask32 {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  %val_b = arith.addi %shared, %cst : vector<64xi32>
+  vector.transfer_write %val_b, %arg1[%c0], %mask16 {in_bounds = [true]} : vector<64xi32>, memref<16xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
+// (32, 63): restricted write uses mask[32]; second write uses mask[63].
+// Same reasoning as (32, 16): two explicit MLIR masks, size()>1 guard fires.
+// Unaffected by the new fix.
+// CHECK-LABEL: mask_32_and_63
+// CHECK: %[[SHARED:.*]] = arith.addi
+// CHECK-NOT: annotation.mark %[[SHARED]]
+func.func @mask_32_and_63(
+    %arg0: memref<32xi32, #hivm.address_space<ub>>,
+    %arg1: memref<63xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<32> : vector<64xi32>
+  %mask32 = vector.constant_mask [32] : vector<64xi1>
+  %mask63 = vector.constant_mask [63] : vector<64xi1>
+  %shared = arith.addi %cst, %offset : vector<64xi32>
+  %val_a = arith.addi %shared, %offset : vector<64xi32>
+  vector.transfer_write %val_a, %arg0[%c0], %mask32 {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  %val_b = arith.addi %shared, %cst : vector<64xi32>
+  vector.transfer_write %val_b, %arg1[%c0], %mask63 {in_bounds = [true]} : vector<64xi32>, memref<63xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
+// (32, 128): restricted write uses mask[32]; the 128-element full path is
+// split into two 64-element writes each with its own explicit
+// vector.constant_mask [64] op. Three distinct mask ops produce three mask
+// indices on %shared, so size()>1 fires. Unaffected by the new fix.
+// CHECK-LABEL: mask_32_and_128
+// CHECK: %[[SHARED:.*]] = arith.addi
+// CHECK-NOT: annotation.mark %[[SHARED]]
+func.func @mask_32_and_128(
+    %arg0: memref<32xi32, #hivm.address_space<ub>>,
+    %arg1: memref<128xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<32> : vector<64xi32>
+  %base_hi = arith.constant dense<64> : vector<64xi32>
+  %mask32 = vector.constant_mask [32] : vector<64xi1>
+  // Two separate mask ops for the two full-width halves of the 128-elem write.
+  %mask64_lo = vector.constant_mask [64] : vector<64xi1>
+  %mask64_hi = vector.constant_mask [64] : vector<64xi1>
+  %shared = arith.addi %cst, %offset : vector<64xi32>
+  %val_row = arith.addi %shared, %offset : vector<64xi32>
+  vector.transfer_write %val_row, %arg0[%c0], %mask32 {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  %val_col_lo = arith.addi %shared, %cst : vector<64xi32>
+  vector.transfer_write %val_col_lo, %arg1[%c0], %mask64_lo {in_bounds = [true]} : vector<64xi32>, memref<128xi32, #hivm.address_space<ub>>
+  %val_col_hi = arith.addi %shared, %base_hi : vector<64xi32>
+  vector.transfer_write %val_col_hi, %arg1[%c64], %mask64_hi {in_bounds = [true]} : vector<64xi32>, memref<128xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
+// (32, 64): restricted write uses mask[32]; the full 64-element write has NO
+// MLIR mask because the destination size equals the vector width. Only one
+// mask index accumulates on %shared, so size()>1 does not fire. The new
+// hasUnmaskedUser guard detects that %val_col is unannotated and strips the
+// annotation on %shared, preventing predicate contamination in LLVM lowering.
+// CHECK-LABEL: mask_32_and_64_unmasked
+// CHECK: %[[SHARED:.*]] = arith.addi
+// CHECK-NOT: annotation.mark %[[SHARED]]
+func.func @mask_32_and_64_unmasked(
+    %arg0: memref<32xi32, #hivm.address_space<ub>>,
+    %arg1: memref<64xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<32> : vector<64xi32>
+  %mask32 = vector.constant_mask [32] : vector<64xi1>
+  %shared = arith.addi %cst, %offset : vector<64xi32>
+  %val_row = arith.addi %shared, %offset : vector<64xi32>
+  vector.transfer_write %val_row, %arg0[%c0], %mask32 {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  // No mask: destination is exactly 64 elements wide, so MLIR omits the mask.
+  // %val_col is never annotated, making %shared an unmasked-user case.
+  %val_col = arith.addi %shared, %cst : vector<64xi32>
+  vector.transfer_write %val_col, %arg1[%c0] {in_bounds = [true]} : vector<64xi32>, memref<64xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
+// (16, 64): same bug as (32, 64) but with a smaller restricted mask.
+// Verifies the hasUnmaskedUser fix is not specific to a particular mask size.
+// CHECK-LABEL: mask_16_and_64_unmasked
+// CHECK: %[[SHARED:.*]] = arith.addi
+// CHECK-NOT: annotation.mark %[[SHARED]]
+func.func @mask_16_and_64_unmasked(
+    %arg0: memref<16xi32, #hivm.address_space<ub>>,
+    %arg1: memref<64xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<16> : vector<64xi32>
+  %mask16 = vector.constant_mask [16] : vector<64xi1>
+  %shared = arith.addi %cst, %offset : vector<64xi32>
+  %val_row = arith.addi %shared, %offset : vector<64xi32>
+  vector.transfer_write %val_row, %arg0[%c0], %mask16 {in_bounds = [true]} : vector<64xi32>, memref<16xi32, #hivm.address_space<ub>>
+  %val_col = arith.addi %shared, %cst : vector<64xi32>
+  vector.transfer_write %val_col, %arg1[%c0] {in_bounds = [true]} : vector<64xi32>, memref<64xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
+// Positive regression test: a value whose only non-mark users are all inside
+// the masked chain must keep its reached_mask_ops_idx annotation. This guards
+// against over-aggressive erasure — a broken fix that always erases would
+// still pass the CHECK-NOT tests above but fail here.
+// CHECK-LABEL: pure_masked_chain
+// CHECK: %[[VAL:.*]] = arith.addi
+// CHECK: annotation.mark %[[VAL]] {reached_mask_ops_idx
+func.func @pure_masked_chain(
+    %arg0: memref<32xi32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0> : vector<64xi32>
+  %offset = arith.constant dense<32> : vector<64xi32>
+  %mask = vector.constant_mask [32] : vector<64xi1>
+  // %inner feeds only %outer, which feeds only the masked write.
+  // hasUnmaskedUser stays false, so the annotation must be preserved.
+  %inner = arith.addi %cst, %offset : vector<64xi32>
+  %outer = arith.addi %inner, %offset : vector<64xi32>
+  vector.transfer_write %outer, %arg0[%c0], %mask {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
 // CHECK-LABEL: triton_test_reduction_mask
 // CHECK: %[[VAL:[0-9]+]] = vector.reduction
 // CHECK-NOT: annotation.mark %[[VAL]]

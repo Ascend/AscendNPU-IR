@@ -189,7 +189,32 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
                 maskOpMark->second)) { // mask_op_idx
           rewriter.eraseOp(markOp);
         } else {
-          markOp->setAttr(utils::reachedMaskOpsIdx, markedIdxArray[0]);
+          // If the annotated value is also used outside the masked data flow,
+          // do not mark it. Marking it would cause the LLVM lowering to
+          // materialize it under the restricted predicate, and then silently
+          // reuse that restricted-predicate result in the unmasked context,
+          // leaving the upper lanes of the vector invalid.
+          Value annotatedVal = markOp.getSrc();
+          bool hasUnmaskedUser = false;
+          for (Operation *user : annotatedVal.getUsers()) {
+            // Skip annotation mark ops themselves.
+            if (isa<annotation::MarkOp>(user))
+              continue;
+            // Skip ops with no results (e.g., the transfer_write anchor).
+            if (user->getNumResults() == 0)
+              continue;
+            // If this user's result has no reached_mask_ops_idx annotation it
+            // lies outside the masked chain — the value has mixed uses.
+            if (!utils::getAnnotateOpWithAttr(user->getResult(0),
+                                              utils::reachedMaskOpsIdx)) {
+              hasUnmaskedUser = true;
+              break;
+            }
+          }
+          if (hasUnmaskedUser)
+            rewriter.eraseOp(markOp);
+          else
+            markOp->setAttr(utils::reachedMaskOpsIdx, markedIdxArray[0]);
         }
 
       } else {
