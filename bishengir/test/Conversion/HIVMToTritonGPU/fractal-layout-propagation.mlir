@@ -6,21 +6,21 @@
 // The UB memref<8xf32, #ub> {hivm.fractal_layout = "zN"} expands to 5 args:
 //   arg0: !tt.ptr<f32, 6> {hivm.fractal_layout = "zN"}  <-- attribute here
 //   arg1: !tt.ptr<f32, 6>
-//   arg2: index
-//   arg3: index
-//   arg4: index
+//   arg2: i64
+//   arg3: i64
+//   arg4: i64
 
 // CHECK-LABEL: tt.func @fractal_zN_store
 // CHECK-SAME:  %[[A0:.*]]: !tt.ptr<f32, 6> {hivm.fractal_layout = "zN"}
 // CHECK-SAME:  !tt.ptr<f32, 6>
-// CHECK-SAME:  index
-// CHECK-SAME:  index
-// CHECK-SAME:  index
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
 // CHECK-SAME:  !tt.ptr<f32>
 // CHECK-SAME:  !tt.ptr<f32>
-// CHECK-SAME:  index
-// CHECK-SAME:  index
-// CHECK-SAME:  index
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
 module {
   func.func @fractal_zN_store(
       %arg0: memref<8xf32, #hivm.address_space<ub>> {hivm.fractal_layout = "zN"},
@@ -38,9 +38,9 @@ module {
 // CHECK-LABEL: tt.func @fractal_nZ_load
 // CHECK-SAME:  %[[A0:.*]]: !tt.ptr<f16, 6> {hivm.fractal_layout = "nZ"}
 // CHECK-SAME:  !tt.ptr<f16, 6>
-// CHECK-SAME:  index
-// CHECK-SAME:  index
-// CHECK-SAME:  index
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
+// CHECK-SAME:  i64
 module {
   func.func @fractal_nZ_load(
       %arg0: memref<8xf16, #hivm.address_space<ub>> {hivm.fractal_layout = "nZ"}
