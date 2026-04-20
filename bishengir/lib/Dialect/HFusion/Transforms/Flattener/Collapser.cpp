@@ -488,6 +488,107 @@ void Flattener::adjustGatherOp(hfusion::GatherOp gatherOp, OpBuilder &builder) {
   eraseOp(gatherOp);
 }
 
+void Flattener::adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
+                                   OpBuilder &builder) {
+  Value ref = gatherLoadOp.getDst();
+  if (!hasCollapseGroup(ref) && gatherLoadOp.getResult()) {
+    ref = gatherLoadOp.getResult();
+  }
+  if (!hasCollapseGroup(ref)) {
+    adjustResultType(gatherLoadOp);
+    return;
+  }
+
+  // Gather-load has no explicit axis attribute, so the collapsed
+  // destination/result shape becomes the canonical iteration space for every
+  // tensor operand that participates in the access.
+  auto collapseGroup = getCollapseGroup(ref);
+  auto collapseTensorOperand = [&](Value operand) -> Value {
+    auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
+    if (!tensorType || collapseGroup.empty() ||
+        collapseGroup.size() ==
+            static_cast<size_t>(tensorType.getRank())) {
+      return operand;
+    }
+    auto collapsedType =
+        tensor::CollapseShapeOp::inferCollapsedType(tensorType, collapseGroup);
+    auto collapseOp = builder.create<tensor::CollapseShapeOp>(
+        operand.getLoc(), collapsedType, operand, collapseGroup);
+    updatePreviousType(collapseOp.getResult(), tensorType);
+    collapsePropagateOrVerify(collapseOp.getResult(), operand);
+    return collapseOp.getResult();
+  };
+
+  builder.setInsertionPoint(gatherLoadOp);
+  Value indices = collapseTensorOperand(gatherLoadOp.getIndices());
+  Value mask =
+      gatherLoadOp.getMask() ? collapseTensorOperand(gatherLoadOp.getMask())
+                             : Value();
+  Value dst = collapseTensorOperand(gatherLoadOp.getDst());
+
+  builder.setInsertionPointAfter(gatherLoadOp);
+  auto newGatherLoadOp = builder.create<hfusion::GatherLoadOp>(
+      gatherLoadOp.getLoc(), gatherLoadOp.getBase(), indices,
+      gatherLoadOp.getBurstLen(), mask, gatherLoadOp.getOther(), dst,
+      gatherLoadOp.getCacheAttr(), gatherLoadOp.getEvictAttr(),
+      gatherLoadOp.getIsVolatileAttr());
+  if (gatherLoadOp.getResult()) {
+    auto oldRes = gatherLoadOp.getResult();
+    auto newRes = newGatherLoadOp.getResult();
+    collapsePropagateOrVerify(newRes, oldRes);
+    updatePreviousType(newRes, oldRes.getType());
+  }
+  replaceOpUsage(gatherLoadOp, newGatherLoadOp);
+  eraseOp(gatherLoadOp);
+}
+
+void Flattener::adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
+                                     OpBuilder &builder) {
+  Value ref = scatterStoreOp.getIndices();
+  if (!hasCollapseGroup(ref) && scatterStoreOp.getResult()) {
+    ref = scatterStoreOp.getResult();
+  }
+  if (!hasCollapseGroup(ref)) {
+    adjustResultType(scatterStoreOp);
+    return;
+  }
+
+  // Scatter-store follows the same collapsed iteration space on its
+  // index/data/mask tensors, so rewrite them as a unit before recreating the
+  // op with the new ranks.
+  auto collapseGroup = getCollapseGroup(ref);
+  auto collapseTensorOperand = [&](Value operand) -> Value {
+    auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
+    if (!tensorType || collapseGroup.empty() ||
+        collapseGroup.size() ==
+            static_cast<size_t>(tensorType.getRank())) {
+      return operand;
+    }
+    auto collapsedType =
+        tensor::CollapseShapeOp::inferCollapsedType(tensorType, collapseGroup);
+    auto collapseOp = builder.create<tensor::CollapseShapeOp>(
+        operand.getLoc(), collapsedType, operand, collapseGroup);
+    updatePreviousType(collapseOp.getResult(), tensorType);
+    collapsePropagateOrVerify(collapseOp.getResult(), operand);
+    return collapseOp.getResult();
+  };
+
+  builder.setInsertionPoint(scatterStoreOp);
+  Value indices = collapseTensorOperand(scatterStoreOp.getIndices());
+  Value data = collapseTensorOperand(scatterStoreOp.getData());
+  Value mask =
+      scatterStoreOp.getMask() ? collapseTensorOperand(scatterStoreOp.getMask())
+                               : Value();
+
+  builder.setInsertionPointAfter(scatterStoreOp);
+  auto newScatterStoreOp = builder.create<hfusion::ScatterStoreOp>(
+      scatterStoreOp.getLoc(), scatterStoreOp->getResultTypes(), indices, data,
+      scatterStoreOp.getBurstLen(), mask, scatterStoreOp.getBase(),
+      scatterStoreOp.getCacheAttr(), scatterStoreOp.getEvictAttr());
+  replaceOpUsage(scatterStoreOp, newScatterStoreOp);
+  eraseOp(scatterStoreOp);
+}
+
 void Flattener::adjustConcatOp(tensor::ConcatOp concatOp) {
   auto collapseGroups = getCollapseGroup(concatOp.getInputs()[0]);
   auto tmpDim = concatOp.getDim();
@@ -1144,6 +1245,16 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
   // Check if the operation is skippable
   if (isHeadOperation(op) || isTailOperation(op) || isUnsupportedOp(op)) {
     LLVM_DEBUG(llvm::dbgs() << "Warning: Skipping OP " << *op << "\n";);
+    return success();
+  }
+
+  if (auto gatherLoadOp = dyn_cast<hfusion::GatherLoadOp>(op)) {
+    adjustGatherLoadOp(gatherLoadOp, builder);
+    return success();
+  }
+
+  if (auto scatterStoreOp = dyn_cast<hfusion::ScatterStoreOp>(op)) {
+    adjustScatterStoreOp(scatterStoreOp, builder);
     return success();
   }
 

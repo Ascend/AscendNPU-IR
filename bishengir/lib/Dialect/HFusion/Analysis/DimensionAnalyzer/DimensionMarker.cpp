@@ -73,6 +73,11 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           [&](auto subviewOp) { processSubviewOp(subviewOp); })
       .Case<hfusion::GatherOp>(
           [&](auto gatherOp) { processGatherOp(gatherOp); })
+      .Case<hfusion::GatherLoadOp, hfusion::ScatterStoreOp>(
+          // These ops preserve their logical iteration shape on tensor
+          // operands, so the generic parallel-op rule is enough to connect the
+          // dimensions used by flattening.
+          [&](auto op) { processParallelOp(op, current); })
       .Case<hfusion::InterleaveOp>(
           [&](auto interleaveOp) { processInterleaveOp(interleaveOp); })
       .Case<hfusion::DeinterleaveOp>(

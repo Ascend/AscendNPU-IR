@@ -11,6 +11,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -25,6 +26,23 @@ using namespace mlir::hivm;
 using namespace mlir::triton;
 
 namespace {
+static Type getTritonABIType(Type type) {
+  if (isa<IndexType>(type))
+    return IntegerType::get(type.getContext(), 64);
+  return HIVMToTritonTypeConvert(type);
+}
+
+static Value narrowABIIndexArg(ConversionPatternRewriter &rewriter,
+                               Location loc, Value abiArg, Type originalType) {
+  auto i32Ty = rewriter.getI32Type();
+  Value narrowed = abiArg;
+  if (!abiArg.getType().isInteger(32))
+    narrowed = rewriter.create<arith::TruncIOp>(loc, i32Ty, abiArg);
+  if (isa<IndexType>(originalType))
+    return rewriter.create<arith::IndexCastUIOp>(loc, originalType, narrowed);
+  return narrowed;
+}
+
 class FuncOpPattern : public OpConversionPattern<func::FuncOp> {
 public:
   using OpConversionPattern::OpConversionPattern;
@@ -45,19 +63,21 @@ public:
         // The following conversion logic should be consistent with
         // 'LLVMTypeConverter::convertMemRefType'
         auto ptrTy = HIVMToTritonTypeConvert(inputTy);
-        auto indexTy = mlir::IndexType::get(op.getContext());
+        auto indexTy = rewriter.getI64Type();
 
+        // Expand the memref descriptor into TTIR-friendly scalars:
+        //   base ptr, aligned ptr, offset, sizes[rank], strides[rank].
+        // Multi-dimensional memrefs need per-dimension metadata here because
+        // TTIR cannot carry the original LLVM descriptor struct directly.
         newInputTypes.push_back(ptrTy);
         newInputTypes.push_back(ptrTy);
         newInputTypes.push_back(indexTy);
 
         auto rank = memrefTy.getRank();
-        // The current dialect does not allow the use of LLVM dialects.
-        // auto rankArrayTy = LLVM::LLVMArrayType::get(indexTy, rank); 
-        // e.g. !llvm.array<rank x index>
-        auto rankArrayTy = indexTy;
-        newInputTypes.push_back(rankArrayTy);
-        newInputTypes.push_back(rankArrayTy);
+        for (int i = 0; i < rank; ++i)
+          newInputTypes.push_back(indexTy); // sizes
+        for (int i = 0; i < rank; ++i)
+          newInputTypes.push_back(indexTy); // strides
 
         // Record the index of the shared memory base pointer.
         if (op.getArgAttr(idx, SharedMemoryAttr::name)) {
@@ -74,7 +94,7 @@ public:
         newArgCounter += rank;
         newArgCounter += rank;
       } else {
-        newInputTypes.push_back(HIVMToTritonTypeConvert(inputTy));
+        newInputTypes.push_back(getTritonABIType(inputTy));
         newArgCounter++;
       }
     }
@@ -103,9 +123,18 @@ public:
     for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
       if (auto memrefTy = mlir::dyn_cast<MemRefType>(oldArg.getType())) {
         auto dataPtr1 = newArgs[argIdx];
-        argIdx += 5;
-        /// New args should be repackaged as llvm.struct{ptr, ptr, index, {index}, {index}}.
+        auto rank = memrefTy.getRank();
+        // Skip over the full rank-aware descriptor emitted above; the cloned
+        // body still models the original memref value through its data pointer.
+        argIdx += FixCount;
+        argIdx += rank;
+        argIdx += rank;
         argMapper.map(oldArg, dataPtr1);
+      } else if (isa<IndexType>(oldArg.getType())) {
+        auto narrowedArg =
+            narrowABIIndexArg(rewriter, op.getLoc(), newArgs[argIdx++],
+                              oldArg.getType());
+        argMapper.map(oldArg, narrowedArg);
       } else {
         argMapper.map(oldArg, newArgs[argIdx++]);
       }

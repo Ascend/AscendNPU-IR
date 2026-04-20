@@ -90,6 +90,10 @@ private:
 
   /// Adjusts indices for hfusion.gather operations.
   void adjustGatherOp(hfusion::GatherOp gatherOp, OpBuilder &builder);
+  void adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
+                          OpBuilder &builder);
+  void adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
+                            OpBuilder &builder);
 
   MemRefType inferResultMemRefType(memref::SubViewOp subviewOp);
 
