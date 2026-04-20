@@ -54,6 +54,8 @@ bool isSingleResultPropagatableMemrefOp(Operation *op) {
     return true;
   if (isa<bishengir::memref_ext::AllocWorkspaceOp>(op))
     return true;
+  if (isa<UnrealizedConversionCastOp>(op))
+    return true;
   return false;
 }
 

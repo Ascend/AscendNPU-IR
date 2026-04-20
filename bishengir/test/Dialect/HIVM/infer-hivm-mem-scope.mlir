@@ -264,3 +264,14 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: test_infer_mem_scope_unrealized_conversion_cast
+module {
+  func.func @test_infer_mem_scope_unrealized_conversion_cast(%arg0 : memref<128xi32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    // CHECK: #hivm.address_space<gm>
+    %1 = builtin.unrealized_conversion_cast %arg0 : memref<128xi32> to memref<256xi16>
+    return
+  }
+}
