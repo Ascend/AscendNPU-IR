@@ -203,6 +203,75 @@ public:
   }
 };
 
+/// Insert fixpipe for hivm::Conv1DL1Op.
+struct InsertFixpipeForConv1DL1OpPattern : public OpRewritePattern<Conv1DL1Op> {
+public:
+  using OpRewritePattern<Conv1DL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(Conv1DL1Op op,
+                                PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    if (op->getAttr(fixpipeAlreadyInserted))
+      return failure();
+
+    auto result = op.getResultTensors()[0];
+    auto resultType = dyn_cast<RankedTensorType>(result.getType());
+    if (!resultType) {
+      return failure();
+    }
+
+    auto init = op.getInit();
+    auto initType = dyn_cast<RankedTensorType>(init.getType());
+    if (!initType) {
+      return failure();
+    }
+
+    auto elementType = resultType.getElementType();
+
+    // === insert fixpipe ===
+    int resultIndx = 0;
+    Operation *insertAfterOp = nullptr;
+    if (isAccumulation(op)) {
+      // only insert fixpipe outside of the for loop when it is an accumulation
+      // loop
+      insertAfterOp = getInsertPoint(op, resultIndx);
+    } else {
+      insertAfterOp = op;
+    }
+    rewriter.setInsertionPointAfter(insertAfterOp);
+    Location loc = insertAfterOp->getLoc();
+
+    Value fixpipeInit = rewriter.create<tensor::EmptyOp>(
+        loc, resultType.getShape(), elementType);
+
+    // Create FixpipeDMAModeAttr with NZ2ND mode
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr dmaModeAttr =
+        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+
+    auto fixpipeOp = rewriter.create<FixpipeOp>(
+        loc,
+        fixpipeInit.getType(),                // result_tensor
+        insertAfterOp->getResult(resultIndx), // src
+        fixpipeInit,                          // dst
+        dmaModeAttr,                          // dma_mode (NZ2ND)
+        FixpipeDualDstModeAttr{},             // dual_dst_mode (default)
+        /*pre_quant=*/nullptr,                // pre_quant
+        /*pre_relu=*/nullptr,                 // pre_relu
+        /*channel_split=*/nullptr             // channel_split
+    );
+
+    rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
+                                  fixpipeOp.getResultTensor(), fixpipeOp);
+
+    op->setAttr(fixpipeAlreadyInserted, rewriter.getBoolAttr(true));
+    return success();
+  }
+};
+
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
@@ -585,6 +654,7 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConv1DL1OpPattern>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 

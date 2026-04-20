@@ -834,11 +834,13 @@ template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv1DL1Op>,
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::BatchMmadL1Op>,
       InsertStoreOpBetweenVectorAndLoad<OpType>,
       InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
       InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::BatchMmadL1Op>,
-      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv1DL1Op>>(
       patterns.getContext());
 }
 
@@ -856,16 +858,27 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
   registerOne<tensor::InsertOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv1DL1Op>>(
+      patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
   patterns
       .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::MmadL1Op>>(
           patterns.getContext());
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv1DL1Op>>(
+          patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
                                                      hivm::MmadL1Op>>(
       patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
+                                                     hivm::Conv1DL1Op>>(
+      patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
                                                      hivm::MmadL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
+                                                     hivm::Conv1DL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<tensor::ExtractOp>>(
       patterns.getContext());

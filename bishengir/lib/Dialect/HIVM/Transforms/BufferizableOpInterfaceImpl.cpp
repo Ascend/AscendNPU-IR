@@ -104,6 +104,16 @@ struct MmadL1OpInterface
   }
 };
 
+struct Conv1DL1OpInterface
+    : public DstBufferizableOpInterfaceExternalModel<Conv1DL1OpInterface,
+                                                     hivm::Conv1DL1Op> {
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+};
+
 struct FixpipeOpInterface
     : public DstBufferizableOpInterfaceExternalModel<FixpipeOpInterface,
                                                      hivm::FixpipeOp> {
@@ -479,6 +489,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
   registry.addExtension(+[](MLIRContext *ctx, hivm::HIVMDialect *dialect) {
     FixpipeOp::attachInterface<FixpipeOpInterface>(*ctx);
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
+    Conv1DL1Op::attachInterface<Conv1DL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
