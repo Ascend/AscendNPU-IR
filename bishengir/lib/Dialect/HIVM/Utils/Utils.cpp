@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InferHIVMMemScope.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -103,6 +104,49 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
       });
 }
 } // namespace
+
+LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
+  LDBG("Begin infer and propagate memory scope for:" << op);
+
+  auto gmSpaceAttr =
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
+  MemScopeInferAndPropagateHelper helper;
+  auto res = op.getResult();
+
+  // Only pointer casts annotated as GM carry enough information to seed
+  // address space propagation.
+  if (util::isGMPointerCastOp(op)) {
+    if (failed(helper.Run(res, gmSpaceAttr))) {
+      return op->emitOpError(
+          "Failed to propagate memory scope for PointerCastOp");
+    }
+  }
+  return success();
+}
+
+// 1. Infer the allocation type based on memoryspace (ub/l1).
+// 2. If there is no memoryspace and the function is aic/aiv,
+// allocate the memory to the corresponding ub or l1;
+// otherwise, allocate the memory to ub by default.
+LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
+                                                hivm::AddressSpace space) {
+  LDBG("Begin infer and propagate memory scope for: " << *op);
+  auto memorySpace = op.getType().getMemorySpace();
+  MemScopeInferAndPropagateHelper helper;
+  if (memorySpace) {
+    auto toAddrSpace =
+        cast<hivm::AddressSpaceAttr>(memorySpace).getAddressSpace();
+    if ((toAddrSpace != hivm::AddressSpace::UB) &&
+        (toAddrSpace != hivm::AddressSpace::L1))
+      return success();
+    return helper.propagateMemScopeToUsers(op->getResults()[0]);
+  }
+  auto spaceAttr = AddressSpaceAttr::get(op->getContext(), space);
+  if (failed(helper.Run(op, spaceAttr))) {
+    return op->emitOpError("Failed to propagate memory scope for allocOp");
+  }
+  return success();
+}
 
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
   if (auto bbArg = dyn_cast<BlockArgument>(operand)) {

@@ -779,6 +779,13 @@ def InferSimtVFMemEffect : Pass<"infer-simt-vf-memory-effect"> {
   let constructor = "mlir::hivm::createInferSimtVFMemEffectPass()";
 }
 
+def InferSimtVFMemScopeHint
+    : Pass<"infer-simt-vf-memory-scope-hint", "ModuleOp"> {
+  let summary = "Infer memory scope hints for simt vf arguments";
+  let constructor = "mlir::hivm::createInferSimtVFMemScopeHintPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
 def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
   let summary = "Insert convert layout for matmul operations";
   let constructor = "mlir::hivm::createInsertConvertLayoutPass()";
@@ -821,10 +828,11 @@ def SplitSimtModule : Pass<"split-simt-module"> {
   let constructor = "mlir::hivm::createSplitSimtModulePass()";
 }
 
-def StripMemRefAddressSpace : Pass<"hivm-strip-memref-address-space", "ModuleOp"> {
-  let summary = "Strip memory space from memref types in the current module";
-  let constructor = "mlir::hivm::createStripMemRefAddressSpacePass()";
-  let dependentDialects = ["func::FuncDialect", "memref::MemRefDialect"];
+def MaterializeSimtVFMemScope
+    : Pass<"materialize-simt-vf-memory-scope", "ModuleOp"> {
+  let summary = "Materialize explicit memory scopes inside split simt modules";
+  let constructor = "mlir::hivm::createMaterializeSimtVFMemScopePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
 def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {

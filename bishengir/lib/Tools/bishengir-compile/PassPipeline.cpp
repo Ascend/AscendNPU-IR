@@ -198,8 +198,6 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
     hivm::HIVMPipelineOptions hivmPipelineOptions;
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
     if (config.shouldEnableSimdSimtMixCompile()) {
-      pm.addPass(hivm::createStripMemRefAddressSpacePass());
-      // Temporary workaround until reg-based vectorization is lowered to HIVM.
       buildDelayedHFusionRegBaseVectorizePipeline(
           pm, config, /*shouldInferFuncCoreType=*/false);
     }
@@ -240,6 +238,9 @@ void setupLowerTritonPipelineOptions(
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
   if (config.shouldEnableSimdSimtMixCompile()) {
+    // Materialize SIMT mem scopes only after split so the main module can stay
+    // free of address-spaced memrefs before delayed reg-based vectorization.
+    pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
     pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
@@ -314,7 +315,10 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.addPass(scope::createOutlineScopePass());
       pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
       pm.addPass(hivm::createInferSimtVFMemEffectPass());
-      pm.addPass(hivm::createInferHIVMMemScopePass());
+      // Infer per-argument mem scope hints from the mixed call boundary first;
+      // actual address space rewrites are deferred until each SIMT module is
+      // split out and lowered independently.
+      pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
       pm.addPass(hivm::createSplitSimtModulePass());
     }
   }

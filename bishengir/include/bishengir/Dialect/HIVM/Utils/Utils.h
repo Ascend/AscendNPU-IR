@@ -351,6 +351,15 @@ Value createMemrefAllocOpWithBufferSizeWithTargetElemType(OpBuilder &builder,
 // and set buffer size with dynamic sizes
 Value createMemrefAllocOpWithBufferSize(OpBuilder &builder, Location loc,
                                         Value source);
+
+/// Infer, propagate, and set memory scope information to PointerCastOp.
+LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op);
+
+/// Infer, propagate, and set memory scope information to AllocOp.
+/// \note Set alloc memory scope to ub/l1.
+LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
+                                                hivm::AddressSpace space);
+
 namespace util {
 enum class BitWidth : uint32_t {
   B1 = 1,

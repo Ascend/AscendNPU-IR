@@ -13,7 +13,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -455,49 +454,6 @@ LogicalResult hivm::inferAndPropagateMemScopeForGpuFunc(gpu::GPUFuncOp op) {
     op.setFunctionType(newFt);
   }
 
-  return success();
-}
-
-LogicalResult
-hivm::inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
-  LDBG("Begin infer and propagate memory scope for:" << op);
-
-  auto gmSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
-  MemScopeInferAndPropagateHelper helper;
-  auto res = op.getResult();
-
-  if (util::isGMPointerCastOp(op)) {
-    if (failed(helper.Run(res, gmSpaceAttr))) {
-      return op->emitOpError(
-          "Failed to propagate memory scope for PointerCastOp");
-    }
-  }
-  return success();
-}
-
-// 1. Infer the allocation type based on memoryspace (ub/l1).
-// 2. If there is no memoryspace and the function is aic/aiv,
-// allocate the memory to the corresponding ub or l1;
-// otherwise, allocate the memory to ub by default.
-LogicalResult
-hivm::inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
-                                        hivm::AddressSpace space) {
-  LDBG("Begin infer and propagate memory scope for: " << *op);
-  auto memorySpace = op.getType().getMemorySpace();
-  MemScopeInferAndPropagateHelper helper;
-  if (memorySpace) {
-    auto toAddrSpace =
-        cast<hivm::AddressSpaceAttr>(memorySpace).getAddressSpace();
-    if ((toAddrSpace != hivm::AddressSpace::UB) &&
-        (toAddrSpace != hivm::AddressSpace::L1))
-      return success();
-    return helper.propagateMemScopeToUsers(op->getResults()[0]);
-  }
-  auto spaceAttr = AddressSpaceAttr::get(op->getContext(), space);
-  if (failed(helper.Run(op, spaceAttr))) {
-    return op->emitOpError("Failed to propagate memory scope for allocOp");
-  }
   return success();
 }
 

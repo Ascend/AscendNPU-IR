@@ -1053,6 +1053,16 @@ def HIVM_SharedMemoryAttr : HIVM_Attr<"SharedMemory", "shared_memory"> {
   }];
 }
 
+def HIVM_SimtMemScopeHintAttr
+    : HIVM_Attr<"SimtMemScopeHint", "simt_mem_scope_hint"> {
+  let parameters = (ins EnumParameter<HIVM_AddressSpaceEnum>:$addressSpace);
+  let assemblyFormat = "`<` $addressSpace `>`";
+  let description = [{
+    Memory scope hint for SIMT VF arguments before address space
+    materialization.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Memory Effect
 //===----------------------------------------------------------------------===//

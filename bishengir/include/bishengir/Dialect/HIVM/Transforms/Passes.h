@@ -137,9 +137,6 @@ std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 
-// Create a pass to strip memory space from memref types in a module.
-std::unique_ptr<Pass> createStripMemRefAddressSpacePass();
-
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
@@ -282,6 +279,13 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 
 // Create a pass to infer simt vf func args memory effect.
 std::unique_ptr<Pass> createInferSimtVFMemEffectPass();
+
+// Create a pass to infer simt vf func args memory scope hints.
+std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
+
+// Create a pass to materialize explicit memory scopes inside split simt
+// modules.
+std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
 
 // Create a pass to insert convert layout operations for matmul ops
 std::unique_ptr<Pass> createInsertConvertLayoutPass();

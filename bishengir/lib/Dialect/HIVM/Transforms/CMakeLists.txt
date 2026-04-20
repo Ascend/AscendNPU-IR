@@ -95,9 +95,10 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   RemoveCopyOps.cpp
   SetBufferSize.cpp
   SinkOpToConsumerInLoop.cpp
+  InferSimtVFMemScopeHint.cpp
+  MaterializeSimtVFMemScope.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
-  StripMemRefAddressSpace.cpp
   SplitSimtModule.cpp
   SyncBlockHoisting.cpp
   TileAndBindSubBlock.cpp
