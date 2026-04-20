@@ -38,11 +38,14 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Debug.h"
 
 // For function inliner support
 #include "mlir/Transforms/InliningUtils.h"
 
 #include <numeric>
+
+#define DEBUG_TYPE "hivm-ops"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -418,6 +421,14 @@ LogicalResult ConvertLayoutOp::verify() {
 // CustomOp
 //===----------------------------------------------------------------------===//
 
+// Builder with empty temp_buffers.
+void CustomOp::build(OpBuilder &builder, OperationState &result, StringRef name,
+                     TypeRange resultTypes, ValueRange inputs,
+                     ValueRange outputs) {
+  build(builder, result, resultTypes, name, inputs, outputs,
+        /*temp_buffers=*/ValueRange{});
+}
+
 // Helper functions
 void CustomOp::setPipe(PIPE pipe) {
   getOperation()->setAttr(PipeAttr::name, PipeAttr::get(getContext(), pipe));
@@ -604,6 +615,20 @@ LogicalResult CustomOp::verify() {
     // Cube function ignores vf mode information
   }
 
+  // Check extra buffers attributes
+  const auto typeArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  const auto sizesArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (typeArrayAttr && sizesArrayAttr) {
+    if (typeArrayAttr.size() != sizesArrayAttr.size())
+      return emitOpError() << "Extra buffers' types and sizes mismatch";
+  } else if (!typeArrayAttr && !sizesArrayAttr) {
+    // No extra buffers attributes specified, ok
+  } else {
+    return emitOpError() << "Either extra buffers' types or sizes missing";
+  }
+
   if (getSymbol().empty())
     return emitOpError() << "Missing implementation function name";
 
@@ -672,6 +697,29 @@ PIPE CustomOp::getPipe() {
     return pipAttr.getPipe();
 
   return PIPE::PIPE_UNASSIGNED;
+}
+
+SmallVector<std::pair<Type, int64_t>> CustomOp::getExtraBuffersInfo() {
+  SmallVector<std::pair<Type, int64_t>> res;
+  const auto typeArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  const auto sizesArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (!typeArrayAttr) {
+    LLVM_DEBUG(assert(!sizesArrayAttr && "custom op verification failed?"));
+    return res;
+  }
+
+  LLVM_DEBUG(assert(typeArrayAttr.size() == sizesArrayAttr.size() &&
+                    "custom op verification failed?"));
+
+  for (auto [typeAttr, sizeAttr] : llvm::zip(typeArrayAttr, sizesArrayAttr)) {
+    const mlir::Type type = cast<mlir::TypeAttr>(typeAttr).getValue();
+    const int64_t size = cast<mlir::IntegerAttr>(sizeAttr).getInt();
+    res.push_back(std::make_pair(type, size));
+  }
+
+  return res;
 }
 
 int CustomOp::getMaxRank() {
