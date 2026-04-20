@@ -1542,10 +1542,6 @@ Interfaces: `InferCoreTypeInterface`
 | `tcube_pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `tvector_pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 
-
-
-
-
 #### Operands
 
 | Operand | Description |
@@ -1601,9 +1597,6 @@ Interfaces: `InferCoreTypeInterface`
 | `pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `static_flag_id` | ::mlir::IntegerAttr | An Attribute containing a integer value<br><br>Syntax:<br>`integer-attribute ::= (integer-literal ( : (index-type \| integer-type) )?) \| true \| false`<br><br>An integer attribute is a literal attribute that represents an integral value of the specified integer or index type. `i1` integer attributes are treated as `boolean` attributes, and use a unique assembly format of either `true` or `false` depending on the value. The default type for non-boolean integer attributes, if a type is not specified, is signless 64-bit integer.<br><br>Examples:<br>`10 : i32`<br>`10    // : i64 is implied here.`<br>`true  // A bool, i.e. i1, value.`<br>`false // A bool, i.e. i1, value.` |
 
-
-
-
 | `tsync_instr_mode` | ::mlir::hivm::SyncBlockInstrModeAttr | HIVM synchronization block instruction mode attribute. |
 
 #### Operands
@@ -1657,10 +1650,6 @@ Interfaces: `InferCoreTypeInterface`
 | `tpipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `static_flag_id` | ::mlir::IntegerAttr | An Attribute containing a integer value<br><br>Syntax:<br>`integer-attribute ::= (integer-literal ( : (index-type \| integer-type) )?) \| true \| false`<br><br>An integer attribute is a literal attribute that represents an integral value of the specified integer or index type. `i1` integer attributes are treated as `boolean` attributes, and use a unique assembly format of either `true` or `false` depending on the value. The default type for non-boolean integer attributes, if a type is not specified, is signless 64-bit integer.<br><br>Examples:<br>`10 : i32`<br>`10    // : i64 is implied here.`<br>`true  // A bool, i.e. i1, value.`<br>`false // A bool, i.e. i1, value.` |
-
-
-
-
 
 #### Operands
 
