@@ -155,7 +155,9 @@ def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
 def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
+                           "annotation::AnnotationDialect",
+  ];
 }
 
 def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
@@ -815,6 +817,12 @@ def CreatePreload : Pass<"create-preload"> {
   let summary = "Create preload for CV pipelining";
   let constructor = "mlir::hivm::createCreatePreloadPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
+}
+
+def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {
+  let summary = "Remove HIVM data layout annotation";
+  let constructor = "mlir::hivm::createRemoveHIVMDataLayoutAnnotationPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

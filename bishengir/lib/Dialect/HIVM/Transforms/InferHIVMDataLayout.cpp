@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -500,6 +501,25 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
       }
       return WalkResult::advance();
     }
+    // If a value is marked with a layout through annotation::MarkOp, we
+    // consider it as an anchor and initialize its layout info accordingly.
+    if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
+      auto layoutAttr =
+          markOp->getAttrOfType<DataLayoutAttr>(hivm::kHIVMDataLayoutAttrName);
+      if (!layoutAttr) {
+        return WalkResult::advance();
+      }
+
+      Value markedValue = markOp.getSrc();
+      if (!isa<MemRefType>(markedValue.getType())) {
+        return WalkResult::advance();
+      }
+
+      LLVM_DEBUG(llvm::dbgs() << layoutAttr << "\n";);
+      (void)updateLayoutIfChanged(markedValue, {layoutAttr, layoutAttr});
+
+      return WalkResult::advance();
+    }
     // Pointer casts with GM space address is considered to have ND layout.
     // This could happen due to supporting indirect memory access.
     if (auto pointerCast = dyn_cast<hivm::PointerCastOp>(op)) {
@@ -591,7 +611,7 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
         })
         .Case<bishengir::memref_ext::AllocWorkspaceOp>(
             [&](bishengir::memref_ext::AllocWorkspaceOp op) {
-              updateLayout(op->getResults(), info, changed);
+              populateLayout(op->getResults(), info, changed);
             })
         .Default([&](Operation *op) {
           // Don't need to update Ops that don't have results.
@@ -617,14 +637,37 @@ bool DataLayoutInferAndPropagateHelper::updateLayoutIfChanged(
     Value value, const LayoutInfo &info) {
 
   if (layout_info_.contains(value) && layout_info_.lookup(value) == info) {
-    LDBG("Not updating, layout_info_ for " << value << " exists");
+    LDBG("Not updating, layout_info_ for "
+         << value << " exists and consists with new info");
     return false;
   }
+
   layout_info_[value] = info;
-  LLVM_DEBUG(llvm::dbgs() << "  Value [" << value << "] Current layout is: "
-                          << info.currentLayout
-                          << ", Target layout is: "
-                          << info.targetLayout << "\n";);
+  LLVM_DEBUG(llvm::dbgs() << "  Value [" << value
+                          << "] Current layout is: " << info.currentLayout
+                          << ", Target layout is: " << info.targetLayout
+                          << "\n";);
+  return true;
+}
+
+/// Populates the layout information for a value if it is absent.
+/// @param value The value to populate layout for.
+/// @param info The layout information to insert.
+/// @return True if the layout was populated, false if the value already had
+/// layout information and was not modified.
+bool DataLayoutInferAndPropagateHelper::populateLayoutIfAbsent(
+    Value value, const LayoutInfo &info) {
+
+  if (layout_info_.contains(value)) {
+    LDBG("Not populating, layout_info_ for " << value << " already exists");
+    return false;
+  }
+
+  layout_info_[value] = info;
+  LLVM_DEBUG(llvm::dbgs() << "  [Init] Value [" << value
+                          << "] Current layout is: " << info.currentLayout
+                          << ", Target layout is: " << info.targetLayout
+                          << "\n";);
   return true;
 }
 
@@ -634,6 +677,17 @@ void DataLayoutInferAndPropagateHelper::updateLayout(
     if (!isa<BaseMemRefType>(value.getType()))
       continue;
     if (updateLayoutIfChanged(value, info))
+      changed.push_back(value);
+  }
+}
+
+void DataLayoutInferAndPropagateHelper::populateLayout(
+    ValueRange values, const LayoutInfo &info, SmallVector<Value> &changed) {
+
+  for (Value value : values) {
+    if (!isa<BaseMemRefType>(value.getType()))
+      continue;
+    if (populateLayoutIfAbsent(value, info))
       changed.push_back(value);
   }
 }

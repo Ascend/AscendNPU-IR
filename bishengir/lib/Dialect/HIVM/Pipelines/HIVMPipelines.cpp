@@ -322,6 +322,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
   // convert copyOp to nd2nzOp
   pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
+  pm.nest<func::FuncOp>().addPass(createRemoveHIVMDataLayoutAnnotationPass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT;
   pm.nest<func::FuncOp>().addPass(
