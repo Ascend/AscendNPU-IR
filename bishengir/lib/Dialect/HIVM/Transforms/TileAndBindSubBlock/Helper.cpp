@@ -343,5 +343,34 @@ bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
   return true;
 }
 
+void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
+                            OpFoldResult tiledOffset, OpFoldResult tiledSize,
+                            Location loc, OpBuilder &builder) {
+  auto lb = getValueOrCreateConstantIndexOp(builder, loc, tiledOffset);
+  auto ub = getValueOrCreateConstantIndexOp(builder, loc, tiledSize);
+  auto curLB = getValueOrCreateConstantIndexOp(builder, loc, offset);
+  auto curUB = getValueOrCreateConstantIndexOp(builder, loc, size);
+  if (getConstantIntValue(offset).value_or(ShapedType::kDynamic) == 0) {
+    lb = builder.createOrFold<arith::MinSIOp>(loc, lb, curUB);
+    curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, lb);
+    curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
+    size = curUB;
+    return;
+  }
+
+  ub = builder.createOrFold<arith::AddIOp>(loc, lb, ub);
+  curUB = builder.createOrFold<arith::AddIOp>(loc, curLB, curUB);
+
+  curLB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, lb);
+  curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
+  curUB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, curUB);
+
+  curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, curLB);
+  curLB = builder.createOrFold<arith::SubIOp>(loc, curLB, lb);
+
+  offset = curLB;
+  size = curUB;
+}
+
 } // namespace hivm
 } // namespace mlir
