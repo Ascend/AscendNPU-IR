@@ -31,6 +31,28 @@ public:
     return op.hasPureTensorSemantics() && op.getFun() == hfusion::UnaryFn::rsqrt;
   }
 };
+
+/// Normalizes `mul(rec_like(x), y)` to `div(y, x)`
+/// (1/b) * a -> a/b
+/// a * (1/b) -> a/b
+struct HFusionNormalizeMulRecTraits
+    : public hfusion::NormalizeTraitsBase {
+  using RecOpType = hfusion::ElemwiseUnaryOp;
+  using DivOpType = linalg::ElemwiseBinaryOp;
+
+  static bool shouldNormalizeMulRec(linalg::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == linalg::BinaryFn::mul;
+  }
+};
+
+/// Normalizes `div(1, x)` to `rec(x)`.
+struct HFusionNormalizeDivVSToRecTraits
+    : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeDiv(linalg::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == linalg::BinaryFn::div;
+  }
+};
 } // namespace mlir
 
 namespace mlir::hfusion {
@@ -64,61 +86,6 @@ public:
             rewriter, op->getLoc(), linalg::BinaryFn::mul,
             ValueRange{input, one}, ValueRange(op.getDpsInits()[0]));
     rewriter.replaceOp(op, mulOp);
-    return success();
-  }
-};
-
-/// normalize div op to rec op
-/// eg.
-///  y = linalg.div(1, x)
-///  is normalized to
-///  y = hfuson.elemwise_unary {rec}(x)
-struct NormalizeDivVSToRec : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != linalg::BinaryFn::div) {
-      return failure();
-    }
-
-    auto inputs = op.getDpsInputs();
-    auto input0Type = inputs[0].getType();
-    if (!input0Type.isIntOrFloat()) {
-      return failure();
-    }
-
-    auto elemType = getElementTypeOrSelf(input0Type);
-    if (elemType.isF32() || elemType.isBF16()) {
-      // rec accuracy is not enough for f32, and bf16 will be cast to f32
-      // finally
-      return failure();
-    }
-
-    auto input0ConstOp =
-        dyn_cast_or_null<arith::ConstantOp>(inputs[0].getDefiningOp());
-    if (!input0ConstOp) {
-      return failure();
-    }
-    auto constFloatAttr = dyn_cast<FloatAttr>(input0ConstOp.getValue());
-    if (!constFloatAttr) {
-      return failure();
-    }
-    llvm::APFloat oneFloat(constFloatAttr.getValue().getSemantics(), 1);
-    if (!input0ConstOp || constFloatAttr.getValue() != oneFloat) {
-      return failure();
-    }
-
-    auto recOP = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
-                                        hfusion::UnaryFn, hfusion::UnaryFnAttr>(
-        rewriter, op->getLoc(), hfusion::UnaryFn::rec, ValueRange{inputs[1]},
-        ValueRange(op.getDpsInits()[0]));
-    rewriter.replaceOp(op, recOP);
     return success();
   }
 };
@@ -226,93 +193,6 @@ public:
                           /*enableOverflow*/ false, true, castIntegerType);
     rewriter.replaceOp(op, res);
     return success();
-  }
-};
-
-/// Returns whether the input value `v` is rec-like: Rec op or div op
-/// with numerator of constant one. Set the denominator in place if true
-static bool isRecLike(mlir::Value v, mlir::Value &denominator) {
-  Operation *op = v.getDefiningOp();
-  if (auto recOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op)) {
-    if (recOp.getFun() != hfusion::UnaryFn::rec) {
-      return false;
-    }
-    denominator = recOp.getDpsInputs()[0];
-    return true;
-  }
-  auto binOp = dyn_cast_or_null<linalg::ElemwiseBinaryOp>(op);
-  if (!binOp) {
-    return false;
-  }
-  if (binOp.getFun() != linalg::BinaryFn::div) {
-    return false;
-  }
-  auto inputs = binOp.getDpsInputs();
-  mlir::Value divLhs = inputs[0];
-  mlir::Value divRhs = inputs[1];
-  auto lhsConstOp = dyn_cast_or_null<arith::ConstantOp>(divLhs.getDefiningOp());
-  if (!lhsConstOp) {
-    return false;
-  }
-
-  denominator = divRhs;
-  if (auto constFloatAttr = dyn_cast<FloatAttr>(lhsConstOp.getValue())) {
-    llvm::APFloat floatOne(constFloatAttr.getValue().getSemantics(), 1);
-    return constFloatAttr.getValue() == floatOne;
-  }
-  if (auto constIntAttr = dyn_cast<IntegerAttr>(lhsConstOp.getValue())) {
-    return constIntAttr.getInt() == 1;
-  }
-  return false;
-}
-
-// replace `mulOp` with `newDivLhs/newDivRhs`
-static void normalizeMulRecLikeByDiv(linalg::ElemwiseBinaryOp mulOp,
-                                     Value newDivLhs, Value newDivRhs,
-                                     PatternRewriter &rewriter) {
-  assert(mulOp.getFun() == linalg::BinaryFn::mul &&
-         "only support div-by-one used by mul bin op");
-  auto initTensor = mulOp->getOperand(2);
-  auto newDivResult =
-      utils::createEmptyOp(rewriter, mulOp.getLoc(), initTensor);
-  auto newDivOp =
-      hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                              linalg::BinaryFnAttr>(
-          rewriter, mulOp.getLoc(), linalg::BinaryFn::div,
-          ValueRange{newDivLhs, newDivRhs}, ValueRange(newDivResult));
-  rewriter.replaceOp(mulOp, newDivOp);
-}
-
-/// normalize mul rec(div-by-one)
-/// (1/b) * a -> a/b
-/// a * (1/b) -> a/b
-struct NormalizeMulRec : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    if (op.getFun() != linalg::BinaryFn::mul) {
-      return failure();
-    }
-    auto inputs = op.getDpsInputs();
-    mlir::Value mulLhs = inputs[0];
-    mlir::Value mulRhs = inputs[1];
-    mlir::Value denominator;
-    if (isRecLike(mulLhs, denominator)) {
-      /// (1/b) * a -> a/b
-      normalizeMulRecLikeByDiv(op, mulRhs, denominator, rewriter);
-      return success();
-    }
-    if (isRecLike(mulRhs, denominator)) {
-      /// a * (1/b) -> a/b
-      normalizeMulRecLikeByDiv(op, mulLhs, denominator, rewriter);
-      return success();
-    }
-    return failure();
   }
 };
 
@@ -557,9 +437,13 @@ struct NormalizeVPowiToPowf
 
 using NormalizeRSqrtOp =
     NormalizeRSqrtOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeRSqrtTraits>;
+using NormalizeMulRecOp =
+    NormalizeMulRecOpTemplate<linalg::ElemwiseBinaryOp, HFusionNormalizeMulRecTraits>;
+using NormalizeDivVSToRec =
+    NormalizeDivVSToRecTemplate<linalg::ElemwiseBinaryOp, HFusionNormalizeDivVSToRecTraits>;
 
 void populateNormalizeMulRecPatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeMulRec>(patterns.getContext());
+  patterns.add<NormalizeMulRecOp>(patterns.getContext());
 }
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns) {

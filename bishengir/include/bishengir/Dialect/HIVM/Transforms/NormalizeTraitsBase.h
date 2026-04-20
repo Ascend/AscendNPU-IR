@@ -29,11 +29,19 @@ namespace mlir::hivm {
 /// Provides common utility methods that can be reused by specific traits.
 struct NormalizeTraitsBase {
 public:
+  static bool matchOp(Operation *op, UnaryKind kind);
+
+  static bool matchOp(Operation *op, BinaryKind kind);
+
   static Value createCmpOp(PatternRewriter &rewriter, Location loc,
                            Value input, Value dst, CompareKind kind);
 
   static Value createUnaryOp(PatternRewriter &rewriter, Location loc,
                              Value input, Value dst, UnaryKind kind);
+
+  static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
+                              Value lhs, Value rhs, Value dst,
+                              BinaryKind kind);
 };
 
 } // namespace mlir::hivm

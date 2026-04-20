@@ -43,6 +43,41 @@ static UnaryFn mapUnaryKindToUnaryFn(UnaryKind kind) {
   return it->second;
 }
 
+static linalg::BinaryFn mapBinaryKindToBinaryFn(BinaryKind kind) {
+  static const llvm::DenseMap<BinaryKind, linalg::BinaryFn> kindToFn = {
+      {BinaryKind::Div, linalg::BinaryFn::div},
+  };
+
+  auto it = kindToFn.find(kind);
+  if (it == kindToFn.end()) {
+    llvm_unreachable("unsupported binary kind");
+  }
+
+  return it->second;
+}
+
+static bool matchUnaryOp(Operation *op, UnaryKind kind) {
+  auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
+  return unaryOp && unaryOp.hasPureTensorSemantics() &&
+         unaryOp.getFun() == mapUnaryKindToUnaryFn(kind);
+}
+
+static bool matchBinaryOp(Operation *op, BinaryKind kind) {
+  auto binaryOp = dyn_cast_or_null<linalg::ElemwiseBinaryOp>(op);
+  return binaryOp && binaryOp.hasPureTensorSemantics() &&
+         binaryOp.getFun() == mapBinaryKindToBinaryFn(kind);
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchOp(Operation *op,
+                                                 UnaryKind kind) {
+  return matchUnaryOp(op, kind);
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchOp(Operation *op,
+                                                 BinaryKind kind) {
+  return matchBinaryOp(op, kind);
+}
+
 static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
   static const llvm::DenseMap<CompareKind, hfusion::CompareFn> kindToFn = {
       {CompareKind::EQ, hfusion::CompareFn::veq},
@@ -76,6 +111,17 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
   auto *op = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
                                     hfusion::UnaryFnAttr>(
       rewriter, loc, unaryFn, mlir::ValueRange{input}, mlir::ValueRange{dst});
+  return op->getResult(0);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
+    PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
+    BinaryKind kind) {
+  linalg::BinaryFn binaryFn = mapBinaryKindToBinaryFn(kind);
+  auto *op = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                     linalg::BinaryFnAttr>(
+      rewriter, loc, binaryFn, mlir::ValueRange{lhs, rhs},
+      mlir::ValueRange{dst});
   return op->getResult(0);
 }
 } // namespace mlir::hfusion
