@@ -45,7 +45,6 @@ These layers allow custom DSLs and frameworks to integrate. Triton and PyTorch c
 
 Supported target devices include the Atlas A2/A3, Ascend 950PR/Ascend 950DT series.
 
-
 ### Function attributes
 
 The following attributes mark kernel entry functions and are shared across all integration paths:
