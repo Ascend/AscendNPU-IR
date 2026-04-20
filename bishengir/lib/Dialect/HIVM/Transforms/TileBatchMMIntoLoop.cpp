@@ -28,19 +28,22 @@
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeRange.h"
-#include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -73,7 +76,7 @@ static constexpr llvm::StringLiteral elideAfterBufferize =
 namespace {
 
 LogicalResult
-getBatchSingleUseChain(Operation *op, int64_t batchDim,
+traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
                        SmallVector<Operation *> &recursiveUseChain,
                        Block *fixedBlock) {
   if (op->getBlock() != fixedBlock)
@@ -96,7 +99,7 @@ getBatchSingleUseChain(Operation *op, int64_t batchDim,
         extractSliceOp.getStaticStrides()[0] == 1 &&
         extractSliceOp.getStaticSizes()[0] == batchDim) {
       Operation *userOp = *(op->user_begin());
-      auto next = getBatchSingleUseChain(userOp, batchDim, recursiveUseChain,
+      auto next = traceBatchChainToFixpipe(userOp, batchDim, recursiveUseChain,
                                          fixedBlock);
       if (succeeded(next)) {
         recursiveUseChain.push_back(op);
@@ -221,18 +224,16 @@ Value rewriteMatrixCShapeChange(ArrayRef<Operation *> useChain, Value matrixC,
   return curVal;
 }
 
-Value rewriteMmadThrowOutBatch(hivm::BatchMmadL1Op batchmmOp,
-                               SmallVector<Value> indexes,
-                               RankedTensorType matrixCType,
-                               const SmallVector<Operation *> &useChain,
-                               PatternRewriter &rewriter) {
-  // Adjust matrix A & matrix B
+Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
+                        SmallVector<Value> indexes,
+                        RankedTensorType matrixCType,
+                        PatternRewriter &rewriter) {
   assert(indexes.size() == 1);
   Value matrixA = extractTensorValueWithoutBatch(
       batchmmOp->getLoc(), batchmmOp.getA(), indexes[0], rewriter);
   Value matrixB = extractTensorValueWithoutBatch(
       batchmmOp->getLoc(), batchmmOp.getB(), indexes[0], rewriter);
-  // Get new matrix C
+
   SmallVector<Value> outputsDynSize;
   auto outputValShape = getValueFromShape(batchmmOp.getC(), rewriter);
   assert(succeeded(outputValShape));
@@ -252,21 +253,157 @@ Value rewriteMmadThrowOutBatch(hivm::BatchMmadL1Op batchmmOp,
     tiledMmad->setAttr(fixpipeAlreadyInserted,
                        batchmmOp->getAttr(fixpipeAlreadyInserted));
   }
-  Value matrixToStore = rewriteMatrixCShapeChange(
-      /* ignore first fixpipe */ ArrayRef<Operation *>(useChain).drop_front(),
-      tiledMmad.getResultTensors()[0], rewriter);
-  return matrixToStore;
+  return tiledMmad.getResultTensors()[0];
 }
 
-void rewriteFixpipeThrowOutBatch(Value matrixToStore,
-                                 SmallVector<Value> indexes,
-                                 RankedTensorType matrixCType,
-                                 const SmallVector<Operation *> &useChain,
-                                 ArrayRef<BlockArgument> forIterArgs,
-                                 PatternRewriter &rewriter) {
+FailureOr<SmallVector<SmallVector<Operation *>>>
+collectUseChains(hivm::BatchMmadL1Op batchmmOp,
+                 RankedTensorType matrixCType) {
+  SmallVector<SmallVector<Operation *>> allUseChains;
+  for (Operation *user : batchmmOp->getUsers()) {
+    SmallVector<Operation *> chain;
+    if (failed(traceBatchChainToFixpipe(user, matrixCType.getShape()[0], chain,
+                                      batchmmOp->getBlock())))
+      return batchmmOp.emitOpError(
+          "unaccepted batch matmul: use chain between "
+          "hivm::BatchMmadL1Op and "
+          "hivm::FixpipeOp is illegal; just support "
+          "tensor::extractSliceOp "
+          "between above two and all exist in the same block");
+    allUseChains.push_back(std::move(chain));
+  }
+  return allUseChains;
+}
+
+struct TensorChainInfo {
+  SmallVector<int> indices;
+  SmallVector<Value> initArgs;
+};
+
+TensorChainInfo collectTensorChainInitArgs(
+    const SmallVector<SmallVector<Operation *>> &allUseChains) {
+  TensorChainInfo info;
+  for (int i = 0; i < static_cast<int>(allUseChains.size()); ++i) {
+    auto fixpipe = dyn_cast<hivm::FixpipeOp>(allUseChains[i].front());
+    if (isa<TensorType>(fixpipe.getDst().getType())) {
+      info.indices.push_back(i);
+      info.initArgs.push_back(fixpipe.getDst());
+    }
+  }
+  return info;
+}
+
+Operation *getLastChainOp(
+    const SmallVector<SmallVector<Operation *>> &allUseChains) {
+  Operation *lastChainOp = nullptr;
+  for (const auto &chain : allUseChains) {
+    for (Operation *op : chain) {
+      if (!lastChainOp || lastChainOp->isBeforeInBlock(op))
+        lastChainOp = op;
+    }
+  }
+  return lastChainOp;
+}
+
+SmallVector<Operation *>
+collectDownstreamOpsToMove(
+    ArrayRef<int> tensorChainIndices,
+    const SmallVector<SmallVector<Operation *>> &allUseChains,
+    Operation *lastChainOp) {
+  SmallVector<Operation *> fixpipeOps;
+  for (int idx : tensorChainIndices)
+    fixpipeOps.push_back(allUseChains[idx].front());
+
+  SmallVector<Operation *> opsToMove;
+  SmallVector<Operation *> worklist;
+  for (Operation *fixpipeOp : fixpipeOps) {
+    for (Operation *user : fixpipeOp->getUsers())
+      if (!lastChainOp->isBeforeInBlock(user))
+        worklist.push_back(user);
+  }
+
+  SmallPtrSet<Operation *, 8> seen;
+  while (!worklist.empty()) {
+    Operation *op = worklist.pop_back_val();
+    if (seen.contains(op))
+      continue;
+    seen.insert(op);
+    opsToMove.push_back(op);
+    for (Operation *user : op->getUsers()) {
+      if (!lastChainOp->isBeforeInBlock(user))
+        worklist.push_back(user);
+    }
+  }
+
+  llvm::sort(opsToMove, [](Operation *a, Operation *b) {
+    return a->isBeforeInBlock(b);
+  });
+  return opsToMove;
+}
+
+LogicalResult checkOpsMoveSafety(ArrayRef<Operation *> opsToMove,
+                                 hivm::BatchMmadL1Op batchmmOp) {
+  for (Operation *op : opsToMove) {
+    auto iface = dyn_cast<MemoryEffectOpInterface>(op);
+    if (!iface)
+      continue;
+
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    iface.getEffects(effects);
+    for (auto &effect : effects) {
+      // Global effects (no specific Value) like debug prints are safe to move.
+      // Only reject ops that have Write/Allocate effects on specific Values
+      // that could conflict with the for loop body.
+      if (!effect.getValue())
+        continue;
+      if (isa<MemoryEffects::Write>(effect.getEffect()) ||
+          isa<MemoryEffects::Allocate>(effect.getEffect())) {
+        return batchmmOp.emitOpError(
+            "downstream user of fixpipe result has memory side effects "
+            "and cannot be moved after the tiled loop");
+      }
+    }
+  }
+  return success();
+}
+
+void cloneAndReplaceDownstreamOps(
+    ArrayRef<Operation *> opsToMove, scf::ForOp forOp,
+    ArrayRef<int> tensorChainIndices,
+    const SmallVector<SmallVector<Operation *>> &allUseChains,
+    PatternRewriter &rewriter) {
+  DenseMap<Value, Value> replacements;
+  int resultIdx = 0;
+  for (int idx : tensorChainIndices) {
+    auto fixpipe = dyn_cast<hivm::FixpipeOp>(allUseChains[idx].front());
+    replacements[fixpipe->getResult(0)] = forOp.getResult(resultIdx);
+    resultIdx++;
+  }
+
+  rewriter.setInsertionPointAfter(forOp.getOperation());
+  for (Operation *op : opsToMove) {
+    IRMapping mapping;
+    for (auto &[oldVal, newVal] : replacements)
+      mapping.map(oldVal, newVal);
+
+    auto *cloned = rewriter.clone(*op, mapping);
+    for (unsigned r = 0; r < op->getNumResults(); ++r)
+      replacements[op->getResult(r)] = cloned->getResult(r);
+  }
+
+  for (auto &[oldVal, newVal] : replacements)
+    rewriter.replaceAllUsesWith(oldVal, newVal);
+}
+
+std::optional<Value>
+rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
+                            const SmallVector<Operation *> &useChain,
+                            BlockArgument forIterArg,
+                            PatternRewriter &rewriter) {
   assert(indexes.size() == 1);
   auto originFixpipe = dyn_cast<hivm::FixpipeOp>(useChain.front());
   Value oriFixpipeDst = originFixpipe.getDst();
+
   if (isa<mlir::MemRefType>(oriFixpipeDst.getType())) {
     Value fixpipeDst = subviewMemrefValueWithoutBatch(
         originFixpipe.getLoc(), oriFixpipeDst, indexes[0], rewriter);
@@ -276,18 +413,19 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
         /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
         originFixpipe.getDualDstModeAttr(), originFixpipe.getPreQuantAttr(),
         originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
-  } else if (isa<mlir::TensorType>(oriFixpipeDst.getType())) {
-    assert(matrixToStore.getDefiningOp() &&
-           matrixToStore.getDefiningOp()->getParentOp());
-    assert(isa<scf::ForOp>(matrixToStore.getDefiningOp()->getParentOp()) &&
-           forIterArgs.size() == 1);
-    BlockArgument iterationArg = forIterArgs[0];
-    assert(iterationArg);
+    return std::nullopt;
+  }
+
+  if (isa<mlir::TensorType>(oriFixpipeDst.getType())) {
+    // All tensor-type chains use iter args for accumulation.
+    assert(forIterArg);
+    auto iterationType =
+        dyn_cast<RankedTensorType>(forIterArg.getType());
+    assert(iterationType);
 
     Value fixpipeDst = extractTensorValueWithoutBatch(
-        originFixpipe.getLoc(), iterationArg, indexes[0], rewriter);
-    Type resultType =
-        extractNonBatchType(dyn_cast<RankedTensorType>(iterationArg.getType()));
+        originFixpipe.getLoc(), forIterArg, indexes[0], rewriter);
+    Type resultType = extractNonBatchType(iterationType);
 
     auto newfixpipe = rewriter.create<hivm::FixpipeOp>(
         originFixpipe.getLoc(), resultType, /*src=*/matrixToStore,
@@ -296,11 +434,14 @@ void rewriteFixpipeThrowOutBatch(Value matrixToStore,
         originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
 
     Value insert = insertTensorValueWithoutBatch(
-        originFixpipe.getLoc(), newfixpipe.getResults()[0], iterationArg,
+        originFixpipe.getLoc(), newfixpipe.getResults()[0], forIterArg,
         indexes[0], rewriter);
-    rewriter.create<scf::YieldOp>(originFixpipe.getLoc(), insert);
+    return insert;
   }
+
+  llvm_unreachable("unsupported fixpipe dst type");
 }
+
 /// This pattern wanna convert all hivm::BatchMmadL1Op and releated fixpipe to
 /// loop of new hivm::MmadL1Op and hivm::FixpipeOp
 ///
@@ -322,53 +463,77 @@ public:
                                 PatternRewriter &rewriter) const override {
     Value matrixC = batchmmOp.getResultTensors()[0];
     auto matrixCType = dyn_cast<RankedTensorType>(matrixC.getType());
-#ifndef NDEBUG
-    const int batchMMSize = 3;
-    assert(matrixCType.getRank() == batchMMSize && batchmmOp->hasOneUse());
-#endif
-    SmallVector<Operation *> recursiveUseChain;
-    if (failed(getBatchSingleUseChain(
-            *(batchmmOp->user_begin()), matrixCType.getShape()[0],
-            recursiveUseChain, batchmmOp->getBlock())))
-      return batchmmOp.emitOpError(
-          "unaccepted batch matmul: use chain between hivm::BatchMmadL1Op and "
-          "hivm::FixpipeOp is illegal; just support tensor::extractSliceOp "
-          "between above two and all exist in the same block");
+    assert(matrixCType.getRank() == 3);
 
-    assert(isa<hivm::FixpipeOp>(recursiveUseChain.front()));
-    auto originFixpipe = dyn_cast<hivm::FixpipeOp>(recursiveUseChain.front());
-    // For tensor data-flow, here needs to make original fixpipe destination
-    // with batch dimension as loop iteration.
-    // Then use extract_slice/insert_slice to update tensor continuously.
-    SmallVector<Value> forInitArgs;
-    if (isa<TensorType>(originFixpipe.getDst().getType()))
-      forInitArgs.push_back(originFixpipe.getDst());
+    // 1. Collect and validate use chains
+    auto allUseChains = collectUseChains(batchmmOp, matrixCType);
+    if (failed(allUseChains))
+      return failure();
 
+    // 2. Identify tensor-type chains for iter args
+    auto tensorInfo = collectTensorChainInitArgs(*allUseChains);
+
+    // 3. Collect downstream users and check move safety .
+    Operation *lastChainOp = getLastChainOp(*allUseChains);
+    auto opsToMove = collectDownstreamOpsToMove(
+        tensorInfo.indices, *allUseChains, lastChainOp);
+    if (failed(checkOpsMoveSafety(opsToMove, batchmmOp)))
+      return failure();
+
+    // 4. Build loop body and create for loop
     auto buildLoopBody =
-        [&batchmmOp, &rewriter, &matrixCType,
-         &recursiveUseChain](const SmallVector<Value> &indexes,
-                             Block::BlockArgListType iterArgs) -> void {
-      Value matrixToStore = rewriteMmadThrowOutBatch(
-          batchmmOp, indexes, matrixCType, recursiveUseChain, rewriter);
-      rewriteFixpipeThrowOutBatch(matrixToStore, indexes, matrixCType,
-                                  recursiveUseChain,
-                                  ArrayRef<BlockArgument>{iterArgs}, rewriter);
+        [&batchmmOp, &rewriter, &matrixCType, &allUseChains = *allUseChains](
+            const SmallVector<Value> &indexes,
+            Block::BlockArgListType iterArgs) -> void {
+      Value tiledMmadResult =
+          createTiledMmadL1(batchmmOp, indexes, matrixCType, rewriter);
+
+      SmallVector<Value> yieldValues;
+      int tensorChainCounter = 0;
+      for (int i = 0; i < static_cast<int>(allUseChains.size()); ++i) {
+        const auto &chain = allUseChains[i];
+        Value matrixToStore = rewriteMatrixCShapeChange(
+            ArrayRef<Operation *>(chain).drop_front(), tiledMmadResult,
+            rewriter);
+
+        auto originFixpipe = dyn_cast<hivm::FixpipeOp>(chain.front());
+        BlockArgument iterArg;
+        if (isa<TensorType>(originFixpipe.getDst().getType())) {
+          iterArg = iterArgs[tensorChainCounter++];
+        }
+
+        auto result = rewriteFixpipeThrowOutBatch(
+            matrixToStore, indexes, chain, iterArg, rewriter);
+        if (result)
+          yieldValues.push_back(*result);
+      }
+
+      if (!yieldValues.empty())
+        rewriter.create<scf::YieldOp>(batchmmOp.getLoc(), yieldValues);
     };
 
-    std::set<int> loopDims = {0}; // First dim is batch axis
-    // To ensure order domination, new created op should after origin fixpipe
-    rewriter.setInsertionPointAfter(originFixpipe);
-    auto nestFor = createNestedLoops(rewriter, batchmmOp.getLoc(), matrixC,
-                                     loopDims, buildLoopBody, 0, forInitArgs);
+    std::set<int> loopDims = {0};
+    rewriter.setInsertionPointAfter(lastChainOp);
+
+    auto nestFor = createNestedLoops(
+        rewriter, batchmmOp.getLoc(), matrixC, loopDims, buildLoopBody, 0,
+        tensorInfo.initArgs.empty()
+            ? std::optional<SmallVector<Value>>{std::nullopt}
+            : std::optional<SmallVector<Value>>(tensorInfo.initArgs));
 
     assert(nestFor.size() == 1);
-    if (isa<TensorType>(originFixpipe.getDst().getType())) {
-      rewriter.replaceAllUsesWith(originFixpipe->getResult(0),
-                                  nestFor[0]->getResult(0));
-    }
+    scf::ForOp forOp = nestFor[0];
 
-    for (Operation *op : recursiveUseChain)
+    // 5. Move downstream users after the for loop
+    cloneAndReplaceDownstreamOps(opsToMove, forOp, tensorInfo.indices,
+                                 *allUseChains, rewriter);
+
+    // 6. Erase old ops
+    for (Operation *op : llvm::reverse(opsToMove))
       rewriter.eraseOp(op);
+    for (auto &chain : *allUseChains)
+      for (Operation *op : chain)
+        rewriter.eraseOp(op);
     rewriter.eraseOp(batchmmOp);
 
     return success();
