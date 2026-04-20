@@ -75,12 +75,16 @@ static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
   auto *ctx = op->getContext();
   for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
-    ShapedType shapedType = cast<ShapedType>(res.getType());
-    if (!(shapedType && getElementTypeOrSelf(shapedType).isBF16())) {
-      continue;
+    // Use dyn_cast to safely handle both ShapedType and scalar types
+    if (auto shapedType = dyn_cast<ShapedType>(res.getType())) {
+      if (getElementTypeOrSelf(shapedType).isBF16()) {
+        auto newResTy = shapedType.clone(Float32Type::get(ctx));
+        newOp->getResult(idx).setType(newResTy);
+      }
+    } else if (res.getType().isBF16()) {
+      // Handle scalar BF16 types (e.g., from arith.addf with scalar operands)
+      newOp->getResult(idx).setType(Float32Type::get(ctx));
     }
-    auto newResTy = shapedType.clone(Float32Type::get(ctx));
-    newOp->getResult(idx).setType(newResTy);
   }
 
   if (op->getNumRegions() <= 0)
@@ -230,6 +234,7 @@ void populateLegalizeBF16Pattern(RewritePatternSet &patterns) {
   registerOne<hfusion::SortOp>(patterns);
   registerOne<tensor::ConcatOp>(patterns);
   registerOne<tensor::PadOp>(patterns);
+  registerOne<arith::AddFOp>(patterns);
 }
 
 void LegalizeBF16Pass::runOnOperation() {
