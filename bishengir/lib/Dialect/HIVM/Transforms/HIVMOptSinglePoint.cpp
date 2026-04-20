@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -265,8 +266,8 @@ void HIVMOptSinglePointOpPass::runOnOperation() {
                           arith::DivUIOp>,
       SinglePointEltVecOp<hivm::VAbsOp, math::AbsFOp, math::AbsIOp, None>,
       SinglePointEltVecOp<hivm::VSqrtOp, math::SqrtOp, math::SqrtOp, None>,
-      SinglePointEltVecOp<hivm::VMaxOp, arith::MaxNumFOp, arith::MaxSIOp, None>,
-      SinglePointEltVecOp<hivm::VMinOp, arith::MinNumFOp, arith::MinSIOp,
+      SinglePointEltVecOp<hivm::VMaxOp, arith::MaximumFOp, arith::MaxSIOp, None>,
+      SinglePointEltVecOp<hivm::VMinOp, arith::MinimumFOp, arith::MinSIOp,
                           None>>(&getContext());
 
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
