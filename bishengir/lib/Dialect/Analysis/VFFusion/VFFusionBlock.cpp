@@ -94,8 +94,6 @@ SetVector<Value> VFFusionBlock::getOutputs() const { return outputs; }
 void VFFusionBlock::fuseOp(Operation *const op) {
   if (ops.contains(op))
     return;
-  // NOTE: can be optimized by precompute all operations
-  assert(!hasFusedUser(op) && "need to fuse operation in topological order");
   ops.insert(op);
 }
 

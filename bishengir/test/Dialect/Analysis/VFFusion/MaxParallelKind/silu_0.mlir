@@ -1,5 +1,6 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 // CHECK-LABEL: func.func private @triton_unk_fused_silu_0_fused_0(
+// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
@@ -14,15 +15,26 @@
 // CHECK: arith.addi
 // CHECK: arith.minsi
 // CHECK: scf.for
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: arith.index_cast
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
+// CHECK: arith.addi
+// CHECK: arith.index_cast
+// CHECK: arith.maxsi
+// CHECK: arith.minsi
+// CHECK: arith.subi
 // CHECK: arith.cmpi slt
 // CHECK: scf.if
 // CHECK: linalg.fill
 // CHECK: memref.subview
+// CHECK: memref.subview
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
+// CHECK: memref.reinterpret_cast
 // CHECK: func.call @triton_unk_fused_silu_0_fused_0
+// CHECK: memref.subview
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
 

@@ -14,7 +14,7 @@
 
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
-
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h" 
 namespace mlir {
 namespace hfusion {
 
@@ -58,6 +58,10 @@ struct HFusionPipelineOptions
   PassOptions::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
                                            llvm::cl::desc("Enable vf fusion"),
                                            llvm::cl::init(false)};
+
+  PassOptions::Option<mlir::analysis::FusionMode> vfFusionMode{
+      *this, "vf-fusion-mode", llvm::cl::desc("VF fusion mode"),
+      llvm::cl::init(mlir::analysis::FusionMode::MaxParallel)};
 
   PassOptions::Option<bool> enableTreeReduce{
       *this, "enable-tree-reduce", llvm::cl::desc("Enable tree reduce"),

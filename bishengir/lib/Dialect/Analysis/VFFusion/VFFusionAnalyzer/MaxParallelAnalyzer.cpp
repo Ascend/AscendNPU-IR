@@ -136,16 +136,12 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     return false;
 
   auto producerLinalgOp = dyn_cast<linalg::LinalgOp>(producerOp);
-  auto consumerLinalgOp = dyn_cast<linalg::LinalgOp>(consumerOp);
 
   if (producerLinalgOp != nullptr && isLinalgReductionOp(producerLinalgOp))
     return false;
   
   // Prevent reduction op having a consumer in the fused group                                                 
   if (hasReductionToConsumer(producerIndex, consumerIndex))
-    return false;
-
-  if (consumerLinalgOp != nullptr && !consumerLinalgOp.isDpsInput(fusedOperand))
     return false;
 
   return true;

@@ -1,5 +1,6 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_0(
+// CHECK: arith.constant
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
@@ -8,6 +9,8 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_1(
+// CHECK: arith.constant
+// CHECK: linalg.fill
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>}
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
 // CHECK: hfusion.select
@@ -16,8 +19,10 @@
 // CHECK: linalg.yield
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_2(
+// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+// CHECK: linalg.fill
 // CHECK: linalg.reduce
 // CHECK: arith.addf
 // CHECK: linalg.yield
@@ -25,7 +30,6 @@
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_3(
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
-// CHECK: tensor.extract_slice
 
 // CHECK-LABEL: func.func @triton_unk_fused__softmax_0(
 // CHECK: arith.constant

@@ -118,7 +118,8 @@ static void preProcess(OpPassManager &pm,
   if (options.enableTritonKernelCompile &&
       hacc::utils::isRegBasedArch(targetEnum)) {
     if (options.enableFuseReductionIntoLoop)
-      pm.nest<func::FuncOp>().addPass(bishengir::createFuseReductionIntoLoopPass());
+      pm.nest<func::FuncOp>().addPass(
+          bishengir::createFuseReductionIntoLoopPass());
     pm.nest<func::FuncOp>().addPass(createLegalizeScalarPass());
     // Convert the operations to HFusion as much as possible to make
     // LinalgFoldUnitExtentDims work on LinalgOp interface more effectively.
@@ -346,6 +347,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
   if (enableSIMDVFFusion(hfusionOptions)) {
     VFFusionOptions vfFusionOptions;
+    vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
@@ -380,8 +382,10 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
   pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
-  if (enableSIMDVFFusion(hfusionOptions))
-    pm.addPass(scope::createInlineScopePass());
+  if (enableSIMDVFFusion(hfusionOptions)) {
+    // Eliminate VFFusion outline
+    pm.addPass(mlir::createInlinerPass());
+  }
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);

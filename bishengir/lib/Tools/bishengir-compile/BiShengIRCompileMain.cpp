@@ -84,6 +84,7 @@ runExternalHIVMC(ModuleOp &module,
                                      "hfusion-enable-multiple-consumer-fusion",
                                      "disable-tightly-coupled-buffer-reuse",
                                      "enable-tree-reduce-v2",
+                                     "vf-fusion-mode",
                                      "disable-sink-dpx-load"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
@@ -126,8 +127,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     // simt-simd mixed pipeline
     bool success = true;
     if (config.shouldEnableSimdSimtMixCompile()) {
-        success &= succeeded(runPipeline(
-            hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                       config, "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
@@ -135,18 +136,18 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
                                          config, "BiShengTTIR"));
       }
-      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRFinishPipeline,
-                                         config, "BishengHIR"));
-      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines,
-                                         config, "buildFinalHIVMPipelines"));
+      success &= succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BishengHIR"));
+      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines, config,
+                                       "buildFinalHIVMPipelines"));
     } else if (config.shouldCompileTritonDialect()) {
-      success = succeeded(runPipeline(
-          hirCompileMode, buildBiShengTTIRPipeline, config, "BiShengTTIR"));
+      success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
+                                      config, "BiShengTTIR"));
     } else {
-      success = succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+      success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                      config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                         config, "buildFinalHIVMPipelines"));
+                                       config, "buildFinalHIVMPipelines"));
     }
 
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {

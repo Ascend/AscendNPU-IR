@@ -94,8 +94,14 @@ FailureOr<func::FuncOp> VFFusionOutliner::outline(func::FuncOp funcOp,
   // Clone operations and replace usages
   LDBG("Pushing outlined operations");
   for (auto [oldIn, newIn] : llvm::zip_equal(
-           fusedBlock.recomputeInputs().takeVector(), entryBB->getArguments()))
-    mapFromCloning.map(oldIn, newIn);
+           fusedBlock.recomputeInputs().takeVector(), entryBB->getArguments())) {
+    if (auto constOp = oldIn.getDefiningOp<arith::ConstantOp>()) {
+      Operation *clonedConst = builder.clone(*constOp);
+      mapFromCloning.map(oldIn, clonedConst->getResult(0));
+    } else {
+      mapFromCloning.map(oldIn, newIn);
+    }
+  }
 
   SetVector<Operation *> newOps;
   for (auto op : fusedBlock.getOps()) {

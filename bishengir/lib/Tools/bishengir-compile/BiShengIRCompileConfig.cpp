@@ -106,7 +106,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     static cl::opt<bool, /*ExternalStorage=*/true> disableFFTS(
         "disable-ffts", cl::desc("Force disabling FFTS."),
         cl::location(disableFFTSFlag), cl::init(false));
-    
+
     static cl::opt<bool, /*ExternalStorage=*/true> disableFMA(
         "disable-fma", cl::desc("Force disabling FMA."),
         cl::location(disableFMAFlag), cl::init(false));
@@ -204,6 +204,23 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableVFFusionFlag), cl::init(false),
         cl::cat(featCtrlCategory));
 
+    static cl::opt<mlir::analysis::FusionMode, /*ExternalStorage=*/true>
+        vfFusionMode(
+            "vf-fusion-mode",
+            cl::desc("VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel"),
+            cl::values(clEnumValN(mlir::analysis::FusionMode::MaxParallel,
+                                  "max-parallel", "Fuse for max parallel"),
+                       clEnumValN(mlir::analysis::FusionMode::AllOp, "all-op",
+                                  "Fuse all vector operations"),
+                       clEnumValN(mlir::analysis::FusionMode::NMostOp,
+                                  "n-most-op", "Fuse at most N operations")),
+            cl::location(vfFusionModeFlag),
+            cl::init(mlir::analysis::FusionMode::MaxParallel),
+            cl::cat(featCtrlCategory),
+            cl::callback([this](const mlir::analysis::FusionMode &) {
+              enableVFFusionFlag = true;
+            }));
+
     static cl::opt<bool, /*ExternalStorage=*/true> enableHighPrecision(
         "enable-high-precision",
         cl::desc("Enable high precision calculation for sin/cos in HFusion"),
@@ -289,25 +306,24 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                  "functions are replaced with those from the file for debug"),
         cl::location(injectIrFromFileFlag), cl::init(""),
         cl::cat(dfxCtrlCategory));
-        
+
     static cl::opt<bool, /*ExternalStorage=*/true> printPassId(
-        "print-pass-id",
-        cl::desc("Print pass ID before each pass"),
-        cl::location(printPassIdFlag),
-        cl::init(false),
+        "print-pass-id", cl::desc("Print pass ID before each pass"),
+        cl::location(printPassIdFlag), cl::init(false),
         cl::cat(dfxCtrlCategory));
-    
+
     static cl::opt<std::string, /*ExternalStorage=*/true> injectIrBefore(
         "inject-ir-before",
-        cl::desc("Inject IR from file before a specific pass. Format: pass_id@file_path"),
+        cl::desc("Inject IR from file before a specific pass. Format: "
+                 "pass_id@file_path"),
         cl::location(injectIrBeforeFlag), cl::init(""),
         cl::cat(dfxCtrlCategory));
-    
+
     static cl::opt<std::string, /*ExternalStorage=*/true> injectIrAfter(
         "inject-ir-after",
-        cl::desc("Inject IR from file after a specific pass. Format: pass_id@file_path"),
-        cl::location(injectIrAfterFlag),
-        cl::init(""),
+        cl::desc("Inject IR from file after a specific pass. Format: "
+                 "pass_id@file_path"),
+        cl::location(injectIrAfterFlag), cl::init(""),
         cl::cat(dfxCtrlCategory));
 
     // -------------------------------------------------------------------------//
@@ -502,7 +518,7 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableMultipleConsumerFusionFlag), cl::init(false),
         cl::cat(hfusionOptCategory));
 
-        static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
+    static cl::opt<int32_t, /*ExternalStorage=*/true> maxFusedElementwiseOps(
         "hfusion-max-fused-elementwise-ops",
         cl::desc("Maximum number of elementwise ops to fuse in "
                  "PreVectorizationFusion (Default: unlimited)"),

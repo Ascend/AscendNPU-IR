@@ -10,10 +10,10 @@
 #define BISHENGIR_TOOLS_BISHENGIR_COMPILE_CONFIG_H
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Pass/PassManager.h"
-
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/IR/Module.h"
@@ -183,6 +183,15 @@ public:
     return *this;
   }
   bool shouldEnableVFFusion() const { return enableVFFusionFlag; }
+
+  BiShengIRCompileMainConfig &setVFFusionMode(mlir::analysis::FusionMode mode) {
+    vfFusionModeFlag = mode;
+    return *this;
+  }
+
+  mlir::analysis::FusionMode getVFFusionMode() const {
+    return vfFusionModeFlag;
+  }
 
   BiShengIRCompileMainConfig &treeReduce(bool enable) {
     enableTreeReduceFlag = enable;
@@ -803,6 +812,9 @@ protected:
   int32_t maxFusedOpsInAutoVectorizeV2Flag{-1};
 
   bool enableVFFusionFlag{false};
+
+  mlir::analysis::FusionMode vfFusionModeFlag{
+      mlir::analysis::FusionMode::MaxParallel};
 
   bool enableTreeReduceFlag{false};
 

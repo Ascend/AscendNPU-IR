@@ -103,6 +103,7 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.maxFusedOpsInAutoVectorizeV2 =
       config.maxFusedOpsInAutoVectorizeV2();
   hfusionPipelineOptions.enableVFFusion = config.shouldEnableVFFusion();
+  hfusionPipelineOptions.vfFusionMode = config.getVFFusionMode();
   hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
   hfusionPipelineOptions.enableTreeReduceV2 = config.shouldEnableTreeReduceV2();
   hfusionPipelineOptions.enableMultipleConsumerFusion =
@@ -188,7 +189,7 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode =
       config.shouldCompileTriton() ? hfusion::MmMapMode::MacroInstr
-                                   : hfusion::MmMapMode::CoreOp;
+                                  : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
 }
 
@@ -307,7 +308,7 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.nest<func::FuncOp>().addPass(
           mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
       buildDelayedHFusionRegBaseVectorizePipeline(
-            pm, config, /*shouldInferFuncCoreType=*/true);
+          pm, config, /*shouldInferFuncCoreType=*/true);
     }
     if (config.shouldEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createAutoScopePass());
@@ -358,6 +359,7 @@ public:
     enableAutoVectorizeV2 = pass.enableAutoVectorizeV2;
     maxFusedOpsInAutoVectorizeV2 = pass.maxFusedOpsInAutoVectorizeV2;
     enableVFFusion = pass.enableVFFusion;
+    vfFusionMode = pass.vfFusionMode;
     enableTreeReduceV2 = pass.enableTreeReduceV2;
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
     ensureNoImplicitBroadcast = pass.ensureNoImplicitBroadcast;
@@ -568,6 +570,9 @@ protected:
   Pass::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
                                     llvm::cl::desc("Enable vf fusion"),
                                     llvm::cl::init(false)};
+  Pass::Option<mlir::analysis::FusionMode> vfFusionMode{
+      *this, "vf-fusion-mode", llvm::cl::desc("VF fusion mode"),
+      llvm::cl::init(mlir::analysis::FusionMode::MaxParallel)};
   Pass::Option<bool> enableHighPrecision{
       *this, "enable-high-precision",
       llvm::cl::desc(
