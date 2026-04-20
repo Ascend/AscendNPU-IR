@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -46,9 +47,9 @@ void RemoveHIVMDataLayoutAnnotationPass::runOnOperation() {
   auto funcOp = getOperation();
 
   funcOp.walk([&](annotation::MarkOp markOp) {
-    if (markOp->hasAttr("layout")) {
-      LDBG("Removing layout attr from: " << markOp);
-      markOp->removeAttr("layout");
+    if (markOp->hasAttr(hivm::kHIVMDataLayoutAttrName)) {
+      LDBG("Removing hivm_data_layout attr from: " << markOp);
+      markOp->removeAttr(hivm::kHIVMDataLayoutAttrName);
     }
   });
 }

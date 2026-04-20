@@ -504,7 +504,8 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
     // If a value is marked with a layout through annotation::MarkOp, we
     // consider it as an anchor and initialize its layout info accordingly.
     if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
-      auto layoutAttr = markOp->getAttrOfType<DataLayoutAttr>("layout");
+      auto layoutAttr =
+          markOp->getAttrOfType<DataLayoutAttr>(hivm::kHIVMDataLayoutAttrName);
       if (!layoutAttr) {
         return WalkResult::advance();
       }
@@ -516,7 +517,7 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
 
       LLVM_DEBUG(llvm::dbgs() << layoutAttr << "\n";);
       (void)updateLayoutIfChanged(markedValue, {layoutAttr, layoutAttr});
-      
+
       return WalkResult::advance();
     }
     // Pointer casts with GM space address is considered to have ND layout.

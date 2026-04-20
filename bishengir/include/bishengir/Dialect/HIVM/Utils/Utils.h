@@ -64,6 +64,9 @@ static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
 
+static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
+    "hivm_data_layout";
+
 /// TODO: add into hivm attrs
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
     "buffer_size_in_byte";

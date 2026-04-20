@@ -578,12 +578,12 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
 // CHECK:           %{{.*}} = arith.muli %{{.*}}, %{{.*}} : i32
 // CHECK:           annotation.mark %{{.*}} {logical_block_num} : i32
 // CHECK:           %{{.*}} = memref_ext.alloc_workspace() from %{{.*}} offset = [%{{.*}}] : from memref<?xi8, #hivm.address_space<gm>> to memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
-// CHECK:           annotation.mark %{{.*}} {layout = #hivm.data_layout<NC1HWC0>} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
 // CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
 // CHECK:           %{{.*}} = memref_ext.alloc_workspace() from %{{.*}} offset = [%{{.*}}] : from memref<?xi8, #hivm.address_space<gm>> to memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
-// CHECK:           annotation.mark %{{.*}} {layout = #hivm.data_layout<C1HWNC0>} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
 // CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
@@ -625,12 +625,12 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
   %1 = arith.muli %0, %arg9 : i32
   annotation.mark %1 {logical_block_num} : i32
   %2 = memref_ext.alloc_workspace() from %arg2 offset = [%c0] : from memref<?xi8, #hivm.address_space<gm>> to memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
-  annotation.mark %2 {layout = #hivm.data_layout<NC1HWC0>} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
+  annotation.mark %2 {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
   hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
   %alloc = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
   hivm.hir.load ins(%2 : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%alloc : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
   %3 = memref_ext.alloc_workspace() from %arg2 offset = [%c16384] : from memref<?xi8, #hivm.address_space<gm>> to memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
-  annotation.mark %3 {layout = #hivm.data_layout<C1HWNC0>} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
+  annotation.mark %3 {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
   hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
   hivm.hir.load ins(%3 : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
