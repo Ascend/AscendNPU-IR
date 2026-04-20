@@ -396,7 +396,7 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
   auto markOp =
       rewriter.create<annotation::MarkOp>(op->getLoc(), storeOp->getResult(0));
 
-  markOp->setAttr("layout", NC1HWC0Layout);
+  markOp->setAttr(hivm::kHIVMDataLayoutAttrName, NC1HWC0Layout);
 
   Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
       rewriter, op->getLoc(), finalVal, elemType, std::nullopt);
@@ -581,7 +581,7 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
   auto markOp =
       rewriter.create<annotation::MarkOp>(op->getLoc(), storeOp->getResult(0));
 
-  markOp->setAttr("layout", C1HWNC0Layout);
+  markOp->setAttr(hivm::kHIVMDataLayoutAttrName, C1HWNC0Layout);
 
   Value loadInit = mlir::utils::createEmptyOpWithTargetElemType(
       rewriter, op->getLoc(), finalVal, elemType, std::nullopt);
