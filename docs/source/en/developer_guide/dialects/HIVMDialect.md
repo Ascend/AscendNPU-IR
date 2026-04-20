@@ -362,7 +362,7 @@ Constraints:
 - Only support left padding.
 - `pad_value` should have the same element type as `src` and `dst`.
 
-### Non-contigous reassocicative reshape
+### Non-contiguous reassociative reshape
 
 `hivm.hir.copy` also supports copying non-contiguous data to contiguous storage, and vice versa.
 This can be seen as "expanding" or "collapsing" the data. The `collapse_reassociation` attribute is used to
@@ -454,7 +454,7 @@ General interface for custom op, where:
                   which comes together within bishengir-compile.
 
                   For normal names/cases, user needs to specify implementation location/compilation commands (TODO),
-                  and all ther necessary informations.
+                  and all the necessary information.
 
            Available builtin names:
              "__builtin_gather_load"
@@ -464,14 +464,14 @@ General interface for custom op, where:
               of the operation or the init locations to which the results of the op will be written.
 
 In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
-to retreive necessary information, required informations are:
+to retrieve necessary information, required information are:
 
   - CoreType : which core type to execute on, refer to TCoreTypeAttr.
   - Pipe     : which pipe to execute on, refer to PipeAttr.
   - VFMode   : which mode to run on vector units, refer to VFModeAttr.
                this attribute is ignored when core type is cube.
 
-               Note : for builtins, user could specify these informations or not,
+               Note : for builtins, user could specify these information or not,
                       compiler will help to check the correctness and canonicalize.
 
 TODO:
@@ -902,7 +902,7 @@ loaded in a transposed manner.
 Optionally, this operation takes the following arguments:
 
   - `bias` (ranked type): bias value, which is a vector of shape `n`
-  - `descale`: antiquantionzation value. Support 3 types:
+  - `descale`: dequantization value. Support 3 types:
   - `DescaleNull` : no descale.
   - `DescalePerChannel`: the shape of `descale` is equal to `n`.
   - `DescalePerTensor`: the shape of `descale` is equal to `1`.
@@ -994,7 +994,7 @@ loaded in a transposed manner.
 Optionally, this operation takes the following arguments:
 
   - `bias` (ranked type): bias value, which is a vector of shape `n`
-  - `descale`: antiquantionzation value. Support 3 types:
+  - `descale`: dequantization value. Support 3 types:
   - `DescaleNull` : no descale.
   - `DescalePerChannel`: the shape of `descale` is equal to `n`.
   - `DescalePerTensor`: the shape of `descale` is equal to `1`.
@@ -1003,11 +1003,11 @@ The operation performed is represented as `C = descale * (A * B + bias)`.
 
 This operation also supports tile-level fusion with a post-vector
 function (hence it's a Mix op)
-`tokens_per_expert` specify how matmuls are distrubuted to different experts
+`tokens_per_expert` specify how matmuls are distributed to different experts
 `post_vector_func_ins` is used to specify the arguments.
 `post_vector_func_outs` is used to specify the outputs.
 `comm_params` is used to specify communication related arguments (eg.
-  topology, communicator, group, etc al) when fusing communication
+  topology, communicator, group, etc.) when fusing communication
   operators.
 
 Traits: `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
@@ -1099,7 +1099,7 @@ loaded in a transposed manner.
 Optionally, this operation takes the following arguments:
 
   - `bias` (ranked type): bias value, which is a vector of shape `n`
-  - `descale`: antiquantionzation value. Support 3 types:
+  - `descale`: dequantization value. Support 3 types:
   - `DescaleNull` : no descale.
   - `DescalePerChannel`: the shape of `descale` is equal to `n`.
   - `DescalePerTensor`: the shape of `descale` is equal to `1`.
@@ -1110,7 +1110,7 @@ This operation also supports tile-level fusion with a post-vector
 function (hence it's a Mix op).
 `post_vector_func_ins` is used to specify the arguments.
 `comm_params` is used to specify communication related arguments (eg.
-  topology, communicator, group, etc al) when fusing communication
+  topology, communicator, group, etc.) when fusing communication
   operators.
 
 Traits: `AttrSizedOperandSegments`, `MacroOpPipeTrait<PIPE::PIPE_MTE2, PIPE::PIPE_MTE3>`, `MacroOpTrait`
@@ -1374,7 +1374,7 @@ Traits: `AttrSizedOperandSegments`, `CubeVectorCoreTypeTrait`
 
 ### `hivm.hir.set_ffts_base_addr` (hivm::SetFFTSBaseAddrOp)
 
-_Set base addr for ffts sync machenism._
+_Set base addr for ffts sync mechanism._
 
 Syntax:
 
@@ -1515,10 +1515,10 @@ There are sync block modes:
                vector core is waiting for.
   - ALL_SUB_VECTOR : All sub-vector cores are synchronized to a same point.
   - BARRIER_CUBE : Used for cube-cube synchronization, it's going to
-               be lowered to a barrie.pipe_all and would only be
+               be lowered to a barrier.pipe_all and would only be
                copied the aic kernel.
   - BARRIER_VECTOR : Used for cube-cube synchronization, it's going to
-               be lowered to a barrie.pipe_all and  would only be
+               be lowered to a barrier.pipe_all and  would only be
                copied the aiv kernel.
   - ALL : All aic/aiv are synchronized to same point.
           `tvector_pipe` needs to be set to the pipe that the
@@ -1527,7 +1527,7 @@ There are sync block modes:
 Note:
 
   - SyncBlockOp can only use after data is moved to gm.
-  - `$ffts_base_addr` must be set in Ascend910B. Every time FFTS collect
+  - `$ffts_base_addr` must be set in Altas A2/A3. Every time FFTS collect
     one specific `$flag_id` from all subblocks, FFTS would set the flag ID
     back to the block in the group to do synchronization.
 
@@ -1541,10 +1541,6 @@ Interfaces: `InferCoreTypeInterface`
 | `flag_id` | ::mlir::IntegerAttr | An Attribute containing a integer value<br><br>Syntax:<br>`integer-attribute ::= (integer-literal( : (index-type \| integer-type) )?) \| true \| false`<br><br>An integer attribute is a literal attribute that represents an integral value of the specified integer or index type. `i1` integer attributes are treated as `boolean` attributes, and use a unique assembly format of either `true` or `false` depending on the value. The default type for non-boolean integer attributes, if a type is not specified, is signless 64-bit integer.<br><br>Examples:<br>`10 : i32`<br>`10    // : i64 is implied here.`<br>`true  // A bool, i.e. i1, value.`<br>`false // A bool, i.e. i1, value.` |
 | `tcube_pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `tvector_pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
-
-
-
-
 
 #### Operands
 
@@ -1601,9 +1597,6 @@ Interfaces: `InferCoreTypeInterface`
 | `pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `static_flag_id` | ::mlir::IntegerAttr | An Attribute containing a integer value<br><br>Syntax:<br>`integer-attribute ::= (integer-literal ( : (index-type \| integer-type) )?) \| true \| false`<br><br>An integer attribute is a literal attribute that represents an integral value of the specified integer or index type. `i1` integer attributes are treated as `boolean` attributes, and use a unique assembly format of either `true` or `false` depending on the value. The default type for non-boolean integer attributes, if a type is not specified, is signless 64-bit integer.<br><br>Examples:<br>`10 : i32`<br>`10    // : i64 is implied here.`<br>`true  // A bool, i.e. i1, value.`<br>`false // A bool, i.e. i1, value.` |
 
-
-
-
 | `tsync_instr_mode` | ::mlir::hivm::SyncBlockInstrModeAttr | HIVM synchronization block instruction mode attribute. |
 
 #### Operands
@@ -1657,10 +1650,6 @@ Interfaces: `InferCoreTypeInterface`
 | `tpipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `pipe` | ::mlir::hivm::PipeAttr | HIVM Op pipe attribute. |
 | `static_flag_id` | ::mlir::IntegerAttr | An Attribute containing a integer value<br><br>Syntax:<br>`integer-attribute ::= (integer-literal ( : (index-type \| integer-type) )?) \| true \| false`<br><br>An integer attribute is a literal attribute that represents an integral value of the specified integer or index type. `i1` integer attributes are treated as `boolean` attributes, and use a unique assembly format of either `true` or `false` depending on the value. The default type for non-boolean integer attributes, if a type is not specified, is signless 64-bit integer.<br><br>Examples:<br>`10 : i32`<br>`10    // : i64 is implied here.`<br>`true  // A bool, i.e. i1, value.`<br>`false // A bool, i.e. i1, value.` |
-
-
-
-
 
 #### Operands
 
@@ -2656,7 +2645,7 @@ Interfaces: `ConditionallySpeculatable`, `DestinationStyleOpInterface`, `ExtraBu
 
 ### `hivm.hir.vinterleave` (hivm::VInterleaveOp)
 
-_Vetor Interleave Op_
+_Vector Interleave Op_
 
 Syntax:
 
@@ -3381,7 +3370,7 @@ operation ::= `hivm.hir.vreduce` attr-dict $arith `ins` `(` $src `:` type($src) 
               (`->` type($result)^)?
 ```
 
-Recuce one or more axes of the source vector according to
+Reduce one or more axes of the source vector according to
 the reduction axes array, starting from an init value.
 
 Constraints:

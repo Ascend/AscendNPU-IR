@@ -29,9 +29,6 @@ symbol.bind_symbolic_shape %out0, [%0, %1, %2], affine_map<()[s0, s1, s2] -> (s0
 |--------------------|-------------------------|-------------|
 | `shape_expressions` | ::mlir::AffineMapAttr | An Attribute containing an AffineMap object<br><br>Syntax:<br>`affine-map-attribute ::= affine_map<affine-map>`<br><br>Examples:<br>`affine_map<(d0) -> (d0)>`<br>`affine_map<(d0, d1, d2) -> (d0, d1)>`|
 
-
-
-
 #### Operands
 
 | Operand | Description |
@@ -73,9 +70,6 @@ Effects: `MemoryEffects::Effect{}`
 | `min_val` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
 | `max_val` | ::mlir::IntegerAttr | 64-bit signless integer attribute |
 | `int_expressions` | ::mlir::AffineMapAttr | An Attribute containing an AffineMap object<br><br>Syntax:<br>`affine-map-attribute ::= affine_map<affine-map>`<br><br>Examples:<br>`affine_map<(d0) -> (d0)>`<br>`affine_map<(d0, d1, d2) -> (d0, d1)>` |
-
-
-
 
 #### Operands
 

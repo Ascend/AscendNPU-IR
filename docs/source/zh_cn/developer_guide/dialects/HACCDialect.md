@@ -242,7 +242,7 @@ Syntax:
 ```
 
 On NPU device, the kernel function's calling convention is that the output
-is passed in as a input parameter.
+is passed in as an input parameter.
 
 This attribute is used to indicate which output value does the current
 function argument corresponds to.

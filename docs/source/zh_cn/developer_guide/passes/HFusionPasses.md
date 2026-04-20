@@ -70,7 +70,7 @@ _Propagate constants between tiling and device function_
    * Constant tiling data are inlined into the device function.
    * Constant tiling data are removed from the tiling function.
    * Constant tiling data are removed from the arguments of the device
-     function. And the call sites are modifed accordingly.
+     function. And the call sites are modified accordingly.
    * Constant tiling data are removed from the callers of the device function,
      and the callers of the callers, and so on.
 

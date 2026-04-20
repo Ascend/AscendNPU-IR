@@ -36,18 +36,14 @@ These layers allow custom DSLs and frameworks to integrate. Triton and PyTorch c
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-target` | `Ascend910B1` | Target device (core count, on-chip memory, etc.) |
+| `-target` | `Ascend<Name>` | Target device (core count, on-chip memory size and other hardware specifications), queried via `npu-smi info`. |
 | `-block-dim` | `1` | Number of blocks; compiled kernel carries `hacc.block_dim` |
 | `-enable-hfusion-compile` | `false` | Enable HFusion pipeline (fusion, scheduling, tiling) |
 | `-enable-hivm-compile` | `true` | Enable HIVM pipeline (lower to HIVM and optimize) |
 | `-enable-torch-compile` | `false` | Enable Torch-MLIR pipeline |
 | `-enable-triton-kernel-compile` | `false` | Enable Triton kernel pipeline |
 
-Supported targets:
-
-- Ascend910B: `Ascend910B1`, `Ascend910B2`, `Ascend910B3`, `Ascend910B4`, etc.
-- Ascend910_93: `Ascend910_9362`, `Ascend910_9372`, `Ascend910_9381`, etc.
-- Ascend910_95: `Ascend910_950z`, `Ascend910_9579`, `Ascend910_9589`, etc.
+Supported target devices include the Atlas A2/A3, Ascend 950PR/Ascend 950DT series.
 
 ### Function attributes
 

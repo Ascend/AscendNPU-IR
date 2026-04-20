@@ -15,8 +15,8 @@
 |-----|-----|-----|
 | Unified Buffer (UB) | 32字节对齐 | 通用缓存空间，主要用于向量和标量运算 |
 | L1 Buffer | 32字节对齐 | 暂存feature map等卷积使用到的数据 |
-| L0A Buffer | 512字节对齐 | 暂存矩阵运算的左矩阵(feature map) |
-| L0B Buffer | 512字节对齐 | 暂存矩阵运算的右矩阵(weight) |
+| L0A Buffer | 512字节对齐 | 暂存矩阵运算的左矩阵（feature map） |
+| L0B Buffer | 512字节对齐 | 暂存矩阵运算的右矩阵（weight） |
 | L0C Buffer | 512字节对齐 | 暂存矩阵运算的中间结果和输出矩阵 |
 | BT Buffer | 64字节对齐 | BiasTable Buffer，存放矩阵运算中的Bias |
 | FP Buffer | 64字节对齐 | Fixpipe Buffer，存放量化参数、Relu参数等 |
@@ -27,9 +27,9 @@
 
 针对昇腾片上内存，由于输入IR中`memref.alloc`的Buffer仅包含变量名称、需要的内存空间大小，不包含地址信息，因此AscendNPU IR内存管理模块（PlanMemory）需要根据Buffer的**生命区间**分配合适的内存地址，防止运算过程中出现内存覆写导致精度问题。为了尽可能在有限的内存空间下分配完所有的Buffer，PlanMemory会基于「IR语义」和「硬件支持」进行**内存复用**。同时为了避免引入不必要的数据依赖影响性能，PlanMemory提供了三级分配内存算法，在尽量保障性能的情况下，提高内存利用率。
 
-片上内存分配主要是在Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元（包括 UB、L1、L0C 等）上进行内存分配。Cube访问的存储单元中，L0A存储左矩阵，L0B存储右矩阵，左右矩阵会从L1 Buffer搬入L0A和L0B，L0C存储矩阵乘的结果和中间结果，内存分配主要在L1和L0C存储单元上进行内存分配。Vector访问的存储单元是UB(Unified Buffer)内存，存储着向量计算的输入和输出，内存分配也需要在UB为不同的Buffer分配内存。
+片上内存分配主要是在Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元（包括 UB、L1、L0C 等）上进行内存分配。Cube访问的存储单元中，L0A存储左矩阵，L0B存储右矩阵，左右矩阵会从L1 Buffer搬入L0A和L0B，L0C存储矩阵乘的结果和中间结果，内存分配主要在L1和L0C存储单元上进行内存分配。Vector访问的存储单元是UB(Unified Buffer）内存，存储着向量计算的输入和输出，内存分配也需要在UB为不同的Buffer分配内存。
 
-除了片上内存，PlanMemory还会进行少量的Workspace的内存分配(`memref_ext.alloc_workspace`)，主要用于CV场景。如果涉及Cube计算完成后Vector单元继续参与运算，则需要将Cube运算结果从L0C搬出，临时保存在Workspace空间，再搬入UB进行Vector运算。片外空间交给框架Runtime统一申请管理，因此算子需要反馈所需的Workspace空间大小。
+除了片上内存，PlanMemory还会进行少量的Workspace的内存分配（`memref_ext.alloc_workspace`)，主要用于CV场景。如果涉及Cube计算完成后Vector单元继续参与运算，则需要将Cube运算结果从L0C搬出，临时保存在Workspace空间，再搬入UB进行Vector运算。片外空间交给框架Runtime统一申请管理，因此算子需要反馈所需的Workspace空间大小。
 
 ### 相关术语说明
 

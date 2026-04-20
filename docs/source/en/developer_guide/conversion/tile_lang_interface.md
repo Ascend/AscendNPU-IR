@@ -12,7 +12,7 @@ Within the TileLang ecosystem, we have developed an NPU Intermediate Representat
 
 Install the Ascend Toolkit.
 
-[Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002)，install`Ascend-cann-toolkit`.For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
+[Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002), install`Ascend-cann-toolkit`.For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
 
 ```bash
 chmod +x Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run
@@ -50,7 +50,7 @@ git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 Run the installation script
 
 > Note: If you environment has gtest include file but has not gtest lib file, the build process may cause some weird problem. 
-> plese remove the gtest include file or add the lib file or build gtest with tvm.
+> please remove the gtest include file or add the lib file or build gtest with tvm.
 
 ```bash
 cd tilelang-ascend

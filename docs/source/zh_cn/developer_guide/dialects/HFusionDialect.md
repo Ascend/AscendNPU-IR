@@ -1599,7 +1599,7 @@ allowed 32-bit signless integer cases: 0, 1, 2, 3, 4, 5, 6
 | ODD | `5` | odd |
 | TRUNCWITHOVERFLOW | `6` | truncwithoverflow |
 
-### TaylerMode
+### TaylorMode
 
 allowed 32-bit signless integer cases: 0, 1
 

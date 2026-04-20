@@ -8,7 +8,7 @@
 
 #### Python版本要求
 
-当前Triton-Ascend要求的Python版本为:**py3.9-py3.11**。
+当前Triton-Ascend要求的Python版本为：**py3.9-py3.11**。
 
 #### 安装Ascend CANN
 
@@ -149,7 +149,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 | `triton::LoadOp` | `memref::copy` + `bufferization::ToTensorOp` | 从内存加载数据 |
 | `triton::AtomicRMWOp` | `hivm::StoreOp` 或 `hfusion::AtomicXchgOp` | 执行原子的读-修改-写操作 |
 | `triton::AtomicCASOp` | `linalg::GenericOp` | 执行原子的比较并交换操作 |
-| `triton::GatherOp` | 先转换为`func::CallOp` (调用 `triton_gather`)<br>再转换为`hfusion::GatherOp` | 根据索引收集数据 |
+| `triton::GatherOp` | 先转换为`func::CallOp`（调用 `triton_gather`）<br>再转换为`hfusion::GatherOp` | 根据索引收集数据 |
 | **指针运算类 Op** | | |
 | `triton::AddPtrOp` | `memref::ReinterpretCast` | 对指针进行偏移运算 |
 | `triton::PtrToIntOp` | `arith::IndexCastOp` | 将指针转换为整数 |
@@ -158,8 +158,8 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 | **程序信息类 Op** | | |
 | `triton::GetProgramIdOp` | `functionOp` 的参数 | 获取当前程序的ID |
 | `triton::GetNumProgramsOp` | `functionOp` 的参数 | 获取总程序数量 |
-| `triton::AssertOp` | 先转换为`func::CallOp` (调用 `triton_assert`)<br>再转换为`hfusion::AssertOp` | 断言操作 |
-| `triton::PrintOp` | 先转换为`func::CallOp` (调用 `triton_print`)<br>再转换为`hfusion::PrintOp` | 打印操作 |
+| `triton::AssertOp` | 先转换为`func::CallOp`（调用 `triton_assert`）<br>再转换为`hfusion::AssertOp` | 断言操作 |
+| `triton::PrintOp` | 先转换为`func::CallOp`（调用 `triton_print`）<br>再转换为`hfusion::PrintOp` | 打印操作 |
 | **张量操作类 Op** | | |
 | `triton::ReshapeOp` | `tensor::ReshapeOp` | 改变张量形状 |
 | `triton::ExpandDimsOp` | `tensor::ExpandShapeOp` | 扩展张量维度 |
@@ -170,7 +170,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 | `triton::CatOp` | `tensor::InsertSliceOp` | 拼接张量 |
 | `triton::MakeRangeOp` | `linalg::GenericOp` | 创建一个包含连续整数的张量 |
 | `triton::SplatOp` | `linalg::FillOp` | 用标量值填充张量 |
-| `triton::SortOp` | 先转换为`func::CallOp` (调用 `triton_sort`)<br>再转换为`hfusion::SortOp` | 对张量进行排序 |
+| `triton::SortOp` | 先转换为`func::CallOp`（调用 `triton_sort`）<br>再转换为`hfusion::SortOp` | 对张量进行排序 |
 | **数值计算类 Op** | | |
 | `triton::MulhiUIOp` | `arith::MulSIExtendedOp` | 无符号整数乘法，返回高位结果 |
 | `triton::PreciseDivFOp` | `arith::DivFOp` | 执行高精度浮点除法 |
@@ -179,7 +179,7 @@ Triton Ascend将Triton方言的高级GPU抽象操作逐级下降为Linalg、HFus
 | `triton::ClampFOp` | `tensor::EmptyOp` + `linalg::FillOp` | 将浮点数限制在指定范围内 |
 | `triton::DotOp` | `linalg::MatmulOp` | 执行通用矩阵乘法 |
 | `triton::DotScaledOp` | `linalg::MatmulOp` | 执行带缩放因子的矩阵乘法 |
-| `triton::ascend::FlipOp` | 先转换为`func::CallOp` (调用 `triton_flip`)<br>再转换为`hfusion::FlipOp` | 执行带缩放因子的矩阵乘法 |
+| `triton::ascend::FlipOp` | 先转换为`func::CallOp`（调用 `triton_flip`）<br>再转换为`hfusion::FlipOp` | 执行带缩放因子的矩阵乘法 |
 | **归约类 Op** | | |
 | `triton::ArgMinOp` | `linalg::ReduceOp` | 返回张量中最小值的索引 |
 | `triton::ArgMaxOp` | `linalg::ReduceOp` | 返回张量中最大值的索引 |
@@ -317,14 +317,14 @@ def triton_matmul_exp():
 | 参数 | 类型 | 说明 | 范例 |
 |------|------|------|------|
 | `arg1` | int | 起始值或结束值 | `parallel(10)` |
-| `arg2` | int | 结束值 (可选) | `parallel(0, 10)` |
-| `step` | int | 步长 (可选) | `parallel(0, 10, 2)` |
-| `num_stages` | int | 流水线阶段数 (可选) | `parallel(0, 10, num_stages=3)` |
-| `loop_unroll_factor` | int | 循环展开因子 (可选) | `parallel(0, 10, loop_unroll_factor=4)` |
+| `arg2` | int | 结束值（可选） | `parallel(0, 10)` |
+| `step` | int | 步长（可选） | `parallel(0, 10, 2)` |
+| `num_stages` | int | 流水线阶段数（可选） | `parallel(0, 10, num_stages=3)` |
+| `loop_unroll_factor` | int | 循环展开因子（可选） | `parallel(0, 10, loop_unroll_factor=4)` |
 
 **限制**：
 
-目前 910B 最多支持2个Vector核。
+目前 Altas A2 最多支持2个Vector核。
 
 **写法样例**：
 
@@ -423,7 +423,7 @@ def kernel_debug_barrier():
 
 #### insert_slice & extract_slice
 
-昇腾支持根据操作的偏移量、大小和步长参数，将一个张量插入到另一个张量中(即`insert_slice`)或从另一个张量中提取指定的切片(即`extract_slice`)。
+昇腾支持根据操作的偏移量、大小和步长参数，将一个张量插入到另一个张量中（即`insert_slice`）或从另一个张量中提取指定的切片（即`extract_slice`）。
 
 **参数说明**：
 
@@ -564,7 +564,7 @@ def cast_to_bool():
 | `end_offset` | int元组 | 索引张量每个维度的结束偏移量 |
 | `start_offset` | int元组 | 源张量每个维度的起始偏移量 |
 | `src_stride` | int元组 | 源张量每个维度的步长 |
-| `other` (可选) | scalar value | 当索引越界时的默认值（位于UB中） |
+| `other`（可选） | scalar value | 当索引越界时的默认值（位于UB中） |
 | `out` | tensor | 输出张量（位于UB中） |
 
 **写法样例**：
@@ -594,7 +594,7 @@ def select_index():
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
-| `ptr` | tensor (指针类型) | 目标张量指针（位于GM中） |
+| `ptr` | tensor（指针类型） | 目标张量指针（位于GM中） |
 | `index` | tensor | 用于放置的索引（位于UB中） |
 | `value` | tensor | 要储存的值（位于UB中） |
 | `dim` | int32 | 沿其进行索引放置的维度 |
@@ -648,14 +648,14 @@ def put_index():
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
-| `src` | tensor (指针类型) | 源张量指针（位于GM中） |
+| `src` | tensor（指针类型） | 源张量指针（位于GM中） |
 | `index` | tensor | 用于收集的索引张量（位于UB中） |
 | `index_boundary` | int64 | 索引值的上边界 |
 | `dim` | int32 | 沿其进行收集的维度 |
 | `src_stride` | int64元组 | 源张量每个维度的步长 |
 | `end_offset` | int32元组 | 索引张量每个维度的结束偏移量 |
 | `start_offset` | int32元组 | 索引张量每个维度的起始偏移量 |
-| `other` | 标量值 (可选) | 当索引越界时使用的默认值（位于UB中） |
+| `other` | 标量值（可选） | 当索引越界时使用的默认值（位于UB中） |
 
 **返回值**：
 
@@ -712,7 +712,7 @@ def gather():
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
-| `ptr` | tensor (指针类型) | 目标张量指针（位于GM中） |
+| `ptr` | tensor（指针类型） | 目标张量指针（位于GM中） |
 | `value` | tensor | 要储存的图块值（位于UB中） |
 | `index` | tensor | 散点储存使用的索引（位于UB中） |
 | `index_boundary` | int64 | 索引值的上边界 |
@@ -857,7 +857,7 @@ def my_kernel(...):
 
 - **操作名称**：需要与注册的操作名称一致。
 - **输入参数**：不同的操作有不同的输入参数。
-- **输出参数（可选）**：输出参数由`out`指定, 表示操作的输出。
+- **输出参数（可选）**：输出参数由`out`指定，表示操作的输出。
 
 如果通过`out`参数指明了输出变量，则该定制操作的返回值与输出变量保持一致；否则该操作的返回值不可用。
 
@@ -992,7 +992,7 @@ class my_custom_op:
 如果实现定制操作的函数需要从源代码或字节码编译产生，则需要在注册定制操作类的时候分别配置`source`和`compile`属性：
 
 - source 实现定制操作函数的源代码或字节码文件路径。
-- compile 实现定制操作函数的编译命令, 其中可以用`%<`和`%@`分别表示源文件和目标文件（与Makefile类似）。
+- compile 实现定制操作函数的编译命令，其中可以用`%<`和`%@`分别表示源文件和目标文件（与Makefile类似）。
 
 与符号名类似，这两个属性也可以静态配置或在注册类构造函数中动态配置，例如：
 
@@ -1013,7 +1013,7 @@ class my_custom_op:
 
 #### 参数顺序
 
-定制操作转换为对应的函数调用，其参数顺序与python侧保持一致，输出参数(out，如果有的话)总是放在最后，例如下面python代码：
+定制操作转换为对应的函数调用，其参数顺序与python侧保持一致，输出参数（out，如果有的话）总是放在最后，例如下面python代码：
 
 ```python
 al.custom('my_custom_op', src, index, dim, out=dst)
@@ -1051,7 +1051,7 @@ custom_op_impl_func(memref_t<...> *src, memref_t<...> *idx, int64_t bound);
 
 其bound参数要求为int64_t类型的整数。
 
-在python侧调用定制操作是给出了bound常量参数的值：
+在python侧调用定制操作时给出了bound常量参数的值：
 
 ```python
 al.custom('my_custom_op', src, idx, bound=1024)
@@ -1124,7 +1124,7 @@ def my_custom_op(src, index, _builder=None):
     return al.custom_semantic(_my_custom_op.name, src, index, out=dst, _builder=_builder)
 ```
 
-封装的操作函数需要用`al.builtin`装饰，并通过`al.custom_semantic`调用定制操作；同时也可以利用`tl.semantic`提供的功能准备输出参数；注意：封装操作函数时需要给定一个额外的`_builder`参数，并传递给所有senamtic函数。
+封装的操作函数需要用`al.builtin`装饰，并通过`al.custom_semantic`调用定制操作；同时也可以利用`tl.semantic`提供的功能准备输出参数；注意：封装操作函数时需要给定一个额外的`_builder`参数，并传递给所有semantic函数。
 
 封装好的操作函数可以类似原生操作一样直接调用：
 

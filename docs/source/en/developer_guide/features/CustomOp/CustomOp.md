@@ -29,7 +29,7 @@ Generic interface for custom op as following:
                 which comes together within bishengir-compile.
 
                 For normal names/cases, user needs to specify implementation location/compilation commands,
-                and all ther necessary informations.
+                and all the necessary information.
 
          Available builtin names :
             "__builtin_gather_load"
@@ -46,7 +46,7 @@ to retrieve necessary information:
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
              this attribute is ignored when core type is cube.
 
-             Note : for builtins, user could specify these informations or not,
+             Note : for builtins, user could specify these information or not,
                     compiler will help to check the correctness and canonicalize.
 - Symbol   : Implementation function name
 
@@ -88,7 +88,7 @@ TODO:
 | **Pipe**                        | Custom op execution pipe.                                    |
 | **VFMode**                      | Custom op running mode on vector core, SIMT/SIMD/MIX.        |
 | **Symbol**                      | User provided implementation function name                   |
-| **Buitlins**                    | Set of builtins (name reserved).                             |
+| **Builtins**                    | Set of builtins (name reserved).                             |
 
 #### ⚠️ Limitations
 
@@ -130,6 +130,7 @@ TODO:
 ```
 
 #### TRITON CustomOp Lowering Example
+
 ```python
 # For more detail of Triton custom op design, please refer to
 # https://gitcode.com/Ascend/triton-ascend/pull/988 for more details
