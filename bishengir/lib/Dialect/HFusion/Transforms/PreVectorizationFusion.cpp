@@ -611,10 +611,9 @@ struct ZeroDimToOneDimGenericPattern
 
   LogicalResult matchAndRewrite(linalg::GenericOp op,
                                 PatternRewriter &rewriter) const override {
-    if (!(hfusion::isZeroElementLinalgOp(op) && hfusion::isFillOp(op))) {
-      return failure();
-    }
-    if (op.getNumLoops() != 0) {
+    bool isFill =
+        hfusion::isZeroElementLinalgOp(op) && hfusion::isFillOp(op);
+    if (!isFill && op.getNumLoops() != 0) {
       return failure();
     }
     if (op.getNumDpsInits() != 1) {
@@ -627,6 +626,17 @@ struct ZeroDimToOneDimGenericPattern
       return failure();
     }
 
+    // For non-fill rank-0 generics, bail if any tensor input is rank > 0
+    // (e.g. constant-indexed). Check before creating any ops to avoid leaving
+    // orphaned ops in the IR (applyPatternsGreedily does not roll back).
+    if (!isFill) {
+      for (Value input : op.getDpsInputs()) {
+        auto tensorType = dyn_cast<RankedTensorType>(input.getType());
+        if (tensorType && tensorType.getRank() > 0)
+          return failure();
+      }
+    }
+
     auto newOutputType =
         RankedTensorType::get({1}, outputType.getElementType());
 
@@ -637,12 +647,42 @@ struct ZeroDimToOneDimGenericPattern
     auto ctx = rewriter.getContext();
     auto inputMap = AffineMap::get(1, 0, {}, ctx);
     auto outputMap = AffineMap::get(1, 0, {rewriter.getAffineDimExpr(0)}, ctx);
-    SmallVector<AffineMap> newMaps = {inputMap, outputMap};
     SmallVector<utils::IteratorType> newIteratorTypes = {
         utils::IteratorType::parallel};
-    auto newOp = rewriter.create<linalg::GenericOp>(
-        op.getLoc(), newOutputType, op.getDpsInputs(), ValueRange{newOutput},
-        newMaps, newIteratorTypes);
+
+    linalg::GenericOp newOp;
+    if (isFill) {
+      // Original path: scalar inputs use broadcast map (d0)->().
+      SmallVector<AffineMap> newMaps = {inputMap, outputMap};
+      newOp = rewriter.create<linalg::GenericOp>(
+          op.getLoc(), newOutputType, op.getDpsInputs(), ValueRange{newOutput},
+          newMaps, newIteratorTypes);
+    } else {
+      // Rank-0 tensor inputs: expand to rank-1 with identity map (d0)->(d0).
+      // Passing a rank-0 tensor with broadcast map (d0)->() crashes
+      // FoldScalarOrSplatConstant in the same greedy-apply cycle.
+      SmallVector<Value> newInputs;
+      SmallVector<AffineMap> newMaps;
+      for (Value input : op.getDpsInputs()) {
+        auto tensorType = dyn_cast<RankedTensorType>(input.getType());
+        if (tensorType && tensorType.getRank() == 0) {
+          auto newType =
+              RankedTensorType::get({1}, tensorType.getElementType());
+          Value expanded = rewriter.create<tensor::ExpandShapeOp>(
+              op.getLoc(), newType, input,
+              SmallVector<ReassociationIndices>{});
+          newInputs.push_back(expanded);
+          newMaps.push_back(outputMap);
+        } else {
+          newInputs.push_back(input);
+          newMaps.push_back(inputMap);
+        }
+      }
+      newMaps.push_back(outputMap);
+      newOp = rewriter.create<linalg::GenericOp>(
+          op.getLoc(), newOutputType, newInputs, ValueRange{newOutput},
+          newMaps, newIteratorTypes);
+    }
     rewriter.inlineRegionBefore(op.getRegion(), newOp.getRegion(),
                                 newOp.getRegion().begin());
     mlir::Value zeroIndex =
