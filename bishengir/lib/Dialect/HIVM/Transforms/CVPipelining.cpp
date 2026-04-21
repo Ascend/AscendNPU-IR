@@ -401,6 +401,8 @@ static std::optional<int> getMultibufferCount(Block *blk) {
     if (!annotation) {
       continue;
     }
+    if (!annotation->hasAttr(MultiBufferAttr::name))
+      continue;
     int mbCount = getMultibufferCount(annotation);
     if (result == uninitializedCount)
       result = mbCount;
