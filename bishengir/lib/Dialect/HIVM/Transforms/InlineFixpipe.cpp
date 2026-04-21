@@ -21,6 +21,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -102,24 +103,23 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
-bool isAccumulation(Operation *op) {
-  auto mmadOp = dyn_cast_if_present<hivm::MmadL1Op>(op);
-  if (!mmadOp)
+bool isAccumulationImpl(Operation *op, Value accumulator) {
+  if (!accumulator)
     return false;
 
-  auto forOp = mmadOp->getParentOfType<scf::ForOp>();
+  auto forOp = op->getParentOfType<scf::ForOp>();
   if (!forOp)
     return false;
 
-  auto cArg = dyn_cast<BlockArgument>(mmadOp.getC());
-  if (!cArg || cArg.getOwner() != forOp.getBody() ||
-      cArg.getArgNumber() < forOp.getNumInductionVars()) {
+  auto accArg = dyn_cast<BlockArgument>(accumulator);
+  if (!accArg || accArg.getOwner() != forOp.getBody() ||
+      accArg.getArgNumber() < forOp.getNumInductionVars()) {
     return false;
   }
 
-  unsigned iterIdx = cArg.getArgNumber() - forOp.getNumInductionVars();
+  unsigned iterIdx = accArg.getArgNumber() - forOp.getNumInductionVars();
 
-  Value val = mmadOp.getResultTensors()[0];
+  Value val = op->getResult(0);
   while (val) {
     if (val == forOp.getBody()->getTerminator()->getOperand(iterIdx)) {
       return true;
@@ -141,6 +141,19 @@ bool isAccumulation(Operation *op) {
       return false;
     }
   }
+
+  return false;
+}
+
+bool isAccumulation(Operation *op) {
+  if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op))
+    return isAccumulationImpl(op, mmadOp.getC());
+
+  if (auto conv1d = dyn_cast<hivm::Conv1DL1Op>(op))
+    return isAccumulationImpl(op, conv1d.getInit());
+
+  if (auto conv2d = dyn_cast<hivm::Conv2DL1Op>(op))
+    return isAccumulationImpl(op, conv2d.getInit());
 
   return false;
 }
@@ -203,11 +216,12 @@ public:
   }
 };
 
-/// Insert fixpipe for hivm::Conv1DL1Op.
-struct InsertFixpipeForConv1DL1OpPattern : public OpRewritePattern<Conv1DL1Op> {
+/// Insert fixpipe for hivm::ConvOp.
+template <typename ConvOp>
+struct InsertFixpipeForConvOpPattern : public OpRewritePattern<ConvOp> {
 public:
-  using OpRewritePattern<Conv1DL1Op>::OpRewritePattern;
-  LogicalResult matchAndRewrite(Conv1DL1Op op,
+  using OpRewritePattern<ConvOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(ConvOp op,
                                 PatternRewriter &rewriter) const override {
 
     if (!op.hasPureTensorSemantics()) {
@@ -654,7 +668,8 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
-  patterns.add<InsertFixpipeForConv1DL1OpPattern>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 
