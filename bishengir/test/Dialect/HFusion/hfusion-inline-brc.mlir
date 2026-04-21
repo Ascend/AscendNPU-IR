@@ -154,3 +154,18 @@ func.func @inline_brc_with_splat_dense(%arg0: tensor<1x4x2047x2047xf32>) -> tens
                                                              outs(%3 : tensor<1x4x2047x2047xf32>) -> tensor<1x4x2047x2047xf32>
   return %5 : tensor<1x4x2047x2047xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @inline_brc_skip_sel_mask
+// CHECK: linalg.fill
+func.func @inline_brc_skip_sel_mask() -> tensor<64xf32> {
+    %cst = arith.constant 1 : i1
+    %0 = tensor.empty() : tensor<64xi1>
+    %1 = tensor.empty() : tensor<64xf32>
+    %2 = tensor.empty() : tensor<64xf32>
+    %3 = linalg.fill ins(%cst : i1) outs(%0 : tensor<64xi1>) -> tensor<64xi1>
+    %4 = tensor.empty() : tensor<64xf32>
+    %5 = hfusion.select ins(%3, %1, %2 : tensor<64xi1>, tensor<64xf32>, tensor<64xf32>) outs(%4 : tensor<64xf32>) -> tensor<64xf32>
+    return %5 : tensor<64xf32>
+}

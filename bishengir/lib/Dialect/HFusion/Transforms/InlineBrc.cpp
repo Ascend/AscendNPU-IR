@@ -91,6 +91,10 @@ static void findUsersToInline(Value src, DenseSet<OpOperand *> &usesToInline,
   assert(src && "src must not be nullptr");
   for (OpOperand &use : src.getUses()) {
     Operation *user = use.getOwner();
+    // If user is select and src is select mask, pass
+    if (isa<hfusion::SelectOp, linalg::SelectOp>(user) &&
+        user->getOperand(0) == src)
+      continue;
     if (canInlineBrc(user, &use, isInlineScalar)) {
       usesToInline.insert(&use);
       continue;
