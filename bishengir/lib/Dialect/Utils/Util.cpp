@@ -720,8 +720,9 @@ int64_t getNumPerBlock(Type t) {
 }
 
 int64_t getNumPerRepeat(Type t) {
-  return INTR_BYTES_PER_REPEAT /
-         (getElementTypeOrSelf(t).getIntOrFloatBitWidth() / INTR_BITS_PER_BYTE);
+  unsigned int tBits = getElementTypeOrSelf(t).getIntOrFloatBitWidth();
+  unsigned int tBytes = llvm::divideCeil(tBits, INTR_BITS_PER_BYTE);
+  return INTR_BYTES_PER_REPEAT / tBytes;
 }
 
 // Gets a suitable vector size from the element type, assuming the type is

@@ -203,3 +203,22 @@ func.func @large_copy_vf_2_dim(%arg0: memref<1x1000xf32>, %arg1: memref<1x1000xf
   hivm.hir.copy ins(%arg0 : memref<1x1000xf32>) outs(%arg1 : memref<1x1000xf32>)
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @i1_copy_callee_vf
+// CHECK-NOT: hivm.hir.copy
+func.func @i1_copy_callee_vf(%arg0: memref<16xi1>, %arg1: memref<16xi1>) attributes {hivm.vector_function, no_inline} {
+  %cst = arith.constant dense<false> : vector<1xi1>
+  %c0 = arith.constant 0 : index
+  %subview = memref.subview %arg1[%c0] [1] [1] : memref<16xi1> to memref<1xi1, strided<[1], offset: ?>>
+  vector.transfer_write %cst, %subview[%c0] {in_bounds = [true]} : vector<1xi1>, memref<1xi1, strided<[1], offset: ?>>
+  hivm.hir.copy ins(%arg0 : memref<16xi1>) outs(%arg1 : memref<16xi1>)
+  return
+}
+
+func.func @i1_copy_caller() {
+  %src = memref.alloc() : memref<16xi1>
+  %dst = memref.alloc() : memref<16xi1>
+  func.call @i1_copy_callee_vf(%src, %dst) {hivm.vector_function, no_inline} : (memref<16xi1>, memref<16xi1>) -> ()
+  return
+}
