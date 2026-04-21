@@ -1240,6 +1240,17 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   if (!options.forHIVM && isa<tensor::InsertSliceOp>(definingOp)) {
     return handleInsertSliceOp(expandOp, rewriter, definingOp);
   }
+  // `linalg.fill` is included in `isMarkedAsElementwiseOp`, but lifting
+  // `tensor.expand_shape` across fill interacts with `PropagateCollapseDown`
+  // through `tensor.concat` / `extract_slice` chains (e.g. insert/concat
+  // regions) and can make `applyPatternsGreedily` fail to reach a fixed point.
+  // Collapse-down propagation through fill is unchanged.
+  if (isa<linalg::FillOp>(definingOp)) {
+    return rewriter.notifyMatchFailure(
+        expandOp,
+        "not propagating expand through linalg.fill (non-termination with "
+        "collapse-down/concat)");
+  }
   if (isMarkedAsElementwiseOp(definingOp)) {
     return handleElementwiseOp(expandOp, rewriter, definingOp);
   }
