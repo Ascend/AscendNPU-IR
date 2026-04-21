@@ -215,6 +215,17 @@ func.func @test_hfusion_elemwise_extended_ops(
   %low, %high = hfusion.mulext %src1, %src2 : tensor<6xi32>
   return %low : tensor<6xi32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_hfusion_unsigned_elemwise_extended_ops
+func.func @test_hfusion_unsigned_elemwise_extended_ops(
+  %src1 :  tensor<6xi32>, %src2 :  tensor<6xi32>, %dst :  tensor<6xi32>) -> tensor<6xi32> {
+  //     CHECK: hivm.hir.vmulextui
+  %low, %high = hfusion.mulextui %src1, %src2 : tensor<6xi32>
+  return %low : tensor<6xi32>
+}
+
 // -----
 
 // CHECK-LABEL: func @normal_tensor_copy

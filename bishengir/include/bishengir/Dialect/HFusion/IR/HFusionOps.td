@@ -131,6 +131,29 @@ def MulExtOp : HFusion_Op<"mulext", [Pure, Commutative,
 }
 
 //===----------------------------------------------------------------------===//
+// MulExtUiOp
+//===----------------------------------------------------------------------===//
+
+def MulExtUiOp : HFusion_Op<"mulextui", [Pure, Commutative,
+    AllTypesMatch<["lhs", "rhs", "low", "high"]>]> {
+  let summary = [{
+    extended unsigned integer multiplication operation
+  }];
+
+  let description = [{
+    Performs (2*N)-bit multiplication on zero-extended unsigned operands. Returns two
+    N-bit results: the low and the high halves of the product. The low half has
+    the same value as the result of regular multiplication with the same operands.
+  }];
+
+  let arguments = (ins SignlessIntegerLike:$lhs, SignlessIntegerLike:$rhs);
+  let results = (outs SignlessIntegerLike:$low, SignlessIntegerLike:$high);
+
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+
+}
+
+//===----------------------------------------------------------------------===//
 // InterleaveOp
 //===----------------------------------------------------------------------===//
 

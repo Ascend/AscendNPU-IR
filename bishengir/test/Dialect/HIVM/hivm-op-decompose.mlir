@@ -1286,10 +1286,10 @@ func.func @test_log_scalar_f16(%src : f16, %out : memref<16xf16>) {
 }
 
 //===----------------------------------------------------------------------===//
-// Test Arith_MulUIExtendedOp Decompose MemRef(I32)
+// Test Arith_MulSIExtendedOp Decompose MemRef(I32)
 //===----------------------------------------------------------------------===//
 // -----
-func.func @test_muluiextended_op_memref_i32() {
+func.func @test_mulsiextended_op_memref_i32() {
   // CHECK: %[[VAL_0:.*]] = arith.constant 32 : i64
   // CHECK: %[[VAL_1:.*]] = arith.constant 1 : index
   // CHECK: %[[VAL_2:.*]] = arith.constant 0 : index
@@ -1308,6 +1308,51 @@ func.func @test_muluiextended_op_memref_i32() {
   // CHECK:   %[[VAL_15:.*]] = arith.shrsi %[[VAL_14]], %[[VAL_0]] : i64
   // CHECK:   %[[VAL_16:.*]] = arith.trunci %[[VAL_15]] : i64 to i32
   // CHECK:   %[[VAL_17:.*]] = arith.shrsi %[[VAL_13]], %[[VAL_0]] : i64
+  // CHECK:   %[[VAL_18:.*]] = arith.trunci %[[VAL_17]] : i64 to i32
+  // CHECK:   memref.store %[[VAL_16]], %[[VAL_6]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   memref.store %[[VAL_18]], %[[VAL_7]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK: }
+
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c6 = arith.constant 6 : index
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  scf.for %arg0 = %c0 to %c6 step %c1 {
+    %0 = memref.load %alloc[%arg0] : memref<6xi32>
+    %1 = memref.load %alloc_0[%arg0] : memref<6xi32>
+    %low, %high = arith.mulsi_extended %0, %1 : i32
+    memref.store %low, %alloc_1[%arg0] : memref<6xi32>
+    memref.store %high, %alloc_2[%arg0] : memref<6xi32>
+  }
+  return
+}
+
+//===----------------------------------------------------------------------===//
+// Test Arith_MulUIExtendedOp Decompose MemRef(I32) - Unsigned
+//===----------------------------------------------------------------------===//
+// -----
+func.func @test_muluiextended_op_memref_i32() {
+  // CHECK: %[[VAL_0:.*]] = arith.constant 32 : i64
+  // CHECK: %[[VAL_1:.*]] = arith.constant 1 : index
+  // CHECK: %[[VAL_2:.*]] = arith.constant 0 : index
+  // CHECK: %[[VAL_3:.*]] = arith.constant 6 : index
+  // CHECK: %[[VAL_4:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_5:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_6:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_7:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: scf.for %[[VAL_8:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_1]] {
+  // CHECK:   %[[VAL_9:.*]] = memref.load %[[VAL_4]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   %[[VAL_10:.*]] = memref.load %[[VAL_5]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   %[[VAL_11:.*]] = arith.extui %[[VAL_9]] : i32 to i64
+  // CHECK:   %[[VAL_12:.*]] = arith.extui %[[VAL_10]] : i32 to i64
+  // CHECK:   %[[VAL_13:.*]] = arith.muli %[[VAL_11]], %[[VAL_12]] : i64
+  // CHECK:   %[[VAL_14:.*]] = arith.shli %[[VAL_13]], %[[VAL_0]] : i64
+  // CHECK:   %[[VAL_15:.*]] = arith.shrui %[[VAL_14]], %[[VAL_0]] : i64
+  // CHECK:   %[[VAL_16:.*]] = arith.trunci %[[VAL_15]] : i64 to i32
+  // CHECK:   %[[VAL_17:.*]] = arith.shrui %[[VAL_13]], %[[VAL_0]] : i64
   // CHECK:   %[[VAL_18:.*]] = arith.trunci %[[VAL_17]] : i64 to i32
   // CHECK:   memref.store %[[VAL_16]], %[[VAL_6]]{{\[}}%[[VAL_8]]] : memref<6xi32>
   // CHECK:   memref.store %[[VAL_18]], %[[VAL_7]]{{\[}}%[[VAL_8]]] : memref<6xi32>
