@@ -661,7 +661,9 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
     ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
     ShapedTypeOf<[UI8, I8]>:$scaleA,
     ShapedTypeOf<[UI8, I8]>:$scaleB,
-    ShapedTypeOf<[AnyFloat]>:$acc
+    ShapedTypeOf<[AnyFloat]>:$acc,
+    OptionalAttr<HFusion_MatMulMxDataFormatAttr>:$lhsFormat,
+    OptionalAttr<HFusion_MatMulMxDataFormatAttr>:$rhsFormat
   );
 
   let results = (outs
