@@ -528,6 +528,31 @@ struct AtomicRMWOpConversion
           return op.emitError("unhandled atomic operation");
         result = *atomOrFailure;
       }
+      // In SIMT mode the atomic executes on the leader thread only (guarded
+      // by threadPred).  The return value lives only in the leader; all other
+      // threads receive llvm.mlir.undef via the conditional branch above.
+      // Broadcast the leader's result to every thread via shared memory so
+      // that downstream address arithmetic sees the correct value.
+      // The allocation pass reserves shared memory for atomics whose results
+      // are used by non-leader threads (tensor atomics, or scalar atomics
+      // whose results feed into tt.splat → tensor operations).
+      if (pred && op->hasAttr("allocation.offset")) {
+        Value smemBase = LLVM::getSharedMemoryBase(loc, rewriter, targetInfo,
+                                                   op.getOperation());
+        auto i32Ty = rewriter.getI32Type();
+        // Compute per-element offset within the shared memory scratch area.
+        Value smemPtr = b.gep(smemBase.getType(), i32Ty, smemBase,
+                              b.i32_val(i));
+        // Leader stores its result to shared memory.
+        targetInfo.storeDShared(rewriter, loc, smemPtr, /*ctaId=*/std::nullopt,
+                                result, pred);
+        // Barrier: ensure the store is visible to all threads.
+        targetInfo.barrier(loc, rewriter);
+        // All threads load the broadcast value from shared memory.
+        result = targetInfo.loadDShared(rewriter, loc, smemPtr,
+                                        /*ctaId=*/std::nullopt, valueElemTy,
+                                        /*pred=*/b.true_val());
+      }
       resultVals[i] = result;
     }
 

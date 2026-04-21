@@ -14,7 +14,8 @@ module attributes {
     "ttg.enable-bishengir-simt-optimization" = 1111 : i32
 } {
   // CHECK-LABEL: @scalar_atomic_add_i32
-  // CHECK: ascend_dpx.atomic_add
+  // CHECK:     ascend_dpx.atomic_add
+  // CHECK-NOT: ascend_dpx.sync_threads
   tt.func @scalar_atomic_add_i32(%ptr: !tt.ptr<i32>, %val: i32, %out: !tt.ptr<i32>) {
     %true = arith.constant true
     %0 = tt.atomic_rmw add, acq_rel, gpu, %ptr, %val, %true : (!tt.ptr<i32>, i32, i1) -> i32
