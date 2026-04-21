@@ -248,7 +248,7 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
           copyOp, TypeRange(), src, dst);
       // TODO: change TA to create hivm.load/store op directly
       auto implicitTransposeAttr = utils::getAnnotateOpWithAttr(
-          copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
+          dst, "MayImplicitTransposeWithLastAxis");
       if (implicitTransposeAttr.has_value()) {
         storeOp.setMayImplicitTransposeWithLastAxis(true);
       }
