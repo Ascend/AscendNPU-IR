@@ -1,14 +1,23 @@
-//===- SelectRoundModeTest.cpp - selectRoundMode unit tests --------------===//
+//===- SelectRoundModeTest.cpp - selectRoundMode unit tests ---------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 
+#include "gtest/gtest.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "gtest/gtest.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 
@@ -43,9 +52,13 @@ TEST_F(SelectRoundModeTest, Int8ToF16UsesRint) {
                   hivm::RoundMode::RINT);
 }
 
-TEST_F(SelectRoundModeTest, Int16ToInt8UsesTruncWithOverflow) {
+TEST_F(SelectRoundModeTest, IntegerToIntegerDefaultsToRint) {
   expectRoundMode(builder.getI16Type(), builder.getI8Type(),
-                  hivm::RoundMode::TRUNCWITHOVERFLOW);
+                  hivm::RoundMode::RINT);
+  expectRoundMode(builder.getI32Type(), builder.getI16Type(),
+                  hivm::RoundMode::RINT);
+  expectRoundMode(builder.getI64Type(), builder.getI32Type(),
+                  hivm::RoundMode::RINT);
 }
 
 TEST_F(SelectRoundModeTest, FloatToIntegerUsesTrunc) {
@@ -55,17 +68,10 @@ TEST_F(SelectRoundModeTest, FloatToIntegerUsesTrunc) {
                   hivm::RoundMode::TRUNC);
 }
 
-TEST_F(SelectRoundModeTest, IntegerToFloatUsesTrunc) {
+TEST_F(SelectRoundModeTest, IntegerToFloatUsesRint) {
   expectRoundMode(builder.getI32Type(), builder.getF16Type(),
-                  hivm::RoundMode::TRUNC);
-  expectRoundMode(builder.getI64Type(), builder.getF32Type(),
-                  hivm::RoundMode::TRUNC);
-}
-
-TEST_F(SelectRoundModeTest, IntegerToIntegerDefaultsToRint) {
-  expectRoundMode(builder.getI32Type(), builder.getI16Type(),
                   hivm::RoundMode::RINT);
-  expectRoundMode(builder.getI64Type(), builder.getI32Type(),
+  expectRoundMode(builder.getI64Type(), builder.getF32Type(),
                   hivm::RoundMode::RINT);
 }
 

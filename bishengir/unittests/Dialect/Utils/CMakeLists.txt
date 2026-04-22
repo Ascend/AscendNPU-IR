@@ -4,6 +4,6 @@ add_bishengir_unittest(BiShengIRDialectUtilsTests
 
 target_link_libraries(BiShengIRDialectUtilsTests PRIVATE
   MLIRIR
-  MLIRHFusionDialect
-  MLIRHIVMDialect
+  BiShengIRHFusionDialect
+  BiShengIRHIVMDialect
 )

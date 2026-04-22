@@ -121,11 +121,11 @@ std::string to_string(const T &container, int indent, bool useEndl) {
 
 // Currently dtype cast rules:
 // (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16 -> f32
-// (3-TRUNC) float -> int
-// (4-TRUNC) int -> float
-// (5-RINT ) int -> int
-// (6-RINT ) others
+// (2-RINT ) f16/bf16 -> f32
+// (3-RINT ) i8 -> f16
+// (4-TRUNC) float -> int
+// (5-RINT ) int -> float
+// (6-RINT ) int -> int
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32()) {
@@ -139,8 +139,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
     }
   }
 
-  if (inType.isInteger(8) && // for bit width of 8 and 16 use RINT mode
-      outType.isF16()) {
+  if (inType.isInteger(8) && outType.isF16()) {
     return T::RINT;
   }
 
