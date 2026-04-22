@@ -1,0 +1,153 @@
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/LLVMOps.td b/mlir/include/mlir/Dialect/LLVMIR/LLVMOps.td
+index d2d1fbaf304b..895198be0835 100644
+--- a/mlir/include/mlir/Dialect/LLVMIR/LLVMOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/LLVMOps.td
+@@ -24,6 +24,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
+ include "mlir/Interfaces/InferTypeOpInterface.td"
+ include "mlir/Interfaces/MemorySlotInterfaces.td"
+ include "mlir/Interfaces/SideEffectInterfaces.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ class LLVM_Builder<string builder> {
+   string llvmBuilder = builder;
+@@ -413,6 +414,60 @@ def LLVM_LoadOp : LLVM_MemAccessOpBase<"load",
+       CArg<"StringRef", "StringRef()">:$syncscope)>
+   ];
+   let hasVerifier = 1;
++  // TODO: remove following patch when upgrade to LLVM 22
++  let useCustomPropertiesEncoding = 1;
++  let extraClassDefinition = [{
++    void $cppClass::writeProperties(mlir::DialectBytecodeWriter &writer) {
++      // do nothing, this is just an implementation for BytecodeOpInterface
++    }
++
++    mlir::LogicalResult $cppClass::readProperties(mlir::DialectBytecodeReader &reader,
++                                       mlir::OperationState &state) {
++      // Skip the dereferenceable/invariantGroup attributes generated in LLVM22
++      // as they do not exist in LLVM19. These attributes are stored after alignment.
++      mlir::Attribute attr;
++      auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
++      if (::mlir::failed(reader.readOptionalAttribute(prop.access_groups)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.alias_scopes)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.alignment)))
++        return ::mlir::failure();
++
++      // Skip dereferenceable (stored after alignment in LLVM22)
++      if (mlir::failed(reader.readOptionalAttribute(attr)))
++        return mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.invariant)))
++        return ::mlir::failure();
++
++      // Skip invariantGroup (stored after invariant in LLVM22)
++      if (mlir::failed(reader.readOptionalAttribute(attr)))
++        return mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.noalias_scopes)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.nontemporal)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.ordering)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.syncscope)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.tbaa)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.volatile_)))
++        return ::mlir::failure();
++
++      return mlir::success();
++    }
++  }];
+ }
+ 
+ def LLVM_StoreOp : LLVM_MemAccessOpBase<"store",
+@@ -485,6 +540,54 @@ def LLVM_StoreOp : LLVM_MemAccessOpBase<"store",
+       CArg<"StringRef", "StringRef()">:$syncscope)>
+   ];
+   let hasVerifier = 1;
++  // TODO: remove following patch when upgrade to LLVM 22
++  let useCustomPropertiesEncoding = 1;
++  let extraClassDefinition = [{
++    void $cppClass::writeProperties(mlir::DialectBytecodeWriter &writer) {
++      // do nothing, this is just an implementation for BytecodeOpInterface
++    }
++
++    mlir::LogicalResult $cppClass::readProperties(mlir::DialectBytecodeReader &reader,
++                                       mlir::OperationState &state) {
++      // Skip the invariantGroup attribute generated in LLVM22
++      // as it does not exist in LLVM19. This attribute is stored after alignment.
++      mlir::Attribute attr;
++      auto &prop = state.getOrAddProperties<Properties>(); (void)prop;
++      if (::mlir::failed(reader.readOptionalAttribute(prop.access_groups)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.alias_scopes)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.alignment)))
++        return ::mlir::failure();
++
++      // Skip invariantGroup (stored after alignment in LLVM22)
++      if (mlir::failed(reader.readOptionalAttribute(attr)))
++        return mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.noalias_scopes)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.nontemporal)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.ordering)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.syncscope)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.tbaa)))
++        return ::mlir::failure();
++
++      if (::mlir::failed(reader.readOptionalAttribute(prop.volatile_)))
++        return ::mlir::failure();
++
++      return mlir::success();
++    }
++  }];
++
+ }
+ 
+ // Casts.
+@@ -515,7 +618,23 @@ def LLVM_AddrSpaceCastOp : LLVM_CastOp<"addrspacecast", "AddrSpaceCast",
+ }
+ def LLVM_IntToPtrOp : LLVM_CastOp<"inttoptr", "IntToPtr",
+                                   LLVM_ScalarOrVectorOf<AnySignlessInteger>,
+-                                  LLVM_ScalarOrVectorOf<LLVM_AnyPointer>>;
++                                  LLVM_ScalarOrVectorOf<LLVM_AnyPointer>,
++                                  [DeclareOpInterfaceMethods<BytecodeOpInterface>]> {
++  // TODO: remove following patch when upgrade to LLVM 22
++  let extraClassDefinition = [{
++    void $cppClass::writeProperties(mlir::DialectBytecodeWriter &writer) {
++      // do nothing, this is just an implementation for BytecodeOpInterface
++    }
++
++    mlir::LogicalResult $cppClass::readProperties(mlir::DialectBytecodeReader &reader,
++                                       mlir::OperationState &result) {
++      // do nothing, this is just an implementation for BytecodeOpInterface
++      // the dereference attribute generated in LLVM22 does not exist in LLVM19
++      return mlir::success();
++    }
++  }];
++}
++
+ def LLVM_PtrToIntOp : LLVM_CastOp<"ptrtoint", "PtrToInt",
+                                   LLVM_ScalarOrVectorOf<LLVM_AnyPointer>,
+                                   LLVM_ScalarOrVectorOf<AnySignlessInteger>>;
