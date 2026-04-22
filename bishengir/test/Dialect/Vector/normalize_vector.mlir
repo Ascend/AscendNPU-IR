@@ -416,3 +416,23 @@ func.func @test_tag_multi_reduction_init_from_arith_constant(%arg0: f32, %arg1: 
   %3 = vector.multi_reduction <add>, %0, %2 [1] : vector<1x64xf32> to vector<1xf32>
   return %3 : vector<1xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_drop_unit_dim_mulsi_extended
+// CHECK: %{{.*}} = vector.shape_cast %arg0 : vector<1x4xi32> to vector<4xi32>
+// CHECK: %{{.*}} = vector.shape_cast %arg1 : vector<1x4xi32> to vector<4xi32>
+// CHECK: %{{.*}}, %{{.*}} = arith.mulsi_extended %{{.*}}, %{{.*}} : vector<4xi32>
+func.func @test_drop_unit_dim_mulsi_extended(%arg0: vector<1x4xi32>, %arg1: vector<1x4xi32>) -> (vector<1x4xi32>) {
+  %low, %high = arith.mulsi_extended %arg0, %arg1 : vector<1x4xi32>
+  return %high : vector<1x4xi32>
+}
+
+// -----  
+// CHECK-LABEL: func.func @test_drop_unit_dim_mului_extended
+// CHECK: %{{.*}} = vector.shape_cast %arg0 : vector<1x4xi32> to vector<4xi32>
+// CHECK: %{{.*}} = vector.shape_cast %arg1 : vector<1x4xi32> to vector<4xi32>
+// CHECK: %{{.*}}, %{{.*}} = arith.mului_extended %{{.*}}, %{{.*}} : vector<4xi32>
+func.func @test_drop_unit_dim_mului_extended(%arg0: vector<1x4xi32>, %arg1: vector<1x4xi32>) -> (vector<1x4xi32>) {
+  %low, %high = arith.mului_extended %arg0, %arg1 : vector<1x4xi32>
+  return %high : vector<1x4xi32>
+}

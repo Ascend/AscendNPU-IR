@@ -716,6 +716,67 @@ class ShapeCastDropUnitDimsForMultiDimVectorPattern
   }
 };
 
+/// ```mlir
+/// %low, %high = arith.mulsi_extended %arg0, %zero: vector<1x64xi32>
+///  ==>
+/// %0 = vector.shape_cast %arg0 : vector<1x64xi32> to vector<64xi32>
+/// %1 = vector.shape_cast %zero : vector<1x64xi32> to vector<64xi32>
+/// %low, %high = arith.mulsi_extended %arg0, %zero: vector<64xi32>
+/// %2 = vector.shape_cast %high : vector<64xi32> to vector<1x64xi32>
+/// ```
+template <typename MulExtendedOp>
+struct DropUnitDimFromMulExtendedOp : public OpRewritePattern<MulExtendedOp> {
+  using OpRewritePattern<MulExtendedOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MulExtendedOp op,
+                                PatternRewriter &rewriter) const override {
+
+    auto resultLowType = dyn_cast<VectorType>(op.getLow().getType());
+    auto resultHighType = dyn_cast<VectorType>(op.getHigh().getType());
+    if (!resultLowType || !resultHighType || resultLowType.getRank() < 2)
+      return failure();
+
+    auto lhsType = dyn_cast<VectorType>(op.getLhs().getType());
+    auto rhsType = dyn_cast<VectorType>(op.getRhs().getType());
+    if (!lhsType || !rhsType || lhsType.getRank() < 2)
+      return failure();
+
+    bool hasUnitDim =
+        llvm::any_of(lhsType.getShape(), [](int64_t dim) { return dim == 1; });
+    if (!hasUnitDim)
+      return rewriter.notifyMatchFailure(op, "No unit dimension to remove.");
+
+    auto loc = op.getLoc();
+    auto flattenType = [&](VectorType type) -> VectorType {
+      SmallVector<int64_t> newShape;
+      for (int64_t dim : type.getShape()) {
+        if (dim != 1)
+          newShape.push_back(dim);
+      }
+      return VectorType::get(newShape, type.getElementType());
+    };
+
+    Value flatLhs = rewriter.create<vector::ShapeCastOp>(
+        loc, flattenType(lhsType), op.getLhs());
+    Value flatRhs = rewriter.create<vector::ShapeCastOp>(
+        loc, flattenType(rhsType), op.getRhs());
+
+    auto newResultType = flattenType(resultLowType);
+    auto newOp = rewriter.create<MulExtendedOp>(loc,
+                                                newResultType, // low
+                                                newResultType, // high
+                                                flatLhs, flatRhs);
+
+    Value newLow = rewriter.create<vector::ShapeCastOp>(loc, resultLowType,
+                                                        newOp.getLow());
+    Value newHigh = rewriter.create<vector::ShapeCastOp>(loc, resultHighType,
+                                                         newOp.getHigh());
+
+    rewriter.replaceOp(op, {newLow, newHigh});
+    return success();
+  }
+};
+
 /// Pattern to convert multi-dimensional create_mask operations to 1D and cast
 /// back
 
@@ -1467,6 +1528,8 @@ void NormalizeVectorPass::runOnOperation() {
 
   patterns
       .add<OneDimAccMultiReductionToReduction,
+           DropUnitDimFromMulExtendedOp<arith::MulSIExtendedOp>,
+           DropUnitDimFromMulExtendedOp<arith::MulUIExtendedOp>,
            ShapeCastDropUnitDimsForMultiDimVectorPattern,
            UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
            ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
