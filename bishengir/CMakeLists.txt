@@ -196,6 +196,7 @@ add_subdirectory(lib/CAPI)
 if(MLIR_INCLUDE_TESTS)
   add_definitions(-DMLIR_INCLUDE_TESTS)
   add_subdirectory(test)
+  add_subdirectory(unittests)
 endif()
 
 if(MLIR_ENABLE_BINDINGS_PYTHON)
