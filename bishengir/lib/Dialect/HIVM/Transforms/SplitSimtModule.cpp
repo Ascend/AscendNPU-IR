@@ -40,6 +40,76 @@ struct SplitSimtModulePass
 
 } // namespace
 
+static void updateFuncSignatrueTo1D(func::FuncOp func) {
+  auto* ctx = func.getContext();
+  auto oldType = func.getFunctionType();
+  SmallVector<Type> newArgTypes;
+  for (auto argType : oldType.getInputs()) {
+    if (auto memrefType = dyn_cast<MemRefType>(argType)) {
+      if (memrefType.getRank() > 1) {
+        int64_t totalSize = 1;
+        bool hasDynamicDim = false;
+        for (auto dim : memrefType.getShape()) {
+          if (ShapedType::isDynamic(dim)) {
+            hasDynamicDim = true;
+            break;
+          }
+          totalSize *= dim;
+      }
+      int64_t finalSize = hasDynamicDim ? ShapedType::kDynamic : totalSize;
+      auto elemType = memrefType.getElementType();
+      auto collapsedMemrefType = MemRefType::get({finalSize}, elemType, MemRefLayoutAttrInterface(),
+                                         memrefType.getMemorySpace());
+      newArgTypes.push_back(collapsedMemrefType);
+      } else {
+        newArgTypes.push_back(argType);
+      }
+    } else {
+      newArgTypes.push_back(argType);
+    }
+  }
+  auto newFuncType = FunctionType::get(ctx, newArgTypes, oldType.getResults());
+  func.setType(newFuncType);
+}
+
+static void fixMultiDimMemrefToSIMTFunc(ModuleOp module, func::FuncOp func) {
+  updateFuncSignatrueTo1D(func);
+  StringRef funcName = func.getName();
+  module.walk([&funcName](func::CallOp callOp) {
+    if (callOp.getCallee() != funcName) {
+      WalkResult::advance();
+    }
+    for (auto& operand : callOp->getOpOperands()) {
+      Value val = operand.get();
+      if (auto memrefType = dyn_cast<MemRefType>(val.getType())) {
+        auto rank = memrefType.getRank();
+        if (rank > 1) {
+          OpBuilder b(callOp);
+          int64_t totalSize = 1;
+          SmallVector<ReassociationIndices> reassociation(1);
+          bool hasDynamicDim = false;
+          for(int64_t i = 0; i < rank; i++) {
+            reassociation[0].push_back(i);
+            int64_t dimSize = memrefType.getDimSize(i);
+            if (ShapedType::isDynamic(dimSize)) {
+              hasDynamicDim = true;
+            }else{
+              totalSize *= dimSize;
+            }
+          }
+          int64_t finalSize = hasDynamicDim ? ShapedType::kDynamic : totalSize;
+          auto elemType = memrefType.getElementType();
+          auto collapsedMemrefType = MemRefType::get({finalSize}, elemType, MemRefLayoutAttrInterface(),
+                                              memrefType.getMemorySpace());
+          Value collapsed = b.create<memref::CollapseShapeOp>(callOp.getLoc(), collapsedMemrefType, val, reassociation);
+          operand.set(collapsed);
+          }
+        }
+      }
+      return WalkResult::advance();
+    });
+}
+
 void SplitSimtModulePass::runOnOperation() {
   static constexpr int GridSizeCount = 3;
   static constexpr int GridSizeWidth = 32;
@@ -97,6 +167,11 @@ void SplitSimtModulePass::runOnOperation() {
     builder.setInsertionPointToStart(modBlock);
     newMod->setAttrs(mod->getAttrs());
     newMod->setAttr(hacc::SIMTModuleAttr::name, builder.getUnitAttr());
+
+    // Fix multi-dim memref to 1-d memref for simt vf and its call sites.
+    // This is a workaround for the fact that current SIMT VF lowering assumes
+    // all memref arguments are 1-d.
+    fixMultiDimMemrefToSIMTFunc(mod,funcOp);
   }
 
   llvm::SmallVector<Operation *> simdFuncs;

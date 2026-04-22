@@ -24,6 +24,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -49,7 +50,7 @@ static void registerAllVectorOp(mlir::RewritePatternSet &patterns) {
   registerAll<PatternT,
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-              >(patterns);
+              ,mlir::hivm::GatherLoadOp>(patterns);
 }
 
 using namespace mlir;
@@ -538,8 +539,15 @@ struct InsertMoveL1BetweenVectorAndCube
 
       auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
       llvm::SmallVector<OpOperand *> consumerOperands{operand};
+      bool layoutConversionOnTheFly = false;
+      if (auto gatherOp = dyn_cast_or_null<hivm::GatherLoadOp>(beforeValue.getDefiningOp())) {
+          layoutConversionOnTheFly = true;
+          StringRef layout ="zN";
+          // StringRef layout = operand->getOperandNumber() == 0 ? "zN" : "nZ";
+          gatherOp->setAttr("hivm.fractal_layout", StringAttr::get(op.getContext(), layout));
+      }
       bool isBiasOperand = (beforeValue == op.getPerChannelBias());
-      LogicalResult result = isBiasOperand?
+      LogicalResult result = (isBiasOperand || layoutConversionOnTheFly)?
           InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
           InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
       if (failed(result))

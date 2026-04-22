@@ -25,6 +25,7 @@
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <string>
@@ -92,6 +93,19 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
         moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
+    // transfer layout attribute from scopeOp to funcOp if exists
+    for (auto [idx, input] : llvm::enumerate(inputs)) {
+      if (isa<BlockArgument>(input)) {
+        continue;
+      }
+      auto defOp = input.getDefiningOp();
+      if (!defOp) {
+        continue;
+      }
+      if (auto attr = defOp->getAttr("hivm.fractal_layout")) {
+        newFuncOp.setArgAttr(idx, "hivm.fractal_layout", attr);
+      }
+    }
     SymbolTable symbolTable(moduleOp);
     FailureOr<StringAttr> scopeFuncName =
         symbolTable.renameToUnique(newFuncOp, SmallVector<SymbolTable *>());

@@ -108,7 +108,11 @@ void InsertMemSemanticForSimtVFPass::dealWithReturnValue(
     builder.setInsertionPoint(scopeOp);
     auto memrefOfUB =
         builder.create<memref::AllocOp>(scopeOp->getLoc(), memrefType);
-
+    if (auto gatherOp = dyn_cast<hivm::GatherLoadOp>(val.getDefiningOp())) {
+      if (auto attr = gatherOp->getAttr("hivm.fractal_layout")) {
+        memrefOfUB->setAttr("hivm.fractal_layout", attr);
+      }
+    }
     // Transfer data from simt(Register) to simd(UB)
     builder.setInsertionPoint(returnOp);
     builder.create<hivm::LocalStoreOp>(returnOp->getLoc(), memrefOfUB, val);

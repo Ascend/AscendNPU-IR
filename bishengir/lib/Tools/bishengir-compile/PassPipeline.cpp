@@ -200,7 +200,7 @@ void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
     if (config.shouldEnableSimdSimtMixCompile()) {
       buildDelayedHFusionRegBaseVectorizePipeline(
-          pm, config, /*shouldInferFuncCoreType=*/false);
+          pm, config, /*shouldInferFuncCoreType=*/true);
     }
     hivm::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
   }
@@ -307,8 +307,10 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
       pm.nest<func::FuncOp>().addPass(
           mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
-      buildDelayedHFusionRegBaseVectorizePipeline(
-          pm, config, /*shouldInferFuncCoreType=*/true);
+      // delay vectorization after split simd/simt
+      if (!config.shouldEnableSimdSimtMixCompile())
+        buildDelayedHFusionRegBaseVectorizePipeline(
+            pm, config, /*shouldInferFuncCoreType=*/true);
     }
     if (config.shouldEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createAutoScopePass());

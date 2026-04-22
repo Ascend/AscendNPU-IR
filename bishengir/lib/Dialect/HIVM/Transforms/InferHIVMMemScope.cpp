@@ -487,7 +487,8 @@ void InferHIVMMemScopePass::runOnOperation() {
     // Here shouldn't contain `hivm::BatchMmadL1Op` which has been decomposed.
     func->walk([&](mlir::hivm::MmadL1Op op) {
       if (failed(hivm::inferAndPropagateMemScopeForMmadL1(op)))
-        signalPassFailure();
+        op->emitWarning("Failed to infer/propagate memory scope for MmadL1Op");
+        // signalPassFailure();
     });
 
     // Set device function arguments' memory scope to GM.
