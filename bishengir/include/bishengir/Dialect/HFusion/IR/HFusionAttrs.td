@@ -128,4 +128,14 @@ def HFusion_EvictionPolicyAttr : HFusion_Attr<"EvictionPolicy", "eviction_policy
   }];
 }
 
+def HFusion_MatMulMxDataFormatAttr : I32EnumAttr<
+    "Dataformat", "Microscaling floating-point data format for MatMulMx",
+    [
+        I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+        I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+        I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">
+    ]> {
+    let cppNamespace = "::mlir::hfusion";
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONATTRS_TD
