@@ -1372,13 +1372,15 @@ struct BinaryScalarOpToVectorPattern : public OpRewritePattern<BinaryOpType> {
 /// ```
 /// After conversion:
 /// ```mlir
-///    %1 = vector.broadcast %arg3 : f32 to vector<64xf32>          
+///    %1 = vector.broadcast %arg3 : f32 to vector<64xf32>
 ///    %2 = math.absf %1 : vector<64xf32>
 /// ```
 template <typename UnaryOpType>
 struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
   using OpRewritePattern<UnaryOpType>::OpRewritePattern;
-  LogicalResult matchAndRewrite(UnaryOpType op, PatternRewriter &rewriter) const override {
+
+  LogicalResult matchAndRewrite(UnaryOpType op,
+                                PatternRewriter &rewriter) const override {
     if (isa<VectorType>(op.getResult().getType()))
       return failure();
     Value operand = op.getOperand();
@@ -1386,60 +1388,58 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
     if (!operandType.isF32()) {
       return failure();
     }
-    auto blockArg = dyn_cast<BlockArgument>(operand);
     VectorType vectorType = VectorType::get({64}, operandType);
     Location loc = op.getLoc();
-    if (blockArg) {
-      auto broadcast = rewriter.create<vector::BroadcastOp>(
-        op.getLoc(), vectorType, operand);
-      if constexpr (std::is_same_v<UnaryOpType, math::AbsFOp> ||
-                    std::is_same_v<UnaryOpType, math::LogOp> ||
-                    std::is_same_v<UnaryOpType, math::RoundOp>) {
-        if constexpr (std::is_same_v<UnaryOpType, math::RoundOp>) {
-          auto enableSaturate = 
-              op->template getAttrOfType<BoolAttr>("enable_saturate");
-          auto roundMode = op->template getAttrOfType<Attribute>("round_mode");
-          auto unsignedMode = 
-              op->template getAttrOfType<Attribute>("unsigned_mode");
-          if (enableSaturate)
-            broadcast->setAttr("enable_saturate", enableSaturate);
-          if (roundMode)
-            broadcast->setAttr("round_mode", roundMode);
-          if (unsignedMode)
-            broadcast->setAttr("unsigned_mode", unsignedMode);
-        }
-        auto vecOp = 
-            rewriter.create<UnaryOpType>(loc, broadcast.getResult());
-        auto castOp = 
-            rewriter.create<UnrealizedConversionCastOp>(loc, operandType, vecOp.getResult());
-        rewriter.replaceOp(op, castOp.getResult(0));
-        return success();
+    auto blockArg = dyn_cast<BlockArgument>(operand);
+
+    // Collect broadcast users
+    SmallVector<vector::BroadcastOp, 4> broadcastUsers;
+    for (auto user : op->getUsers()) {
+      if (auto broadcastUser = dyn_cast<vector::BroadcastOp>(user)) {
+        broadcastUsers.push_back(broadcastUser);
       }
-    } else {
-      auto castOp = 
-            rewriter.create<UnrealizedConversionCastOp>(loc, vectorType, operand);
-      if constexpr (std::is_same_v<UnaryOpType, math::AbsFOp> ||
-                    std::is_same_v<UnaryOpType, math::LogOp> ||
-                    std::is_same_v<UnaryOpType, math::RoundOp>) {
-        auto vecOp = rewriter.create<UnaryOpType>(loc, castOp.getResult(0));
-        if constexpr (std::is_same_v<UnaryOpType, math::RoundOp>) {
-          auto enableSaturate = 
-              op->template getAttrOfType<BoolAttr>("enable_saturate");
-          auto roundMode = op->template getAttrOfType<Attribute>("round_mode");
-          auto unsignedMode = 
-              op->template getAttrOfType<Attribute>("unsigned_mode");
-          if (enableSaturate)
-            vecOp->setAttr("enable_saturate", enableSaturate);
-          if (roundMode)
-            vecOp->setAttr("round_mode", roundMode);
-          if (unsignedMode)
-            vecOp->setAttr("unsigned_mode", unsignedMode);
-        }
-      rewriter.replaceOp(op, vecOp.getResult());
-      return success();
     }
+
+    // Create vector operand
+    Value vecOperand;
+    if (blockArg) {
+      vecOperand =
+          rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
+    } else {
+      vecOperand =
+          rewriter.create<UnrealizedConversionCastOp>(loc, vectorType, operand)
+              .getResult(0);
+    }
+
+    // Create vector unary op
+    auto vecOp = rewriter.create<UnaryOpType>(loc, vecOperand);
+    copyRoundAttributes(op, vecOp);
+
+    // Replace broadcast users
+    for (auto broadcastUser : broadcastUsers) {
+      rewriter.replaceOp(broadcastUser, vecOp.getResult());
+    }
+
+    // Handle remaining uses
+    if (!op->use_empty()) {
+      auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+          loc, operandType, vecOp.getResult());
+      rewriter.replaceOp(op, castOp.getResult(0));
+    }
+    return success();
   }
-    return failure();
+
+  void copyRoundAttributes(Operation *src, Operation *dst) const {
+    if constexpr (std::is_same_v<UnaryOpType, math::RoundOp>) {
+      if (auto enableSaturate =
+              src->template getAttrOfType<BoolAttr>("enable_saturate"))
+        dst->setAttr("enable_saturate", enableSaturate);
+      if (auto roundMode = src->template getAttrOfType<Attribute>("round_mode"))
+        dst->setAttr("round_mode", roundMode);
+      if (auto unsignedMode =
+              src->template getAttrOfType<Attribute>("unsigned_mode"))
+        dst->setAttr("unsigned_mode", unsignedMode);
+    }
   }
 };
 
