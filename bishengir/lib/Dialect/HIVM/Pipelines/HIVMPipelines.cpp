@@ -250,10 +250,6 @@ static void hivmPreBufferizationOptimizationPipeline(
   ADD_CANONICALIZER_PASS;
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
   if (hivmPipelineOptions.enableMixedCV) {
-    if (hivmPipelineOptions.setWorkspaceMultibuffer > 1) {
-      pm.nest<func::FuncOp>().addPass(
-          mlir::hivm::createSplitMixedIfConditionalsPass());
-    }
     // Software pipelining Cube and Vector operations
     CVPipeliningOptions pipelineOptions;
     pipelineOptions.pipelineDepth =
