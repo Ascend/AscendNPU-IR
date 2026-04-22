@@ -141,8 +141,6 @@ struct ConvertTritonAscendGPUToLLVMPass
         typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
     mlir::triton::populateControlFlowOpToLLVMPattern(
         typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
-    mlir::triton::populatePrintOpToLLVMPattern(
-        typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
     triton::ascend::populateGPUOpToDPXPatterns(typeConverter, patterns,
                                                kDefaultPatternBenefit);
     triton::ascend::populateTritonOpToDPXPatterns(typeConverter, patterns,

@@ -10,11 +10,11 @@
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Conversion/TritonGPUToLLVM/Utility.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace mlir;
 using namespace mlir::triton;
@@ -86,6 +86,18 @@ struct GetNumProgramsOpConversion
   }
 };
 
+struct PrintOpConversion : public ConvertOpToLLVMPattern<triton::PrintOp> {
+
+  PrintOpConversion(LLVMTypeConverter &converter, PatternBenefit benefit)
+      : ConvertOpToLLVMPattern<triton::PrintOp>(converter, benefit) {}
+
+  LogicalResult
+  matchAndRewrite(triton::PrintOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 } // namespace
 
@@ -96,6 +108,7 @@ void populateTritonOpToDPXPatterns(LLVMTypeConverter &converter,
                                    PatternBenefit benefit) {
   patterns.add<GetProgramIdOpConversion, GetNumProgramsOpConversion>(
       converter, patterns.getContext(), benefit);
+  patterns.add<PrintOpConversion>(converter, benefit);
 }
 
 } // namespace mlir::triton::ascend
