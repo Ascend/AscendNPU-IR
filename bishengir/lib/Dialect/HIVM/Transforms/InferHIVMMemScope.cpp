@@ -257,7 +257,8 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadL1(hivm::MmadL1Op op) {
   return success();
 }
 
-LogicalResult hivm::inferAndPropagateMemScopeForConv1DL1(hivm::Conv1DL1Op op) {
+template <typename ConvOp>
+LogicalResult hivm::inferAndPropagateMemScopeForConvOp(ConvOp op) {
   if (!op.hasPureBufferSemantics()) {
     return op->emitOpError("Run infer memory scope after bufferization.");
   }
@@ -273,50 +274,50 @@ LogicalResult hivm::inferAndPropagateMemScopeForConv1DL1(hivm::Conv1DL1Op op) {
 
   if (!allocInput.has_value()) {
     emitError(op.getLoc())
-      << "Cannot find root memref.alloc for input of this op.";
+        << "Cannot find root memref.alloc for input of this op.";
     return failure();
   }
 
   if (!allocWeight.has_value()) {
     emitError(op.getLoc())
-      << "Cannot find root memref.alloc for weight of this op.";
+        << "Cannot find root memref.alloc for weight of this op.";
     return failure();
   }
 
   if (!allocOutput.has_value()) {
     emitError(op.getLoc())
-      << "Cannot find root memref.alloc for output of this op.";
+        << "Cannot find root memref.alloc for output of this op.";
     return failure();
   }
 
   auto l1SpaceAttr =
-    AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
   auto l0cSpaceAttr =
-    AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
-  
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
+
   MemScopeInferAndPropagateHelper helper;
 
-  // For Conv1DL1Op, operand input should be in L1.
+  // For ConvOp, operand input should be in L1.
   if (failed(helper.Run(*allocInput, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for input");
   }
   LDBG("IR after setting mem scope for input:\n"
-    << *(op->getParentOfType<ModuleOp>()));
-  
-  // For Conv1DL1Op, operand weight should be in L1.
+       << *(op->template getParentOfType<ModuleOp>()));
+
+  // For ConvOp, operand weight should be in L1.
   if (failed(helper.Run(*allocWeight, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for weight");
   }
   LDBG("IR after setting mem scope for weight:\n"
-    << *(op->getParentOfType<ModuleOp>()));
-  
-  // For Conv1DL1Op, operand output should be in L0C.
+       << *(op->template getParentOfType<ModuleOp>()));
+
+  // For ConvOp, operand output should be in L0C.
   if (failed(helper.Run(*allocOutput, l0cSpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for output");
   }
   LDBG("IR after setting mem scope for output:\n"
-    << *(op->getParentOfType<ModuleOp>()));
-  
+       << *(op->template getParentOfType<ModuleOp>()));
+
   return success();
 }
 
@@ -512,7 +513,13 @@ void InferHIVMMemScopePass::runOnOperation() {
 
     // Set the memory scope of values related to `hivm::Conv1DL1Op` to L1 or L0C.
     func->walk([&](mlir::hivm::Conv1DL1Op op) {
-      if (failed(hivm::inferAndPropagateMemScopeForConv1DL1(op)))
+      if (failed(inferAndPropagateMemScopeForConvOp(op)))
+        signalPassFailure();
+    });
+
+    // Set the memory scope of values related to `hivm::Conv2DL1Op` to L1 or L0C.
+    func->walk([&](mlir::hivm::Conv2DL1Op op) {
+      if (failed(inferAndPropagateMemScopeForConvOp(op)))
         signalPassFailure();
     });
 

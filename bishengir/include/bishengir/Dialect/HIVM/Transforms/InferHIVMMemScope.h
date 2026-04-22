@@ -46,9 +46,10 @@ private:
 /// \note MmadL1Op should be bufferized beforehand.
 LogicalResult inferAndPropagateMemScopeForMmadL1(MmadL1Op op);
 
-/// Infer, propagate, and set memory scope information to Conv1DL1Op.
-/// \note Conv1DL1Op should be bufferized beforehand.
-LogicalResult inferAndPropagateMemScopeForConv1DL1(Conv1DL1Op op);
+/// Infer, propagate, and set memory scope information to ConvOp.
+/// \note ConvOp should be bufferized beforehand.
+template<typename ConvOp>
+LogicalResult inferAndPropagateMemScopeForConvOp(ConvOp op);
 
 /// Infer, propagate, and set memory scope information to FuncOp.
 /// \note FuncOp should be bufferized beforehand.
