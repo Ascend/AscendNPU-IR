@@ -103,6 +103,7 @@ private:
   // use its reference in multiple places. In order for references to not be
   // destroyed by vector reallocations, we use shared_ptr
   SmallVector<std::shared_ptr<WorkItem>> worklist_;
+  SmallVector<annotation::MarkOp> markerlist_;
 
   DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs_;
 
@@ -346,6 +347,7 @@ static SetVector<Operation *> independentSubgraph(WorkItem *item) {
 
 void CVPipeliningPass::init() {
   blocksContainingMultibuffer_.clear();
+  markerlist_.clear();
   worklist_.clear();
   workspaceAllocs_.clear();
   originalStepMap_.clear();
@@ -1809,6 +1811,7 @@ void CVPipeliningPass::runOnOperation() {
     if (!multiBufferAttr)
       return;
     blocksContainingMultibuffer_.insert(annotation->getBlock());
+    markerlist_.push_back(annotation);
   });
 
   OpBuilder builder(&getContext());
@@ -1821,6 +1824,9 @@ void CVPipeliningPass::runOnOperation() {
     // unsatisfied, move on without pipelining
     if (!blocksContainingMultibuffer_.empty()) {
       func->emitWarning("Failed to pipelinine function");
+    }
+    for (auto &markerOp : markerlist_) { 
+      markerOp->erase();
     }
     return;
   }
