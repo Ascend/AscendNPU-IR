@@ -261,6 +261,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Software pipelining Cube and Vector operations
     CVPipeliningOptions pipelineOptions;
     pipelineOptions.pipelineDepth = (int)hivmPipelineOptions.workspaceMultiBufferNum;
+    pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
   }
 

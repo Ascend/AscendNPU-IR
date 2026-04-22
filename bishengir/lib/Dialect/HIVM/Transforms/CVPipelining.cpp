@@ -76,9 +76,10 @@ struct WorkItem {
 };
 
 struct CVPipelineImpl {
-  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer)
+  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
+                 bool enableLazyLoading = false)
       : pipelineLoop(loop), builder(loop->getContext()),
-        numMultibuffer(multibuffer),
+        numMultibuffer(multibuffer), enableLazyLoading(enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
                     loop.getYieldedValues().end()) {}
 
@@ -128,6 +129,10 @@ private:
 
   // Number of multibuffer/pipeline stages/unroll iterations
   int numMultibuffer;
+
+  // When true, load ops are cloned into each consuming work item rather than
+  // passing their results via expanded multi-buffered tensors.
+  bool enableLazyLoading;
 
   // Pipelines we focus on that will be pipelined, everything else will be
   // traced from these based on the operands
@@ -629,8 +634,12 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
       if (opToWorkItemMap.contains(op)) {
         // If Core Op is already inserted into a different work item, then we
         // don't include it here
-        if (!item->ops.contains(op))
-          continue;
+        if (!item->ops.contains(op)) {
+          // With lazy loading, allow Load ops to be cloned into multiple
+          // work items so each stage loads independently from GM.
+          if (!(enableLazyLoading && isa<LoadOp>(op)))
+            continue;
+        }
       } else if (!isa<LoadOp>(op))
         // Load ops are pulled into their consuming work items, apart from that,
         // if we get here that means we depend on an op that have not satisfied
@@ -641,8 +650,22 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     // this work item
     else if (item->ops.contains(op))
       continue;
+    // Determine whether a to_tensor should be skipped because it has already
+    // been allocated to another work item.  The default guard fires for all
+    // to_tensor ops, but with lazy loading we lift the restriction for
+    // to_tensor ops whose backing writer is a LoadOp: those are cloned into
+    // every consuming work item independently.
+    bool skipToTensor = isa<bufferization::ToTensorOp>(op) &&
+                        opToWorkItemMap.contains(op);
+    if (enableLazyLoading && skipToTensor) {
+      auto tt = cast<bufferization::ToTensorOp>(op);
+      auto it = outputMemrefMap.find(tt);
+      if (it != outputMemrefMap.end() &&
+          isa<LoadOp>(it->second.getOperation()))
+        skipToTensor = false;
+    }
     if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
-        (isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op)))
+        skipToTensor)
       continue;
     LLVM_DEBUG(dbgs() << "Inserting \t"; op->dump());
     mapOpToItem(op, item);
@@ -897,6 +920,16 @@ void CVPipelineImpl::markOutputs() {
     for (Operation *op : item->ops) {
       if (isa<tensor::EmptyOp>(op))
         continue;
+      // With lazy loading, skip to_tensor results backed by a LoadOp since
+      // the load is cloned into each consuming work item directly.
+      if (enableLazyLoading) {
+        if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+          auto it = outputMemrefMap.find(toTensor);
+          if (it != outputMemrefMap.end() &&
+              isa<LoadOp>(it->second.getOperation()))
+            continue;
+        }
+      }
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
           unsigned opNumber = static_cast<unsigned>(std::distance(
@@ -1323,7 +1356,7 @@ void CVPipeliningPass::runOnOperation() {
       parentLoop = parentLoop->getParentOfType<scf::ForOp>();
     }
 
-    CVPipelineImpl impl(loop, this->pipelineDepth);
+    CVPipelineImpl impl(loop, this->pipelineDepth, this->enableLazyLoading);
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);
   });

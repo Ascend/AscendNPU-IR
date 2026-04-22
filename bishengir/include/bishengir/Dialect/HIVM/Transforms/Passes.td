@@ -759,7 +759,11 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                         /*default=*/"false", "DEPRICATED">,
                  Option<"pipelineDepth", "pipeline-depth", "int",
                         /*default=*/"-1",
-                        "Specify pipeline depth for cv-pipelining.">];
+                        "Specify pipeline depth for cv-pipelining.">,
+                 Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+                        /*default=*/"false",
+                        "Allow load ops to be cloned into multiple work items "
+                        "to reduce intermediate buffer expansion">];
 }
 
 def AutoBlockifyParallelLoop

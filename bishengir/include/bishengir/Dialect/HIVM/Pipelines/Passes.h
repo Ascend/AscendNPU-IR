@@ -80,6 +80,12 @@ struct HIVMPipelineOptions
       llvm::cl::desc("Set multibuffer number of workspace, defaults to 2"),
       llvm::cl::init(2)};
 
+  PassOptions::Option<bool> enableLazyLoading{
+      *this, "cv-pipeline-lazy-loading",
+      llvm::cl::desc(
+          "Enable lazy loading in CV pipelining to reduce buffer expansion"),
+      llvm::cl::init(false)};
+
   PassOptions::Option<bool> enableAutoBindSubBlock{
       *this, "enable-auto-bind-sub-block",
       llvm::cl::desc("Enable auto bind sub block"), llvm::cl::init(true)};
