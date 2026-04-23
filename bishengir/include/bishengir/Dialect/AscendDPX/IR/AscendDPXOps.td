@@ -65,14 +65,18 @@ def LoadOp : AscendDPX_Op<"load", [AttrSizedOperandSegments, MemoryEffects<[MemR
     Optional<I1>:$mask,
     Optional<LLVM_Type>:$falseVal,
     DefaultValuedAttr<AscendDPX_LoadCachePolicyAttr, 
-                      "::mlir::ascend_dpx::AscendDPXLoadCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cache
+                      "::mlir::ascend_dpx::AscendDPXLoadCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cacheHint,
+    DefaultValuedAttr<AscendDPX_CacheOptionAttr,
+                      "::mlir::ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA">:$cacheOption,
+    DefaultValuedAttr<AscendDPX_VolatileOptionAttr,
+                      "::mlir::ascend_dpx::AscendDPXVolatileOption::NONVOLATILE">:$volatileOption
   );
 
   let results = (outs LLVM_Type:$result);
 
   let assemblyFormat = [{
     $ptr (`,` $mask^)? (`,` $falseVal^)?
-    oilist(`cacheModifier` `=` $cache)
+    oilist(`cacheModifier` `=` $cacheHint | `cacheOption` `=` $cacheOption | `volatileOption` `=` $volatileOption)
     attr-dict `:` functional-type(operands, results)
   }];
 }
@@ -90,12 +94,14 @@ def StoreOp : AscendDPX_Op<"store",[MemoryEffects<[MemWrite]>]> {
     LLVM_Type:$value,
     Optional<I1>:$mask,
     DefaultValuedAttr<AscendDPX_StoreCachePolicyAttr, 
-                      "::mlir::ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cache
+                      "::mlir::ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_FV">:$cacheHint,
+    DefaultValuedAttr<AscendDPX_CacheOptionAttr,
+                      "::mlir::ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA">:$cacheOption
   );
 
   let assemblyFormat = [{
     $ptr `,` $value (`,` $mask^)?
-    oilist(`cacheModifier` `=` $cache)
+    oilist(`cacheModifier` `=` $cacheHint | `cacheOption` `=` $cacheOption)
     attr-dict `:` type($ptr) `,` type($value)
   }];
 }

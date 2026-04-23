@@ -72,11 +72,39 @@ def AscendDPX_StoreL2CachePolicy : I32EnumAttr<"AscendDPXStoreCachePolicy",
   let cppNamespace = "mlir::ascend_dpx";
 }
 
+def AscendDPX_CacheOption : I32EnumAttr<"AscendDPXCacheOption",
+    "Cache Option for David A5 Memory Load/Store Operations",
+    [
+      I32EnumAttrCase<"LOADCACHEOPTION_NCA",  0>,
+      I32EnumAttrCase<"LOADCACHEOPTION_CA",   1>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::ascend_dpx";
+}
+
+def AscendDPX_VolatileOption : I32EnumAttr<"AscendDPXVolatileOption",
+    "Volatile Option for David A5 Load Operations",
+    [
+      I32EnumAttrCase<"NONVOLATILE", 0>,
+      I32EnumAttrCase<"VOLATILE", 1>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::ascend_dpx";
+}
+
 def AscendDPX_LoadCachePolicyAttr : EnumAttr<AscendDPX_Dialect, AscendDPX_LoadCachePolicy, "dpx_load_cache"> {
   let assemblyFormat = "`<` $value `>`";
 }
 
 def AscendDPX_StoreCachePolicyAttr : EnumAttr<AscendDPX_Dialect, AscendDPX_StoreL2CachePolicy, "dpx_store_cache"> {
+  let assemblyFormat = "`<` $value `>`";
+}
+
+def AscendDPX_CacheOptionAttr : EnumAttr<AscendDPX_Dialect, AscendDPX_CacheOption, "dpx_cache_option"> {
+  let assemblyFormat = "`<` $value `>`";
+}
+
+def AscendDPX_VolatileOptionAttr : EnumAttr<AscendDPX_Dialect, AscendDPX_VolatileOption, "dpx_volatile_option"> {
   let assemblyFormat = "`<` $value `>`";
 }
 

@@ -210,6 +210,17 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
       llvm_unreachable("switch on EvictionPolicy is not exhaustive");
     }();
 
+    triton::CacheModifier mod = op.getCache();
+    bool isVolatile = op.getIsVolatile();
+    auto cacheOption = [&]() -> ascend_dpx::AscendDPXCacheOption {
+      if (mod == triton::CacheModifier::CG || isVolatile)
+        return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA;
+      return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
+    }();
+
+    auto volatileOption =
+        isVolatile ? ascend_dpx::AscendDPXVolatileOption::VOLATILE
+                   : ascend_dpx::AscendDPXVolatileOption::NONVOLATILE;
     SmallVector<Value> loadedVals;
     for (size_t vecStart = 0; vecStart < numElems; vecStart += vec) {
       if (auto canonicalVecStart = getCanonicalIndex(vecStart, regMask);
@@ -232,7 +243,7 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
                            : otherElems[vecStart + s];
           elem = b.bitcast(elem, valueElemTy);
           Value sVal = createIndexAttrConstant(
-            rewriter, loc, typeConverter->getIndexType(), s);
+              rewriter, loc, typeConverter->getIndexType(), s);
           v = b.insert_element(retVecTy, v, elem, sVal);
         }
         falseVal = v;
@@ -240,8 +251,8 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
       Value maskVal = mask ? maskElems[vecStart] : Value();
 
       Value loadResult = rewriter.create<ascend_dpx::LoadOp>(
-        loc, retVecTy, ptrElems[vecStart], maskVal, falseVal, cachePolicy);
-      
+          loc, retVecTy, ptrElems[vecStart], maskVal, mask ? falseVal : Value(),
+          cachePolicy, cacheOption, volatileOption);
       if (vec == 1) {
         Value loaded = b.bitcast(loadResult, valueElemTy);
         loadedVals.push_back(loaded);
@@ -336,6 +347,13 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
       llvm_unreachable("switch on EvictionPolicy is not exhaustive");
     }();
 
+    triton::CacheModifier mod = op.getCache();
+    auto cacheOption = [&]() -> ascend_dpx::AscendDPXCacheOption {
+      if (mod == triton::CacheModifier::CG)
+        return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA;
+      return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
+    }();
+
     const int numVecs = static_cast<int>(elemsPerThread / vec);
     for (size_t vecStart = 0; vecStart < elemsPerThread; vecStart += vec) {
       if ((vecStart & regMask) != 0) {
@@ -386,7 +404,7 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
       }
 
       rewriter.create<ascend_dpx::StoreOp>(loc, ptrElems[vecStart], toBeStored,
-                                           pred, cachePolicy);
+                                           pred, cachePolicy, cacheOption);
     }
 
     rewriter.eraseOp(op);
@@ -463,15 +481,13 @@ struct AtomicRMWOpConversion
     auto tensorTy = dyn_cast<RankedTensorType>(valueTy);
     Type valueElemTy;
     if (tensorTy) {
-      valueElemTy =
-          getTypeConverter()->convertType(tensorTy.getElementType());
+      valueElemTy = getTypeConverter()->convertType(tensorTy.getElementType());
     } else {
       valueElemTy = getTypeConverter()->convertType(valueTy);
     }
 
-    unsigned elemsPerThread = tensorTy
-        ? getTotalElemsPerThread(op.getVal().getType())
-        : 1;
+    unsigned elemsPerThread =
+        tensorTy ? getTotalElemsPerThread(op.getVal().getType()) : 1;
 
     // Compute warp/lane/block guard: only threads that hold unique data execute
     // the atomic. This matches the warp guard emitted by the remap path.
@@ -502,8 +518,7 @@ struct AtomicRMWOpConversion
         // (warp guard = false) do not execute it at all.
         Value undefVal = b.undef(valueElemTy);
         auto *curBlock = rewriter.getInsertionBlock();
-        auto *endBlock =
-            curBlock->splitBlock(rewriter.getInsertionPoint());
+        auto *endBlock = curBlock->splitBlock(rewriter.getInsertionPoint());
         auto *atomicBlock = rewriter.createBlock(
             curBlock->getParent(), std::next(Region::iterator(curBlock)));
         endBlock->addArgument({valueElemTy}, {loc});
@@ -573,12 +588,11 @@ private:
                                 Value val) const {
     switch (rmwOp) {
     case triton::RMWOp::AND:
-      return rewriter.create<ascend_dpx::AtomicAndOp>(loc, valueElemTy, ptr,
-                                                      val)
+      return rewriter
+          .create<ascend_dpx::AtomicAndOp>(loc, valueElemTy, ptr, val)
           .getRes();
     case triton::RMWOp::OR:
-      return rewriter
-          .create<ascend_dpx::AtomicOrOp>(loc, valueElemTy, ptr, val)
+      return rewriter.create<ascend_dpx::AtomicOrOp>(loc, valueElemTy, ptr, val)
           .getRes();
     case triton::RMWOp::XOR:
       return rewriter
