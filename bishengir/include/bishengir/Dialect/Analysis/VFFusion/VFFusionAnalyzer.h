@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionBlock.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFUnionFind.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 
@@ -128,6 +129,12 @@ protected:
     Operation *const y = opsInBlock[yIndex];
     assert(opToIndex.contains(x) && "missing operation in opToIndex");
     assert(opToIndex.contains(y) && "missing operation in opToIndex");
+
+    // For CV affinity cases: split-mix-kernel is unavailable before vffusion pass.
+    // Temporarily avoid vectorizing into vf functions via isInCubeScope
+    // for vector ops in cube scope.
+    if (mlir::hfusion::isInCubeScope(x) || mlir::hfusion::isInCubeScope(y))
+      return false;
 
     if (!this->isOutlineableOp(x) || !this->isOutlineableOp(y))
       return false;

@@ -18,7 +18,6 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoUtils.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionAnalyzer.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/Visitors.h"
 #include "llvm/Support/Debug.h"
@@ -95,19 +94,6 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
   return false;
 }
 
-static bool isCubeScopeOp(Operation *op) {
-  auto scopeOp = dyn_cast<scope::ScopeOp>(op);
-  if (!scopeOp)
-    return false;
-
-  auto attr =
-      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
-  if (!attr)
-    return false;
-
-  return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
-}
-
 static bool isInFusionWhiteList(Operation *op) {
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
@@ -126,11 +112,6 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
       return false;
     }
   }
-
-  if (hfusion::isMatmulOps(producerOp) || hfusion::isMatmulOps(consumerOp) ||
-      isCubeScopeOp(producerOp) || isCubeScopeOp(consumerOp)) 
-    return false;
-
 
   if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
@@ -532,12 +513,12 @@ bool MaxParallelAnalyzer::fuseIntoGroup(const int producerIndex,
 bool MaxParallelAnalyzer::isFusibleImpl(const int producerIndex,
                                         const int consumerIndex) {
   LDBG("checking fusible");
-  Operation *const candidiateOp = opsInBlock[producerIndex];
-  if (getComputeOpCount(candidiateOp) == 0) {
+  Operation *const candidateOp = opsInBlock[producerIndex];
+  if (getComputeOpCount(candidateOp) == 0) {
     LDBG("zero compute op, fuse");
     return true;
   }
-  if (isReshapeOp(candidiateOp) || isReshapeOp(opsInBlock[consumerIndex])) {
+  if (isReshapeOp(candidateOp) || isReshapeOp(opsInBlock[consumerIndex])) {
     LDBG("has reshape Op, fuse");
     return true;
   }
@@ -545,14 +526,14 @@ bool MaxParallelAnalyzer::isFusibleImpl(const int producerIndex,
     return true;
   }
 
-  float_t candidateOpComputeScores = getComputeScores(candidiateOp);
-  float_t candidateOpIoScores = getIoScores(candidiateOp);
+  float_t candidateOpComputeScores = getComputeScores(candidateOp);
+  float_t candidateOpIoScores = getIoScores(candidateOp);
   auto groupId = opToGroupIndex[opsInBlock[consumerIndex]];
   const auto& fusedOps = AllFusedBlocks[groupId];
   float_t fusedOpsIoScores = getFusedOpsIoScores(fusedOps);
   float_t fusedOpsComputeScores = getFusedOpsComputeScores(fusedOps);
-  auto paralLift = parallelismCostModel(candidiateOp, fusedOps);
-  auto execUtilLift = execUnitUtilizationCostModel(candidiateOp, fusedOps);
+  auto paralLift = parallelismCostModel(candidateOp, fusedOps);
+  auto execUtilLift = execUnitUtilizationCostModel(candidateOp, fusedOps);
   // IO Scores compute with uneliminated inputs/outputs
   float_t afterFusedIoScores = candidateOpIoScores + fusedOpsIoScores;
   float_t afterFusedComputeScores =
