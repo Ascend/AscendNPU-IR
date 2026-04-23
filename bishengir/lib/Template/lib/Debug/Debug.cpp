@@ -16,7 +16,7 @@
 
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
-#include "Debug/Debug.h"
+#include "Debug/DebugUtils.h"
 #include <type_traits>
 
 [aicore] __attribute__((always_inline)) float bf162f32(bfloat16_t v) {

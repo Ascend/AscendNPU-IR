@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef HIVM_MLIR_TEMPLATE_DEBUG_H
-#define HIVM_MLIR_TEMPLATE_DEBUG_H
+#ifndef HIVM_MLIR_TEMPLATE_DEBUG_UTILS_H
+#define HIVM_MLIR_TEMPLATE_DEBUG_UTILS_H
 
 #include "Utils.h"
 
@@ -158,4 +158,4 @@ _mlir_ciface_init_debug(__gm__ cce::internal::DebugTunnelData *DTData);
 [aicore] __attribute__((always_inline)) void
 _mlir_ciface_finish_debug(__gm__ cce::internal::DebugTunnelData *DTData);
 }
-#endif // HIVM_MLIR_TEMPLATE_DEBUG_H
+#endif // HIVM_MLIR_TEMPLATE_DEBUG_UTILS_H
