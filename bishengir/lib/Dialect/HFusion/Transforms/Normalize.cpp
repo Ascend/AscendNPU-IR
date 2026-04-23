@@ -1470,6 +1470,18 @@ protected:
     return rewriter.create<arith::ConstantOp>(loc, f32,
                                               rewriter.getFloatAttr(f32, v));
   }
+
+  Value tensorConstLike(PatternRewriter &rewriter, Location loc,
+                        Value reference, float v) const {
+    auto elemType = getElementTypeOrSelf(reference.getType());
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, v));
+    auto empty = utils::createEmptyOp(rewriter, loc, reference);
+    return rewriter
+        .create<linalg::FillOp>(loc, ValueRange{scalar}, ValueRange{empty})
+        ->getResult(0);
+  }
+
   Value createUnary(PatternRewriter &rewriter, Location loc,
                     linalg::UnaryFn fn, Value input) const {
     auto empty = utils::createEmptyOp(rewriter, loc, input);
@@ -1478,6 +1490,7 @@ protected:
                rewriter, loc, fn, ValueRange{input}, ValueRange{empty})
         ->getResult(0);
   }
+
   Value createBinary(PatternRewriter &rewriter, Location loc,
                      linalg::BinaryFn fn, Value lhs, Value rhs,
                      Value outLike) const {
@@ -1487,10 +1500,12 @@ protected:
                rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
         ->getResult(0);
   }
+
   Value createCmp(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
                   CompareFn fn) const {
     return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
   }
+
   Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
                      Value t, Value f) const {
     auto empty = utils::createEmptyOp(rewriter, loc, t);
@@ -1499,13 +1514,16 @@ protected:
                                    ValueRange{cond, t, f}, ValueRange{empty})
         ->getResult(0);
   }
+
   Value createVand(PatternRewriter &rewriter, Location loc, Value lhs,
                    Value rhs) const {
     return createVandOp(rewriter, loc, lhs, rhs)->getResult(0);
   }
+
   Value mulAdd(PatternRewriter &rewriter, Location loc, Value a, Value b,
                Value c, Value outLike) const {
-    Value mul = createBinary(rewriter, loc, linalg::BinaryFn::mul, a, b, outLike);
+    Value mul =
+        createBinary(rewriter, loc, linalg::BinaryFn::mul, a, b, outLike);
     return createBinary(rewriter, loc, linalg::BinaryFn::add, mul, c, outLike);
   }
 };
@@ -1513,19 +1531,23 @@ protected:
 struct NormalizeAtan2Op : public NormalizeAtan2Base {
 public:
   using NormalizeAtan2Base::NormalizeAtan2Base;
+
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::BinaryFn::atan2) {
       return failure();
     }
+
     Location loc = op.getLoc();
     Value y = op.getInputs()[0];
     Value x = op.getInputs()[1];
+
     auto inType = getElementTypeOrSelf(y.getType());
     auto xType = getElementTypeOrSelf(x.getType());
     if ((!inType.isF16() && !inType.isF32()) || inType != xType) {
       return failure();
     }
+
     bool isF16 = inType.isF16();
     if (isF16) {
       y = hfusion::castTo(rewriter, y, rewriter.getF32Type(),
@@ -1533,28 +1555,21 @@ public:
       x = hfusion::castTo(rewriter, x, rewriter.getF32Type(),
                           hfusion::RoundMode::ROUND);
     }
-    // Pre-computation:
-    //   ax = |x|, ay = |y|
-    //   swapMask = ay > ax
-    //   maxv = max(ax, ay), minv = min(ax, ay)
-    //   safeMaxv = maxv == 0 ? 1 : maxv
+
     Value ax, ay, swapMask, maxv, minv, safeMaxv;
     std::tie(ax, ay, swapMask, maxv, minv, safeMaxv) =
         preprocess(rewriter, loc, x, y);
-    // Polynomial approximation in first quadrant.
+
     Value a = calculateFirstQuadrantAtan(rewriter, loc, y, minv, safeMaxv);
-    // Recover first-quadrant angle:
-    //   a1 = swapMask ? (pi/2 - a) : a
     Value a1 = recoverFirstQuadrant(rewriter, loc, y, a, swapMask);
-    // Restore quadrant by signs of x and y.
     Value theta = restoreQuadrant(rewriter, loc, x, y, a1);
-    // Special case:
-    //   atan2(0, 0) = 0
     Value result = handleOrigin(rewriter, loc, x, y, theta);
+
     if (isF16) {
       result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
                                hfusion::RoundMode::ROUND);
     }
+
     rewriter.replaceOp(op, result);
     return success();
   }
@@ -1570,17 +1585,22 @@ private:
   preprocess(PatternRewriter &rewriter, Location loc, Value x, Value y) const {
     Value ax = createUnary(rewriter, loc, linalg::UnaryFn::abs, x);
     Value ay = createUnary(rewriter, loc, linalg::UnaryFn::abs, y);
+
     Value swapMask = createCmp(rewriter, loc, ay, ax, CompareFn::vgt);
     Value maxv = createSelect(rewriter, loc, swapMask, ay, ax);
     Value minv = createSelect(rewriter, loc, swapMask, ax, ay);
+
+    Value zeroLike = tensorConstLike(rewriter, loc, maxv, 0.0f);
+    Value oneLike = tensorConstLike(rewriter, loc, maxv, 1.0f);
+
     Value maxIsZero =
-        createCmp(rewriter, loc, maxv, f32Const(rewriter, loc, 0.0f),
-                  CompareFn::veq);
+        createCmp(rewriter, loc, maxv, zeroLike, CompareFn::veq);
     Value safeMaxv =
-        createSelect(rewriter, loc, maxIsZero, f32Const(rewriter, loc, 1.0f),
-                     maxv);
+        createSelect(rewriter, loc, maxIsZero, oneLike, maxv);
+
     return std::make_tuple(ax, ay, swapMask, maxv, minv, safeMaxv);
   }
+
   // First-quadrant atan approximation:
   //   t = minv / safeMaxv
   //   t2 = t * t
@@ -1593,57 +1613,81 @@ private:
         createBinary(rewriter, loc, linalg::BinaryFn::div, minv, safeMaxv,
                      outLike);
     Value t2 = createBinary(rewriter, loc, linalg::BinaryFn::mul, t, t, outLike);
+
     Value c0 = f32Const(rewriter, loc, 0.99998005f);
     Value c1 = f32Const(rewriter, loc, -0.33269410f);
     Value c2 = f32Const(rewriter, loc, 0.19401768f);
-    Value c3 = f32Const(rewriter, loc, -0.11768927f);
-    Value c4 = f32Const(rewriter, loc, 0.05407583f);
-    Value c5 = f32Const(rewriter, loc, -0.01229686f);
-    Value poly = mulAdd(rewriter, loc, t2, c5, c4, outLike);
-    poly = mulAdd(rewriter, loc, t2, poly, c3, outLike);
-    poly = mulAdd(rewriter, loc, t2, poly, c2, outLike);
-    poly = mulAdd(rewriter, loc, t2, poly, c1, outLike);
-    poly = mulAdd(rewriter, loc, t2, poly, c0, outLike);
+    Value c3 = f32Const(rewriter, loc, -0.12123907f);
+    Value c4 = f32Const(rewriter, loc, 0.05292646f);
+    Value c5 = f32Const(rewriter, loc, -0.01171914f);
+
+    Value poly = c5;
+    poly = mulAdd(rewriter, loc, poly, t2, c4, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c3, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c2, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c1, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c0, outLike);
+
     return createBinary(rewriter, loc, linalg::BinaryFn::mul, t, poly, outLike);
   }
+
   // Recover first-quadrant angle:
   //   a1 = swapMask ? (pi/2 - a) : a
   Value recoverFirstQuadrant(PatternRewriter &rewriter, Location loc,
                              Value outLike, Value a, Value swapMask) const {
-    Value halfPi = f32Const(rewriter, loc, 1.57079632679489661923f);
+    Value halfPiLike = tensorConstLike(rewriter, loc, outLike, 1.57079632679f);
     Value halfPiMinusA =
-        createBinary(rewriter, loc, linalg::BinaryFn::sub, halfPi, a, outLike);
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, halfPiLike, a,
+                     outLike);
     return createSelect(rewriter, loc, swapMask, halfPiMinusA, a);
   }
-  // Quadrant restoration:
-  //   x < 0 ? use pi-shifted branch : use direct branch
-  //   y < 0 ? choose lower half plane : choose upper half plane
+
+  // Restore quadrant:
+  //   if x < 0 and y >= 0: theta = pi - a1
+  //   if x < 0 and y < 0 : theta = a1 - pi
+  //   if x >= 0 and y < 0: theta = -a1
+  //   else               : theta = a1
   Value restoreQuadrant(PatternRewriter &rewriter, Location loc, Value x,
                         Value y, Value a1) const {
-    Value zero = f32Const(rewriter, loc, 0.0f);
-    Value pi = f32Const(rewriter, loc, 3.14159265358979323846f);
+    Value zeroX = tensorConstLike(rewriter, loc, x, 0.0f);
+    Value zeroA = tensorConstLike(rewriter, loc, a1, 0.0f);
+    Value piLike = tensorConstLike(rewriter, loc, a1, 3.14159265359f);
     Value negOne = f32Const(rewriter, loc, -1.0f);
-    Value xNeg = createCmp(rewriter, loc, x, zero, CompareFn::vlt);
-    Value yNeg = createCmp(rewriter, loc, y, zero, CompareFn::vlt);
-    Value piMinusA1 =
-        createBinary(rewriter, loc, linalg::BinaryFn::sub, pi, a1, y);
-    Value a1MinusPi =
-        createBinary(rewriter, loc, linalg::BinaryFn::sub, a1, pi, y);
+
+    Value xNeg = createCmp(rewriter, loc, x, zeroX, CompareFn::vlt);
+    Value yNeg = createCmp(rewriter, loc, y, zeroX, CompareFn::vlt);
+    Value yGeZero = createCmp(rewriter, loc, y, zeroX, CompareFn::vge);
+
+    Value q2Mask = createVand(rewriter, loc, xNeg, yGeZero);
+    Value q3Mask = createVand(rewriter, loc, xNeg, yNeg);
+
     Value negA1 =
-        createBinary(rewriter, loc, linalg::BinaryFn::mul, negOne, a1, y);
-    Value upper = createSelect(rewriter, loc, xNeg, piMinusA1, a1);
-    Value lower = createSelect(rewriter, loc, xNeg, a1MinusPi, negA1);
-    return createSelect(rewriter, loc, yNeg, lower, upper);
+        createBinary(rewriter, loc, linalg::BinaryFn::mul, a1, negOne, a1);
+    Value piMinusA =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, piLike, a1, a1);
+    Value aMinusPi =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, a1, piLike, a1);
+
+    Value theta = createSelect(rewriter, loc, yNeg, negA1, a1);
+    theta = createSelect(rewriter, loc, q2Mask, piMinusA, theta);
+    theta = createSelect(rewriter, loc, q3Mask, aMinusPi, theta);
+
+    Value isNan = createCmp(rewriter, loc, a1, a1, CompareFn::vne);
+    return createSelect(rewriter, loc, isNan, zeroA, theta);
   }
-  // Origin handling:
-  //   if x == 0 && y == 0, return 0
+
+  // Special case:
+  //   atan2(0, 0) = 0
   Value handleOrigin(PatternRewriter &rewriter, Location loc, Value x, Value y,
                      Value theta) const {
-    Value zero = f32Const(rewriter, loc, 0.0f);
-    Value xZero = createCmp(rewriter, loc, x, zero, CompareFn::veq);
-    Value yZero = createCmp(rewriter, loc, y, zero, CompareFn::veq);
+    Value zeroX = tensorConstLike(rewriter, loc, x, 0.0f);
+    Value zeroTheta = tensorConstLike(rewriter, loc, theta, 0.0f);
+
+    Value xZero = createCmp(rewriter, loc, x, zeroX, CompareFn::veq);
+    Value yZero = createCmp(rewriter, loc, y, zeroX, CompareFn::veq);
     Value originMask = createVand(rewriter, loc, xZero, yZero);
-    return createSelect(rewriter, loc, originMask, zero, theta);
+
+    return createSelect(rewriter, loc, originMask, zeroTheta, theta);
   }
 };
 

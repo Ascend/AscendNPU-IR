@@ -1086,10 +1086,27 @@ func.func @test_hfusion_atan_ops(%arg0 : tensor<32xf32>) ->  tensor<32xf32> {
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>}
 // CHECK: hfusion.select
 // CHECK: hfusion.select
+// CHECK: linalg.fill
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.select
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.fill
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: hfusion.select
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
+// CHECK: hfusion.select
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
 // CHECK: hfusion.select
 // CHECK: return
