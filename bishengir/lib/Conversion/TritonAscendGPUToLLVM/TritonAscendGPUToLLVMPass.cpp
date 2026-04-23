@@ -90,6 +90,18 @@ struct ConvertTritonAscendGPUToLLVMPass
     option.overrideIndexBitwidth(32);
     TritonGPUToLLVMTypeConverter typeConverter(context, option, targetInfo);
 
+    // Run shared-memory allocation and barrier insertion before the func op
+    // conversion. Func conversion rewrites memdesc-typed arguments through the
+    // type converter, leaving them re-materialized via
+    // `builtin.unrealized_conversion_cast` — which SharedMemoryAliasAnalysis
+    // does not recognize as a memdesc producer and asserts on. Matching the
+    // NVIDIA pipeline's ordering avoids that.
+    ModuleAllocation allocation(
+        mod, mlir::triton::ascend::AscendAllocationAnalysisScratchSizeFn,
+        mlir::triton::ascend::AscendAllocationSharedMemCheckFn);
+    ModuleMembarAnalysis membarPass(&allocation);
+    membarPass.run();
+
     // Lower functions
     TritonLLVMFunctionConversionTarget funcTarget(*context);
     RewritePatternSet funcPatterns(context);
@@ -103,26 +115,6 @@ struct ConvertTritonAscendGPUToLLVMPass
     // initialize a global object to facilitate shared memory. Do this before
     // any of the conversion passes run.
     initSharedMemory(typeConverter);
-
-    // Insert barriers for LocalAllocOp whose users include a LocalLoadOp with
-    // DotOperandEncodingAttr. Done before LLVM lowering so the gpu::BarrierOp
-    // is handled by populateGPUOpToDPXPatterns along with other GPU ops.
-    mod.walk([](triton::gpu::LocalAllocOp op) {
-      bool needBarrier = false;
-      for (Operation *user : op->getUsers()) {
-        if (auto loadOp = dyn_cast<triton::gpu::LocalLoadOp>(user)) {
-          auto resultTy = dyn_cast<RankedTensorType>(loadOp.getType());
-          if (resultTy &&
-              isa<triton::gpu::DotOperandEncodingAttr>(resultTy.getEncoding()))
-            needBarrier = true;
-        }
-      }
-      if (needBarrier) {
-        OpBuilder builder(op);
-        builder.setInsertionPointAfter(op);
-        builder.create<mlir::gpu::BarrierOp>(op.getLoc());
-      }
-    });
 
     ModuleAxisInfoAnalysis axisInfoAnalysis(mod);
     TritonLLVMConversionTarget convTarget(*context);
