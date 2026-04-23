@@ -173,6 +173,77 @@ struct HFusionGeneralizationPatterns
   }
 };
 
+// The GeneralizeMulextPattern is a transformation pattern that
+// converts Hfusion::MulExtOp (a custom multiply-extended operation)
+// into a linalg.generic operation that performs element-wise
+// multiplication with extended precision using VMULL.
+struct GeneralizeMulextPattern : public OpRewritePattern<hfusion::MulExtOp> {
+  using OpRewritePattern<hfusion::MulExtOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hfusion::MulExtOp op,
+                                PatternRewriter &rewriter) const override {
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
+    auto resultTypes = op->getResultTypes();
+    Type lowType = resultTypes[0];
+    Type highType = resultTypes[1];
+    auto lhsType = cast<RankedTensorType>(lhs.getType());
+    int64_t rank = lhsType.getRank();
+
+    // Create index mapping
+    SmallVector<AffineMap> indexingMaps;
+    SmallVector<utils::IteratorType> iteratorTypes;
+    auto ctx = rewriter.getContext();
+    auto identityMap = AffineMap::getMultiDimIdentityMap(rank, ctx);
+
+    for (int64_t i = 0; i < rank; ++i) {
+      iteratorTypes.push_back(utils::IteratorType::parallel);
+    }
+    
+    for (int64_t i = 0; i < 4; ++i) {
+      indexingMaps.push_back(identityMap);
+    }
+
+    // Create empty output tensor
+    auto shape = lhsType.getShape();
+    Value lowEmpty = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), shape, getElementTypeOrSelf(lowType));
+    Value highEmpty = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), shape, getElementTypeOrSelf(highType));
+
+    auto lhsElemType = getElementTypeOrSelf(lhsType);
+    bool isSigned = lhsElemType.isSignlessInteger() || lhsElemType.isSignedInteger();
+
+    // create linalg.generic
+    auto genericOp = rewriter.create<linalg::GenericOp>(
+      op.getLoc(),
+      TypeRange{lowType, highType},
+      ValueRange{lhs, rhs},
+      ValueRange{lowEmpty, highEmpty},
+      indexingMaps,
+      iteratorTypes,
+      [&](OpBuilder &b, Location loc, ValueRange args) {
+        Value lhsElem = args[0];
+        Value rhsElem = args[1];
+        Value low, high;
+        if (isSigned) {
+          auto mulExt = b.create<arith::MulSIExtendedOp>(
+              loc, b.getI32Type(), b.getI32Type(), lhsElem, rhsElem);
+          low = mulExt.getLow();
+          high = mulExt.getHigh();
+        } else {
+          auto mulExt = b.create<arith::MulUIExtendedOp>(
+              loc, b.getI32Type(), b.getI32Type(), lhsElem, rhsElem);
+          low = mulExt.getLow();
+          high = mulExt.getHigh();              
+        }
+        // use arith.mulsi_extended
+        b.create<linalg::YieldOp>(loc, ValueRange{low, high});
+      });
+    rewriter.replaceOp(op, genericOp->getResults());
+    return success();
+  }
+};
+
 bool isYieldGeneric(linalg::GenericOp &operandOp, OpOperand *operand) {
   // The body of linalg has yield only
   auto &block = operandOp.getRegion().front();
@@ -699,6 +770,7 @@ struct ZeroDimToOneDimGenericPattern
 
 static void populatePreVectorizationFusionPatterns(RewritePatternSet &patterns,
                                                    int maxFusedElementwiseOps) {
+  patterns.add<GeneralizeMulextPattern>(patterns.getContext());
   patterns.add<HFusionGeneralizationPatterns>(patterns.getContext());
   patterns.add<ExtractInlinePattern>(patterns.getContext());
   patterns.add<ExpandShapeToImplicitBrcInGenericPattern>(patterns.getContext());
