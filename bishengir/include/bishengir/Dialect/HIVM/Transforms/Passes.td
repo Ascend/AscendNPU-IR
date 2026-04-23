@@ -803,6 +803,12 @@ def ConvertNonContiguousReshapeToCopy : Pass<"convert-non-contiguous-reshape-to-
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
 }
 
+def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
+  let summary = "Insert convert layout for matmul operations";
+  let constructor = "mlir::hivm::createInsertConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
 def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
   let summary = "Propagate convert layout for matmul operations";
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";

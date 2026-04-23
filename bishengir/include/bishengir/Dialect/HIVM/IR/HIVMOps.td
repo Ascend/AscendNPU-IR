@@ -180,7 +180,7 @@ def ConvertLayoutOp : HIVM_Op<"convert_layout",
   let assemblyFormat = [{
     $source
     `output_shape` custom<DynamicIndexList>($output_shape, $static_output_shape)
-    attr-dict `:` functional-type(operands, results)
+    attr-dict `:` `(`type($source)`)` `->` type($result)
   }];
 
   let extraClassDeclaration = [{
