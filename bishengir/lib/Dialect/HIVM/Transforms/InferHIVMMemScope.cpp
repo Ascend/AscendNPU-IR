@@ -61,7 +61,8 @@ LogicalResult setMemSpaceForAllocs(Operation *sourceOp,
   return success();
 }
 
-static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op, OpOperand *opOperand) {
+static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op,
+                                             OpOperand *opOperand) {
   auto argsMutable = op.getInitsMutable();
   auto *it = llvm::find(argsMutable, *opOperand);
   if (it == argsMutable.end())
@@ -153,7 +154,7 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
               SymbolTable::lookupNearestSymbolFrom(op, op.getCalleeAttr()));
           if (!funcOp || !util::isSIMTVF(funcOp))
             return success();
-          
+
           auto argTypes = funcOp.getArgumentTypes().vec();
           for (size_t idx = 0; idx < op->getOperands().size(); idx++) {
             if (op->getOperand(idx) == val) {
@@ -488,7 +489,6 @@ void InferHIVMMemScopePass::runOnOperation() {
     func->walk([&](mlir::hivm::MmadL1Op op) {
       if (failed(hivm::inferAndPropagateMemScopeForMmadL1(op)))
         op->emitWarning("Failed to infer/propagate memory scope for MmadL1Op");
-        // signalPassFailure();
     });
 
     // Set device function arguments' memory scope to GM.
