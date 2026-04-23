@@ -119,34 +119,50 @@ static LLVM::LLVMFuncOp ensureDecl(OpBuilder &b, ModuleOp mod, Location loc,
   return decl;
 }
 
-/// !ttg.memdesc<1xi32, #swizzled_shared<vec=1,perPhase=1,maxPhase=1,order=[0]>,
-///             #smem, mutable>
-/// One i32 element — matching the i32 return-type size of the helper funcs.
-static MemDescType buildI32MemDescType(MLIRContext *ctx) {
+/// One i32 element in shared memory with \p rank dimensions (shape is all-ones)
+/// so that the memdesc rank matches the encoding and is compatible with
+/// local_load results carrying multi-dimensional distributed layouts.
+static MemDescType buildI32MemDescType(MLIRContext *ctx, unsigned rank) {
   auto smem = SharedMemorySpaceAttr::get(ctx);
+  SmallVector<unsigned> ones(rank, 1);
+  SmallVector<unsigned> order(rank);
+  for (unsigned i = 0; i < rank; ++i)
+    order[i] = rank - 1 - i;
   auto ctaLayout =
-      CTALayoutAttr::get(ctx, /*ctasPerCGA=*/{1}, /*ctasSplitNum=*/{1},
-                         /*ctasOrder=*/{0});
+      CTALayoutAttr::get(ctx, /*ctasPerCGA=*/ones, /*ctasSplitNum=*/ones,
+                         /*ctasOrder=*/order);
   auto sharedEnc = SwizzledSharedEncodingAttr::get(
-      ctx, /*vec=*/1, /*perPhase=*/1, /*maxPhase=*/1, /*order=*/{0}, ctaLayout);
-  return MemDescType::get({1}, IntegerType::get(ctx, 32), sharedEnc, smem,
+      ctx, /*vec=*/1, /*perPhase=*/1, /*maxPhase=*/1, /*order=*/order,
+      ctaLayout);
+  SmallVector<int64_t> shape(rank, 1);
+  return MemDescType::get(shape, IntegerType::get(ctx, 32), sharedEnc, smem,
                           /*mutableMemory=*/true);
 }
 
-/// tensor<1xi32> result type for local_load from memdesc<1xi32>, carrying
-/// the provided encoding attribute.  Passing \p enc=nullptr uses a fallback
-/// blocked encoding whose threadsPerWarp and warpsPerCTA are taken from the
-/// module attributes so the layout passes Triton's verifier.
+/// All-ones tensor<1x…x1xi32> result type for local_load, carrying the
+/// provided encoding attribute.  \p rank sets the number of dimensions.
+/// Passing \p enc=nullptr uses a fallback blocked encoding whose
+/// threadsPerWarp and warpsPerCTA are taken from the module attributes so
+/// the layout passes Triton's verifier.
 static RankedTensorType buildLoadType(MLIRContext *ctx, Attribute enc,
+                                      unsigned rank,
                                       unsigned threadsPerWarp = 32,
                                       unsigned numWarps = 1) {
   auto i32Ty = IntegerType::get(ctx, 32);
+  SmallVector<int64_t> shape(rank, 1);
   if (enc)
-    return RankedTensorType::get({1}, i32Ty, enc);
-  auto ctaLayout = CTALayoutAttr::get(ctx, {1}, {1}, {0});
-  auto blk = BlockedEncodingAttr::get(ctx, {1}, {threadsPerWarp}, {numWarps},
-                                      {0}, ctaLayout);
-  return RankedTensorType::get({1}, i32Ty, blk);
+    return RankedTensorType::get(shape, i32Ty, enc);
+  SmallVector<unsigned> ones(rank, 1);
+  SmallVector<unsigned> order(rank);
+  for (unsigned i = 0; i < rank; ++i)
+    order[i] = rank - 1 - i;
+  auto ctaLayout = CTALayoutAttr::get(ctx, ones, ones, order);
+  SmallVector<unsigned> tpw(rank, 1);
+  tpw[rank - 1] = threadsPerWarp;
+  SmallVector<unsigned> wpc(rank, 1);
+  wpc[0] = numWarps;
+  auto blk = BlockedEncodingAttr::get(ctx, ones, tpw, wpc, order, ctaLayout);
+  return RankedTensorType::get(shape, i32Ty, blk);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,20 +260,24 @@ public:
     ensureDecl(builder, mod, loc, kMagicMulFn,
                FunctionType::get(ctx, {i32Ty, i32Ty}, {i32Ty}));
 
-    auto memDescTy = buildI32MemDescType(ctx);
-
     // ------------------------------------------------------------------
-    // 3. For each unique divisor, emit local_alloc + call_scalar at the
-    //    very start of the function entry block.  Deduplication is keyed
-    //    by argument number (for func args) or constant value (for consts).
+    // 3. For each unique (divisor, rank) pair, emit local_alloc +
+    //    call_scalar at the very start of the function entry block.
+    //    Deduplication is keyed by (argument number, tensor rank) for
+    //    func args, or (constant value, tensor rank) for constants.
+    //    Different ranks need separate memdesc types so that the
+    //    local_load result shape matches.
     // ------------------------------------------------------------------
     builder.setInsertionPointToStart(&func.getBody().front());
 
-    llvm::SmallDenseMap<unsigned, MagicInfo> argToMagic;
-    llvm::SmallDenseMap<int32_t, MagicInfo> constToMagic;
+    using ArgKey = std::pair<unsigned, unsigned>;
+    using ConstKey = std::pair<int32_t, unsigned>;
+    llvm::SmallDenseMap<ArgKey, MagicInfo> argToMagic;
+    llvm::SmallDenseMap<ConstKey, MagicInfo> constToMagic;
 
     // Emit the local_alloc + call_scalar pair for a given scalar i32 value.
-    auto emitMagic = [&](Value scalarDivisor) -> MagicInfo {
+    auto emitMagic = [&](Value scalarDivisor, unsigned rank) -> MagicInfo {
+      auto memDescTy = buildI32MemDescType(ctx, rank);
       Value shmShift = builder.create<LocalAllocOp>(loc, memDescTy);
       Value shiftScalar =
           builder
@@ -280,15 +300,19 @@ public:
     };
 
     for (auto &d : work) {
+      unsigned rank = 1;
+      if (d.isTensor)
+        rank = cast<RankedTensorType>(d.op->getResultTypes()[0]).getRank();
       if (!d.isConst) {
-        unsigned idx = d.divisorArg.getArgNumber();
-        if (!argToMagic.count(idx))
-          argToMagic[idx] = emitMagic(d.divisorArg);
+        ArgKey key{d.divisorArg.getArgNumber(), rank};
+        if (!argToMagic.count(key))
+          argToMagic[key] = emitMagic(d.divisorArg, rank);
       } else {
-        if (!constToMagic.count(d.constVal)) {
+        ConstKey key{d.constVal, rank};
+        if (!constToMagic.count(key)) {
           Value constV = builder.create<arith::ConstantOp>(
               loc, builder.getIntegerAttr(i32Ty, d.constVal));
-          constToMagic[d.constVal] = emitMagic(constV);
+          constToMagic[key] = emitMagic(constV, rank);
         }
       }
     }
@@ -304,8 +328,13 @@ public:
     //          result   = dividend - quotient * divisor
     // ------------------------------------------------------------------
     for (auto &d : work) {
-      MagicInfo &mi = d.isConst ? constToMagic[d.constVal]
-                                : argToMagic[d.divisorArg.getArgNumber()];
+      unsigned rank = 1;
+      if (d.isTensor)
+        rank = cast<RankedTensorType>(d.op->getResultTypes()[0]).getRank();
+      MagicInfo &mi =
+          d.isConst
+              ? constToMagic[{d.constVal, rank}]
+              : argToMagic[{d.divisorArg.getArgNumber(), rank}];
       builder.setInsertionPoint(d.op);
       bool isSigned = isa<arith::DivSIOp>(d.op) || isa<arith::RemSIOp>(d.op);
 
@@ -328,7 +357,7 @@ public:
       if (!d.isTensor) {
         // ---- Scalar i32 ------------------------------------------------
         auto loadTy =
-            buildLoadType(ctx, /*enc=*/nullptr, threadsPerWarp, numWarps);
+            buildLoadType(ctx, /*enc=*/nullptr, rank, threadsPerWarp, numWarps);
         builder.create<LocalLoadOp>(loc, loadTy, mi.shmShift);
         builder.create<LocalLoadOp>(loc, loadTy, mi.shmMul);
 
@@ -346,7 +375,7 @@ public:
         auto resTy = cast<RankedTensorType>(d.op->getResultTypes()[0]);
         Attribute enc = resTy.getEncoding();
 
-        auto loadTy = buildLoadType(ctx, enc);
+        auto loadTy = buildLoadType(ctx, enc, resTy.getRank());
         Value magicLoad = builder.create<LocalLoadOp>(loc, loadTy, mi.shmMul);
         Value shiftLoad = builder.create<LocalLoadOp>(loc, loadTy, mi.shmShift);
 
