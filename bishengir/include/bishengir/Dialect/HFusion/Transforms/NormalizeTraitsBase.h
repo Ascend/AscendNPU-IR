@@ -20,6 +20,7 @@
 
 #include "bishengir/Transforms/Normalize/Utils.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Types.h"
 
 namespace mlir::hfusion {
 
@@ -40,6 +41,9 @@ public:
   static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
                               Value lhs, Value rhs, Value dst,
                               BinaryKind kind);
+
+  static Value castTo(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, CastRoundKind kind);
 };
 
 } // namespace mlir::hfusion

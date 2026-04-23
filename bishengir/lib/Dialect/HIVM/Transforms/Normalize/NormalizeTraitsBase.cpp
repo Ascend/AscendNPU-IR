@@ -63,6 +63,9 @@ static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
+    {BinaryKind::Add, createHIVMBinaryOp<hivm::VAddOp>},
+    {BinaryKind::Sub, createHIVMBinaryOp<hivm::VSubOp>},
+    {BinaryKind::Mul, createHIVMBinaryOp<hivm::VMulOp>},
     {BinaryKind::Div, createHIVMBinaryOp<hivm::VDivOp>},
 };
 
@@ -105,6 +108,18 @@ CompareMode mapCompareKindToCompareMode(CompareKind kind) {
   return it->second;
 }
 
+static hivm::RoundMode mapCastRoundKindToRoundMode(CastRoundKind kind) {
+  static const llvm::DenseMap<CastRoundKind, hivm::RoundMode> castRoundKindMap = {
+      {CastRoundKind::Round, hivm::RoundMode::ROUND},
+      {CastRoundKind::Floor, hivm::RoundMode::FLOOR},
+  };
+
+  auto it = castRoundKindMap.find(kind);
+  if (it == castRoundKindMap.end())
+    llvm_unreachable("Unknown CastRoundKind");
+  return it->second;
+}
+
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     CompareKind kind) {
@@ -136,5 +151,22 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
     llvm_unreachable("unsupported binary kind");
   }
   return it->second(rewriter, loc, lhs, rhs, dst);
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::castTo(
+    PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
+    CastRoundKind kind) {
+  Type srcElemType = getElementTypeOrSelf(input.getType());
+  hivm::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
+  if ((srcElemType.isF16() || srcElemType.isBF16()) && targetElemType.isF32()) {
+    // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
+    roundMode = hivm::RoundMode::RINT;
+  }
+
+  auto castOp = hivm::castTo(
+      rewriter, loc, input, rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
+      targetElemType);
+  return castOp->getResults().empty() ? castOp.getSingleDst()
+                                      : castOp->getResults()[0];
 }
 } // namespace mlir::hivm

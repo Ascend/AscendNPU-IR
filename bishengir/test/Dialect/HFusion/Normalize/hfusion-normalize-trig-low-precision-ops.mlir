@@ -18,7 +18,7 @@
 // CHECK: %[[VAL_14:.*]] = arith.constant 3.140625 : f32
 // CHECK: %[[VAL_15:.*]] = arith.constant 0.318309873 : f32
 // CHECK: %[[VAL_16:.*]] = tensor.empty() : tensor<5x1xf32>
-// CHECK: %[[VAL_17:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_0]], %[[VAL_15]] : tensor<5x1xf32>, f32) outs(%[[VAL_16]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_17:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_0]], %[[VAL_15]] : tensor<5x1xf32>, f32) outs(%{{.*}} : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_18:.*]] = tensor.empty() : tensor<5x1xf32>
 // CHECK: %[[VAL_19:.*]] = hfusion.cast {{.*}} ins(%[[VAL_17]] : tensor<5x1xf32>) outs(%[[VAL_18]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_20:.*]] = tensor.empty() : tensor<5x1xf32>
@@ -37,11 +37,11 @@
 // CHECK: %[[VAL_33:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_31]], %[[VAL_31]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_34:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_33]], %[[VAL_8]] : tensor<5x1xf32>, f32) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_35:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_34]], %[[VAL_7]] : tensor<5x1xf32>, f32) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_36:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_35]], %[[VAL_33]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_36:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_33]], %[[VAL_35]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_37:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_36]], %[[VAL_6]] : tensor<5x1xf32>, f32) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_38:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_37]], %[[VAL_33]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_38:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_33]], %[[VAL_37]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_39:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_38]], %[[VAL_5]] : tensor<5x1xf32>, f32) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_40:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_39]], %[[VAL_33]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_40:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_33]], %[[VAL_39]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_41:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_40]], %[[VAL_4]] : tensor<5x1xf32>, f32) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_42:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_41]], %[[VAL_31]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_32]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_43:.*]] = tensor.empty() : tensor<5x1xf32>
@@ -53,7 +53,7 @@
 // CHECK: %[[VAL_49:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_47]], %[[VAL_48]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_43]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_50:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_49]], %[[VAL_4]] : tensor<5x1xf32>, f32) outs(%[[VAL_43]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_51:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_42]], %[[VAL_50]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_16]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK  return %[[VAL_51]] : tensor<5x1xf32>
+// CHECK:  return %[[VAL_51]] : tensor<5x1xf32>
 // CHECK: }
 func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor<5x1xf32> {
   %0 = tensor.empty() : tensor<5x1xf32>
@@ -82,6 +82,7 @@ func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor
 // CHECK: %[[VAL_15:.*]] = arith.constant 0.318309873 : f32
 // CHECK: %[[VAL_16:.*]] = tensor.empty() : tensor<5x1xf32>
 // CHECK: %[[VAL_17:.*]] = hfusion.cast {{.*}} ins(%[[VAL_0]] : tensor<5x1xf16>) outs(%[[VAL_16]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %{{.*}} = tensor.empty() : tensor<5x1xf32>
 // CHECK: %[[VAL_18:.*]] = tensor.empty() : tensor<5x1xf32>
 // CHECK: %[[VAL_19:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_17]], %[[VAL_15]] : tensor<5x1xf32>, f32) outs(%[[VAL_18]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_20:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_19]], %[[VAL_14]] : tensor<5x1xf32>, f32) outs(%[[VAL_18]] : tensor<5x1xf32>) -> tensor<5x1xf32>
@@ -103,11 +104,11 @@ func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor
 // CHECK: %[[VAL_36:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_34]], %[[VAL_34]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_37:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_36]], %[[VAL_7]] : tensor<5x1xf32>, f32) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_38:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_37]], %[[VAL_6]] : tensor<5x1xf32>, f32) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_39:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_38]], %[[VAL_36]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_39:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_36]], %[[VAL_38]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_40:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_39]], %[[VAL_5]] : tensor<5x1xf32>, f32) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_41:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_40]], %[[VAL_36]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_41:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_36]], %[[VAL_40]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_42:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_41]], %[[VAL_4]] : tensor<5x1xf32>, f32) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_43:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_42]], %[[VAL_36]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_43:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_36]], %[[VAL_42]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_44:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_43]], %[[VAL_3]] : tensor<5x1xf32>, f32) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_45:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_44]], %[[VAL_34]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_35]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_46:.*]] = tensor.empty() : tensor<5x1xf32>
@@ -118,8 +119,7 @@ func.func @test_NormalizeSin_hfusion_sin_ops(%arg0 : tensor<5x1xf32>) ->  tensor
 // CHECK: %[[VAL_51:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_22]], %[[VAL_1]] : tensor<5x1xf32>, f32) outs(%[[VAL_46]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_52:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_50]], %[[VAL_51]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_46]] : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_53:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_52]], %[[VAL_3]] : tensor<5x1xf32>, f32) outs(%[[VAL_46]] : tensor<5x1xf32>) -> tensor<5x1xf32>
-// CHECK: %[[VAL_54:.*]] = tensor.empty() : tensor<5x1xf32>
-// CHECK: %[[VAL_55:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_45]], %[[VAL_53]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%[[VAL_54]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VAL_55:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[VAL_45]], %[[VAL_53]] : tensor<5x1xf32>, tensor<5x1xf32>) outs(%{{.*}} : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: %[[VAL_56:.*]] = tensor.empty() : tensor<5x1xf16>
 // CHECK: %[[VAL_57:.*]] = hfusion.cast {{.*}} ins(%[[VAL_55]] : tensor<5x1xf32>) outs(%[[VAL_56]] : tensor<5x1xf16>) -> tensor<5x1xf16>
 // CHECK: return %[[VAL_57]] : tensor<5x1xf16>

@@ -107,7 +107,6 @@ template <hfusion::TaylerMode taylerMode>
 Value tayler(OpBuilder &b, Location loc, Value x, int taylerExpansionNum);
 SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
                                     int taylerExpansionNum);
-Value getSinSign(PatternRewriter &rewriter, Location loc, Value x);
 double getFPMAX(FloatType fType);
 double getFPMIN(FloatType fType);
 Value getAtanSign(PatternRewriter &rewriter, Location loc, Value x);

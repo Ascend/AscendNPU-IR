@@ -45,6 +45,9 @@ static UnaryFn mapUnaryKindToUnaryFn(UnaryKind kind) {
 
 static linalg::BinaryFn mapBinaryKindToBinaryFn(BinaryKind kind) {
   static const llvm::DenseMap<BinaryKind, linalg::BinaryFn> kindToFn = {
+      {BinaryKind::Add, linalg::BinaryFn::add},
+      {BinaryKind::Sub, linalg::BinaryFn::sub},
+      {BinaryKind::Mul, linalg::BinaryFn::mul},
       {BinaryKind::Div, linalg::BinaryFn::div},
   };
 
@@ -96,6 +99,20 @@ static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
   return it->second;
 }
 
+static hfusion::RoundMode mapCastRoundKindToRoundMode(CastRoundKind kind) {
+  static const llvm::DenseMap<CastRoundKind, hfusion::RoundMode> kindToFn = {
+      {CastRoundKind::Round, hfusion::RoundMode::ROUND},
+      {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
+  };
+
+  auto it = kindToFn.find(kind);
+  if (it == kindToFn.end()) {
+    llvm_unreachable("unsupported cast round kind");
+  }
+
+  return it->second;
+}
+
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCmpOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     CompareKind kind) {
@@ -123,5 +140,12 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
       rewriter, loc, binaryFn, mlir::ValueRange{lhs, rhs},
       mlir::ValueRange{dst});
   return op->getResult(0);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::castTo(
+    PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
+    CastRoundKind kind) {
+  hfusion::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
+  return hfusion::castTo(rewriter, input, targetElemType, roundMode);
 }
 } // namespace mlir::hfusion

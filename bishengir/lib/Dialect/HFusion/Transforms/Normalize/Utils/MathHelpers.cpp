@@ -56,13 +56,8 @@ Value norm(PatternRewriter &rewriter, Location loc, Value x,
 
 template <hfusion::TaylerMode taylerMode>
 Value sign(PatternRewriter &rewriter, Location loc, Value x) {
-  switch (taylerMode) {
-  case hfusion::TaylerMode::SIN: {
-    return getSinSign(rewriter, loc, x);
-  }
-  case hfusion::TaylerMode::ATAN: {
+  if (taylerMode == hfusion::TaylerMode::ATAN) {
     return getAtanSign(rewriter, loc, x);
-  }
   }
   llvm_unreachable("unsupported TaylerMode");
 }
@@ -143,52 +138,6 @@ SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
   }
   }
   llvm_unreachable("unsupported TaylerMode");
-}
-
-Value getSinSign(PatternRewriter &rewriter, Location loc, Value x) {
-  // sign(x)=floor(x/2)*4- x_round*(2)+1
-  auto emptyOp = utils::createEmptyOp(rewriter, loc, x);
-  auto elementType = getElementTypeOrSelf(x.getType());
-  auto half = rewriter.create<arith::ConstantOp>(
-      loc, elementType, rewriter.getFloatAttr(elementType, 0.5));
-  auto kHalf = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul, ValueRange{x, half},
-                   ValueRange(emptyOp))
-                   ->getResult(0);
-  auto kHalfFloor = hfusion::castTo(rewriter, kHalf, rewriter.getF32Type(),
-                                    hfusion::RoundMode::FLOOR);
-  auto constFour = rewriter.create<arith::ConstantOp>(
-      loc, elementType, rewriter.getFloatAttr(elementType, 4.0));
-  auto kHalfFloor4 =
-      hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                              linalg::BinaryFnAttr>(
-          rewriter, loc, linalg::BinaryFn::mul,
-          ValueRange{kHalfFloor, constFour}, ValueRange(emptyOp))
-          ->getResult(0);
-
-  auto constMinusTwo = rewriter.create<arith::ConstantOp>(
-      loc, elementType, rewriter.getFloatAttr(elementType, -2.0));
-  auto k2 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                    linalg::BinaryFnAttr>(
-                rewriter, loc, linalg::BinaryFn::mul,
-                ValueRange{x, constMinusTwo}, ValueRange(emptyOp))
-                ->getResult(0);
-
-  auto sign = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                      linalg::BinaryFn, linalg::BinaryFnAttr>(
-                  rewriter, loc, linalg::BinaryFn::add,
-                  ValueRange{kHalfFloor4, k2}, ValueRange(emptyOp))
-                  ->getResult(0);
-
-  auto constOne = rewriter.create<arith::ConstantOp>(
-      loc, elementType, rewriter.getFloatAttr(elementType, 1.0));
-  auto sign1 = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::add,
-                   ValueRange{sign, constOne}, ValueRange(emptyOp))
-                   ->getResult(0);
-  return sign1;
 }
 
 double getFPMAX(FloatType fType) {
@@ -979,9 +928,7 @@ Value genPolyExpr(PatternRewriter &rewriter, Location loc,
 }
 
 // Explicit template instantiations
-template Value mlir::hfusion::sign<TaylerMode::SIN>(PatternRewriter &, Location, Value);
 template Value mlir::hfusion::sign<TaylerMode::ATAN>(PatternRewriter &, Location, Value);
-template Value mlir::hfusion::tayler<TaylerMode::SIN>(OpBuilder &, Location, Value, int);
 template Value mlir::hfusion::tayler<TaylerMode::ATAN>(OpBuilder &, Location, Value, int);
 
 } // namespace mlir::hfusion

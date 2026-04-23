@@ -16,181 +16,40 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Transforms/Normalize/NormalizeTrigTemplate.h"
+
+namespace mlir {
+struct HFusionNormalizeSinTraits : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeSin(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::sin) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
+struct HFusionNormalizeCosTraits : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeCos(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::cos) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
+using NormalizeSinOp =
+    NormalizeSinOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeSinTraits>;
+using NormalizeCosOp =
+    NormalizeCosOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeCosTraits>;
+} // namespace mlir
 
 namespace mlir::hfusion {
-
-// normalize sin(x) to sinTayler(norm(x,x_round,0.0))*sign(x_round), where
-// round_x=round(input_x*(1/pi))
-struct NormalizeSinOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::sin) {
-      return failure();
-    }
-
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    // round_x=round(input_x*(1/pi))
-    // 1/pi=0.3183098733425140380859375
-    Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      // TODO: remove cast after enable automatical high precision computing
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
-    }
-    auto loc = op->getLoc();
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto elementType = getElementTypeOrSelf(input.getType());
-    auto piRecOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1 / (double)M_PI));
-    auto inputDivPi =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul, ValueRange{input, piRecOp},
-            ValueRange(emptyOp))
-            ->getResult(0);
-
-    auto xRound = hfusion::castTo(rewriter, inputDivPi, rewriter.getF32Type(),
-                                  hfusion::RoundMode::ROUND);
-
-    // norm_x = x-round(x/pi)*(pi1+pi2+pi3+pi4+pi5)+offset
-    // (pi1+pi2+pi3+pi4+pi5) approximates pi
-    const llvm::SmallVector<double> piApproParams = {
-        3.140625, 0.0009670257568359375, 6.2771141529083251953125e-7,
-        1.21644916362129151821136474609375e-10,
-        -1.0290623200529979163359041220560e-13};
-    auto normInput = norm(rewriter, loc, input, xRound, piApproParams, 0.0);
-
-    // x_res = sinTayler(norm_x)
-
-    auto sinTaylerNorm =
-        tayler<hfusion::TaylerMode::SIN>(rewriter, loc, normInput, 5);
-
-    // sign(round_x)=floor(x_round/2)*4- x_round*(2)+1
-    auto signX = sign<hfusion::TaylerMode::SIN>(rewriter, loc, xRound);
-
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::mul,
-                    ValueRange{sinTaylerNorm, signX}, ValueRange(emptyOp))
-                    ->getResult(0);
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
-    return success();
-  }
-};
-
-/// normalize cos(x)
-/// cos(x) = sin(x+pi/2)
-///        = sinTayler(norm(x+pi/2,x_round,0.0))*sign(x_round),
-/// where
-/// round_x = round((x+pi/2)*(1/pi))
-///         = sinTayler(norm(x,x_round,pi/2))*sign(x_round),
-/// where
-/// round_x = round(x*(1/pi)+0.5)
-struct NormalizeCosOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  Value computeRoundX(PatternRewriter &rewriter, Location loc,
-                      Value input) const {
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto elementType = getElementTypeOrSelf(input.getType());
-    auto piRecOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1 / (double)M_PI));
-    auto inputDivPi =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul, ValueRange{input, piRecOp},
-            ValueRange(emptyOp))
-            ->getResult(0);
-    auto halfOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 0.5));
-    auto inputInit =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{inputDivPi, halfOp}, ValueRange(emptyOp))
-            ->getResult(0);
-
-    return hfusion::castTo(rewriter, inputInit, rewriter.getF32Type(),
-                           hfusion::RoundMode::ROUND);
-  }
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::cos) {
-      return failure();
-    }
-
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
-    }
-
-    // step 1: compute round_x
-    // round_x = round(input_x*(1/pi)+0.5)
-    auto loc = op->getLoc();
-    auto xRound = computeRoundX(rewriter, loc, input);
-
-    // step 2: compute norm(x, x_round, pi/2)
-    const llvm::SmallVector<double> piApproParams = {
-        3.140625, 0.0009670257568359375, 6.2771141529083251953125e-7,
-        1.21644916362129151821136474609375e-10,
-        -1.0290623200529979163359041220560e-13};
-    auto normInput =
-        norm(rewriter, loc, input, xRound, piApproParams, (double)M_PI / 2);
-
-    // step 3: sinTayler(norm(x,x_round,pi/2))
-    auto cosTayler =
-        tayler<hfusion::TaylerMode::SIN>(rewriter, loc, normInput, 5);
-
-    // step 4: compute sign(x_round)
-    auto signX = sign<hfusion::TaylerMode::SIN>(rewriter, loc, xRound);
-
-    // step 5: compute cos(x) = sinTayler(norm(x,x_round,pi/2))*sign(x_round)
-    auto emptyOp = utils::createEmptyOp(rewriter, loc, input);
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::mul,
-                    ValueRange{cosTayler, signX}, ValueRange(emptyOp))
-                    ->getResult(0);
-
-    if (inType.isF16()) {
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
-    return success();
-  }
-};
-
 struct HighPrecisionNormalizeSinOp
     : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:

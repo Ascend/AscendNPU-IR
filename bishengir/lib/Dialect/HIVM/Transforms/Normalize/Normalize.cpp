@@ -38,6 +38,7 @@ struct NormalizeHIVMPass
     auto *context = &getContext();
     RewritePatternSet patterns(context);
     populateNormalizeArithmeticPatterns(patterns);
+    populateNormalizeTrigPatterns(patterns);
     if (!isRegbased)
       populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))

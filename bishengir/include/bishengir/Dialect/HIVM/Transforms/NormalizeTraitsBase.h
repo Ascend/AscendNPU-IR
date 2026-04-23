@@ -42,6 +42,9 @@ public:
   static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
                               Value lhs, Value rhs, Value dst,
                               BinaryKind kind);
+
+  static Value castTo(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, CastRoundKind kind);
 };
 
 } // namespace mlir::hivm

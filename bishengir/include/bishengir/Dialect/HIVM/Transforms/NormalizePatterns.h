@@ -27,6 +27,7 @@
 namespace mlir::hivm {
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
 void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hivm
