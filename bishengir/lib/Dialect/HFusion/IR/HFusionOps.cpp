@@ -395,8 +395,6 @@ public:
       return builder.create<math::ExpM1Op>(arg.getLoc(), arg);
     case UnaryFn::ilogb:
       return builder.create<mathExt::IlogbOp>(arg.getLoc(), arg);
-    case UnaryFn::sinh:
-      return builder.create<math::SinhOp>(arg.getLoc(), arg);
     case UnaryFn::relu:
       return buildUnaryRelu(builder, arg);
     case UnaryFn::rec:
