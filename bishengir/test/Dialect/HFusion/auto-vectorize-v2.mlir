@@ -227,3 +227,73 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return %3 : tensor<2048xi32>
   }
 }
+
+// CHECK-LABEL: func @softmax_kernel_non_inner
+// CHECK: scf.execute_region
+// CHECK-LABEL: call @softmax_kernel_non_inner_outlined_vf_0
+// CHECK: scf.yield
+func.func @softmax_kernel_non_inner(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %cst_0 = arith.constant 0xFC00 : f16
+  %c2 = arith.constant 2 : index
+  %c2_i64 = arith.constant 2 : i64
+  %0 = arith.extsi %arg9 : i32 to i64
+  %1 = arith.extsi %arg8 : i32 to i64
+  %2 = arith.muli %0, %c2_i64 : i64
+  %3 = arith.extsi %arg4 : i32 to i64
+  %4 = arith.muli %1, %3 : i64
+  %5 = arith.index_cast %4 : i64 to index
+  %6 = arith.index_cast %arg4 : i32 to index
+  %7 = arith.index_cast %2 : i64 to index
+  %8 = arith.addi %5, %7 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [%8], sizes: [512, 2], strides: [%6, 1] : memref<?xf16> to memref<512x2xf16, strided<[?, 1], offset: ?>>
+  %alloc = memref.alloc() : memref<512x2xf16>
+  %9 = arith.addi %7, %c2 : index
+  %10 = arith.maxsi %7, %6 : index
+  %11 = arith.minsi %9, %10 : index
+  %12 = arith.subi %11, %7 : index
+  %13 = arith.minsi %12, %c2 : index
+  annotation.mark %alloc keys = ["pad_const"] values = [%cst_0 : f16] : memref<512x2xf16>
+  linalg.generic {indexing_maps = [affine_map<(d0, d1) -> ()>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%cst_0 : f16) outs(%alloc : memref<512x2xf16>) {
+  ^bb0(%in: f16, %out: f16):
+    linalg.yield %in : f16
+  }
+  %subview = memref.subview %reinterpret_cast[0, 0] [1, %13] [1, 1] : memref<512x2xf16, strided<[?, 1], offset: ?>> to memref<1x?xf16, strided<[?, 1], offset: ?>>
+  %subview_1 = memref.subview %alloc[0, 0] [1, %13] [1, 1] : memref<512x2xf16> to memref<1x?xf16, strided<[2, 1]>>
+  %collapse_shape = memref.collapse_shape %subview_1 [[0, 1]] : memref<1x?xf16, strided<[2, 1]>> into memref<?xf16, strided<[1]>>
+  %dim = memref.dim %collapse_shape, %c0 : memref<?xf16, strided<[1]>>
+  %expand_shape = memref.expand_shape %collapse_shape [[0, 1]] output_shape [1, %dim] : memref<?xf16, strided<[1]>> into memref<1x?xf16>
+  memref.copy %subview, %expand_shape : memref<1x?xf16, strided<[?, 1], offset: ?>> to memref<1x?xf16>
+  %14 = bufferization.to_tensor %alloc restrict writable : memref<512x2xf16>
+  %15 = tensor.empty() : tensor<512x2xf16>
+  %16 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%14 : tensor<512x2xf16>) outs(%15 : tensor<512x2xf16>) {
+  ^bb0(%in: f16, %out: f16):
+    %21 = math.exp %in : f16
+    linalg.yield %21 : f16
+  } -> tensor<512x2xf16>
+  %17 = tensor.empty() : tensor<2xf32>
+  %18 = linalg.generic {indexing_maps = [affine_map<(d0) -> (d0)>], iterator_types = ["parallel"]} outs(%17 : tensor<2xf32>) {
+  ^bb0(%out: f32):
+    linalg.yield %cst : f32
+  } -> tensor<2xf32>
+  %19 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d1)>], iterator_types = ["reduction", "parallel"]} ins(%16 : tensor<512x2xf16>) outs(%18 : tensor<2xf32>) {
+  ^bb0(%in: f16, %out: f32):
+    %21 = arith.extf %in {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : f16 to f32
+    %22 = arith.addf %21, %out : f32
+    linalg.yield %22 : f32
+  } -> tensor<2xf32>
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [%8], sizes: [512, 2], strides: [%6, 1] : memref<?xf16> to memref<512x2xf16, strided<[?, 1], offset: ?>>
+  %20 = linalg.generic {indexing_maps = [affine_map<(d0, d1) -> (d0, d1)>, affine_map<(d0, d1) -> (d1)>, affine_map<(d0, d1) -> (d0, d1)>], iterator_types = ["parallel", "parallel"]} ins(%16, %19 : tensor<512x2xf16>, tensor<2xf32>) outs(%15 : tensor<512x2xf16>) {
+  ^bb0(%in: f16, %in_5: f32, %out: f16):
+    %21 = arith.extf %in {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : f16 to f32
+    %22 = arith.divf %21, %in_5 : f32
+    %23 = arith.truncf %22 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : f32 to f16
+    linalg.yield %23 : f16
+  } -> tensor<512x2xf16>
+  %extracted_slice = tensor.extract_slice %20[0, 0] [1, %13] [1, 1] : tensor<512x2xf16> to tensor<?xf16>
+  %subview_3 = memref.subview %reinterpret_cast_2[0, 0] [1, %13] [1, 1] : memref<512x2xf16, strided<[?, 1], offset: ?>> to memref<1x?xf16, strided<[?, 1], offset: ?>>
+  %collapse_shape_4 = memref.collapse_shape %subview_3 [[0, 1]] : memref<1x?xf16, strided<[?, 1], offset: ?>> into memref<?xf16, strided<[1], offset: ?>>
+  bufferization.materialize_in_destination %extracted_slice in writable %collapse_shape_4 : (tensor<?xf16>, memref<?xf16, strided<[1], offset: ?>>) -> ()
+  return
+}

@@ -484,6 +484,41 @@ static void computeConflictLists(
               fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
             }
           }
+          if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
+            DenseSet<Operation *> previousOps;
+            DenseSet<Operation *> followingOps;
+            findPreviousAndFollowingFusableOpOf(op, block, previousOps,
+                                                followingOps);
+            auto copyOpTarget = cast<CopyOpInterface>(op).getTarget();
+            auto optAllocCopyOpTarget = mlir::utils::tracebackMemRefToAlloc(copyOpTarget);
+            if (optAllocCopyOpTarget.has_value()) {
+              auto allocCopyOpTarget = optAllocCopyOpTarget.value();
+              for (auto previousOp : previousOps) {
+                for (auto followingOp : followingOps) {
+                  for (auto previousOperand : previousOp->getOperands()) {
+                    auto optAllocPrevious = mlir::utils::tracebackMemRefToAlloc(previousOperand);
+                    if (!optAllocPrevious.has_value()) {
+                      continue;
+                    }
+                    auto allocPrevious = optAllocPrevious.value();
+                    for (auto followingOperand : followingOp->getOperands()) {
+                      auto optAllocFollowing = mlir::utils::tracebackMemRefToAlloc(followingOperand);
+                      if (!optAllocFollowing.has_value()) {
+                        continue;
+                      }
+                      auto allocFollowing = optAllocFollowing.value();
+                      if (allocCopyOpTarget == allocPrevious && allocPrevious == allocFollowing) {
+                        for (auto innerFollowingOp : followingOps) {
+                          fusableOpInfoMap[previousOp].conflictList.insert(innerFollowingOp);
+                          fusableOpInfoMap[innerFollowingOp].conflictList.insert(previousOp);
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
           if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp,
                   scf::WhileOp, scf::IfOp>(op)) {
             DenseSet<Operation *> previousOps;
