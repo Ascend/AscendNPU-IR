@@ -12,8 +12,9 @@
 namespace mlir {
 namespace memref {
 
-Value createMemRefAllocOpWithTargetElemType(OpBuilder &builder, Location loc,
-                                            Value source, Type targetElemType) {
+Value createMemRefAllocOpWithTargetElemType(
+    OpBuilder &builder, Location loc, Value source, Type targetElemType,
+    std::optional<MemRefLayoutAttrInterface> layout) {
   auto shapedType = cast<ShapedType>(source.getType());
   ArrayRef<int64_t> staticShapes = shapedType.getShape();
   llvm::SmallVector<Value, 2> dynamicSizes;
@@ -24,9 +25,10 @@ Value createMemRefAllocOpWithTargetElemType(OpBuilder &builder, Location loc,
     }
   }
   MemRefType origType = cast<MemRefType>(shapedType);
-  MemRefType newMemTy = MemRefType::get(staticShapes, targetElemType, nullptr,
-                                        origType.getMemorySpace());
-
+  MemRefType newMemTy = MemRefType::get(
+      staticShapes, targetElemType,
+      layout.has_value() ? layout.value() : origType.getLayout(),
+      origType.getMemorySpace());
   return builder.create<memref::AllocOp>(loc, newMemTy, dynamicSizes);
 }
 

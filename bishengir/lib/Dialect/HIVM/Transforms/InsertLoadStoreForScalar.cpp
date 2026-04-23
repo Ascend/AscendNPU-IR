@@ -1,17 +1,23 @@
-//===-------------------- InsertLoadStoreForScalar.cpp-------------------===//
+//===---- InsertLoadStoreForScalar.cpp -------------------------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//===----------------------------------------------------------------------===//
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-// This pass handles special cases for tensor.extract when consumed by cube ops.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -22,8 +28,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Casting.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
- 
+
 namespace mlir {
 #define GEN_PASS_DEF_INSERTLOADSTOREFORSCALAR
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -42,20 +47,20 @@ struct InsertLoadStoreForScalarPass
   void runOnOperation() override;
 };
 
-template <typename... OpTypes>
-static bool traceVector(Value v) {
+template <typename... OpTypes> static bool traceVector(Value v) {
   return ((traceDefOp<OpTypes>(v) != std::nullopt) || ...);
 }
- 
+
 //===----------------------------------------------------------------------===//
 // DuplicateTensorExtractForCube
 //===----------------------------------------------------------------------===//
 /// Handles tensor.extract ops that feed into cube operations.
-/// Inserts explicit store/load to ensure data movement between vector and cube cores.
+/// Inserts explicit store/load to ensure data movement between vector and cube
+/// cores.
 struct DuplicateTensorExtractForCube
     : public OpRewritePattern<tensor::ExtractOp> {
   using OpRewritePattern<tensor::ExtractOp>::OpRewritePattern;
- 
+
   constexpr static llvm::StringRef visitedLabel =
       "DuplicateTensorExtractForCube::visitedLabel";
   constexpr static llvm::StringRef newExtractLabel =
@@ -64,7 +69,7 @@ struct DuplicateTensorExtractForCube
       "DuplicateTensorExtractForCube::replacementLabel";
   constexpr static llvm::StringRef cubeErasureLabel =
       "DuplicateTensorExtractForCube::cubeErasureLabel";
- 
+
   void markCoreType(PatternRewriter &rewriter, Location location, Value value,
                     TCoreType tCoreType) const {
     auto markOp = rewriter.create<annotation::MarkOp>(location, value);
@@ -72,53 +77,49 @@ struct DuplicateTensorExtractForCube
         mlir::hivm::TCoreTypeAttr::name,
         mlir::hivm::TCoreTypeAttr::get(markOp->getContext(), tCoreType));
   }
- 
+
   bool findCubeUser(tensor::ExtractOp extractOp) const {
     bool hasCubeUser = false;
     SmallVector<Operation *> worklist;
-    
+
     if (extractOp->getNumResults() > 0) {
       for (Operation *userOp : extractOp->getResult(0).getUsers()) {
         worklist.push_back(userOp);
       }
     } else {
-      return false; 
-
+      return false;
     }
     SmallPtrSet<Operation *, 16> visited;
     while (!worklist.empty()) {
       Operation *currentOp = worklist.pop_back_val();
- 
-      if (!visited.insert(currentOp).second) {
-        continue;
-      }
- 
+
       // Check current operation and its nested operations
       currentOp->walk([&hasCubeUser](Operation *nestedOp) {
-        if (getCoreType(nestedOp) == TCoreType::CUBE) {
+        if (getCoreType(nestedOp) == TCoreType::CUBE ||
+            getCoreType(nestedOp) == TCoreType::CUBE_OR_VECTOR) {
           hasCubeUser = true;
           return WalkResult::interrupt();
-        } else if (getCoreType(nestedOp) == TCoreType::VECTOR) {
+        }
+        if (getCoreType(nestedOp) == TCoreType::VECTOR) {
           return WalkResult::skip();
         }
         return WalkResult::advance();
       });
- 
+
       if (hasCubeUser) {
         return true;
       }
-      
+
       // Add all users of currentOp to worklist for indirect user checking
-      for (auto result : currentOp->getResults()) {
-        for (Operation *userOp : result.getUsers()) {
+      for (Operation *userOp : currentOp->getUsers()) {
+        if (visited.insert(userOp).second)
           worklist.push_back(userOp);
-        }
       }
     }
- 
+
     return false;
   }
- 
+
   LogicalResult matchAndRewrite(tensor::ExtractOp extractOp,
                                 PatternRewriter &rewriter) const override {
     // check if it has already been visited
@@ -127,26 +128,33 @@ struct DuplicateTensorExtractForCube
     }
     extractOp.getOperation()->setAttr(visitedLabel,
                                       rewriter.getI32IntegerAttr(1));
- 
+
     // if the extractOp is in for loop, and the for loop is gather_load,
     // the for loop should be atomic, don't insert any other op.
     auto forOp = extractOp->getParentOfType<scf::ForOp>();
     if (forOp && forOp->hasAttrOfType<UnitAttr>(hivm::ParallelLoopAttr::name)) {
       return failure();
     }
- 
-    // only process cases with vector sources or direct load
+
     Value originTensor = extractOp.getTensor();
     Operation *definingOp = originTensor.getDefiningOp();
     if (!definingOp) {
       return failure();
     }
+
+    // only process cases with cube users
+    if (!findCubeUser(extractOp)) {
+      return failure();
+    }
+
+    // only process cases with vector sources or direct load
     TensorType tensorType = cast<TensorType>(originTensor.getType());
     bool originCoreTypeIsVector = traceVector<
     #define GET_OP_LIST
     #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-      >(originTensor);
-    if (!originCoreTypeIsVector) {
+        >(originTensor);
+    TCoreType originCoreType = getCoreType(definingOp).value();
+    if (!originCoreTypeIsVector && originCoreType != TCoreType::VECTOR) {
       // handle the case of direct load
       // TODO: (plan A) bubble up (plan B) infer load to vector type
       auto presumedAllocOp = traceDefOp<memref::AllocOp>(originTensor);
@@ -157,46 +165,37 @@ struct DuplicateTensorExtractForCube
         bool foundBufferization = false;
         SmallVector<Operation *, 2> tmpOps;
         for (Operation *userOp : memrefValue.getUsers()) {
-          if (isa<hivm::LoadOp>(userOp) &&
-              dyn_cast<hivm::LoadOp>(userOp).getDst() == memrefValue) {
+          if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp);
+              loadOp && loadOp.getDst() == memrefValue) {
             foundLoad = true;
             tmpOps.push_back(userOp);
-          }
-          if (isa<bufferization::ToTensorOp>(userOp) &&
-              dyn_cast<bufferization::ToTensorOp>(userOp).getOperand() ==
-                  memrefValue) {
+          } else if (auto toTensorOp =
+                         dyn_cast<bufferization::ToTensorOp>(userOp);
+                     toTensorOp && toTensorOp.getOperand() == memrefValue) {
             foundBufferization = true;
             tmpOps.push_back(userOp);
           }
         }
         if (!(tmpOps.size() == 2 && foundLoad && foundBufferization)) {
           return failure();
-        } else {
-          // the op need eraseLabel only if when the bufferization is from load
-          allocOp->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-          for (auto op: tmpOps) {
-            op->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-          }
+        }
+        // the op need eraseLabel only if when the bufferization is from load
+        allocOp->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
+        for (auto *op : tmpOps) {
+          op->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
         }
       } else {
         return failure();
       }
     }
- 
-    // only process cases with cube users
-    if (!findCubeUser(extractOp)) {
-      return failure();
-    }
- 
+
     // prepare for insertion
     Location loc = extractOp->getLoc();
     rewriter.setInsertionPointAfterValue(extractOp.getResult());
 
-    // HIVM store does not support i1 element type, so convert to i8 before storing,
-    // and convert back to i1 after extraction.
+    // HIVM store does not support i1 element type, so convert to i8 before
+    // storing, and convert back to i1 after extraction.
     bool isElementI1 = getElementTypeOrSelf(tensorType).isInteger(1);
-    Type storageElemType =
-        isElementI1 ? rewriter.getI8Type() : getElementTypeOrSelf(tensorType);
     Value convertedTensor = originTensor;
     auto roundMode =
         rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT);
@@ -208,11 +207,13 @@ struct DuplicateTensorExtractForCube
 
     // insert operations
     Value workSpaceTensor = getLocalWorkSpaceTensor(
-        rewriter, loc, tensorType.getShape(), storageElemType);
+        rewriter, loc, tensorType.getShape(),
+        hivm::getTensorDynamicValues(rewriter, loc, convertedTensor),
+        getElementTypeOrSelf(convertedTensor.getType()));
     hivm::StoreOp storeOp = rewriter.create<hivm::StoreOp>(
-        loc, TypeRange(convertedTensor.getType()), convertedTensor,
-        workSpaceTensor);
+        loc, TypeRange(convertedTensor.getType()), convertedTensor, workSpaceTensor);
     markCoreType(rewriter, loc, storeOp.getResults()[0], TCoreType::VECTOR);
+    storeOp->setAttr("inserted-store", rewriter.getUnitAttr());
     tensor::ExtractOp newExtractOp = rewriter.create<tensor::ExtractOp>(
         loc, storeOp.getResultTensor(), extractOp.getIndices());
     newExtractOp.getOperation()->setAttr(visitedLabel,
@@ -232,7 +233,7 @@ struct DuplicateTensorExtractForCube
     return success();
   }
 };
- 
+
 void InsertLoadStoreForScalarPass::runOnOperation() {
   auto funcOp = getOperation();
   auto *context = &getContext();
@@ -246,11 +247,11 @@ void InsertLoadStoreForScalarPass::runOnOperation() {
     }
     return WalkResult::advance();
   });
- 
+
   if (hasCube) {
     patterns.insert<DuplicateTensorExtractForCube>(patterns.getContext());
   }
- 
+
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     signalPassFailure();
 }

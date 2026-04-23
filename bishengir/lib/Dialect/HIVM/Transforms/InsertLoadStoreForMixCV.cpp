@@ -15,18 +15,29 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/InsertPropagation.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
+#include "bishengir/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
+
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -40,12 +51,18 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 #define DEBUG_TYPE "insert-load-store"
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define DBGSNL() (llvm::dbgs() << "\n")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace {
 struct InsertLoadStoreForMixCVPass
     : public impl::InsertLoadStoreForMixCVBase<InsertLoadStoreForMixCVPass> {
+public:
   using Base::Base;
   void runOnOperation() override;
+private:
+  void runLegacyInsertLoadStoreForMixCV();
 };
 
 enum class InsertMode { LoadOnly = 0, StoreOnly, LoadAndStore };
@@ -323,7 +340,7 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
           patterns.getContext());
 }
 
-void InsertLoadStoreForMixCVPass::runOnOperation() {
+void InsertLoadStoreForMixCVPass::runLegacyInsertLoadStoreForMixCV() {
   OpBuilder builder(&getContext());
   auto context = &getContext();
   auto funcOp = getOperation();
@@ -335,6 +352,154 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass() {
-  return std::make_unique<InsertLoadStoreForMixCVPass>();
+static LogicalResult runPropagateOpPatterns(func::FuncOp funcOp,
+                                            PropagationStep step) {
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<PropagateUpPattern, PropagateDownPattern>(patterns.getContext(),
+                                                         step);
+
+  patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
+      patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  LDBG("After propagation step " << static_cast<int>(step));
+  LDBG(funcOp);
+  return success();
+}
+
+static LogicalResult insertPropagationOp(func::FuncOp funcOp) {
+  IRRewriter rewriter(funcOp.getContext());
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  for (auto arg : funcOp.getArguments()) {
+    if (isa<ShapedType>(arg.getType())) {
+      Value newArg = PropagatorUtil::createPropagator(
+          arg, kPropagateDownAttr, hivm::AddressSpace::GM, rewriter);
+      rewriter.replaceAllUsesExcept(arg, newArg, newArg.getDefiningOp());
+    }
+  }
+
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<InsertPropagationPattern>(patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult propagateAndResolve(func::FuncOp funcOp) {
+  SmallVector<PropagationStep> propagations = {
+      PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
+      PropagationStep::ALL};
+  for (auto step : propagations) {
+    if (failed(runPropagateOpPatterns(funcOp, step))) {
+      return failure();
+    }
+  }
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<CloneMultipleAddressSpaceOperation>(patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  LDBG("After clone multiple address space: " << funcOp);
+  if (failed(runPropagateOpPatterns(funcOp, PropagationStep::ALL))) {
+    return failure();
+  }
+  return success();
+}
+
+void InsertLoadStoreForMixCVPass::runOnOperation() {
+  OpBuilder builder(&getContext());
+  auto *ctx = &getContext();
+  auto funcOp = getOperation();
+
+  if (enableLegacy)
+    return runLegacyInsertLoadStoreForMixCV();
+  if (!hacc::utils::isDeviceEntry(funcOp))
+    return;
+
+  PassManager pm(ctx);
+  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
+
+  if (failed(pm.run(funcOp))) {
+    return signalPassFailure();
+  }
+  if (failed(insertPropagationOp(funcOp))) {
+    return signalPassFailure();
+  }
+  LDBG("After inserting Propagation Op: " << funcOp);
+  if (failed(propagateAndResolve(funcOp))) {
+    return signalPassFailure();
+  }
+  LDBG("After propagation & resolve: " << funcOp);
+  LLVM_DEBUG({
+    if (failed(verifyPropagation(funcOp))) {
+      return signalPassFailure();
+    }
+  });
+
+  /// Postprocess of adding core type attribute
+  funcOp->walk([](Operation *op) {
+    TypeSwitch<Operation *>(op)
+        .Case([&](hivm::DebugOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
+          if (upProp) {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              op.setTcoretypeAttr(
+                  TCoreTypeAttr::get(op.getContext(), coreType));
+            } else {
+              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                        : addressSpaces[0];
+              op.setTcoretypeAttr(TCoreTypeAttr::get(
+                  op.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+            }
+          }
+        })
+        .Case([&](hivm::LoadOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getDstMutable());
+          if (upProp) {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              op.setTcoretypeAttr(
+                  TCoreTypeAttr::get(op.getContext(), coreType));
+            } else {
+              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                        : addressSpaces[0];
+              op.setTcoretypeAttr(TCoreTypeAttr::get(
+                  op.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+            }
+          }
+        });
+  });
+
+  PassManager pm2(ctx);
+  pm2.addPass(createCanonicalizerPass());
+  if (failed(pm2.run(funcOp))) {
+    return signalPassFailure();
+  }
+
+  PassManager pm3(ctx);
+  pm3.addPass(createInsertLoadStoreForScalarPass());
+  if (failed(pm3.run(funcOp))) {
+    return signalPassFailure();
+  }
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass(
+    const InsertLoadStoreForMixCVOptions &options) {
+  return std::make_unique<InsertLoadStoreForMixCVPass>(options);
 }

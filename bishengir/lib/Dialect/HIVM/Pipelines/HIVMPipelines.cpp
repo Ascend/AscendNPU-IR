@@ -55,6 +55,14 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
 }
 
+static void hivmAutoInsertLdStForMixCVPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
+  InsertLoadStoreForMixCVOptions options;
+  options.enableLegacy = hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createInsertLoadStoreForMixCVPass(options));
+}
+
 static void
 hivmCVCommunicationPipeline(OpPassManager &pm,
                             const HIVMPipelineOptions &hivmPipelineOptions) {
@@ -69,8 +77,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
-    pm.nest<func::FuncOp>().addPass(
-        mlir::hivm::createInsertLoadStoreForMixCVPass());
+    hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   }
@@ -225,7 +232,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  pm.addPass(createInsertWorkSpaceForMixCVPass());
+  hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   // keep this for the debug feature (device print, etc.)
   pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
 

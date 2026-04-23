@@ -474,6 +474,40 @@ void VPadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
   results.add<FoldLoadAndVPadPattern>(context);
 }
 
+struct FilterCVScopeOpCanonicalizer : public OpRewritePattern<FilterCVScopeOp> {
+  using OpRewritePattern<FilterCVScopeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FilterCVScopeOp filterOp,
+                                PatternRewriter &rewriter) const final {
+    auto funcOp = filterOp->getParentOfType<func::FuncOp>();
+    if (!funcOp)
+      return rewriter.notifyMatchFailure(filterOp,
+                                         "requires parent func::FuncOp");
+    hivm::TFuncCoreTypeAttr funcCoreTypeAttr =
+        funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+            hivm::TFuncCoreTypeAttr::name);
+    if (!funcCoreTypeAttr)
+      return rewriter.notifyMatchFailure(
+          filterOp, "requires hivm::TFuncCoreTypeAttr on parent function");
+    switch (funcCoreTypeAttr.getFuncCoreType()) {
+    case TFuncCoreType::AIC:
+      rewriter.replaceAllOpUsesWith(filterOp, filterOp.getCube());
+      return success();
+    case TFuncCoreType::AIV:
+      rewriter.replaceAllOpUsesWith(filterOp, filterOp.getVector());
+      return success();
+    default:
+      return rewriter.notifyMatchFailure(
+          filterOp, "fold only applies to AIC/AIV function core types");
+    }
+  }
+};
+
+void FilterCVScopeOp::getCanonicalizationPatterns(
+    ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
+  results.add<FilterCVScopeOpCanonicalizer>(context);
+}
+
 template <typename CustomOpT>
 struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
   using OpRewritePattern<CustomOpT>::OpRewritePattern;

@@ -273,6 +273,51 @@ def SetFFTSBaseAddrOp : HIVM_Op<"set_ffts_base_addr", [CubeVectorCoreTypeTrait]>
   }];
 }
 
+def FilterCVScopeOp :
+  HIVM_Op<"filter_cv_scope",
+          [Pure,
+           SameOperandsAndResultShape,
+           SameOperandsAndResultType,
+           DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface, ["inferCoreType"]>]> {
+  let summary = "Selects cube/vector values according to active core in mixed-CV.";
+  let description = [{
+    `filter_cv_scope` chooses one value from the `cube` and `vector` inputs
+    according to current execution core/scope in mixed-CV compilation.
+    It supports both scalar and shaped values. The `cube`, `vector`, and
+    result must have the same type (and same shape for shaped types).
+
+    Valid examples:
+    ```mlir
+    %r0 = hivm.hir.filter_cv_scope cube(%cube_i32), vector(%vec_i32) : i32
+    %r1 = hivm.hir.filter_cv_scope cube(%cube_val), vector(%vec_val) :
+      memref<16x16xf16>
+    %r2 = hivm.hir.filter_cv_scope cube(%cube_tensor), vector(%vec_tensor) :
+      tensor<32xf32>
+    ```
+  }];
+  let description = [{
+    `filter_cv_scope` chooses one value from the `cube` and `vector` inputs
+    according to current execution core/scope in mixed-CV compilation.
+    It supports both scalar and shaped values. The `cube`, `vector`, and
+    result must have the same type (and same shape for shaped types).
+
+    Valid examples:
+    ```mlir
+    %r0 = hivm.hir.filter_cv_scope cube(%cube_i32), vector(%vec_i32) : i32
+    %r1 = hivm.hir.filter_cv_scope cube(%cube_val), vector(%vec_val) :
+      memref<16x16xf16>
+    %r2 = hivm.hir.filter_cv_scope cube(%cube_tensor), vector(%vec_tensor) :
+      tensor<32xf32>
+    ```
+  }];
+  let arguments = (ins AnyType:$cube, AnyType:$vector);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    attr-dict `cube` `(` $cube `)` `,` `vector` `(` $vector `)` `:` type($result)
+  }];
+  let hasCanonicalizer = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // HIVM Debug op definitions.
 //===----------------------------------------------------------------------===//

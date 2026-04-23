@@ -141,7 +141,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         /*pad_value=*/nullptr, /*left_padding_num=*/nullptr,
         /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
-        /*eviction_policy=*/nullptr);
+        /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -150,7 +150,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
         /*pad_value=*/nullptr, left_padding_num,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr);
+        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -159,7 +159,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         /*left_padding_num=*/nullptr,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr);
+        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -168,7 +168,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr,
         /*init_out_buffer=*/false, /*init_condition=*/nullptr,
-        /*eviction_policy=*/nullptr);
+        /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -177,7 +177,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    bool init_out_buffer) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr);
+        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -186,7 +186,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    Value right_padding_num) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, right_padding_num, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr);
+        /*init_condition=*/nullptr, /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -195,7 +195,7 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    bool init_out_buffer, Value init_condition) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        init_condition, /*eviction_policy=*/nullptr);
+        init_condition, /*eviction_policy=*/nullptr, nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -204,7 +204,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         /*left_padding_num=*/nullptr,
         /*right_padding_num=*/nullptr,
-        /*init_out_buffer=*/false, /*init_condition=*/nullptr, eviction_policy);
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr, eviction_policy,
+        nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -214,7 +215,8 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num,
         /*right_padding_num=*/nullptr,
-        /*init_out_buffer=*/false, /*init_condition=*/nullptr, eviction_policy);
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr, eviction_policy,
+        nullptr);
 }
 
 LogicalResult LoadOp::verify() {

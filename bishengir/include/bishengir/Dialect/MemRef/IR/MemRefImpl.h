@@ -25,8 +25,9 @@ Value createMemRefAllocOp(OpBuilder &builder, Location loc, Value source);
 
 /// Create memref.alloc op with the same shape as source
 /// but with element type targetElemType
-Value createMemRefAllocOpWithTargetElemType(OpBuilder &builder, Location loc,
-                                            Value source, Type targetElemType);
+Value createMemRefAllocOpWithTargetElemType(
+    OpBuilder &builder, Location loc, Value source, Type targetElemType,
+    std::optional<MemRefLayoutAttrInterface> layout = std::nullopt);
 
 } // namespace memref
 } // namespace mlir

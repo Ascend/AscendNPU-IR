@@ -213,15 +213,21 @@ createSinglePointStore(RewriterBase &rewriter, Location loc, Value storeValue,
   return rewriter.create<memref::StoreOp>(loc, storeValue, memOper, indexes);
 }
 
-Value createEmptyOpWithTargetElemType(OpBuilder &builder, Location loc,
-                                      Value source, Type targetElemType) {
+Value createEmptyOpWithTargetElemType(
+    OpBuilder &builder, Location loc, Value source, Type targetElemType,
+    std::optional<MemRefLayoutAttrInterface> layout) {
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
+#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
+    llvm_unreachable("Not implemented");
+#else
+    // TODO: it should be defined in Dialect/Tensor/IR
     return tensor::createTensorEmptyOpWithTargetElemType(builder, loc, source,
                                                          targetElemType);
+#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   }
-  return memref::createMemRefAllocOpWithTargetElemType(builder, loc, source,
-                                                       targetElemType);
+  return memref::createMemRefAllocOpWithTargetElemType(
+      builder, loc, source, targetElemType, std::move(layout));
 }
 
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
