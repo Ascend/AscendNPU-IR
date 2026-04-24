@@ -187,36 +187,6 @@ static void modifyStoreToSliced(RewriterBase &rewriter, OpOperand *operand,
   }
 }
 
-static void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
-                                   OpFoldResult tiledOffset,
-                                   OpFoldResult tiledSize, Location loc,
-                                   OpBuilder &builder) {
-  auto lb = getValueOrCreateConstantIndexOp(builder, loc, tiledOffset);
-  auto ub = getValueOrCreateConstantIndexOp(builder, loc, tiledSize);
-  auto curLB = getValueOrCreateConstantIndexOp(builder, loc, offset);
-  auto curUB = getValueOrCreateConstantIndexOp(builder, loc, size);
-  if (getConstantIntValue(offset).value_or(ShapedType::kDynamic) == 0) {
-    lb = builder.createOrFold<arith::MinSIOp>(loc, lb, curUB);
-    curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, lb);
-    curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
-    size = curUB;
-    return;
-  }
-
-  ub = builder.createOrFold<arith::AddIOp>(loc, lb, ub);
-  curUB = builder.createOrFold<arith::AddIOp>(loc, curLB, curUB);
-
-  curLB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, lb);
-  curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
-  curUB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, curUB);
-
-  curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, curLB);
-  curLB = builder.createOrFold<arith::SubIOp>(loc, curLB, lb);
-
-  offset = curLB;
-  size = curUB;
-}
-
 namespace {
 
 /// try to tile store ops and bind sub block mapping
@@ -685,15 +655,16 @@ static LogicalResult tileAndSliceStore(func::FuncOp func,
                                        bool &isBroadcastAxisCase) {
   IRRewriter rewriter(func.getContext());
   func->walk([&rewriter](Operation *op) {
-    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp>(op) ||
-        op->hasOneUse())
+    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp>(op) || op->hasOneUse())
       return;
     rewriter.setInsertionPoint(op);
-    for (auto &use : op->getUses()) {
-      auto *user = use.getOwner();
-      rewriter.modifyOpInPlace(user, [&]() {
-        use.set(rewriter.clone(*op)->getResult(0));
-      });
+    SmallVector<OpOperand *> uses;
+    for (auto &use : op->getUses())
+      uses.push_back(&use);
+    for (auto *use : uses) {
+      auto *user = use->getOwner();
+      rewriter.modifyOpInPlace(
+          user, [&]() { use->set(rewriter.clone(*op)->getResult(0)); });
     }
   });
   hivm::detail::DimensionAnalyzer analyzer(func);

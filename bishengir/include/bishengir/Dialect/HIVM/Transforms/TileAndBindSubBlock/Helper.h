@@ -72,6 +72,10 @@ DenseSet<size_t> getIntersectionDims(DenseSet<size_t> dims1,
 
 bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp);
 
+void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
+                            OpFoldResult tiledOffset, OpFoldResult tiledSize,
+                            Location loc, OpBuilder &builder);
+
 } // namespace hivm
 } // namespace mlir
 

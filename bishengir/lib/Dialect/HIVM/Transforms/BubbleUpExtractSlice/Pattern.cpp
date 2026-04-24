@@ -1138,9 +1138,9 @@ bool LoopArgsBubbleUpStrategy::isSupportedOperation(
   auto whileOp = dyn_cast_or_null<scf::WhileOp>(sliceOp->getParentOp());
   if (!whileOp)
     return false;
-  return llvm::any_of(whileOp.getBeforeArguments(), [&blockArg](auto beforeArg) {
-    return blockArg == beforeArg;
-  });
+  return llvm::any_of(
+      whileOp.getBeforeArguments(),
+      [&blockArg](auto beforeArg) { return blockArg == beforeArg; });
 }
 
 LogicalResult
@@ -1307,15 +1307,13 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     // Pattern 2: This deals with the pattern: memref.alloc() ->
     // bufferization.to_tensor, with Subview Op + Load Op
     if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
-      if (!subViewOp->hasOneUse() || !subViewOp.hasZeroOffset() ||
-          !subViewOp.hasUnitStride())
+      if (!subViewOp->hasOneUse() || !subViewOp.hasUnitStride())
         continue;
       auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
       if (!loadOp)
         continue;
       auto subViewOpGM = loadOp.getSrc().getDefiningOp<memref::SubViewOp>();
-      if (!subViewOpGM || !subViewOpGM.hasZeroOffset() ||
-          !subViewOpGM.hasUnitStride())
+      if (!subViewOpGM || !subViewOpGM.hasUnitStride())
         continue;
       auto castOp =
           subViewOpGM.getSource().getDefiningOp<memref::ReinterpretCastOp>();
@@ -1333,33 +1331,29 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       rewriter.setInsertionPoint(subViewOpGM);
 
       // Compute new size
-      auto newSizes = subViewOpGM.getMixedSizes();
+      auto newOffsets = subViewOp.getMixedOffsets();
+      auto newOffsetsGM = subViewOpGM.getMixedOffsets();
+      auto newSizes = subViewOp.getMixedSizes();
+      auto newSizesGM = subViewOpGM.getMixedSizes();
       auto extractDims = getExtractOrInsertDim(sliceOp);
       if (extractDims.size() != 1)
         continue;
       auto tilingDim = *extractDims.begin();
-      auto offsetVal = getValueOrCreateConstantIndexOp(
-          rewriter, sliceOp.getLoc(), offsets[tilingDim]);
-      auto sizeVal = getValueOrCreateConstantIndexOp(rewriter, sliceOp.getLoc(),
-                                                     newSizes[tilingDim]);
-      rewriter.setInsertionPointAfterValue(sizeVal);
-      auto tilingSize = getValueOrCreateConstantIndexOp(
-          rewriter, sliceOp.getLoc(), sizes[tilingDim]);
-      offsetVal = rewriter.create<arith::MinSIOp>(offsetVal.getLoc(), offsetVal,
-                                                  sizeVal);
-      sizeVal =
-          rewriter.create<arith::SubIOp>(sizeVal.getLoc(), sizeVal, offsetVal);
-      sizeVal = rewriter.create<arith::MinSIOp>(sizeVal.getLoc(), sizeVal,
-                                                tilingSize);
-      newSizes[tilingDim] = sizeVal;
+      rewriter.setInsertionPoint(subViewOp);
+      handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
+                             offsets[tilingDim], sizes[tilingDim],
+                             subViewOp.getLoc(), rewriter);
 
       // Rewrite operations
       rewriter.setInsertionPoint(subViewOpGM);
+      handleExtractOfExtract(newOffsetsGM[tilingDim], newSizesGM[tilingDim],
+                             offsets[tilingDim], sizes[tilingDim],
+                             subViewOpGM.getLoc(), rewriter);
       auto newCastValue = rewriter.create<memref::SubViewOp>(
           castOp.getLoc(), castOp, offsets, sizes, strides);
       auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
-          subViewOpGM.getLoc(), newCastValue, subViewOpGM.getMixedOffsets(),
-          newSizes, subViewOpGM.getMixedStrides());
+          subViewOpGM.getLoc(), newCastValue, newOffsetsGM, newSizesGM,
+          subViewOpGM.getMixedStrides());
       rewriter.setInsertionPoint(allocOp);
       auto resultType =
           dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
@@ -1368,7 +1362,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           MemRefType::get(resultType.getShape(), resultType.getElementType()));
       rewriter.setInsertionPoint(subViewOp);
       auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-          subViewOp.getLoc(), allocOp, subViewOp.getMixedOffsets(), newSizes,
+          subViewOp.getLoc(), allocOp, newOffsets, newSizes,
           subViewOp.getMixedStrides());
 
       rewriter.modifyOpInPlace(loadOp, [&]() {
@@ -1493,6 +1487,103 @@ LogicalResult IfBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       ifOp, [&]() { ifOp.getResult(yieldIndex).setType(sliceOp.getType()); });
   rewriter.replaceAllUsesWith(sliceOp, ifOp->getResult(yieldIndex));
 
+  return success();
+}
+
+bool VarangeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp) {
+    return false;
+  }
+  bool isVarangeOp = dyn_cast<hivm::VArangeOp>(sourceOp);
+  return isVarangeOp;
+}
+
+LogicalResult
+VarangeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                 PatternRewriter &rewriter) const {
+  auto varangeOp =
+      dyn_cast<hivm::VArangeOp>(sliceOp.getSource().getDefiningOp());
+  if (!varangeOp)
+    return failure();
+
+  auto varangeOutputType =
+      dyn_cast<RankedTensorType>(varangeOp.getResult().getType());
+  if (!varangeOutputType)
+    return failure();
+
+  auto sliceOutputType =
+      dyn_cast<RankedTensorType>(sliceOp.getSource().getType());
+  if (!sliceOutputType)
+    return failure();
+
+  if (varangeOutputType.getRank() != 1 || sliceOutputType.getRank() != 1)
+    return failure();
+
+  auto loc = varangeOp.getLoc();
+
+  // Extract slice parameters
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  rewriter.setInsertionPoint(varangeOp);
+  auto newSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      loc, varangeOp.getDst(), offsets, sizes, strides);
+
+  markCreatedExtractSliceOp(rewriter, newSliceOp);
+
+  // get the offset value from extract_slice
+  Value sliceOffset =
+      getValueOrCreateConstantIndexOp(rewriter, loc, offsets[0]);
+  Value origVarangeOffset = varangeOp.getOffset();
+  // The new offset of varange = sliceOffset + origVarangeOffset
+  Value newVarangeOffset =
+      rewriter.create<arith::AddIOp>(loc, origVarangeOffset, sliceOffset);
+
+  rewriter.setInsertionPointAfter(varangeOp);
+  auto newVarangeOp = rewriter.create<hivm::VArangeOp>(
+      loc, sliceOp.getType(), newSliceOp.getResult(), newVarangeOffset);
+
+  rewriter.replaceOp(sliceOp, newVarangeOp.getResult());
+  rewriter.eraseOp(varangeOp);
+
+  return success();
+}
+
+bool ScopeBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto sourceOp = sliceOp.getSource().getDefiningOp<scope::ScopeOp>();
+  return sourceOp && !isDynamicSlice(sliceOp);
+}
+
+LogicalResult ScopeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                             PatternRewriter &rewriter) const {
+  auto src = cast<OpResult>(sliceOp.getSource());
+  auto scopeOp = src.getDefiningOp<scope::ScopeOp>();
+  if (!scopeOp)
+    return failure();
+
+  auto returnIndex = src.getResultNumber();
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+  rewriter.setInsertionPoint(returnOp);
+  auto newMovedInSlice = rewriter.create<tensor::ExtractSliceOp>(
+      sliceOp->getLoc(), returnOp.getResults()[returnIndex],
+      sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
+      sliceOp.getMixedStrides());
+  markCreatedExtractSliceOp(rewriter, newMovedInSlice);
+   auto &returnValueOpr = returnOp->getOpOperand(returnIndex);
+   rewriter.modifyOpInPlace(returnOp, [&returnValueOpr, &newMovedInSlice]() {
+     returnValueOpr.assign(newMovedInSlice.getResult());
+   });
+
+  rewriter.modifyOpInPlace(scopeOp, [&]() {
+    scopeOp->getResult(returnIndex).setType(sliceOp.getType());
+  });
+  rewriter.replaceAllUsesWith(sliceOp, scopeOp->getResult(returnIndex));
+  
   return success();
 }
 
