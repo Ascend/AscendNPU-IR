@@ -41,6 +41,13 @@ struct NormalizeHIVMPass
     populateNormalizeTrigPatterns(patterns);
     if (!isRegbased)
       populateNormalizeCmpVnePatterns(patterns);
+    populateNormalizeScalarLikeHIVMPatterns(patterns);
+    // "NonDense" means the broadcast source is a scalar-like shaped value,
+    // but not an arith.constant dense tensor. Dense constants are handled by
+    // populateNormalizeScalarLikeHIVMPatterns above; this late regbased-only
+    // pass extracts the single runtime value and rebuilds the broadcast.
+    populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns,
+                                                         isRegbased);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

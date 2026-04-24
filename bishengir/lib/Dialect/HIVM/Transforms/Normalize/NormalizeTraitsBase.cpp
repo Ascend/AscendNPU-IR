@@ -19,11 +19,15 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/IR/TypeUtilities.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 using namespace mlir;
 namespace mlir::hivm {
+
+namespace {
 
 template <typename UnaryOp>
 mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
@@ -78,6 +82,8 @@ static const llvm::DenseMap<UnaryKind, UnaryOpMatcherFn> unaryOpMatcherMap = {
 static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = {
     {BinaryKind::Div, matchHIVMOp<hivm::VDivOp>},
 };
+
+} // namespace
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, UnaryKind kind) {
   auto it = unaryOpMatcherMap.find(kind);
@@ -168,5 +174,24 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::castTo(
       targetElemType);
   return castOp->getResults().empty() ? castOp.getSingleDst()
                                       : castOp->getResults()[0];
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst) {
+  // Rebuild scalar-like broadcasts as scalar-source `hivm.hir.vbrc`.
+  // VBrcOp requires a scalar src; extract if input is a 0-rank tensor.
+  if (auto shapedType = dyn_cast<ShapedType>(input.getType());
+      shapedType && shapedType.getRank() == 0) {
+    input = rewriter.create<tensor::ExtractOp>(loc, input, ArrayRef<Value>{});
+  }
+  const bool isTensor = isa<TensorType>(dst.getType());
+  auto resultTypeRange = isTensor ? TypeRange(dst.getType()) : TypeRange();
+  // Use the scalar-broadcast builder directly instead of materializing an
+  // explicit empty `broadcast_dims` attribute. This matches the verifier-clean
+  // textual form `hivm.hir.vbrc ins(%scalar) outs(%dst)` and avoids
+  // reintroducing vector-broadcast semantics while normalizing scalar-like
+  // inputs.
+  auto fillOp = rewriter.create<hivm::VBrcOp>(loc, resultTypeRange, input, dst);
+  return isTensor ? fillOp->getResult(0) : dst;
 }
 } // namespace mlir::hivm

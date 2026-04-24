@@ -16,98 +16,52 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
-#include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
+#include "bishengir/Transforms/Normalize/NormalizeScalarTemplate.h"
 
 namespace mlir::hfusion {
 
-template <typename OpType>
-struct NormalizeScalarLikeTensorOp : public OpRewritePattern<OpType> {
-public:
-  using OpRewritePattern<OpType>::OpRewritePattern;
-  LogicalResult matchAndRewrite(OpType op,
-                                PatternRewriter &rewriter) const override {
-    bool isConverted = false;
-    SmallVector<Value> inputsNew;
-    for (auto inp : op.getInputs()) {
-      auto inpNew = singleElemDenseTensorToScalar(inp, rewriter);
-      if (inpNew.has_value()) {
-        inputsNew.push_back(*inpNew);
-        isConverted = true;
-      } else {
-        inputsNew.push_back(inp);
-      }
-    }
+namespace {
 
-    SmallVector<Value> outputsNew;
-    for (auto out : op.getOutputs()) {
-      auto outNew = singleElemDenseTensorToScalar(out, rewriter);
-      if (outNew.has_value()) {
-        outputsNew.push_back(*outNew);
-        isConverted = true;
-      } else {
-        outputsNew.push_back(out);
-      }
-    }
-
-    if (!isConverted)
-      return failure();
-
-    IRMapping mapper;
-    mapper.map(op.getInputs(), ValueRange(inputsNew));
-    mapper.map(op.getOutputs(), ValueRange(outputsNew));
-
-    Operation *clonedOp = rewriter.clone(*op, mapper);
-    rewriter.replaceOp(op, clonedOp);
-    return success();
+/// Normalize scalar-like HFusion ops by scalarizing single-element dense tensor
+/// constants on every input/init slot and by rebuilding scalar-like broadcasts
+/// through `createFillOp`.
+struct HFusionNormalizeScalarTraits : public NormalizeTraitsBase {
+  // HFusion scalar normalize does not have vector-only operand slots, so every
+  // input can be scalarized when it is a single-element dense tensor constant.
+  static bool shouldKeepInputShaped(Operation * /*op*/, unsigned /*inputIdx*/) {
+    return false;
   }
+
+  // HFusion scalar normalize also scalarizes single-element init tensors.
+  static bool shouldKeepInitShaped() {
+    return false;
+  }
+
+  // HFusion only accepts rank-0 / rank-1 single-element dense constants on the
+  // broadcast-input path; multi-rank all-ones tensors stay untouched here.
+  static bool allowMultiRankUnitDenseBroadcastInput() { return false; }
 };
 
-/// Convert linalg.broadcast to linalg.fill if input operand only has one elem.
-struct NormalizeScalarLikeTensorLinalgBrcOp
-    : public OpRewritePattern<linalg::BroadcastOp> {
-public:
-  using OpRewritePattern<linalg::BroadcastOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(linalg::BroadcastOp op,
-                                PatternRewriter &rewriter) const override {
-    auto optInpNew = singleElemDenseTensorToScalar(op.getInput(), rewriter);
-    if (!optInpNew.has_value())
-      return failure();
+template <typename... Ops>
+void addScalarLikeTensorPatterns(RewritePatternSet &patterns) {
+  addNormalizeScalarLikeTensorOpPatterns<HFusionNormalizeScalarTraits, Ops...>(
+      patterns);
+}
 
-    auto fillOp = rewriter.create<linalg::FillOp>(
-        op->getLoc(), ValueRange(*optInpNew), op.getInit());
-    rewriter.replaceOp(op, fillOp);
-    return success();
-  }
-};
+template <typename... Ops>
+void addScalarLikeBroadcastPatterns(RewritePatternSet &patterns) {
+  addNormalizeScalarLikeTensorBrcOpPatterns<
+      HFusionNormalizeScalarTraits, Ops...>(patterns);
+}
 
-/// Convert linalg.broadcast to linalg.fill if input operand only has one elem.
-/// necessary normalization to break cycle on infinite loop of propagate reshape
-/// pass.
-struct NormalizeScalarLikeTensorLinalgBrcOpNonDense
-    : public OpRewritePattern<linalg::BroadcastOp> {
-public:
-  using OpRewritePattern<linalg::BroadcastOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(linalg::BroadcastOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op.getInput().getDefiningOp<arith::ConstantOp>())
-      return failure();
-    auto inputShape = op.getInput().getType().getShape();
-    if (ShapedType::isDynamicShape(inputShape))
-      return failure();
-    if (llvm::any_of(inputShape, [](auto &val) { return val != 1; }))
-      return failure();
-    SmallVector<Value> indices;
-    indices.resize(
-        inputShape.size(),
-        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0).getResult());
-    auto extractOp = rewriter.create<tensor::ExtractOp>(op->getLoc(),
-                                                        op.getInput(), indices);
-    auto fillOp = rewriter.create<linalg::FillOp>(
-        op->getLoc(), extractOp.getResult(), op.getInit());
-    rewriter.replaceOp(op, fillOp);
-    return success();
-  }
-};
+template <typename... Ops>
+void addNonDenseScalarLikeBroadcastPatterns(RewritePatternSet &patterns) {
+  addNormalizeScalarLikeTensorBrcOpNonDensePatterns<
+      HFusionNormalizeScalarTraits, Ops...>(patterns);
+}
+
+} // namespace
 
 /// normalize i8/i32 CompareOp
 ///   i8 -> f16
@@ -120,26 +74,17 @@ public:
 ///   hfusion.compare ins(%cast1, %cast2 : tensor<6x6xi64>, tensor<6x6xi64>)
 
 void populateNormalizeScalarLikeHFusionPatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeScalarLikeTensorOp<hfusion::ElemwiseUnaryOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<hfusion::ElemwiseBinaryOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<hfusion::CompareOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<hfusion::SelectOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<hfusion::CastOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<linalg::ElemwiseUnaryOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorOp<linalg::ElemwiseBinaryOp>>(
-      patterns.getContext());
-  patterns.add<NormalizeScalarLikeTensorLinalgBrcOp>(patterns.getContext());
+  addScalarLikeTensorPatterns<hfusion::ElemwiseUnaryOp,
+                              hfusion::ElemwiseBinaryOp, hfusion::CompareOp,
+                              hfusion::SelectOp, hfusion::CastOp,
+                              linalg::ElemwiseUnaryOp,
+                              linalg::ElemwiseBinaryOp>(patterns);
+  addScalarLikeBroadcastPatterns<linalg::BroadcastOp>(patterns);
 }
 
-void populateNormalizeFinalScalarPatterns(RewritePatternSet &patterns) {
+void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
+    RewritePatternSet &patterns) {
   if (archIsRegbased)
-    patterns.add<NormalizeScalarLikeTensorLinalgBrcOpNonDense>(
-        patterns.getContext());
+    addNonDenseScalarLikeBroadcastPatterns<linalg::BroadcastOp>(patterns);
 }
 } // namespace mlir::hfusion

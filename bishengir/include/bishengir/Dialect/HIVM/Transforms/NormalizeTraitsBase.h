@@ -1,4 +1,4 @@
-//===-------- NormalizeTraitsBase.h ------------------------------*- C++ -*-===//
+//===- NormalizeTraitsBase.h -----------------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +45,9 @@ public:
 
   static Value castTo(PatternRewriter &rewriter, Location loc, Value input,
                       Type targetElemType, CastRoundKind kind);
+
+  static Value createFillOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Value dst);
 };
 
 } // namespace mlir::hivm

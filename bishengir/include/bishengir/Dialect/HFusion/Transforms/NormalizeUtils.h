@@ -130,13 +130,6 @@ Value genPolyExpr(PatternRewriter &rewriter, Location loc,
                   const llvm::SmallVector<double> &numerCoeff,
                   bool enableLastMulTerm = true);
 
-// ScalerHelpers.cpp
-std::optional<Value> getScalarFromConstantOp(PatternRewriter &rewriter,
-                                             Location loc,
-                                             arith::ConstantOp constant);
-std::optional<Value> singleElemDenseTensorToScalar(Value operand,
-                                                   PatternRewriter &rewriter);
-
 // TypeHelpers.cpp
 bool isI1ElemType(Type type);
 bool isI8ElemType(Type type);

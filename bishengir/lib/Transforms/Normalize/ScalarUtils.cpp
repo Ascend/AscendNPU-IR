@@ -1,4 +1,4 @@
-//===- ScalarHelpers.cpp --------------------------------------------*- C++ -*-===//
+//===- ScalarUtils.cpp ------------------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Transforms/Normalize/ScalarUtils.h"
 
-namespace mlir::hfusion {
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+
+namespace mlir {
 
 /// Convert dense tensor/memref with only 1 element to scalar.
-std::optional<Value>
-getScalarFromConstantOp(PatternRewriter &rewriter, Location loc,
-                        arith::ConstantOp constant) {
+std::optional<Value> getScalarFromConstantOp(PatternRewriter &rewriter,
+                                             Location loc,
+                                             arith::ConstantOp constant) {
   auto denseAttr = dyn_cast<DenseIntOrFPElementsAttr>(constant.getValue());
   if (!denseAttr) {
     return std::nullopt;
@@ -42,8 +45,8 @@ getScalarFromConstantOp(PatternRewriter &rewriter, Location loc,
 }
 
 /// Convert dense tensor/memref with only 1 element to scalar.
-std::optional<Value>
-singleElemDenseTensorToScalar(Value operand, PatternRewriter &rewriter) {
+std::optional<Value> singleElemDenseTensorToScalar(Value operand,
+                                                   PatternRewriter &rewriter) {
   auto constantOp = operand.getDefiningOp<arith::ConstantOp>();
   if (!constantOp)
     return std::nullopt;
@@ -59,4 +62,24 @@ singleElemDenseTensorToScalar(Value operand, PatternRewriter &rewriter) {
   return getScalarFromConstantOp(rewriter, operand.getLoc(), constantOp);
 }
 
-} // namespace mlir::hfusion
+/// Convert a dense constant tensor with exactly one static element to a scalar.
+///
+/// This is broader than singleElemDenseTensorToScalar: it also accepts
+/// multi-rank unit tensors such as tensor<1x1xf32>. That shape appears on the
+/// HIVM path when a scalar-like broadcast source has already been rank-expanded
+/// during HFusion-to-HIVM conversion.
+std::optional<Value> unitDenseTensorToScalar(Value operand,
+                                             PatternRewriter &rewriter) {
+  auto constantOp = operand.getDefiningOp<arith::ConstantOp>();
+  if (!constantOp)
+    return std::nullopt;
+
+  auto shapedType = dyn_cast<ShapedType>(constantOp.getType());
+  if (!shapedType || !shapedType.hasStaticShape() ||
+      shapedType.getNumElements() != 1)
+    return std::nullopt;
+
+  return getScalarFromConstantOp(rewriter, operand.getLoc(), constantOp);
+}
+
+} // namespace mlir

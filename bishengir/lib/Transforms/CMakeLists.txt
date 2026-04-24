@@ -7,6 +7,7 @@ add_bishengir_library(BishengIRTransform
   InjectIR.cpp
   InjectIRInstrumentation.cpp
   LowerToCPUBackend.cpp
+  Normalize/ScalarUtils.cpp
   Transforms.cpp
 
   ADDITIONAL_HEADER_DIRS

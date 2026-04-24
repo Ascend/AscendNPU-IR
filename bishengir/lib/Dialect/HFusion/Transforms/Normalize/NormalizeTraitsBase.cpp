@@ -148,4 +148,10 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::castTo(
   hfusion::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
   return hfusion::castTo(rewriter, input, targetElemType, roundMode);
 }
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createFillOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst) {
+  auto fillOp = rewriter.create<linalg::FillOp>(loc, ValueRange{input}, dst);
+  return fillOp->getResult(0);
+}
 } // namespace mlir::hfusion

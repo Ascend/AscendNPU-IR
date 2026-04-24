@@ -89,7 +89,8 @@ void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizePreScalarCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHFusionPatterns(RewritePatternSet &patterns);
-void populateNormalizeFinalScalarPatterns(RewritePatternSet &patterns);
+void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
+    RewritePatternSet &patterns);
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns);
 void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns);
 void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns);
