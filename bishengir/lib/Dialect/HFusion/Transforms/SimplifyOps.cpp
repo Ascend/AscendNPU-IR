@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Matchers.h"
@@ -26,6 +27,56 @@ struct SimplifyOpsPass : public impl::SimplifyOpsBase<SimplifyOpsPass> {
 public:
   void runOnOperation() final;
 };
+
+bool involvesLinalgMatmulImpl(
+    mlir::Value value,
+    llvm::SmallPtrSetImpl<mlir::Value> &seenValues,
+    llvm::SmallPtrSetImpl<mlir::Operation *> &seenOps) {
+  if (!seenValues.insert(value).second)
+    return false;
+
+  auto defOp = value.getDefiningOp();
+  if (!defOp)
+    return false;
+
+  if (!seenOps.insert(defOp).second)
+    return false;
+
+  if (llvm::isa<mlir::linalg::MatmulOp>(defOp))
+    return true;
+
+  if (auto forOp = llvm::dyn_cast<mlir::scf::ForOp>(defOp)) {
+    auto result = llvm::cast<mlir::OpResult>(value);
+    unsigned resultNumber = result.getResultNumber();
+
+    auto yieldOp = llvm::cast<mlir::scf::YieldOp>(
+        forOp.getBody()->getTerminator());
+
+    if (involvesLinalgMatmulImpl(yieldOp.getOperand(resultNumber),
+                                 seenValues, seenOps))
+      return true;
+
+    if (resultNumber < forOp.getInitArgs().size() &&
+        involvesLinalgMatmulImpl(forOp.getInitArgs()[resultNumber],
+                                 seenValues, seenOps))
+      return true;
+
+    return false;
+  }
+
+  for (mlir::Value operand : defOp->getOperands()) {
+    if (involvesLinalgMatmulImpl(operand, seenValues, seenOps))
+      return true;
+  }
+
+  return false;
+}
+
+bool involvesLinalgMatmul(mlir::Value value) {
+  llvm::SmallPtrSet<mlir::Value, 32> seenValues;
+  llvm::SmallPtrSet<mlir::Operation *, 32> seenOps;
+  return involvesLinalgMatmulImpl(value, seenValues, seenOps);
+}
 
 // TODO: Optimize to solve it generally by canonicalize
 bool isSafeToSimplifyCast(CastOp castOp) {
@@ -63,10 +114,94 @@ public:
       return inputCastOp;
     };
 
+    // Helper to test for fastmath<contract> attribute.
+    auto hasFastMathContract = [](CastOp op) -> bool {
+      auto fastMathAttr = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>(
+          mlir::arith::FastMathFlagsAttr::name);
+      if (!fastMathAttr)
+        return false;
+
+      using arith::FastMathFlags;
+      FastMathFlags flags = fastMathAttr.getValue();
+
+      return mlir::arith::bitEnumContainsAll(flags, FastMathFlags::contract);
+    };
+
     // Process ops bottom-to-top.
+
+    // Helper to get precision rank for float types (higher = more precision)
+    auto getPrecisionRank = [](Type type) -> int {
+      if (type.isBF16())
+        return 0; // lowest precision
+      if (type.isF16())
+        return 1;
+      if (type.isF32())
+        return 2;
+      if (type.isF64())
+        return 3; // highest precision
+      return -1;  // non-float type
+    };
+
+    // Helper to check if chain has precision down-then-up pattern
+    auto hasPrecisionDownUpPattern =
+        [&getPrecisionRank](SmallVector<CastOp> &chain) -> bool {
+      if (chain.size() < 2)
+        return false;
+
+      // Track if we've seen a precision decrease
+      bool hasDecreased = false;
+
+      for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
+        Type inType = getElementTypeOrSelf(chain[i].getInputs()[0].getType());
+        Type outType = getElementTypeOrSelf(chain[i].getOutputs()[0].getType());
+
+        int inRank = getPrecisionRank(inType);
+        int outRank = getPrecisionRank(outType);
+
+        // Skip if not float-to-float cast
+        if (inRank < 0 || outRank < 0)
+          continue;
+
+        if (outRank < inRank) {
+          // Precision decrease
+          hasDecreased = true;
+        } else if (outRank > inRank && hasDecreased) {
+          // Precision increase after a decrease - this is the pattern we're
+          // looking for
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Helper to check if a cast is precision upcast (safe, no precision loss)
+    auto isPrecisionUpcast = [&getPrecisionRank](CastOp op) -> bool {
+      Type inType = getElementTypeOrSelf(op.getInputs()[0].getType());
+      Type outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
+      int inRank = getPrecisionRank(inType);
+      int outRank = getPrecisionRank(outType);
+      // Precision upcast means output has higher or equal precision
+      return inRank >= 0 && outRank >= 0 && outRank >= inRank;
+    };
+
+    // Helper to check if all casts in chain have fastmath contract
+    // Precision upcasts are allowed without fastmath contract since they are
+    // safe and don't cause precision loss
+    auto allHaveFastMathContract = [&isPrecisionUpcast, &hasFastMathContract](
+                                       SmallVector<CastOp> &chain) -> bool {
+      for (CastOp op : chain) {
+        // Skip precision upcasts - they are safe
+        if (isPrecisionUpcast(op))
+          continue;
+        if (!hasFastMathContract(op))
+          return false;
+      }
+      return true;
+    };
 
     // Traverse the chain of input cast ops to see if an op with the same
     // input types can be found.
+    SmallVector<CastOp> castChain;
     CastOp nextCast = castOp;
     while (nextCast) {
       // In total cast chain, if one cast of chain has the same type input and
@@ -75,10 +210,21 @@ public:
       if (nextCast.getInputs().getTypes() == nextCast.getResultTypes())
         break;
 
+      castChain.push_back(nextCast);
+
       if (nextCast.getInputs().getTypes() == castOp.getResultTypes()) {
         // Found a cast where the input types match the output types of the
         // matched op. We can directly use those inputs and the matched op can
         // be removed.
+        // Check if chain has precision down-then-up pattern, if so all casts
+        // must have fastmath contract to allow optimization.
+        if (hasPrecisionDownUpPattern(castChain) &&
+            !allHaveFastMathContract(castChain)) {
+          if (!involvesLinalgMatmul(castChain[0].getOperand(0))) {
+            break;
+          }
+        }
+
         rewriter.replaceOp(castOp, nextCast.getInputs());
         return success();
       }
