@@ -1,0 +1,152 @@
+name: Build ascendnpu-ir Wheels (aarch64)
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build_binaries:
+    runs-on: [self-hosted, Linux, ARM64]
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Install build dependencies
+        run: |
+          yum install -y clang lld ccache
+
+          /opt/python/cp310-cp310/bin/python3 -m pip install ninja
+          cp /opt/_internal/cpython-3.10.20/bin/ninja /usr/local/bin/
+          chmod +x /usr/local/bin/ninja
+
+      - name: Download and extract CANN toolkit
+        run: |
+          curl -LO https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.0.0/Ascend-cann-toolkit_9.0.0_linux-aarch64.run
+          bash ./Ascend-cann-toolkit_9.0.0_linux-aarch64.run --noexec --extract=cann900
+          bash cann900/run_package/cann-bisheng-compiler_*.run --noexec --extract=bisheng_toolkit
+          echo "--- 验证 bisheng compiler ---"
+          test -f bisheng_toolkit/bisheng_compiler/bin/bisheng || echo "ERROR: bisheng not found"
+          bisheng_toolkit/bisheng_compiler/bin/bisheng --version
+
+      - name: Verify tools
+        run: |
+          echo "--- 验证工具 ---"
+          which cmake && cmake --version
+          which ninja && ninja --version
+          which clang && clang --version
+          which lld && ld.lld --version
+
+      - name: Initialize submodules
+        run: |
+          git submodule update --init --depth 1 third-party/llvm-project
+          git submodule update --init --depth 1 third-party/torch-mlir
+
+      - name: Cache LLVM build directory
+        uses: actions/cache@v4
+        with:
+          path: build/
+          key: llvm-build-aarch64-${{ hashFiles('.gitmodules') }}-${{ hashFiles('build-tools/patches/**/*.patch') }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-aarch64-${{ hashFiles('.gitmodules') }}
+          restore-keys: |
+            ccache-aarch64-
+
+      - name: Build ascendnpu-ir binaries
+        run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache
+          chmod +x build-tools/build.sh
+          build-tools/build.sh -o ./build \
+            --add-cmake-options="-DCMAKE_LINKER=LLD" \
+            --add-cmake-options="-DLLVM_ENABLE_LLD=ON" \
+            -t \
+            --bisheng-compiler=$GITHUB_WORKSPACE/bisheng_toolkit/bisheng_compiler/bin \
+            --build-torch-mlir \
+            --safety-options \
+            --safety-ld-options \
+            --skip-rpath \
+            --apply-patches
+
+      - name: Prepare artifacts for upload
+        run: |
+          mkdir -p bishengir-output/bin
+          cp build/install/bin/bishengir-compile bishengir-output/bin/
+          cp build/install/bin/bishengir-opt bishengir-output/bin/
+          if [ -d build/install/lib ]; then
+            mkdir -p bishengir-output/lib
+            cp -r build/install/lib/* bishengir-output/lib/ 2>/dev/null || true
+          fi
+
+      - name: Upload binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-aarch64
+          path: bishengir-output/
+
+  build_wheels:
+    runs-on: [self-hosted, Linux, ARM64]
+    needs: build_binaries
+    container:
+      image: quay.io/pypa/manylinux_2_28_aarch64:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory '*'
+
+      - name: Download binaries artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-aarch64
+          path: bishengir-output/
+
+      - name: Determine version from git tag
+        id: get_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          TAG=${TAG#v}
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Build wheels for all Python versions
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          sed -i "s/version = \".*\"/version = \"${VERSION}\"/" bishengir/python/wheel/pyproject.toml
+
+          for PY_VERSION in "3.9" "3.10" "3.11" "3.12"; do
+            PYBIN_VERSION=${PY_VERSION//./}
+            PYBIN=/opt/python/cp${PYBIN_VERSION}-cp${PYBIN_VERSION}
+            echo "=== Building wheel for Python ${PY_VERSION} ==="
+            export PATH="$PYBIN/bin:$PATH"
+            python -m pip install setuptools wheel build auditwheel
+            chmod +x build-tools/build_wheel.sh
+            build-tools/build_wheel.sh \
+              --build-dir bishengir-output \
+              --output-dir "dist-cp${PYBIN_VERSION}" \
+              --clean
+          done
+
+          mkdir -p dist
+          for d in dist-cp*/; do
+            cp ${d}*.whl dist/ 2>/dev/null || true
+          done
+          cp dist-cp39/*.tar.gz dist/ 2>/dev/null || true
+          echo "=== All wheels ==="
+          ls -lh dist/
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-aarch64
+          path: dist/
