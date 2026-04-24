@@ -248,7 +248,7 @@ Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
       matrixB, batchmmOp.getInitCondition(), batchmmOp.getRealM(),
       batchmmOp.getRealK(), batchmmOp.getRealN(), /*C=*/newOutput,
       batchmmOp.getPerChannelBias(), batchmmOp.getATransposeAttr(),
-      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr());
+      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr(), batchmmOp.getEnable_I4Attr());
   if (batchmmOp->getAttr(fixpipeAlreadyInserted)) {
     tiledMmad->setAttr(fixpipeAlreadyInserted,
                        batchmmOp->getAttr(fixpipeAlreadyInserted));

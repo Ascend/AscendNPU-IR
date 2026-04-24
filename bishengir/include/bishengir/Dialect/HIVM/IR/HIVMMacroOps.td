@@ -93,6 +93,9 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         to HF32 by CUBE before matrix multiplication, which achieves
                         double performance of MMAD.F32 but losing precision.
                        }]>:$enable_HF32,
+                       Arg<OptionalAttr<UnitAttr>, [{
+                        Was i4 -> i8 conversion
+                       }]>:$enable_I4,
                        OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
                        );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
@@ -154,7 +157,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                    CArg<"Value", "{}">:$per_channel_bias,
                    CArg<"UnitAttr", "{}">:$a_transpose,
                    CArg<"UnitAttr", "{}">:$b_transpose,
-                   CArg<"UnitAttr", "{}">:$enable_HF32)>
+                   CArg<"UnitAttr", "{}">:$enable_HF32,
+                   CArg<"UnitAttr", "{}">:$enable_I4)>
   ];
 
   let hasVerifier = 1;

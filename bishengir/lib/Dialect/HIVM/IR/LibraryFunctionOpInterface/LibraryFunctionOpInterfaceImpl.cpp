@@ -288,7 +288,7 @@ std::string getVGatherMaskOpLibraryCallName(VGatherMaskOp concreteOp,
   ss << baseName.data() << "_1d_" << getTypeName(concreteOp.getLoc(), elemType);
   return ss.str();
 }
-  
+
 std::string getDebugOpLibraryCallName(DebugOp concreteOp,
                                       std::optional<bool> /*isOpsAligned*/) {
   std::string callName = concreteOp.getDebugtype().str();
@@ -888,6 +888,7 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
   auto transposeA = concreteOp.getATranspose();
   auto transposeB = concreteOp.getBTranspose();
   auto enableHF32 = concreteOp.getEnable_HF32();
+  auto enableI4 = concreteOp.getEnable_I4();
   std::string transName = "";
   if (transposeA.has_value()) {
     transName = transName + "_ta";
@@ -898,7 +899,13 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
   if (enableHF32.has_value()) {
     transName = transName + "_hf32";
   }
+
+  if (enableI4.has_value()) {
+    assert(!transposeA.has_value() && "i4 mmad doesn't support transpose A");
+    transName = transName + "_i4";
+  }
   if (concreteOp.getPerChannelBias()) {
+    // TODO: change biasTypeName for int4 case
     auto biasTypeName = getTypeName(
         concreteOp.getLoc(),
         getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
