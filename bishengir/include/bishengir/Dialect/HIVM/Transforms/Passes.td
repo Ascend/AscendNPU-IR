@@ -754,12 +754,16 @@ def InsertL12UBForDebug : Pass<"hivm-insert-l12ub-for-debug"> {
 def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect", "mlir::scope::ScopeDialect"];
   let options = [Option<"enableAutoBalance", "enable-auto-balance", "bool",
                         /*default=*/"false", "DEPRICATED">,
                  Option<"pipelineDepth", "pipeline-depth", "int",
                         /*default=*/"-1",
                         "Specify pipeline depth for cv-pipelining.">,
+                 Option<"enableSkewMode", "enable-skew-mode", "bool",
+                        /*default=*/"false",
+                        "Enable skew-mode cv-pipelining instead of the "
+                        "default unroll-mode.">,
                  Option<"enableLazyLoading", "enable-lazy-loading", "bool",
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "

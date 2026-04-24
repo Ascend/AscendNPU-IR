@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -70,16 +71,20 @@ struct WorkItem {
 
   // Reconstructed original induction variable
   Value reconstructedIV;
+
+  // ScopeOp for single cube or vector
+  scope::ScopeOp scopeOp;
 #ifndef NDEBUG
   int id;
 #endif
 };
 
 struct CVPipelineImpl {
-  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
-                 bool enableLazyLoading = false)
-      : pipelineLoop(loop), builder(loop->getContext()),
-        numMultibuffer(multibuffer), enableLazyLoading(enableLazyLoading),
+  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, bool skewMode,
+                 bool enableLazyLoading)
+      : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
+        numMultibuffer(multibuffer), enableSkewMode(skewMode),
+        enableLazyLoading(enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
                     loop.getYieldedValues().end()) {}
 
@@ -100,20 +105,39 @@ private:
 
   LogicalResult traceDependentOps(WorkItem *item);
 
-  void traceMemrefSubnet(Operation *start,
-                         SmallVector<Operation *> &workingStack);
+  LogicalResult traceMemrefSubnet(Operation *start,
+                                  SmallVector<Operation *> &workingStack);
+
+  LogicalResult traceOperands(Value operand, WorkItem *item,
+                              SmallVector<Operation *> &workingStack);
 
   void collectAtomicEffects();
 
   void markOutputs();
 
-  void expandOutputInits(WorkItem *item);
+  LogicalResult expandOutputInits(WorkItem *item);
+  LogicalResult expandOutputInitsForPreload(WorkItem *item);
 
-  void createNewLoops();
+  LogicalResult createNewLoops();
 
   void mapOpToItem(Operation *op, WorkItem *item);
 
-  void migrateOps();
+  LogicalResult migrateOps();
+
+  LogicalResult createNewLoopsForPreloadWithScopes();
+  LogicalResult markScopesForPreload();
+
+  // Undo partial IR changes by erasing newLoop if it was created.
+  void revert();
+
+  Value createSubview(OpBuilder &builder, Location loc, Value from, Type to,
+                      Value iv);
+  Value createToTensor(OpBuilder &builder, Location loc, Value src);
+  // Returns failure() on malformed input. On success, the returned Value may
+  // still be nullptr when there is no masking subview to update.
+  FailureOr<Value> updateMaskingSubview(OpBuilder &builder, Location loc,
+                                        Value expanded, OpOperand *initOperand,
+                                        Value iv);
 
   // ===========================================================================
   // Data members
@@ -129,6 +153,9 @@ private:
 
   // Number of multibuffer/pipeline stages/unroll iterations
   int numMultibuffer;
+
+  // Use skew-mode pipelining instead of the default unroll-mode
+  bool enableSkewMode;
 
   // When true, load ops are cloned into each consuming work item rather than
   // passing their results via expanded multi-buffered tensors.
@@ -177,6 +204,10 @@ private:
   // Mapping from the original pipelineLoop to the newLoop to guide the cloning
   // process
   IRMapping globalIRMap;
+
+  DenseMap<Value, Value> localOuputsToRedurnRes;
+
+  DenseSet<Operation *> toErase;
 };
 
 struct CVPipeliningPass
@@ -220,7 +251,11 @@ static Value traceValueDef(Value v) {
 
   // In case of Block Argument
   auto blkArg = dyn_cast<BlockArgument>(v);
-  assert(blkArg && "Expecting non-OpResult value to be block argument");
+  if (!blkArg) {
+    LLVM_DEBUG(dbgs() << "[traceValueDef] expected block argument, got: " << v
+                      << '\n');
+    return nullptr;
+  }
   Operation *parent = blkArg.getOwner()->getParentOp();
   auto loop = dyn_cast<LoopLikeOpInterface>(parent);
   if (!loop)
@@ -282,7 +317,7 @@ static bool illegalRegionedOp(Operation *op) {
     return WalkResult::advance();
   });
   if (result.wasInterrupted()) {
-    op->emitWarning("CV-Pipelining: Unsupported regioned op");
+    op->emitWarning("[cv-pipelining] unsupported regioned op");
     return true;
   }
 
@@ -363,8 +398,8 @@ static Value createExtractSlice(OpBuilder &builder, Location loc, Value from,
                                                 sizes, strides);
 }
 
-static Value createSubview(OpBuilder &builder, Location loc, Value from,
-                           Type to, Value iv) {
+Value CVPipelineImpl::createSubview(OpBuilder &builder, Location loc,
+                                    Value from, Type to, Value iv) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -373,14 +408,20 @@ static Value createSubview(OpBuilder &builder, Location loc, Value from,
   offsets.append(targetTy.getRank(), const0);
   sizes.push_back(const1);
   for (int64_t dim : targetTy.getShape()) {
-    assert(!ShapedType::isDynamic(dim));
+    if (ShapedType::isDynamic(dim)) {
+      pipelineLoop->emitWarning(
+          "[cv-pipelining] unexpected dynamic dim in target memref");
+      return nullptr;
+    }
     sizes.push_back(builder.getIndexAttr(dim));
   }
   strides.append(targetTy.getRank() + 1, const1);
   int64_t offset;
   SmallVector<int64_t> layoutStrides;
-  if (getStridesAndOffset(targetTy, layoutStrides, offset).failed())
-    llvm_unreachable("Unexpected memref layout");
+  if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
+    pipelineLoop->emitWarning("[cv-pipelining] unexpected memref layout");
+    return nullptr;
+  }
   auto layout = StridedLayoutAttr::get(builder.getContext(),
                                        ShapedType::kDynamic, layoutStrides);
   Attribute srcMemSpace = cast<MemRefType>(from.getType()).getMemorySpace();
@@ -501,8 +542,9 @@ void CVPipelineImpl::populateLoopCarriedDependencies() {
 
 /// Helper to trace the alloc (if within pipelineLoop), toTensor, and
 /// potentially various casts along the way
-void CVPipelineImpl::traceMemrefSubnet(Operation *start,
-                                       SmallVector<Operation *> &workingStack) {
+LogicalResult
+CVPipelineImpl::traceMemrefSubnet(Operation *start,
+                                  SmallVector<Operation *> &workingStack) {
   // When we get here, `start` should be one of three ops:
   // 1. Fixpipe
   // 2. Copy
@@ -527,7 +569,8 @@ void CVPipelineImpl::traceMemrefSubnet(Operation *start,
             bufferization::ToTensorOp, tensor::ExtractSliceOp>(defining))
       defining = defining->getOperand(0).getDefiningOp();
     else
-      llvm_unreachable("Unexpected memref op in chain");
+      return defining->emitWarning(
+          "[cv-pipelining] unexpected memref op in chain");
   }
   SmallVector<Operation *> userTraceStack = {start};
   bufferization::ToTensorOp toTensor = nullptr;
@@ -537,12 +580,17 @@ void CVPipelineImpl::traceMemrefSubnet(Operation *start,
     workingStack.push_back(def);
     for (Operation *usr : def->getUsers()) {
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(usr)) {
-        assert(!writer && "Expecting only one op writing to a defined memref");
+        if (writer)
+          return usr->emitWarning("[cv-pipelining] expecting only one op "
+                                  "writing to a defined memref");
         writer = dps;
         continue;
       }
       if (auto tt = dyn_cast<bufferization::ToTensorOp>(usr)) {
-        assert(!toTensor && "Expecting only one toTensor for a defined memref");
+        if (toTensor)
+          return usr->emitWarning(
+              "[cv-pipelining] expecting only one toTensor for a "
+              "defined memref");
         toTensor = tt;
         workingStack.push_back(usr);
         continue;
@@ -556,10 +604,12 @@ void CVPipelineImpl::traceMemrefSubnet(Operation *start,
   }
   if (toTensor && !writer) {
     LLVM_DEBUG(dbgs() << "toTensor: "; toTensor->dump());
-    llvm_unreachable("Expecting toTensor to have dps op to write to it");
+    return toTensor->emitWarning(
+        "[cv-pipelining] expecting toTensor to have dps op to write to it");
   }
   if (toTensor && writer)
     outputMemrefMap[toTensor] = writer;
+  return success();
 }
 
 // Given memref value, populate users with all operations that uses any aliasing
@@ -568,6 +618,8 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
   SmallVector<Operation *> traceStack;
   DenseSet<Operation *> visited;
   Value rootVal = traceValueDef(memrefVal);
+  if (!rootVal)
+    return;
   traceStack.append(rootVal.user_begin(), rootVal.user_end());
   while (!traceStack.empty()) {
     Operation *op = traceStack.pop_back_val();
@@ -584,17 +636,19 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
   }
 }
 
-static void traceOperands(Value operand, scf::ForOp pipelineLoop,
-                          WorkItem *item,
-                          SmallVector<Operation *> &workingStack) {
+LogicalResult
+CVPipelineImpl::traceOperands(Value operand, WorkItem *item,
+                              SmallVector<Operation *> &workingStack) {
   if (!operand)
-    return;
+    return success();
   Operation *defining = getContainedParent(pipelineLoop, operand);
   if (item->ops.contains(defining))
-    return;
+    return success();
   if (!defining) {
     auto iterArg = dyn_cast<BlockArgument>(operand);
-    assert(iterArg && "Expecting non-op-defined value to be block argument");
+    if (!iterArg)
+      return pipelineLoop->emitWarning(
+          "[cv-pipelining] expected non-op-defined value to be block argument");
     for (Operation *usr : iterArg.getUsers()) {
       if (isa<DebugOp>(usr) && !item->ops.contains(usr) &&
           usr->getParentOp() == pipelineLoop)
@@ -602,18 +656,18 @@ static void traceOperands(Value operand, scf::ForOp pipelineLoop,
     }
     if (iterArg.getOwner()->getParentOp() != pipelineLoop ||
         iterArg.getArgNumber() == 0)
-      return;
+      return success();
     // Need to pull defining op into this work item to guarentee safety,
     // should already be guarenteed by extractAvailableOps
     if (isa<TensorType>(operand.getType()))
-      return;
+      return success();
     Value yieldVal = pipelineLoop.getTiedLoopYieldedValue(iterArg)->get();
     defining = yieldVal.getDefiningOp();
     if (!defining || defining->getParentOp() != pipelineLoop)
-      return;
+      return success();
   }
   if (defining->getParentOp() != pipelineLoop)
-    return;
+    return success();
   // If defining is a memref, then trace everything that also uses that memref.
   if (isa<MemRefType>(operand.getType()))
     memrefDFS(operand, workingStack);
@@ -621,6 +675,7 @@ static void traceOperands(Value operand, scf::ForOp pipelineLoop,
   // load/fixpipe/copy
   if (!item->ops.contains(defining))
     workingStack.push_back(defining);
+  return success();
 }
 
 /// Trace each op in the initial set of ops in each WorkItem, get non-HIVM ops
@@ -644,7 +699,8 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
         // Load ops are pulled into their consuming work items, apart from that,
         // if we get here that means we depend on an op that have not satisfied
         // their dependency
-        return op->emitWarning("Cannot pipeline op due to dependency");
+        return op->emitWarning(
+            "[cv-pipelining] cannot pipeline op due to dependency");
     }
     // Other than core ops, we can skip them if we already inserted them into
     // this work item
@@ -655,13 +711,12 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     // to_tensor ops, but with lazy loading we lift the restriction for
     // to_tensor ops whose backing writer is a LoadOp: those are cloned into
     // every consuming work item independently.
-    bool skipToTensor = isa<bufferization::ToTensorOp>(op) &&
-                        opToWorkItemMap.contains(op);
+    bool skipToTensor =
+        isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op);
     if (enableLazyLoading && skipToTensor) {
       auto tt = cast<bufferization::ToTensorOp>(op);
       auto it = outputMemrefMap.find(tt);
-      if (it != outputMemrefMap.end() &&
-          isa<LoadOp>(it->second.getOperation()))
+      if (it != outputMemrefMap.end() && isa<LoadOp>(it->second.getOperation()))
         skipToTensor = false;
     }
     if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
@@ -676,26 +731,33 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
 
     // Handle load/fixpipe/copy dealing with memref memref
     if (isa<LoadOp, FixpipeOp>(op) || isCrossCoreCopy(op)) {
-      traceMemrefSubnet(op, workingStack);
+      if (failed(traceMemrefSubnet(op, workingStack)))
+        return failure();
       // Deal with the ins operand
-      traceOperands(op->getOperand(0), pipelineLoop, item, workingStack);
+      if (failed(traceOperands(op->getOperand(0), item, workingStack)))
+        return failure();
       if (auto load = dyn_cast<LoadOp>(op)) {
-        traceOperands(load.getInitCondition(), pipelineLoop, item,
-                      workingStack);
-        traceOperands(load.getLeftPaddingNum(), pipelineLoop, item,
-                      workingStack);
-        traceOperands(load.getRightPaddingNum(), pipelineLoop, item,
-                      workingStack);
-        traceOperands(load.getPadValue(), pipelineLoop, item, workingStack);
+        if (failed(
+                traceOperands(load.getInitCondition(), item, workingStack)) ||
+            failed(
+                traceOperands(load.getLeftPaddingNum(), item, workingStack)) ||
+            failed(
+                traceOperands(load.getRightPaddingNum(), item, workingStack)) ||
+            failed(traceOperands(load.getPadValue(), item, workingStack)))
+          return failure();
       }
       continue;
     }
 
     // Handle nested ops as well
-    op->walk([&](Operation *nestedOp) {
+    WalkResult walkResult = op->walk([&](Operation *nestedOp) {
       for (Value operand : nestedOp->getOperands())
-        traceOperands(operand, pipelineLoop, item, workingStack);
+        if (failed(traceOperands(operand, item, workingStack)))
+          return WalkResult::interrupt();
+      return WalkResult::advance();
     });
+    if (walkResult.wasInterrupted())
+      return failure();
   }
   return success();
 }
@@ -754,7 +816,8 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
         maybeCore = TCoreType::VECTOR;
     }
 
-    assert(maybeCore == TCoreType::VECTOR || maybeCore == TCoreType::CUBE);
+    if (maybeCore != TCoreType::VECTOR && maybeCore != TCoreType::CUBE)
+      return op.emitWarning("[cv-pipelining] unexpected core type for op");
     // Only gather ops of the same core type
     if (((maybeCore == TCoreType::VECTOR || isCrossCoreCopy(&op)) &&
          core == TCoreType::CUBE) ||
@@ -905,8 +968,8 @@ LogicalResult CVPipelineImpl::createWorkItems() {
       for (Operation *op : toBePipelined)
         op->dump();
     });
-    return pipelineLoop->emitWarning(
-        "cannot pipeline loop due to loop carried dependencies");
+    return pipelineLoop->emitWarning("[cv-pipelining] cannot pipeline loop due "
+                                     "to loop carried dependencies");
   }
   if (worklist.size() < 2)
     return failure();
@@ -953,9 +1016,13 @@ void CVPipelineImpl::markOutputs() {
   }
 }
 
-static Value createToTensor(OpBuilder &builder, Location loc, Value src) {
+Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
+                                     Value src) {
   auto memref = dyn_cast<MemRefType>(src.getType());
-  assert(memref && "Expecting creating toTensor from MemRefType");
+  if (!memref) {
+    pipelineLoop->emitWarning("[cv-pipelining] expected MemRefType source");
+    return nullptr;
+  }
   if (memref.getMemorySpace()) {
     auto newMemRef = MemRefType::get(memref.getShape(), memref.getElementType(),
                                      memref.getLayout());
@@ -968,25 +1035,32 @@ static Value createToTensor(OpBuilder &builder, Location loc, Value src) {
 
 /// Expand the localOutputs of each work item by number of multibuffer/pipeline
 /// stages.
-void CVPipelineImpl::expandOutputInits(WorkItem *item) {
+LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(newLoop.getBody());
   for (auto &[output, expanded] : item->localOutputs) {
     Operation *defining = output.getDefiningOp();
-    assert(defining && "Expecting work item outputs to be result of op");
+    if (!defining)
+      return pipelineLoop->emitWarning(
+          "[cv-pipelining] expected work item output to be result of op");
     Location loc = defining->getLoc();
     SmallVector<int64_t> newShape({numMultibuffer});
     bufferization::ToTensorOp toTensor = nullptr;
     // We take the init and expand it
     if (auto dps = dyn_cast<DestinationStyleOpInterface>(defining)) {
-      assert(dps.getNumDpsInits() == 1);
+      if (dps.getNumDpsInits() != 1)
+        return dps->emitWarning(
+            "[cv-pipelining] expected dps op with exactly one init");
       Value init = dps.getDpsInitOperand(0)->get();
       defining = init.getDefiningOp();
-      assert(defining &&
-             "Expecting init operand of dps op to be a result of op");
+      if (!defining)
+        return dps->emitWarning(
+            "[cv-pipelining] expected dps init to be result of op");
       if (isa<tensor::EmptyOp>(defining)) {
         auto origTy = dyn_cast<TensorType>(init.getType());
-        assert(origTy && "Expecting output to be tensor type");
+        if (!origTy)
+          return defining->emitWarning(
+              "[cv-pipelining] expected output to be tensor type");
         auto shapeArr = origTy.getShape();
         newShape.append(shapeArr.begin(), shapeArr.end());
         // TODO: Add support for dynamic dims
@@ -996,13 +1070,18 @@ void CVPipelineImpl::expandOutputInits(WorkItem *item) {
       }
     }
     toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
-    assert(toTensor && "Expecting to_tensor for non-tensor-empty outputs");
+    if (!toTensor)
+      return defining->emitWarning(
+          "[cv-pipelining] expected to_tensor for non-tensor-empty output");
     // Find the alloc
     auto alloc = traceAlloc(toTensor.getMemref());
-    assert(alloc && "Expecting alloc from toTensor");
+    if (!alloc)
+      return toTensor->emitWarning(
+          "[cv-pipelining] expected alloc from toTensor");
     auto origTy = alloc.getMemref().getType();
-    assert(origTy.hasStaticShape() &&
-           "Expecting all temporary buffers to be static");
+    if (!origTy.hasStaticShape())
+      return alloc->emitWarning(
+          "[cv-pipelining] expected temporary buffer to be static");
     newShape.append(origTy.getShape().begin(), origTy.getShape().end());
     auto memspace = origTy.getMemorySpace();
     auto newType = MemRefType::get(newShape, origTy.getElementType(),
@@ -1010,11 +1089,68 @@ void CVPipelineImpl::expandOutputInits(WorkItem *item) {
     expanded = builder.create<memref::AllocOp>(loc, newType, ValueRange(),
                                                alloc.getAlignmentAttr());
   }
+  return success();
+}
+
+LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
+  OpBuilder::InsertionGuard g(builder);
+  builder.setInsertionPointToStart(pipelineLoop.getBody());
+  for (auto &[output, expanded] : item->localOutputs) {
+    Operation *defining = output.getDefiningOp();
+    if (!defining)
+      return pipelineLoop->emitWarning(
+          "[cv-pipelining] expected work item output to be "
+          "result of op");
+    Location loc = defining->getLoc();
+    bufferization::ToTensorOp toTensor = nullptr;
+    // We take the init and expand it
+    if (auto dps = dyn_cast<DestinationStyleOpInterface>(defining)) {
+      if (dps.getNumDpsInits() != 1)
+        return dps->emitWarning(
+            "[cv-pipelining] expected dps op with exactly one "
+            "init");
+      Value init = dps.getDpsInitOperand(0)->get();
+      defining = init.getDefiningOp();
+      if (!defining)
+        return dps->emitWarning(
+            "[cv-pipelining] expected dps init to be result of "
+            "op");
+      if (isa<tensor::EmptyOp>(defining)) {
+        continue;
+      }
+    }
+    toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
+    if (!toTensor)
+      return defining->emitWarning("[cv-pipelining] expected to_tensor for "
+                                   "non-tensor-empty output");
+    // Find the alloc
+    auto alloc = traceAlloc(toTensor.getMemref());
+    if (!alloc)
+      return toTensor->emitWarning(
+          "[cv-pipelining] expected alloc from toTensor");
+    auto origTy = alloc.getMemref().getType();
+    if (!origTy.hasStaticShape())
+      return alloc->emitWarning(
+          "[cv-pipelining] expected temporary buffer to be "
+          "static");
+    auto memspace = origTy.getMemorySpace();
+    auto newType = MemRefType::get(origTy.getShape(), origTy.getElementType(),
+                                   MemRefLayoutAttrInterface(), memspace);
+    expanded = builder.create<memref::AllocOp>(loc, newType, ValueRange(),
+                                               alloc.getAlignmentAttr());
+    alloc.replaceAllUsesWith(expanded);
+    LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] alloc: "; alloc.dump());
+    LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] expanded: ";
+               expanded.dump());
+    item->ops.erase(alloc);
+    alloc->erase();
+  }
+  return success();
 }
 
 /// Create the unrolled newLoop to replace the original pipelineLoop, as well as
 /// a jam loop for each work item
-void CVPipelineImpl::createNewLoops() {
+LogicalResult CVPipelineImpl::createNewLoops() {
   builder.setInsertionPoint(pipelineLoop);
   Value lb = pipelineLoop.getLowerBound();
   Value ub = pipelineLoop.getUpperBound();
@@ -1061,7 +1197,8 @@ void CVPipelineImpl::createNewLoops() {
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
-    expandOutputInits(item.get());
+    if (failed(expandOutputInits(item.get())))
+      return failure();
 
     // Create iter arg inits in order: yieldOutputs followed by localOutputs
     SmallVector<Value> inits;
@@ -1115,17 +1252,22 @@ void CVPipelineImpl::createNewLoops() {
     if (inits.empty())
       item->forOp.getBody()->getTerminator()->erase();
   }
+  return success();
 }
 
-static Value updateMaskingSubview(OpBuilder &builder, Location loc,
-                                  Value expanded, OpOperand *initOperand,
-                                  Value iv) {
+FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
+                                                      Location loc,
+                                                      Value expanded,
+                                                      OpOperand *initOperand,
+                                                      Value iv) {
   auto subview =
       dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp());
   if (!subview)
-    return nullptr;
-  assert(isa<memref::AllocOp>(subview.getSource().getDefiningOp()) &&
-         "Expecting subview at this stage to be from alloc");
+    return Value(nullptr);
+  if (!isa<memref::AllocOp>(subview.getSource().getDefiningOp())) {
+    subview->emitWarning("[cv-pipelining] expected subview to be from alloc");
+    return failure();
+  }
   SmallVector<OpFoldResult> offsets, sizes, strides;
   Attribute cst1Attr = builder.getI64IntegerAttr(1);
   offsets.push_back(iv);
@@ -1138,23 +1280,25 @@ static Value updateMaskingSubview(OpBuilder &builder, Location loc,
   int64_t offset;
   auto targetTy = cast<MemRefType>(initOperand->get().getType());
   SmallVector<int64_t> layoutStrides;
-  if (getStridesAndOffset(targetTy, layoutStrides, offset).failed())
-    llvm_unreachable("Unexpected memref layout");
+  if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
+    subview->emitWarning("[cv-pipelining] unexpected memref layout");
+    return failure();
+  }
   auto layout = StridedLayoutAttr::get(builder.getContext(),
                                        ShapedType::kDynamic, layoutStrides);
   auto finalTy = MemRefType::Builder(targetTy).setLayout(layout);
   auto newSubView = builder.create<memref::SubViewOp>(loc, finalTy, expanded,
                                                       offsets, sizes, strides);
   subview->replaceAllUsesWith(newSubView);
-  return newSubView;
+  return Value(newSubView);
 }
 
 /// Actually migrate/clone each op for each work item
-void CVPipelineImpl::migrateOps() {
+LogicalResult CVPipelineImpl::migrateOps() {
   for (Operation &op : pipelineLoop.getBody()->getOperations()) {
     auto it = opToWorkItemMap.find(&op);
     if (it == opToWorkItemMap.end()) {
-      LLVM_DEBUG(dbgs() << "[migrateOps] Skipping: "; op.dump());
+      LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping: "; op.dump());
       continue;
     }
     for (WorkItem *target : it->getSecond()) {
@@ -1189,21 +1333,25 @@ void CVPipelineImpl::migrateOps() {
     Value iv = item->forOp.getInductionVar();
     for (auto [orig, expanded] : item->localOutputs) {
       Operation *defining = orig.getDefiningOp();
-      assert(defining && "Expecting defining op for output");
       LLVM_DEBUG(dbgs() << "orig: " << orig << "\n\texpanded: " << expanded
                         << '\n');
-      if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(defining)) {
+      if (auto toTensor =
+              dyn_cast_if_present<bufferization::ToTensorOp>(defining)) {
         // Set `defining` to the op that writes to the tensor i.e. the actual
         // defining op for the tensor
         defining = this->outputMemrefMap[toTensor];
       }
       defining = item->irMap.lookup(defining);
-      auto dps = dyn_cast<DestinationStyleOpInterface>(defining);
-      assert(dps && "expecting destination passing style op for output");
+      auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(defining);
+      if (!dps)
+        return pipelineLoop->emitWarning(
+            "[cv-pipelining] expected destination passing style op for output");
       builder.setInsertionPoint(dps);
       Location loc = dps->getLoc();
 
-      assert(dps.getNumDpsInits() == 1);
+      if (dps.getNumDpsInits() != 1)
+        return dps->emitWarning(
+            "[cv-pipelining] expected dps op with exactly one init");
       OpOperand *initOperand = dps.getDpsInitOperand(0);
       Value newResult = *resIt;
       if (isa<TensorType>(initOperand->get().getType())) {
@@ -1223,13 +1371,17 @@ void CVPipelineImpl::migrateOps() {
                      dyn_cast<MemRefType>(initOperand->get().getType())) {
         Value internalDef = item->irMap.lookup(orig);
         // If there are masking subviews, update those first
-        Value updatedSubview =
+        FailureOr<Value> updatedSubviewOr =
             updateMaskingSubview(builder, loc, expanded, initOperand, iv);
+        if (failed(updatedSubviewOr))
+          return failure();
+        Value updatedSubview = *updatedSubviewOr;
         // Then replace the toTensor operand if it is not updated
-        auto innerToTensor =
-            dyn_cast<bufferization::ToTensorOp>(internalDef.getDefiningOp());
-        assert(innerToTensor &&
-               "Expecting memref outputs to be passed as tensors");
+        auto innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
+            internalDef.getDefiningOp());
+        if (!innerToTensor)
+          return dps->emitWarning("[cv-pipelining] expected memref outputs to "
+                                  "be passed as tensors");
         OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
         if (memrefOperand->get() != updatedSubview) {
           Value toTensorSubview = nullptr;
@@ -1237,20 +1389,27 @@ void CVPipelineImpl::migrateOps() {
           if (!updatedSubview) {
             toTensorSubview = createSubview(builder, loc, expanded,
                                             initOperand->get().getType(), iv);
+            if (!toTensorSubview)
+              return failure();
             initOperand->set(toTensorSubview);
           } else {
             toTensorSubview = createSubview(builder, loc, expanded,
                                             memrefOperand->get().getType(), iv);
+            if (!toTensorSubview)
+              return failure();
           }
           memrefOperand->set(toTensorSubview);
         }
         builder.setInsertionPointAfter(item->forOp);
         newResult = createToTensor(builder, loc, expanded);
+        if (!newResult)
+          return failure();
       } else
-        llvm_unreachable("Unexpected output type that is not tensor or memref");
+        return dps->emitWarning("[cv-pipelining] unexpected output type that "
+                                "is not tensor or memref");
 
       // Update outside users
-      LLVM_DEBUG(dbgs() << "[migrateOps] Updating user of "; orig.dump());
+      LLVM_DEBUG(dbgs() << "[cv-pipelining] Updating user of "; orig.dump());
       SmallVector<OpOperand *> toReplace;
       for (OpOperand &use : orig.getUses()) {
         Operation *owner = use.getOwner();
@@ -1285,13 +1444,190 @@ void CVPipelineImpl::migrateOps() {
                                 trailingAtomicEffect->type);
   }
   builder.clone(*pipelineLoop.getBody()->getTerminator(), globalIRMap);
+  return success();
+}
+
+LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
+  int32_t preloadNum = static_cast<int32_t>(worklist.size()) - 1;
+  for (auto &item : worklist) {
+    // Reset insertion point after we're done with this item
+    OpBuilder::InsertionGuard g(builder);
+    if (failed(expandOutputInitsForPreload(item.get())))
+      return failure();
+
+    LLVM_DEBUG(dbgs() << "Creating scope for work item #" << item->id << '\n');
+    scf::ForOp parentFor = pipelineLoop;
+
+    // collect return values
+    SmallVector<Value> returnTensors{};
+    for (auto &localOutput : item->localOutputs) {
+      returnTensors.push_back(localOutput.first);
+    }
+    for (auto &yieldedOutput : item->yieldedOutputs) {
+      returnTensors.push_back(yieldedOutput.first);
+    }
+    if (returnTensors.empty())
+      return success();
+
+    builder.setInsertionPoint(parentFor.getBody()->getTerminator());
+    Location loc = pipelineLoop->getLoc();
+
+    auto newScopeOp =
+        builder.create<scope::ScopeOp>(loc, TypeRange(returnTensors));
+    newScopeOp.setNoInline(true);
+    newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
+                        TCoreTypeAttr::get(builder.getContext(), item->core));
+    newScopeOp->setAttr(
+        "preload_num",
+        IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
+                         preloadNum));
+
+    Region &region = newScopeOp.getRegion();
+    Block *bodyBlock = builder.createBlock(&region);
+    builder.setInsertionPointToEnd(bodyBlock);
+    IRMapping scopeMap(globalIRMap);
+
+    Value origIV = pipelineLoop.getInductionVar();
+    Value mappedIV = origIV;
+
+    if (!origIV.getType().isIndex()) {
+      mappedIV = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
+                                                    origIV);
+      scopeMap.map(origIV, mappedIV);
+    } else {
+      scopeMap.map(origIV, mappedIV);
+    }
+
+    LLVM_DEBUG(dbgs() << "Created scope for work item #" << item->id << " with "
+                      << returnTensors.size() << " results\n");
+    for (Operation &op : parentFor.getBody()->getOperations()) {
+      if (!item->ops.contains(&op))
+        continue;
+
+      builder.clone(op, scopeMap);
+      toErase.insert(&op);
+    }
+
+    builder.setInsertionPointToEnd(bodyBlock);
+    SmallVector<Value> newReturnTensors;
+
+    for (auto returnTensor : returnTensors) {
+      if (scopeMap.contains(returnTensor)) {
+        Value newReturnTensor = scopeMap.lookup(returnTensor);
+        newReturnTensors.push_back(newReturnTensor);
+      } else {
+        newReturnTensors.push_back(returnTensor);
+      }
+    }
+    builder.create<scope::ReturnOp>(loc, ValueRange(newReturnTensors));
+
+    size_t resultIdx = 0;
+    for (auto &localOutput : item->localOutputs) {
+      Value returnTensor = localOutput.first;
+      Value scopeResult = newScopeOp->getResult(resultIdx++);
+      localOuputsToRedurnRes[returnTensor] = scopeResult;
+      globalIRMap.map(returnTensor, scopeResult);
+    }
+
+    for (auto &yieldedOutput : item->yieldedOutputs) {
+      Value returnTensor = yieldedOutput.first;
+      Value scopeResult = newScopeOp->getResult(resultIdx++);
+
+      pipelineLoop.getBody()->getTerminator()->replaceUsesOfWith(returnTensor,
+                                                                 scopeResult);
+      globalIRMap.map(returnTensor, scopeResult);
+    }
+
+    item->scopeOp = newScopeOp;
+    preloadNum--;
+  }
+
+  return success();
+}
+
+LogicalResult CVPipelineImpl::markScopesForPreload() {
+  toErase.clear();
+
+  if (failed(createNewLoopsForPreloadWithScopes()))
+    return failure();
+
+  LLVM_DEBUG({
+    for (auto item : worklist) {
+      dbgs() << "after createNewLoopsForPreloadWithScopes WorkItem #"
+             << item->id << ":---------------\n";
+      item->scopeOp->dump();
+      if (!item->localOutputs.empty())
+        dbgs() << "\tLocal outputs:\n";
+      for (auto p : item->localOutputs) {
+        Value output = p.first;
+        dbgs().indent(4) << output << '\n';
+      }
+      if (!item->yieldedOutputs.empty())
+        dbgs() << "\tYield outputs:\n";
+      for (auto [output, number] : item->yieldedOutputs)
+        dbgs().indent(4) << output << " at " << number << '\n';
+    }
+  });
+
+  LLVM_DEBUG(dbgs() << "\n\nAfter clone before erase:\n";
+             pipelineLoop->getParentOfType<func::FuncOp>()->dump());
+
+  LLVM_DEBUG(dbgs() << "toErase.size() scope for work item all"
+                    << toErase.size() << " results\n");
+  // Clean up
+  Operation *eraseOp = *toErase.begin();
+  while (!toErase.empty()) {
+    if (eraseOp == nullptr)
+      eraseOp = *toErase.begin();
+    auto usrBegin = eraseOp->user_begin();
+    if (usrBegin == eraseOp->user_end()) {
+      LLVM_DEBUG({
+        dbgs() << "eraseOp:";
+        eraseOp->dump();
+        dbgs() << ":---------------\n";
+      });
+      eraseOp->erase();
+      toErase.erase(eraseOp);
+      eraseOp = nullptr;
+      continue;
+    }
+    Operation *usrOp = *usrBegin;
+    Operation *usrParent = usrOp->getParentOp();
+    while (!isa<func::FuncOp>(usrParent)) {
+      if (toErase.contains(usrParent)) {
+        usrOp = usrParent;
+        break;
+      }
+      if (!usrParent)
+        return eraseOp->emitWarning(
+            "[cv-pipelining] reached null parent while tracing users");
+      usrParent = usrParent->getParentOp();
+    }
+
+    if (!toErase.contains(usrOp)) {
+      LLVM_DEBUG(dbgs() << "func" << "\n\nDef: " << *eraseOp
+                        << "\nUser: " << *usrOp << '\n');
+      return usrOp->emitWarning(
+          "[cv-pipelining] cannot erase user of pipelined op, aborting "
+          "pipelining pass");
+    }
+    eraseOp = usrOp;
+  }
+  return success();
+}
+
+void CVPipelineImpl::revert() {
+  if (newLoop)
+    newLoop->erase();
 }
 
 /// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
   collectAtomicEffects();
-  if (createWorkItems().failed())
+  if (createWorkItems().failed()) {
+    revert();
     return failure();
+  }
   markOutputs();
   LLVM_DEBUG({
     for (auto item : worklist) {
@@ -1310,29 +1646,29 @@ LogicalResult CVPipelineImpl::run() {
         dbgs().indent(4) << output << " at " << number << '\n';
     }
   });
-  createNewLoops();
-  migrateOps();
+
+  // Preload pipeline reuse workitems with cvpipeline.
+  if (enableSkewMode) {
+    return markScopesForPreload();
+  }
+
+  if (failed(createNewLoops())) {
+    revert();
+    return failure();
+  }
+  if (failed(migrateOps())) {
+    revert();
+    return failure();
+  }
 
   pipelineLoop.replaceAllUsesWith(newLoop.getResults());
 
-  { // FIXME: This really isn't safe generally, but we hack this in for now:
-    unsigned i = 0;
-    Block *body = newLoop.getBody();
-    auto yield = cast<scf::YieldOp>(body->getTerminator());
-    while (i < newLoop.getNumRegionIterArgs()) {
-      Value yieldVal = yield->getOperand(i);
-      Operation *defining = yieldVal.getDefiningOp();
-      if (defining && pipelineLoop->isAncestor(defining)) {
-        builder.setInsertionPoint(yield);
-        Operation *newOp = builder.clone(*defining, globalIRMap);
-        defining->replaceAllUsesWith(newOp->getResults());
-      }
-      ++i;
-    }
-  }
-
   LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
              newLoop->getParentOfType<func::FuncOp>()->dump());
+  if (failed(newLoop.verify())) {
+    revert();
+    return failure();
+  }
   pipelineLoop->erase();
   return success();
 }
@@ -1356,7 +1692,8 @@ void CVPipeliningPass::runOnOperation() {
       parentLoop = parentLoop->getParentOfType<scf::ForOp>();
     }
 
-    CVPipelineImpl impl(loop, this->pipelineDepth, this->enableLazyLoading);
+    CVPipelineImpl impl(loop, this->pipelineDepth, this->enableSkewMode,
+                        this->enableLazyLoading);
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);
   });
