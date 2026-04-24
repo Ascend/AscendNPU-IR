@@ -1104,7 +1104,8 @@ func.func @test_hfusion_atan_ops(%arg0 : tensor<32xf32>) ->  tensor<32xf32> {
 // CHECK: hfusion.select
 // CHECK: hfusion.select
 // CHECK: hfusion.select
-// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
 // CHECK: hfusion.select
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
