@@ -1096,8 +1096,8 @@ func.func @test_hfusion_atan_ops(%arg0 : tensor<32xf32>) ->  tensor<32xf32> {
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: hfusion.select
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
-// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
