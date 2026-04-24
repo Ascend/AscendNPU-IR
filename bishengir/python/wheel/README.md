@@ -5,7 +5,7 @@ Python bindings for the bishengir-compile compiler.
 ## Installation
 
 ```bash
-pip install ascendnpuir
+pip install ascendnpu-ir
 ```
 
 ## Usage
@@ -14,23 +14,29 @@ pip install ascendnpuir
 import ascendnpuir
 
 mlir_str = """
-func.func @example() -> tensor<1x10x10xf32> {
-  %0 = constant 0.0 : tensor<1x10x10xf32>
-  return %0 : tensor<1x10x10xf32>
+module {
+  func.func @add(%arg0: memref<16xi16, #hivm.address_space<gm>>, %arg1: memref<16xi16, #hivm.address_space<gm>>, %arg2: memref<16xi16, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %alloc = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<16xi16, #hivm.address_space<gm>>) outs(%alloc : memref<16xi16, #hivm.address_space<ub>>)
+    %alloc_0 = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg1 : memref<16xi16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16xi16, #hivm.address_space<ub>>)
+    %alloc_1 = memref.alloc() : memref<16xi16, #hivm.address_space<ub>>
+    hivm.hir.vadd ins(%alloc, %alloc_0 : memref<16xi16, #hivm.address_space<ub>>, memref<16xi16, #hivm.address_space<ub>>) outs(%alloc_1 : memref<16xi16, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%alloc_1 : memref<16xi16, #hivm.address_space<ub>>) outs(%arg2 : memref<16xi16, #hivm.address_space<gm>>)
+    return
+  }
 }
 """
 output_path = "example.o"
 options = [
-    "-enable-hfusion-compile=true",
-    "-enable-triton-kernel-compile",
-    "target=Ascend910_950z",
+    "-enable-hivm-compile=true",
 ]
 
 # Compile a model
 res = ascendnpuir.compile(
     mlir_str,
-    output_file=output_path,
-    options=options,
+    output_path=output_path,
+    option=options,
 )
 print(f"Compiled to: {output_path}")
 ```
@@ -52,7 +58,7 @@ The wheel package will be created in the `bishengir/python/wheel/dist` directory
 
 ## Requirements
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - bishengir-compile binary (built from source)
 
 ## License

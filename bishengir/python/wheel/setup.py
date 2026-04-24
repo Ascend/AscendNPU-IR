@@ -11,15 +11,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from setuptools import setup, find_packages
+from setuptools import setup, Extension
 from setuptools.command.build_py import build_py
-from setuptools.command.sdist import sdist
-from wheel.bdist_wheel import bdist_wheel
 import os
 import shutil
-import subprocess
 import sys
-import platform
 from pathlib import Path
 
 
@@ -86,131 +82,16 @@ class CustomBuildPy(build_py):
                             os.chmod(sub_item, 0o755)
 
 
-class CustomSdist(sdist):
-    """Custom sdist command to ensure README is included."""
-    
-    def run(self):
-        # Create README.md if it doesn't exist
-        readme_path = Path(__file__).parent / "README.md"
-        if not readme_path.exists():
-            print("Creating README.md")
-            readme_path.write_text("""# AscendNPU IR Compiler
-
-Python bindings for the bishengir-compile compiler.
-
-## Installation
-
-bash
-pip install ascendnpuir
-
-## Usage
-
-python
-import ascendnpuir
-
-# Compile a model
-output = ascendnpuir.compile(
-    "model.mlir",
-    output_file="model.o",
-    target="aarch64-unknown-linux-gnu",
-    opt_level=2
-)
-print(f"Compiled to: {output}")
-
-## License
-
-Apache License 2.0
-""")
-        sdist.run(self)
-
-
-class CustomBdistWheel(bdist_wheel):
-    """Custom bdist_wheel command to set platform-specific tags."""
-    
-    def get_platform(self):
-        """Get the platform tag for the wheel."""
-        # Get the platform information
-        system = platform.system().lower()
-        machine = platform.machine().lower()
-        
-        # Map machine names to wheel platform tags
-        machine_map = {
-            'x86_64': 'x86_64',
-            'amd64': 'x86_64',
-            'aarch64': 'aarch64',
-            'arm64': 'aarch64',
-            'armv7l': 'armv7l',
-        }
-        
-        # Get the normalized machine name
-        normalized_machine = machine_map.get(machine, machine)
-        
-        # Build the platform tag based on the OS
-        if system == 'linux':
-            # For Linux, use manylinux tag for better compatibility
-            # We'll use manylinux2014 for glibc 2.17+
-            # Check if we're in a manylinux environment
-            if os.path.exists('/etc/centos-release') or os.path.exists('/etc/redhat-release'):
-                # Assume manylinux2014 compatible
-                platform_tag = f'manylinux2014_{normalized_machine}'
-            else:
-                # Use linux tag with architecture
-                platform_tag = f'linux_{normalized_machine}'
-        elif system == 'darwin':
-            # macOS
-            platform_tag = f'macosx_{platform.mac_ver()[0].replace(".", "_")}_{normalized_machine}'
-        elif system == 'windows':
-            # Windows
-            platform_tag = f'win_{normalized_machine}'
-        else:
-            # Fallback to generic platform
-            platform_tag = f'{system}_{normalized_machine}'
-        
-        return platform_tag
-    
-    def finalize_options(self):
-        bdist_wheel.finalize_options(self)
-        # Set the platform tag
-        self.plat_name = self.get_platform()
-        # Mark this as a platform-specific wheel (not pure Python)
-        self.root_is_pure = False
-
-
+# Standard setuptools way - no CustomBdistWheel
+# This uses a minimal C extension to automatically generate platform-specific tags
 setup(
-    name="ascendnpu-ir",
-    version="1.1.0",
-    description="AscendNPU IR Compiler - Python bindings for bishengir-compile",
-    long_description=open("README.md").read() if os.path.exists("README.md") else "",
-    long_description_content_type="text/markdown",
-    author="Huawei Technologies Co., Ltd.",
-    author_email="support@huawei.com",
-    url="https://github.com/AscendNPU/AscendNPU-IR",
-    license="Apache-2.0",
-    packages=find_packages(),
-    python_requires=">=3.8",
     cmdclass={
         'build_py': CustomBuildPy,
-        'sdist': CustomSdist,
-        'bdist_wheel': CustomBdistWheel,
     },
-    classifiers=[
-        "Development Status :: 4 - Beta",
-        "Intended Audience :: Developers",
-        "License :: OSI Approved :: Apache Software License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Topic :: Software Development :: Compilers",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ext_modules=[
+        Extension(
+            'ascendnpuir._placeholder',
+            sources=['ascendnpuir/_placeholder.c'],
+        )
     ],
-    keywords="compiler npu ascend mlir ir",
-    project_urls={
-        "Homepage": "https://github.com/AscendNPU/AscendNPU-IR",
-        "Documentation": "https://ascendnpu-ir.readthedocs.io",
-        "Repository": "https://github.com/AscendNPU/AscendNPU-IR",
-        "Bug-Tracker": "https://github.com/AscendNPU/AscendNPU-IR/issues",
-    },
 )
