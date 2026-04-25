@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory=disable-tightly-coupled-buffer-reuse=true -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-NOREUSE

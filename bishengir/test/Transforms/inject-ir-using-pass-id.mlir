@@ -1,3 +1,4 @@
+// REQUIRES: hivmc-a5
 // RUN: bishengir-compile --print-pass-id --inject-ir-after=canonicalize/module/0@%S/Inputs/inject-ir-inject.mlir --mlir-print-ir-after-all %s | FileCheck %s
 
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {

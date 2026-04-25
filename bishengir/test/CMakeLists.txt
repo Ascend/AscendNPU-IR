@@ -25,6 +25,7 @@ set(BISHENGIR_TEST_DEPENDS
   bishengir-capi-pass-test
   # These really shouldnt be here, to remove from the testcases in the future
   opt llc llvm-dis
+  mlir-opt
 )
 
 if(MLIR_ENABLE_BINDINGS_PYTHON)

@@ -96,3 +96,6 @@ if config.bishengir_enable_triton_compile:
 
 if config.bspub_davinci_bishengir:
     config.available_features.add("bspub_davinci_bishengir")
+
+if lit.util.which("hivmc-a5"):
+    config.available_features.add("hivmc-a5")
