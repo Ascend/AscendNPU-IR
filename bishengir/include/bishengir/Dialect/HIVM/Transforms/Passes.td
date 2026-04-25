@@ -99,6 +99,14 @@ def EnableMultiBuffer : Pass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let dependentDialects = ["mlir::affine::AffineDialect", ];
 }
 
+def AllocToAlloca : Pass<"hivm-memref-alloc-to-alloca"> {
+  let summary = "Convert local AllocOp to AllocaOp";
+  let description = [{This pass replace all memref.alloc with non -
+                      global memory space to memref.alloca.}];
+  let constructor = "mlir::hivm::createAllocToAllocaPass()";
+  let dependentDialects = ["memref::MemRefDialect"];
+}
+
 def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
   let summary = "Output clones to different empty tensors based on hivmOp.";
   let description = [{This pass clone different tensor.empty to hivmOp output}];
@@ -732,10 +740,16 @@ def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
   ];
 }
 
-def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
+def MarkDisableLoad : Pass<"hivm-mark-disable-load", "ModuleOp"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {
+  let summary = "insert init and finish for debug";
+  let constructor = "mlir::hivm::createInsertInitAndFinishForDebugPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
 }
 
 def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {

@@ -64,6 +64,10 @@ std::unique_ptr<Pass> createTritonGlobalKernelArgsToHIVMOpPass();
 /// HIVM Ops.
 std::unique_ptr<Pass> createInferHIVMMemScopePass();
 
+/// Creates an operation pass to convert `memref.AllocOp` with non-global
+/// memory space to `memref.AllocaOp`.
+std::unique_ptr<Pass> createAllocToAllocaPass();
+
 /// Create a pass to output clones to different empty tensors based on hivmOp.
 std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
@@ -254,6 +258,9 @@ std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
 
 /// Create a pass to vectorize hivm ops.
 std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
+
+// Create a pass to insert init and finish for debug.
+std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
 
 // Create a pass to mark memref.loads that need to disable dcache.
 std::unique_ptr<Pass> createMarkDisableLoadPass();

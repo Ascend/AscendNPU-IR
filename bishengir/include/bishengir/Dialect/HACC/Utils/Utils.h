@@ -151,6 +151,9 @@ bool isRegBasedArch(ModuleOp op);
 
 } // namespace utils
 
+/// Seperate modules containing host and device code
+std::pair<ModuleOp, ModuleOp> separateHostDeviceModule(ModuleOp);
+
 /// Filter funcs based on a callback
 ModuleOp filterFuncsInModule(ModuleOp &op,
                              std::function<bool(Operation *op)> shouldInclude);
@@ -179,6 +182,8 @@ std::optional<unsigned> getHACCOuputIdx(func::FuncOp func, unsigned argIdx);
 /// function type.
 std::string constructHostFunctionName(const std::string &kernelName,
                                       HostFuncType type);
+
+size_t countDeviceArgSizeInByte(ModuleOp modOp);
 
 bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op);
 

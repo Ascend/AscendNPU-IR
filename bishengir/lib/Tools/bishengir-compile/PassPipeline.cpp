@@ -10,15 +10,24 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
+#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Pipelines/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
+#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
@@ -173,7 +182,160 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
       config.shouldDisableTightlyCoupledBufferReuse();
   hivmPipelineOptions.maxReductionSplitNum =
       config.getMaxReductionSplitNum();
+  hivmPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplitNum();
   hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
+}
+
+void setupHIVMAVEPipelineOptions(
+    hivmave::HIVMAVEPipelineOptions &hivmAVEPipelineOptions,
+    const BiShengIRCompileMainConfig &config) {
+  hivmAVEPipelineOptions.enableTritonKernelCompile =
+      config.shouldCompileTriton();
+  hivmAVEPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
+  hivmAVEPipelineOptions.enableLayoutOptimization =
+      config.shouldEnableLayoutOptimization();
+  hivmAVEPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
+  hivmAVEPipelineOptions.enableAutoBlockifyLoop =
+      config.shouldAutoBlockifyLoop();
+  hivmAVEPipelineOptions.enableAutoMultiBuffer =
+      config.shouldEnableAutoMultiBuffer();
+  hivmAVEPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer =
+      config.shouldLimitAutoMultiBufferForLocalBuffer();
+  hivmAVEPipelineOptions.limitAutoMultiBufferOfLocalBuffer =
+      config.getLimitAutoMultiBufferBufferOfLocalBuffer();
+  hivmAVEPipelineOptions.limitMixAutoMultiBufferBuffer =
+      config.getLimitAutoMultiBufferBuffer();
+  hivmAVEPipelineOptions.enableAutoBindSubBlock =
+      config.shouldEnableAutoBindSubBlock();
+  hivmAVEPipelineOptions.enableAutoStorageAlign =
+      config.shouldEnableAutoStorageAlign();
+  hivmAVEPipelineOptions.enableGlobalWorkspaceReuse =
+      config.shouldEnableGlobalWorkspaceReuse();
+  hivmAVEPipelineOptions.enableHIVMInjectBarrierAllSync =
+      config.shouldInjectBarrierAllSync();
+  hivmAVEPipelineOptions.workspaceMultiBufferNum =
+      config.getWorkspaceMultiBufferNum();
+  hivmAVEPipelineOptions.enableAutoCVBalance = config.shouldAutoCVBalance();
+  hivmAVEPipelineOptions.enableInjectBlockAllSync =
+      config.shouldInjectBlockAllSync();
+  hivmAVEPipelineOptions.disableAutoInjectBlockSync =
+      config.shouldDisableAutoInjectBlockSync();
+  hivmAVEPipelineOptions.enableHIVMGraphSyncSolver =
+      config.shouldEnableHIVMGraphSyncSolver();
+  hivmAVEPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
+  hivmAVEPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
+  hivmAVEPipelineOptions.target =
+      hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
+  hivmAVEPipelineOptions.enableVfMergeLevel = config.enableVfMergeLevel();
+  hivmAVEPipelineOptions.useDPX = config.shouldUseDPX();
+  hivmAVEPipelineOptions.enableND2NZOnVector =
+      config.shouldEnableND2NZOnVector();
+  hivmAVEPipelineOptions.enableFusedMultiplyAdd =
+      config.shouldEnableFusedMultiplyAdd();
+  hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
+      config.shouldenablePrintMemoryAllocatedSize();
+  hivmAVEPipelineOptions.maxReductionSplitNum =
+      config.getMaxReductionSplitNum();
+}
+
+void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
+  pm.addPass(createCSEPass());
+  pm.addPass(createSCCPPass());
+  auto tritonGridDim = config.getTritonGridDim();
+  bishengir::TritonRemapOptions options;
+  if (!tritonGridDim.empty()) {
+    options.gridDimX = static_cast<int>(tritonGridDim[0]);
+    options.useGridFlag = true;
+  }
+  if (tritonGridDim.size() > 1)
+    options.gridDimY = static_cast<int>(tritonGridDim[1]);
+
+  if (tritonGridDim.size() > 2)
+    options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+
+  // TODO: When DPX covers all remapper features correctly, remove
+  // createTritonRemapPass completely.
+  if (!config.shouldUseDPX())
+    pm.addPass(bishengir::triton::createTritonRemapPass(options));
+  CanonicalizerOptions canonicalizerOptions;
+  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  pm.addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(createConvertControlFlowToLLVMPass());
+  pm.addPass(createArithToLLVMConversionPass());
+
+  buildLowerToLLVMPipeline(pm, config);
+}
+
+void buildBiShengHIRAVEToLLVMPipeline(
+    OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
+  if (config.shouldCompileHost()) {
+    hacc::buildLowerHACCToLLVMPipeline(pm, config.hostOutputFile());
+    return;
+  }
+
+  if (config.shouldCompileHIVM()) {
+    hivmave::HIVMAVEPipelineOptions hivmAVEPipelineOptions;
+    setupHIVMAVEPipelineOptions(hivmAVEPipelineOptions, config);
+    hivmave::buildLowerAVEPipelines(pm, hivmAVEPipelineOptions);
+  }
+
+  if (config.shouldLowerToLLVM()) {
+    buildLowerToLLVMPipeline(pm, config);
+  }
+}
+
+/// Build the pipeline to lower BiShengHIR to LLVM Dialect IR
+void buildLowerToLLVMPipeline(OpPassManager &pm,
+                              const BiShengIRCompileMainConfig &config) {
+
+  const bool ascendDebugPrint =
+      StringRef(getenv("ASCEND_DEBUG_PRINT")) == "ALL";
+  if (ascendDebugPrint) {
+    DebugMemoryOptions debugMemoryOptions;
+    pm.addPass(createDebugMemoryPass(debugMemoryOptions));
+  }
+
+  pm.addPass(annotation::createAnnotationLoweringPass());
+  pm.addPass(hivm::createAllocToAllocaPass());
+
+  // TODO: How does host/device separation compilation flow for triton
+  //       compilation look like?
+  // if (config.shouldCompileTriton())
+  //   pm.nest<func::FuncOp>().addPass(hivm::createInsertInferVFModeFuncPass());
+
+  pm.nest<func::FuncOp>().addPass(
+      hivm::createInsertInitAndFinishForDebugPass());
+  ConvertHIVMToStandardOptions hivmToStdOptions;
+  hivmToStdOptions.isOpsAligned = config.shouldEnableAutoStorageAlign();
+  pm.addPass(hivm::createMarkDisableLoadPass());
+  pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
+  pm.addPass(createConvertHIVMAVEToStandardPass());
+  pm.addPass(memref::createExpandStridedMetadataPass());
+  pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
+  pm.addPass(hivmave::createHoistVstasPass());
+  if (config.shouldCompileFullSIMT() && config.shouldUseDPX()) {
+    auto tritonGridDim = config.getTritonGridDim();
+    bishengir::TritonRemapOptions options;
+    if (!tritonGridDim.empty()) {
+      options.gridDimX = static_cast<int>(tritonGridDim[0]);
+      options.useGridFlag = true;
+    }
+    if (tritonGridDim.size() > 1)
+      options.gridDimY = static_cast<int>(tritonGridDim[1]);
+
+    if (tritonGridDim.size() > 2)
+      options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+    pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
+    pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
+    pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+  }
+  pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
+  pm.addPass(bishengir::triton::createDecomposeFRemPass());
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(createLowerAffinePass());
+  pm.addPass(arith::createArithExpandOpsPass());
 }
 
 static void buildDelayedHFusionRegBaseVectorizePipeline(

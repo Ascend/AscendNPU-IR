@@ -49,6 +49,12 @@ namespace hivm {
 
 static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 
+// Attribute names used by the hivm-mark-disable-load pass and consumed by the
+// MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
+static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";
+static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
+    "markDCacheInvalidatePatternVisited";
+
 /// TODO: add into hivm attrs
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
     "buffer_size_in_byte";

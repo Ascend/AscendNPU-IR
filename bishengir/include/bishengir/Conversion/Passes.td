@@ -108,6 +108,24 @@ def ConvertHFusionToHIVM : Pass<"convert-hfusion-to-hivm"> {
 }
 
 //===----------------------------------------------------------------------===//
+// HIVMToStandard
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
+  let summary = "Convert the operations from the hivm dialect into the "
+                "Standard dialect";
+  let constructor = "mlir::createConvertHIVMToStandardPass()";
+  let dependentDialects =
+      ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
+
+  let options = [
+      Option<"isOpsAligned", "is-ops-aligned", "bool", /*default*/"false",
+             "Regard All Ops already dims aligned except last axis of "
+             "brc and reduce">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // HIVMToTritonGPU
 //===----------------------------------------------------------------------===//
  
@@ -122,6 +140,18 @@ def ConvertHIVMToTritonGPU : Pass<"convert-hivm-to-tritongpu"> {
              "This option is only for testing purposes, because in formal"
              "scenarios, the simt vf does not support return values.">,
   ];
+}
+
+//===----------------------------------------------------------------------===//
+// AscendDPXToHIVMRegbaseIntrins
+//===----------------------------------------------------------------------===//
+
+def ConvertAscendDPXToHIVMRegbaseIntrins : Pass<"convert-ascend-dpx-to-hivmregbaseintrins", "ModuleOp"> {
+  let summary = "Convert the operations from Ascend DPX into HIVM Regbase Intrins";
+  let constructor = "mlir::createConvertAscendDPXToHIVMRegbaseIntrinPass()";
+  let dependentDialects =
+      ["LLVM::LLVMDialect", "scf::SCFDialect", "arith::ArithDialect",
+       "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "hivm::HIVMDialect"];
 }
 
 //===----------------------------------------------------------------------===//
@@ -257,6 +287,82 @@ def AllocateProtonAscendGlobalScratchBufferPass :
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// HACCToLLVM
+//===----------------------------------------------------------------------===//
+
+def ConvertHACCToLLVM : Pass<"convert-hacc-to-llvm", "ModuleOp"> {
+  let summary = "Convert HACC dialect to LLVM dialect";
+  let constructor = "mlir::createConvertHACCToLLVMPass()";
+  let dependentDialects = ["LLVM::LLVMDialect", "scf::SCFDialect"];
+  let options = [
+      Option<"tempDeviceLLVMFilePath", "device-llvm-file-path", "std::string",
+             /*default=*/[{""}], "Pass in the path to device.so">
+  ];
+}
+//===----------------------------------------------------------------------===//
+// ArithToHIVMAVE
+//===----------------------------------------------------------------------===//
+
+def ConvertArithToHIVMAVE : Pass<"convert-arith-to-hivmave", "func::FuncOp"> {
+  let summary = "Convert arith operations to ave regbased ops";
+  let description = [{
+    This pass converts arith operations to ave regbased ops.
+  }];
+  let constructor = "mlir::createArithToHIVMAVEConversionPass()";
+  let dependentDialects = [
+    "hivmave::AVEDialect",
+    "arith::ArithDialect",
+    "hivm::HIVMDialect"
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// VectorToHIVMAVE
+//===----------------------------------------------------------------------===//
+
+def ConvertVectorToHIVMAVE : Pass<"convert-vector-to-hivmave", "ModuleOp"> {
+  let summary = "Convert vector operations to ave dialect";
+  let description = [{
+    This pass converts vector operations to ave regbased ops.
+  }];
+  let constructor = "mlir::createVectorToHIVMAVEConversionPass()";
+  let dependentDialects = [
+    "hivmave::AVEDialect",
+    "vector::VectorDialect"
+  ];
+  let options = [Option<"enableTritonCompile", "enable-triton-compile",
+                        "bool", "false", "Enable Triton compile.">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVMAVEToAVEIntrin
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMAVEToAVEIntrin : Pass<"convert-hivmave-to-ave-intrin",  "ModuleOp"> {
+  let summary = "Convert the operations from hivmave ops into ave intrins op";
+  let constructor = "mlir::createConvertHIVMAVEToAVEIntrinPass()";
+  let dependentDialects =
+      ["LLVM::LLVMDialect", "scf::SCFDialect", "hivmave::AVEDialect",
+       "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect"];
+  let options = [
+      Option<"useUnsignedCmpFor", "use-unsigned-cmp-for", "bool", /*default*/"true",
+             "use 'scf.for' with 'unsignedCmp'">,
+      Option<"enableI16IndVar", "enable-i16-indvar", "bool", /*default*/"false",
+             "enable 'i16' induction variables">
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVMAVEToStandard
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMAVEToStandard : Pass<"convert-hivmave-to-std", "ModuleOp"> {
+  let summary = "Convert the operations from the hivmave dialect into the Standard dialect";
+  let constructor = "mlir::createConvertHIVMAVEToStandardPass()";
+  let dependentDialects = ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
+}
 
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 //===----------------------------------------------------------------------===//
@@ -308,6 +414,7 @@ def ConvertTorchToSymbol : Pass<"convert-torch-to-symbol", "func::FuncOp"> {
     "arith::ArithDialect"
   ];
 }
+
 #endif
 
 #endif // BISHENGIR_CONVERSION_PASSES_H

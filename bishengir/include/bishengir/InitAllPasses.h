@@ -16,6 +16,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
@@ -24,6 +25,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/Mesh/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -65,6 +67,8 @@ inline void registerAllPasses() {
   mlir::arith::registerBishengIRArithPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
+  mlir::hivmave::registerAVEPasses();
+  mlir::ascend_dpx::registerBishengIRTransformsPasses();
   mlir::memref::registerBishengIRMemRefPasses();
   mlir::mesh::registerBishengIRMeshPasses();
   mlir::tensor::registerBishengIRTensorPasses();

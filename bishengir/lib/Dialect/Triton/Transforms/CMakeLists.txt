@@ -2,11 +2,13 @@ set(BS_FEAT_SOURCES)
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
   list(APPEND BS_FEAT_SOURCES
     AdaptTritonIRKernel.cpp
+    AdaptGPUKernel.cpp
     DecomposeReduction.cpp
     DumpFractalLayout.cpp
     FixFusedCatPass.cpp
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp
+    LLVMTritonRemap.cpp
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
@@ -22,7 +24,7 @@ endif()
 
 add_bishengir_dialect_library(BiShengIRTritonTransforms
   PARTIAL_SOURCES_INTENDED
-
+  DecomposeFRem.cpp
   ${BS_FEAT_SOURCES}
 
   DEPENDS

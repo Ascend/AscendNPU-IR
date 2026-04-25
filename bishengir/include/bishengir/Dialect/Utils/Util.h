@@ -58,6 +58,7 @@ static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static constexpr llvm::StringLiteral elementAlignmentBitWidth =
     "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
+static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 const llvm::StringLiteral padConst = "pad_const";
 
 int64_t getNumPerBlock(Type t);
@@ -582,6 +583,20 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
   virtual ~ForOpLegalization() = default;
 };
 
+Operation *getBroadcastOp(Value scalar, VectorType tileType,
+                          PatternRewriter &rewriter, const Location &loc);
+
+bool isValidHIVMTileElementType(Type type);
+
+unsigned getHIVMTileSliceMinNumElts(Type type);
+
+bool isValidHIVMTileVectorType(VectorType vType);
+
+bool isValidTwoDimVectorType(VectorType vType);
+
+Value createPRegFromConstantOp(VectorType vecTy, bool condition,
+                               PatternRewriter &rewriter);
+
 } // namespace utils
 
 namespace reshape_utils {
@@ -759,6 +774,9 @@ namespace util {
 
 // return a int that controls the optimization given a passname
 int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName);
+
+Value allocateSharedMemory(LLVM::LLVMFuncOp vf, OpBuilder &builder,
+                           Location loc);
 
 } // namespace util
 } // namespace triton

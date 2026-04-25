@@ -15,9 +15,11 @@
 #define BISHENGIR_INITALLDIALECTS_H
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Arith/Transforms/MeshShardingInterfaceImpl.h"
+#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
@@ -28,6 +30,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/HMAP/IR/HMAP.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -62,6 +66,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::hacc::HACCDialect,
                   mlir::hfusion::HFusionDialect,
                   mlir::hivm::HIVMDialect,
+                  mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect,
+                  mlir::hivmave::AVEDialect,
                   mlir::hmap::HMAPDialect,
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,

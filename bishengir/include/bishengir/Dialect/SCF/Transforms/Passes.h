@@ -23,6 +23,9 @@ namespace mlir {
 
 namespace scf {
 
+/// Adds a pass to convert loop iter_arg to hardware types
+std::unique_ptr<Pass> createLegalizeLoopIterArgsPass();
+
 std::unique_ptr<Pass>
 createMapForToForallPass(const MapForToForallOptions &options = {});
 

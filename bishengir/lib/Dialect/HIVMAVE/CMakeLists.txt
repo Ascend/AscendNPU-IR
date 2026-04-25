@@ -1,0 +1,5 @@
+add_subdirectory(IR)
+add_subdirectory(Analyze)
+add_subdirectory(Utils)
+add_subdirectory(Transforms)
+add_subdirectory(Pipelines)

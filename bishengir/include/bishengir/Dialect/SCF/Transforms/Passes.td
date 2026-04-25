@@ -11,6 +11,12 @@
 
 include "mlir/Pass/PassBase.td"
 
+def LegalizeLoopIterArgs : Pass<"hivm-legalize-loop-iter-arg"> {
+  let summary = "Legalize vector typed iter args.";
+  let constructor = "mlir::scf::createLegalizeLoopIterArgsPass()";
+  let dependentDialects = ["LLVM::LLVMDialect", "scf::SCFDialect"];
+}
+
 def MapForToForall
     : Pass<"map-for-to-forall", "func::FuncOp"> {
   let constructor = "mlir::scf::createMapForToForallPass()";
