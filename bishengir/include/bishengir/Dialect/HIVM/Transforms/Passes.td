@@ -527,6 +527,13 @@ def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
+def NormalizeFixpipe : Pass<"normalize-fixpipe", "func::FuncOp"> {
+  let summary = "Normalize fixpipe ops to meet hardware restrictions";
+  let constructor = "mlir::hivm::createNormalizeFixpipePass()";
+
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
   let summary = "Tile batch matmul into loop with iteration on batch dimension";
   let constructor = "mlir::hivm::createTileBatchMMIntoLoopPass()";
