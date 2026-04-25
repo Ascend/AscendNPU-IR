@@ -486,6 +486,7 @@ cmake_generate() {
     if [ ! -d "$BISHENG_COMPILER" ]; then
         echo "Path to bisheng compiler "$BISHENG_COMPILER" does not exist"
       else
+        BISHENG_COMPILER="$(cd "$BISHENG_COMPILER" && pwd)"
         BISHENG_INSTALL_PATH="${BISHENG_COMPILER}"
     fi
   fi

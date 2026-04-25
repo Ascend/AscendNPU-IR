@@ -237,6 +237,9 @@ print(f'manylinux_{version}_{machine}')
     echo "Using processed wheels:"
     ls -lh "${PROCESSED_DIR}"
     
+    # Remove original wheels before replacing with processed ones
+    rm -f "${OUTPUT_DIR}"/*.whl
+    
     # Move and rename to ensure only one platform tag
     for wheel_file in "${PROCESSED_DIR}"/*.whl; do
       if [ -f "${wheel_file}" ]; then
