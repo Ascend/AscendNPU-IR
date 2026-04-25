@@ -46,12 +46,40 @@ inline constexpr std::array<double, 5> kPiApproximations = {
     -1.0290623200529979163359041220560e-13,
 };
 
+// atan(pi / 8) is the hand-picked pivot used by the historical HFusion
+// normalization. Around this point the transformed argument
+//   (x - tan(pi / 8)) / (1 + x * tan(pi / 8))
+// stays much smaller than x for inputs near the middle of [0, 1], so the same
+// short Taylor series becomes noticeably more accurate.
+inline constexpr double kTanPiOver8 = 0.4142135623730950;
+
+// The atan polynomial is evaluated only after clipping to a finite interval.
+// This avoids overflow in intermediate products and is still numerically safe
+// because atan(x) is already within 1e-4 of pi / 2 when |x| is 10000.
+inline constexpr double kAtanClipLowerBound = -10000.0;
+inline constexpr double kAtanClipUpperBound = 10000.0;
+inline constexpr int kAtanTaylorTermCount = 7;
+
 inline Value createFloatConstant(PatternRewriter &rewriter, Location loc,
                                  Type elementType, double value) {
   return rewriter
       .create<arith::ConstantOp>(loc, elementType,
                                  rewriter.getFloatAttr(elementType, value))
       .getResult();
+}
+
+inline double getFloatingPointMaxForAtan(FloatType floatType) {
+  if (floatType.isF32()) {
+    return std::pow(2.0, floatType.getWidth() + 30);
+  }
+  return std::pow(2.0, floatType.getWidth() - 1);
+}
+
+inline double getFloatingPointMinForAtan(FloatType floatType) {
+  if (floatType.isF32()) {
+    return std::pow(2.0, -(static_cast<int>(floatType.getWidth()) + 30));
+  }
+  return std::pow(2.0, -(static_cast<int>(floatType.getWidth()) - 1));
 }
 
 inline SmallVector<double>
@@ -216,6 +244,167 @@ Value buildSinParitySign(PatternRewriter &rewriter, Location loc,
   Value one = createFloatConstant(rewriter, loc, elementType, 1.0);
   return Traits::createBinaryOp(rewriter, loc, parityTerm, one, empty,
                                 BinaryKind::Add);
+}
+
+// Branch-free clamp to [lowerBound, upperBound]. Prevents overflow in later
+// arithmetic while preserving sign (restored separately if needed).
+template <typename Traits>
+Value buildClampedInput(PatternRewriter &rewriter, Location loc, Value input,
+                        double lowerBound, double upperBound) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+  Value upperBoundValue =
+      createFloatConstant(rewriter, loc, elementType, upperBound);
+  Value clampedToUpper = Traits::createBinaryOp(
+      rewriter, loc, input, upperBoundValue, empty, BinaryKind::Min);
+  Value lowerBoundValue =
+      createFloatConstant(rewriter, loc, elementType, lowerBound);
+  return Traits::createBinaryOp(rewriter, loc, clampedToUpper, lowerBoundValue,
+                                empty, BinaryKind::Max);
+}
+
+template <typename Traits>
+Value buildAbsValue(PatternRewriter &rewriter, Location loc, Value input) {
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+  return Traits::createUnaryOp(rewriter, loc, input, empty, UnaryKind::Abs);
+}
+
+// Returns
+//   |(x - a) / (1 + a * x)|
+// which is the reduced argument from the angle-addition identity
+//   atan(x) = atan(a) + atan((x - a) / (1 + a * x))   for x >= a.
+// Using abs makes the transformation branch-free: when x < a, the numerator
+// flips sign, but the caller later takes the smaller of the direct polynomial
+// and the shifted polynomial, which selects the correct branch.
+template <typename Traits>
+Value buildAbsAtanAngleReducedInput(PatternRewriter &rewriter, Location loc,
+                                    Value input, double pivot) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+  Value pivotValue = createFloatConstant(rewriter, loc, elementType, pivot);
+  Value one = createFloatConstant(rewriter, loc, elementType, 1.0);
+
+  Value scaledInput = Traits::createBinaryOp(rewriter, loc, input, pivotValue,
+                                             empty, BinaryKind::Mul);
+  Value denominator = Traits::createBinaryOp(rewriter, loc, scaledInput, one,
+                                             empty, BinaryKind::Add);
+  Value numerator = Traits::createBinaryOp(rewriter, loc, input, pivotValue,
+                                           empty, BinaryKind::Sub);
+  Value reducedInput = Traits::createBinaryOp(rewriter, loc, numerator,
+                                              denominator, empty,
+                                              BinaryKind::Div);
+  return buildAbsValue<Traits>(rewriter, loc, reducedInput);
+}
+
+// Evaluates atan(x) for x in [0, 1] using two branch-free candidates:
+//   1. direct Taylor series around 0
+//   2. pi / 8 + atan((x - tan(pi / 8)) / (1 + x * tan(pi / 8)))
+//
+// The second formula is exact on [tan(pi / 8), 1]. For smaller x it produces a
+// larger angle because the reduced argument becomes negative and we take abs().
+// Taking `min(direct, shifted)` therefore acts like a branch-free selector:
+// it keeps the direct series on [0, tan(pi / 8)] and the shifted series on
+// [tan(pi / 8), 1].
+template <typename Traits>
+Value buildAtanUnitIntervalApproximation(PatternRewriter &rewriter,
+                                         Location loc,
+                                         Value nonNegativeInput) {
+  SmallVector<double> atanTaylorCoefficients =
+      getTaylorSeriesCoefficients(hfusion::TaylerMode::ATAN,
+                                  kAtanTaylorTermCount);
+  Value empty = utils::createEmptyOp(rewriter, loc, nonNegativeInput);
+  Type elementType = getElementTypeOrSelf(nonNegativeInput.getType());
+
+  Value directApproximation = buildTaylorApproximation<Traits>(
+      rewriter, loc, nonNegativeInput, atanTaylorCoefficients);
+
+  Value piOver8ReducedInput = buildAbsAtanAngleReducedInput<Traits>(
+      rewriter, loc, nonNegativeInput, kTanPiOver8);
+  Value shiftedApproximation = buildTaylorApproximation<Traits>(
+      rewriter, loc, piOver8ReducedInput, atanTaylorCoefficients);
+  Value piOver8 =
+      createFloatConstant(rewriter, loc, elementType, M_PI / 8.0);
+  shiftedApproximation = Traits::createBinaryOp(
+      rewriter, loc, shiftedApproximation, piOver8, empty, BinaryKind::Add);
+
+  return Traits::createBinaryOp(rewriter, loc, directApproximation,
+                                shiftedApproximation, empty, BinaryKind::Min);
+}
+
+// Builds a sign tensor without using comparisons:
+//   sign(x) = FP_MAX * x / (FP_MIN + |FP_MAX * x|)
+//
+// For finite x this evaluates to a value very close to +1 or -1, and for NaN
+// it naturally propagates NaN through the final multiplication. The constants
+// intentionally match the previous HFusion-only implementation.
+template <typename Traits>
+Value buildAtanSign(PatternRewriter &rewriter, Location loc, Value input) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  auto floatType = cast<FloatType>(elementType);
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+
+  Value fpMax = createFloatConstant(rewriter, loc, elementType,
+                                    getFloatingPointMaxForAtan(floatType));
+  Value fpMin = createFloatConstant(rewriter, loc, elementType,
+                                    getFloatingPointMinForAtan(floatType));
+  Value scaledInput =
+      Traits::createBinaryOp(rewriter, loc, input, fpMax, empty,
+                             BinaryKind::Mul);
+  Value denominatorAbs = buildAbsValue<Traits>(rewriter, loc, scaledInput);
+  Value denominator = Traits::createBinaryOp(rewriter, loc, denominatorAbs,
+                                             fpMin, empty, BinaryKind::Add);
+  return Traits::createBinaryOp(rewriter, loc, scaledInput, denominator, empty,
+                                BinaryKind::Div);
+}
+
+// Full atan normalization for floating-point tensors.
+//
+// The computation is performed on |x| and the sign is restored afterwards:
+//   atan(x) = sign(x) * atan(|x|)
+//
+// The positive branch uses two exact angle-addition identities:
+//   1. atan(x) = pi / 8 + atan((x - tan(pi / 8)) / (1 + x * tan(pi / 8)))
+//      which improves accuracy on the upper half of [0, 1].
+//   2. atan(x) = pi / 4 + atan((x - 1) / (x + 1))
+//      which maps x >= 1 back into [0, 1].
+//
+// The implementation keeps the rewrite branch-free by computing every
+// candidate and taking the smaller angle at each stage:
+//   direct(x)      = Taylor on x
+//   pi_over_8(x)   = pi / 8 + Taylor(reduced around tan(pi / 8))
+//   unit(x)        = min(direct(x), pi_over_8(x))
+//   reciprocal(x)  = pi / 4 + unit(|(x - 1) / (x + 1)|)
+//   atan(|x|)      = min(unit(x), reciprocal(x))
+template <typename Traits>
+Value buildAtanApproximation(PatternRewriter &rewriter, Location loc,
+                             Value input) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+
+  Value clippedInput =
+      buildClampedInput<Traits>(rewriter, loc, input, kAtanClipLowerBound,
+                                kAtanClipUpperBound);
+  Value absoluteInput = buildAbsValue<Traits>(rewriter, loc, clippedInput);
+
+  Value unitIntervalApproximation = buildAtanUnitIntervalApproximation<Traits>(
+      rewriter, loc, absoluteInput);
+
+  Value reciprocalReducedInput = buildAbsAtanAngleReducedInput<Traits>(
+      rewriter, loc, absoluteInput, 1.0);
+  Value reciprocalApproximation = buildAtanUnitIntervalApproximation<Traits>(
+      rewriter, loc, reciprocalReducedInput);
+  Value piOver4 =
+      createFloatConstant(rewriter, loc, elementType, M_PI / 4.0);
+  reciprocalApproximation = Traits::createBinaryOp(
+      rewriter, loc, reciprocalApproximation, piOver4, empty,
+      BinaryKind::Add);
+
+  Value magnitudeApproximation = Traits::createBinaryOp(
+      rewriter, loc, unitIntervalApproximation, reciprocalApproximation, empty,
+      BinaryKind::Min);
+  Value sign = buildAtanSign<Traits>(rewriter, loc, input);
+  return Traits::createBinaryOp(rewriter, loc, magnitudeApproximation, sign,
+                                empty, BinaryKind::Mul);
 }
 
 } // namespace mlir

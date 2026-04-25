@@ -81,3 +81,49 @@ func.func @test_NormalizeCos_hivm_vcos_f16(%arg0 : tensor<4xf16>) -> tensor<4xf1
   %1 = hivm.hir.vcos ins(%arg0 : tensor<4xf16>) outs(%0 : tensor<4xf16>) -> tensor<4xf16>
   return %1 : tensor<4xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeAtan_hivm_vatan_f32(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<4xf32>) -> tensor<4xf32> {
+// CHECK-DAG: %[[CLIP_HI:.*]] = arith.constant 1.000000e+04 : f32
+// CHECK-DAG: %[[CLIP_LO:.*]] = arith.constant -1.000000e+04 : f32
+// CHECK-DAG: %[[PI_OVER8:.*]] = arith.constant 0.392699093 : f32
+// CHECK-DAG: %[[PI_OVER4:.*]] = arith.constant 0.785398185 : f32
+// CHECK: %[[CLAMP_HI:.*]] = hivm.hir.vmin ins(%[[ARG0]], %[[CLIP_HI]] : tensor<4xf32>, f32)
+// CHECK: %[[CLAMP:.*]] = hivm.hir.vmax ins(%[[CLAMP_HI]], %[[CLIP_LO]] : tensor<4xf32>, f32)
+// CHECK: %[[ABS:.*]] = hivm.hir.vabs ins(%[[CLAMP]] : tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[SHIFTED:.*]] = hivm.hir.vadd ins(%{{.*}}, %[[PI_OVER8]] : tensor<4xf32>, f32)
+// CHECK: %[[RECIP:.*]] = hivm.hir.vadd ins(%{{.*}}, %[[PI_OVER4]] : tensor<4xf32>, f32)
+// CHECK: %[[MAG:.*]] = hivm.hir.vmin ins(%{{.*}}, %[[RECIP]] : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[SIGN:.*]] = hivm.hir.vdiv ins(%{{.*}}, %{{.*}} : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[RES:.*]] = hivm.hir.vmul ins(%[[MAG]], %[[SIGN]] : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK-NEXT: return %[[RES]] : tensor<4xf32>
+// CHECK-NOT: hivm.hir.vatan
+func.func @test_NormalizeAtan_hivm_vatan_f32(%arg0 : tensor<4xf32>) -> tensor<4xf32> {
+  %0 = tensor.empty() : tensor<4xf32>
+  %1 = hivm.hir.vatan ins(%arg0 : tensor<4xf32>) outs(%0 : tensor<4xf32>) -> tensor<4xf32>
+  return %1 : tensor<4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeAtan_hivm_vatan_f16(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<4xf16>) -> tensor<4xf16> {
+// CHECK: %[[EMPTY_F32:.*]] = tensor.empty() : tensor<4xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4xf16>) outs(%[[EMPTY_F32]] : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[CLAMP_HI:.*]] = hivm.hir.vmin ins(%[[CAST_IN]], %{{.*}} : tensor<4xf32>, f32)
+// CHECK: %[[ABS:.*]] = hivm.hir.vabs ins(%{{.*}} : tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: hivm.hir.vmin ins(%{{.*}}, %{{.*}} : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[SIGN_SCALE:.*]] = hivm.hir.vmul ins(%[[CAST_IN]], %{{.*}} : tensor<4xf32>, f32) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[SIGN:.*]] = hivm.hir.vdiv ins(%[[SIGN_SCALE]], %{{.*}} : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%{{.*}}, %[[SIGN]] : tensor<4xf32>, tensor<4xf32>) outs(%{{.*}} : tensor<4xf32>) -> tensor<4xf32>
+// CHECK: %[[EMPTY_F16:.*]] = tensor.empty() : tensor<4xf16>
+// CHECK-NEXT: %[[CAST_OUT:.*]] = hivm.hir.vcast ins(%[[MUL]] : tensor<4xf32>) outs(%[[EMPTY_F16]] : tensor<4xf16>) round_mode = <round> -> tensor<4xf16>
+// CHECK-NEXT: return %[[CAST_OUT]] : tensor<4xf16>
+// CHECK-NOT: hivm.hir.vatan
+func.func @test_NormalizeAtan_hivm_vatan_f16(%arg0 : tensor<4xf16>) -> tensor<4xf16> {
+  %0 = tensor.empty() : tensor<4xf16>
+  %1 = hivm.hir.vatan ins(%arg0 : tensor<4xf16>) outs(%0 : tensor<4xf16>) -> tensor<4xf16>
+  return %1 : tensor<4xf16>
+}

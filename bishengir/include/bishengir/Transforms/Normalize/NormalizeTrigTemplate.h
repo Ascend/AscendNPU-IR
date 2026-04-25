@@ -147,6 +147,58 @@ public:
   }
 };
 
+/// Rewrites `atan(x)` with a branch-free sequence built from the same shared
+/// helpers used by the templated sin/cos normalization.
+///
+/// The rewrite first computes on the magnitude only:
+///   atan(x) = sign(x) * atan(|x|)
+///
+/// Then it reduces `|x|` in two stages so the odd Taylor series is evaluated
+/// only on small arguments:
+///   1. On `[0, 1]`, compare the direct series with the shifted identity
+///        atan(x) = pi / 8 + atan((x - tan(pi / 8)) / (1 + x * tan(pi / 8)))
+///      and keep the smaller branch.
+///   2. On `[1, +inf)`, use
+///        atan(x) = pi / 4 + atan((x - 1) / (x + 1))
+///      to map the problem back into `[0, 1]`, then reuse step 1.
+///
+/// As in the historical HFusion implementation, the input is clipped to
+/// `[-10000, 10000]` before the polynomial work starts. This keeps the
+/// intermediates finite while changing the final angle by at most a negligible
+/// amount because atan is already extremely close to `pi / 2` there.
+template <typename AtanOpType, typename Traits>
+struct NormalizeAtanOpTemplate : public OpRewritePattern<AtanOpType> {
+public:
+  using OpRewritePattern<AtanOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AtanOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeAtan(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
+                             CastRoundKind::Round);
+    }
+
+    Value result = buildAtanApproximation<Traits>(rewriter, loc, input);
+    if (inputType.isF16()) {
+      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
+                              CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZETRIGTEMPLATE_H

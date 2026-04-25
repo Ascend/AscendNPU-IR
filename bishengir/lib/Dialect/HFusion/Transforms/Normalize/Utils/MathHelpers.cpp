@@ -54,14 +54,6 @@ Value norm(PatternRewriter &rewriter, Location loc, Value x,
   return resValue;
 }
 
-template <hfusion::TaylerMode taylerMode>
-Value sign(PatternRewriter &rewriter, Location loc, Value x) {
-  if (taylerMode == hfusion::TaylerMode::ATAN) {
-    return getAtanSign(rewriter, loc, x);
-  }
-  llvm_unreachable("unsupported TaylerMode");
-}
-
 // tayler x =
 // taylerParams[0]*x+taylerParams[1]*x^3+...+taylerParams[i]*x^(2*i+1)
 template <hfusion::TaylerMode taylerMode>
@@ -138,61 +130,6 @@ SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
   }
   }
   llvm_unreachable("unsupported TaylerMode");
-}
-
-double getFPMAX(FloatType fType) {
-  if (fType.isF32()) {
-    // TODO: make confirmation why TBE process it specially
-    return (double)std::pow(2, fType.getWidth() + 30);
-  }
-
-  return (double)std::pow(2, fType.getWidth() - 1);
-}
-
-double getFPMIN(FloatType fType) {
-  if (fType.isF32()) {
-    // TODO: make confirmation why TBE process it specially
-    return (double)std::pow(2, -((int)fType.getWidth() + 30));
-  }
-
-  return (double)std::pow(2, -((int)fType.getWidth() - 1));
-}
-
-Value getAtanSign(PatternRewriter &rewriter, Location loc, Value x) {
-  // sign(x) = FP_MAX * x /(FP_MIN + FP_MAX *|x|)
-  auto elementType = getElementTypeOrSelf(x.getType());
-  assert(isa<FloatType>(elementType) && "Only support floatType");
-  auto elemFloatType = llvm::dyn_cast<FloatType>(elementType);
-  auto FpMaxOp = rewriter.create<arith::ConstantOp>(
-      loc, elementType,
-      rewriter.getFloatAttr(rewriter.getF32Type(), getFPMAX(elemFloatType)));
-  auto FpMinOp = rewriter.create<arith::ConstantOp>(
-      loc, elementType,
-      rewriter.getFloatAttr(rewriter.getF32Type(), getFPMIN(elemFloatType)));
-
-  auto mulInit = utils::createEmptyOp(rewriter, loc, x);
-  auto mulOp = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-      rewriter, loc, linalg::BinaryFn::mul,
-      ValueRange{x, FpMaxOp->getResults()[0]}, ValueRange(mulInit));
-
-  auto addInit = utils::createEmptyOp(rewriter, loc, x);
-  auto absOP = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                      linalg::UnaryFnAttr>(
-      rewriter, loc, linalg::UnaryFn::abs, ValueRange{mulOp->getResults()[0]},
-      ValueRange(addInit));
-  auto addOp = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-      rewriter, loc, linalg::BinaryFn::add,
-      ValueRange{absOP->getResults()[0], FpMinOp->getResults()[0]},
-      ValueRange(addInit));
-
-  auto divOP = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-      rewriter, loc, linalg::BinaryFn::div,
-      ValueRange({mulOp->getResults()[0], addOp->getResults()[0]}),
-      ValueRange(mulInit));
-  return divOP->getResults()[0];
 }
 
 Value constructTaylerSeries(OpBuilder &b, Location loc, Value lastTaylerTerm,
@@ -926,9 +863,4 @@ Value genPolyExpr(PatternRewriter &rewriter, Location loc,
   }
   return res;
 }
-
-// Explicit template instantiations
-template Value mlir::hfusion::sign<TaylerMode::ATAN>(PatternRewriter &, Location, Value);
-template Value mlir::hfusion::tayler<TaylerMode::ATAN>(OpBuilder &, Location, Value, int);
-
 } // namespace mlir::hfusion

@@ -338,6 +338,18 @@ def VCosOp : HIVM_ElementwiseUnaryOp<"vcos",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+def VAtanOp : HIVM_ElementwiseUnaryOp<"vatan",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Arctangent Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 def VErfOp : HIVM_ElementwiseUnaryOp<"verf",
     [SameOperandsElementType,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait

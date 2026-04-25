@@ -63,6 +63,7 @@ static bool matchHIVMOp(Operation *op) {
 static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
     {UnaryKind::Rec, createHIVMUnaryOp<hivm::VRecOp>},
     {UnaryKind::Sqrt, createHIVMUnaryOp<hivm::VSqrtOp>},
+    {UnaryKind::Abs, createHIVMUnaryOp<hivm::VAbsOp>},
     {UnaryKind::Not, createHIVMUnaryOp<hivm::VNotOp>},
 };
 
@@ -71,16 +72,24 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Sub, createHIVMBinaryOp<hivm::VSubOp>},
     {BinaryKind::Mul, createHIVMBinaryOp<hivm::VMulOp>},
     {BinaryKind::Div, createHIVMBinaryOp<hivm::VDivOp>},
+    {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
+    {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
 };
 
 static const llvm::DenseMap<UnaryKind, UnaryOpMatcherFn> unaryOpMatcherMap = {
     {UnaryKind::Rec, matchHIVMOp<hivm::VRecOp>},
     {UnaryKind::Sqrt, matchHIVMOp<hivm::VSqrtOp>},
+    {UnaryKind::Abs, matchHIVMOp<hivm::VAbsOp>},
     {UnaryKind::Not, matchHIVMOp<hivm::VNotOp>},
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = {
+    {BinaryKind::Add, matchHIVMOp<hivm::VAddOp>},
+    {BinaryKind::Sub, matchHIVMOp<hivm::VSubOp>},
+    {BinaryKind::Mul, matchHIVMOp<hivm::VMulOp>},
     {BinaryKind::Div, matchHIVMOp<hivm::VDivOp>},
+    {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
+    {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
 };
 
 } // namespace

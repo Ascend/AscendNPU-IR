@@ -43,10 +43,24 @@ public:
   }
 };
 
+struct HFusionNormalizeAtanTraits : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeAtan(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::atan) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
 using NormalizeSinOp =
     NormalizeSinOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeSinTraits>;
 using NormalizeCosOp =
     NormalizeCosOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeCosTraits>;
+using NormalizeAtanOp = NormalizeAtanOpTemplate<hfusion::ElemwiseUnaryOp,
+                                                HFusionNormalizeAtanTraits>;
 } // namespace mlir
 
 namespace mlir::hfusion {
@@ -126,227 +140,6 @@ public:
                             hfusion::RoundMode::ROUND);
     }
 
-    rewriter.replaceOp(op, res);
-    return success();
-  }
-};
-
-/// step 1: normalize x into [-10000, 10000],
-/// 1.1 when x's value is too large, the first caculator of _do_taylor will be
-/// overflow.
-/// 1.2 when epsilon is 0.0001, the approximate value of `tan(pi / 2 - 0.0001)`
-/// is 10000, thus normalize data [-10000, 10000]
-/// step 2: atan(x) = min(taylor(x), pi / 4 + taylor((x - 1)/(x+1)))
-/// 2.1 if abs(x) <= 1,  atan(x) = x - x^3/3 + x^5/5 - x^7/7 ...
-/// 2.2 if abs(x) > 1, atan(x) = arctan(1) + arctan((x - 1)/(x + 1)) = pi / 4 +
-/// arctan((x - 1)/(x + 1)).
-/// step 3: tayor(x) = min(taylor, taylor(y) + atan((x - y)/(1 + xy))).
-/// It is with higher precision. where:
-/// tan(y) = pi / 8, y = tan(pi / 8) = 0.4142135623730950
-struct NormalizeAtanOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  Value getatanTaylorRes(PatternRewriter &rewriter, Location loc, Value input,
-                         int taylerExpansionNum) const {
-    /// 1. nomalize x into (x-y)/(1+xy)
-    const float M_PI_8 = M_PI / 8;
-    const float TAN_M_PI_8 = std::tan(M_PI_8);
-    auto elementType = getElementTypeOrSelf(input);
-    arith::ConstantOp constOp = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, TAN_M_PI_8));
-    Value emptyOne = utils::createEmptyOp(rewriter, loc, input);
-    auto fillOp = rewriter.create<linalg::FillOp>(
-        loc, TypeRange(emptyOne), ValueRange({constOp->getResults()[0]}),
-        ValueRange({emptyOne}));
-    /// mulOp = x*y
-    auto mulInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *mulOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{input, fillOp->getResults()[0]}, mulInit);
-
-    /// addOp = 1 + x*y
-    arith::ConstantOp constOne = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1.0));
-    auto *addOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{mulOp->getResults()[0], constOne->getResults()[0]},
-            mulInit);
-    /// subOp = x - y
-    auto subInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *subOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::sub,
-            ValueRange{input, fillOp->getResults()[0]}, subInit);
-    /// divOp = (x-y)/(1+xy)
-    auto *divOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::div,
-            ValueRange{subOp->getResults()[0], addOp->getResults()[0]},
-            subInit);
-    /// absOp = abs((x-y)/(1+xy))
-    auto absOP = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::abs, ValueRange{divOp->getResults()[0]},
-        ValueRange(subInit));
-
-    /// 2: atan((x-y)/(1+xy))
-    auto res1 = tayler<hfusion::TaylerMode::ATAN>(
-        rewriter, loc, absOP->getResults()[0], taylerExpansionNum);
-
-    /// 3: atan((x-y)/(1+xy)) + pi /8
-    arith::ConstantOp constM_PI_8 = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, M_PI_8));
-    auto *res2 =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{res1, constM_PI_8->getResults()[0]}, subInit);
-    return res2->getResults()[0];
-  }
-
-  /// if x > 0 and x < tan(pi/8):
-  /// atan(x) = x - x^3/3 + x^5/5 - x^7/7 ...
-  /// elif x > tan(pi/8) and x < tan(pi/4):
-  /// atan(x) = atan(y) + atan((x-y)/(1+xy))
-  Value atanTaylor(PatternRewriter &rewriter, Location loc, Value input,
-                   int taylerExpansionNum) const {
-    // step1: res0 = atan(x)
-    auto res0 = tayler<hfusion::TaylerMode::ATAN>(rewriter, loc, input,
-                                                  taylerExpansionNum);
-
-    /// step 2: atan(x) = atan(y) + atan((x-y)/(1+xy))
-    Value res2 = getatanTaylorRes(rewriter, loc, input, taylerExpansionNum);
-
-    /// 3. atan(x) = min(res0, res2)
-    auto atanInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *minOp =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::minf, ValueRange{res0, res2},
-            atanInit);
-    return minOp->getResults()[0];
-  }
-
-  // y = (x - 1) / (x + 1)
-  Value normalizeInputValue(PatternRewriter &rewriter, Location loc,
-                            Value input) const {
-    // 1.define one
-    auto elementType = getElementTypeOrSelf(input);
-    arith::ConstantOp positiveOne = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1.0));
-    arith::ConstantOp negetiveOne = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, -1.0));
-
-    // 2. sub = vadd(input, -one)
-    auto subInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *subOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{input, negetiveOne->getResults()[0]}, subInit);
-
-    // 3. add = vadd(input, one)
-    auto addInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *addOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{input, positiveOne->getResults()[0]}, addInit);
-
-    // 4. div = vdiv(sub, add)
-    auto divInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *divOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::div,
-            ValueRange{subOp->getResults()[0], addOp->getResults()[0]},
-            divInit);
-    // 5.vabs(div)
-    auto absOP = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::abs, ValueRange{divOp->getResults()[0]},
-        ValueRange(divInit));
-
-    return absOP->getResults()[0];
-  }
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    if (op.getFun() != hfusion::UnaryFn::atan) {
-      return failure();
-    }
-    if (!getElementTypeOrSelf(op.getType(0)).isF16() &&
-        !getElementTypeOrSelf(op.getType(0)).isF32()) {
-      return failure();
-    }
-
-    Value input = op.getDpsInputs()[0];
-    auto elementType = getElementTypeOrSelf(input);
-    if (elementType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      // TODO: remove cast after enable automatical high precision computing
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
-    }
-
-    auto loc = op->getLoc();
-    /// step 1: normalize x into [-10000, 10000], and abs(x)
-    auto clipedInput = ClipInput(rewriter, loc, input, 10000, -10000);
-    auto clipedInit = utils::createEmptyOp(rewriter, loc, clipedInput);
-    auto absOP = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::abs, ValueRange{clipedInput},
-        clipedInit);
-    Value clipedRangeInput = absOP->getResults()[0];
-
-    /// step 2: atan(x) = min(taylor(x), pi / 4 + taylor((x - 1)/(x+1)))
-    /// res0 = taylor(x)
-    auto res0 = atanTaylor(rewriter, loc, clipedRangeInput, 7);
-
-    /// res1 = pi / 4 + taylor((x - 1)/(x+1)), where y = (x - 1)/(x+1)
-    auto y = normalizeInputValue(rewriter, loc, clipedRangeInput);
-    auto taylorY = atanTaylor(rewriter, loc, y, 7);
-    arith::ConstantOp constM_PI_4 = rewriter.create<arith::ConstantOp>(
-        loc, getElementTypeOrSelf(input),
-        rewriter.getFloatAttr(getElementTypeOrSelf(input), M_PI_4));
-    Value res1Op = utils::createEmptyOp(rewriter, loc, input);
-    auto *res1 =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange{taylorY, constM_PI_4->getResults()[0]}, res1Op);
-
-    /// atan(x) = min(res1, res2)
-    Value atanInit = utils::createEmptyOp(rewriter, loc, input);
-    auto *atan =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::minf,
-            ValueRange{res0, res1->getResults()[0]}, atanInit);
-
-    /// res = sign(x) * atan(x)
-    auto signX = sign<hfusion::TaylerMode::ATAN>(rewriter, loc, input);
-    Value resInit = utils::createEmptyOp(rewriter, loc, input);
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::mul,
-                    ValueRange{atan->getResults()[0], signX}, resInit)
-                    ->getResult(0);
-    if (elementType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
     rewriter.replaceOp(op, res);
     return success();
   }

@@ -20,9 +20,9 @@
 
 namespace mlir {
 
-enum class UnaryKind { Rec, Sqrt, Not };
-enum class BinaryKind { Add, Sub, Mul, Div };
-enum class CompareKind {EQ, NE, LT, GT, GE, LE};
+enum class UnaryKind { Rec, Sqrt, Abs, Not };
+enum class BinaryKind { Add, Sub, Mul, Div, Min, Max };
+enum class CompareKind { EQ, NE, LT, GT, GE, LE };
 enum class CastRoundKind { Round, Floor };
 
 } // namespace mlir

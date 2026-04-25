@@ -25,25 +25,44 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/TypeUtilities.h"
 
+#include <optional>
+
 using namespace mlir;
 namespace mlir::hfusion {
 
-static UnaryFn mapUnaryKindToUnaryFn(UnaryKind kind) {
+template <typename Kind, typename Fn>
+static std::optional<Fn>
+lookupMappedFn(const llvm::DenseMap<Kind, Fn> &kindToFn, Kind kind) {
+  auto it = kindToFn.find(kind);
+  if (it == kindToFn.end()) {
+    return std::nullopt;
+  }
+
+  return it->second;
+}
+
+static std::optional<hfusion::UnaryFn>
+mapUnaryKindToHFusionUnaryFn(UnaryKind kind) {
   static const llvm::DenseMap<UnaryKind, hfusion::UnaryFn> kindToFn = {
       {UnaryKind::Rec, hfusion::UnaryFn::rec},
       {UnaryKind::Sqrt, hfusion::UnaryFn::sqrt},
       {UnaryKind::Not, hfusion::UnaryFn::vnot}
   };
 
-  auto it = kindToFn.find(kind);
-  if (it == kindToFn.end()) {
-    llvm_unreachable("unsupported unary kind");
-  }
-
-  return it->second;
+  return lookupMappedFn(kindToFn, kind);
 }
 
-static linalg::BinaryFn mapBinaryKindToBinaryFn(BinaryKind kind) {
+static std::optional<linalg::UnaryFn>
+mapUnaryKindToLinalgUnaryFn(UnaryKind kind) {
+  static const llvm::DenseMap<UnaryKind, linalg::UnaryFn> kindToFn = {
+      {UnaryKind::Abs, linalg::UnaryFn::abs},
+  };
+
+  return lookupMappedFn(kindToFn, kind);
+}
+
+static std::optional<linalg::BinaryFn>
+mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
   static const llvm::DenseMap<BinaryKind, linalg::BinaryFn> kindToFn = {
       {BinaryKind::Add, linalg::BinaryFn::add},
       {BinaryKind::Sub, linalg::BinaryFn::sub},
@@ -51,24 +70,47 @@ static linalg::BinaryFn mapBinaryKindToBinaryFn(BinaryKind kind) {
       {BinaryKind::Div, linalg::BinaryFn::div},
   };
 
-  auto it = kindToFn.find(kind);
-  if (it == kindToFn.end()) {
-    llvm_unreachable("unsupported binary kind");
-  }
+  return lookupMappedFn(kindToFn, kind);
+}
 
-  return it->second;
+static std::optional<hfusion::BinaryFn>
+mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
+  static const llvm::DenseMap<BinaryKind, hfusion::BinaryFn> kindToFn = {
+      {BinaryKind::Min, hfusion::BinaryFn::minf},
+      {BinaryKind::Max, hfusion::BinaryFn::maxf},
+  };
+
+  return lookupMappedFn(kindToFn, kind);
 }
 
 static bool matchUnaryOp(Operation *op, UnaryKind kind) {
-  auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
-  return unaryOp && unaryOp.hasPureTensorSemantics() &&
-         unaryOp.getFun() == mapUnaryKindToUnaryFn(kind);
+  if (auto unaryFn = mapUnaryKindToLinalgUnaryFn(kind)) {
+    auto unaryOp = dyn_cast_or_null<linalg::ElemwiseUnaryOp>(op);
+    return unaryOp && unaryOp.hasPureTensorSemantics() &&
+           unaryOp.getFun() == *unaryFn;
+  }
+  if (auto unaryFn = mapUnaryKindToHFusionUnaryFn(kind)) {
+    auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
+    return unaryOp && unaryOp.hasPureTensorSemantics() &&
+           unaryOp.getFun() == *unaryFn;
+  }
+
+  llvm_unreachable("unsupported unary kind");
 }
 
 static bool matchBinaryOp(Operation *op, BinaryKind kind) {
-  auto binaryOp = dyn_cast_or_null<linalg::ElemwiseBinaryOp>(op);
-  return binaryOp && binaryOp.hasPureTensorSemantics() &&
-         binaryOp.getFun() == mapBinaryKindToBinaryFn(kind);
+  if (auto binaryFn = mapBinaryKindToLinalgBinaryFn(kind)) {
+    auto binaryOp = dyn_cast_or_null<linalg::ElemwiseBinaryOp>(op);
+    return binaryOp && binaryOp.hasPureTensorSemantics() &&
+           binaryOp.getFun() == *binaryFn;
+  }
+  if (auto binaryFn = mapBinaryKindToHFusionBinaryFn(kind)) {
+    auto binaryOp = dyn_cast_or_null<hfusion::ElemwiseBinaryOp>(op);
+    return binaryOp && binaryOp.hasPureTensorSemantics() &&
+           binaryOp.getFun() == *binaryFn;
+  }
+
+  llvm_unreachable("unsupported binary kind");
 }
 
 bool mlir::hfusion::NormalizeTraitsBase::matchOp(Operation *op,
@@ -124,22 +166,41 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createCmpOp(
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     UnaryKind kind) {
-  UnaryFn unaryFn = mapUnaryKindToUnaryFn(kind);
-  auto *op = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                                    hfusion::UnaryFnAttr>(
-      rewriter, loc, unaryFn, mlir::ValueRange{input}, mlir::ValueRange{dst});
-  return op->getResult(0);
+  if (auto unaryFn = mapUnaryKindToLinalgUnaryFn(kind)) {
+    auto *op = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                      linalg::UnaryFn, linalg::UnaryFnAttr>(
+        rewriter, loc, *unaryFn, ValueRange{input}, ValueRange{dst});
+    return op->getResult(0);
+  }
+  if (auto unaryFn = mapUnaryKindToHFusionUnaryFn(kind)) {
+    auto *op = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
+                                      hfusion::UnaryFn, hfusion::UnaryFnAttr>(
+        rewriter, loc, *unaryFn, ValueRange{input}, ValueRange{dst});
+    return op->getResult(0);
+  }
+
+  llvm_unreachable("unsupported unary kind");
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
-  linalg::BinaryFn binaryFn = mapBinaryKindToBinaryFn(kind);
-  auto *op = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                     linalg::BinaryFnAttr>(
-      rewriter, loc, binaryFn, mlir::ValueRange{lhs, rhs},
-      mlir::ValueRange{dst});
-  return op->getResult(0);
+  if (auto binaryFn = mapBinaryKindToLinalgBinaryFn(kind)) {
+    auto *op =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, *binaryFn, ValueRange{lhs, rhs}, ValueRange{dst});
+    return op->getResult(0);
+  }
+  if (auto binaryFn = mapBinaryKindToHFusionBinaryFn(kind)) {
+    auto *op =
+        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                hfusion::BinaryFnAttr>(
+            rewriter, loc, *binaryFn, ValueRange{lhs, rhs}, ValueRange{dst});
+    return op->getResult(0);
+  }
+
+  llvm_unreachable("unsupported binary kind");
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::castTo(

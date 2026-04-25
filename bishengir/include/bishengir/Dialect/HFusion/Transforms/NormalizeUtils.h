@@ -102,14 +102,9 @@ Value norm(PatternRewriter &rewriter, Location loc, Value x, Value xRound,
            const llvm::SmallVector<double> &piApproParams,
            std::optional<float> offset = std::nullopt);
 template <hfusion::TaylerMode taylerMode>
-Value sign(PatternRewriter &rewriter, Location loc, Value x);
-template <hfusion::TaylerMode taylerMode>
 Value tayler(OpBuilder &b, Location loc, Value x, int taylerExpansionNum);
 SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
                                     int taylerExpansionNum);
-double getFPMAX(FloatType fType);
-double getFPMIN(FloatType fType);
-Value getAtanSign(PatternRewriter &rewriter, Location loc, Value x);
 Value constructTaylerSeries(OpBuilder &b, Location loc, Value lastTaylerTerm,
                             Value emptyOp, Value xPow, int taylerExpansionNum,
                             const SmallVector<double> &taylerParams);
