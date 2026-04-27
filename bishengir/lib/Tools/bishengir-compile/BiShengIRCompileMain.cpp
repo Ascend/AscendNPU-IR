@@ -51,6 +51,7 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                                     const BiShengIRCompileMainConfig &config) {
   std::string libDir = getLibDirFromExecutable(executablePath);
   MLIRContext *ctx = module->getContext();
+  ctx->loadDialect<mlir::hivm::HIVMDialect>();
 
   auto addIfExists = [&](const char *filename, llvm::StringRef attrName,
                          auto createAttr) {
