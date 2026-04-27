@@ -158,10 +158,15 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   hivmPipelineOptions.target =
       hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
   hivmPipelineOptions.enableVfMergeLevel = config.enableVfMergeLevel();
+  // UB-aware fusion splits groups to avoid overflow; disable later VF merging
+  // so the split is preserved through the HIVM pipeline.
+  if (config.isUBAwareVfFusion() && hivmPipelineOptions.enableVfMergeLevel > 0)
+    hivmPipelineOptions.enableVfMergeLevel = 0;
   hivmPipelineOptions.enableDirectHIVMLowering =
       config.enableDirectHIVMLowering();
   hivmPipelineOptions.enableND2NZOnVector = config.shouldEnableND2NZOnVector();
-  hivmPipelineOptions.enableFusedMultiplyAdd = config.shouldEnableFusedMultiplyAdd();
+  hivmPipelineOptions.enableFusedMultiplyAdd =
+      config.shouldEnableFusedMultiplyAdd();
   hivmPipelineOptions.enablePrintMemoryAllocatedSize =
       config.shouldenablePrintMemoryAllocatedSize();
   hivmPipelineOptions.disableTightlyCoupledBufferReuse =
@@ -229,7 +234,8 @@ void setupLowerTritonPipelineOptions(
   // encode our own compile optimization
   options.enableBishengirSimtOptimization =
       config.getEnableBishengirSimtOptimize();
-  options.enableSimtReorderInstruction = config.getEnableSimtReorderInstruction();
+  options.enableSimtReorderInstruction =
+      config.getEnableSimtReorderInstruction();
 #endif
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   options.protonGPUCompileConfig = getProtonGPUCompileConfig();

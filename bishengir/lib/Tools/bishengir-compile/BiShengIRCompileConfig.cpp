@@ -207,13 +207,17 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     static cl::opt<mlir::analysis::FusionMode, /*ExternalStorage=*/true>
         vfFusionMode(
             "vf-fusion-mode",
-            cl::desc("VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel"),
+            cl::desc("VF fusion mode: max-parallel, all-op, n-most-op, "
+                     "ub-aware-op. Default is max-parallel"),
             cl::values(clEnumValN(mlir::analysis::FusionMode::MaxParallel,
                                   "max-parallel", "Fuse for max parallel"),
                        clEnumValN(mlir::analysis::FusionMode::AllOp, "all-op",
                                   "Fuse all vector operations"),
                        clEnumValN(mlir::analysis::FusionMode::NMostOp,
-                                  "n-most-op", "Fuse at most N operations")),
+                                  "n-most-op", "Fuse at most N operations"),
+                       clEnumValN(mlir::analysis::FusionMode::UBAwareOp,
+                                  "ub-aware-op",
+                                  "Fuse with UB budget awareness")),
             cl::location(vfFusionModeFlag),
             cl::init(mlir::analysis::FusionMode::MaxParallel),
             cl::cat(featCtrlCategory),

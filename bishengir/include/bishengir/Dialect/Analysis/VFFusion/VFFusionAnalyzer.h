@@ -24,8 +24,7 @@ namespace mlir::analysis {
 //===----------------------------------------------------------------------===//
 
 // TODO: find a way to separate the implementation and declaration
-template <class AnalyzerClass>
-class VFFusionAnalyzerBase {
+template <class AnalyzerClass> class VFFusionAnalyzerBase {
 public:
   /// Traversal order is done in PreOrder walk manner.
   /// Map from operations to their indices in the block traversal order.
@@ -64,7 +63,8 @@ public:
   ///
   /// @param block The block to analyze and retrieve fused groups from.
   /// @return A vector of `VFFusionBlock` objects, each containing operations
-  ///         that should be fused together, or failure if fusion analysis fails.
+  ///         that should be fused together, or failure if fusion analysis
+  ///         fails.
   FailureOr<SmallVector<VFFusionBlock>> retrieveFusedBlocks(Block &block) {
     if (failed(fuse(block)))
       return failure();
@@ -330,6 +330,7 @@ public:
                       const size_t maxNumberOp)
       : VFFusionAnalyzerBase<NMostOpKindAnalyzer>(option), N(maxNumberOp){};
   ~NMostOpKindAnalyzer() override = default;
+
 private:
   // max number operations fusible ops including the ops inside regions.
   const size_t N;
@@ -358,6 +359,34 @@ private:
   bool areFusibleOps(const int producerIndex, const int consumerIndex, OpOperand *fusedOperand);
   DenseMap<Operation *, size_t> opToGroupIndex;
   SmallVector<DenseSet<Operation *>> AllFusedBlocks;
+};
+
+//===----------------------------------------------------------------------===//
+// UBAwareOpKindAnalyzer
+//===----------------------------------------------------------------------===//
+
+/// Like AllOpKindAnalyzer but refuses merges whose estimated caller-side UB
+/// would exceed a budget, unless splitting would materialise shared producers.
+class UBAwareOpKindAnalyzer
+    : public VFFusionAnalyzerBase<UBAwareOpKindAnalyzer> {
+public:
+  UBAwareOpKindAnalyzer() = delete;
+
+  bool isFusibleImpl(int xIndex, int yIndex);
+  LogicalResult fuseImpl(Block &block);
+
+  UBAwareOpKindAnalyzer(const VFFusionKindOption &option, int64_t ubBudgetBytes,
+                        int64_t ubAlignBytes)
+      : VFFusionAnalyzerBase<UBAwareOpKindAnalyzer>(option),
+        ubBudgetBytes_(ubBudgetBytes), ubAlignBytes_(ubAlignBytes){};
+  ~UBAwareOpKindAnalyzer() override = default;
+
+private:
+  const int64_t ubBudgetBytes_;
+  const int64_t ubAlignBytes_;
+
+  int64_t estimateMergedGroupBytes(int xIndex, int yIndex);
+  int64_t sharedProducerBytes(int xIndex, int yIndex);
 };
 
 } // namespace mlir::analysis

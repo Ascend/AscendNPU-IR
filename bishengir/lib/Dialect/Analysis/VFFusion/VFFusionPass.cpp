@@ -16,8 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Pass/Pass.h"
 #include <string>
 
@@ -45,11 +47,16 @@ public:
   explicit VFFusionPass(const mlir::VFFusionOptions &options)
       : impl::VFFusionBase<VFFusionPass>(options) {}
   void runOnOperation() override;
+
+private:
+  int64_t ubBudgetBytes_ = 0;
+  int64_t ubAlignBytes_ = 0;
 };
 
 VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
-                            enableOutlineArith, enableOutlineCube, enableReshapeTiling);
+                            enableOutlineArith, enableOutlineCube,
+                            enableReshapeTiling, ubBudgetBytes_, ubAlignBytes_);
 }
 
 template <typename FusionKind>
@@ -88,6 +95,21 @@ void VFFusionPass::runOnOperation() {
   if (enableOutlineCF)
     llvm_unreachable("unsupported at the moment");
 
+  ubBudgetBytes_ = 0;
+  ubAlignBytes_ = 0;
+  if (fusionMode == FusionMode::UBAwareOp) {
+    if (auto spec = hacc::utils::getNPUTargetSpec(moduleOp)) {
+      auto ubEntry = spec->getSpecForIdentifierEnum(hacc::DeviceSpec::UB_SIZE);
+      ubBudgetBytes_ = cast<IntegerAttr>(ubEntry.getValue()).getInt() / 8;
+      LDBG("UB budget from target spec: " << ubBudgetBytes_ << " bytes");
+
+      auto alignEntry =
+          spec->getSpecForIdentifierEnum(hacc::DeviceSpec::UB_ALIGN_SIZE);
+      ubAlignBytes_ = cast<IntegerAttr>(alignEntry.getValue()).getInt() / 8;
+      LDBG("UB align from target spec: " << ubAlignBytes_ << " bytes");
+    }
+  }
+
   auto walkResult = moduleOp.walk([&](func::FuncOp funcOp) -> WalkResult {
     // Cube/MixCV function requires special fusion strategy (refer to
     // SplitMixKernel).
@@ -106,9 +128,10 @@ void VFFusionPass::runOnOperation() {
     case FusionMode::MaxParallel:
       return WalkResult(
           this->tryToFuse<MaxParallelKind>(funcOp.getOperation(), builder));
-    
-  }
-
+    case FusionMode::UBAwareOp:
+      return WalkResult(
+          this->tryToFuse<UBAwareOpKind>(funcOp.getOperation(), builder));
+    }
     return WalkResult::interrupt();
   });
   if (walkResult.wasInterrupted())

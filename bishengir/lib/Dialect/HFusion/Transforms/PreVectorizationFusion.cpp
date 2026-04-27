@@ -353,7 +353,8 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
     return true;
   // 5. prevent fusion across synchronization boundaries.
   if (producerOp->getBlock() == consumerOp->getBlock()) {
-    // Determine the scanning range: instructions located between producer and consumer.
+    // Determine the scanning range: instructions located between producer and
+    // consumer.
     Operation *start = producerOp;
     Operation *end = consumerOp;
 
@@ -364,7 +365,8 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
     // Traverse all instructions between start and end ops.
     bool hasSyncBarrier = false;
     for (auto it = start->getNextNode(); it != end && it != nullptr; it = it->getNextNode()) {
-      // If a synchronization barrier is found, prohibit fusion to avoid data races.
+      // If a synchronization barrier is found, prohibit fusion to avoid data
+      // races.
       if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(it)) {
         hasSyncBarrier = true;
         break;
@@ -646,8 +648,8 @@ struct ExpandShapeToImplicitBrcInGenericPattern
       newMaps.push_back(oldMaps[op.getDpsInputs().size() + it.index()]);
     }
     auto newOp = rewriter.create<linalg::GenericOp>(
-        op.getLoc(), op.getResultTypes(), newInputs, op.getDpsInits(),
-        newMaps, op.getIteratorTypesArray());
+        op.getLoc(), op.getResultTypes(), newInputs, op.getDpsInits(), newMaps,
+        op.getIteratorTypesArray());
     rewriter.inlineRegionBefore(op.getRegion(), newOp.getRegion(),
                                 newOp.getRegion().begin());
     rewriter.replaceOp(op, newOp.getResults());
@@ -799,6 +801,8 @@ void InsertPadConstMark(Operation *moduleOp) {
         return WalkResult::skip();
       auto dst = copyOp.getTarget();
       auto maybeAlloc = utils::tracebackMemRefToAlloc(dst);
+      if (!maybeAlloc)
+        return WalkResult::skip();
       for (auto *user : maybeAlloc.value()->getUsers()) {
         if (auto fillOp = llvm::dyn_cast<linalg::FillOp>(user)) {
           // check if op for load-padding-value
@@ -823,13 +827,13 @@ void InsertPadConstMark(Operation *moduleOp) {
 // Replace linalg.fill with empty tensor when its user is linalg.reduce which
 // statisfies shouldUseTileReductionUsingForV2 pattern.
 // before:
-// %2 = linalg.fill ins(%cst : f32) outs(%6 : tensor<64xf32>) -> 
-//      tensor<64xf32> 
-// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>) 
+// %2 = linalg.fill ins(%cst : f32) outs(%6 : tensor<64xf32>) ->
+//      tensor<64xf32>
+// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>)
 //      outs(%2 : tensor<64xf32>) dimensions = [1]
 // after:
 // %2 = tensor.empty() : tensor<64xf32>
-// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>) 
+// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>)
 //      outs(%2 : tensor<64xf32>) dimensions = [1]
 void EmptifyReduceInit(Operation *op, IRRewriter &rewriter) {
   op->walk([&](linalg::ReduceOp reduceOp) {

@@ -18,7 +18,6 @@
 
 namespace mlir::analysis {
 
-
 /// Type alias for a collection of fusion blocks.
 using VFFusionBlockList = SmallVector<VFFusionBlock>;
 
@@ -33,7 +32,8 @@ public:
   ///
   /// This method performs the following steps:
   /// - Analyzes the block to identify fusable operation groups (fusion blocks)
-  /// - For each valid fusion block, outlines the operations into a separate func
+  /// - For each valid fusion block, outlines the operations into a separate
+  /// func
   /// - Replaces the outlined operations with a call to the newly created func
   ///
   /// A fusion block is considered valid if:
@@ -41,9 +41,11 @@ public:
   /// - It doesn't contain all operations in the block (trivial case)
   ///
   /// @param block The block containing operations to analyze and fuse
-  /// @param builder The OpBuilder used to create new operations during outlining
+  /// @param builder The OpBuilder used to create new operations during
+  /// outlining
   /// @return success() if all fusion blocks were successfully processed,
-  ///         failure() if analysis failed or any outlining/invocation creation failed
+  ///         failure() if analysis failed or any outlining/invocation creation
+  ///         failed
   LogicalResult fuse(Block &block, OpBuilder &builder) {
     FailureOr<VFFusionBlockList> maybeFusionBlocks = analyzeBlockImpl(block);
     if (failed(maybeFusionBlocks))
@@ -65,14 +67,13 @@ public:
     return success();
   }
 
-  explicit FusionKindBase(const VFFusionKindOption &option) : option(option) {
-  }
+  explicit FusionKindBase(const VFFusionKindOption &option) : option(option) {}
 
   virtual ~FusionKindBase() = default;
 
 protected:
   VFFusionOutliner outliner;
-  VFFusionBlockList analyzedBlocks;  // Renamed from fusedBlock
+  VFFusionBlockList analyzedBlocks; // Renamed from fusedBlock
   const VFFusionKindOption option;
 };
 
@@ -81,8 +82,7 @@ public:
   FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
 
   explicit AllOpKind(const VFFusionKindOption &option)
-    : FusionKindBase(option), analyzer(option) {
-  };
+      : FusionKindBase(option), analyzer(option){};
 
 private:
   AllOpKindAnalyzer analyzer;
@@ -109,6 +109,18 @@ public:
 
 private:
   MaxParallelAnalyzer analyzer;
+};
+
+class UBAwareOpKind : public FusionKindBase {
+public:
+  FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
+
+  explicit UBAwareOpKind(const VFFusionKindOption &option)
+      : FusionKindBase(option),
+        analyzer(option, option.ubBudgetBytes, option.ubAlignBytes){};
+
+private:
+  UBAwareOpKindAnalyzer analyzer;
 };
 
 } // namespace mlir::analysis

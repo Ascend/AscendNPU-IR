@@ -193,6 +193,10 @@ public:
     return vfFusionModeFlag;
   }
 
+  bool isUBAwareVfFusion() const {
+    return vfFusionModeFlag == mlir::analysis::FusionMode::UBAwareOp;
+  }
+
   BiShengIRCompileMainConfig &treeReduce(bool enable) {
     enableTreeReduceFlag = enable;
     return *this;

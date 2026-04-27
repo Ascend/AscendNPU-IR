@@ -9,27 +9,28 @@
 #ifndef BISHENGIR_DIALECT_ANALYSIS_VFFUSION_UTILS_H
 #define BISHENGIR_DIALECT_ANALYSIS_VFFUSION_UTILS_H
 
-#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
-#include "bishengir/Dialect/Utils/UnionFind.h"
-#include "mlir/IR/Operation.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/Utils/UnionFind.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Operation.h"
 namespace mlir {
 namespace analysis {
 
-enum class FusionMode { AllOp, NMostOp, MaxParallel };
+enum class FusionMode { AllOp, NMostOp, MaxParallel, UBAwareOp };
 
 struct VFFusionKindOption {
   VFFusionKindOption(const bool enableOutlineCF, const bool enableOutlineMemref,
                      const bool enableOutlineArith,
                      const bool enableOutlineCube,
-                     const bool enableReshapeTiling)
+                     const bool enableReshapeTiling, int64_t ubBudgetBytes = 0,
+                     int64_t ubAlignBytes = 0)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
         enableOutlineCube(enableOutlineCube),
-        enableReshapeTiling(enableReshapeTiling){};
+        enableReshapeTiling(enableReshapeTiling), ubBudgetBytes(ubBudgetBytes),
+        ubAlignBytes(ubAlignBytes){};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -40,6 +41,8 @@ struct VFFusionKindOption {
   const bool enableOutlineArith;
   const bool enableOutlineCube;
   const bool enableReshapeTiling;
+  const int64_t ubBudgetBytes;
+  const int64_t ubAlignBytes;
 };
 
 bool isReshapeOp(Operation *op);

@@ -348,6 +348,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   if (enableSIMDVFFusion(hfusionOptions)) {
     VFFusionOptions vfFusionOptions;
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
+    if (hfusionOptions.vfFusionMode == analysis::FusionMode::UBAwareOp)
+      vfFusionOptions.enableOutlineMemref = true;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
