@@ -1,36 +1,32 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
+
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_0(
 // CHECK: arith.constant
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: linalg.fill
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
-// CHECK: return
-
-// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_1(
-// CHECK: arith.constant
-// CHECK: linalg.fill
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>}
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
 // CHECK: hfusion.select
 // CHECK: linalg.reduce
 // CHECK: arith.maximumf
-// CHECK: linalg.yield
 // CHECK: return
 
-// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_2(
+// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_1(
 // CHECK: arith.constant
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+// CHECK: linalg.fill
 // CHECK: linalg.reduce
 // CHECK: arith.addf
-// CHECK: linalg.yield
 // CHECK: return
 
-// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_3(
+// CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_2(
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
@@ -54,7 +50,6 @@
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_0
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_1
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_2
-// CHECK: func.call @triton_unk_fused__softmax_0_2_fused_3
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
 

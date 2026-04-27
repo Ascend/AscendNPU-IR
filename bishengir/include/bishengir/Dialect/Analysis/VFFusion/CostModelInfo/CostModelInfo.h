@@ -104,9 +104,9 @@ protected:
   OpConfigMap ReductionOpCostInfos{
       // ReductionOp will expand in the future pass
       {mlir::TypeID::get<mlir::arith::MaximumFOp>(),
-       {{TypeKind::F32, CostInfo{1, 13, 2}}}},
+       {{TypeKind::F32, CostInfo{1, 3, 2}}}},
       {mlir::TypeID::get<mlir::arith::AddFOp>(),
-       {{TypeKind::F32, CostInfo{1, 19, 2}}}},
+       {{TypeKind::F32, CostInfo{1, 4, 2}}}},
   };
 };
 } // namespace analysis

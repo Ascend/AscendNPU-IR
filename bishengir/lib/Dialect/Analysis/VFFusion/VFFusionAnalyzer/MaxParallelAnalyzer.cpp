@@ -525,7 +525,12 @@ bool MaxParallelAnalyzer::isFusibleImpl(const int producerIndex,
   if (opToGroupIndex.find(opsInBlock[consumerIndex]) == opToGroupIndex.end()) {
     return true;
   }
-
+  // Ensure header CastOp is fused to avoid UB overflow
+  // Future work: consider strategies for CastOp
+  if (isa<hfusion::CastOp>(candidateOp)) {
+    LDBG("candidateOp is Cast");
+    return true;
+  }
   float_t candidateOpComputeScores = getComputeScores(candidateOp);
   float_t candidateOpIoScores = getIoScores(candidateOp);
   auto groupId = opToGroupIndex[opsInBlock[consumerIndex]];

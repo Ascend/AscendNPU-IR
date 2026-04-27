@@ -34,11 +34,11 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2(
 // CHECK: arith.constant
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.fill
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
