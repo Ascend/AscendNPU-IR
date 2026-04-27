@@ -27,7 +27,7 @@
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/SourceMgr.h">
+#include "llvm/Support/SourceMgr.h"
 
 namespace {
 // getMainExecutable needs an address inside this binary; ISO C++ forbids using
