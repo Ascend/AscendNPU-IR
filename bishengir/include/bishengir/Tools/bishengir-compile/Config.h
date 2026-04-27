@@ -797,6 +797,15 @@ public:
     this->clArgs(clArgs);
   }
 
+  /// Set the path of the bishengir-compile executable (e.g. argv[0]).
+  /// Used to locate the default aicore bitcode files in ../lib.
+  BiShengIRCompileMainConfig &setExecutablePath(const std::string &path) {
+    executablePath = path;
+    return *this;
+  }
+
+  std::string getExecutablePath() const { return executablePath; }
+
 protected:
   // -------------------------------------------------------------------------//
   //                       Feature control options                            //
@@ -1130,6 +1139,9 @@ protected:
   bool onlyRunHIVMPipelineFlag{false};
 
   std::vector<std::string> clArgsFlag;
+
+private:
+  std::string executablePath; 
 };
 
 } // namespace bishengir
