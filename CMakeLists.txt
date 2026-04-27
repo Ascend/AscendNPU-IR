@@ -235,6 +235,7 @@ add_subdirectory(bishengir/lib/CAPI)
 if(MLIR_INCLUDE_TESTS)
   add_definitions(-DMLIR_INCLUDE_TESTS)
   add_subdirectory(bishengir/test)
+  add_subdirectory(bishengir/unittests)
 endif()
 
 # TODO: Standalone build should support python binding
