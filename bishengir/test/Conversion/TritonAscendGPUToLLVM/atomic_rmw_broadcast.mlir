@@ -37,7 +37,9 @@ module attributes {
   //
   // CHECK-LABEL: @tensor_atomic_add_i32_broadcast
   // CHECK:       ascend_dpx.atomic_add
-  // CHECK:       ascend_dpx.sync_threads
+  // CHECK:       ascend_dpx.store {{.*}} : <3>, vector<1xi32>
+  // CHECK-NEXT:  ascend_dpx.sync_threads
+  // CHECK:       {{.*}} = ascend_dpx.load {{.*}} : (!llvm.ptr<3>) -> i32
   tt.func @tensor_atomic_add_i32_broadcast(
       %ptr: tensor<1x!tt.ptr<i32>, #blocked>,
       %val: tensor<1xi32, #blocked>,
@@ -59,7 +61,9 @@ module attributes {
   //
   // CHECK-LABEL: @scalar_atomic_add_i64_with_alloc_broadcast
   // CHECK:       ascend_dpx.atomic_add
-  // CHECK:       ascend_dpx.sync_threads
+  // CHECK:       ascend_dpx.store {{.*}} : <3>, vector<1xi64>
+  // CHECK-NEXT:  ascend_dpx.sync_threads
+  // CHECK:       {{.*}} = ascend_dpx.load {{.*}} : (!llvm.ptr<3>) -> i64
   tt.func @scalar_atomic_add_i64_with_alloc_broadcast(
       %ptr: !tt.ptr<i64>, %val: i64, %out: !tt.ptr<i64>) {
     %true = arith.constant true
@@ -74,7 +78,9 @@ module attributes {
   //
   // CHECK-LABEL: @scalar_atomic_add_i32_no_broadcast
   // CHECK:       ascend_dpx.atomic_add
+  // CHECK-NOT:   ascend_dpx.store {{.*}} : <3>
   // CHECK-NOT:   ascend_dpx.sync_threads
+  // CHECK-NOT:   ascend_dpx.load {{.*}} : (!llvm.ptr<3>)
   tt.func @scalar_atomic_add_i32_no_broadcast(
       %ptr: !tt.ptr<i32>, %val: i32, %out: !tt.ptr<i32>) {
     %true = arith.constant true

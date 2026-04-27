@@ -1,4 +1,4 @@
-//===- ConvertSharedPtrToMemDesc.cpp - ptr<6> to memdesc conversion ------===//
+//===- ConvertSharedPtrToMemDesc.cpp - ptr<6> to memdesc conversion -------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -110,8 +110,13 @@ buildMemDescType(MLIRContext *ctx, ArrayRef<int64_t> shape, Type elemType,
     auto layoutType =
         bishengir::triton_ext::symbolizeFractalLayoutType(strAttr.getValue());
     assert(layoutType && "invalid hivm.fractal_layout value");
+    // Fractal tile is always 512 bytes: M0 is fixed at 16, N0 scales with
+    // element width so that M0 * N0 * elemBytes == 512.
+    constexpr int64_t fractalM0 = 16;
+    int64_t elemBits = elemType.getIntOrFloatBitWidth();
+    int64_t fractalN0 = 512 / (fractalM0 * (elemBits / 8));
     encoding = bishengir::triton_ext::FractalSharedEncodingAttr::get(
-        ctx, /*fractalM0=*/16, /*fractalN0=*/16, *layoutType, ctaLayout);
+        ctx, fractalM0, fractalN0, *layoutType, ctaLayout);
   } else {
     encoding = triton::gpu::SwizzledSharedEncodingAttr::get(
         ctx, /*vec=*/1, /*perPhase=*/1, /*maxPhase=*/1, order, ctaLayout);

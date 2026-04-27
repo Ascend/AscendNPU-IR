@@ -41,7 +41,7 @@ module {
 // -----
 // Test 3: Store with fractal zN → local_store with fractal_shared encoding.
 
-// CHECK: #[[$FRACTAL:.*]] = #ttgext.fractal_shared<{fractalM0 = 16, fractalN0 = 16, layoutType = "zN"
+// CHECK: #[[$FRACTAL:.*]] = #ttgext.fractal_shared<{fractalM0 = 16, fractalN0 = 8, layoutType = "zN"
 // CHECK-LABEL: tt.func @store_fractal_zN
 // CHECK-SAME:  (%[[MD:.*]]: !ttg.memdesc<8xf32, #[[$FRACTAL]], #smem, mutable>
 // CHECK:         ttg.local_store %{{.*}}, %[[MD]]
