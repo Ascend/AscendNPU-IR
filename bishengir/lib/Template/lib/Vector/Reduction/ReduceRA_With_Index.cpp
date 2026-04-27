@@ -138,6 +138,8 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
   __ubuf__ uint64_t *ub_mask_ptr_ptr =
       (__ubuf__ uint64_t *)(ub_mask_ptr +
                             num_blocks_for_mask_aligned * INTR_BYTES_PER_BLOCK);
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   // to put the ub_mask_ptr in the CMPMASK
   ub_mask_ptr_ptr[0] =
       (uint64_t)((uint8_t *)(((uint64_t)((__ubuf__ uint8_t *)ub_mask_ptr))));
