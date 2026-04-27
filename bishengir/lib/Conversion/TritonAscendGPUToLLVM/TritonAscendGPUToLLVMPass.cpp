@@ -212,12 +212,14 @@ struct AllocateAscendSharedMemory
         mod, mlir::triton::ascend::AscendAllocationAnalysisScratchSizeFn,
         mlir::triton::ascend::AscendAllocationSharedMemCheckFn);
 
+    // Memory allocation needs to run anyways, but membar analysis is for DPX
+    // path only.
+    mlir::triton::gpu::attachAllocationSizeAndOffsetAttr(mod, allocation);
+
     if (triton::util::getPassColumnDigit(mod, "convert-triton-gpu-to-llvm")) {
       ModuleMembarOrFenceAnalysis<MembarAnalysis> analyzer(&allocation);
       analyzer.run();
     }
-
-    mlir::triton::gpu::attachAllocationSizeAndOffsetAttr(mod, allocation);
   }
 };
 
