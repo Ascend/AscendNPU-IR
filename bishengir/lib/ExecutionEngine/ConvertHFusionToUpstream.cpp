@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements converting HFusion operations 
+// This file implements converting HFusion operations
 // to upstream dialect equivalents for precision verification on the CPU
 // execution engine (mlir-cpu-runner).
 //
@@ -66,15 +66,16 @@ struct RewriteHistogramOp : public OpRewritePattern<hfusion::HistogramOp> {
       flatInput =
           rewriter.create<tensor::CollapseShapeOp>(loc, flatTy, input, reassoc);
     }
-   Value flatMask = mask;
+    Value flatMask = mask;
     if (mask) {
       auto maskTy = cast<RankedTensorType>(mask.getType());
       if (maskTy.getRank() > 1) {
         int64_t flatMaskSize = maskTy.hasStaticShape() ? maskTy.getNumElements()
                                                        : ShapedType::kDynamic;
-        auto flatMaskTy = RankedTensorType::get({flatMaskSize}, maskTy.getElementType());
-        flatMask =
-            rewriter.create<tensor::CollapseShapeOp>(loc, flatMaskTy, mask, reassoc);
+        auto flatMaskTy =
+            RankedTensorType::get({flatMaskSize}, maskTy.getElementType());
+        flatMask = rewriter.create<tensor::CollapseShapeOp>(loc, flatMaskTy,
+                                                            mask, reassoc);
       }
     }
 
@@ -116,7 +117,8 @@ struct RewriteHistogramOp : public OpRewritePattern<hfusion::HistogramOp> {
           loc, arith::CmpIPredicate::slt, indexVal, numBins);
       Value isValid = rewriter.create<arith::AndIOp>(loc, isGeZero, isLtBins);
       if (mask) {
-        Value maskVal = rewriter.create<tensor::ExtractOp>(loc, flatMask, ValueRange{iv});
+        Value maskVal =
+            rewriter.create<tensor::ExtractOp>(loc, flatMask, ValueRange{iv});
         isValid = rewriter.create<arith::AndIOp>(loc, isValid, maskVal);
       }
       auto ifOp = rewriter.create<scf::IfOp>(loc, curHist.getType(), isValid,
@@ -171,6 +173,7 @@ struct ConvertHFusionToUpstream
     patterns.add<RewriteHistogramOp>(&ctx);
 
     // Future operations like CumprodOp, AtomicXchgOp, etc., should be added below.
+    //
     // patterns.add<RewriteXXXXX>(&ctx);
 
     // Apply all rewrite patterns greedily.
