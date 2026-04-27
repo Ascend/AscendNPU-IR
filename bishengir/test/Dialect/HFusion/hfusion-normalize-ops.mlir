@@ -1212,6 +1212,44 @@ func.func @test_hfusion_atan_ops(%arg0 : tensor<32xf32>) ->  tensor<32xf32> {
 }
 
 // -----
+// CHECK-LABEL: func.func @test_hfusion_atan2_ops(
+// CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<abs>}
+// CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<abs>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vgt>}
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: linalg.fill
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.select
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.fill
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: hfusion.select
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vge>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.select
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+// CHECK: hfusion.select
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<veq>}
+// CHECK: hfusion.select
+// CHECK: return
+func.func @test_hfusion_atan2_ops(%arg0 : tensor<32xf32>, %arg1 : tensor<32xf32>) -> tensor<32xf32> {
+  %0 = tensor.empty() : tensor<32xf32>
+  %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<atan2>} ins(%arg0, %arg1 : tensor<32xf32>, tensor<32xf32>) outs(%0 : tensor<32xf32>) -> tensor<32xf32>
+  return %ret : tensor<32xf32>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_hfusion_tan_ops(
 // CHECK-SAME: %[[ARG0:.*]]: tensor<32xf32>) -> tensor<32xf32> {
 // CHECK: %[[CST:.*]] = arith.constant -24.8048935 : f32

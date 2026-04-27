@@ -492,6 +492,10 @@ public:
       if (allFloatingPoint)
         return builder.create<math::PowFOp>(arg0.getLoc(), arg0, arg1);
       llvm_unreachable("unsupported type for vpow");
+    case BinaryFn::atan2:
+      if (allFloatingPoint)
+        return builder.create<math::Atan2Op>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for atan2");
     case BinaryFn::powi:
       if (allInteger)
         return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
