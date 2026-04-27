@@ -54,6 +54,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
@@ -244,7 +245,7 @@ public:
       return failure();
 
     int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
-    if (std::is_same_v<hivm::CopyOp, OpType>){
+    if constexpr (std::is_same_v<hivm::CopyOp, OpType>){
       if (!Op.getResults().empty()){  // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
@@ -272,7 +273,7 @@ public:
 
     auto containingLoop = maybeContainingLoop.value();
 
-    if (std::is_same_v<hivm::StoreOp, OpType>) {
+    if constexpr (std::is_same_v<hivm::StoreOp, OpType>) {
       auto storeOp = cast<hivm::StoreOp>(Op);
       auto srcType = dyn_cast<ShapedType>(storeOp.getSrc().getType());
       if (!srcType)
@@ -280,6 +281,15 @@ public:
       // Handling special case
       if (ShapedType::isDynamicShape(srcType.getShape())) {
         return handleDynamicShape(storeOp, tilingDim, containingLoop, rewriter);
+      }
+    }
+
+    if constexpr (std::is_same_v<hivm::IndirectStoreOp, OpType>) {
+      auto srcType = dyn_cast<ShapedType>(Op.getSrc().getType());
+      if (!srcType || !srcType.hasRank() ||
+          ShapedType::isDynamicShape(srcType.getShape())) {
+        Op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+        return failure();
       }
     }
 
@@ -309,8 +319,37 @@ public:
             newShape)))
       return failure();
 
-    modifyOpToSliced(rewriter, Op, mixedOffsets, mixedSize, mixedStrides,
-                     newShape);
+    LogicalResult result =
+        TypeSwitch<Operation *, LogicalResult>(Op.getOperation())
+            .template Case<hivm::IndirectStoreOp>(
+                [&](hivm::IndirectStoreOp indirectStoreOp) {
+                  modifyStoreToSliced(
+                      rewriter, &indirectStoreOp.getSrcMutable(), mixedOffsets,
+                      mixedSize, mixedStrides, newShape);
+                  modifyStoreToSliced(
+                      rewriter, &indirectStoreOp.getOffsetsMutable(),
+                      mixedOffsets, mixedSize, mixedStrides, newShape);
+                  auto maskMutable = indirectStoreOp.getMaskMutable();
+                  if (!maskMutable.empty())
+                    modifyStoreToSliced(rewriter, &maskMutable[0], mixedOffsets,
+                                        mixedSize, mixedStrides, newShape);
+                  rewriter.modifyOpInPlace(indirectStoreOp, [&]() {
+                    indirectStoreOp->setAttr(tiledOp, rewriter.getUnitAttr());
+                  });
+                  return success();
+                })
+            .template Case<hivm::StoreOp, hivm::CopyOp>(
+                [&](auto storeOrCopyOp) {
+                  modifyOpToSliced(rewriter, storeOrCopyOp, mixedOffsets,
+                                   mixedSize, mixedStrides, newShape);
+                  return success();
+                })
+            .Default([&](Operation *unsupportedOp) {
+              return unsupportedOp->emitOpError(
+                  "is unsupported by TileAndSliceStoreCopyOp pattern");
+            });
+    if (failed(result))
+      return result;
 
     // Maybe we need to maintain this map when doing bubble up.
     DenseMap<Operation *, Operation *> map;
@@ -688,7 +727,7 @@ public:
                                                arith::CmpIPredicate::eq,
                                                subBlockIndex, zero);
 
-    if (op.getResults().empty()) {
+    if (op->getResults().empty()) {
       // case 1: store op without results
       auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange(), cond, false);
       auto thenBodyBuilder = ifOp.getThenBodyBuilder(rewriter.getListener());
@@ -734,6 +773,8 @@ static LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp) {
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StoreOp>>(
       funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CopyOp>>(
+      funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::IndirectStoreOp>>(
       funcOp.getContext());
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
@@ -820,14 +861,18 @@ tileAndSliceOp(func::FuncOp func,
                                                        analyzer);
   patterns.add<TileAndSliceStoreCopyOp<hivm::CopyOp>>(func->getContext(),
                                                       analyzer);
+  patterns.add<TileAndSliceStoreCopyOp<hivm::IndirectStoreOp>>(
+      func->getContext(), analyzer);
   patterns.add<TileAndSliceDebugOp>(func->getContext(), analyzer);
   patterns.add<TileAndSliceLeaf<scf::ForOp>>(func->getContext(), analyzer);
   patterns.add<TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
   auto ret = applyPatternsGreedily(func, std::move(patterns), config);
-  if (func.walk([](hivm::StoreOp storeOp) {
-            return storeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
+  if (func.walk([](Operation *op) {
+            if (!isa<hivm::StoreOp, hivm::IndirectStoreOp>(op))
+              return mlir::WalkResult::advance();
+            return op->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
                        ? mlir::WalkResult::interrupt()
                        : mlir::WalkResult::advance();
           })
@@ -918,10 +963,10 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   }
 
   // If all the pattern fails due to the tilingDim=-1
-  // walk through the store op and copy op
+  // walk through the store/copy/indirect_store op
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
-    if (!isa<hivm::StoreOp, hivm::CopyOp>(op)) {
+    if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp>(op)) {
       return WalkResult::advance();
     }
     if (op->hasAttr(tileAndSliceFailure)) {
