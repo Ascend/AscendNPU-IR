@@ -86,6 +86,8 @@ handleSparseUnfriendlyOp(Operation &op, IRRewriter &rewriter,
   if (isa<func::FuncOp>(parentOp))
     return;
   for (auto operand : op.getOperands()) {
+    if (operand.isa<BlockArgument>())
+      continue;
     assert(operand.getDefiningOp() != nullptr);
     Operation *operandParentOp = operand.getDefiningOp()->getParentOp();
     // FIXME: here we only handle operandParentOp is ForOp.

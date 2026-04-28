@@ -426,6 +426,7 @@ traceDefOps(Value v, bool isSingleChain = false,
 /// Returns whether the mmadlike operand traces back to the same mmad-like op set through a single chain.
 template <typename MmadLikeOpType>
 typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
+                            std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op> ||
                             std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
                         bool>::type
 isSingleChainMmadToMmad(MmadLikeOpType op) {

@@ -12,7 +12,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -341,6 +340,46 @@ private:
   }
 };
 
+class MMmadMxL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::MmadMxL1Op> {
+public:
+  using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MmadMxL1Op op,
+                                PatternRewriter &rewriter) const final {
+    // inputs
+    SmallVector<Value> libParams{op.getC(),      op.getA(),      op.getB(),
+                                 op.getScaleA(), op.getScaleB(), op.getRealM(),
+                                 op.getRealK(),  op.getRealN()};
+
+    // additional sync arguments
+    SmallVector<Value> additionalArgs;
+    genAdditionalFunctionArgs(op, additionalArgs, rewriter);
+    libParams.append(additionalArgs.begin(), additionalArgs.end());
+
+    replaceWithLibCall(rewriter, op,
+                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
+    return success();
+  }
+
+private:
+  void genAdditionalFunctionArgs(MmadMxL1Op op,
+                                 SmallVector<Value> &additionalArgs,
+                                 PatternRewriter &rewriter) const {
+    if (op.getSyncRelatedArgs().empty()) {
+      auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+      op.getSyncRelatedArgsMutable().assign(ValueRange(
+          SmallVector<Value>(op.getNumSyncRelatedArgs(), negOneDefaultValue)));
+    }
+
+    auto syncRelatedArgs = op.getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(additionalArgs));
+  }
+};
+
 class ND2NZOpToLibraryCallPattern : public OpRewritePattern<hivm::ND2NZOp> {
 public:
   using OpRewritePattern<hivm::ND2NZOp>::OpRewritePattern;
@@ -351,6 +390,20 @@ public:
           "ND2NZOp's library function implementation requires continuous dst!");
       return failure();
     }
+
+    replaceWithLibCall(rewriter, op,
+                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       op->getOperands(), {});
+    return success();
+  }
+};
+
+class LoadMXScaleOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::LoadMXScaleOp> {
+public:
+  using OpRewritePattern<hivm::LoadMXScaleOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(LoadMXScaleOp op,
+                                PatternRewriter &rewriter) const final {
 
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -484,7 +537,7 @@ public:
       MLIRContext *context, PatternBenefit benefit = 1,
       ArrayRef<StringRef> generatedNames = {})
       : OpRewritePattern<SourceOp>(context, benefit, generatedNames) {}
-      
+
   virtual ~MultiDimOpToLibraryCallPattern() = default;
 
 protected:
@@ -816,7 +869,8 @@ private:
       }
     } else {
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
-      padValue = llvm::TypeSwitch<Type, Value>(elemType)
+      padValue =
+          llvm::TypeSwitch<Type, Value>(elemType)
               .Case([&](IntegerType intType) {
                 // TODO: fix to use int type after support uint op
                 auto width = cast<mlir::IntegerType>(intType).getWidth();
@@ -826,33 +880,35 @@ private:
               .Case([&](FloatType floatType) {
                 if (floatType.isFloat8E4M3FN() || floatType.isFloat8E5M2()) {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
-                        op.getLoc(), rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-                    return constantOp.getResult();
+                      op.getLoc(),
+                      rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
+                  return constantOp.getResult();
                 } else {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
-                        op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
-                    return constantOp.getResult();
+                      op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
+                  return constantOp.getResult();
                 }
               })
               .Default([](Type) {
                 llvm_unreachable("Unsupported type of pad value!");
                 return Value{};
               });
-      }
-      inputOperands.push_back(padValue);
+    }
+    inputOperands.push_back(padValue);
 
-      if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
-        calculatePaddingNum(rewriter, op, inputOperands);
-      }
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      calculatePaddingNum(rewriter, op, inputOperands);
+    }
   }
 
   void addEvictionOperands(PatternRewriter &rewriter, CopyOpType op,
-                      SmallVector<Value> &inputOperands) const {
+                           SmallVector<Value> &inputOperands) const {
     Value evictionPolicy;
     if (op.getEvictionPolicy()) {
       evictionPolicy = this->constantI32(
           rewriter, op->getLoc(),
-          static_cast<uint32_t>(op.getEvictionPolicyAttr().getPolicy()));
+          static_cast<uint32_t>(
+              op.getEvictionPolicyAttr().getPolicy()));
       inputOperands.push_back(evictionPolicy);
     }
   }
@@ -1262,8 +1318,8 @@ public:
       auto I8Ty = rewriter.getIntegerType(8);
       return rewriter.create<arith::BitcastOp>(val.getLoc(), I8Ty, val);
     };
-    auto src=op.getOperand(0);
-    if(src.getType().isFloat8E4M3FN()||src.getType().isFloat8E5M2())
+    auto src = op.getOperand(0);
+    if (src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
       op->setOperand(0, BitCastFp8(src));
     // TODO: Unify the logic with deduceAlignmentForDPSInitOperand
     AlignKind alignKind =
@@ -1297,7 +1353,6 @@ public:
     if (tempBuffer) {
       reducedVals.push_back(tempBuffer);
     }
-
 
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     createLibCall(rewriter, op, mod, libFnName, reducedVals, {});
@@ -1443,7 +1498,7 @@ private:
         createDummyBuffer(rewriter, op, inputOperands);
       }
     }
-    
+
     if (failed(appendInitValue(rewriter, reduceOp, inputOperands)))
       return {};
     return inputOperands;
@@ -1798,7 +1853,9 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
   patterns.add<MmadL1OpToLibraryCallPattern,
+               MMmadMxL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
+               LoadMXScaleOpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
                L12UBOpToLibraryCallPattern,
                FixpipeOpToLibraryCallPattern,

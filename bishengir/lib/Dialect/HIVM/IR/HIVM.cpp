@@ -165,7 +165,6 @@ DataLayoutAttr::verify(::llvm::function_ref<InFlightDiagnostic()> emitError,
            "DOTA_ND or DOTB_ND or ND like";
   return success();
 }
-
 //===----------------------------------------------------------------------===//
 // HIVM Device Mapping Attributes
 //===----------------------------------------------------------------------===//

@@ -221,6 +221,7 @@ void MarkMultiBufferPass::runOnOperation() {
   if (!isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR)) {
     patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
+    // TODO: DN2NZ
     if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C) {
       patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(patterns.getContext());
     }

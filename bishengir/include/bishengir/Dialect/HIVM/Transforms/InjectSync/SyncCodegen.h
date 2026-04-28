@@ -24,7 +24,7 @@ struct SyncPipeBuild {
 };
 
 /// Sync and Template Interaction.
-struct SyncTemplateInter {
+template <typename T = hivm::MmadL1Op> struct SyncTemplateInter {
   SyncTemplateInter() = default;
 
   explicit SyncTemplateInter(Value MmadL1WaitL1AEvent, Value MmadL1WaitL1BEvent,
@@ -52,6 +52,29 @@ struct SyncTemplateInter {
   Value KLoopDBCond;
   Value BackPipeMPipeMTE1DBEvent0;
   Value BackPipeMPipeMTE1DBEvent1;
+};
+
+template <> struct SyncTemplateInter<hivm::MmadMxL1Op> {
+  SyncTemplateInter() = default;
+
+  explicit SyncTemplateInter(Value MmadMxL1WaitL1AEvent,
+                             Value MmadMxL1WaitL1BEvent,
+                             Value L1AWaitMmadMxL1Event,
+                             Value L1B2WaitMmadMxL1Event)
+      : MmadMxL1WaitL1AEvent(MmadMxL1WaitL1AEvent),
+        MmadMxL1WaitL1BEvent(MmadMxL1WaitL1BEvent),
+        L1AWaitMmadMxL1Event(L1AWaitMmadMxL1Event),
+        L1B2WaitMmadMxL1Event(L1B2WaitMmadMxL1Event) {}
+
+  explicit SyncTemplateInter(Value defaultValue)
+      : MmadMxL1WaitL1AEvent(defaultValue), MmadMxL1WaitL1BEvent(defaultValue),
+        L1AWaitMmadMxL1Event(defaultValue),
+        L1B2WaitMmadMxL1Event(defaultValue) {}
+
+  Value MmadMxL1WaitL1AEvent;
+  Value MmadMxL1WaitL1BEvent;
+  Value L1AWaitMmadMxL1Event;
+  Value L1B2WaitMmadMxL1Event;
 };
 
 class SyncCodegen {
@@ -140,9 +163,16 @@ private:
   /// SyncTemplateInter for initialization and library interaction.
   void InitDefaultSyncTemplateInterForMmadL1Op(hivm::MmadL1Op mmadL1Op);
 
+  /// SyncTemplateInter for initialization and library interaction.
+  void InitDefaultSyncTemplateInterForMmadMxL1Op(hivm::MmadMxL1Op mmadMxL1Op);
+
   /// Update the SyncTemplateInter information for the interaction between
   /// MmadL1 and the library.
   void UpdateMmadL1SyncTemplateInter();
+
+  /// Update the SyncTemplateInter information for the interaction between
+  /// MmadMxL1 and the library.
+  void UpdateMmadMxL1SyncTemplateInter();
 
   void HandleUnitFlagEnabledOp(IRRewriter &rewriter,
                                UnitFlagEnabledInterface unitFlagEnabledOp,
@@ -167,8 +197,7 @@ private:
       {4, hivm::EVENT::EVENT_ID4}, {5, hivm::EVENT::EVENT_ID5},
       {6, hivm::EVENT::EVENT_ID6}, {7, hivm::EVENT::EVENT_ID7}};
 
-  /// Record the loop and corresponding counter buffer, with eventidNum as
-  /// part of the key to handle different buffer counts for the same loop
+  /// Record the loop and corresponding counter buffer.
   DenseMap<std::pair<LoopLikeOpInterface, unsigned>, Value> loop2BufferCounter;
 
   /// Collect sync index and corresponding event id expressions.
@@ -177,8 +206,13 @@ private:
   /// Collect sync index and corresponding event id expressions.
   DenseMap<unsigned, Value> SyncIndex2EventID;
 
-  /// Collect MmadL1Op SyncTemplateInter info.
-  DenseMap<hivm::MmadL1Op, SyncTemplateInter> mmadL12SyncTemplateInter;
+  /// Collect MmadL1Op SyncTemplateInter info
+  DenseMap<hivm::MmadL1Op, SyncTemplateInter<hivm::MmadL1Op>>
+      mmadL12SyncTemplateInter;
+
+  /// Collect MmadMxL1Op SyncTemplateInter info.
+  DenseMap<hivm::MmadMxL1Op, SyncTemplateInter<hivm::MmadMxL1Op>>
+      mmadMxL12SyncTemplateInter;
 };
 
 } // namespace hivm

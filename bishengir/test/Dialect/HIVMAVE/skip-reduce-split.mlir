@@ -23,7 +23,7 @@ func.func @_attn_bwd_dq_dsink_mix_aiv_outlined_vf_7(%arg0: memref<1x1x64xf32, #h
     // CHECK:   %11 = ave.hir.vadd %res_4, %res_5, %10 {reductionOp} : vector<64xf32>, vector<64xi1>
     // CHECK:   %12 = ave.hir.pge <ALL> : vector<64xi1>
     // CHECK:   ave.hir.masked_store <NORM_B32> %subview_0[%c0], %12, %11 : memref<64xf32, strided<[1]>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
-    // CHECK: } {FirstIterationLoop}
+    // CHECK: }
     // CHECK: scf.for %arg4 = %c64 to %c512 step %c64 {
     scf.for %arg4 = %c0 to %c512 step %c64 {
       %subview_2 = memref.subview %arg1[%arg3, 0, %arg4] [1, 1, 64] [1, 1, 1] : memref<16x1x512xf32, #hivm.address_space<ub>> to memref<1x1x64xf32, strided<[512, 512, 1], offset: ?>, #hivm.address_space<ub>>

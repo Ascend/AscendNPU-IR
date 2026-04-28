@@ -25,18 +25,16 @@ func.func @triton_unk_fused_mean_0_outlined_vf_2(%arg0: memref<16xf32, #hivm.add
     // CHECK:   %res_7 = ave.hir.vload <NORM> %subview_6[%c0] : memref<?xf16, #map1, #hivm.address_space<ub>> into vector<64xf16>
     // CHECK:   %23 = ave.hir.pge <ALL> : vector<64xi1>
     // CHECK:   %24 = ave.hir.vextf %res_7, <part_even>, %23 : vector<64xf16>, vector<64xf32>, vector<64xi1>
-    // CHECK:   %25 = ave.hir.pge <ALL> : vector<64xi1>
-    // CHECK:   %26 = ave.hir.vadd %24, %arg5, %25 {reductionOp} : vector<64xf32>, vector<64xi1>
-    // CHECK:   %27 = affine.min #map(%21)
-    // CHECK:   %subview_8 = memref.subview %arg1[%arg3, %21] [1, %27] [1, 1] : memref<16x784xf16, #hivm.address_space<ub>> to memref<1x?xf16, strided<[784, 1], offset: ?>, #hivm.address_space<ub>>
-    // CHECK:   %subview_9 = memref.subview %subview_8[0, 0] [1, %27] [1, 1] : memref<1x?xf16, strided<[784, 1], offset: ?>, #hivm.address_space<ub>> to memref<?xf16, #map1, #hivm.address_space<ub>>
+    // CHECK-NOT: ave.hir.vadd
+    // CHECK:   %25 = affine.min #map(%21)
+    // CHECK:   %subview_8 = memref.subview %arg1[%arg3, %21] [1, %25] [1, 1] : memref<16x784xf16, #hivm.address_space<ub>> to memref<1x?xf16, strided<[784, 1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK:   %subview_9 = memref.subview %subview_8[0, 0] [1, %25] [1, 1] : memref<1x?xf16, strided<[784, 1], offset: ?>, #hivm.address_space<ub>> to memref<?xf16, #map1, #hivm.address_space<ub>>
     // CHECK:   %res_10 = ave.hir.vload <NORM> %subview_9[%c0] : memref<?xf16, #map1, #hivm.address_space<ub>> into vector<64xf16>
-    // CHECK:   %28 = ave.hir.pge <ALL> : vector<64xi1>
-    // CHECK:   %29 = ave.hir.vextf %res_10, <part_even>, %28 : vector<64xf16>, vector<64xf32>, vector<64xi1>
-    // CHECK:   %30 = ave.hir.pge <ALL> : vector<64xi1>
-    // CHECK:   %31 = ave.hir.vadd %29, %arg6, %30 {reductionOp} : vector<64xf32>, vector<64xi1>
-    // CHECK:   scf.yield %26, %31 : vector<64xf32>, vector<64xf32>
-    // CHECK: } {FirstIterationLoop, splitDepth = 1 : i64}
+    // CHECK:   %26 = ave.hir.pge <ALL> : vector<64xi1>
+    // CHECK:   %27 = ave.hir.vextf %res_10, <part_even>, %26 : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    // CHECK-NOT: ave.hir.vadd
+    // CHECK:   scf.yield %24, %27 : vector<64xf32>, vector<64xf32>
+    // CHECK: } {splitDepth = 1 : i64}
     // CHECK: %8:2 = scf.for %arg4 = %c64 to %c384 step %c64 iter_args(%arg5 = %7#0, %arg6 = %7#1) -> (vector<64xf32>, vector<64xf32>) {
     %7 = scf.for %arg4 = %c0 to %c784 step %c64 iter_args(%arg5 = %1) -> (vector<64xf32>) {
       // CHECK: %21 = arith.addi %arg4, %c384 : index

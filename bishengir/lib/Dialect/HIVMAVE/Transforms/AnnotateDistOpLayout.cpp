@@ -97,7 +97,7 @@ int maxAlignmentBitWidthContextFreeAnalysis(Operation *op) {
 }
 
 bool isDenseOnlyOp(Operation *op) {
-  return isa<hivmave::VFStoreWithStrideOp>(op);
+  return isa<hivmave::VFStoreWithStrideOp, hivmave::VFGatherOp, hivmave::VFVCIOp>(op);
 }
 
 int contextFreeAnalysis(Operation *op) {
@@ -105,7 +105,8 @@ int contextFreeAnalysis(Operation *op) {
     if (auto sts = dyn_cast<hivmave::VFStoreWithStrideOp>(op)) {
       return sts.getVectorType().getElementTypeBitWidth();
     } else {
-      assert(0 && "invalid op");
+      return dyn_cast<VectorType>(op->getResultTypes()[0])
+          .getElementTypeBitWidth();
     }
   } else {
     return maxAlignmentBitWidthContextFreeAnalysis(op);
@@ -134,10 +135,12 @@ int pregDefinerAnalysis(Operation *op) {
 }
 
 int pregSelfAnalysis(Operation *op) {
-  return hivm::util::PREDICATE_BITS / dyn_cast<VectorType>(op->getResultTypes()[0]).getNumElements() * 8;
+  return hivm::util::PREDICATE_BITS /
+         dyn_cast<VectorType>(op->getResultTypes()[0]).getNumElements() * 8;
 }
 
-int pregParentOpAnalysis(Operation *op, DenseMap<Operation *, int> &parOpAlign) {
+int pregParentOpAnalysis(Operation *op,
+                         DenseMap<Operation *, int> &parOpAlign) {
   if (parOpAlign.find(op->getParentOp()) != parOpAlign.end()) {
     if (parOpAlign[op->getParentOp()] == -1) {
       return contextFreeBitwidthCollect(op);
@@ -148,6 +151,9 @@ int pregParentOpAnalysis(Operation *op, DenseMap<Operation *, int> &parOpAlign) 
 
 int pgeOpAnalysis(hivmave::VFPgeOp pgeOp) {
   for (auto user : pgeOp->getUsers()) {
+    if (isa<hivmave::VectorLayoutCastOp>(user)) {
+      user = *(user->getUsers().begin());
+    }
     if (auto vgatherOp = dyn_cast<hivmave::VFGatherOp>(user)) {
       auto v = vgatherOp.getIndexVec();
       return v.getType().getElementTypeBitWidth();
@@ -158,7 +164,25 @@ int pgeOpAnalysis(hivmave::VFPgeOp pgeOp) {
       auto v = maskStoreOp.getVectorType();
       if (v.getElementTypeBitWidth() == 64) {
         return 32;
-      } 
+      }
+    }
+  }
+  return -1;
+}
+
+int specialCaseAnalysis(Operation *op) {
+  // Case 1: Vgather uses mask defined by plt
+  if (auto vgatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
+    auto mask = vgatherOp.getMask();
+    if (auto vcast = mask.getDefiningOp<hivmave::VectorLayoutCastOp>()) {
+      mask = vcast.getSrc();
+    }
+    if (auto pltOp = mask.getDefiningOp<hivmave::VFPltOp>()) {
+      auto dstVec = dyn_cast<VectorType>(pltOp.getRes().getType());
+      return hivm::util::VL_BITS / dstVec.getNumElements();
+    }
+    if (auto pgeOp = mask.getDefiningOp<hivmave::VFPgeOp>()) {
+      return getAlignmentBitWidth(pgeOp);
     }
   }
   return -1;
@@ -167,11 +191,15 @@ int pgeOpAnalysis(hivmave::VFPgeOp pgeOp) {
 void analyzeAlignmentBitWidth(Operation *op,
                               DenseMap<Operation *, int> &parOpAlign,
                               IRRewriter &rewriter) {
-  int alignmentBitWidth = -1;
-  if (isPredicateArithOp(op)) {
-    alignmentBitWidth = std::max({pregDefinerAnalysis(op), pregSelfAnalysis(op), pregParentOpAnalysis(op, parOpAlign)});
-  } else {
-    alignmentBitWidth = contextFreeAnalysis(op);
+  int alignmentBitWidth = specialCaseAnalysis(op);
+  if (alignmentBitWidth == -1) {
+    if (isPredicateArithOp(op)) {
+      alignmentBitWidth =
+          std::max({pregDefinerAnalysis(op), pregSelfAnalysis(op),
+                    pregParentOpAnalysis(op, parOpAlign)});
+    } else {
+      alignmentBitWidth = contextFreeAnalysis(op);
+    }
   }
   (void)setAlignmentBitWidthAttr(op, rewriter, alignmentBitWidth);
   parOpAlign[op] = alignmentBitWidth;
@@ -206,11 +234,9 @@ bool isGeneralOp(Operation *op) {
   return false;
 }
 
-// Specify Ops that need to be analyzed 
+// Specify Ops that need to be analyzed
 // for special cases.
-bool isSpecifyOp(Operation *op) {
-  return isa<hivmave::VFPgeOp>(op);
-}
+bool isSpecifyOp(Operation *op) { return isa<hivmave::VFPgeOp>(op); }
 
 struct AnnotateDistOpLayoutPass
     : public impl::AnnotateDistOpLayoutBase<AnnotateDistOpLayoutPass> {

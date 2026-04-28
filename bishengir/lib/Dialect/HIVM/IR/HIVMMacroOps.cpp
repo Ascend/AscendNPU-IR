@@ -328,6 +328,16 @@ llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   return kBlockSizes;
 }
 
+llvm::SmallVector<int64_t> getScaleBlockSizes(mlir::Value oper) {
+  llvm::SmallVector<int64_t> kBlockSizes;
+  auto elementType = getElementTypeOrSelf(oper.getType());
+  size_t kBlockSize =
+      2 * utils::kBitsToByte / elementType.getIntOrFloatBitWidth();
+  kBlockSizes.push_back(kBlockSize);
+  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  return kBlockSizes;
+}
+
 /// @brief Computes the block sizes for the B operand, with special handling
 ///        for transpose and A5 configurations.
 ///
@@ -1098,4 +1108,262 @@ LogicalResult MixGroupMatmulOp::verify() {
 std::string
 MixGroupMatmulOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   return getLibraryCallNameForGlobalMixMatmulOps<MixGroupMatmulOp>(this);
+}
+ 
+//===----------------------------------------------------------------------===//
+// MmadMxL1Op
+//===----------------------------------------------------------------------===//
+ 
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadMxL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+ 
+  auto operA = getA();
+  bool isATranspose = false;
+  auto aBlockSizes = getBlockSizes(operA);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      getContext(), isATranspose ? DataLayout::zN : DataLayout::nZ,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+ 
+  auto operB = getB();
+  bool isBTranspose = false;
+  auto bBlockSizes = getBlockSizes(operB);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+ 
+  auto operScaleA = getScaleA();
+  auto scaleABlockSizes = getScaleBlockSizes(operScaleA);
+  auto scaleALayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEA_zZ, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleABlockSizes)));
+  valLayoutMap[operScaleA] = scaleALayoutAttr;
+ 
+  auto operScaleB = getScaleB();
+  auto scaleBBlockSizes = getScaleBlockSizes(operScaleB);
+  auto scaleBLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEB_nN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
+  valLayoutMap[operScaleB] = scaleBLayoutAttr;
+ 
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[getC()] = mCLayoutAttr;
+  return valLayoutMap;
+}
+ 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
+  auto rank = getRankFromShapedTypeValue(getA());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND, false);
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getA().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::zN, nullptr,
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+ 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() {
+  auto rank = getRankFromShapedTypeValue(getB());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND, false);
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getB().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::zN, nullptr,
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+ 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleALayout() {
+  auto rank = getRankFromShapedTypeValue(getScaleA());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo: {
+    return DataLayoutAttr::get(getContext(), DataLayout::SCALEA_ND);
+  }
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getScaleA().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::SCALEA_zZ, nullptr,
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+ 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleBLayout() {
+  auto rank = getRankFromShapedTypeValue(getScaleB());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo: {
+    return DataLayoutAttr::get(getContext(), DataLayout::SCALEB_DN);
+  }
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getScaleB().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::SCALEB_nN, nullptr,
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+ 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() {
+  auto rank = getRankFromShapedTypeValue(getC());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+ 
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadMxL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+ 
+  auto aLayoutAttr = getOperandALayout();
+  assert(succeeded(aLayoutAttr) && "Cannot get layout for Matrix A");
+  valLayoutMap[getDpsInputOperand(0)->get()] = *aLayoutAttr;
+ 
+  auto bLayoutAttr = getOperandBLayout();
+  assert(succeeded(bLayoutAttr) && "Cannot get layout for Matrix B");
+  valLayoutMap[getDpsInputOperand(1)->get()] = *bLayoutAttr;
+ 
+  auto scaleALayoutAttr = getOperandScaleALayout();
+  assert(succeeded(scaleALayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[this->getScaleA()] = *scaleALayoutAttr;
+ 
+  auto scaleBLayoutAttr = getOperandScaleBLayout();
+  assert(succeeded(scaleBLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[this->getScaleB()] = *scaleBLayoutAttr;
+ 
+  auto cLayoutAttr = getOperandCLayout();
+  assert(succeeded(cLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[getDpsInitOperand(0)->get()] = *cLayoutAttr;
+ 
+  return valLayoutMap;
+}
+ 
+bool MmadMxL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<MmadMxL1Op>(this, cst);
+}
+ 
+void MmadMxL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+ 
+std::string MmadMxL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  auto baseCallName = getOpName().str();
+  auto elemAType = getElementTypeOrSelf(this->getDpsInputs()[0].getType());
+  auto elemBType = getElementTypeOrSelf(this->getDpsInputs()[1].getType());
+ 
+  auto srcTypeName = hivm::detail::getTypeName(this->getLoc(), elemAType);
+  auto dstTypeName = hivm::detail::getTypeName(
+      this->getLoc(), getElementTypeOrSelf(this->getDpsInits()[0].getType()));
+ 
+  auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+ 
+  auto i8Type = IntegerType::get(getContext(), 8);
+ 
+  auto lhsFmt = getLhsFormat();
+  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
+    return finalName;
+ 
+  std::string lhsFmtStr = "";
+ 
+  switch (lhsFmt.value().getSExtValue()) {
+  case 1:
+    lhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    lhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    lhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+ 
+  auto rhsFmt = getRhsFormat();
+  if (!rhsFmt)
+    return finalName;
+ 
+  std::string rhsFmtStr = "";
+ 
+  switch (rhsFmt.value().getSExtValue()) {
+  case 1:
+    rhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    rhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    rhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+ 
+  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+}
+ 
+bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd)
+    return false;
+  if (isSingleChainMmadToMmad<MmadMxL1Op>(*this))
+    return false;
+  return true;
+}
+ 
+MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
+  return getMatmulLikeBiasMode<MmadMxL1Op>(*this);
 }

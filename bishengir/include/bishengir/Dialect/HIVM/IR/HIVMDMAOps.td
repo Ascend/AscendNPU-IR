@@ -272,24 +272,23 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     HIVM dual destination mode control. dual destination mode can be enabled only when nz2nd or normal data
     movement mode is enabled, and data movement is being performed from L0C to UB. Only supported on Ascend950 series.
   }];
-  let arguments = (ins AnyShaped:$src,
-                       AnyShaped:$dst,
-                       Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flag mode, 
+  let arguments = (ins AnyShaped:$src, AnyShaped:$dst, Arg<Variadic<I1>, [{
+                        An optional condition to enable unit-flag mode,
+ 
+ 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
-                       DefaultValuedAttr<HIVM_FixpipeDMAModeAttr,
-                         "FixpipeDMAMode::NZ2NZ">:$dma_mode,
-                       DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
-                         "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
-                       DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
-                         "FixpipePreQuantMode::NO_QUANT">:$pre_quant,
-                       DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
-                         "FixpipePreReluMode::NO_RELU">:$pre_relu,
-                       DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
-                       Optional<AnyFloat>:$quant_scale
-  );
+      DefaultValuedAttr<HIVM_FixpipeDMAModeAttr,
+                        "FixpipeDMAMode::NZ2NZ">:$dma_mode,
+      DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
+                                "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
+      DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
+                                "FixpipePreQuantMode::NO_QUANT">:$pre_quant,
+      DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
+                                "FixpipePreReluMode::NO_RELU">:$pre_relu,
+      DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
+      OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+      Optional<AnyFloat>:$quant_scale);
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
@@ -398,6 +397,29 @@ def L12UBOp : HIVM_DmaOp<"l12ub",
     attr-dict
     `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`->` type($result_tensor)^)?
+  }];
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+def LoadMXScaleOp
+    : HIVM_DmaOp<
+          "load_scale", [SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+                         HIVMCoreTypeInterface, CubeCoreTypeTrait,
+                         NoMaxRankTrait,
+                         DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+]> {
+  let summary =
+      "HIVM data copy operation for loading scale tensor for mmad mx op";
+  let description =
+      [{ loading scale tensor from OUT to L1 using special version of dn2nz . }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst,
+      DefaultValuedOptionalAttr<BoolAttr, "false">:$is_transposed);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`is_transposed` `=` $is_transposed^ )?
     (`->` type($result_tensor)^)?
   }];
   let extraClassDeclaration = DmaOpBaseDecl;

@@ -880,7 +880,8 @@ void MarkStrideAlignPass::runOnOperation() {
     }
 
     // TODO: Relax when enable user provided optimization hints
-    if (isa<CustomOp>(op) || isa<CustomMacroOp>(op)) {
+    if (isa<CustomOp>(op) || isa<CustomMacroOp>(op) ||
+        isa<hivm::MmadMxL1Op>(op)) {
       return WalkResult::advance();
     }
 

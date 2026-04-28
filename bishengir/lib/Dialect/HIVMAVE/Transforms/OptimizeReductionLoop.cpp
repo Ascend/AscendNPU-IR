@@ -393,7 +393,7 @@ struct EliminateReductionLoopInitPattern : public OpRewritePattern<scf::ForOp> {
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
-    // stage-1: peel first iteration && mark it
+    // stage-1: peel first iteration
     if (!forOp->hasAttr(REDUCTION_LOOP_ATTR)) {
       return failure();
     }
@@ -403,24 +403,23 @@ struct EliminateReductionLoopInitPattern : public OpRewritePattern<scf::ForOp> {
       return failure();
     }
     forOp->removeAttr(REDUCTION_LOOP_ATTR);
-    firstIteration->setAttr("FirstIterationLoop", rewriter.getUnitAttr());
     firstIteration->removeAttr(REDUCTION_LOOP_ATTR);
 
-    // stage-2: replace first vadd && remove first loop
-    if (forOp->hasAttr("FirstIterationLoop")) {
-      forOp.walk([&](Operation *op) {
-        if (op->hasAttr(REDUCTION_OP_ATTR)) {
-          Value lhs = op->getOperand(0);
-          Value rhs = op->getOperand(1);
-          Block &body = forOp.getRegion().front();
-          if (!isFromRegionArg(lhs, body)) {
-            rewriter.replaceOp(op, lhs);
-          } else if (!isFromRegionArg(rhs, body)) {
-            rewriter.replaceOp(op, rhs);
-          }
+    // stage-2: remove the operand of which come from for-loop argument
+    firstIteration.walk([&](Operation *op) {
+      if (op->hasAttr(REDUCTION_OP_ATTR)) {
+        Value lhs = op->getOperand(0);
+        Value rhs = op->getOperand(1);
+        Block &body = firstIteration.getRegion().front();
+        bool isLhsFromArg = isFromRegionArg(lhs, body);
+        bool isRhsFromArg = isFromRegionArg(rhs, body);
+        if (!isLhsFromArg && isRhsFromArg) {
+          rewriter.replaceOp(op, lhs);
+        } else if (isLhsFromArg && !isRhsFromArg) {
+          rewriter.replaceOp(op, rhs);
         }
-      });
-    }
+      }
+    });
     return success();
   }
 };

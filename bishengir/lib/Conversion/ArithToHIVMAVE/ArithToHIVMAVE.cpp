@@ -135,6 +135,41 @@ struct BinaryOpPattern : public OpConversionPattern<ArithBinaryOp> {
   }
 };
 
+template <typename ArithMulExtendOp, typename HivmVFVMULLOp>
+struct ArithMulExtendOpPattern : public OpConversionPattern<ArithMulExtendOp> {
+  using OpConversionPattern<ArithMulExtendOp>::OpConversionPattern;
+
+  using ArithBinaryOpAdaptor =
+      typename OpConversionPattern<ArithMulExtendOp>::OpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(ArithMulExtendOp op, ArithBinaryOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto lhs = adaptor.getLhs();
+    auto rhs = adaptor.getRhs();
+    auto lowResType = op.getResult(0).getType();
+    auto highResType = op.getResult(1).getType();
+    auto resType = op.getResultTypes();
+    VectorType lowResVecType = mlir::dyn_cast<VectorType>(lowResType);
+    VectorType highResVecType = mlir::dyn_cast<VectorType>(highResType);
+
+    if (!lowResVecType || !highResVecType || resType.size() !=2) {
+      LLVM_DEBUG(DBGS() << "legalize" << ArithMulExtendOp::getOperationName()
+                        << "failed."
+                        << "\n";);
+      return failure();
+    }
+
+    Value mask = hivmave::findReuseableMaskOrCreateOne(op, lowResVecType, rewriter);
+
+    HivmVFVMULLOp res =
+        rewriter.create<HivmVFVMULLOp>(loc, resType, lhs, rhs, mask, nullptr);
+    rewriter.replaceOp(op, {res->getResult(0), res->getResult(1)});
+    return success();
+  }
+};
+
 struct RoundOpPattern : public OpConversionPattern<math::RoundOp> {
   using OpConversionPattern<math::RoundOp>::OpConversionPattern;
 
@@ -1763,6 +1798,8 @@ void mlir::hivmave::populateArithToHIVMAVEConversionPatterns(
            BinaryOpPattern<arith::MaximumFOp, hivmave::VFMaxOp>,
            BinaryOpPattern<arith::MinimumFOp, hivmave::VFMinOp>,
            BinaryOpPattern<mathExt::DivFHPOp, hivmave::VFDivFHPOp>,
+           ArithMulExtendOpPattern<arith::MulSIExtendedOp, hivmave::VFVMULLOp>,
+           ArithMulExtendOpPattern<arith::MulUIExtendedOp, hivmave::VFVMULLOp>,
            LogicOpLowering<arith::AndIOp>, LogicOpLowering<arith::OrIOp>,
            XOrIOpLowering, ShiftOpLowering<arith::ShLIOp>,
            ShiftOpLowering<arith::ShRSIOp>, ShiftOpLowering<arith::ShRUIOp>,

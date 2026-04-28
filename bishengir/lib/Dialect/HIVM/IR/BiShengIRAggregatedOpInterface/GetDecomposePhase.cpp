@@ -41,7 +41,7 @@ DecomposePhase VDeinterleaveOp::getDecomposePhase() {
 //===----------------------------------------------------------------------===//
 
 DecomposePhase LoadOp::getDecomposePhase() {
-   return DecomposePhase::NO_CONSTRAINT;
+  return DecomposePhase::NO_CONSTRAINT;
 }
 
 //===----------------------------------------------------------------------===//
