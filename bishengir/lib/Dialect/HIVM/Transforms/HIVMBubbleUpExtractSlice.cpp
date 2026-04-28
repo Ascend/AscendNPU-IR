@@ -27,6 +27,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
@@ -35,6 +36,7 @@
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_HIVMBUBBLEUPEXTRACTSLICE
@@ -55,7 +57,13 @@ public:
   using Base::Base;
 
   static bool traceAndCheckIsGM(Value value) {
-    return !traceDefOp<memref::AllocOp>(value).has_value();
+    auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
+    if (!maybeAlloc.has_value())
+      return true;
+    auto allocOp = cast<memref::AllocOp>(maybeAlloc.value());
+    return utils::getAnnotateOpWithAttr(
+               allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name)
+        .has_value();
   }
 
   LogicalResult
@@ -79,8 +87,13 @@ public:
           if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0)) &&
               strictMode) {
             return WalkResult::interrupt();
+          } else {
+            return WalkResult::advance();
           }
-          return WalkResult::advance();
+        }
+        if (auto whileOp =
+                dyn_cast<scf::WhileOp>((extractSrc.getDefiningOp()))) {
+          return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
@@ -115,7 +128,7 @@ public:
     SmallVector<std::string> disabledPatterns(
         {"ReinterpretCastConstantArgumentFolder"});
     options.disabledPatterns = disabledPatterns;
-    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));  //The canonicalizer pass is different from A5
     pm.addPass(createCSEPass());
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();

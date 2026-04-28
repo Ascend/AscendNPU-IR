@@ -269,6 +269,7 @@ def CopyOp : HIVM_DmaOp<"copy", [
 }
 
 def FixpipeOp : HIVM_DmaOp<"fixpipe", [
+  AttrSizedOperandSegments,
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_FIX">,
   HIVMCoreTypeInterface, CubeCoreTypeTrait,
   HIVMUnitFlagEnabledInterface,
@@ -301,7 +302,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
                          "FixpipePreReluMode::NO_RELU">:$pre_relu,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+                       Optional<AnyFloat>:$quant_scale
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
@@ -309,13 +311,15 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"Value", "nullptr">:$quant_scale)
     >,
     OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split)
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"Value", "nullptr">:$quant_scale)
     >
   ];
 

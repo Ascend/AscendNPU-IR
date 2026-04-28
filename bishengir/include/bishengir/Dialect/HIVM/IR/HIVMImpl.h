@@ -310,6 +310,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope);
 
 } // namespace util
+bool isCopytoL1(Operation *op);
 } // namespace hivm
 } // namespace mlir
 
