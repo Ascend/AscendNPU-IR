@@ -151,15 +151,37 @@ static bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
   return userCanFuseIntoVsstbPatternTransposeOp(op);
 }
 
-static bool isNonVectorizableOp(Operation *op) {
-  if (hivm::util::isSIMTVF(op))
-    return true;
-  if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op))
-    if (hfusion::isSingleElementLinalgOp(linalgOp) &&
-        !isa<linalg::GenericOp>(linalgOp))
-      return true;
-  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op))
+bool isScalarPredSelectOp(Operation *op) {
+  auto selectOp = dyn_cast<arith::SelectOp>(op);
+  if (!selectOp)
     return false;
+  auto condType = selectOp.getCondition().getType();
+  return condType.isInteger(1) || condType.isIndex();
+}
+
+bool isNonVectorizableOp(Operation *op) {
+  if (hivm::util::isSIMTVF(op) || hfusion::isSimtOps(op)) {
+    return true;
+  }
+
+  if (isScalarPredSelectOp(op)) {
+    return true;
+  }
+
+  if (hfusion::isMatmulOps(op) || hfusion::opCanFuseIntoMatmul(op)) {
+    return true;
+  }
+
+  auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+  if (linalgOp && hfusion::isSingleElementLinalgOp(linalgOp) &&
+      !isa<linalg::GenericOp>(linalgOp)) {
+    return true;
+  }
+
+  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(op)) {
+    return false;
+  }
+
   return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
              hfusion::GatherOp, hfusion::MulExtOp, hfusion::CumsumOp,
              hfusion::CumprodOp, hfusion::PrintOp, hfusion::SortOp,
@@ -170,9 +192,7 @@ static bool isNonVectorizableOp(Operation *op) {
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
              hivm::BitcastOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
              scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp, memref::CopyOp>(
-             op) ||
-         hfusion::isSimtOps(op) || hfusion::isMatmulOps(op) ||
-         hfusion::opCanFuseIntoMatmul(op);
+      op);
 }
 
 static bool isMemrefLinalgOp(Operation *op) {

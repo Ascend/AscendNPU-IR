@@ -389,44 +389,19 @@ struct ElementwiseOpToHFusionSelect : public OpRewritePattern<SelectOp> {
 
   LogicalResult matchAndRewrite(SelectOp op,
                                 PatternRewriter &rewriter) const final {
-    
-    auto resultTy = dyn_cast<RankedTensorType>(op.getType());
-    if (!resultTy) {
+    if (!operateOnTensors(op))
       return failure();
-    }
-    
     SmallVector<Value> dsts;
-    if (failed(tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts))) {
+    if (failed(
+            tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
-    }
-
     Value condition = op.getCondition();
-    auto scalarPred = getScalarPred(op);
-    Location loc = op.getLoc();
-    if (scalarPred.has_value()) {
-      condition = fillTensorWithScalar(scalarPred.value(), op.getResult(), rewriter, loc);
-    }
+    Value trueValue = op.getTrueValue();
+    Value falseValue = op.getFalseValue();
 
     rewriter.replaceOpWithNewOp<hfusion::SelectOp>(
-        op, ValueRange{condition, op.getTrueValue(), op.getFalseValue()}, ValueRange{dsts});
+        op, ValueRange{condition, trueValue, falseValue}, ValueRange{dsts});
     return success();
-  }
-
-private:
-  std::optional<Value> getScalarPred(SelectOp op) const {
-    Value pred = op.getCondition();
-    auto scalarTy = dyn_cast<IntegerType>(pred.getType());
-    if (!scalarTy) {
-      return std::nullopt;
-    }
-    return pred;
-  }
-
-  Value fillTensorWithScalar(Value pred, Value shape, PatternRewriter &rewriter, Location loc) const {
-          Value empty = tensor::createTensorEmptyOpWithTargetElemType(
-        rewriter, loc, shape, pred.getType());
-      return rewriter.create<linalg::FillOp>(
-        loc, ValueRange{pred}, ValueRange{empty}).getResult(0);
   }
 };
 
@@ -554,13 +529,6 @@ void ArithToHFusionConversionPass::runOnOperation() {
         return false;
       return true;
     }
-
-
-    if (auto selectOp = dyn_cast<arith::SelectOp>(op)) {
-      //Ensure arith.select on tensor will be converted to hfusion.select
-      return !isa<RankedTensorType>(selectOp.getType());
-    }
-
     return !operateOnTensors(op);
   });
 
