@@ -76,14 +76,6 @@ const std::map<std::pair<hivm::DataLayout, hivm::DataLayout>,
          LayoutConversionKind::nZ_TO_ND},
         {{hivm::DataLayout::zN, hivm::DataLayout::ND},
          LayoutConversionKind::zN_TO_ND},
-         {{hivm::DataLayout::ND, hivm::DataLayout::SCALEA_zZ},
-         LayoutConversionKind::DOT_SCALE_ND_TO_zZ},
-        {{hivm::DataLayout::ND, hivm::DataLayout::SCALEB_nN},
-         LayoutConversionKind::DOT_SCALE_DN_TO_nN},
-        {{hivm::DataLayout::SCALEA_ND, hivm::DataLayout::SCALEA_zZ},
-         LayoutConversionKind::DOT_SCALE_ND_TO_zZ},
-        {{hivm::DataLayout::SCALEB_DN, hivm::DataLayout::SCALEB_nN},
-         LayoutConversionKind::DOT_SCALE_DN_TO_nN},
 };
 
 inline bool isGlobalMemory(Value val) {
@@ -145,11 +137,7 @@ void convertToND2NZOp(Value src, Value dst, Operation *originalOp,
                                 builder.getUnitAttr(), hasInitOutBuffer,
                                 padValue, initCondition);
 }
-void convertToLoadMXScaleOp(Value src, Value dst, Operation *originalOp,
-                            OpBuilder &builder, bool isTransposed) {
-  builder.create<hivm::LoadMXScaleOp>(originalOp->getLoc(), Type(), src, dst,
-                                      isTransposed);
-}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -261,13 +249,6 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutShape(
   case LayoutConversionKind::ND_TO_nZ:
     return computeDOTNDToFractalnZShape(transCurrentShape, builder, loc,
                                         kBlockSizes);
-  case LayoutConversionKind::DOT_SCALE_ND_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_DN_TO_nN:
-    return computeScaleNDToFractalzZShape(transCurrentShape, builder, loc,
-                                          kBlockSizes);
-  case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    llvm_unreachable("not implemented yet");
   default:
     return failure();
   }
@@ -307,13 +288,6 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutOffset(
   case LayoutConversionKind::ND_TO_zN:
     return computeDOTNDToFractalzNOffset(transCurrentOffset, builder, loc,
                                          kBlockSizes);
-  case LayoutConversionKind::DOT_SCALE_ND_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_DN_TO_nN:
-    return computeScaleNDToFractalzZOffset(transCurrentOffset, builder, loc,
-                                           kBlockSizes);
-  case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    llvm_unreachable("not implemented yet");
   default:
     return failure();
   }
@@ -351,45 +325,6 @@ DataLayoutInferAndPropagateHelper::computeDOTNDToFractalzNOffset(
   auto binner =
       builder.create<affine::AffineApplyOp>(loc, mapBInner, ValueRange{a, b});
   SmallVector<Value> fractalOffset{bouter, aouter, ainner, binner};
-  if (batchIndexBias != 0) {
-    fractalOffset.insert(fractalOffset.begin(), currentOffset[0]);
-  }
-  return fractalOffset;
-}
-
-FailureOr<SmallVector<Value>>
-DataLayoutInferAndPropagateHelper::computeScaleNDToFractalzZOffset(
-    SmallVector<Value> currentOffset, OpBuilder &builder, Location loc,
-    SmallVector<int64_t> kBlockSizes) const {
-  OpBuilder::InsertionGuard g(builder);
-  int batchIndexBias = static_cast<int>(currentOffset.size() - 2);
-  // a1=M/16, b1=K_scale/(2byte), a0=16, b0=2byte
-  // DOT{A/B/C}_ND:   (a, b) -> zZ: (a/a0, b/b0, a%a0, b%b0)
-  auto symA = builder.getAffineSymbolExpr(0);
-  auto symB = builder.getAffineSymbolExpr(1);
-  // #mapAOuter = affine_map<(symA, symB) -> (symA / a0)>
-  // #mapAInner = affine_map<(symA, symB) ->(symA % a0)>
-  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[1]);
-  auto mapAOuter = AffineMap::get(0, 2, (symA.floorDiv(constA0)));
-  auto mapAInner = AffineMap::get(0, 2, (symA % constA0));
- 
-  // #mapBOuter = affine_map<(symA, symB) -> (symB /b0)>
-  // #mapBInner = affine_map<(symA, symB) -> (symB % b0)>
-  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[0]);
-  auto mapBOuter = AffineMap::get(0, 2, (symB.floorDiv(constB0)));
-  auto mapBInner = AffineMap::get(0, 2, (symB % constB0));
- 
-  Value a = currentOffset[0 + batchIndexBias];
-  Value b = currentOffset[1 + batchIndexBias];
-  auto aouter =
-      builder.create<affine::AffineApplyOp>(loc, mapAOuter, ValueRange{a, b});
-  auto ainner =
-      builder.create<affine::AffineApplyOp>(loc, mapAInner, ValueRange{a, b});
-  auto bouter =
-      builder.create<affine::AffineApplyOp>(loc, mapBOuter, ValueRange{a, b});
-  auto binner =
-      builder.create<affine::AffineApplyOp>(loc, mapBInner, ValueRange{a, b});
-  SmallVector<Value> fractalOffset{aouter, bouter, ainner, binner};
   if (batchIndexBias != 0) {
     fractalOffset.insert(fractalOffset.begin(), currentOffset[0]);
   }
@@ -494,37 +429,6 @@ DataLayoutInferAndPropagateHelper::computeDOTNDToFractalnZShape(
   return fractalShape;
 }
 
-FailureOr<SmallVector<Value>>
-DataLayoutInferAndPropagateHelper::computeScaleNDToFractalzZShape(
-    SmallVector<Value> currentShape, OpBuilder &builder, Location loc,
-    SmallVector<int64_t> kBlockSizes) const {
-  OpBuilder::InsertionGuard g(builder);
-  uint batchIndexBias = currentShape.size() - 2;
-  // ScaleA_ND:   (a1a0, b1b0) -> zZ: (a1=M/16, b1=K_scale/(2byte), a0=16,
-  // b0=2byte)
-  auto symA = builder.getAffineSymbolExpr(0);
-  auto symB = builder.getAffineSymbolExpr(1);
-  auto constA0MinusOne = builder.getAffineConstantExpr(kBlockSizes[1] - 1);
-  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[1]);
-  // #mapA = affine_map<(symA, symB) -> ((symA+constA0-1)/constA0)>
-  auto mapA = AffineMap::get(0, 2, (symA + constA0MinusOne).floorDiv(constA0));
-  // #mapB = affine_map<(symA, symB) -> ((symB+constB0-1)/constB0)>
-  auto constB0MinusOne = builder.getAffineConstantExpr(kBlockSizes[0] - 1);
-  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[0]);
-  auto mapB = AffineMap::get(0, 2, (symB + constB0MinusOne).floorDiv(constB0));
-  Value a = currentShape[0 + batchIndexBias];
-  Value b = currentShape[1 + batchIndexBias];
-  auto a1 = builder.create<affine::AffineApplyOp>(loc, mapA, ValueRange{a, b});
-  auto b1 = builder.create<affine::AffineApplyOp>(loc, mapB, ValueRange{a, b});
-  Value a0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[1]);
-  Value b0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[0]);
-  SmallVector<Value> fractalShape{a1.getResult(), b1.getResult(), a0, b0};
-  if (batchIndexBias != 0) {
-    fractalShape.insert(fractalShape.begin(), currentShape[0]);
-  }
-  return fractalShape;
-}
-
 FailureOr<ConvertLayoutOp>
 DataLayoutInferAndPropagateHelper::createLayoutConversion(
     Value currentValue, const LayoutInfo &info, OpBuilder &builder) {
@@ -565,12 +469,6 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
           opWithLayout.getOperandsCurrentLayout();
       llvm::SmallDenseMap<Value, DataLayoutAttr> targetLayoutMap =
           opWithLayout.getOperandsTargetLayout();
-      LLVM_DEBUG({
-        llvm::outs() << "\n\nCurrent layout map size:\n"
-                     << currentLayoutMap.size();
-        llvm::outs() << "\n\nTarget layout map size:\n"
-                     << targetLayoutMap.size();
-      });
       assert(currentLayoutMap.size() == targetLayoutMap.size());
       for (auto operand : op->getOperands()) {
         if (!isa<MemRefType>(operand.getType()))
@@ -925,13 +823,12 @@ DataLayoutInferAndPropagateHelper::rewriteSelectOp(arith::SelectOp op) {
       srcType.getElementType(), builder.getMultiDimIdentityMap(newRank),
       srcType.getMemorySpace());
   SmallVector<Value, 3> srcs;
-  for (auto src : op->getOperands()) {
-    srcs.push_back(getValueAs(src, getTargetLayout(src)));
+  for(auto src:op->getOperands()){
+      srcs.push_back(getValueAs(src, getTargetLayout(src)));
   }
-  auto newSelect = builder.create<arith::SelectOp>(
-      loc, TypeRange{fullyDynamicShapedType}, srcs);
-  map(op->getResults().front(), newSelect->getResults().front(),
-      layoutInfo.targetLayout);
+  auto newSelect =
+      builder.create<arith::SelectOp>(loc,TypeRange{fullyDynamicShapedType},srcs);
+  map(op->getResults().front(), newSelect->getResults().front(), layoutInfo.targetLayout);
   return newSelect.getOperation();
 }
 
@@ -1286,6 +1183,11 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
     Value src, Value dst, Operation *originalOp, OpBuilder &builder) {
   assert(llvm::isa<MemRefType>(src.getType()) &&
          llvm::isa<MemRefType>(dst.getType()));
+  if (llvm::dyn_cast<ShapedType>(dst.getType()).getRank() -
+          llvm::dyn_cast<ShapedType>(src.getType()).getRank() !=
+      2)
+    llvm_unreachable("Unsupported operand shape when convert copy to ND2NZ");
+  bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
 
   auto srcLayout = getCurrentLayout(src);
   auto dstLayout = getCurrentLayout(dst);
@@ -1295,18 +1197,11 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
   auto conversionKind = kSupportedConversion.find(
       std::make_pair(srcLayout.getDataLayout(), dstLayout.getDataLayout()));
   if (conversionKind == kSupportedConversion.cend()) {
-    LLVM_DEBUG(llvm::dbgs() << "kSupportedConversion doesn't contain"
-                            << srcLayout << "->" << dstLayout << ".\n";);
     return failure();
   }
   switch (conversionKind->second) {
   case LayoutConversionKind::ND_TO_nZ:
-  case LayoutConversionKind::ND_TO_zN: {
-    if (llvm::dyn_cast<ShapedType>(dst.getType()).getRank() -
-            llvm::dyn_cast<ShapedType>(src.getType()).getRank() !=
-        2)
-      llvm_unreachable("Unsupported operand shape when convert copy to ND2NZ");
-    bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
+  case LayoutConversionKind::ND_TO_zN:
     if (batchFlag) {
       convertToBatchND2NZOp(src, dst, builder);
       return success();
@@ -1314,15 +1209,6 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
       convertToND2NZOp(src, dst, originalOp, builder);
       return success();
     }
-  }
-  case LayoutConversionKind::DOT_SCALE_ND_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    convertToLoadMXScaleOp(src, dst, originalOp, builder, false);
-    return success();
-  case LayoutConversionKind::DOT_SCALE_DN_TO_nN:
-  case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
-    convertToLoadMXScaleOp(src, dst, originalOp, builder, true);
-    return success();
   default:
     LLVM_DEBUG(llvm::dbgs() << "  No matching HIVM data copy op with "
                                "on-the-fly layout conversion available.\n";);
@@ -1357,8 +1243,7 @@ void DataLayoutInferAndPropagateHelper::rewriteCopyOp(mlir::Operation *op) {
   builder.setInsertionPoint(op);
   auto foldResult =
       tryFoldLayoutConversionIntoCopy(rewrittenSrc, rewrittenDst, op, builder);
-  LDBG("layout conversion is" << srcTargetLayout << "->" << dstTargetLayout
-                              << "try to fold into copy...");
+  LDBG("try to fold layout conversion into copy...");
   if (succeeded(foldResult)) {
     LDBG("successfully folded");
     opsToDelete_.insert(op);
@@ -1375,26 +1260,6 @@ public:
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hivm::MmadL1Op op,
-                                PatternRewriter &rewriter) const final {
-    bool modifed = false;
-    for (auto &operand : op->getOpOperands()) {
-      if (auto convertLayout = dyn_cast_if_present<hivm::ConvertLayoutOp>(
-              operand.get().getDefiningOp())) {
-        modifed = true;
-        rewriter.modifyOpInPlace(op, [&convertLayout, &operand]() {
-          operand.assign(convertLayout.getSource());
-        });
-      }
-    }
-    return success(modifed);
-  }
-};
-
-class ReplaceMMADmxOperand : public OpRewritePattern<hivm::MmadMxL1Op> {
-public:
-  using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
- 
-  LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
                                 PatternRewriter &rewriter) const final {
     bool modifed = false;
     for (auto &operand : op->getOpOperands()) {
