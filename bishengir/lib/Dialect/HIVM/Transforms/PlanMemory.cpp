@@ -1016,6 +1016,137 @@ StorageEntry::GetBufferLifeByValue(const Value v) const {
   return nullptr;
 }
 
+bool MemPlan::IsInplaceMultiBuffer(
+    Value src, const SmallVector<ValuePair> &inplaceList) const {
+  // Check if src or its paired buffer in inplaceList has multi-buffer attribute
+  // (buffer2MultiNum > 1)
+  auto srcMultiBufferIter = buffer2MultiNum.find(src);
+  if (srcMultiBufferIter != buffer2MultiNum.end() &&
+      srcMultiBufferIter->second > 1) {
+    return true;
+  }
+  for (const auto &pair : inplaceList) {
+    Value pairedBuffer;
+    if (pair.first == src) {
+      pairedBuffer = pair.second;
+    } else if (pair.second == src) {
+      pairedBuffer = pair.first;
+    } else {
+      continue;
+    }
+    auto multiBufferIter = buffer2MultiNum.find(pairedBuffer);
+    if (multiBufferIter != buffer2MultiNum.end() &&
+        multiBufferIter->second > 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename DstOpType>
+bool MemPlan::VisitDstOpTypeReachable(
+    Value src, DenseSet<Value> &visited,
+    const SmallVector<ValuePair> &inplaceList) const {
+  if (visited.contains(src)) {
+    return false;
+  }
+  visited.insert(src);
+
+  auto srcBuffer = utils::tracebackMemRefToAlloc(src);
+  if (!srcBuffer.has_value()) {
+    LDBG("inplace-reuse src allocOp is not found: " << src << "\n");
+    return false;
+  }
+  for (Operation *user : src.getUsers()) {
+    if (isa<DstOpType>(user)) {
+      // successfully reach `DstOpType`
+      LDBG("inplace-reuse reachable to op: " << *user << "\n");
+      return true;
+    }
+
+    if (auto viewLikeOp = dyn_cast<ViewLikeOpInterface>(user)) {
+      // recursively visit ViewLikeOp result users
+      return VisitDstOpTypeReachable<DstOpType>(
+          viewLikeOp.getOperation()->getResult(0), visited, inplaceList);
+    }
+  }
+  // check alias and inplace buffers
+  for (auto pair : inplaceList) {
+    if (pair.first == pair.second) {
+      continue;
+    }
+    if (pair.first == srcBuffer.value()) {
+      if (VisitDstOpTypeReachable<DstOpType>(pair.second, visited,
+                                             inplaceList)) {
+        return true;
+      }
+    }
+    if (pair.second == srcBuffer.value()) {
+      if (VisitDstOpTypeReachable<DstOpType>(pair.first, visited,
+                                             inplaceList)) {
+        return true;
+      }
+    }
+  }
+
+  // not reachable for all paths
+  LDBG("not inplace-reuse reachable from: "
+       << src << ", to: " << DstOpType::getOperationName() << "\n");
+  return false;
+}
+
+/// Determines whether the value `src` is reachable to an operand of a
+/// `DstOpType` operation.
+///
+/// Recursively traces the use chain of `src` through:
+/// 1. ViewLikeOpInterface operations (e.g. `memref.subview`)
+/// 2. alias buffers
+/// 3. Other op's operands that support inplace reuse
+template <typename DstOpType>
+bool MemPlan::HasUser(Value src,
+                      const SmallVector<ValuePair> &inplaceList) const {
+  LDBG("-- start visiting inplace-reuse path from: "
+       << src << ", to: " << DstOpType::getOperationName() << "\n");
+  DenseSet<Value> visited;
+  return VisitDstOpTypeReachable<DstOpType>(src, visited, inplaceList);
+}
+
+/// check if gen-kill inplace will break up the pipeline.
+/// eg. here vector op inplacement will break up the load-vector-store pipeline
+/// when gen and kill are optimized by multi-buffers.
+///      load outs(%gen)
+///      vector op ins(%gen) outs(%kill)
+///      store ins(%kill)
+bool MemPlan::InplaceStallPipeline(Value gen, Value kill,
+                                   const SmallVector<ValuePair> &inplaceList) {
+  // 1. trace alloc op for gen and kill
+  auto genAlloc = utils::tracebackMemRefToAlloc(gen);
+  auto killAlloc = utils::tracebackMemRefToAlloc(kill);
+  if (!genAlloc.has_value() || !killAlloc.has_value()) {
+    return true;
+  }
+
+  // 2. check if inplace multi buffers
+  if (!IsInplaceMultiBuffer(genAlloc.value(), inplaceList) ||
+      !IsInplaceMultiBuffer(killAlloc.value(), inplaceList)) {
+    return false;
+  }
+
+  // 3. check if gen has load op and kill has store op
+  // When `gen` reaches `store` and `kill` reaches `load`, inplace-reuse for
+  // `gen` and `kill` can cause mte2/mte3 pipeline stalls, because we need extra
+  // synchronization on the same ub address between loop interations, which
+  // means multi-buffer will be not useful.
+  if (HasUser<hivm::StoreOp>(genAlloc.value(), inplaceList) &&
+      HasUser<hivm::LoadOp>(killAlloc.value(), inplaceList)) {
+    // Record the pair of buffers that can inplace but should not be reused due
+    // to pipeline stalls
+    inplacableBufferPairs.emplace_back(genAlloc.value(), killAlloc.value());
+    return true;
+  }
+  return false;
+}
+
 bool MemPlan::IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                             const Value &killBuffer) const {
   auto hivmOp = dyn_cast<hivm::HIVMStructuredOp>(op);
@@ -1088,7 +1219,8 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
         bool canInplace =
             killBufferIter->second.constBits >=
                 genBufferIter->second.constBits &&
-            IsReuseHIVMOp(it->first->operation, genBuffer, killBuffer);
+            IsReuseHIVMOp(it->first->operation, genBuffer, killBuffer) &&
+            !InplaceStallPipeline(genBuffer, killBuffer, inplaceList);
         if (canInplace) {
           inplaceList.emplace_back(std::make_pair(genBuffer, killBuffer));
           break;
@@ -1718,6 +1850,7 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
     e->bitsOffset = 0;
     return success();
   }
+  SmallVector<ValuePair> stallPipelineInplacePairs;
   for (MemBoundListConstIter start = outline.begin(); start != outline.end();
        ++start) {
     uint64_t size = 0;
@@ -1728,7 +1861,7 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
       // if index & addr are as same as last rollback result,
       // continue to find next result
       if (IsSamePlanAsLastRollBack(allocOffset, e->childIdx, si) ||
-          VerifyConflictStage0(e, last)) {
+          VerifyConflictStage0(e, last, stallPipelineInplacePairs)) {
         start = end;
         break;
       }
@@ -1764,6 +1897,12 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
           SpecAllocRelationOtherBufferEntry(outline, his, e, otherBufferOffset);
       }
       LDBG("APPLY_SPEC_LEVEL:  " << localLevel << "\n");
+      if (localLevel == SPEC_LEVEL_0) {
+        for (const auto &pair : stallPipelineInplacePairs) {
+          LDBG("Store/Load inplace reuse buffer pair: " << pair.first << " and "
+                                                        << pair.second << "\n");
+        }
+      }
       RecordAllocatedEntry(e);
       return success();
     }
@@ -2202,13 +2341,62 @@ bool MemPlan::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,
 }
 
 // spec_level == SPEC_LEVEL_0
-inline bool
-MemPlan::VerifyConflictStage0(StorageEntry *e,
-                              const std::shared_ptr<MemoryBound> &last) {
+inline bool MemPlan::VerifyConflictStage0(
+    StorageEntry *e, const std::shared_ptr<MemoryBound> &last,
+    SmallVector<ValuePair> &stallPipelineInplacePairs) {
   // level_0: offset = 0, offset means life distance
   DenseMap<ValuePair, BufferLife> intersection =
       GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
-  return !intersection.empty();
+  if (intersection.empty()) {
+    return false;
+  }
+  // If any value in intersection has allocTime != freeTime, which means not
+  // match inplace rule, then return conflict. Otherwise, reuse can cause
+  // accuracy problem instead of pipeline stalls.
+  for (const auto &entry : intersection) {
+    if (entry.second.allocTime != entry.second.freeTime) {
+      return true;
+    }
+    // If any pair formed by inplaceBuffers from buffer and conflictBuffer
+    // doesn't match any pair in inplacableBufferPairs(e.g. store buffer inplace
+    // load buffer when multi-buffer scenario), return conflict.
+    auto buffer = entry.first.first;
+    auto conflictBuffer = entry.first.second;
+    if (!IsInplacableBufferPairMatched(buffer, conflictBuffer,
+                                       stallPipelineInplacePairs)) {
+      return true;
+    }
+  }
+  // Conflict pairs are all in inplacableBufferPairs, which means can reuse
+  // memory, return not conflict. But it will cause pipeline stalls.
+  return false;
+}
+
+bool MemPlan::IsInplacableBufferPairMatched(
+    Value buffer, Value conflictBuffer,
+    SmallVector<ValuePair> &matchedPairs) const {
+  auto iter = buffer2storageEntry.find(buffer);
+  auto iter2 = buffer2storageEntry.find(conflictBuffer);
+  assert(iter != buffer2storageEntry.end() &&
+         iter2 != buffer2storageEntry.end());
+  auto storageEntry = iter->second;
+  auto conflictStorageEntry = iter2->second;
+  assert(storageEntry != nullptr && conflictStorageEntry != nullptr);
+  for (const auto &inplaceBuffer : storageEntry->inplaceBuffers) {
+    for (const auto &conflictInplaceBuffer :
+         conflictStorageEntry->inplaceBuffers) {
+      for (const auto &pair : inplacableBufferPairs) {
+        if ((inplaceBuffer == pair.first &&
+             conflictInplaceBuffer == pair.second) ||
+            (inplaceBuffer == pair.second &&
+             conflictInplaceBuffer == pair.first)) {
+          matchedPairs.emplace_back(inplaceBuffer, conflictInplaceBuffer);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 // verify two buffer life vectors is conflict or not

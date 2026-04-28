@@ -684,8 +684,16 @@ private:
                                 const SpecInfo &si) const;
 
   /// spec_level == SPEC_LEVEL_0, life time reuse.
-  inline bool VerifyConflictStage0(StorageEntry *e,
-                                   const std::shared_ptr<MemoryBound> &last);
+  inline bool
+  VerifyConflictStage0(StorageEntry *e,
+                       const std::shared_ptr<MemoryBound> &last,
+                       SmallVector<ValuePair> &stallPipelineInplacePairs);
+
+  /// Check if any pair formed by inplaceBuffers from buffer and conflictBuffer
+  /// matches a pair in inplacableBufferPairs.
+  bool
+  IsInplacableBufferPairMatched(Value buffer, Value conflictBuffer,
+                                SmallVector<ValuePair> &matchedPairs) const;
 
   /// Update the outline information and record history
   void UpdateOutline(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
@@ -730,6 +738,26 @@ private:
 
   /// generate inplace list by some rules
   SmallVector<ValuePair> GenerateInplaceList();
+
+  /// Check if src or its paired buffer in inplaceList has multi-buffer
+  /// attribute (multi-buffer num > 1).
+  bool IsInplaceMultiBuffer(Value src,
+                            const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if src can be reachable under DstOpType OP.
+  template <typename DstOpType>
+  bool VisitDstOpTypeReachable(Value src, DenseSet<Value> &visited,
+                               const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if it has user op.
+  template <typename DstOpType>
+  bool HasUser(Value src, const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if gen is store and kill is (or reuse) load when multi-buffer
+  /// scenario, then it can cause mte2/mte3 pipeline stalls, which can not be
+  /// reused.
+  bool InplaceStallPipeline(Value gen, Value kill,
+                            const SmallVector<ValuePair> &inplaceList);
 
   /// the hivmop that can reuse dst address and src address in limited situation
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
@@ -801,6 +829,10 @@ private:
 
   /// map from operation to its gen and kill buffer.
   DenseMap<OpInfo *, GenKillEntry> genKillMap;
+
+  /// Record pairs of buffers that can be inplaced but not be inplaced due to
+  /// pipeline stalls at earlier phase.
+  SmallVector<ValuePair> inplacableBufferPairs;
 
   /// record all storage entry to be plan address.
   SmallVector<std::unique_ptr<StorageEntry>> StorageEntryVec;
