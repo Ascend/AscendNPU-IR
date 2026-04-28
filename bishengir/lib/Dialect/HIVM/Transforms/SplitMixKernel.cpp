@@ -270,20 +270,61 @@ LogicalResult replaceResultWithInitOperand(Operation *op) {
   return success();
 }
 
-void annotateTightlyCoupledBuffer(func::FuncOp func) {
-  int isForCVCounter = 0;
+ void annotateTightlyCoupledBuffer(func::FuncOp func) {
   OpBuilder builder(func.getContext());
-  func->walk([&](memref::AllocOp allocOp) {
+
+  SmallVector<memref::AllocOp> candidateAllocs;
+  llvm::DenseSet<int64_t> usedIds;
+
+  func.walk([&](memref::AllocOp allocOp) {
     auto maybeMemrefAddressSpace =
         mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
     if (maybeMemrefAddressSpace != AddressSpace::L1 &&
-        maybeMemrefAddressSpace != AddressSpace::UB)
+        maybeMemrefAddressSpace != AddressSpace::UB) {
       return;
+    }
 
-    auto mayHasMarked = utils::getAnnotateOpWithAttr(
+    candidateAllocs.push_back(allocOp);
+
+    auto maybeMarked = utils::getAnnotateOpWithAttr(
         allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
-    if (mayHasMarked.has_value())
+    if (!maybeMarked.has_value()) {
       return;
+    }
+
+    auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarked);
+    if (!markOp) {
+      return;
+    }
+
+    auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+        markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+    if (!tcbAttr || !tcbAttr.getId().has_value()) {
+      return;
+    }
+
+    usedIds.insert(tcbAttr.getId().value());
+  });
+
+  int64_t nextId = 0;
+  auto getNextAvailableId = [&]() -> int64_t {
+    while (usedIds.contains(nextId)) {
+      ++nextId;
+    }
+    int64_t assignedId = nextId;
+    usedIds.insert(assignedId);
+    ++nextId;
+    return assignedId;
+  };
+
+  for (memref::AllocOp allocOp : candidateAllocs) {
+    auto maybeMarked = utils::getAnnotateOpWithAttr(
+        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
+    if (maybeMarked.has_value()) {
+      continue;
+    }
+
+    int64_t newId = getNextAvailableId();
 
     builder.setInsertionPointAfter(allocOp);
     auto mark = builder.create<annotation::MarkOp>(
@@ -293,11 +334,11 @@ void annotateTightlyCoupledBuffer(func::FuncOp func) {
             stringifyEffectMode(mlir::annotation::EffectMode::Read)}),
         /*values=*/ValueRange{},
         /*keys=*/nullptr);
+
     mark->setAttr(hivm::HIVMTightlyCoupledBufferAttr::name,
-                  HIVMTightlyCoupledBufferAttr::get(allocOp->getContext(),
-                                                    isForCVCounter));
-    isForCVCounter++;
-  });
+                  hivm::HIVMTightlyCoupledBufferAttr::get(
+                      allocOp->getContext(), static_cast<int32_t>(newId)));
+  }
 }
 
 struct SplitMixKernelPass

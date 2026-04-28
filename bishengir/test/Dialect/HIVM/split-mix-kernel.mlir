@@ -189,6 +189,38 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 }
 
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @tcb_id_unique_mix_aic(
+  // Existing TCB id=1 should be kept.
+  // CHECK: %[[KEEP:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK-NEXT: annotation.mark %[[KEEP]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, ssbuffer.block_id = 9 : i32, ssbuffer.transfer_id = 1 : i32} : memref<16x16xf32, #hivm.address_space<ub>>
+
+  // First new UB alloc should get id=0.
+  // CHECK: %[[NEW0:.*]] = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+  // CHECK-NEXT: annotation.mark %[[NEW0]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<8x8xf32, #hivm.address_space<ub>>
+
+  // Second new UB alloc must skip existing id=1 and get id=2.
+  // CHECK: %[[NEW2:.*]] = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+  // CHECK-NEXT: annotation.mark %[[NEW2]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<32xf32, #hivm.address_space<ub>>
+
+  func.func @tcb_id_unique(%arg0: memref<16x16xf32, #hivm.address_space<cbuf>>)
+      attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %src_tensor = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf32, #hivm.address_space<cbuf>>
+
+    // Existing TCB id=1.
+    %keep = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+    annotation.mark %keep {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, ssbuffer.block_id = 9 : i32, ssbuffer.transfer_id = 1 : i32} : memref<16x16xf32, #hivm.address_space<ub>>
+    hivm.hir.fixpipe {enable_nz2nd} ins(%src_tensor : tensor<16x16xf32>) outs(%keep : memref<16x16xf32, #hivm.address_space<ub>>)
+
+    // Two new UB allocs without TCB mark.
+    %new0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
+    %new1 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+
+    return
+  }
+}
+
+// -----
 
 // CHECK-LABEL: scope_vector_result_mix_aic({{.*}} attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix}
 // CHECK-NOT: scope.scope
