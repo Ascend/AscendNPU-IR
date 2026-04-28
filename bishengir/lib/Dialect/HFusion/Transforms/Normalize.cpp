@@ -6824,6 +6824,40 @@ struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
   }
 };
 
+template <typename MatmulOpType>
+struct NormalizeMatMulBase : public OpRewritePattern<MatmulOpType> {
+  using OpRewritePattern<MatmulOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MatmulOpType op,
+                                PatternRewriter &rewriter) const override {
+    
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value output = dpsOp.getDpsInits()[0];
+    if (!isF16ElemType(output.getType())) {
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+
+    Value outputF32 = hfusion::castTo(rewriter, output, rewriter.getF32Type());
+
+    auto newOp = rewriter.create<MatmulOpType>(
+        op.getLoc(), outputF32.getType(), ValueRange{lhs, rhs}, outputF32);
+
+    Value resultF16 = hfusion::castTo(rewriter, newOp.getResult(0), 
+                                      rewriter.getF16Type());
+
+    rewriter.replaceAllUsesWith(op.getResult(0), resultF16);
+    return success();
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -6884,6 +6918,8 @@ void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeF16ToF32Type<hfusion::ElemwiseUnaryOp>>(ctx);
   patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumsumOp>>(ctx);
   patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumprodOp>>(ctx);
+  patterns.add<NormalizeMatMulBase<linalg::BatchMatmulOp>>(ctx);
+  patterns.add<NormalizeMatMulBase<linalg::MatmulOp>>(ctx);
 }
 
 void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {

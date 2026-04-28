@@ -2905,3 +2905,43 @@ func.func @test_insert_slice_i8(%arg0: tensor<32xi8>, %arg1: tensor<1024xi8>, %a
   %ret = tensor.insert_slice %arg0 into %arg1[%args2] [32] [1] : tensor<32xi8> into tensor<1024xi8>
   return %ret : tensor<1024xi8>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_batch_matmul_f32_output
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<2x16x32xf16>, %[[ARG1:.*]]: tensor<2x32x16xf16>)
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<2x16x16xf32>
+// CHECK: %[[MATMUL:.*]] = linalg.batch_matmul ins(%[[ARG0]], %[[ARG1]] : tensor<2x16x32xf16>, tensor<2x32x16xf16>) outs(%[[EMPTY]] : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+// CHECK: return %[[MATMUL]]
+func.func @test_batch_matmul_f32_output(%arg0: tensor<2x16x32xf16>, %arg1: tensor<2x32x16xf16>) -> tensor<2x16x16xf32> {
+  %0 = tensor.empty() : tensor<2x16x16xf32>
+  %1 = linalg.batch_matmul ins(%arg0, %arg1 : tensor<2x16x32xf16>, tensor<2x32x16xf16>) outs(%0 : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+  return %1 : tensor<2x16x16xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_matmul_f16_output
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xf16>, %[[ARG1:.*]]: tensor<32x16xf16>)
+// CHECK-DAG: %[[EMPTY_F16:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK-DAG: %[[EMPTY_F32:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK: %[[CAST_OUT:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[EMPTY_F16]] : tensor<16x16xf16>) outs(%[[EMPTY_F32]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[MATMUL:.*]] = linalg.matmul ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xf16>, tensor<32x16xf16>) outs(%[[CAST_OUT]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK-DAG: %[[EMPTY_F16_2:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK: %[[CAST_RES:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<rint>} ins(%[[MATMUL]] : tensor<16x16xf32>) outs(%[[EMPTY_F16_2]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: return %[[CAST_RES]]
+func.func @test_matmul_f16_output(%arg0: tensor<16x32xf16>, %arg1: tensor<32x16xf16>) -> tensor<16x16xf16> {
+  %0 = tensor.empty() : tensor<16x16xf16>
+  %1 = linalg.matmul ins(%arg0, %arg1 : tensor<16x32xf16>, tensor<32x16xf16>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+  return %1 : tensor<16x16xf16>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_matmul_f32_output
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16x32xf16>, %[[ARG1:.*]]: tensor<32x16xf16>)
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK: %[[MATMUL:.*]] = linalg.matmul ins(%[[ARG0]], %[[ARG1]] : tensor<16x32xf16>, tensor<32x16xf16>) outs(%[[EMPTY]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: return %[[MATMUL]]
+func.func @test_matmul_f32_output(%arg0: tensor<16x32xf16>, %arg1: tensor<32x16xf16>) -> tensor<16x16xf32> {
+  %0 = tensor.empty() : tensor<16x16xf32>
+  %1 = linalg.matmul ins(%arg0, %arg1 : tensor<16x32xf16>, tensor<32x16xf16>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+  return %1 : tensor<16x16xf32>
+}
