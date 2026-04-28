@@ -91,4 +91,9 @@ llvm::LogicalResult inferMixedCV(ModuleOp &module,
 llvm::LogicalResult inferDotScale(ModuleOp &module,
                                   bishengir::BiShengIRCompileMainConfig &config);
 
+/// Get the absolute path of the current executable. Resolves symlinks and
+/// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
+/// is reinterpret_cast<void*>(main). Returns empty string on failure.
+std::string getExecutablePath(const char *argv0, void *mainAddr);
+
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_UTILITY_H

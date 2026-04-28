@@ -26,7 +26,14 @@
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
+
+namespace {
+// getMainExecutable needs an address inside this binary; ISO C++ forbids using
+// `main` as a normal function pointer.
+static void bishengirCompileExecutableAnchor() {}
+} // namespace
 
 static void printVersion(llvm::raw_ostream &os) {
   os << bishengir::getBiShengIRToolFullVersion("bishengir-compile") << '\n';
@@ -84,6 +91,9 @@ int main(int argc, char **argv) {
   // Create config from command line options.
   bishengir::BiShengIRCompileMainConfig config =
       bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
+
+  config.setExecutablePath(getExecutablePath(
+      argv[0], reinterpret_cast<void *>(&bishengirCompileExecutableAnchor)));
 
   // TODO: remove it after seperate the config from hfusion and hivm
   config.readCLArgs(argc, argv);

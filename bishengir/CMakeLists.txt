@@ -38,6 +38,9 @@ endif()
 
 option(BISHENGIR_DISABLE_CANN "Disable CANN dependency" OFF)
 
+option(BISHENGIR_BUILD_TEMPLATE "Build BiShengIR Template bitcode" OFF)
+message("-- BISHENGIR_BUILD_TEMPLATE Value: ${BISHENGIR_BUILD_TEMPLATE}")
+
 # Only enable execution engine if the native target is available.
 if(${LLVM_NATIVE_ARCH} IN_LIST LLVM_TARGETS_TO_BUILD)
   set(MLIR_ENABLE_EXECUTION_ENGINE 1)

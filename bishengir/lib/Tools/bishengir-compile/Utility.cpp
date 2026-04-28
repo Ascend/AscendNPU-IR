@@ -266,3 +266,20 @@ inferDotScale(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
   });
   return success();
 }
+
+std::string getExecutablePath(const char *argv0, void *mainAddr) {
+  std::string path = llvm::sys::fs::getMainExecutable(argv0, mainAddr);
+  if (!path.empty()) {
+    llvm::SmallString<256> realPath;
+    if (!llvm::sys::fs::real_path(path, realPath))
+      return std::string(realPath.str());
+    return path;
+  }
+  llvm::SmallString<256> absPath(argv0);
+  if (llvm::sys::fs::make_absolute(absPath))
+    return "";
+  llvm::SmallString<256> realPath;
+  if (llvm::sys::fs::real_path(absPath, realPath))
+    return std::string(absPath.str());
+  return std::string(realPath.str());
+}

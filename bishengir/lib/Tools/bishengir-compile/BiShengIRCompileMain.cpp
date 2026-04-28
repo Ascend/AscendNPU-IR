@@ -6,13 +6,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/Utility.h"
-#include "mlir/Parser/Parser.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/VersionTuple.h"
+#include <functional>
 
 #define DEBUG_TYPE "bishengir-compile"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -22,6 +26,86 @@ using namespace llvm;
 using namespace mlir;
 
 namespace {
+
+/// Get the lib directory path (../lib relative to bishengir-compile
+/// executable). Returns canonical absolute path without ".." or ".".
+static std::string getLibDirFromExecutable(StringRef executablePath) {
+  if (executablePath.empty() ||
+      (!executablePath.contains('/') && !executablePath.contains('\\')))
+    return "";
+  llvm::SmallString<256> absPath(executablePath);
+  if (llvm::sys::fs::make_absolute(absPath))
+    return "";
+  llvm::SmallString<256> realPath;
+  if (!llvm::sys::fs::real_path(absPath, realPath))
+    absPath = realPath;
+  llvm::sys::path::remove_filename(absPath);
+  llvm::sys::path::append(absPath, "..", "lib");
+  llvm::sys::path::remove_dots(absPath, /*remove_dot_dot=*/true);
+  return std::string(absPath.str());
+}
+
+/// Add bitcode path attributes to ModuleOp from ../lib/*.bc files.
+/// Paths are canonical (no ".." or ".") before being stored in attributes.
+static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
+                                    const BiShengIRCompileMainConfig &config) {
+  std::string libDir = getLibDirFromExecutable(executablePath);
+  MLIRContext *ctx = module->getContext();
+  ctx->loadDialect<mlir::hivm::HIVMDialect>();
+
+  auto addIfExists = [&](const char *filename, llvm::StringRef attrName,
+                         auto createAttr) {
+    llvm::SmallString<256> bcPath(libDir);
+    llvm::sys::path::append(bcPath, filename);
+    if (!llvm::sys::fs::exists(bcPath))
+      return;
+    llvm::SmallString<256> canonicalPath;
+    if (llvm::sys::fs::real_path(bcPath, canonicalPath))
+      return;
+    module->setAttr(
+        attrName, createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
+  };
+
+  if(hacc::utils::isAscend950(config.getTargetBackend())) {
+    addIfExists("meta_op.aic.c310.bc", mlir::hivm::AIC_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::AIC_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.aiv.c310.bc", mlir::hivm::AIV_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::AIV_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.mix.aic.c310.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.mix.aiv.c310.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
+                });
+  } else {
+    addIfExists("meta_op.aic.c220.bc", mlir::hivm::AIC_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::AIC_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.aiv.c220.bc", mlir::hivm::AIV_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::AIV_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.mix.aic.c220.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
+                });
+    addIfExists("meta_op.mix.aiv.c220.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
+                [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                  return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
+                });
+  }
+  addIfExists("host-a5.bc", mlir::hivm::HOST_BITCODEAttr::name,
+              [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
+                return mlir::hivm::HOST_BITCODEAttr::get(c, s);
+              });
+}
 
 static std::vector<std::string>
 skipOptions(const std::vector<std::string> &options,
@@ -149,7 +233,9 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
     }
-
+    
+    // hivmc pipepine
+    addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
       hirCompileSuccess = true;
       mod = hirCompileMode.clone();

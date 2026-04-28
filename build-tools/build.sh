@@ -13,9 +13,12 @@ readonly ENABLE_PROJECTS="mlir;llvm"
 readonly LONG_OPTS=(
   "add-cmake-options:"
   "apply-patches"
+  "bisheng-compiler:"
+  "build-bishengir-template"
   "bishengir-publish"
   "build:"
   "build-bishengir-so"
+  "build-template"
   "disable-cann"
   "build-bishengir-doc"
   "build-test"
@@ -99,6 +102,7 @@ readonly LLVM_ROOT_DIR=$(pwd)/..
 BUILD_TYPE="Release"
 C_COMPILER="clang"
 CXX_COMPILER="clang++"
+BISHENG_COMPILER=""
 THREADS=$(($(grep -c "processor" /proc/cpuinfo) * 3 / 4))
 THREADS=$((${THREADS} > 1 ? ${THREADS} : 1))
 BUILD_DIR="${SCRIPT_ROOT}"
@@ -124,6 +128,7 @@ SAFETY_LD_OPTIONS=""
 SKIP_RPATH_OPTION="FALSE"
 BISHENGIR_PUBLISH="OFF"
 BUILD_TARGETS="host"
+BISHENGIR_BUILD_TEMPLATE="OFF"
 BUILD_DIR="${GIT_ROOT}/build"
 
 # help infomation
@@ -132,8 +137,8 @@ usage() {
 
     SYNOPSIS:
       ${SCRIPT_NAME}  [-h | --help] [-r | --rebuild] [-j | --jobs JOBS] [-o | --build PATH]
-                [-s | --build-bishengir-so] [--disable-cann] [--apply-patches]
-                [--c-compiler C_COMPILER] [--cxx-compiler CXX_COMPILER]
+                [-s | --build-bishengir-so] [-t | --build-template] [--disable-cann] [--apply-patches]
+                [--c-compiler C_COMPILER] [--cxx-compiler CXX_COMPILER] [--bisheng-compiler BISHENG_COMPILER]
                 [--build-type BUILD_TYPE] [--build-test] [--python-binding]
                 [--disable-werror] [--disable-mlir-werror] [--disable-bishengir-werror]
                 [--shared-libs] [--add-cmake-options CMAKE_OPTIONS] [--disable-ccache] [--safety_options]
@@ -149,9 +154,12 @@ usage() {
       -o, --build BUILD_PATH               Path to directory which CMake will use as the root of build directory
                                            (Default: build_BiShengIR)
       -s, --build-bishengir-so             Build shared libBiShengIR.so (Default: OFF)
+      -t, --build-template                 Build BiShengIR Template (Default: OFF)
+                                           If this option is set, must set --bisheng-compiler option.
       --disable-cann                       Disable the CANN dependency (Default: OFF)
       --c-compiler C_COMPILER              The full path to the compiler for C (Default: clang)
       --cxx-compiler CXX_COMPILER          The full path to the compiler for C++ (Default: clang++)
+      --bisheng-compiler BISHENG_COMPILER  The full path to the bisheng compiler.
       --build-type BUILD_TYPE              Specifies the build type. (Default: Release)
       --build-test                         Whether to build bishengir-test (Default: OFF)
       --enable-assertion                   Whether to build with assertion (Default: OFF)
@@ -172,6 +180,7 @@ usage() {
       --bishengir-publish                  Whether to disable features that we don't want to expose to users. (Default: OFF)
       --enable-pydsl                       Enable the PyDSL(BiShengTile) project.
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: OFF)
+      -t, --build-bishengir-template       Build BiShengIR Template (Default: OFF)
       "
 }
 
@@ -207,6 +216,10 @@ while true; do
     readonly BUILD_LIB_BISHENGIR_SO=""
     shift
     ;;
+  -t | --build-template)
+    BISHENGIR_BUILD_TEMPLATE="ON"
+    shift
+    ;;
   --disable-cann)
     BISHENGIR_DISABLE_CANN="ON"
     shift
@@ -217,6 +230,10 @@ while true; do
     ;;
   --cxx-compiler)
     CXX_COMPILER="$2"
+    shift 2
+    ;;
+  --bisheng-compiler)
+    BISHENG_COMPILER="$2"
     shift 2
     ;;
   --build-bishengir-doc)
@@ -332,6 +349,16 @@ fi
 cmake_generate() {
   mkdir -p ${BUILD_DIR}
   cd ${BUILD_DIR}
+
+  if [ "${BISHENGIR_BUILD_TEMPLATE}" = "ON" ]; then
+    if [ ! -d "$BISHENG_COMPILER" ]; then
+      echo "Path to bisheng compiler $BISHENG_COMPILER does not exist."
+      exit 1
+    else
+      export BISHENG_INSTALL_PATH="${BISHENG_COMPILER}"
+    fi
+  fi
+
   local torch_mlir_option=""
   local enable_external_projects="bishengir"
   if [ "${BUILD_TORCH_MLIR}" = "ON" ]; then
@@ -399,6 +426,8 @@ cmake_generate() {
             ${triton_options} \
             -DLLVM_TARGETS_TO_BUILD="${BUILD_TARGETS}" \
             -DLLVM_ENABLE_HIIPU=ON \
+            -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+            -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
             -DBISHENGIR_DISABLE_CANN="${BISHENGIR_DISABLE_CANN}" \
             -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \
             -DMLIR_ENABLE_BINDINGS_PYTHON="${PYTHON_BINDING}" \
@@ -439,6 +468,8 @@ cmake_generate() {
     ${triton_options} \
     -DLLVM_TARGETS_TO_BUILD="${BUILD_TARGETS}" \
     -DLLVM_ENABLE_HIIPU=ON \
+    -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+    -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
     -DBISHENGIR_DISABLE_CANN="${BISHENGIR_DISABLE_CANN}" \
     -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \
     -DMLIR_ENABLE_BINDINGS_PYTHON="${PYTHON_BINDING}" \

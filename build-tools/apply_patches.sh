@@ -88,5 +88,5 @@ if [[ -n "$OPTION" ]]; then
   fi
 fi
 
-#clean_up_patches
+clean_up_patches
 apply_patches
