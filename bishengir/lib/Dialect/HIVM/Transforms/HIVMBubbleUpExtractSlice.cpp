@@ -169,7 +169,10 @@ private:
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<VInterleaveBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }

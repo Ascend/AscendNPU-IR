@@ -920,3 +920,74 @@ func.func @extract_slice_attribute(%arg0: tensor<4x32x64xi32>) -> tensor<16x64xi
   %extracted_slice_0 = tensor.extract_slice %extracted_slice[0, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xi32> to tensor<16x64xi32>
   return %extracted_slice_0 : tensor<16x64xi32>
 }
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_vtranspose(
+// CHECK-SAME:      %[[A0:.*]]: tensor<4x8xf32>, %[[A1:.*]]: tensor<8x4xf32>) -> tensor<2x4xf32> {
+// CHECK-DAG:       %[[EXT0:.*]] = tensor.extract_slice %[[A0]][0, 0] [4, 2] [1, 1] {to_be_bubbled_slice} : tensor<4x8xf32> to tensor<4x2xf32>
+// CHECK-DAG:       %[[EXT1:.*]] = tensor.extract_slice %[[A1]][0, 0] [2, 4] [1, 1] {to_be_bubbled_slice} : tensor<8x4xf32> to tensor<2x4xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%[[EXT0]] : tensor<4x2xf32>) outs(%[[EXT1]] : tensor<2x4xf32>) permutation = [1, 0] -> tensor<2x4xf32>
+// CHECK:           return %{{.*}} : tensor<2x4xf32>
+// CHECK:         }
+func.func @bubble_up_vtranspose(%arg0: tensor<4x8xf32>, %arg1: tensor<8x4xf32>) -> tensor<2x4xf32> {
+  %0 = hivm.hir.vtranspose ins(%arg0 : tensor<4x8xf32>) outs(%arg1 : tensor<8x4xf32>) permutation = [1, 0] -> tensor<8x4xf32>
+  %1 = tensor.extract_slice %0[0, 0] [2, 4] [1, 1] {to_be_bubbled_slice} : tensor<8x4xf32> to tensor<2x4xf32>
+  return %1 : tensor<2x4xf32>
+}
+
+// -----
+// Bubble-up through hivm.hir.vtranspose: slice on result maps to src via
+// permutation; dst empty + slice folds to empty of tile shape.
+// CHECK-LABEL:   func.func @bubble_up_vtranspose2(
+// CHECK-SAME:      %[[A:.*]]: tensor<8x4xf32>) -> tensor<4x4xf32> {
+// CHECK:           %[[S:.*]] = tensor.extract_slice %[[A]][0, 0] [4, 4] [1, 1] {to_be_bubbled_slice}
+// CHECK:           %[[D:.*]] = tensor.empty() : tensor<4x4xf32>
+// CHECK:           %[[R:.*]] = hivm.hir.vtranspose ins(%[[S]] : tensor<4x4xf32>) outs(%[[D]] : tensor<4x4xf32>) permutation = [1, 0] -> tensor<4x4xf32>
+// CHECK:           return %[[R]] : tensor<4x4xf32>
+// CHECK:         }
+func.func @bubble_up_vtranspose2(%arg0: tensor<8x4xf32>) -> tensor<4x4xf32> {
+  %empty = tensor.empty() : tensor<4x8xf32>
+  %t = hivm.hir.vtranspose ins(%arg0 : tensor<8x4xf32>) outs(%empty : tensor<4x8xf32>) permutation = [1, 0] -> tensor<4x8xf32>
+  %e = tensor.extract_slice %t[0, 0] [4, 4] [1, 1] {to_be_bubbled_slice} : tensor<4x8xf32> to tensor<4x4xf32>
+  return %e : tensor<4x4xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_vinterleave(
+// CHECK-SAME:                                     %[[VAL_0:.*]]: tensor<32x16x1xi32>) -> tensor<16x16x2xi32> {
+// CHECK:          %[[VAL_1:.*]] = tensor.extract_slice
+// CHECK:          %[[VAL_2:.*]] = tensor.empty() : tensor<16x16x2xi32>
+// CHECK:          %[[VAL_3:.*]] = hivm.hir.vinterleave ins(%[[VAL_1:.*]], %[[VAL_1:.*]] : tensor<16x16x1xi32>, tensor<16x16x1xi32>) outs(%[[VAL_2:.*]] : tensor<16x16x2xi32>) interleave_channel_nums = 2 -> tensor<16x16x2xi32>
+// CHECK:          return %[[VAL_3:.*]] : tensor<16x16x2xi32>
+// CHECK:         }
+func.func @bubble_up_vinterleave(%arg0: tensor<32x16x1xi32>) -> tensor<16x16x2xi32> {
+  %62 = tensor.empty() : tensor<32x16x2xi32>
+  %63 = hivm.hir.vinterleave ins(%arg0, %arg0 : tensor<32x16x1xi32>, tensor<32x16x1xi32>) outs(%62 : tensor<32x16x2xi32>) interleave_channel_nums = 2 -> tensor<32x16x2xi32>
+  %extracted_slice = tensor.extract_slice %63[0, 0, 0] [16, 16, 2] [1, 1, 1] {to_be_bubbled_slice} : tensor<32x16x2xi32> to tensor<16x16x2xi32>
+  return %extracted_slice : tensor<16x16x2xi32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_select(
+// CHECK-SAME:                                %[[VAL_0:.*]]: i1,
+// CHECK-SAME:                                %[[VAL_1:.*]]: tensor<64x128xf32>,
+// CHECK-SAME:                                %[[VAL_2:.*]]: tensor<64x128xf32>) -> tensor<32x128xf32> {
+// CHECK:           %[[VAL_3:.*]] = tensor.extract_slice %[[VAL_1]][0, 0] [32, 128] [1, 1] {to_be_bubbled_slice} : tensor<64x128xf32> to tensor<32x128xf32>
+// CHECK:           %[[VAL_4:.*]] = tensor.extract_slice %[[VAL_2]][0, 0] [32, 128] [1, 1] {to_be_bubbled_slice} : tensor<64x128xf32> to tensor<32x128xf32>
+// CHECK:           %[[VAL_5:.*]] = arith.select %[[VAL_0]], %[[VAL_3]], %[[VAL_4]] : tensor<32x128xf32>
+// CHECK:           return %[[VAL_5]] : tensor<32x128xf32>
+// CHECK:         }
+func.func @bubble_up_select(
+    %cond: i1,
+    %arg0: tensor<64x128xf32>,
+    %arg1: tensor<64x128xf32>)
+    -> tensor<32x128xf32> {
+
+  %sel = arith.select %cond, %arg0, %arg1
+      : tensor<64x128xf32>
+
+  %slice = tensor.extract_slice %sel[0, 0] [32, 128] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x128xf32> to tensor<32x128xf32>
+
+  return %slice : tensor<32x128xf32>
+}
