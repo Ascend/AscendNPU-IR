@@ -258,12 +258,15 @@ public:
       : OpRewritePattern<OpType>(context, /*benefit=*/1), analyzer(analyzer) {}
   LogicalResult matchAndRewrite(OpType Op,
                                 PatternRewriter &rewriter) const override {
-    if (Op->template hasAttrOfType<UnitAttr>(tiledOp) ||
-        Op->template hasAttrOfType<UnitAttr>(tileAndSliceFailure))
+    if (Op->template hasAttrOfType<UnitAttr>(tiledOp))
       return failure();
     int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
+    auto inputType = Op.getOperand(0).getType();
+ 	  if (!inputType) {
+ 	    return failure();
+ 	  }
     /// We differentiate storeOp and copyOp
-    if (std::is_same_v<hivm::CopyOp, OpType>) {
+    if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
       if (!Op.getResults().empty()) { // If copy Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
@@ -273,11 +276,10 @@ public:
         }
       }
       // If the copy input is memref, we cannot tile it.
-      auto inputType = Op.getOperand(0).getType();
       if (isa<mlir::MemRefType>(inputType)) {
-        tilingDim = -1;
         Op->emitWarning(
             "Copy input memref is not supported, skip tile and bind.");
+        return failure();
       }
       LLVM_DEBUG(DBGS() << "The copy op tiling dim is: " << tilingDim << "\n");
     } else {
@@ -291,7 +293,7 @@ public:
     auto containingLoop = maybeContainingLoop.value();
     auto *srcOpr = &Op.getSrcMutable();
     auto *dstOpr = &Op.getDstMutable();
-    if (std::is_same_v<hivm::StoreOp, OpType>) {
+    if constexpr (std::is_same_v<hivm::StoreOp, OpType>) {
       auto storeOp = cast<hivm::StoreOp>(Op);
       auto srcType = dyn_cast<ShapedType>(storeOp.getSrc().getType());
       if (!srcType) {
@@ -810,17 +812,11 @@ tileAndSliceOp(func::FuncOp func,
                TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
-  auto ret = applyPatternsGreedily(func, std::move(patterns), config);
-  if (func.walk([](hivm::StoreOp storeOp) {
-            return storeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
-                       ? mlir::WalkResult::interrupt()
-                       : mlir::WalkResult::advance();
-          })
-          .wasInterrupted()) {
+  if (failed(applyPatternsGreedily(func, std::move(patterns), config))) {
     return failure();
   }
+  return success();
 
-  return ret;
 }
 
 /// Attempts to tile and bind sub-blocks within a function
@@ -1387,7 +1383,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 #endif
   ]() -> LogicalResult {
     for (func::FuncOp originalFunc : aivFunctions) {
-      auto symNameStr = originalFunc.getSymNameAttr().str();
+      auto symNameStr = originalFunc.getSymNameAttr().str();  
       FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
       eraseTilingDimMappingMarksInModule(
           originalFunc->getParentOfType<ModuleOp>());
@@ -1455,6 +1451,18 @@ void TileAndBindSubBlockPass::runOnOperation() {
     }
     return success();
   };
+
+  if (failed(tileAicFixpipeFuncs())) {
+    if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
+                                           /*limitSubBlockToStore=*/false)) ||
+        failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
+                                           /*limitSubBlockToStore=*/true))) {
+      signalPassFailure();
+    }
+    destroyAllBackups();
+    return;
+  }
+  destroyAllBackups();
 
 #ifndef NDEBUG
   LLVM_DEBUG(DBGS() << "TileAndBindSubBlock pass completed. "
