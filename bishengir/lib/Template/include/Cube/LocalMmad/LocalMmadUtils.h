@@ -16,48 +16,13 @@
 
 #ifndef HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
 #define HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H
-#include "Utils.h"
+#include "../Utils.h"
 
 constexpr uint32_t HF32_CTRL_REGISTER_BIT = 49;
 
 enum class Load2DTransposeMode : uint8_t {
   ADDADDR = 0,
   SUBADDR = 1,
-};
-
-template <typename SRC_TYPE, typename DST_TYPE>
-struct mmad_intrin_args {
-  __cc__ DST_TYPE *dst_ptr;
-  __ca__ SRC_TYPE *src0_ptr;
-  __cb__ SRC_TYPE *src1_ptr;
-  uint16_t m;
-  uint16_t k;
-  uint16_t n;
-  uint8_t unitFlag;
-  bool kDirectionAlign;
-  bool cmatrixSource;
-  uint8_t cmatrixInitVal;
-};
-
-template <typename T, typename DST_QUALIFER>
-struct img2colv2_intrin_args {
-  DST_QUALIFER *dst_ptr;
-  __cbuf__ T *src_ptr;
-  uint16_t stepK;
-  uint16_t stepM;
-  uint16_t posK;
-  uint16_t posM;
-  uint8_t strideW;
-  uint8_t strideH;
-  uint8_t Wk;
-  uint8_t Hk;
-  uint8_t dilationW;
-  uint8_t dilationH;
-  bool filterW;
-  bool filterH;
-  bool transpose;
-  bool fmatrixCtrl;
-  uint16_t sizeChannel;
 };
 
 template <typename T, typename DST_QUALIFER>
@@ -74,28 +39,11 @@ struct load2d_transpose_intrin_args {
 
 template <typename T, typename DST_QUALIFER>
 __aicore__ __attribute__((always_inline)) void
-img2colv2_cbuf_to_ca_intrin_core(img2colv2_intrin_args<T, DST_QUALIFER> args) {
-  INTRINSIC(img2colv2_cbuf_to_ca, args.dst_ptr, args.src_ptr, args.stepK,
-            args.stepM, args.posK, args.posM, args.strideW, args.strideH,
-            args.Wk, args.Hk, args.dilationW, args.dilationH, args.filterW,
-            args.filterH, args.transpose, args.fmatrixCtrl, args.sizeChannel);
-}
-
-template <typename T, typename DST_QUALIFER>
-__aicore__ __attribute__((always_inline)) void
 img2colv2_cbuf_to_cb_intrin_core(img2colv2_intrin_args<T, DST_QUALIFER> args) {
   INTRINSIC(img2colv2_cbuf_to_cb, args.dst_ptr, args.src_ptr, args.stepK,
             args.stepM, args.posK, args.posM, args.strideW, args.strideH,
             args.Wk, args.Hk, args.dilationW, args.dilationH, args.filterW,
             args.filterH, args.transpose, args.fmatrixCtrl, args.sizeChannel);
-}
-
-template <typename SRC_TYPE, typename DST_TYPE>
-__aicore__ __attribute__((always_inline)) void
-mad_intrin_core(mmad_intrin_args<SRC_TYPE, DST_TYPE> args) {
-  INTRINSIC(mad, args.dst_ptr, args.src0_ptr, args.src1_ptr, args.m, args.k,
-            args.n, args.unitFlag, args.kDirectionAlign, args.cmatrixSource,
-            args.cmatrixInitVal);
 }
 
 template <typename T, typename DST_QUALIFER>

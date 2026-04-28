@@ -385,6 +385,22 @@ private:
   }
 };
 
+class Conv1DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv1DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
+    return success();
+  }
+};
+
 class ND2NZOpToLibraryCallPattern : public OpRewritePattern<hivm::ND2NZOp> {
 public:
   using OpRewritePattern<hivm::ND2NZOp>::OpRewritePattern;
@@ -1756,6 +1772,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
   // clang-format off
   patterns.add<
                MmadL1OpToLibraryCallPattern,
+               Conv1DL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
                FixpipeOpToLibraryCallPattern,
@@ -1834,6 +1851,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
   // Abstract Intrinsic Ops must be converted.
   // clang-format off
   target.addIllegalOp<hivm::MmadL1Op,
+                      hivm::Conv1DL1Op,
                       hivm::ND2NZOp,
                       hivm::NZ2NDOp,
                       hivm::FixpipeOp,

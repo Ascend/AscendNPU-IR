@@ -815,6 +815,52 @@ Conv1DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
   return retOperands;
 }
 
+SmallVector<Value>
+Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
+  // inputs
+  SmallVector<Value> libParams =
+      getInputOperands(/*includeSyncRelatedArgs=*/false);
+
+  // outputs
+  libParams.push_back(getInit());
+
+  // conv1d attributes
+  Location loc = getLoc();
+  auto i64Ty = rewriter.getI64Type();
+  auto makeI64 = [&](int64_t val) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(val));
+  };
+
+  libParams.push_back(makeI64(getGroups()));
+
+  int64_t pad = getPadding();
+  libParams.push_back(makeI64(0));   // padT
+  libParams.push_back(makeI64(0));   // padB
+  libParams.push_back(makeI64(pad)); // padL
+  libParams.push_back(makeI64(pad)); // padR
+
+  libParams.push_back(makeI64(1)); // strideH
+  libParams.push_back(makeI64(1)); // strideW
+
+  libParams.push_back(makeI64(1)); // dilationH
+  libParams.push_back(makeI64(1)); // dilationW
+
+  // additional sync arguments
+  if (getSyncRelatedArgs().empty()) {
+    auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+    getSyncRelatedArgsMutable().assign(ValueRange(
+        SmallVector<Value>(getNumSyncRelatedArgs(), negOneDefaultValue)));
+  }
+
+  auto syncRelatedArgs = getSyncRelatedArgs();
+  std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+            std::back_inserter(libParams));
+
+  return libParams;
+}
+
 //===----------------------------------------------------------------------===//
 // Conv2DL1Op
 //===----------------------------------------------------------------------===//
