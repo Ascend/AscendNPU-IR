@@ -177,11 +177,17 @@ func.func @flatten_layout_cast_fallback(%arg0: memref<4x256xf16, strided<[1, 1]>
 }
 
 // -----
-// CHECK-LABEL: test_subview_reshape(
+// CHECK-LABEL: func.func @test_subview_reshape()
 
-// CHECK: %[[VAL_12:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [64, 1] : memref<?xi64, strided<[1]>> into memref<?x1xi64>
-// CHECK: %[[VAL_13:.*]] = memref.cast %[[VAL_12]] : memref<?x1xi64> to memref<?x1xi64, strided<[1, 1]>>
-// CHECK: %[[VAL_14:.*]] = memref.collapse_shape %[[VAL_13]] {{\[\[}}0, 1]] : memref<?x1xi64, strided<[1, 1]>> into memref<?xi64, strided<[1]>>
+// The recovered expand_shape must preserve the sliced tail size,
+// instead of expanding back to the full tile [64, 1].
+
+// CHECK: %[[EXPAND:.*]] = memref.expand_shape %{{.*}} {{\[\[}}0, 1{{\]\]}} output_shape [%{{.*}}, 1] : memref<?xi64, strided<[1]>> into memref<?x1xi64>
+// CHECK: %[[CAST:.*]] = memref.cast %[[EXPAND]] : memref<?x1xi64> to memref<?x1xi64, strided<[1, 1]>>
+// CHECK: %[[COLLAPSE:.*]] = memref.collapse_shape %[[CAST]] {{\[\[}}0, 1{{\]\]}} : memref<?x1xi64, strided<[1, 1]>> into memref<?xi64, strided<[1]>>
+
+// CHECK-NOT: output_shape [64, 1]
+
 func.func @test_subview_reshape() {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

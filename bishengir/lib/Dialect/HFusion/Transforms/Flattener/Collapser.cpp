@@ -1456,6 +1456,55 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
   return success();
 }
 
+std::optional<SmallVector<OpFoldResult>>
+Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
+  DenseSet<Value> visited;
+  Value current = value;
+
+  // Walk back through replacement chain:
+  // new collapsed value -> old pre-flatten value
+  for (auto it = valueReplacement.find(current);
+      it != valueReplacement.end();
+      it = valueReplacement.find(current)) {
+    Value prev = it->second;
+    if (!visited.insert(prev).second) {
+      break;
+    }
+
+    current = prev;
+  }
+
+  if (auto subviewOp = current.getDefiningOp<memref::SubViewOp>()) {
+    SmallVector<OpFoldResult> sizes;
+    llvm::append_range(sizes, subviewOp.getMixedSizes());
+    return sizes;
+  }
+
+  if (auto extractSliceOp = current.getDefiningOp<tensor::ExtractSliceOp>()) {
+    SmallVector<OpFoldResult> sizes;
+    llvm::append_range(sizes, extractSliceOp.getMixedSizes());
+    return sizes;
+  }
+ 
+  return std::nullopt;
+}
+
+SmallVector<OpFoldResult>
+Flattener::getMixedSizesForTailExpand(Value collapsedVal,
+                                      Type expandedType) const {
+  int64_t expectedRank = static_cast<int64_t>(utils::getShapeRank(expandedType).value_or(0));
+
+  // For flatten-out, prefer the original slicing provenance.
+  // This preserves runtime tail sizes like [%29, %30, 1].
+  if (auto recovered = tryGetOriginalSliceMixedSizes(collapsedVal)) {
+    if (static_cast<int64_t>(recovered->size()) == expectedRank)
+      return *recovered;
+  }
+
+  // Fallback to the old behavior for non-slicing cases.
+  return getFlattenMixedSizes(collapsedVal);
+}
+
 void Flattener::adjustReturnOp(Operation *op, OpBuilder &builder) const {
   SmallVector<Value> newOperands;
   bool needsUpdate = false;
@@ -1477,7 +1526,11 @@ void Flattener::adjustReturnOp(Operation *op, OpBuilder &builder) const {
       builder.setInsertionPoint(op);
       // Use the function's return type instead of computing it
       auto expandedType = cast<RankedTensorType>(funcResults[idx]);
-      auto mixedSize = getFlattenMixedSizes(operand);
+      auto mixedSize = getMixedSizesForTailExpand(operand, expandedType);
+      if (mixedSize.empty()) {
+        LLVM_DEBUG(llvm::dbgs() << "Failed to recover mixed sizes for tail expand\n";);
+        return;
+      }
       auto expandOp = builder.create<tensor::ExpandShapeOp>(
           op->getLoc(), expandedType, operand, collapseGroup, mixedSize);
       newOperands.push_back(expandOp.getResult());
@@ -1511,7 +1564,12 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
   auto expandedType = previousType_.at(collapsedVal);
   builder.setInsertionPoint(tensorOutOp);
 
-  auto mixedSize = getFlattenMixedSizes(collapsedVal);
+  auto mixedSize = getMixedSizesForTailExpand(collapsedVal, expandedType);
+  if (mixedSize.empty()) {
+    LLVM_DEBUG(llvm::dbgs() << "Failed to recover mixed sizes for tail expand\n";);
+    return failure();
+  }
+
   if (isa<RankedTensorType>(expandedType)) {
     auto expandOp = builder.create<tensor::ExpandShapeOp>(
         tensorOutOp.getLoc(), expandedType, collapsedVal, collapseGroup,

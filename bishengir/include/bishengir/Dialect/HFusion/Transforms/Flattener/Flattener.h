@@ -176,6 +176,10 @@ private:
   /// Collapses operations during adjustment.
   LogicalResult collapser(Operation *op, OpBuilder &builder);
 
+  std::optional<SmallVector<OpFoldResult>> tryGetOriginalSliceMixedSizes(Value value) const;
+
+  SmallVector<OpFoldResult> getMixedSizesForTailExpand(Value collapsedVal, Type expandedType) const;
+
   /// Adjusts return operations after flattening.
   void adjustReturnOp(Operation *op, OpBuilder &builder) const;
 
