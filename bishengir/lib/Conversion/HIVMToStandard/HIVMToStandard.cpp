@@ -391,69 +391,13 @@ public:
   using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
                                 PatternRewriter &rewriter) const final {
-    // inputs
-    SmallVector<Value> libParams =
-        op.getInputOperands(/*includeSyncRelatedArgs=*/false);
-
-    // outputs
-    libParams.push_back(op.getInit());
-
-    // conv1d attributes
-    SmallVector<Value> conv1dAttrArgs;
-    genConv1dAttrArgs(op, conv1dAttrArgs, rewriter);
-    libParams.append(conv1dAttrArgs.begin(), conv1dAttrArgs.end());
-
-    // additional sync arguments
-    SmallVector<Value> additionalArgs;
-    genAdditionalFunctionArgs(op, additionalArgs, rewriter);
-    libParams.append(additionalArgs.begin(), additionalArgs.end());
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
 
     replaceWithLibCall(rewriter, op,
                        cast<OpWithLibraryFunction>(op.getOperation())
                            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
-  }
-
-private:
-  void genConv1dAttrArgs(Conv1DL1Op op, SmallVector<Value> &conv1dAttrArgs,
-                         PatternRewriter &rewriter) const {
-    Location loc = op.getLoc();
-    auto i64Ty = rewriter.getI64Type();
-
-    auto makeI64 = [&](int64_t val) -> Value {
-      return rewriter.create<arith::ConstantOp>(
-          loc, i64Ty, rewriter.getI64IntegerAttr(val));
-    };
-
-    conv1dAttrArgs.push_back(makeI64(op.getGroups()));
-
-    int64_t pad = op.getPadding();
-    conv1dAttrArgs.push_back(makeI64(0));   //  padT
-    conv1dAttrArgs.push_back(makeI64(0));   //  padB
-    conv1dAttrArgs.push_back(makeI64(pad)); //  padL
-    conv1dAttrArgs.push_back(makeI64(pad)); //  padR
-
-    conv1dAttrArgs.push_back(makeI64(1)); //  strideH
-    conv1dAttrArgs.push_back(makeI64(1)); //  strideW
-
-    conv1dAttrArgs.push_back(makeI64(1)); //  dilationH
-    conv1dAttrArgs.push_back(makeI64(1)); //  dilationW
-  }
-
-  void genAdditionalFunctionArgs(Conv1DL1Op op,
-                                 SmallVector<Value> &additionalArgs,
-                                 PatternRewriter &rewriter) const {
-    if (op.getSyncRelatedArgs().empty()) {
-      auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
-          op->getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
-      op.getSyncRelatedArgsMutable().assign(ValueRange(
-          SmallVector<Value>(op.getNumSyncRelatedArgs(), negOneDefaultValue)));
-    }
-
-    auto syncRelatedArgs = op.getSyncRelatedArgs();
-    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
-              std::back_inserter(additionalArgs));
   }
 };
 

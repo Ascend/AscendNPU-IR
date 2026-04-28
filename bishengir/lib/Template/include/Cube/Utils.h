@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#ifndef HIVM_MLIR_TEMPLATE_CONV2D_GROUP_UTILS_H
-#define HIVM_MLIR_TEMPLATE_CONV2D_GROUP_UTILS_H
-#include "Utils.h"
+#ifndef HIVM_MLIR_TEMPLATE_CUBE_UTILS_H
+#define HIVM_MLIR_TEMPLATE_CUBE_UTILS_H
+#include "../Utils.h"
 
 template <typename SRC_TYPE, typename DST_TYPE>
 struct mmad_intrin_args {
@@ -70,32 +70,4 @@ mad_intrin_core(mmad_intrin_args<SRC_TYPE, DST_TYPE> args) {
             args.cmatrixInitVal);
 }
 
-#define DECLARE_CONV2D_GROUP(src_scope, dst_scope, dim, src_type, dst_type)    \
-  __aicore__ __attribute__((always_inline)) void                               \
-      _mlir_ciface_conv2d_group_##src_type##_to_##dst_type(                    \
-          memref_t<__##src_scope##__ src_type, dim> *src0,                     \
-          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,          \
-          memref_t<__##dst_scope##__ dst_type, 4> *dst, int64_t G,             \
-          int64_t padT, int64_t padB, int64_t padL, int64_t padR,              \
-          int64_t strideH, int64_t strideW, int64_t dilationH,                 \
-          int64_t dilationW, int64_t conv_l1_wait_l1a_event,                   \
-          int64_t conv_l1_wait_l1b_event, int64_t l1a_wait_conv_l1_event,      \
-          int64_t l1b_wait_conv_l1_event,                                      \
-          int64_t back_pipe_m_pipe_mte1_db_event0,                             \
-          int64_t back_pipe_m_pipe_mte1_db_event1)
-
-#define REGISTER_CONV2D_GROUP(src_scope, dst_scope, dim, src_type, dst_type)   \
-  DECLARE_CONV2D_GROUP(src_scope, dst_scope, dim, src_type, dst_type) {        \
-    conv2d_group<src_type, dst_type>(                                          \
-        src0, src1, init, dst, G, padT, padB, padL, padR, strideH, strideW,    \
-        dilationH, dilationW, conv_l1_wait_l1a_event, conv_l1_wait_l1b_event,  \
-        l1a_wait_conv_l1_event, l1b_wait_conv_l1_event,                        \
-        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1);     \
-  }
-
-extern "C" {
-DECLARE_CONV2D_GROUP(cbuf, cc, 5, float, float);
-DECLARE_CONV2D_GROUP(cbuf, cc, 5, half, float);
-DECLARE_CONV2D_GROUP(cbuf, cc, 5, bfloat16_t, float);
-}
-#endif // HIVM_MLIR_TEMPLATE_CONV2D_GROUP_UTILS_H
+#endif // HIVM_MLIR_TEMPLATE_CUBE_UTILS_H

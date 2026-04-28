@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "Cube/Conv/ConvUtils.h"
+#include "Cube/LocalConv/LocalConvUtils.h"
 
 template <typename TYPE> struct b16_converter {
   using type = TYPE;
@@ -100,6 +100,7 @@ load_l1_to_l0a(__ca__ SRC_TYPE *l0a_buf, memref_t<__cbuf__ SRC_TYPE, 5> *input,
 
 // load k-tile of weight matrix into L0B
 // no loop_k, because src_repeat_stride cannot be defined under this case
+// TODO: Refactor this function together with the implemantation in LocalMmad
 template <typename SRC_TYPE>
 __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_unaligned(
     __cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 5> *weight,
@@ -130,6 +131,7 @@ __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_unaligned(
 }
 
 // load k-tile and n-tile (group tiling) of weight matrix into L0B
+// TODO: Refactor this function together with the implemantation in LocalMmad
 template <typename SRC_TYPE>
 __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_group(
     __cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 5> *weight,
