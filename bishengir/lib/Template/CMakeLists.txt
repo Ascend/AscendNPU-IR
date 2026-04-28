@@ -252,7 +252,7 @@ function(link_all_to_meta_op)
     set(BITCODE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib")
     message(STATUS "BITCODE_OUTPUT_DIR = ${BITCODE_OUTPUT_DIR}")
     file(MAKE_DIRECTORY ${BITCODE_OUTPUT_DIR})
-    set(output_host_file_name "${BITCODE_OUTPUT_DIR}/host.bc")
+    set(output_host_file_name "${BITCODE_OUTPUT_DIR}/host-a5.bc")
     message(STATUS "output_host_file_name = ${output_host_file_name}")
     add_custom_llvm_link_command(all_host_op_list ${output_host_file_name})
 

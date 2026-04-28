@@ -57,7 +57,6 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                          auto createAttr) {
     llvm::SmallString<256> bcPath(libDir);
     llvm::sys::path::append(bcPath, filename);
-    llvm::errs() << "Debug : bcPath is " <<  bcPath.str().str() << "\n";
     if (!llvm::sys::fs::exists(bcPath))
       return;
     llvm::SmallString<256> canonicalPath;
@@ -102,7 +101,7 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
                   return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
                 });
   }
-  addIfExists("host.bc", mlir::hivm::HOST_BITCODEAttr::name,
+  addIfExists("host-a5.bc", mlir::hivm::HOST_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::HOST_BITCODEAttr::get(c, s);
               });
