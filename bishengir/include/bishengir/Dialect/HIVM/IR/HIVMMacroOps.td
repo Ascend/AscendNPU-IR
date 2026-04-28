@@ -685,7 +685,8 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
+    SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
   }];
 }
- 	 
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD
