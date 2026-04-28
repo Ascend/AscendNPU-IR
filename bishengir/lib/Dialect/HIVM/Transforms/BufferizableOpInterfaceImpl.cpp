@@ -294,6 +294,30 @@ struct HIVMMixGroupMatmulOpInterface
   }
 };
 
+struct HIVMMatmulMxOpInterface
+    : public DstBufferizableOpInterfaceExternalModel<HIVMMatmulMxOpInterface,
+                                                     hivm::MmadMxL1Op> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInit(&opOperand);
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    // The `tilingParams` operand might be already bufferized.
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options,
+        /*supportMixedTensorBufferMode=*/true);
+  }
+};
+
 template <typename OpTy>
 struct VectorOpInterface
     : public DstBufferizableOpInterfaceExternalModel<VectorOpInterface<OpTy>,
@@ -478,15 +502,15 @@ struct EmbeddingGatherOpInterface
   }
 
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
-                                     const AnalysisState &state) const {
+                                      const AnalysisState &state) const {
     auto gatherOp = cast<EmbeddingGatherOp>(op);
     AliasingValueList result;
 
     if (opOperand.getOperandNumber() == 2) { // $dst
       // dst is alias of the result
-      result.addAlias({AliasingValue(gatherOp->getResult(0),
-                                    BufferRelation::Equivalent,
-                                    /*isMustAlias=*/true)});
+      result.addAlias(
+          {AliasingValue(gatherOp->getResult(0), BufferRelation::Equivalent,
+                         /*isMustAlias=*/true)});
     }
 
     return result;
@@ -498,11 +522,13 @@ struct EmbeddingGatherOpInterface
 
     auto srcBuffer = gatherOp.getSrc();
 
-    FailureOr<Value> indexBuffer = getBuffer(rewriter, gatherOp.getIndex(), options);
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, gatherOp.getIndex(), options);
     if (failed(indexBuffer))
       return failure();
 
-    FailureOr<Value> dstBuffer = getBuffer(rewriter, gatherOp.getDst(), options);
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, gatherOp.getDst(), options);
     if (failed(dstBuffer))
       return failure();
 
@@ -529,42 +555,46 @@ struct IndirectLoadOpInterface
                                                     hivm::IndirectLoadOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    return opOperand.getOperandNumber() < 2 || opOperand.getOperandNumber() ==3 || opOperand.getOperandNumber() == 4;
+    return opOperand.getOperandNumber() < 2 ||
+           opOperand.getOperandNumber() == 3 ||
+           opOperand.getOperandNumber() == 4;
   }
- 
+
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     return opOperand.getOperandNumber() == 2; // $dst
   }
- 
+
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
-                                     const AnalysisState &state) const {
+                                      const AnalysisState &state) const {
     auto indirectLoadOp = cast<IndirectLoadOp>(op);
     AliasingValueList result;
- 
+
     if (opOperand.getOperandNumber() == 2) { // $dst
       result.addAlias({AliasingValue(indirectLoadOp->getResult(0),
-                                    BufferRelation::Equivalent,
-                                    /*isMustAlias=*/true)});
+                                     BufferRelation::Equivalent,
+                                     /*isMustAlias=*/true)});
     }
- 
+
     return result;
   }
- 
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto indirectLoadOp = cast<hivm::IndirectLoadOp>(op);
- 
+
     auto srcBuffer = indirectLoadOp.getSrc();
- 
-    FailureOr<Value> offsetBuffer = getBuffer(rewriter, indirectLoadOp.getOffsets(), options);
+
+    FailureOr<Value> offsetBuffer =
+        getBuffer(rewriter, indirectLoadOp.getOffsets(), options);
     if (failed(offsetBuffer))
       return failure();
- 
-    FailureOr<Value> dstBuffer = getBuffer(rewriter, indirectLoadOp.getDst(), options);
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, indirectLoadOp.getDst(), options);
     if (failed(dstBuffer))
       return failure();
-    
+
     FailureOr<Value> maskBuffer = failure();
     if (indirectLoadOp.getMask()) {
       maskBuffer = getBuffer(rewriter, indirectLoadOp.getMask(), options);
@@ -581,33 +611,33 @@ struct IndirectLoadOpInterface
 
     auto mask = indirectLoadOp.getMask();
     auto other = indirectLoadOp.getOther();
- 
+
     if (indirectLoadOp.getMask()) {
       if (indirectLoadOp.getOther()) {
-        rewriter.create<IndirectLoadOp>(
-        indirectLoadOp.getLoc(),
-        /*resultType*/ TypeRange{},
-        /*operands*/
-        srcBuffer, *offsetBuffer, *dstBuffer, *maskBuffer, *otherBuffer);
-      }else {
-        rewriter.create<IndirectLoadOp>(
-        indirectLoadOp.getLoc(),
-        /*resultType*/ TypeRange{},
-        /*operands*/
-        srcBuffer, *offsetBuffer, *dstBuffer, *maskBuffer, other);
+        rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                        /*resultType*/ TypeRange{},
+                                        /*operands*/
+                                        srcBuffer, *offsetBuffer, *dstBuffer,
+                                        *maskBuffer, *otherBuffer);
+      } else {
+        rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                        /*resultType*/ TypeRange{},
+                                        /*operands*/
+                                        srcBuffer, *offsetBuffer, *dstBuffer,
+                                        *maskBuffer, other);
       }
     } else {
-      rewriter.create<IndirectLoadOp>(
-        indirectLoadOp.getLoc(),
-        /*resultType*/ TypeRange{},
-        /*operands*/
-        srcBuffer, *offsetBuffer, *dstBuffer, mask, other);
+      rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                      /*resultType*/ TypeRange{},
+                                      /*operands*/
+                                      srcBuffer, *offsetBuffer, *dstBuffer,
+                                      mask, other);
     }
- 
+
     if (indirectLoadOp->getNumResults() > 0) {
       replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
     }
- 
+
     return success();
   }
 };
@@ -619,7 +649,7 @@ struct IndirectStoreOpInterface
                               const AnalysisState &state) const {
     return opOperand.getOperandNumber() > 0;
   }
- 
+
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     return opOperand.getOperandNumber() == 0; // $dst
@@ -629,21 +659,23 @@ struct IndirectStoreOpInterface
                                       const AnalysisState &state) const {
     return {};
   }
- 
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto indirectStoreOp = cast<hivm::IndirectStoreOp>(op);
- 
-    FailureOr<Value> srcBuffer = getBuffer(rewriter, indirectStoreOp.getSrc(), options);
+
+    FailureOr<Value> srcBuffer =
+        getBuffer(rewriter, indirectStoreOp.getSrc(), options);
     if (failed(srcBuffer))
       return failure();
- 
-    FailureOr<Value> offsetBuffer = getBuffer(rewriter, indirectStoreOp.getOffsets(), options);
+
+    FailureOr<Value> offsetBuffer =
+        getBuffer(rewriter, indirectStoreOp.getOffsets(), options);
     if (failed(offsetBuffer))
       return failure();
- 
+
     auto dstBuffer = indirectStoreOp.getDst();
-    
+
     FailureOr<Value> maskBuffer = failure();
     if (indirectStoreOp.getMask()) {
       maskBuffer = getBuffer(rewriter, indirectStoreOp.getMask(), options);
@@ -654,15 +686,15 @@ struct IndirectStoreOpInterface
     auto mask = indirectStoreOp.getMask();
     IndirectStoreOp newOp;
     if (mask) {
-      newOp = rewriter.create<IndirectStoreOp>(
-      indirectStoreOp.getLoc(),
-      /*operands*/
-      dstBuffer, *offsetBuffer, *srcBuffer, *maskBuffer);
+      newOp = rewriter.create<IndirectStoreOp>(indirectStoreOp.getLoc(),
+                                               /*operands*/
+                                               dstBuffer, *offsetBuffer,
+                                               *srcBuffer, *maskBuffer);
     } else {
-      newOp = rewriter.create<IndirectStoreOp>(
-        indirectStoreOp.getLoc(),
-        /*operands*/
-        dstBuffer, *offsetBuffer, *srcBuffer, mask);
+      newOp = rewriter.create<IndirectStoreOp>(indirectStoreOp.getLoc(),
+                                               /*operands*/
+                                               dstBuffer, *offsetBuffer,
+                                               *srcBuffer, mask);
     }
 
     rewriter.replaceOp(op, newOp);
@@ -676,39 +708,42 @@ struct GatherTOpInterface
                                                     hivm::GatherTOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    return opOperand.getOperandNumber() == 0 || opOperand.getOperandNumber() == 1;
+    return opOperand.getOperandNumber() == 0 ||
+           opOperand.getOperandNumber() == 1;
   }
- 
+
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     return opOperand.getOperandNumber() == 2; // $dst
   }
- 
+
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
-                                     const AnalysisState &state) const {
+                                      const AnalysisState &state) const {
     auto gatherOp = cast<GatherTOp>(op);
     AliasingValueList result;
- 
+
     if (opOperand.getOperandNumber() == 2) { // $dst
-      result.addAlias({AliasingValue(gatherOp->getResult(0),
-                                    BufferRelation::Equivalent,
-                                    /*isMustAlias=*/true)});
+      result.addAlias(
+          {AliasingValue(gatherOp->getResult(0), BufferRelation::Equivalent,
+                         /*isMustAlias=*/true)});
     }
- 
+
     return result;
   }
- 
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto gatherOp = cast<hivm::GatherTOp>(op);
- 
+
     auto srcBuffer = gatherOp.getSrc();
- 
-    FailureOr<Value> indexBuffer = getBuffer(rewriter, gatherOp.getIndex(), options);
+
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, gatherOp.getIndex(), options);
     if (failed(indexBuffer))
       return failure();
- 
-    FailureOr<Value> dstBuffer = getBuffer(rewriter, gatherOp.getDst(), options);
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, gatherOp.getDst(), options);
     if (failed(dstBuffer))
       return failure();
 
@@ -718,16 +753,16 @@ struct GatherTOpInterface
     auto index_shape = gatherOp.getIndexShape();
     auto offsets = gatherOp.getOffsets();
 
-    rewriter.create<GatherTOp>(
-        gatherOp.getLoc(),
-        /*resultType*/ TypeRange{},
-        /*operands*/
-        srcBuffer, *indexBuffer, *dstBuffer, bound, dim, src_stride, index_shape, offsets);
+    rewriter.create<GatherTOp>(gatherOp.getLoc(),
+                               /*resultType*/ TypeRange{},
+                               /*operands*/
+                               srcBuffer, *indexBuffer, *dstBuffer, bound, dim,
+                               src_stride, index_shape, offsets);
 
     if (gatherOp->getNumResults() > 0) {
       replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
     }
- 
+
     return success();
   }
 };
@@ -737,33 +772,36 @@ struct IndexPutOpInterface
                                                     hivm::IndexPutOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    return opOperand.getOperandNumber() == 1 || opOperand.getOperandNumber() == 2;
+    return opOperand.getOperandNumber() == 1 ||
+           opOperand.getOperandNumber() == 2;
   }
- 
+
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     return opOperand.getOperandNumber() == 0; // $dst
   }
- 
+
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
-                                     const AnalysisState &state) const {
+                                      const AnalysisState &state) const {
     return {};
   }
- 
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto indexPutOp = cast<hivm::IndexPutOp>(op);
- 
+
     auto dstBuffer = indexPutOp.getDst();
- 
-    FailureOr<Value> indexBuffer = getBuffer(rewriter, indexPutOp.getIndex(), options);
+
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, indexPutOp.getIndex(), options);
     if (failed(indexBuffer))
       return failure();
- 
-    FailureOr<Value> valueBuffer = getBuffer(rewriter, indexPutOp.getValue(), options);
+
+    FailureOr<Value> valueBuffer =
+        getBuffer(rewriter, indexPutOp.getValue(), options);
     if (failed(valueBuffer))
       return failure();
-    
+
     Value scatter_dim = indexPutOp.getScatterDim();
     Value bound = indexPutOp.getBound();
     auto end_offset = indexPutOp.getEndOffset();
@@ -774,7 +812,8 @@ struct IndexPutOpInterface
         indexPutOp.getLoc(),
         /*resultType*/ TypeRange{},
         /*operands*/
-        dstBuffer, *indexBuffer, *valueBuffer, scatter_dim, bound, end_offset, start_offset, dst_stride);
+        dstBuffer, *indexBuffer, *valueBuffer, scatter_dim, bound, end_offset,
+        start_offset, dst_stride);
 
     rewriter.replaceOp(op, newOp);
 
@@ -783,11 +822,12 @@ struct IndexPutOpInterface
 };
 
 struct ScatterTOpInterface
-  : public BufferizableOpInterface::ExternalModel<ScatterTOpInterface,
-    hivm::ScatterTOp> {
+    : public BufferizableOpInterface::ExternalModel<ScatterTOpInterface,
+                                                    hivm::ScatterTOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
-    return opOperand.getOperandNumber() == 1 || opOperand.getOperandNumber() == 2;
+    return opOperand.getOperandNumber() == 1 ||
+           opOperand.getOperandNumber() == 2;
   }
 
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
@@ -804,20 +844,24 @@ struct ScatterTOpInterface
                           const BufferizationOptions &options) const {
     auto scatterTOp = cast<hivm::ScatterTOp>(op);
 
-    FailureOr<Value> valueBuffer = getBuffer(rewriter, scatterTOp.getValue(), options);
+    FailureOr<Value> valueBuffer =
+        getBuffer(rewriter, scatterTOp.getValue(), options);
     if (failed(valueBuffer))
       return failure();
 
-    FailureOr<Value> indexTileBuffer = getBuffer(rewriter, scatterTOp.getIndexTile(), options);
+    FailureOr<Value> indexTileBuffer =
+        getBuffer(rewriter, scatterTOp.getIndexTile(), options);
     if (failed(indexTileBuffer))
       return failure();
 
     auto ret = rewriter.create<ScatterTOp>(
-      scatterTOp.getLoc(),
-      /*resultType*/ TypeRange{},
-      /*operands*/
-      scatterTOp.getDst(), *valueBuffer, *indexTileBuffer, scatterTOp.getIndexBoundary(), scatterTOp.getDim(),
-      scatterTOp.getDstStride(), scatterTOp.getIndexShape(), scatterTOp.getOffsets());
+        scatterTOp.getLoc(),
+        /*resultType*/ TypeRange{},
+        /*operands*/
+        scatterTOp.getDst(), *valueBuffer, *indexTileBuffer,
+        scatterTOp.getIndexBoundary(), scatterTOp.getDim(),
+        scatterTOp.getDstStride(), scatterTOp.getIndexShape(),
+        scatterTOp.getOffsets());
 
     rewriter.replaceOp(op, ret);
 
@@ -834,7 +878,6 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
-    L12UBOp::attachInterface<HIVMCopyOrStoreOpInterface<L12UBOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
     CustomOp::attachInterface<HIVMCustomOpInterface<CustomOp>>(*ctx);
     CustomMacroOp::attachInterface<HIVMCustomOpInterface<CustomMacroOp>>(*ctx);
@@ -843,6 +886,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);
     MixMatmulOp::attachInterface<HIVMMixMatmulOpInterface>(*ctx);
     MixGroupMatmulOp::attachInterface<HIVMMixGroupMatmulOpInterface>(*ctx);
+    MmadMxL1Op::attachInterface<HIVMMatmulMxOpInterface>(*ctx);
     DebugOp::attachInterface<DebugOpInterface>(*ctx);
     VConcatOp::attachInterface<VConcatOpInterface>(*ctx);
     BitcastOp::attachInterface<BitcastOpInterface>(*ctx);

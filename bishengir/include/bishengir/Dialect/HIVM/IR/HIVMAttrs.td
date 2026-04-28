@@ -88,6 +88,10 @@ def HIVM_DataLayoutnZ : I32EnumAttrCase<"nZ", 4, "nZ">;
 def HIVM_DataLayoutzN : I32EnumAttrCase<"zN", 5, "zN">;
 def HIVM_DataLayoutND : I32EnumAttrCase<"ND", 6, "ND">;
 def HIVM_DataLayoutFractal : I32EnumAttrCase<"Fractal", 7, "Fractal">;
+def HIVM_DataLayoutScaleAND : I32EnumAttrCase<"SCALEA_ND", 8, "SCALEA_ND">;
+def HIVM_DataLayoutScaleBDN : I32EnumAttrCase<"SCALEB_DN", 9, "SCALEB_DN">;
+def HIVM_DataLayoutScaleAzZ : I32EnumAttrCase<"SCALEA_zZ", 10, "SCALEA_zZ">;
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 11, "SCALEB_nN">;
 
 def HIVM_DataLayoutEnum : HIVM_I32Enum<
   "DataLayout", "HIVM data layout", [
@@ -97,7 +101,11 @@ def HIVM_DataLayoutEnum : HIVM_I32Enum<
     HIVM_DataLayoutnZ,
     HIVM_DataLayoutzN,
     HIVM_DataLayoutND,
-    HIVM_DataLayoutFractal
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN,
   ]>;
 
 def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
@@ -934,6 +942,11 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
 ]>;
 
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
 //===----------------------------------------------------------------------===//
 // Memory Access
 //===----------------------------------------------------------------------===//

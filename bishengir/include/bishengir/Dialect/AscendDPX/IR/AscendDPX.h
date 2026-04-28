@@ -11,6 +11,7 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 
 //===----------------------------------------------------------------------===//
 // AscendDPX Dialect

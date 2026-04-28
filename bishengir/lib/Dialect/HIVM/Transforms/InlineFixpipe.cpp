@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -161,7 +162,7 @@ bool needYieldOut(Operation *user, Value val) {
   return false;
 }
 
-/// Pushed down insert point only when a unique yieldop is traced
+/// Pushed down insert point only when a unique yieldop is trace
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
   // if op has multiple users, don't push the insert point down
   int32_t count = 0;
@@ -263,6 +264,52 @@ public:
     }
     rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
                                   res.getResultTensor(), exceptedOps);
+    return success();
+  }
+};
+
+/// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
+struct InsertFixpipeOpPatternMmadMxL1
+    : public OpRewritePattern<hivm::MmadMxL1Op> {
+public:
+  using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
+                                PatternRewriter &rewriter) const override {
+    auto mmadLikeOpRes = op->getResults()[0];
+ 
+    auto isMatchedOp = [](Operation *op, Value v) {
+      LDBG("Matching this current op " << *op);
+      if (isa<hivm::FixpipeOp>(op)) {
+        // already insert fixpipe, no need to insert fixpipe again
+        return true;
+      }
+      if (isLocalMatmulInit(op, v)) {
+        // no need to insert fixpipe because the single user can directly use
+        // result stay in local buffer.
+        return true;
+      }
+      return false;
+    };
+    if (traceSingleChainUser(mmadLikeOpRes, isMatchedOp))
+      return failure();
+ 
+    int resultIndx = 0;
+    auto insertAfterOp = getInsertPoint(op, resultIndx);
+    rewriter.setInsertionPointAfter(insertAfterOp);
+ 
+    Value fixpipeInit =
+        utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
+    LDBG("Replacing fix pipe for " << op);
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr dmaModeAttr =
+        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    auto res = rewriter.create<FixpipeOp>(
+        op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
+        /*src=*/insertAfterOp->getResult(resultIndx),
+        /*dst=*/fixpipeInit, dmaModeAttr, /*dual_dst_mode=*/nullptr,
+        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+    rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
+                                  res.getResultTensor(), res);
     return success();
   }
 };
@@ -643,6 +690,7 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
+  patterns.add<InsertFixpipeOpPatternMmadMxL1>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 

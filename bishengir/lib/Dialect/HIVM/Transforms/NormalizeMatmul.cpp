@@ -233,6 +233,24 @@ FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
   return mkn;
 }
 
+template <>
+FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
+                                             PatternRewriter &rewriter) {
+  auto loc = op.getLoc();
+  auto realMK = getRealShapeFromMemrefOrTensor(op.getA(), loc, rewriter);
+  static constexpr size_t matrixSize = 2;
+  if (failed(realMK) || (*realMK).size() != matrixSize) {
+    return failure();
+  }
+  auto realKN = getRealShapeFromMemrefOrTensor(op.getB(), loc, rewriter);
+  if (failed(realKN) || (*realKN).size() != matrixSize) {
+    return failure();
+  }
+ 
+  // set m,k,n
+  return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
+}
+
 template <typename T> struct SetRealMKNPattern : public OpRewritePattern<T> {
 public:
   using OpRewritePattern<T>::OpRewritePattern;
@@ -588,6 +606,7 @@ public:
 
 void populateSetRealMKNPattern(RewritePatternSet &patterns) {
   patterns.add<SetRealMKNPattern<hivm::MmadL1Op>,
+               SetRealMKNPattern<hivm::MmadMxL1Op>,
                SetRealMKNPattern<hivm::BatchMmadL1Op>>(patterns.getContext());
 }
 

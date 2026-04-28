@@ -1,5 +1,6 @@
 add_bishengir_library(BishengIRSCFTransforms
   MapForToForall.cpp
+  LegalizeLoopIterArg.cpp
   RemoveRedundantLoopInit.cpp
   CanonicalizeIterArg.cpp
 

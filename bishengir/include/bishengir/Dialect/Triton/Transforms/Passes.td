@@ -11,6 +11,13 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DecomposeFRem : Pass<"decompose-frem", "ModuleOp"> {
+  let summary = "Decompose llvm.frem to sub(mul(trunc(div)))";
+  let constructor = "bishengir::triton::createDecomposeFRemPass()";
+  let dependentDialects = ["LLVM::LLVMDialect", "hivm::HIVMDialect", "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect"];
+}
+
+
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 
 def SetBishengirSimtOptAttr
@@ -198,6 +205,30 @@ def GetTritonMetadata :
   let options = [Option<"tritonMetadataOutput",
                         "triton-metadata-output", "std::string", "",
                         "File to dump triton metadata. -- means stdout">];
+}
+
+def AdaptGPUKernel : Pass<"adapt-gpu-kernel", "ModuleOp"> {
+  let summary = "Generate HIVM SIMT wrappers and attributes for a GPU/SIMT kernel";
+  let constructor = "bishengir::triton::createAdaptGPUKernelPass()";
+  let dependentDialects = [
+    "hacc::HACCDialect", "ascend_dpx::AscendDPXDialect", "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "LLVM::LLVMDialect", "hivm::HIVMDialect"
+  ];
+}
+
+def TritonRemap : Pass<"triton-remap", "mlir::ModuleOp"> {
+  let summary = "Converts triton-generated LLVM IR into NPU-compatible LLVM IR.";
+  let constructor = "bishengir::triton::createTritonRemapPass()";
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect", "mlir::hivm::HIVMDialect", "mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect",
+    "mlir::hacc::HACCDialect", "mlir::NVVM::NVVMDialect", "mlir::scf::SCFDialect"
+  ];
+  let options = [
+    Option<"gridDimX", "dim-x", "int", "1", "Grid dimension for x axis">,
+    Option<"gridDimY", "dim-y", "int", "1", "Grid dimension for y axis">,
+    Option<"gridDimZ", "dim-z", "int", "1", "Grid dimension for z axis">,
+    Option<"useIfElse", "use-if-else", "bool", "true", "Replace inline asm load/stores with scf and llvm.load/store">,
+    Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">
+  ];
 }
 #endif
 

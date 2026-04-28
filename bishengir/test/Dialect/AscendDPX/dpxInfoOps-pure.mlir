@@ -1,5 +1,5 @@
 // RUN: bishengir-opt %s -cse -canonicalize | FileCheck %s
-
+ 
 llvm.func @test_redundant_thread_id() -> i32 {
   %0 = ascend_dpx.thread_id_x
   %1 = ascend_dpx.thread_id_x
@@ -10,7 +10,7 @@ llvm.func @test_redundant_thread_id() -> i32 {
   %6 = llvm.add %4, %5 : i32
   llvm.return %6 : i32
 }
-
+ 
 // CHECK-LABEL: llvm.func @test_redundant_thread_id() -> i32
 // CHECK-NEXT:    %[[CST:.*]] = llvm.mlir.constant(32 : i32) : i32
 // CHECK-NEXT:    %[[TID:.*]] = ascend_dpx.thread_id_x

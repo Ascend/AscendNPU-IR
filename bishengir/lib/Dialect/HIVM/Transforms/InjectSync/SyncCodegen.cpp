@@ -48,6 +48,7 @@ void SyncCodegen::Build() {
 
   if (syncAnalysisMode == SyncAnalysisMode::NORMALSYNC) {
     UpdateMmadL1SyncTemplateInter();
+    UpdateMmadMxL1SyncTemplateInter();
   }
 }
 
@@ -69,6 +70,21 @@ void SyncCodegen::UpdateMmadL1SyncTemplateInter() {
   });
 }
 
+void SyncCodegen::UpdateMmadMxL1SyncTemplateInter() {
+  func_->walk<WalkOrder::PreOrder>([&](hivm::MmadMxL1Op mmadMxL1Op) {
+    auto iter = mmadMxL12SyncTemplateInter.find(mmadMxL1Op);
+    checkCondition(iter != mmadMxL12SyncTemplateInter.end(),
+                   "mmadL1 must has SyncTemplateInter");
+    SmallVector<Value> newArgs;
+    newArgs.push_back(iter->second.MmadMxL1WaitL1AEvent);
+    newArgs.push_back(iter->second.MmadMxL1WaitL1BEvent);
+    newArgs.push_back(iter->second.L1AWaitMmadMxL1Event);
+    newArgs.push_back(iter->second.L1B2WaitMmadMxL1Event);
+    auto syncArgs = mmadMxL1Op.getSyncRelatedArgsMutable();
+    syncArgs.assign(newArgs);
+  });
+}
+
 void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
   for (auto &nowElement : syncIR) {
     if (auto *compoundElement =
@@ -83,6 +99,9 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
         InitDefaultSyncTemplateInterForMmadL1Op(mmadL1Op);
         UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement,
                                                       mmadL1Op);
+      } else if (auto mmadMxL1Op =
+                     dyn_cast<MmadMxL1Op>(compoundElement->elementOp)) {
+        InitDefaultSyncTemplateInterForMmadMxL1Op(mmadMxL1Op);
       }
     } else if (auto *placeHolder =
                    dyn_cast<PlaceHolderInstanceElement>(nowElement.get())) {
@@ -204,7 +223,7 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
   rewriter.setInsertionPointToStart(&func_.getBody().front());
   auto defaultValue = rewriter.create<arith::ConstantIntOp>(
       mmadL1Op.getOperation()->getLoc(), rewriter.getI64Type(), -1);
-  SyncTemplateInter syncTemplateInter(defaultValue);
+  SyncTemplateInter<hivm::MmadL1Op> syncTemplateInter(defaultValue);
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
   if (checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op) &&
       checkAllParentLoopsAreForLoops(mmadL1Op)) {
@@ -215,6 +234,19 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
       mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCondIdx;
     }
   }
+}
+
+void SyncCodegen::InitDefaultSyncTemplateInterForMmadMxL1Op(
+    hivm::MmadMxL1Op mmadMxL1Op) {
+  if (mmadMxL12SyncTemplateInter.contains(mmadMxL1Op)) {
+    return;
+  }
+  IRRewriter rewriter(func_->getContext());
+  rewriter.setInsertionPointToStart(&func_.getBody().front());
+  auto defaultValue = rewriter.create<arith::ConstantIntOp>(
+      mmadMxL1Op.getOperation()->getLoc(), rewriter.getI64Type(), -1);
+  SyncTemplateInter<hivm::MmadMxL1Op> syncTemplateInter(defaultValue);
+  mmadMxL12SyncTemplateInter[mmadMxL1Op] = syncTemplateInter;
 }
 
 void SyncCodegen::UpdateLoopOpInsertSync(LoopInstanceElement *nowElement) {
@@ -447,29 +479,17 @@ bool SyncCodegen::IsNeedLowerSyncToTemplate(Operation *op,
   if (!isVirtualMTE2) {
     return false;
   }
-  if (!isa<hivm::MmadL1Op>(op)) {
+  if (!isa<hivm::MmadL1Op, hivm::MmadMxL1Op>(op)) {
     return false;
   }
   return true;
 }
 
-bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
-                                          SyncOperation *sync, Value eventId) {
-  if (!IsNeedLowerSyncToTemplate(op, sync)) {
-    return false;
-  }
-  if (!eventId) {
-    Location loc = op->getLoc();
-    checkCondition(sync->eventIds.size() == 1,
-                   "sync operation expected to have exactly 1 eventId");
-    rewriter.setInsertionPointToStart(&func_.getBody().front());
-    eventId = rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
-                                                    sync->eventIds[0]);
-  }
-  auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(op);
-  auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
-  checkCondition(iter != mmadL12SyncTemplateInter.end(),
-                 "mmadL1Op expected to be found in mmadL12SyncTemplateInter");
+template <typename T = hivm::MmadL1Op>
+static bool LowerSyncToTemplate(SyncOperation *sync, Value eventId, T op,
+                                DenseMap<T, SyncTemplateInter<T>> &t) {
+  auto iter = t.find(op);
+  checkCondition(iter != t.end(), "expected to be found");
   if (sync->GetType() == SyncOperation::TYPE::WAIT_EVENT) {
     if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
       sync->uselessSync = true;
@@ -493,6 +513,64 @@ bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
       return true;
     }
   }
+  return false;
+}
+
+template <>
+bool LowerSyncToTemplate<hivm::MmadMxL1Op>(
+    SyncOperation *sync, Value eventId, hivm::MmadMxL1Op op,
+    DenseMap<hivm::MmadMxL1Op, SyncTemplateInter<hivm::MmadMxL1Op>> &t) {
+  auto iter = t.find(op);
+  checkCondition(iter != t.end(), "expected to be found");
+  if (sync->GetType() == SyncOperation::TYPE::WAIT_EVENT) {
+    if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
+      sync->uselessSync = true;
+      iter->second.MmadMxL1WaitL1AEvent = eventId;
+      return true;
+    }
+    if (sync->GetSrcPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B) {
+      iter->second.MmadMxL1WaitL1BEvent = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+  } else if (sync->GetType() == SyncOperation::TYPE::SET_EVENT) {
+    if (sync->GetDstPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A) {
+      iter->second.L1AWaitMmadMxL1Event = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+    if (sync->GetDstPipe() == hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B) {
+      iter->second.L1B2WaitMmadMxL1Event = eventId;
+      sync->uselessSync = true;
+      return true;
+    }
+  }
+  return false;
+}
+ 
+bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
+                                          SyncOperation *sync, Value eventId) {
+  if (!IsNeedLowerSyncToTemplate(op, sync)) {
+    return false;
+  }
+  if (!eventId) {
+    Location loc = op->getLoc();
+    checkCondition(sync->eventIds.size() == 1,
+                   "sync operation expected to have exactly 1 eventId");
+    rewriter.setInsertionPointToStart(&func_.getBody().front());
+    eventId = rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
+                                                    sync->eventIds[0]);
+  }
+ 
+  if (auto mmadL1Op = dyn_cast_or_null<hivm::MmadL1Op>(op))
+    if (LowerSyncToTemplate(sync, eventId, mmadL1Op, mmadL12SyncTemplateInter))
+      return true;
+ 
+  if (auto mmadMxL1Op = dyn_cast_or_null<hivm::MmadMxL1Op>(op))
+    if (LowerSyncToTemplate(sync, eventId, mmadMxL1Op,
+                            mmadMxL12SyncTemplateInter))
+      return true;
+ 
   return false;
 }
 

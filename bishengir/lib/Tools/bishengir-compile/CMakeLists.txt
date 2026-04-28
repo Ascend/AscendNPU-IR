@@ -29,6 +29,7 @@ add_bishengir_library(MLIRBiShengIRCompileLib
   ${extension_libs}
   BiShengIRPass
   BishengIRTransform
+  MLIRHIVMAVEPipelines
   ${triton_libs}
 
   LINK_COMPONENTS

@@ -7,6 +7,7 @@ llvm.func @test_redundant_load(%arg0: !llvm.ptr<1>, %arg1: i1, %arg2: vector<1xi
   %3 = llvm.bitcast %0 : vector<1xi64> to i64
   %4 = llvm.bitcast %1 : vector<1xi64> to i64
   %5 = llvm.add %3, %4 : i64
+  
   llvm.return %5 : i64
 }
 

@@ -36,6 +36,7 @@ namespace utils {
 //===----------------------------------------------------------------------===//
 // Utility functions for HACCFunction
 //===----------------------------------------------------------------------===//
+constexpr const static uint64_t kBitsInByte = 8;
 
 bool isHost(Operation *func) {
   auto haccFunction = dyn_cast_if_present<hacc::HACCFunction>(func);
@@ -186,7 +187,8 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
 }
 
 std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
-  if (auto targetAttr = op->getAttrOfType<TargetAttr>(TargetAttr::name))
+  if (auto targetAttr =
+          op ? op->getAttrOfType<TargetAttr>(TargetAttr::name) : nullptr)
     return symbolizeTargetDeviceEnum(targetAttr.getTarget());
   return std::nullopt;
 }
@@ -330,6 +332,61 @@ bool isRegBasedArch(ModuleOp op) {
 
 } // namespace utils
 
+static ModuleOp getDeviceModule(ModuleOp op) {
+  ModuleOp module = op.clone();
+  LLVM_DEBUG(llvm::dbgs() << "Processing to get device " << op << "\n";);
+  module->walk([&](HACCFunction func) {
+    if (func.isHost())
+      func->erase();
+  });
+  return module;
+}
+
+static void
+resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
+  /// In LLVM IR, there are two types of debug information (!dbg):
+  /// (1) distinct, (2) uniqued.
+  /// According to llvm/lib/IR/Verifier.cpp:Verifier::visitFunction,
+  /// "function declaration may only have a unique !dbg attachment".
+  /// We need to set this in addition to making the function's body as
+  /// empty.
+  if (auto originalLoc =
+          llvm::dyn_cast_if_present<FusedLoc>(llvmFunc.getLoc())) {
+    if (!originalLoc.getMetadata()) {
+      return;
+    }
+    auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
+    auto newAttr = LLVM::DISubprogramAttr::get(
+        llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
+        originalAttr.getScope(), originalAttr.getName(),
+        originalAttr.getLinkageName(), originalAttr.getFile(), unsigned(),
+        unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType());
+    auto newLoc = FusedLoc::get(originalLoc.getLocations(), newAttr,
+                                llvmFunc->getContext());
+    llvmFunc->setLoc(newLoc);
+  }
+}
+
+static ModuleOp getHostModule(ModuleOp op) {
+  ModuleOp module = op.clone();
+
+  LLVM_DEBUG(llvm::dbgs() << "Processing to get host module " << op << "\n";);
+  module->walk([&](HACCFunction func) {
+    if (!func->hasAttr(HACCFuncTypeAttr::name) || func.isDevice()) {
+      Region emptyRegion;
+      if (auto llvmFunc = utils::dynCastFunc<LLVM::LLVMFuncOp>(func)) {
+        llvmFunc.getBody().takeBody(emptyRegion);
+        llvmFunc.setLinkage(LLVM::Linkage::External);
+        resetDeclFuncLoc(llvmFunc);
+      } else if (auto funcOp = utils::dynCastFunc<func::FuncOp>(func)) {
+        funcOp.getBody().takeBody(emptyRegion);
+        funcOp.setVisibility(mlir::SymbolTable::Visibility::Private);
+      }
+    }
+  });
+  return module;
+}
+
 bool existHost(Operation *module) {
   bool ret = false;
   module->walk([&](HACCFunction op) { ret |= op.isHost(); });
@@ -372,6 +429,10 @@ bool existEntryHost(Operation *module) {
     return WalkResult::advance();
   });
   return ret;
+}
+
+std::pair<ModuleOp, ModuleOp> separateHostDeviceModule(ModuleOp op) {
+  return {getHostModule(op), getDeviceModule(op)};
 }
 
 ModuleOp filterFuncsInModule(ModuleOp &op,
@@ -432,6 +493,30 @@ std::optional<unsigned> getHACCInputIdx(func::FuncOp func, unsigned argIdx) {
 std::string constructHostFunctionName(const std::string &kernelName,
                                       HostFuncType type) {
   return llvm::formatv("{0}_{1}", kernelName, stringifyHostFuncType(type));
+}
+
+size_t countDeviceArgSizeInByte(ModuleOp modOp) {
+  size_t maxArgSizeInBytes = 0;
+  modOp.walk([&](LLVM::LLVMFuncOp funcOp) {
+    if (utils::isHost(funcOp))
+      return WalkResult::advance();
+    size_t curFuncArgSizeInBits = 0;
+    for (auto argTypes : funcOp.getArgumentTypes()) {
+      if (isa<LLVM::LLVMPointerType>(argTypes)) {
+        LLVMTypeConverter llvmTypeConverter(funcOp->getContext());
+        curFuncArgSizeInBits += llvmTypeConverter.getPointerBitwidth();
+      } else {
+        curFuncArgSizeInBits +=
+            getElementTypeOrSelf(argTypes).getIntOrFloatBitWidth();
+      }
+    }
+    size_t curFuncArgSizeInBytes = curFuncArgSizeInBits / utils::kBitsInByte;
+    if (curFuncArgSizeInBytes > maxArgSizeInBytes) {
+      maxArgSizeInBytes = curFuncArgSizeInBytes;
+    }
+    return WalkResult::advance();
+  });
+  return maxArgSizeInBytes;
 }
 
 static bool isCombinerLikeRegion(Region &reg, unsigned expectedNumArgs = 2) {

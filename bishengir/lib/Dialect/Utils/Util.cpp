@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -732,7 +733,8 @@ int64_t getVectorSizeByElementType(Type t) {
   int factor = t.isInteger(64) ? 2 : 1;
   constexpr unsigned int vectorByteLength = 256;
   constexpr unsigned int byteSize = 8;
-  return factor * vectorByteLength / ((int64_t)t.getIntOrFloatBitWidth() / byteSize);
+  return factor * vectorByteLength /
+         ((int64_t)t.getIntOrFloatBitWidth() / byteSize);
 }
 
 template <bool DropUnitDimOnly>
@@ -830,6 +832,77 @@ LogicalResult ForOpLegalization<DropUnitDimOnly>::matchAndRewrite(
 
 template struct utils::ForOpLegalization<true>;
 template struct utils::ForOpLegalization<false>;
+
+Operation *getBroadcastOp(Value scalar, VectorType tileType,
+                          PatternRewriter &rewriter, const Location &loc) {
+  auto maskType = VectorType::get(
+      SmallVector<int64_t>{tileType.getNumElements()}, rewriter.getI1Type());
+  auto mask = rewriter.create<hivmave::VFPgeOp>(
+      loc, maskType,
+      hivmave::PgePatternAttr::get(rewriter.getContext(),
+                                   hivmave::PgePattern::ALL));
+  auto broadcastmaskOp = rewriter.create<hivmave::VFBroadcastScalarMaskOp>(
+      loc, tileType, scalar, mask);
+  return broadcastmaskOp;
+}
+
+bool isValidHIVMTileElementType(Type type) {
+  return type.isInteger(1) || type.isInteger(8) || type.isInteger(16) ||
+         type.isInteger(32) || type.isInteger(64) || type.isF16() ||
+         type.isF32() || type.isBF16() || type.isFloat8E4M3FN() ||
+         type.isFloat8E5M2();
+}
+
+unsigned getHIVMTileSliceMinNumElts(Type type) {
+  assert(isValidHIVMTileElementType(type) && "invalid tile type!");
+  unsigned factor = type.isInteger(64) ? 2 : 1;
+  return factor * hivm::util::VL_BITS / type.getIntOrFloatBitWidth();
+}
+
+bool isValidHIVMTileVectorType(VectorType vType) {
+  if (!hivm::util::isOneDimLikeVecType(vType))
+    return false;
+
+  auto elemType = vType.getElementType();
+  if (!isValidHIVMTileElementType(elemType))
+    return false;
+
+  unsigned minNumElts = getHIVMTileSliceMinNumElts(elemType);
+  if (vType.getNumElements() > minNumElts)
+    return false;
+
+  return true;
+}
+
+bool isValidTwoDimVectorType(VectorType vType) {
+  if (vType.getRank() < 2)
+    return false;
+  auto shape = vType.getShape();
+  for (int64_t i = 0, e = vType.getRank() - 2; i < e; ++i) {
+    if (shape[i] != 1)
+      return false;
+  }
+
+  auto elemType = vType.getElementType();
+  if (!isValidHIVMTileElementType(elemType))
+    return false;
+
+  unsigned minNumElts = getHIVMTileSliceMinNumElts(elemType);
+  if (vType.getNumElements() > minNumElts)
+    return false;
+
+  return true;
+}
+
+Value createPRegFromConstantOp(VectorType vecTy, bool condition,
+                               PatternRewriter &rewriter) {
+  auto pgePattern =
+      condition ? hivmave::PgePattern::ALL : hivmave::PgePattern::ALLF;
+  auto pgeAttr = hivmave::PgePatternAttr::get(vecTy.getContext(), pgePattern);
+  auto maskOp = rewriter.create<hivmave::VFPgeOp>(rewriter.getUnknownLoc(),
+                                                  vecTy, pgeAttr);
+  return maskOp;
+}
 
 } // namespace utils
 
@@ -1694,6 +1767,34 @@ int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
   size_t pos = digitStr.size() - 1 - static_cast<size_t>(idx);
   char c = digitStr[pos];
   return static_cast<int>(c - '0');
+}
+
+Value allocateSharedMemory(LLVM::LLVMFuncOp vf, OpBuilder &builder,
+                           Location loc) {
+  // Try to find the base address from the arguments at first. If it is not
+  // exist, the base address of the shared memory starts from 0
+  Value sharedMemAddr = nullptr;
+  for (auto [idx, value] : llvm::enumerate(vf.getArguments())) {
+    auto dictAttr = vf.getArgAttrDict(idx);
+    if (!dictAttr)
+      continue;
+
+    if (dictAttr.get(hivm::SharedMemoryAttr::name)) {
+      sharedMemAddr = value;
+      break;
+    }
+  }
+
+  if (!sharedMemAddr) {
+    Value c0 = builder.create<LLVM::ConstantOp>(
+        vf->getLoc(), builder.getI64Type(), builder.getI64IntegerAttr(0));
+    auto intToPtr = builder.create<LLVM::IntToPtrOp>(
+        vf->getLoc(), LLVM::LLVMPointerType::get(builder.getContext(), 6), c0);
+    intToPtr->setAttr(hivm::SharedMemoryAttr::name, builder.getUnitAttr());
+    sharedMemAddr = intToPtr;
+  }
+
+  return sharedMemAddr;
 }
 
 } // namespace util

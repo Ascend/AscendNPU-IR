@@ -56,6 +56,8 @@ std::unique_ptr<mlir::Pass> createFuseReductionIntoLoopPass();
 /// Eliminate `scf.for` loops that are proven to execute exactly once
 /// (ValueBounds / trip count, constant IV, and affine.min/max bounds).
 std::unique_ptr<mlir::Pass> createEliminateSingleIterationScfForPass();
+/// Create a pass to debug memory.
+std::unique_ptr<mlir::Pass> createDebugMemoryPass(const DebugMemoryOptions &options = {});
 
 //===----------------------------------------------------------------------===//
 // Registration

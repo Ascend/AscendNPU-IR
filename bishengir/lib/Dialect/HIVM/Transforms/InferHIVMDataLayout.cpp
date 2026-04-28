@@ -1292,7 +1292,7 @@ struct InferHIVMDataLayoutPass
 void hasConvertlayoutForCube(func::FuncOp func) {
   MLIRContext *ctx = func->getContext();
   RewritePatternSet pattern(ctx);
-  pattern.add<ReplaceMMADOperand>(ctx); 
+  pattern.add<ReplaceMMADOperand>(ctx);
   (void)(applyPatternsGreedily(func, std::move(pattern)));
 }
 

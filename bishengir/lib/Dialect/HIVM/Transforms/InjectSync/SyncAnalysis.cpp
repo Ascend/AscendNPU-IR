@@ -710,27 +710,12 @@ void SyncAnalyzer::InsertBlockSyncOperation(
   assert(syncOperations.size() == syncIndex);
 }
 
-void SyncAnalyzer::ChangeToVirtualMTE2IfNeed(
-    CompoundInstanceElement *nowCompound,
-    CompoundInstanceElement *frontCompound, hivm::PIPE &nowPipe,
-    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec) {
-  auto frontMmadL1Op = dyn_cast<hivm::MmadL1Op>(frontCompound->elementOp);
-  auto nowMmadL1Op = dyn_cast<hivm::MmadL1Op>(nowCompound->elementOp);
-  if (nowPipe == hivm::PIPE::PIPE_MTE2 && frontPipe == hivm::PIPE::PIPE_MTE1 &&
-      frontMmadL1Op) {
-    ChangeNowPipeToVirtualMTE2(nowPipe, depBaseMemInfosVec, frontMmadL1Op);
-  }
-  if (nowPipe == hivm::PIPE::PIPE_MTE1 && frontPipe == hivm::PIPE::PIPE_MTE2 &&
-      nowMmadL1Op) {
-    ChangeFrontPipeToVirtualMTE2(frontPipe, depBaseMemInfosVec, nowMmadL1Op);
-  }
-}
-
+template <typename T>
 void SyncAnalyzer::ChangeNowPipeToVirtualMTE2(
     hivm::PIPE &nowPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
-    hivm::MmadL1Op mmadL1Op) const {
-  Value L1A = mmadL1Op.getA();
-  Value L1B = mmadL1Op.getB();
+    T mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
   for (auto &depValue : depBaseMemInfosVec) {
     // Check L1B before L1A: when A==B, the pattern is
     // WAIT(MTE2, MTE1) -> LoadL1->L0A -> LoadL1->L0B -> SET(MTE1, MTE2),
@@ -743,16 +728,68 @@ void SyncAnalyzer::ChangeNowPipeToVirtualMTE2(
   }
 }
 
+template <typename T>
 void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2(
     hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
-    hivm::MmadL1Op mmadL1Op) const {
-  Value L1A = mmadL1Op.getA();
-  Value L1B = mmadL1Op.getB();
-  for (auto depValue : depBaseMemInfosVec) {
+    T mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
+  for (auto &depValue : depBaseMemInfosVec) {
     if (depValue.first->baseBuffer == L1A) {
       frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
     } else if (depValue.first->baseBuffer == L1B) {
       frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    }
+  }
+}
+
+template <>
+void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2<hivm::MmadMxL1Op>(
+    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
+    hivm::MmadMxL1Op mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
+  Value L1ScaleA = mmadL1LikeOp.getScaleA();
+  Value L1ScaleB = mmadL1LikeOp.getScaleB();
+  for (auto &depValue : depBaseMemInfosVec) {
+    if (depValue.first->baseBuffer == L1A) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    } else if (depValue.first->baseBuffer == L1B) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    } else if (depValue.first->baseBuffer == L1ScaleA) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    } else if (depValue.first->baseBuffer == L1ScaleB) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    }
+  }
+}
+
+void SyncAnalyzer::ChangeToVirtualMTE2IfNeed(
+    CompoundInstanceElement *nowCompound,
+    CompoundInstanceElement *frontCompound, hivm::PIPE &nowPipe,
+    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+  {
+    auto frontMmadL1Op = dyn_cast<hivm::MmadL1Op>(frontCompound->elementOp);
+    auto nowMmadL1Op = dyn_cast<hivm::MmadL1Op>(nowCompound->elementOp);
+    if (nowPipe == hivm::PIPE::PIPE_MTE2 &&
+        frontPipe == hivm::PIPE::PIPE_MTE1 && frontMmadL1Op) {
+      ChangeNowPipeToVirtualMTE2(nowPipe, depBaseMemInfosVec, frontMmadL1Op);
+    }
+    if (nowPipe == hivm::PIPE::PIPE_MTE1 &&
+        frontPipe == hivm::PIPE::PIPE_MTE2 && nowMmadL1Op) {
+      ChangeFrontPipeToVirtualMTE2(frontPipe, depBaseMemInfosVec, nowMmadL1Op);
+    }
+  }
+  {
+    auto frontMmadL1Op = dyn_cast<hivm::MmadMxL1Op>(frontCompound->elementOp);
+    auto nowMmadL1Op = dyn_cast<hivm::MmadMxL1Op>(nowCompound->elementOp);
+    if (nowPipe == hivm::PIPE::PIPE_MTE2 &&
+        frontPipe == hivm::PIPE::PIPE_MTE1 && frontMmadL1Op) {
+      ChangeNowPipeToVirtualMTE2(nowPipe, depBaseMemInfosVec, frontMmadL1Op);
+    }
+    if (nowPipe == hivm::PIPE::PIPE_MTE1 &&
+        frontPipe == hivm::PIPE::PIPE_MTE2 && nowMmadL1Op) {
+      ChangeFrontPipeToVirtualMTE2(frontPipe, depBaseMemInfosVec, nowMmadL1Op);
     }
   }
 }

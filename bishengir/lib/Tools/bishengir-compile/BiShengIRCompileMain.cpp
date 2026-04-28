@@ -173,19 +173,35 @@ runExternalHIVMC(ModuleOp &module,
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
-  if (failed(execute(getHIVMCName(),
-                     getBiShengIRHIVMCompileInstallPath(), argumentsRef))) {
+  if (failed(execute(getHIVMCName(), getBiShengIRHIVMCompileInstallPath(),
+                     argumentsRef))) {
     return failure();
   }
 
   return success();
 }
 
+bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
+                          BiShengIRCompileMainConfig config) {
+  config.compileFullSIMT(true);
+  bool result = true;
+  for (auto module : modules) {
+    result &= runPipeline(module, buildSIMTPipeline, config, "BiShengSIMT")
+                  .succeeded();
+  }
+  return result;
+}
+
+bool runSIMDToLLVMCompile(ModuleOp module, BiShengIRCompileMainConfig &config) {
+  return runPipeline(module, buildBiShengHIRAVEToLLVMPipeline, config,
+                     "BiShengSIMD")
+      .succeeded();
+}
 } // namespace
 
 LogicalResult
 bishengir::runBiShengIRPipeline(ModuleOp mod,
-                                BiShengIRCompileMainConfig config) {
+                                BiShengIRCompileMainConfig config) {                          
   if (failed(checkOptionValidity(config))) {
     return failure();
   }
@@ -233,8 +249,24 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
     }
-    
+
     // hivmc pipepine
+    if (config.shouldEnableSimdSimtMixCompile()) {
+      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
+      // SIMT modules run triton lowering pipeline
+      // Main module runs regular pipeline
+      if (runSIMTToLLVMCompile(simtMods, config) &&
+          runSIMDToLLVMCompile(mainMod, config)) {
+        // Once both are lowered, flatten into single module
+        // success &= succeeded(runPipeline(hirCompileModule,
+        //                                  buildFinalMixVFCompilePipeline,
+        //                                  config, "BiShengFinishLLVM"));
+      }
+    } else if (config.shouldCompileFullSIMT()) {
+      success &= runSIMTToLLVMCompile(hirCompileMode, config);
+    } else {
+      success &= runSIMDToLLVMCompile(hirCompileMode, config);
+    }
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
       hirCompileSuccess = true;

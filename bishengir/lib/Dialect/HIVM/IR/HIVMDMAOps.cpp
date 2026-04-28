@@ -73,6 +73,7 @@ ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(FixpipeOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(ND2NZOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NZ2NDOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(L12UBOp)
+ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(LoadMXScaleOp)
 #undef ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -738,6 +739,28 @@ std::string L12UBOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   // make library function name
   return this->getOpName().str() + "_" + srcRankStr + "_to_" + dstRankStr +
          "_" + dataTypeStr;
+}
+
+//===----------------------------------------------------------------------===//
+// LoadMXScaleOp
+//===----------------------------------------------------------------------===//
+ 
+std::string
+LoadMXScaleOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  MemRefType srcMemref = cast<MemRefType>(this->getSrcOperandType());
+  assert(srcMemref.getMemorySpace() &&
+         "Source should have memory space by now.");
+  int64_t rank = srcMemref.getRank();
+  auto baseCallName = getLibraryCallNameForCopyLikeOp(
+      this->getOpName().str(), this->getSrc().getType(),
+      this->getDst().getType(), this->getLoc(), rank);
+  return baseCallName;
+}
+ 
+void LoadMXScaleOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
 }
 
 //===----------------------------------------------------------------------===//

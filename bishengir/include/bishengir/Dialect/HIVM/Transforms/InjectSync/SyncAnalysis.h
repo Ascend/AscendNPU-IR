@@ -236,14 +236,16 @@ private:
                                  DepBaseMemInfoPairVec &depBaseMemInfosVec);
 
   /// Change nowPipe MTE2 to VIRTUAL_PIPE_MTE2_L1A and VIRTUAL_PIPE_MTE2_L1B.
+  template <typename T>
   void ChangeNowPipeToVirtualMTE2(hivm::PIPE &nowPipe,
                                   DepBaseMemInfoPairVec &depBaseMemInfosVec,
-                                  hivm::MmadL1Op mmadL1Op) const;
+                                  T mmadL1LikeOp) const;
 
   /// Change front MTE2 to VIRTUAL_PIPE_MTE2_L1A and VIRTUAL_PIPE_MTE2_L1B.
+  template <typename T>
   void ChangeFrontPipeToVirtualMTE2(hivm::PIPE &frontPipe,
                                     DepBaseMemInfoPairVec &depBaseMemInfosVec,
-                                    hivm::MmadL1Op mmadL1Op) const;
+                                    T mmadL1LikeOp) const;
 
   /// Insert set_flag(PIPE_M, PIPE_MTE1) and wait_flag(PIPE_M, PIPE_MTE1) for
   /// Template.

@@ -15,6 +15,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ${TILE_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
   AllocExtraBuffer.cpp
+  AllocToAlloca.cpp
   AllocToPointerCast.cpp
   AnnotateVFAlias.cpp
   AutoBlockifyParallelLoop.cpp
@@ -73,6 +74,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   InsertLoadStoreForMixCV.cpp
   InsertLoadStoreForScalar.cpp
   InsertMemSemanticForSimtVF.cpp
+  InsertInitAndFinishForDebug.cpp
   InsertNZ2NDForDebug.cpp
   InsertL12UBForDebug.cpp
   InsertAllocBasePlaceholder.cpp
