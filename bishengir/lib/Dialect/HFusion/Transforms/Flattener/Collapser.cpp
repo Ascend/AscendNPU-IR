@@ -544,20 +544,37 @@ void Flattener::adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
 
 void Flattener::adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
                                      OpBuilder &builder) {
-  Value ref = scatterStoreOp.getIndices();
-  if (!hasCollapseGroup(ref) && scatterStoreOp.getResult()) {
-    ref = scatterStoreOp.getResult();
+  Value accessRef = scatterStoreOp.getIndices();
+  if (!hasCollapseGroup(accessRef) &&
+      hasCollapseGroup(scatterStoreOp.getData())) {
+    accessRef = scatterStoreOp.getData();
   }
-  if (!hasCollapseGroup(ref)) {
+  if (!hasCollapseGroup(accessRef) && scatterStoreOp.getMask() &&
+      hasCollapseGroup(scatterStoreOp.getMask())) {
+    accessRef = scatterStoreOp.getMask();
+  }
+
+  Value dstRef = scatterStoreOp.getBase();
+  if (!hasCollapseGroup(dstRef) && scatterStoreOp.getResult()) {
+    dstRef = scatterStoreOp.getResult();
+  }
+
+  if (!hasCollapseGroup(accessRef) && !hasCollapseGroup(dstRef)) {
     adjustResultType(scatterStoreOp);
     return;
   }
 
-  // Scatter-store follows the same collapsed iteration space on its
-  // index/data/mask tensors, so rewrite them as a unit before recreating the
-  // op with the new ranks.
-  auto collapseGroup = getCollapseGroup(ref);
-  auto collapseTensorOperand = [&](Value operand) -> Value {
+  CollapseGroup accessCollapseGroup;
+  if (hasCollapseGroup(accessRef)) {
+    accessCollapseGroup = getCollapseGroup(accessRef);
+  }
+  CollapseGroup dstCollapseGroup;
+  if (hasCollapseGroup(dstRef)) {
+    dstCollapseGroup = getCollapseGroup(dstRef);
+  }
+
+  auto collapseTensorOperand = [&](Value operand,
+                                   const CollapseGroup &collapseGroup) -> Value {
     auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
     if (!tensorType || collapseGroup.empty() ||
         collapseGroup.size() ==
@@ -574,17 +591,32 @@ void Flattener::adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
   };
 
   builder.setInsertionPoint(scatterStoreOp);
-  Value indices = collapseTensorOperand(scatterStoreOp.getIndices());
-  Value data = collapseTensorOperand(scatterStoreOp.getData());
+  Value indices =
+      collapseTensorOperand(scatterStoreOp.getIndices(), accessCollapseGroup);
+  Value data =
+      collapseTensorOperand(scatterStoreOp.getData(), accessCollapseGroup);
   Value mask =
-      scatterStoreOp.getMask() ? collapseTensorOperand(scatterStoreOp.getMask())
-                               : Value();
+      scatterStoreOp.getMask()
+          ? collapseTensorOperand(scatterStoreOp.getMask(), accessCollapseGroup)
+          : Value();
+  Value base =
+      collapseTensorOperand(scatterStoreOp.getBase(), dstCollapseGroup);
 
   builder.setInsertionPointAfter(scatterStoreOp);
+  SmallVector<Type> resultTypes;
+  if (scatterStoreOp.getResult()) {
+    resultTypes.push_back(base.getType());
+  }
   auto newScatterStoreOp = builder.create<hfusion::ScatterStoreOp>(
-      scatterStoreOp.getLoc(), scatterStoreOp->getResultTypes(), indices, data,
-      scatterStoreOp.getBurstLen(), mask, scatterStoreOp.getBase(),
+      scatterStoreOp.getLoc(), resultTypes, indices, data,
+      scatterStoreOp.getBurstLen(), mask, base,
       scatterStoreOp.getCacheAttr(), scatterStoreOp.getEvictAttr());
+  if (scatterStoreOp.getResult()) {
+    auto oldRes = scatterStoreOp.getResult();
+    auto newRes = newScatterStoreOp.getResult();
+    collapsePropagateOrVerify(newRes, oldRes);
+    updatePreviousType(newRes, oldRes.getType());
+  }
   replaceOpUsage(scatterStoreOp, newScatterStoreOp);
   eraseOp(scatterStoreOp);
 }

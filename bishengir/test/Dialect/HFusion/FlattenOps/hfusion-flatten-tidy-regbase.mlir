@@ -1307,6 +1307,55 @@ func.func @indirect_store(%arg0: memref<?xi32>){
 
 // -----
 
+// CHECK-LABEL: test_gather_load_multi_dim_flatten
+// CHECK-DAG: %[[IDX:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi64> into tensor<8xi64>
+// CHECK-DAG: %[[MASK:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi1> into tensor<8xi1>
+// CHECK: %[[INIT:.*]] = tensor.empty() : tensor<2x4xf32>
+// CHECK: %[[INIT_FLAT:.*]] = tensor.collapse_shape %[[INIT]] {{\[\[}}0, 1]] : tensor<2x4xf32> into tensor<8xf32>
+// CHECK: %[[OUT:.*]] = hfusion.gather_load ins(%{{.*}} : memref<?xf32>, %[[IDX]] : tensor<8xi64>, %{{.*}} : i64, %[[MASK]] : tensor<8xi1>, %{{.*}} : f32) outs(%[[INIT_FLAT]] : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: tensor.expand_shape %[[OUT]] {{\[\[}}0, 1]] output_shape {{\[}}2, 4] : tensor<8xf32> into tensor<2x4xf32>
+func.func @test_gather_load_multi_dim_flatten(%base: memref<?xf32>, %idx: tensor<2x4xi64>, %mask: tensor<2x4xi1>) -> tensor<2x4xf32> {
+  %c1 = arith.constant 1 : i64
+  %other = arith.constant 0.000000e+00 : f32
+  %init = tensor.empty() : tensor<2x4xf32>
+  %res = hfusion.gather_load ins(%base : memref<?xf32>, %idx : tensor<2x4xi64>, %c1 : i64, %mask : tensor<2x4xi1>, %other : f32) outs(%init : tensor<2x4xf32>) -> tensor<2x4xf32>
+  return %res : tensor<2x4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: test_scatter_store_multi_dim_flatten
+// CHECK-DAG: %[[BASE:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x8xf32> into tensor<16xf32>
+// CHECK-DAG: %[[IDX:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi64> into tensor<8xi64>
+// CHECK-DAG: %[[DATA:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xf32> into tensor<8xf32>
+// CHECK-DAG: %[[MASK:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi1> into tensor<8xi1>
+// CHECK: %[[OUT:.*]] = hfusion.scatter_store ins(%[[IDX]] : tensor<8xi64>, %[[DATA]] : tensor<8xf32>, %{{.*}} : i64, %[[MASK]] : tensor<8xi1>) outs(%[[BASE]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: tensor.expand_shape %[[OUT]] {{\[\[}}0, 1]] output_shape {{\[}}2, 8] : tensor<16xf32> into tensor<2x8xf32>
+func.func @test_scatter_store_multi_dim_flatten(%base: tensor<2x8xf32>, %idx: tensor<2x4xi64>, %data: tensor<2x4xf32>, %mask: tensor<2x4xi1>) -> tensor<2x8xf32> {
+  %c1 = arith.constant 1 : i64
+  %res = hfusion.scatter_store ins(%idx : tensor<2x4xi64>, %data : tensor<2x4xf32>, %c1 : i64, %mask : tensor<2x4xi1>) outs(%base : tensor<2x8xf32>) -> tensor<2x8xf32>
+  return %res : tensor<2x8xf32>
+}
+
+// -----
+
+// CHECK-LABEL: test_scatter_store_separate_access_and_dst_domains
+// CHECK-DAG: %[[IDX:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1, 2]] : tensor<2x4x5xi64> into tensor<40xi64>
+// CHECK-DAG: %[[DATA:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1, 2]] : tensor<2x4x5xf32> into tensor<40xf32>
+// CHECK-DAG: %[[MASK:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1, 2]] : tensor<2x4x5xi1> into tensor<40xi1>
+// CHECK-DAG: %[[BASE:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0], {{\[}}1, 2]] : tensor<4x12x10xf32> into tensor<4x120xf32>
+// CHECK: %[[OUT:.*]] = hfusion.scatter_store ins(%[[IDX]] : tensor<40xi64>, %[[DATA]] : tensor<40xf32>, %{{.*}} : i64, %[[MASK]] : tensor<40xi1>) outs(%[[BASE]] : tensor<4x120xf32>) -> tensor<4x120xf32>
+// CHECK: %[[SLICE:.*]] = tensor.extract_slice %[[OUT]][0, 0] [2, 60] [2, 2] : tensor<4x120xf32> to tensor<2x60xf32>
+// CHECK: tensor.expand_shape %[[SLICE]] {{\[\[}}0], {{\[}}1, 2]] output_shape {{\[}}2, 12, 5] : tensor<2x60xf32> into tensor<2x12x5xf32>
+func.func @test_scatter_store_separate_access_and_dst_domains(%base: tensor<4x12x10xf32>, %idx: tensor<2x4x5xi64>, %data: tensor<2x4x5xf32>, %mask: tensor<2x4x5xi1>) -> tensor<2x12x5xf32> {
+  %c1 = arith.constant 1 : i64
+  %res = hfusion.scatter_store ins(%idx : tensor<2x4x5xi64>, %data : tensor<2x4x5xf32>, %c1 : i64, %mask : tensor<2x4x5xi1>) outs(%base : tensor<4x12x10xf32>) -> tensor<4x12x10xf32>
+  %slice = tensor.extract_slice %res[0, 0, 0] [2, 12, 5] [2, 1, 2] : tensor<4x12x10xf32> to tensor<2x12x5xf32>
+  return %slice : tensor<2x12x5xf32>
+}
+
+// -----
+
 // CHECK-LABEL: while_loop_yield_mismatch
 // CHECK: scf.yield %arg2, %5 : tensor<128xi1>, i1
 func.func @while_loop_yield_mismatch(%arg0: tensor<128xi1>, %arg1: i1) -> tensor<128xi1> {

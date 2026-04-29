@@ -25,7 +25,7 @@ Type HIVMToTritonTypeConvert(Type ty);
 void populateHIVMToTritonPatterns(RewritePatternSet &patterns);
 void populateFuncToTritonPatterns(RewritePatternSet &patterns);
 void populateBufferizationToTritonPatterns(RewritePatternSet &patterns);
-void populateHIVMToTensorPatterns(RewritePatternSet &patterns);
+void populateTensorToTritonPatterns(RewritePatternSet &patterns);
 void populateReinterpretCastToUnrealizedCastPatterns(RewritePatternSet &patterns);
 } // namespace hivm
 

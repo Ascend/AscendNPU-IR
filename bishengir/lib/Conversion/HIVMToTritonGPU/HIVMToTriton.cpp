@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -27,6 +28,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <limits>
 #include <numeric>
 
 using namespace mlir;
@@ -34,6 +36,95 @@ using namespace mlir::hivm;
 using namespace mlir::triton;
 
 namespace {
+Value castIndexToI32(ConversionPatternRewriter &rewriter, Location loc,
+                            Value value) {
+  if (value.getType().isInteger(32))
+    return value;
+  return rewriter.createOrFold<arith::IndexCastOp>(loc, rewriter.getI32Type(),
+                                                   value);
+}
+
+FailureOr<Value>
+castI32TensorToType(ConversionPatternRewriter &rewriter, Location loc,
+                    Value value, Type elementType) {
+  auto srcTy = dyn_cast<RankedTensorType>(value.getType());
+  if (!srcTy)
+    return failure();
+  if (srcTy.getElementType() == elementType)
+    return value;
+
+  auto dstTy = RankedTensorType::get(srcTy.getShape(), elementType);
+  if (auto intTy = dyn_cast<IntegerType>(elementType)) {
+    unsigned width = intTy.getWidth();
+    if (width < 32)
+      return rewriter.create<arith::TruncIOp>(loc, dstTy, value).getResult();
+    if (width > 32)
+      return rewriter.create<arith::ExtUIOp>(loc, dstTy, value).getResult();
+    return rewriter.create<arith::BitcastOp>(loc, dstTy, value).getResult();
+  }
+  if (isa<FloatType>(elementType))
+    return rewriter.create<arith::SIToFPOp>(loc, dstTy, value).getResult();
+
+  return failure();
+}
+
+// Lowers hivm.hir.varange to an N-D strided index tensor:
+//
+//   result[i0, i1, ..., in] = offset + i0 * stride0 + i1 * stride1 + ... +
+//                             in * striden
+//
+// For each dimension k, this builds tt.make_range(0, shape[k]), reshapes it to
+// [1, ..., shape[k], ..., 1], broadcasts it to the final result shape, multiplies
+// by the splatted stride[k], and accumulates all terms.  The accumulated i32
+// tensor is cast to the requested result element type at the end.
+FailureOr<Value>
+buildArangeTensor(ConversionPatternRewriter &rewriter, Location loc,
+                  ArrayRef<int64_t> shape, ValueRange strides, Value offset,
+                  Type resultElementType) {
+  if (shape.empty() || shape.size() != strides.size())
+    return failure();
+
+  auto i32Ty = rewriter.getI32Type();
+  auto resultTy = RankedTensorType::get(shape, i32Ty);
+  Value result;
+
+  for (auto [dim, stride] : llvm::enumerate(strides)) {
+    int64_t dimSize = shape[dim];
+    if (dimSize <= 0 || dimSize > std::numeric_limits<int32_t>::max())
+      return failure();
+
+    auto dimTy = RankedTensorType::get({dimSize}, i32Ty);
+    Value dimRange =
+        rewriter.create<triton::MakeRangeOp>(loc, dimTy, 0, dimSize);
+    if (shape.size() > 1) {
+      // Materialize one per-dimension range and broadcast it to the final
+      // result shape so we can accumulate a strided N-D linear index tensor.
+      SmallVector<int64_t> reshapeShape(shape.size(), 1);
+      reshapeShape[dim] = dimSize;
+      auto reshapeTy = RankedTensorType::get(reshapeShape, i32Ty);
+      dimRange =
+          rewriter.create<triton::ReshapeOp>(loc, reshapeTy, dimRange, false);
+      dimRange = rewriter.create<triton::BroadcastOp>(loc, resultTy, dimRange);
+    }
+
+    Value strideI32 = castIndexToI32(rewriter, loc, stride);
+    Value strideTensor =
+        rewriter.create<triton::SplatOp>(loc, resultTy, strideI32);
+    Value term = rewriter.create<arith::MulIOp>(loc, dimRange, strideTensor);
+    result = result ? rewriter.create<arith::AddIOp>(loc, result, term) : term;
+  }
+
+  if (offset) {
+    Value offsetI32 = castIndexToI32(rewriter, loc, offset);
+    Value offsetTensor =
+        rewriter.create<triton::SplatOp>(loc, resultTy, offsetI32);
+    result = result ? rewriter.create<arith::AddIOp>(loc, result, offsetTensor)
+                    : offsetTensor;
+  }
+
+  return castI32TensorToType(rewriter, loc, result, resultElementType);
+}
+
 // Convert hivm.hir.gather_load op into tt.load, for example:
 // Before:
 //  %1 = hivm.hir.gather_load ins(%base, %indices, %burst_len) outs(%dst)
@@ -679,12 +770,75 @@ public:
     return success();
   }
 };
+
+class VArangeOpPattern : public OpConversionPattern<hivm::VArangeOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(hivm::VArangeOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    if (op->getNumResults() == 0)
+      return op.emitOpError("buffer-form varange is not supported");
+
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy || !resultTy.hasStaticShape())
+      return op.emitOpError("requires a ranked static tensor result");
+
+    auto resultTensor =
+        buildArangeTensor(rewriter, loc, resultTy.getShape(),
+                          adaptor.getStrides(), adaptor.getOffset(),
+                          resultTy.getElementType());
+    if (failed(resultTensor))
+      return op.emitOpError(
+          "unsupported shape, strides, or result element type");
+
+    rewriter.replaceOp(op, resultTensor.value());
+    return success();
+  }
+};
+
+class VBrcOpPattern : public OpConversionPattern<hivm::VBrcOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(hivm::VBrcOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    if (op->getNumResults() == 0)
+      return op.emitOpError("buffer-form vbrc is not supported");
+
+    auto resultTy = dyn_cast<RankedTensorType>(op->getResult(0).getType());
+    if (!resultTy || !resultTy.hasStaticShape()) {
+      return op.emitOpError("requires a ranked static tensor result");
+    }
+
+    Value resultTensor;
+    if (isa<RankedTensorType>(adaptor.getSrc().getType())) {
+      // HFusion inserts expand_shape before vbrc so the source already matches
+      // the destination rank and Triton only needs a pure broadcast here.
+      resultTensor =
+          rewriter.create<triton::BroadcastOp>(loc, resultTy, adaptor.getSrc());
+    } else if (adaptor.getSrc().getType().isIntOrFloat()) {
+      // Scalar broadcast is a splat in Triton IR.
+      resultTensor =
+          rewriter.create<triton::SplatOp>(loc, resultTy, adaptor.getSrc());
+    } else {
+      return op.emitOpError("only tensor or scalar sources are supported");
+    }
+
+    rewriter.replaceOp(op, resultTensor);
+    return success();
+  }
+};
 } // namespace
 
 void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
   auto *context = patterns.getContext();
   patterns
       .add<GatherLoadOpPattern, ScatterStoreOpPattern, HIVMLoadOpPattern,
-           HIVMStoreOpPattern, HIVMLoalLoadOpPattern, HIVMLoalStoreOpPattern>(
-          context);
+           HIVMStoreOpPattern, HIVMLoalLoadOpPattern, HIVMLoalStoreOpPattern,
+           VArangeOpPattern, VBrcOpPattern>(context);
 }

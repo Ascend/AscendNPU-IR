@@ -48,25 +48,55 @@ public:
 };
 
 class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
+  static bool isExternalToScope(ScopeOp scopeOp, Value val) {
+    if (auto blockArg = dyn_cast<BlockArgument>(val))
+      return !scopeOp->isAncestor(blockArg.getParentRegion()->getParentOp());
+    if (auto *defOp = val.getDefiningOp())
+      return !scopeOp->isAncestor(defOp);
+    return false;
+  }
+
+  static Operation *getConstantLikeDefiningOp(Value val) {
+    auto *defOp = val.getDefiningOp();
+    if (!defOp || !defOp->hasTrait<OpTrait::ConstantLike>()) {
+      return nullptr;
+    }
+    return defOp;
+  }
+
   SmallVector<Value> getInputs(ScopeOp scopeOp) const {
     SetVector<Value> inputs;
     scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp](Operation *op) {
       for (auto &opr : op->getOpOperands()) {
         auto val = opr.get();
 
-        // Skip if defined within scope
-        if (auto blockArg = dyn_cast<BlockArgument>(val)) {
-          if (scopeOp->isAncestor(blockArg.getParentRegion()->getParentOp()))
-            continue;
-        } else if (auto *defOp = val.getDefiningOp()) {
-          if (scopeOp->isAncestor(defOp))
-            continue;
-        }
+        if (!isExternalToScope(scopeOp, val))
+          continue;
+
+        // External constants are cloned into the outlined function body, so
+        // they do not need to be modeled as function inputs.
+        if (getConstantLikeDefiningOp(val))
+          continue;
 
         inputs.insert(val);
       }
     });
     return inputs.takeVector();
+  }
+
+  SetVector<Operation *> getExternalConstantLikeOps(ScopeOp scopeOp) const {
+    SetVector<Operation *> constants;
+    // Collect each external ConstantLike producer once so it can be cloned
+    // before the outlined body is replayed.
+    scopeOp.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      for (Value val : op->getOperands()) {
+        if (!isExternalToScope(scopeOp, val))
+          continue;
+        if (Operation *constantOp = getConstantLikeDefiningOp(val))
+          constants.insert(constantOp);
+      }
+    });
+    return constants;
   }
 
   SetVector<Operation *> getOpsOfScopeOp(ScopeOp scopeOp) const {
@@ -122,6 +152,16 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     for (auto [oldIn, newIn] :
          llvm::zip_equal(inputs, entryBB->getArguments())) {
       currentMap.map(oldIn, newIn);
+    }
+
+    // Materialize external constants first so cloned scope ops keep seeing
+    // constant values instead of extra outlined function arguments.
+    for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
+      auto *newConstOp = rewriter.clone(*constantOp, currentMap);
+      for (auto [oldRes, newRes] :
+           llvm::zip_equal(constantOp->getResults(), newConstOp->getResults())) {
+        currentMap.map(oldRes, newRes);
+      }
     }
 
     Operation *newScopeReturnOp = nullptr;

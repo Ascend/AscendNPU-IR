@@ -163,6 +163,7 @@ protected:
 
   /// Processes gather operations.
   void processGatherOp(hfusion::GatherOp op);
+  void processScatterStoreOp(hfusion::ScatterStoreOp op);
 
   // Process interleave and deinterleave op
   void processInterleaveOp(hfusion::InterleaveOp op);

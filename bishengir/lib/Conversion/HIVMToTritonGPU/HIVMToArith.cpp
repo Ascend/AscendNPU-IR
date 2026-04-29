@@ -9,6 +9,8 @@
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToArith.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "triton/Dialect/Triton/IR/Dialect.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -31,6 +33,23 @@ static bool operateOnShaped(Operation *op) {
                       [](Type type) { return isa<VectorType, RankedTensorType>(type); });
 }
 
+static bool operateOnTensorOrScalar(Operation *op) {
+  auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
+  if (!structuredOp) {
+    return false;
+  }
+  // Mixed tensor-scalar vector ops are lowered by splatting the scalar to the
+  // shaped result, so only require that at least one operand carries shape.
+  bool hasShapedOperand = false;
+  return llvm::all_of(structuredOp.getHIVMOperandTypes(false), [&](Type type) {
+    if (isa<VectorType, RankedTensorType>(type)) {
+      hasShapedOperand = true;
+      return true;
+    }
+    return type.isIntOrFloat();
+  }) && hasShapedOperand;
+}
+
 static SmallVector<Value> getHIVMVectorOperands(Operation *op) {
     auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
     SmallVector<Value> hivmOperands = {};
@@ -42,6 +61,20 @@ static SmallVector<Value> getHIVMVectorOperands(Operation *op) {
       hivmOperands.push_back(operand->get());
     }
     return hivmOperands;
+}
+
+static Value splatScalarOperand(PatternRewriter &rewriter, Location loc,
+                                Value operand, Type resultType) {
+  if (isa<ShapedType>(operand.getType())) {
+    return operand;
+  }
+  auto tensorResultType = dyn_cast<RankedTensorType>(resultType);
+  if (!tensorResultType) {
+    return Value();
+  }
+  // Triton arith ops expect both operands to have the same tensor shape.
+  return rewriter.create<mlir::triton::SplatOp>(loc, tensorResultType, operand)
+      .getResult();
 }
 
 template<typename... types>
@@ -114,8 +147,9 @@ static bool transpose_check(Operation *op) {
 
 template<bool legal_or_not, bool sign_check, sst signed_require, typename... types>
 static bool entryCondition(Operation *op) {
-    // conversion would be executed only as oper is used on operand with shape.
-    if (!operateOnShaped(op)) {
+    // conversion would be executed only as operands are tensors/vectors or
+    // scalars, and at least one operand is shaped.
+    if (!operateOnTensorOrScalar(op)) {
         return false;
     }
 
@@ -160,10 +194,15 @@ struct VectorOpToArithBinary : public OpRewritePattern<HIVMVectorOp> {
     Value lhs = hivmOperands[0];
     Value rhs = hivmOperands[1];
     Value dst_val = hivmOperands[2];
-    auto resType = op.getResult().getType();
+    Type resultType = op->getResult(0).getType();
+    lhs = splatScalarOperand(rewriter, op.getLoc(), lhs, resultType);
+    rhs = splatScalarOperand(rewriter, op.getLoc(), rhs, resultType);
+    if (!lhs || !rhs) {
+      return failure();
+    }
 
     auto newOp = rewriter.create<ArithBinaryOp>(
-      op.getLoc(), resType, lhs, rhs);
+      op.getLoc(), resultType, lhs, rhs);
     dst_val.replaceAllUsesWith(newOp.getResult());
     rewriter.replaceOp(op, newOp);
     return success();

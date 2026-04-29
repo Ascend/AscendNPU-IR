@@ -22,6 +22,7 @@
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include <cstddef>
@@ -45,8 +46,7 @@ public:
   using OpRewritePattern<SIMTOP>::OpRewritePattern;
   LogicalResult matchAndRewrite(SIMTOP simtOp,
                                 PatternRewriter &rewriter) const override {
-    llvm::SmallVector<Operation *> simtVFOps{simtOp};
-    gatherSimtOps(simtVFOps);
+    OrderedOps simtVFOps = gatherSimtOps(simtOp);
     auto loc = simtOp->getLoc();
     auto scopeOp = createScope(simtVFOps, rewriter, loc);
     rewriter.replaceOp(simtOp, scopeOp);
@@ -54,10 +54,13 @@ public:
   }
 
 private:
-  scope::ScopeOp createScope(llvm::SmallVector<Operation *> &simtVFOps,
+  using OrderedOps = llvm::SmallVector<Operation *>;
+  using VisitedOps = llvm::SmallPtrSet<Operation *, 16>;
+
+  scope::ScopeOp createScope(const OrderedOps &simtVFOps,
                              PatternRewriter &rewriter, Location &loc) const {
     auto scopeOp = rewriter.create<scope::ScopeOp>(
-        loc, simtVFOps[0]->getResultTypes(), true);
+        loc, simtVFOps.back()->getResultTypes(), true);
     scopeOp->setAttr("outline", rewriter.getUnitAttr());
     scopeOp->setAttr(
         TFuncCoreTypeAttr::name,
@@ -69,14 +72,14 @@ private:
     rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
     IRMapping mapping;
     Operation *cloned = nullptr;  
-    for (auto iter = simtVFOps.rbegin(); iter != simtVFOps.rend(); iter++) {
-      cloned = rewriter.clone(**iter, mapping);
+    for (Operation *op : simtVFOps) {
+      cloned = rewriter.clone(*op, mapping);
       for (size_t i = 0; i < cloned->getNumResults(); i++) {
-        mapping.map((*iter)->getResult(i), cloned->getResult(i));
+        mapping.map(op->getResult(i), cloned->getResult(i));
       }
-      if (llvm::isa<DestinationStyleOpInterface>(*iter) &&
-          *iter != simtVFOps.front() && (*iter)->use_empty()) {
-        rewriter.eraseOp(*iter);
+      if (llvm::isa<DestinationStyleOpInterface>(op) &&
+          op != simtVFOps.back() && op->use_empty()) {
+        rewriter.eraseOp(op);
       }
     }
     if (cloned != nullptr) {
@@ -85,8 +88,53 @@ private:
     return scopeOp;
   }
 
-  void gatherDestinationStyleOp(llvm::SmallVector<Operation *> &simtVFOps,
-                                Operation *allocOp, Operation *simtOp) const {
+  void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                                Value val) const {
+    auto defOp = val.getDefiningOp();
+    if (!defOp || llvm::isa<scope::ScopeOp, memref::AllocOp>(defOp)) {
+      return;
+    }
+    collectOpDependencies(simtVFOps, visitedOps, defOp);
+  }
+
+  void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                                Value val, Operation *simtOp) const {
+    auto defOp = val.getDefiningOp();
+    if (!defOp || llvm::isa<scope::ScopeOp>(defOp)) {
+      return;
+    }
+    if (auto allocOp = llvm::dyn_cast<memref::AllocOp>(defOp)) {
+      collectDestinationStyleOp(simtVFOps, visitedOps, allocOp, simtOp);
+      return;
+    }
+    collectOpDependencies(simtVFOps, visitedOps, defOp, simtOp);
+  }
+
+  void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                             Operation *op) const {
+    if (!visitedOps.insert(op).second) {
+      return;
+    }
+    for (auto operand : op->getOperands()) {
+      collectValueDependencies(simtVFOps, visitedOps, operand);
+    }
+    simtVFOps.emplace_back(op);
+  }
+
+  void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                             Operation *op, Operation *simtOp) const {
+    if (!visitedOps.insert(op).second) {
+      return;
+    }
+    for (auto operand : op->getOperands()) {
+      collectValueDependencies(simtVFOps, visitedOps, operand, simtOp);
+    }
+    simtVFOps.emplace_back(op);
+  }
+
+  void collectDestinationStyleOp(OrderedOps &simtVFOps,
+                                 VisitedOps &visitedOps,
+                                 Operation *allocOp, Operation *simtOp) const {
     // currently only concern alloc op and simt op in the same block
     if (allocOp->getBlock() != simtOp->getBlock()) {
       return;
@@ -125,64 +173,49 @@ private:
         auto val = destinationStyleOp.getDpsInitOperand(0)->get();
         auto maybeAllocOp = utils::tracebackMemRefToAlloc(val);
         if (maybeAllocOp && *maybeAllocOp == allocOp) {
+          if (!visitedOps.insert(&op).second) {
+            return;
+          }
+          collectValueDependencies(simtVFOps, visitedOps, val);
+          collectValueDependencies(simtVFOps, visitedOps,
+                                   destinationStyleOp.getDpsInputs()[0],
+                                   simtOp);
           simtVFOps.emplace_back(&op);
-          recurseIR(simtVFOps, val);
-          recurseIR(simtVFOps, destinationStyleOp.getDpsInputs()[0], simtOp);
           break;
         }
       }
     }
   }
 
-  // simply trace IR.
-  void recurseIR(llvm::SmallVector<Operation *> &simtVFOps, Value val) const {
-    auto defOp = val.getDefiningOp();
-    if (!defOp || llvm::isa<scope::ScopeOp, memref::AllocOp>(defOp)) {
-      return;
-    }
-    simtVFOps.emplace_back(defOp);
-    for (auto operand : defOp->getOperands()) {
-      recurseIR(simtVFOps, operand);
-    }
-  }
-
-  // trace IR and gather destination style op
-  void recurseIR(llvm::SmallVector<Operation *> &simtVFOps, Value val,
-                 Operation *simtOp) const {
-    auto defOp = val.getDefiningOp();
-    if (!defOp || llvm::isa<scope::ScopeOp>(defOp)) {
-      return;
-    }
-    if (llvm::isa<memref::AllocOp>(defOp)) {
-      // gather the nearest destionation style op for simt op's operand
-      gatherDestinationStyleOp(simtVFOps, defOp, simtOp);
-      return;
-    }
-    simtVFOps.emplace_back(defOp);
-    for (auto operand : defOp->getOperands()) {
-      recurseIR(simtVFOps, operand, simtOp);
-    }
-  }
-
-  void gatherSimtOps(llvm::SmallVector<Operation *> &simtVFOps) const {
-    if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(simtVFOps[0])) {
-      recurseIR(simtVFOps, loadOp.getBase(), simtVFOps[0]);
-      recurseIR(simtVFOps, loadOp.getIndices(), simtVFOps[0]);
-      recurseIR(simtVFOps, loadOp.getDst(), simtVFOps[0]);
+  OrderedOps gatherSimtOps(Operation *simtOp) const {
+    OrderedOps simtVFOps;
+    VisitedOps visitedOps;
+    if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(simtOp)) {
+      collectValueDependencies(simtVFOps, visitedOps, loadOp.getBase(), simtOp);
+      collectValueDependencies(simtVFOps, visitedOps, loadOp.getIndices(),
+                               simtOp);
+      collectValueDependencies(simtVFOps, visitedOps, loadOp.getDst(), simtOp);
       if (loadOp.getMask()) {
-        recurseIR(simtVFOps, loadOp.getMask(), simtVFOps[0]);
+        collectValueDependencies(simtVFOps, visitedOps, loadOp.getMask(),
+                                 simtOp);
       }
       if (loadOp.getOther()) {
-        recurseIR(simtVFOps, loadOp.getOther(), simtVFOps[0]);
+        collectValueDependencies(simtVFOps, visitedOps, loadOp.getOther(),
+                                 simtOp);
       }
     } else if (auto storeOp =
-                   llvm::dyn_cast<hivm::ScatterStoreOp>(simtVFOps[0])) {
-      recurseIR(simtVFOps, storeOp.getBase(), simtVFOps[0]);
-      recurseIR(simtVFOps, storeOp.getIndices(), simtVFOps[0]);
+                   llvm::dyn_cast<hivm::ScatterStoreOp>(simtOp)) {
+      collectValueDependencies(simtVFOps, visitedOps, storeOp.getBase(),
+                               simtOp);
+      collectValueDependencies(simtVFOps, visitedOps, storeOp.getIndices(),
+                               simtOp);
       if (storeOp.getMask()) {
-        recurseIR(simtVFOps, storeOp.getMask(), simtVFOps[0]);
+        collectValueDependencies(simtVFOps, visitedOps, storeOp.getMask(),
+                                 simtOp);
       }
     }
+    simtVFOps.emplace_back(simtOp);
+    return simtVFOps;
   }
 };
 

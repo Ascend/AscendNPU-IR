@@ -73,11 +73,12 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
           [&](auto subviewOp) { processSubviewOp(subviewOp); })
       .Case<hfusion::GatherOp>(
           [&](auto gatherOp) { processGatherOp(gatherOp); })
-      .Case<hfusion::GatherLoadOp, hfusion::ScatterStoreOp>(
-          // These ops preserve their logical iteration shape on tensor
-          // operands, so the generic parallel-op rule is enough to connect the
-          // dimensions used by flattening.
+      .Case<hfusion::GatherLoadOp>(
+          // Gather-load preserves its logical iteration shape on tensor
+          // operands, so the generic parallel-op rule is enough for flattening.
           [&](auto op) { processParallelOp(op, current); })
+      .Case<hfusion::ScatterStoreOp>(
+          [&](auto scatterStoreOp) { processScatterStoreOp(scatterStoreOp); })
       .Case<hfusion::InterleaveOp>(
           [&](auto interleaveOp) { processInterleaveOp(interleaveOp); })
       .Case<hfusion::DeinterleaveOp>(
@@ -240,6 +241,26 @@ void DimensionAnalyzer::processGatherOp(hfusion::GatherOp gatherOp) {
       }
     }
   }
+}
+
+void DimensionAnalyzer::processScatterStoreOp(
+    hfusion::ScatterStoreOp scatterStoreOp) {
+  createDummyRefIfNotExist({scatterStoreOp.getIndices(),
+                            scatterStoreOp.getData()});
+  processValue(scatterStoreOp.getData(), scatterStoreOp.getIndices());
+
+  if (auto mask = scatterStoreOp.getMask()) {
+    createDummyRefIfNotExist({mask});
+    processValue(mask, scatterStoreOp.getIndices());
+  }
+
+  if (auto result = scatterStoreOp.getResult()) {
+    createDummyRefIfNotExist({scatterStoreOp.getBase(), result});
+    processValue(result, scatterStoreOp.getBase());
+    return;
+  }
+
+  createDummyRefIfNotExist({scatterStoreOp.getBase()});
 }
 
 void DimensionAnalyzer::processInterleaveOp(
