@@ -212,15 +212,16 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
 
     triton::CacheModifier mod = op.getCache();
     bool isVolatile = op.getIsVolatile();
-    auto cacheOption = [&]() -> ascend_dpx::AscendDPXCacheOption {
-      if (mod == triton::CacheModifier::CG || isVolatile)
-        return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA;
-      return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
-    }();
+    bool bypassCache = mod == triton::CacheModifier::CG ||
+                       mod == triton::CacheModifier::CV || isVolatile;
+    auto cacheOption = bypassCache
+                           ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
+                           : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
 
     auto volatileOption =
-        isVolatile ? ascend_dpx::AscendDPXVolatileOption::VOLATILE
-                   : ascend_dpx::AscendDPXVolatileOption::NONVOLATILE;
+        (isVolatile || mod == triton::CacheModifier::CV)
+            ? ascend_dpx::AscendDPXVolatileOption::VOLATILE
+            : ascend_dpx::AscendDPXVolatileOption::NONVOLATILE;
     SmallVector<Value> loadedVals;
     for (size_t vecStart = 0; vecStart < numElems; vecStart += vec) {
       if (auto canonicalVecStart = getCanonicalIndex(vecStart, regMask);
@@ -348,11 +349,11 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
     }();
 
     triton::CacheModifier mod = op.getCache();
-    auto cacheOption = [&]() -> ascend_dpx::AscendDPXCacheOption {
-      if (mod == triton::CacheModifier::CG)
-        return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA;
-      return ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
-    }();
+    bool bypassCache = mod == triton::CacheModifier::CG ||
+                       mod == triton::CacheModifier::CV;
+    auto cacheOption = bypassCache
+                           ? ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_NCA
+                           : ascend_dpx::AscendDPXCacheOption::LOADCACHEOPTION_CA;
 
     const int numVecs = static_cast<int>(elemsPerThread / vec);
     for (size_t vecStart = 0; vecStart < elemsPerThread; vecStart += vec) {
