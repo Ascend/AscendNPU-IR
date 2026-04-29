@@ -53,12 +53,38 @@ inline constexpr std::array<double, 5> kPiApproximations = {
 // short Taylor series becomes noticeably more accurate.
 inline constexpr double kTanPiOver8 = 0.4142135623730950;
 
+// The pi / 2 terms are split into high and low parts:
+//   pi / 2 ~= kTanPiOver2High + kTanPiOver2Low.
+// They are added in the same staged order as the old rewrite so that small
+// rounding differences near the tan poles at z = +/- pi / 2 are preserved.
+inline constexpr double kTanPiOver2High = 1.57079637050628662109375;
+inline constexpr double kTanPiOver2Low = -0.00000004371139000189375;
+
+// Coefficients for the tan numerator polynomial:
+//   numerator(z) = ((C0 * z^2 + C1) * z^2 + C2) * z.
+// The final multiplication by z makes the numerator odd, matching tan(-z) =
+// -tan(z).
+inline constexpr double kTanNumeratorCoeff0 = 0.0698520831551998762793;
+inline constexpr double kTanNumeratorCoeff1 = -6.8711573651634203789;
+inline constexpr double kTanNumeratorCoeff2 = 61.20362572811089435388;
+
+// Coefficient for the first tan denominator factor:
+//   denominator(z) = (z^2 + D0) * (z + pi / 2) * (z - pi / 2).
+// The last two factors make the rational approximation grow near the
+// mathematical tan poles where cos(z) is zero.
+inline constexpr double kTanDenominatorCoeff0 = -24.8048928861126769186219;
+
 // The atan polynomial is evaluated only after clipping to a finite interval.
 // This avoids overflow in intermediate products and is still numerically safe
 // because atan(x) is already within 1e-4 of pi / 2 when |x| is 10000.
 inline constexpr double kAtanClipLowerBound = -10000.0;
 inline constexpr double kAtanClipUpperBound = 10000.0;
 inline constexpr int kAtanTaylorTermCount = 7;
+
+// The tanh rewrite evaluates exp(2x) after clipping. The bounds keep the
+// exponential finite while preserving tanh saturation for larger inputs.
+inline constexpr double kTanhClipUpperBound = 8.8;
+inline constexpr double kTanhClipLowerBound = -8.8;
 
 inline Value createFloatConstant(PatternRewriter &rewriter, Location loc,
                                  Type elementType, double value) {
@@ -212,6 +238,50 @@ Value buildTaylorApproximation(PatternRewriter &rewriter, Location loc,
 
   return Traits::createBinaryOp(rewriter, loc, approximation, input, empty,
                                 BinaryKind::Mul);
+}
+
+// Elementwise helper for the common polynomial step
+//   y = input + constant.
+// It materializes `constant` with the same element type as `input`, then uses
+// the dialect-specific binary-add operation supplied by `Traits`.
+template <typename Traits>
+Value addConstant(PatternRewriter &rewriter, Location loc, Value input,
+                  double constant) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+  Value constantValue =
+      createFloatConstant(rewriter, loc, elementType, constant);
+  return Traits::createBinaryOp(rewriter, loc, input, constantValue, empty,
+                                BinaryKind::Add);
+}
+
+// Adds constants to a polynomial and multiplies by the already-computed
+// squared input after each addition:
+//   result = (((input + c0) * x2 + c1) * x2 + c2) * x2 ...
+//
+// `multiplyAfterLastAdd = false` leaves off the final multiply, which is useful
+// when the caller needs
+//   ((input + c0) * x2 + c1)
+// and will apply a different final operation afterwards.
+template <typename Traits>
+Value buildPolynomialFromSquaredInput(PatternRewriter &rewriter, Location loc,
+                                      Value squaredInput, Value input,
+                                      llvm::ArrayRef<double> coefficients,
+                                      bool multiplyAfterLastAdd = true) {
+  if (coefficients.empty())
+    llvm_unreachable("polynomial coefficients must not be empty");
+
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+  Value result = input;
+  for (int index = 0, end = static_cast<int>(coefficients.size());
+       index < end; ++index) {
+    result = addConstant<Traits>(rewriter, loc, result, coefficients[index]);
+    if (multiplyAfterLastAdd || index != end - 1) {
+      result = Traits::createBinaryOp(rewriter, loc, result, squaredInput,
+                                      empty, BinaryKind::Mul);
+    }
+  }
+  return result;
 }
 
 template <typename Traits>
@@ -405,6 +475,136 @@ Value buildAtanApproximation(PatternRewriter &rewriter, Location loc,
   Value sign = buildAtanSign<Traits>(rewriter, loc, input);
   return Traits::createBinaryOp(rewriter, loc, magnitudeApproximation, sign,
                                 empty, BinaryKind::Mul);
+}
+
+template <typename Traits>
+Value buildTanApproximation(PatternRewriter &rewriter, Location loc,
+                            Value input) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+  Value empty = utils::createEmptyOp(rewriter, loc, input);
+
+  // Because tan has period pi, first choose the nearest multiple of pi:
+  //   k = round(x / pi).
+  // The later reduced argument z = x - k * pi is close to 0, where the
+  // rational approximation is accurate.
+  Value roundedPiMultiple =
+      buildRoundedPiMultiple<Traits>(rewriter, loc, input,
+                                     rewriter.getF32Type());
+
+  // Start the range reduction with the two largest split pieces of pi:
+  //   z12 = x - k * (pi_0 + pi_1).
+  // The staged form keeps more low bits than subtracting k * pi in one rounded
+  // multiply.
+  llvm::ArrayRef<double> piPart1(kPiApproximations.data(), 2);
+  Value reducedAfterPart1 = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, input, roundedPiMultiple, piPart1);
+
+  // Build the two pole-distance factors. Conceptually these are
+  //   z + pi / 2
+  //   z - pi / 2
+  // and they appear in the denominator because tan(z) has poles at
+  // z = +/- pi / 2.
+  //
+  // The high part of pi / 2 is applied before subtracting the smaller pi
+  // pieces, matching the old operation order to preserve precision behavior.
+  Value denominatorFactor1 = addConstant<Traits>(
+      rewriter, loc, reducedAfterPart1, kTanPiOver2High);
+  Value denominatorFactor2 = addConstant<Traits>(
+      rewriter, loc, reducedAfterPart1, -kTanPiOver2High);
+
+  // Finish the middle piece of both pole factors, then add the low pi / 2 split
+  // so that
+  //   factor1 ~= x - k * pi + pi / 2
+  //   factor2 ~= x - k * pi - pi / 2.
+  llvm::ArrayRef<double> piPart2(kPiApproximations.data() + 2, 1);
+  denominatorFactor1 = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, denominatorFactor1, roundedPiMultiple, piPart2);
+  denominatorFactor2 = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, denominatorFactor2, roundedPiMultiple, piPart2);
+  denominatorFactor1 = addConstant<Traits>(
+      rewriter, loc, denominatorFactor1, kTanPiOver2Low);
+  denominatorFactor2 = addConstant<Traits>(
+      rewriter, loc, denominatorFactor2, -kTanPiOver2Low);
+
+  // Subtract the final tiny pi pieces from both pole factors. Changing this
+  // order can move the last few bits near the poles, so keep it explicit.
+  llvm::ArrayRef<double> piPart3(kPiApproximations.data() + 3, 2);
+  denominatorFactor1 = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, denominatorFactor1, roundedPiMultiple, piPart3);
+  denominatorFactor2 = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, denominatorFactor2, roundedPiMultiple, piPart3);
+
+  // Compute the fully reduced argument and its square:
+  //   z  = x - k * (pi_0 + pi_1 + pi_2 + pi_3 + pi_4)
+  //   z2 = z * z.
+  Value reducedInput = buildRangeReducedTrigInput<Traits>(
+      rewriter, loc, reducedAfterPart1, roundedPiMultiple,
+      llvm::ArrayRef<double>(kPiApproximations.data() + 2, 3));
+  Value squaredInput = Traits::createBinaryOp(
+      rewriter, loc, reducedInput, reducedInput, empty, BinaryKind::Mul);
+
+  // Numerator polynomial in Horner form:
+  //   numerator = ((C0 * z2 + C1) * z2 + C2) * z.
+  Value numeratorSeed = Traits::createBinaryOp(
+      rewriter, loc, squaredInput,
+      createFloatConstant(rewriter, loc, elementType, kTanNumeratorCoeff0),
+      empty, BinaryKind::Mul);
+  Value numerator = buildPolynomialFromSquaredInput<Traits>(
+      rewriter, loc, squaredInput, numeratorSeed, {kTanNumeratorCoeff1});
+  numerator = addConstant<Traits>(rewriter, loc, numerator,
+                                  kTanNumeratorCoeff2);
+  numerator = Traits::createBinaryOp(rewriter, loc, numerator, reducedInput,
+                                     empty, BinaryKind::Mul);
+
+  // Denominator polynomial/factors:
+  //   denominator = (z2 + D0) * (z + pi / 2) * (z - pi / 2).
+  // Dividing the odd numerator by this even denominator gives the final tan
+  // approximation.
+  Value denominator = addConstant<Traits>(rewriter, loc, squaredInput,
+                                          kTanDenominatorCoeff0);
+  denominator = Traits::createBinaryOp(rewriter, loc, denominator,
+                                       denominatorFactor1, empty,
+                                       BinaryKind::Mul);
+  denominator = Traits::createBinaryOp(rewriter, loc, denominator,
+                                       denominatorFactor2, empty,
+                                       BinaryKind::Mul);
+  return Traits::createBinaryOp(rewriter, loc, numerator, denominator, empty,
+                                BinaryKind::Div);
+}
+
+/// Normalize tanh(x) as:
+///   tanh(x) = (exp(2x') - 1) / (exp(2x') + 1)
+/// where x' = clamp(x, [-8.8, 8.8]). Clipping avoids overflow in exp(2x) while
+/// keeping the tanh error below the tolerance.
+template <typename Traits>
+Value buildTanhApproximation(PatternRewriter &rewriter, Location loc,
+                             Value input) {
+  Type elementType = getElementTypeOrSelf(input.getType());
+
+  // Keep the same operation order as the original HFusion-only rewrite.
+  Value clippedInput =
+      buildClampedInput<Traits>(rewriter, loc, input, kTanhClipLowerBound,
+                                kTanhClipUpperBound);
+
+  Value two = createFloatConstant(rewriter, loc, elementType, 2.0);
+  Value expInit = utils::createEmptyOp(rewriter, loc, input);
+  Value doubledInput = Traits::createBinaryOp(
+      rewriter, loc, clippedInput, two, expInit, BinaryKind::Mul);
+  Value exponential = Traits::createUnaryOp(rewriter, loc, doubledInput,
+                                            expInit, UnaryKind::Exp);
+
+  Value minusOne = createFloatConstant(rewriter, loc, elementType, -1.0);
+  Value numeratorInit = utils::createEmptyOp(rewriter, loc, input);
+  Value numerator = Traits::createBinaryOp(
+      rewriter, loc, exponential, minusOne, numeratorInit, BinaryKind::Add);
+
+  Value one = createFloatConstant(rewriter, loc, elementType, 1.0);
+  Value denominatorInit = utils::createEmptyOp(rewriter, loc, input);
+  Value denominator = Traits::createBinaryOp(
+      rewriter, loc, exponential, one, denominatorInit, BinaryKind::Add);
+
+  return Traits::createBinaryOp(rewriter, loc, numerator, denominator,
+                                numeratorInit, BinaryKind::Div);
 }
 
 } // namespace mlir

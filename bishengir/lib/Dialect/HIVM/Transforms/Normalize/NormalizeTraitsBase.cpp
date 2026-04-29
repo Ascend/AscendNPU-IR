@@ -27,8 +27,6 @@
 using namespace mlir;
 namespace mlir::hivm {
 
-namespace {
-
 template <typename UnaryOp>
 mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
                               mlir::Location loc, mlir::Value input,
@@ -65,6 +63,7 @@ static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
     {UnaryKind::Sqrt, createHIVMUnaryOp<hivm::VSqrtOp>},
     {UnaryKind::Abs, createHIVMUnaryOp<hivm::VAbsOp>},
     {UnaryKind::Not, createHIVMUnaryOp<hivm::VNotOp>},
+    {UnaryKind::Exp, createHIVMUnaryOp<hivm::VExpOp>},
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
@@ -81,6 +80,7 @@ static const llvm::DenseMap<UnaryKind, UnaryOpMatcherFn> unaryOpMatcherMap = {
     {UnaryKind::Sqrt, matchHIVMOp<hivm::VSqrtOp>},
     {UnaryKind::Abs, matchHIVMOp<hivm::VAbsOp>},
     {UnaryKind::Not, matchHIVMOp<hivm::VNotOp>},
+    {UnaryKind::Exp, matchHIVMOp<hivm::VExpOp>},
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = {
@@ -91,8 +91,6 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
 };
-
-} // namespace
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, UnaryKind kind) {
   auto it = unaryOpMatcherMap.find(kind);

@@ -58,16 +58,46 @@ public:
   }
 };
 
+struct HIVMNormalizeTanTraits : public hivm::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeTan(hivm::VTanOp op) {
+    if (!op.hasPureTensorSemantics() || !op.getBroadcast().empty() ||
+        !op.getTranspose().empty()) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
+struct HIVMNormalizeTanhTraits : public hivm::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeTanh(hivm::VTanhOp op) {
+    if (!op.hasPureTensorSemantics() || !op.getBroadcast().empty() ||
+        !op.getTranspose().empty()) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
 using NormalizeSinOp =
     NormalizeSinOpTemplate<hivm::VSinOp, HIVMNormalizeSinTraits>;
 using NormalizeCosOp =
     NormalizeCosOpTemplate<hivm::VCosOp, HIVMNormalizeCosTraits>;
 using NormalizeAtanOp =
     NormalizeAtanOpTemplate<hivm::VAtanOp, HIVMNormalizeAtanTraits>;
+using NormalizeTanOp =
+    NormalizeTanOpTemplate<hivm::VTanOp, HIVMNormalizeTanTraits>;
+using NormalizeTanhOp =
+    NormalizeTanhOpTemplate<hivm::VTanhOp, HIVMNormalizeTanhTraits>;
 } // namespace mlir
 
 void mlir::hivm::populateNormalizeTrigPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeSinOp>(patterns.getContext());
   patterns.add<NormalizeCosOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
+  patterns.add<NormalizeTanOp>(patterns.getContext());
+  patterns.add<NormalizeTanhOp>(patterns.getContext());
 }

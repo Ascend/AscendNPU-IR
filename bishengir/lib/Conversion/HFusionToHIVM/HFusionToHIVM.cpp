@@ -270,8 +270,6 @@ Operation *convertUnaryHFusionOp(ElemwiseOpConvertor &b,
     return b.create<hivm::VSinOp>();
   case hfusion::UnaryFn::cos:
     return b.create<hivm::VCosOp>();
-  case hfusion::UnaryFn::atan:
-    return b.create<hivm::VAtanOp>();
   case hfusion::UnaryFn::absi:
     return b.create<hivm::VAbsOp>();
   case hfusion::UnaryFn::erf:

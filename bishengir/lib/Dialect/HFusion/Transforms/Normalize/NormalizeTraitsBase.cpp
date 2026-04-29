@@ -56,6 +56,7 @@ static std::optional<linalg::UnaryFn>
 mapUnaryKindToLinalgUnaryFn(UnaryKind kind) {
   static const llvm::DenseMap<UnaryKind, linalg::UnaryFn> kindToFn = {
       {UnaryKind::Abs, linalg::UnaryFn::abs},
+      {UnaryKind::Exp, linalg::UnaryFn::exp},
   };
 
   return lookupMappedFn(kindToFn, kind);

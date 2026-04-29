@@ -199,6 +199,95 @@ public:
   }
 };
 
+/// Rewrites `tan(x)` by first removing whole multiples of `pi`:
+///   1. k = round(x / pi)
+///   2. z = x - k * pi
+///
+/// Because `tan(x + k * pi) = tan(x)`, the reduced argument `z` stays near the
+/// origin and the approximation only needs to model one principal interval.
+/// The rewrite then evaluates:
+///   tan(x) = tan(z)
+///          ~= (((C0 * z^2 + C1) * z^2 + C2) * z)
+///             / ((z^2 + D0) * (z + pi / 2) * (z - pi / 2)).
+///
+/// The odd numerator matches the symmetry `tan(-z) = -tan(z)`, while the
+/// denominator factors at `z = +/- pi / 2` capture the poles where `cos(z)=0`.
+/// As in the original rewrite, the `pi / 2` terms are built from split high and
+/// low pieces in a fixed order so small rounding behavior near those poles is
+/// preserved.
+template <typename TanOpType, typename Traits>
+struct NormalizeTanOpTemplate : public OpRewritePattern<TanOpType> {
+public:
+  using OpRewritePattern<TanOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TanOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeTan(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
+                             CastRoundKind::Round);
+    }
+
+    Value result = buildTanApproximation<Traits>(rewriter, loc, input);
+    if (inputType.isF16()) {
+      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
+                              CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Rewrites `tanh(x)` using the exponential identity:
+///   1. x' = clamp(x, -8.8, 8.8)
+///   2. e = exp(2 * x')
+///   3. tanh(x) ~= (e - 1) / (e + 1)
+///
+/// The clamp keeps `exp(2 * x')` finite and bounded while preserving the
+/// saturated value of tanh within the tolerance.
+template <typename TanhOpType, typename Traits>
+struct NormalizeTanhOpTemplate : public OpRewritePattern<TanhOpType> {
+public:
+  using OpRewritePattern<TanhOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TanhOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeTanh(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
+                             CastRoundKind::Round);
+    }
+
+    Value result = buildTanhApproximation<Traits>(rewriter, loc, input);
+    if (inputType.isF16()) {
+      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
+                              CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZETRIGTEMPLATE_H

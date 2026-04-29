@@ -384,6 +384,7 @@ func.func @test_unary_vector_op(
   hivm.hir.vsin ins(%src : memref<?x?xf16>) outs(%dst : memref<?x?xf16>)
   hivm.hir.vcos ins(%src : memref<?x?xf16>) outs(%dst : memref<?x?xf16>)
   hivm.hir.vatan ins(%src : memref<?x?xf16>) outs(%dst : memref<?x?xf16>)
+  hivm.hir.vtan ins(%src : memref<?x?xf16>) outs(%dst : memref<?x?xf16>)
   hivm.hir.verf ins(%src : memref<?x?xf16>) outs(%dst : memref<?x?xf16>)
   return
 }

@@ -350,6 +350,18 @@ def VAtanOp : HIVM_ElementwiseUnaryOp<"vatan",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+def VTanOp : HIVM_ElementwiseUnaryOp<"vtan",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Tangent Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 def VErfOp : HIVM_ElementwiseUnaryOp<"verf",
     [SameOperandsElementType,
      VectorOnlyTrait<0>, NoLibraryFunctionTrait

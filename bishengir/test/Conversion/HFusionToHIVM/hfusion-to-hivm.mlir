@@ -113,10 +113,6 @@ func.func @test_hfusion_elemwise_unary_ops(
   hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>}
     ins(%src : memref<6x6xf32>)
     outs(%dst : memref<6x6xf32>)
-  //     CHECK: hivm.hir.vatan
-  hfusion.elemwise_unary {fun = #hfusion.unary_fn<atan>}
-    ins(%src : memref<6x6xf32>)
-    outs(%dst : memref<6x6xf32>)
 
   //     CHECK: hivm.hir.vabs
   hfusion.elemwise_unary {fun = #hfusion.unary_fn<absi>}
