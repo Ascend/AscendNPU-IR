@@ -53,6 +53,9 @@ static bool isSparseUnfriendlyOp(const Operation &op) {
     if (auto vbr = vecVal.getDefiningOp<hivmave::VFBroadcastScalarMaskOp>()) {
       return true;
     }
+    if (storeOp.getVectorType().getElementTypeBitWidth() == 1) {
+      return true;
+    }
   }
   if (auto vgatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
     for (auto user : vgatherOp->getUsers()) {
@@ -63,7 +66,7 @@ static bool isSparseUnfriendlyOp(const Operation &op) {
     }
   }
   return isa<hivmave::VFInterleaveOp, hivmave::VFDeInterleaveOp,
-             hivmave::VFStoreWithStrideOp, hivmave::VFSlideOp>(op);
+             hivmave::VFStoreWithStrideOp, hivmave::VFSlideOp, hivmave::VFVCIOp>(op);
 }
 
 /// If there is a SparseUnfriendlyOp, we should set element alignment of its
