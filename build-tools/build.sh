@@ -496,6 +496,7 @@ cmake_generate() {
 
 cmake_build() {
 #  local targets="check-mlir;check-bishengir"
+  mkdir -p ${BUILD_DIR}
   cd ${BUILD_DIR}
   local targets="check-bishengir"
   if [[ -v BUILD_TEST ]]; then

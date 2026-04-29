@@ -197,6 +197,39 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b32_op
+func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
+  "test.test"(%res, %new_true_shape) {element_alignment_bit_width = 32 : i32} : (vector<64xi1>, index) -> ()
+  return
+}
+// CHECK: "hivm_regbaseintrins.intr.hivm.plt.b32.v300"
+// CHECK: llvm.extractvalue {{.*}}[0] {mask_bit_width = 32 : i32
+
+// -----
+
+// CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b16_op
+func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
+  "test.test"(%res, %new_true_shape) {element_alignment_bit_width = 16 : i32} : (vector<64xi1>, index) -> ()
+  return
+}
+// CHECK: "hivm_regbaseintrins.intr.hivm.plt.b16.v300"
+// CHECK: llvm.extractvalue {{.*}}[0] {mask_bit_width = 16 : i32
+
+// -----
+
+// CHECK-LABEL: @test_plt_b8_in_top_region_user_has_no_elem_align
+func.func @test_plt_b8_in_top_region_user_has_no_elem_align(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
+  "test.test"(%res) : (vector<64xi1>) -> ()
+  return
+}
+// CHECK: "hivm_regbaseintrins.intr.hivm.plt.b8.v300"
+// CHECK: llvm.extractvalue {{.*}}[0] {mask_bit_width = 8 : i32
+
+// -----
+
 // CHECK-LABEL: @cast_to_nd_with_overflow_outlined_vf_0
 #map3 = affine_map<()[s0, s1] -> (s0 * 2048 + s1 * 256)>
 #map4 = affine_map<(d0)[s0] -> (d0 + s0)>
