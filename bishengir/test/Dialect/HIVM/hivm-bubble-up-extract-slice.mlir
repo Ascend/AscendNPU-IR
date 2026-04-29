@@ -265,3 +265,120 @@ func.func @bubble_up_select(
 
   return %slice : tensor<32x128xf32>
 }
+
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_extract_of_insert_same_dim_dynamic(
+// CHECK:           %[[VAL_0:.*]] = arith.constant 32 : index
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %arg0[%arg3] [32] [1] : tensor<64xf32> to tensor<32xf32>
+// CHECK:           %[[VAL_2:.*]] = arith.minsi %arg3, %arg2 : index
+// CHECK:           %[[VAL_3:.*]] = arith.subi %arg2, %[[VAL_2]] : index
+// CHECK:           %[[VAL_4:.*]] = arith.minsi %[[VAL_3]], %[[VAL_0]] : index
+// CHECK:           %[[VAL_5:.*]] = tensor.extract_slice %[[VAL_1]][0] [%[[VAL_4]]] [1] : tensor<32xf32> to tensor<?xf32>
+// CHECK:           %[[VAL_6:.*]] = tensor.extract_slice %arg1[%arg3] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
+// CHECK:           %[[VAL_7:.*]] = tensor.insert_slice %[[VAL_5]] into %[[VAL_6]][0] [%[[VAL_4]]] [1] : tensor<?xf32> into tensor<32xf32>
+// CHECK:           return %[[VAL_7]] : tensor<32xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_insert_same_dim_dynamic(
+    %arg0: tensor<64xf32>, %arg1: tensor<64xf32>, %arg2: index, %arg3: index)
+    -> tensor<32xf32> {
+  %0 = tensor.extract_slice %arg0[0] [%arg2] [1]
+      : tensor<64xf32> to tensor<?xf32>
+  %1 = tensor.insert_slice %0 into %arg1[0] [%arg2] [1]
+      : tensor<?xf32> into tensor<64xf32>
+  %2 = tensor.extract_slice %1[%arg3] [32] [1] {to_be_bubbled_slice}
+      : tensor<64xf32> to tensor<32xf32>
+  return %2 : tensor<32xf32>
+}
+
+// -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract different dim
+// Parent extracts on dim0, to_be_bubbled_slice extracts on dim1 (no overlap)
+// After bubble-up: swap extraction order, extract dim1 first then dim0
+// CHECK-LABEL:   func.func @bubble_up_extract_of_extract_different_dim(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg0[0, %arg2] [64, 8] [1, 1] {to_be_bubbled_slice} : tensor<64x16xf32> to tensor<64x8xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][%arg1, 0] [32, 8] [1, 1] : tensor<64x8xf32> to tensor<32x8xf32>
+// CHECK:           return %[[VAL_1]] : tensor<32x8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_extract_different_dim(
+    %arg0: tensor<64x16xf32>, %arg1: index, %arg2: index) -> tensor<32x8xf32> {
+  %0 = tensor.extract_slice %arg0[%arg1, 0] [32, 16] [1, 1]
+      : tensor<64x16xf32> to tensor<32x16xf32>
+  %1 = tensor.extract_slice %0[0, %arg2] [32, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<32x16xf32> to tensor<32x8xf32>
+  return %1 : tensor<32x8xf32>
+}
+
+// -----
+// ExtractSliceBubbleUpStrategy: Extract→Extract rank-reduced
+// Parent does rank-reduce (4x16x16 -> 16x16), to_be_bubbled_slice extracts from result
+// After bubble-up: extract from original tensor first, then rank-reduce
+// CHECK-LABEL:   func.func @bubble_up_extract_of_extract_rank_reduced(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg0[0, %arg2, 0] [4, 8, 8] [1, 1, 1] {to_be_bubbled_slice} : tensor<4x16x16xf32> to tensor<4x8x8xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %[[VAL_0]][0, %arg1, 0] [1, 8, 8] [1, 1, 1] : tensor<4x8x8xf32> to tensor<8x8xf32>
+// CHECK:           return %[[VAL_1]] : tensor<8x8xf32>
+// CHECK:         }
+func.func @bubble_up_extract_of_extract_rank_reduced(
+    %arg0: tensor<4x16x16xf32>, %arg1: index, %arg2: index) -> tensor<8x8xf32> {
+  %0 = tensor.extract_slice %arg0[0, %arg1, 0] [1, 16, 16] [1, 1, 1]
+      : tensor<4x16x16xf32> to tensor<16x16xf32>
+  %1 = tensor.extract_slice %0[%arg2, 0] [8, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<16x16xf32> to tensor<8x8xf32>
+  return %1 : tensor<8x8xf32>
+}
+
+// -----
+// InsertSliceBubbleUpStrategy: Insert→Extract ranked-reduce (static)
+// Insert does rank-expand (8x8 -> 4x8x8), extract on dim1 only (4x8x8 -> 4x4x8)
+// After bubble-up: extract from source and dest, then insert
+// CHECK-LABEL:   func.func @bubble_up_insert_rank_reduced(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg0[0, %arg2] [4, 8] [1, 1] {to_be_bubbled_slice} : tensor<8x8xf32> to tensor<4x8xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %arg1[0, 0, %arg2] [4, 4, 8] [1, 1, 1] {to_be_bubbled_slice} : tensor<4x8x8xf32> to tensor<4x4x8xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.insert_slice %[[VAL_0]] into %[[VAL_1]][0, %arg2, 0] [1, 4, 8] [1, 1, 1] : tensor<4x8xf32> into tensor<4x4x8xf32>
+// CHECK:           return %[[VAL_2]] : tensor<4x4x8xf32>
+// CHECK:         }
+func.func @bubble_up_insert_rank_reduced(
+    %arg0: tensor<8x8xf32>, %arg1: tensor<4x8x8xf32>, %arg2: index) -> tensor<4x4x8xf32> {
+  %0 = tensor.insert_slice %arg0 into %arg1[0, %arg2, 0] [1, 8, 8] [1, 1, 1]
+      : tensor<8x8xf32> into tensor<4x8x8xf32>
+  %1 = tensor.extract_slice %0[0, 0, %arg2] [4, 4, 8] [1, 1, 1] {to_be_bubbled_slice}
+      : tensor<4x8x8xf32> to tensor<4x4x8xf32>
+  return %1 : tensor<4x4x8xf32>
+}
+
+// -----
+// InsertSliceBubbleUpStrategy: Insert→Extract same dim, non-tiling, source dimSize=1
+// Insert scalar (1xf32) into tensor at offset, then extract from result
+// After bubble-up: extract from dest first, then insert scalar into extracted slice
+// CHECK-LABEL:   func.func @bubble_up_insert_scalar_same_dim(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg1[%arg2] [8] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<8xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.insert_slice %arg0 into %[[VAL_0]][%arg2] [1] [1] : tensor<1xf32> into tensor<8xf32>
+// CHECK:           return %[[VAL_1]] : tensor<8xf32>
+// CHECK:         }
+func.func @bubble_up_insert_scalar_same_dim(
+    %arg0: tensor<1xf32>, %arg1: tensor<64xf32>, %arg2: index) -> tensor<8xf32> {
+  %0 = tensor.insert_slice %arg0 into %arg1[%arg2] [1] [1]
+      : tensor<1xf32> into tensor<64xf32>
+  %1 = tensor.extract_slice %0[%arg2] [8] [1] {to_be_bubbled_slice}
+      : tensor<64xf32> to tensor<8xf32>
+  return %1 : tensor<8xf32>
+}
+
+// -----
+// InsertSliceBubbleUpStrategy: Insert→Extract different dim (static source)
+// Insert on dim0 only (8x16 into 16x16), extract on dim1 only (16x16 -> 16x8)
+// After bubble-up: extract from dest and source, then insert
+// CHECK-LABEL:   func.func @bubble_up_insert_extract_different_dim(
+// CHECK:           %[[VAL_0:.*]] = tensor.extract_slice %arg1[0, %arg3] [16, 8] [1, 1] {to_be_bubbled_slice} : tensor<16x16xf32> to tensor<16x8xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %arg0[0, %arg3] [8, 8] [1, 1] {to_be_bubbled_slice} : tensor<8x16xf32> to tensor<8x8xf32>
+// CHECK:           %[[VAL_2:.*]] = tensor.insert_slice %[[VAL_1]] into %[[VAL_0]][%arg2, 0] [8, 8] [1, 1] : tensor<8x8xf32> into tensor<16x8xf32>
+// CHECK:           return %[[VAL_2]] : tensor<16x8xf32>
+// CHECK:         }
+func.func @bubble_up_insert_extract_different_dim(
+    %arg0: tensor<8x16xf32>, %arg1: tensor<16x16xf32>, %arg2: index, %arg3: index) -> tensor<16x8xf32> {
+  %0 = tensor.insert_slice %arg0 into %arg1[%arg2, 0] [8, 16] [1, 1]
+      : tensor<8x16xf32> into tensor<16x16xf32>
+  %1 = tensor.extract_slice %0[0, %arg3] [16, 8] [1, 1] {to_be_bubbled_slice}
+      : tensor<16x16xf32> to tensor<16x8xf32>
+  return %1 : tensor<16x8xf32>
+}

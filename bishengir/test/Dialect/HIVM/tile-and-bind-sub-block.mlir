@@ -1124,3 +1124,330 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     return
   }
 }
+
+
+// ----- 
+ 
+// CHECK-LABEL: func.func @chunk_gated_delta_rule_fwd_kernel_h_blockdim64_mix_aiv
+// CHECK-NOT: scf.if
+// CHECK: hivm.hir.store
+// CHECK-NOT: limit_sub_block_id0
+#map = affine_map<()[s0, s1] -> (s0 + s1 * 512)>
+#map1 = affine_map<()[s0, s1] -> (s0 - s1)>
+#map2 = affine_map<()[s0] -> (s0 * 32)>
+#map3 = affine_map<()[s0] -> (s0 * 16)>
+#map4 = affine_map<()[s0] -> (s0 * 2)>
+#map5 = affine_map<()[s0] -> (-s0 + (s0 floordiv 512) * 512 + 64)>
+#map6 = affine_map<()[s0, s1] -> (s0 + s1 * 64)>
+#map7 = affine_map<()[s0] -> (-s0 + 64)>
+#map8 = affine_map<()[s0, s1] -> (s0 + s1 * 8)>
+#map9 = affine_map<()[s0, s1, s2] -> (s0 + s1 + s2 * 512)>
+#map10 = affine_map<()[s0, s1, s2] -> (s0 - s2 - s1 floordiv 512)>
+#map11 = affine_map<()[s0] -> (s0 + 64)>
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @chunk_gated_delta_rule_fwd_kernel_h_blockdim64_mix_aic(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg9: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, true, true, true, false, false, false, false]> : vector<14xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c1_i32 = arith.constant 1 : i32
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f16
+    %c32 = arith.constant 32 : index
+    %c63_i32 = arith.constant 63 : i32
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c8_i32 = arith.constant 8 : i32
+    %c64_i32 = arith.constant 64 : i32
+    %c64_i64 = arith.constant 64 : i64
+    %c0_i32 = arith.constant 0 : i32
+    hivm.hir.set_ctrl false at ctrl[60]
+    hivm.hir.set_ctrl true at ctrl[48]
+    %0 = arith.muli %arg11, %arg12 : i32
+    %1 = arith.muli %0, %arg13 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %2 = hivm.hir.get_block_idx -> i64
+    %3 = arith.trunci %2 : i64 to i32
+    %4 = arith.divsi %3, %arg13 : i32
+    %5 = arith.remsi %4, %arg12 : i32
+    %6 = tensor.empty() : tensor<64x32xf32>
+    %7 = arith.divsi %5, %c8_i32 : i32
+    %8 = arith.remsi %5, %c8_i32 : i32
+    %9 = arith.muli %7, %arg10 : i32
+    %10 = arith.addi %arg10, %c63_i32 : i32
+    %11 = arith.divsi %10, %c64_i32 : i32
+    %12 = arith.muli %9, %c8_i32 : i32
+    %13 = arith.addi %12, %8 : i32
+    %14 = arith.extsi %13 : i32 to i64
+    %15 = arith.muli %14, %c64_i64 : i64
+    %16 = arith.index_cast %15 : i64 to index
+    scf.for %arg14 = %c0_i32 to %11 step %c1_i32  : i32 {
+      %17 = arith.muli %arg14, %c64_i32 : i32
+      %18 = arith.maxsi %17, %c0_i32 : i32
+      %19 = arith.index_cast %18 : i32 to index
+      %20 = affine.apply #map()[%16, %19]
+      %21 = arith.index_cast %arg10 : i32 to index
+      %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [%20], sizes: [64, 64], strides: [512, 1] : memref<?xf16> to memref<64x64xf16, strided<[512, 1], offset: ?>>
+      %alloc = memref.alloc() : memref<64x64xf16>
+      %22 = affine.apply #map1()[%21, %19]
+      %23 = arith.maxsi %22, %c0 : index
+      %24 = arith.minsi %23, %c64 : index
+      %25 = arith.subi %c0_i32, %17 : i32
+      %26 = arith.maxsi %25, %c0_i32 : i32
+      %27 = arith.index_cast %26 : i32 to index
+      %28 = arith.minsi %27, %24 : index
+      %29 = affine.apply #map1()[%24, %28]
+      %30 = arith.cmpi slt, %29, %c64 : index
+      %subview = memref.subview %reinterpret_cast[0, 0] [%29, 64] [1, 1] : memref<64x64xf16, strided<[512, 1], offset: ?>> to memref<?x64xf16, strided<[512, 1], offset: ?>>
+      %subview_0 = memref.subview %alloc[%28, 0] [%29, 64] [1, 1] : memref<64x64xf16> to memref<?x64xf16, strided<[64, 1], offset: ?>>
+      hivm.hir.load ins(%subview : memref<?x64xf16, strided<[512, 1], offset: ?>>) outs(%subview_0 : memref<?x64xf16, strided<[64, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %30 : i1 eviction_policy = <EvictFirst>
+      %31 = bufferization.to_tensor %alloc restrict writable : memref<64x64xf16>
+      %alloc_1 = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+      annotation.mark %alloc_1 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index} : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+      %memspacecast = memref.memory_space_cast %alloc_1 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>> to memref<2x4x16x16xf16>
+      %32 = bufferization.to_tensor %memspacecast restrict writable : memref<2x4x16x16xf16>
+      %33 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%31, %32, %true, %c64, %c64, %c32 : tensor<64x64xf16>, tensor<2x4x16x16xf16>, i1, index, index, index) outs(%6 : tensor<64x32xf32>) -> tensor<64x32xf32>
+      %alloc_2 = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc_2 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, hivm.tiling_dim = 0 : index} : memref<32x32xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%33 : tensor<64x32xf32>) outs(%alloc_2 : memref<32x32xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
+      %reinterpret_cast_3 = memref.reinterpret_cast %arg2 to offset: [%20], sizes: [64, 64], strides: [512, 1] : memref<?xf16> to memref<64x64xf16, strided<[512, 1], offset: ?>>
+      %alloc_4 = memref.alloc() : memref<64x64xf16>
+      %subview_5 = memref.subview %reinterpret_cast_3[0, 0] [%29, 64] [1, 1] : memref<64x64xf16, strided<[512, 1], offset: ?>> to memref<?x64xf16, strided<[512, 1], offset: ?>>
+      %subview_6 = memref.subview %alloc_4[%28, 0] [%29, 64] [1, 1] : memref<64x64xf16> to memref<?x64xf16, strided<[64, 1], offset: ?>>
+      hivm.hir.load ins(%subview_5 : memref<?x64xf16, strided<[512, 1], offset: ?>>) outs(%subview_6 : memref<?x64xf16, strided<[64, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %30 : i1 eviction_policy = <EvictFirst>
+      %34 = bufferization.to_tensor %alloc_4 restrict writable : memref<64x64xf16>
+      %alloc_7 = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+      annotation.mark %alloc_7 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>, hivm.tiling_dim = 1 : index} : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+      %memspacecast_8 = memref.memory_space_cast %alloc_7 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>> to memref<2x4x16x16xf16>
+      %35 = bufferization.to_tensor %memspacecast_8 restrict writable : memref<2x4x16x16xf16>
+      %36 = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, fixpipe_already_inserted = true} ins(%34, %35, %true, %c64, %c64, %c32 : tensor<64x64xf16>, tensor<2x4x16x16xf16>, i1, index, index, index) outs(%6 : tensor<64x32xf32>) -> tensor<64x32xf32>
+      %alloc_9 = memref.alloc() : memref<64x16xf32, #hivm.address_space<ub>>
+      annotation.mark %alloc_9 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<3>, hivm.tiling_dim = 1 : index} : memref<64x16xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%36 : tensor<64x32xf32>) outs(%alloc_9 : memref<64x16xf32, #hivm.address_space<ub>>) dual_dst_mode = <COLUMN_SPLIT>
+    }
+    return
+  }
+  func.func @chunk_gated_delta_rule_fwd_kernel_h_blockdim64_mix_aiv(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg9: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, true, true, true, false, false, false, false]> : vector<14xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %c0_i32 = arith.constant 0 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c64_i64 = arith.constant 64 : i64
+    %c64_i32 = arith.constant 64 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c64 = arith.constant 64 : index
+    %c63_i32 = arith.constant 63 : i32
+    %c4096_i64 = arith.constant 4096 : i64
+    %c4096_i32 = arith.constant 4096 : i32
+    %c32768_i64 = arith.constant 32768 : i64
+    %c32 = arith.constant 32 : index
+    %cst_0 = arith.constant 0.000000e+00 : f16
+    %c8 = arith.constant 8 : index
+    %cst_1 = arith.constant -1.000000e+00 : f32
+    %c1_i32 = arith.constant 1 : i32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    scf.for %arg14 = %c0 to %c2 step %c1 {
+      %0 = affine.apply #map2()[%arg14]
+      %1 = affine.apply #map3()[%arg14]
+      %2 = affine.apply #map4()[%arg14]
+      hivm.hir.set_ctrl false at ctrl[60]
+      hivm.hir.set_ctrl true at ctrl[48]
+      %3 = arith.muli %arg11, %arg12 : i32
+      %4 = arith.muli %3, %arg13 : i32
+      annotation.mark %4 {logical_block_num} : i32
+      %5 = hivm.hir.get_block_idx -> i64
+      %6 = arith.trunci %5 : i64 to i32
+      %7 = arith.divsi %6, %arg13 : i32
+      %8 = arith.remsi %7, %arg12 : i32
+      %9 = arith.muli %arg13, %arg12 : i32
+      %10 = arith.divsi %6, %9 : i32
+      %11 = arith.remsi %10, %arg11 : i32
+      %12 = tensor.empty() : tensor<32x32xf32>
+      %13 = tensor.empty() : tensor<32xf32>
+      %14 = hivm.hir.vbrc ins(%cst : f32) outs(%13 : tensor<32xf32>) -> tensor<32xf32>
+      %15 = tensor.empty() : tensor<16x64xf32>
+      %16 = arith.divsi %8, %c8_i32 : i32
+      %17 = arith.remsi %8, %c8_i32 : i32
+      %18 = arith.muli %16, %arg10 : i32
+      %19 = arith.addi %arg10, %c63_i32 : i32
+      %20 = arith.divsi %19, %c64_i32 : i32
+      %21 = arith.muli %16, %20 : i32
+      %22 = arith.muli %21, %c8_i32 : i32
+      %23 = arith.addi %22, %17 : i32
+      %24 = arith.extsi %23 : i32 to i64
+      %25 = arith.muli %24, %c4096_i64 : i64
+      %26 = arith.muli %18, %c8_i32 : i32
+      %27 = arith.addi %26, %17 : i32
+      %28 = arith.extsi %27 : i32 to i64
+      %29 = arith.muli %28, %c64_i64 : i64
+      %30 = arith.index_cast %29 : i64 to index
+      %31 = arith.muli %8, %c4096_i32 : i32
+      %32 = arith.index_cast %31 : i32 to index
+      %33 = arith.muli %11, %c32_i32 : i32
+      %34 = arith.maxsi %33, %c0_i32 : i32
+      %35 = arith.index_cast %34 : i32 to index
+      %36 = affine.apply #map5()[%35]
+      %37 = affine.apply #map6()[%32, %35]
+      %38 = affine.apply #map7()[%35]
+      %reinterpret_cast = memref.reinterpret_cast %arg8 to offset: [%37], sizes: [32, 64], strides: [64, 1] : memref<?xf32> to memref<32x64xf32, strided<[64, 1], offset: ?>>
+      %alloc = memref.alloc() : memref<16x64xf32>
+      %39 = arith.maxsi %38, %c0 : index
+      %40 = arith.minsi %39, %c32 : index
+      %41 = arith.subi %c0_i32, %33 : i32
+      %42 = arith.maxsi %41, %c0_i32 : i32
+      %43 = arith.index_cast %42 : i32 to index
+      %44 = arith.minsi %43, %40 : index
+      %45 = affine.apply #map1()[%40, %44]
+      %46 = arith.minsi %1, %45 : index
+      %47 = arith.subi %45, %46 : index
+      %48 = arith.minsi %47, %c16 : index
+      %49 = arith.cmpi slt, %45, %c32 : index
+      %subview = memref.subview %reinterpret_cast[%1, 0] [16, 64] [1, 1] : memref<32x64xf32, strided<[64, 1], offset: ?>> to memref<16x64xf32, strided<[64, 1], offset: ?>>
+      %subview_2 = memref.subview %subview[0, 0] [%48, 64] [1, 1] : memref<16x64xf32, strided<[64, 1], offset: ?>> to memref<?x64xf32, strided<[64, 1], offset: ?>>
+      %subview_3 = memref.subview %alloc[%44, 0] [%48, 64] [1, 1] : memref<16x64xf32> to memref<?x64xf32, strided<[64, 1], offset: ?>>
+      hivm.hir.load ins(%subview_2 : memref<?x64xf32, strided<[64, 1], offset: ?>>) outs(%subview_3 : memref<?x64xf32, strided<[64, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index init_out_buffer = true init_condition = %49 : i1 eviction_policy = <EvictFirst>
+      %50 = arith.index_cast %27 : i32 to index
+      %51 = bufferization.to_tensor %alloc restrict writable : memref<16x64xf32>
+      %52 = scf.for %arg15 = %c0_i32 to %20 step %c1_i32 iter_args(%arg16 = %51) -> (tensor<16x64xf32>)  : i32 {
+        %53 = arith.extsi %arg15 : i32 to i64
+        %54 = arith.muli %53, %c32768_i64 : i64
+        %55 = arith.addi %25, %54 : i64
+        %56 = arith.index_cast %55 : i64 to index
+        %57 = affine.apply #map6()[%56, %35]
+        %reinterpret_cast_7 = memref.reinterpret_cast %arg7 to offset: [%57], sizes: [32, 64], strides: [64, 1] : memref<?xf16> to memref<32x64xf16, strided<[64, 1], offset: ?>>
+        %subview_8 = memref.subview %reinterpret_cast_7[%1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : memref<32x64xf16, strided<[64, 1], offset: ?>> to memref<16x64xf16, strided<[64, 1], offset: ?>>
+        %58 = tensor.empty() : tensor<16x64xf16>
+        %59 = hivm.hir.vcast ins(%arg16 : tensor<16x64xf32>) outs(%58 : tensor<16x64xf16>) -> tensor<16x64xf16>
+        %extracted_slice_9 = tensor.extract_slice %59[%44, 0] [%48, 64] [1, 1] : tensor<16x64xf16> to tensor<?x64xf16>
+        %subview_10 = memref.subview %subview_8[0, 0] [%48, 64] [1, 1] : memref<16x64xf16, strided<[64, 1], offset: ?>> to memref<?x64xf16, strided<[64, 1], offset: ?>>
+        hivm.hir.store ins(%extracted_slice_9 : tensor<?x64xf16>) outs(%subview_10 : memref<?x64xf16, strided<[64, 1], offset: ?>>) {tiled_op}
+        %60 = arith.muli %arg15, %c64_i32 : i32
+        %61 = arith.maxsi %60, %c0_i32 : i32
+        %62 = arith.index_cast %61 : i32 to index
+        %63 = affine.apply #map8()[%50, %62]
+        %64 = affine.apply #map9()[%35, %30, %62]
+        %65 = arith.index_cast %arg10 : i32 to index
+        %66 = affine.apply #map1()[%65, %62]
+        %67 = affine.apply #map10()[%65, %35, %62]
+        %68 = arith.maxsi %66, %c0 : index
+        %69 = arith.minsi %68, %c64 : index
+        %70 = arith.subi %c0_i32, %60 : i32
+        %71 = arith.maxsi %70, %c0_i32 : i32
+        %72 = arith.index_cast %71 : i32 to index
+        %73 = arith.minsi %72, %69 : index
+        %74 = affine.apply #map1()[%69, %73]
+        %75 = arith.minsi %0, %74 : index
+        %76 = arith.subi %74, %75 : index
+        %77 = arith.minsi %76, %c32 : index
+        %78 = arith.cmpi slt, %74, %c64 : index
+        %79 = tensor.empty() : tensor<64x16xf32>
+        %80 = hivm.hir.vtranspose ins(%arg16 : tensor<16x64xf32>) outs(%79 : tensor<64x16xf32>) permutation = [1, 0] -> tensor<64x16xf32>
+        %81 = tensor.empty() : tensor<32x32xf16>
+        %82 = tensor.empty() : tensor<64x16xf16>
+        %83 = hivm.hir.vcast ins(%80 : tensor<64x16xf32>) outs(%82 : tensor<64x16xf16>) -> tensor<64x16xf16>
+        %84 = tensor.empty() : tensor<1x64x16xf16>
+        %expanded = tensor.expand_shape %83 [[0], [1, 2]] output_shape [64, 1, 16] : tensor<64x16xf16> into tensor<64x1x16xf16>
+        %85 = hivm.hir.vtranspose ins(%expanded : tensor<64x1x16xf16>) outs(%84 : tensor<1x64x16xf16>) permutation = [1, 0, 2] -> tensor<1x64x16xf16>
+        %alloc_11 = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+        annotation.mark %alloc_11 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = 0 : index} : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+        %memspacecast = memref.memory_space_cast %alloc_11 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>> to memref<2x4x16x16xf16>
+        %expanded_12 = tensor.expand_shape %85 [[0], [1, 2], [3]] output_shape [1, 4, 16, 16] : tensor<1x64x16xf16> into tensor<1x4x16x16xf16>
+        %subview_13 = memref.subview %memspacecast[%arg14, 0, 0, 0] [1, 4, 16, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : memref<2x4x16x16xf16> to memref<1x4x16x16xf16, strided<[1024, 256, 16, 1], offset: ?>>
+        hivm.hir.copy ins(%expanded_12 : tensor<1x4x16x16xf16>) outs(%subview_13 : memref<1x4x16x16xf16, strided<[1024, 256, 16, 1], offset: ?>>) {tiled_op}
+        %alloc_14 = memref.alloc() : memref<32x32xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc_14 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>, hivm.tiling_dim = 0 : index} : memref<32x32xf32, #hivm.address_space<ub>>
+        %memspacecast_15 = memref.memory_space_cast %alloc_14 : memref<32x32xf32, #hivm.address_space<ub>> to memref<32x32xf32>
+        %86 = bufferization.to_tensor %memspacecast_15 restrict writable : memref<32x32xf32>
+        %reinterpret_cast_16 = memref.reinterpret_cast %arg3 to offset: [%64], sizes: [64, 32], strides: [512, 1] : memref<?xf16> to memref<64x32xf16, strided<[512, 1], offset: ?>>
+        %alloc_17 = memref.alloc() : memref<32x32xf16>
+        %87 = arith.maxsi %67, %c0 : index
+        %88 = arith.minsi %87, %c64 : index
+        %89 = arith.maxsi %36, %c0 : index
+        %90 = arith.minsi %89, %c32 : index
+        %91 = arith.minsi %72, %88 : index
+        %92 = affine.apply #map1()[%88, %91]
+        %93 = arith.minsi %0, %92 : index
+        %94 = arith.subi %92, %93 : index
+        %95 = arith.minsi %94, %c32 : index
+        %96 = arith.minsi %43, %90 : index
+        %97 = affine.apply #map1()[%90, %96]
+        %98 = arith.cmpi slt, %92, %c64 : index
+        %99 = arith.cmpi slt, %97, %c32 : index
+        %100 = arith.ori %98, %99 : i1
+        %subview_18 = memref.subview %reinterpret_cast_16[%0, 0] [32, 32] [1, 1] : memref<64x32xf16, strided<[512, 1], offset: ?>> to memref<32x32xf16, strided<[512, 1], offset: ?>>
+        %subview_19 = memref.subview %subview_18[0, 0] [%95, %97] [1, 1] : memref<32x32xf16, strided<[512, 1], offset: ?>> to memref<?x?xf16, strided<[512, 1], offset: ?>>
+        %subview_20 = memref.subview %alloc_17[%91, %96] [%95, %97] [1, 1] : memref<32x32xf16> to memref<?x?xf16, strided<[32, 1], offset: ?>>
+        %101 = arith.remui %96, %c16 : index
+        hivm.hir.load ins(%subview_19 : memref<?x?xf16, strided<[512, 1], offset: ?>>) outs(%subview_20 : memref<?x?xf16, strided<[32, 1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst_0 : f16 left_padding_num = %101 : index init_out_buffer = true init_condition = %100 : i1 eviction_policy = <EvictFirst>
+        %102 = bufferization.to_tensor %alloc_17 restrict writable : memref<32x32xf16>
+        %103 = hivm.hir.vcast ins(%102 : tensor<32x32xf16>) outs(%12 : tensor<32x32xf32>) -> tensor<32x32xf32>
+        %104 = hivm.hir.vsub ins(%103, %86 : tensor<32x32xf32>, tensor<32x32xf32>) outs(%12 : tensor<32x32xf32>) -> tensor<32x32xf32>
+        %reinterpret_cast_21 = memref.reinterpret_cast %arg5 to offset: [%64], sizes: [64, 32], strides: [512, 1] : memref<?xf16> to memref<64x32xf16, strided<[512, 1], offset: ?>>
+        %subview_22 = memref.subview %reinterpret_cast_21[%0, 0] [32, 32] [1, 1] {to_be_bubbled_slice} : memref<64x32xf16, strided<[512, 1], offset: ?>> to memref<32x32xf16, strided<[512, 1], offset: ?>>
+        %105 = hivm.hir.vcast ins(%104 : tensor<32x32xf32>) outs(%81 : tensor<32x32xf16>) -> tensor<32x32xf16>
+        %extracted_slice_23 = tensor.extract_slice %105[%91, %96] [%95, %97] [1, 1] : tensor<32x32xf16> to tensor<?x?xf16>
+        %subview_24 = memref.subview %subview_22[0, 0] [%95, %97] [1, 1] : memref<32x32xf16, strided<[512, 1], offset: ?>> to memref<?x?xf16, strided<[512, 1], offset: ?>>
+        hivm.hir.store ins(%extracted_slice_23 : tensor<?x?xf16>) outs(%subview_24 : memref<?x?xf16, strided<[512, 1], offset: ?>>) {tiled_op}
+        %106 = arith.addi %arg15, %c1_i32 : i32
+        %107 = arith.muli %106, %c64_i32 : i32
+        %108 = arith.minsi %107, %arg10 : i32
+        %109 = arith.subi %108, %c1_i32 : i32
+        %110 = arith.muli %109, %c8_i32 : i32
+        %111 = arith.addi %26, %110 : i32
+        %112 = arith.addi %111, %17 : i32
+        %113 = arith.index_cast %112 : i32 to index
+        %reinterpret_cast_25 = memref.reinterpret_cast %arg6 to offset: [%113], sizes: [1], strides: [1] : memref<?xf32> to memref<1xf32, strided<[1], offset: ?>>
+        %114 = memref.load %reinterpret_cast_25[%c0] : memref<1xf32, strided<[1], offset: ?>>
+        %reinterpret_cast_26 = memref.reinterpret_cast %arg6 to offset: [%63], sizes: [64], strides: [8] : memref<?xf32> to memref<64xf32, strided<[8], offset: ?>>
+        %alloc_27 = memref.alloc() : memref<32xf32>
+        %subview_28 = memref.subview %reinterpret_cast_26[%0] [32] [1] : memref<64xf32, strided<[8], offset: ?>> to memref<32xf32, strided<[8], offset: ?>>
+        %subview_29 = memref.subview %subview_28[0] [%77] [1] : memref<32xf32, strided<[8], offset: ?>> to memref<?xf32, strided<[8], offset: ?>>
+        %subview_30 = memref.subview %alloc_27[%73] [%77] [1] : memref<32xf32> to memref<?xf32, strided<[1], offset: ?>>
+        %115 = arith.remui %73, %c8 : index
+        hivm.hir.load ins(%subview_29 : memref<?xf32, strided<[8], offset: ?>>) outs(%subview_30 : memref<?xf32, strided<[1], offset: ?>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %115 : index init_out_buffer = true init_condition = %78 : i1 eviction_policy = <EvictFirst>
+        %116 = bufferization.to_tensor %alloc_27 restrict writable : memref<32xf32>
+        %117 = hivm.hir.vmul ins(%116, %cst_1 : tensor<32xf32>, f32) outs(%13 : tensor<32xf32>) -> tensor<32xf32>
+        %118 = hivm.hir.vadd ins(%117, %114 : tensor<32xf32>, f32) outs(%13 : tensor<32xf32>) -> tensor<32xf32>
+        %119 = hivm.hir.vexp ins(%118 : tensor<32xf32>) outs(%13 : tensor<32xf32>) -> tensor<32xf32>
+        %120 = arith.index_cast %60 : i32 to index
+        %121 = affine.apply #map11()[%120]
+        %122 = arith.maxsi %120, %65 : index
+        %123 = arith.minsi %121, %122 : index
+        %124 = affine.apply #map1()[%123, %120]
+        %125 = arith.minsi %0, %124 : index
+        %126 = arith.subi %124, %125 : index
+        %127 = arith.minsi %126, %c32 : index
+        %extracted_slice_31 = tensor.extract_slice %119[0] [%127] [1] : tensor<32xf32> to tensor<?xf32>
+        %inserted_slice = tensor.insert_slice %extracted_slice_31 into %14[0] [%127] [1] : tensor<?xf32> into tensor<32xf32>
+        %expanded_32 = tensor.expand_shape %inserted_slice [[0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+        %128 = hivm.hir.vmul ins(%104, %expanded_32 : tensor<32x32xf32>, tensor<32x1xf32>) outs(%12 : tensor<32x32xf32>) broadcast = [1] -> tensor<32x32xf32>
+        %129 = tensor.empty() : tensor<1xf32>
+        %inserted = tensor.insert %114 into %129[%c0] : tensor<1xf32>
+        %130 = hivm.hir.vexp ins(%inserted : tensor<1xf32>) outs(%129 : tensor<1xf32>) -> tensor<1xf32>
+        %extracted = tensor.extract %130[%c0] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xf32>
+        %131 = hivm.hir.vmul ins(%arg16, %extracted : tensor<16x64xf32>, f32) outs(%15 : tensor<16x64xf32>) -> tensor<16x64xf32>
+        %132 = hivm.hir.vcast ins(%128 : tensor<32x32xf32>) outs(%81 : tensor<32x32xf16>) -> tensor<32x32xf16>
+        %133 = tensor.empty() : tensor<2x32x16xf16>
+        %expanded_33 = tensor.expand_shape %132 [[0], [1, 2]] output_shape [32, 2, 16] : tensor<32x32xf16> into tensor<32x2x16xf16>
+        %134 = hivm.hir.vtranspose ins(%expanded_33 : tensor<32x2x16xf16>) outs(%133 : tensor<2x32x16xf16>) permutation = [1, 0, 2] -> tensor<2x32x16xf16>
+        %alloc_34 = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+        annotation.mark %alloc_34 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>, hivm.tiling_dim = 1 : index} : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+        %memspacecast_35 = memref.memory_space_cast %alloc_34 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>> to memref<2x4x16x16xf16>
+        %expanded_36 = tensor.expand_shape %134 [[0], [1, 2], [3]] output_shape [2, 2, 16, 16] : tensor<2x32x16xf16> into tensor<2x2x16x16xf16>
+        %subview_37 = memref.subview %memspacecast_35[0, %2, 0, 0] [2, 2, 16, 16] [1, 1, 1, 1] {to_be_bubbled_slice} : memref<2x4x16x16xf16> to memref<2x2x16x16xf16, strided<[1024, 256, 16, 1], offset: ?>>
+        hivm.hir.copy ins(%expanded_36 : tensor<2x2x16x16xf16>) outs(%subview_37 : memref<2x2x16x16xf16, strided<[1024, 256, 16, 1], offset: ?>>) {tiled_op}
+        %alloc_38 = memref.alloc() : memref<64x16xf32, #hivm.address_space<ub>>
+        annotation.mark %alloc_38 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<3>, hivm.tiling_dim = 1 : index} : memref<64x16xf32, #hivm.address_space<ub>>
+        %memspacecast_39 = memref.memory_space_cast %alloc_38 : memref<64x16xf32, #hivm.address_space<ub>> to memref<64x16xf32>
+        %135 = bufferization.to_tensor %memspacecast_39 restrict writable : memref<64x16xf32>
+        %136 = hivm.hir.vtranspose ins(%135 : tensor<64x16xf32>) outs(%15 : tensor<16x64xf32>) permutation = [1, 0] -> tensor<16x64xf32>
+        %137 = hivm.hir.vadd ins(%131, %136 : tensor<16x64xf32>, tensor<16x64xf32>) outs(%15 : tensor<16x64xf32>) -> tensor<16x64xf32>
+        scf.yield %137 : tensor<16x64xf32>
+      }
+      %reinterpret_cast_4 = memref.reinterpret_cast %arg9 to offset: [%37], sizes: [32, 64], strides: [64, 1] : memref<?xf32> to memref<32x64xf32, strided<[64, 1], offset: ?>>
+      %subview_5 = memref.subview %reinterpret_cast_4[%1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : memref<32x64xf32, strided<[64, 1], offset: ?>> to memref<16x64xf32, strided<[64, 1], offset: ?>>
+      %extracted_slice = tensor.extract_slice %52[%44, 0] [%48, 64] [1, 1] : tensor<16x64xf32> to tensor<?x64xf32>
+      %subview_6 = memref.subview %subview_5[0, 0] [%48, 64] [1, 1] : memref<16x64xf32, strided<[64, 1], offset: ?>> to memref<?x64xf32, strided<[64, 1], offset: ?>>
+      hivm.hir.store ins(%extracted_slice : tensor<?x64xf32>) outs(%subview_6 : memref<?x64xf32, strided<[64, 1], offset: ?>>) {tiled_op}
+    } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+    return
+  }
+}
