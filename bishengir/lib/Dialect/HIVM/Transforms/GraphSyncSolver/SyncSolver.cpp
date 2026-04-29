@@ -522,7 +522,7 @@ bool Solver::checkGraphConflict(
   if (!endIndex.has_value()) {
     endIndex = occ2->startIndex;
   }
-  GraphSolver graphSolver;
+  GraphSolver graphSolver(options);
   llvm::DenseSet<ConflictPair *> visited;
   auto handleConflictPair = [&](ConflictPair *conflictPair) {
     if (conflictPair->couldNotRun) {
@@ -1206,9 +1206,9 @@ void Solver::insertBarrierAllBeforeOcc(Occurrence *occ, bool isUseless,
   assert(rwOp != nullptr);
   auto conflictPair = std::make_unique<ConflictPair>(
       nullptr, nullptr, rwOp, rwOp, occ, occ,
-      CorePipeInfo(rwOp->coreType, hivm::PIPE::PIPE_ALL),
-      CorePipeInfo(rwOp->coreType, hivm::PIPE::PIPE_ALL), occ->startIndex,
-      occ->startIndex);
+      CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
+      CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
+      occ->startIndex, occ->startIndex);
   conflictPair->isUseless = isUseless;
   auto *normScopeOcc = occ->parentOcc;
   assert(normScopeOcc != nullptr);
@@ -2449,6 +2449,7 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
         }
       }
     }
+
     if (enableOpts2) {
       if (!barrierAllPairs.empty()) {
         if (llvm::succeeded(reuseSyncPairToSaveEventIds())) {
