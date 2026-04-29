@@ -280,7 +280,11 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
         auto orOp =
             rewriter.create<VFOrOp>(loc, newVecType, newTruncOp1.getRes(),
                                     newTruncOp2.getRes(), newMask, nullptr);
-        storeVal = orOp.getResult();
+        newTruncOp1->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(), 
+          hivmave::Layout_ChangeAttr::get(getContext(), hivmave::Layout_Change::DENSE));
+        newTruncOp2->setAttr(hivmave::Layout_ChangeAttr::getMnemonic(), 
+          hivmave::Layout_ChangeAttr::get(getContext(), hivmave::Layout_Change::DENSE));
+          storeVal = orOp.getResult();
         rewriter.setInsertionPointAfter(orOp);
       }
       // use one 128*f16 vsstb instead of two 64*f16 vsstb

@@ -1,5 +1,5 @@
- // RUN: bishengir-opt -append-vector-layout -annotate-dist-op-layout \
- // RUN: -eliminate-vector-layout -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
+  // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
+  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 
 // CHECK-LABEL:   func.func @triton_load_mask_outlined_vf_0
 func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {

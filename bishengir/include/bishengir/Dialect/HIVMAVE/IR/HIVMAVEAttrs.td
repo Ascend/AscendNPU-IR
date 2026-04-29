@@ -322,33 +322,24 @@ def AVE_UnalignedAttr : AttrDef<AVE_Dialect, "Unaligned"> {
   let description = [{Access UB with unaligned address}];
 }
 
-def AVE_VecMem_DENSE : I32EnumAttrCase<"DENSE", 0, "dense">;
-def AVE_VecMem_ODD : I32EnumAttrCase<"ODD", 1, "odd">;
-def AVE_VecMem_EVEN : I32EnumAttrCase<"EVEN", 2, "even">;
-def AVE_VecMem_EVEN_4 : I32EnumAttrCase<"EVEN_4", 4, "even_4">;
+def AVE_VecMem_TOP : I32EnumAttrCase<"TOP", 0, "top">;
+def AVE_VecMem_ANY : I32EnumAttrCase<"ANY", 1, "any">;
+def AVE_VecMem_B8 : I32EnumAttrCase<"B8", 2, "b8">;
+def AVE_VecMem_B16 : I32EnumAttrCase<"B16", 3, "b16">;
+def AVE_VecMem_B8_2VL : I32EnumAttrCase<"B8_2VL", 4, "b8_2vl">;
+def AVE_VecMem_B32 : I32EnumAttrCase<"B32", 5, "b32">;
+def AVE_VecMem_B16_2VL : I32EnumAttrCase<"B16_2VL", 6, "b16_2vl">;
+def AVE_VecMem_B8_4VL : I32EnumAttrCase<"B8_4VL", 7, "b8_4vl">;
+def AVE_VecMem_BOTTOM : I32EnumAttrCase<"BOTTOM", 8, "bottom">;
+
 def AVE_VecMemType : I32EnumAttr<"VecMemType", 
-    "Vector memory layout", [AVE_VecMem_DENSE, AVE_VecMem_ODD, AVE_VecMem_EVEN, AVE_VecMem_EVEN_4]> {
+    "Vector memory layout", [AVE_VecMem_TOP, AVE_VecMem_ANY, AVE_VecMem_B8,
+    AVE_VecMem_B16, AVE_VecMem_B16_2VL,AVE_VecMem_B32, AVE_VecMem_B8_2VL,
+    AVE_VecMem_B8_4VL, AVE_VecMem_BOTTOM]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "mlir::hivmave";
 }
 def AVE_VecMemTypeAttr : EnumAttr<AVE_Dialect, AVE_VecMemType, "vec_mem_type"> {
-  let assemblyFormat = [{`<` $value `>`}];
-}
-
-def AVE_VecReg_N :I32EnumAttrCase<"N", 0, "n">;
-def AVE_VecReg_2N0 : I32EnumAttrCase<"_2N0", 1, "2n0">;
-def AVE_VecReg_2N1 : I32EnumAttrCase<"_2N1", 2, "2n1">;
-def AVE_VecReg_4N0 : I32EnumAttrCase<"_4N0", 3, "4n0">;
-def AVE_VecReg_4N1 : I32EnumAttrCase<"_4N1", 4, "4n1">;
-def AVE_VecReg_4N2 : I32EnumAttrCase<"_4N2", 5, "4n2">;
-def AVE_VecReg_4N3 : I32EnumAttrCase<"_4N3", 6, "4n3">;
-def AVE_VecRegType : I32EnumAttr<"VecRegType",
-    "Vector data offset",
-    [AVE_VecReg_N, AVE_VecReg_2N0, AVE_VecReg_2N1, AVE_VecReg_4N0, AVE_VecReg_4N1, AVE_VecReg_4N2, AVE_VecReg_4N3]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "mlir::hivmave"; 
-}
-def AVE_VecRegTypeAttr : EnumAttr<AVE_Dialect, AVE_VecRegType, "vec_reg_type"> {
   let assemblyFormat = [{`<` $value `>`}];
 }
 
@@ -360,13 +351,49 @@ def AVE_VectorLayoutAttr : AttrDef<AVE_Dialect, "VectorLayout"> {
 
   let parameters = (
     ins
-    "Attribute": $mem,
-    "Attribute": $reg
+    "Attribute": $mem
   );
   let cppNamespace = "mlir::hivmave";
 
   //let hasCustomAssemblyFormat = 1;
   let assemblyFormat = "`<` `{` struct(params) `}` `>`";
+}
+
+def AVE_FunctionDist_TOP : I32EnumAttrCase<"TOP", 0, "top">;
+def AVE_FunctionDist_NONE : I32EnumAttrCase<"NONE", 1, "none">;
+def AVE_FunctionDist_NORM : I32EnumAttrCase<"NORM", 2, "norm">;
+def AVE_FunctionDist_PK : I32EnumAttrCase<"PK", 3, "pk">;
+def AVE_FunctionDist_PK4 : I32EnumAttrCase<"PK4", 4, "pk4">;
+def AVE_FunctionDist_PB8 : I32EnumAttrCase<"PB8", 5, "pb8">;
+def AVE_FunctionDist_PB16 : I32EnumAttrCase<"PB16", 6, "pb16">;
+def AVE_FunctionDist_PB32 : I32EnumAttrCase<"PB32", 7, "pb32">;
+def AVE_FunctionDist_EVEN : I32EnumAttrCase<"EVEN", 8, "even">;
+def AVE_FunctionDist_C2C : I32EnumAttrCase<"C2C", 9, "c2c">;
+def AVE_FunctionDist_UNPK : I32EnumAttrCase<"UNPK", 10, "unpk">;
+def AVE_FunctionDist_UNPK4 : I32EnumAttrCase<"UNPK4", 11, "unpk4">;
+def AVE_FunctionDist_PINTLV2 : I32EnumAttrCase<"PINTLV2", 12, "pintlv2">;
+def AVE_FunctionDist_PINTLV4 : I32EnumAttrCase<"PINTLV4", 13, "pintlv4">;
+def AVE_FunctionDist_INTLV2 : I32EnumAttrCase<"INTLV2", 14, "intlv2">;
+def AVE_FunctionDist_INTLV4 : I32EnumAttrCase<"INTLV4", 15, "intlv4">;
+def AVE_FunctionDist_DINTLV2 : I32EnumAttrCase<"DINTLV2", 16, "dintlv2">;
+def AVE_FunctionDist_DINTLV4 : I32EnumAttrCase<"DINTLV4", 17, "dintlv4">;
+def AVE_FunctionDist_INVALID : I32EnumAttrCase<"INVALID", 18, "invalid">;
+def AVE_FunctionDist_BOTTOM : I32EnumAttrCase<"BOTTOM", 19, "bottom">;
+
+def AVE_FunctionDistType : I32EnumAttr<"FunctionDistType",
+    "Function dist", [AVE_FunctionDist_TOP, AVE_FunctionDist_NONE, AVE_FunctionDist_NORM,
+    AVE_FunctionDist_PK, AVE_FunctionDist_PK4, AVE_FunctionDist_PB8, AVE_FunctionDist_PB16,
+    AVE_FunctionDist_PB32, AVE_FunctionDist_EVEN, AVE_FunctionDist_C2C, AVE_FunctionDist_UNPK,
+    AVE_FunctionDist_UNPK4, AVE_FunctionDist_PINTLV2, AVE_FunctionDist_INTLV2, AVE_FunctionDist_INTLV4,
+    AVE_FunctionDist_PINTLV4, AVE_FunctionDist_DINTLV2, AVE_FunctionDist_DINTLV4, AVE_FunctionDist_BOTTOM, 
+    AVE_FunctionDist_INVALID
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_FunctionDistAttr : EnumAttr<AVE_Dialect, AVE_FunctionDistType, "func_dist_type"> {
+  let assemblyFormat = [{`<` $value `>`}];
 }
 
 #endif // AVE_VFATTRS
