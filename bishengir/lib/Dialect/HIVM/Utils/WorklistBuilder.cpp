@@ -318,7 +318,6 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
     visited.insert(op);
 
     // Since the same gm memref could be loaded multiple times, avoid pulling
-    // the load into current work item if its loaded value is not being used
     if (isLoadLikeOp(op)) {
       auto dpsOp = cast<DestinationStyleOpInterface>(op);
       Value dst = dpsOp.getDpsInitOperand(0)->get();
@@ -327,12 +326,9 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
     }
 
     users.push_back(op);
-
-    // If not memref result, dont need to trace any more
     if (op->getNumResults() == 1 &&
         !isa<MemRefType>(op->getResult(0).getType()))
       continue;
-    traceStack.append(op->user_begin(), op->user_end());
   }
 }
 
@@ -342,9 +338,7 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
 
 WorklistBuilder::WorklistBuilder(scf::ForOp loop, int numMultibuffer,
                                  bool enableLazyLoading)
-    : targetBlock(loop.getBody()), scopeOp(loop.getOperation()),
-      pipelineLoop(loop), isLoopMode(true), numMultibuffer(numMultibuffer),
-      enableLazyLoading(enableLazyLoading),
+      : enableLazyLoading(enableLazyLoading),
       yieldedVals(loop.getYieldedValues().begin(),
                   loop.getYieldedValues().end()) {}
 
@@ -917,7 +911,6 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
     // A counter load in a VECTOR item must drag its advance-clone along so the
     // counter is incremented per stage instead of read-only at 0. Pulling the
     // clone here lets traceDependentOps wire its inits/operands and migrateOps
-    // remap them, avoiding a dangling cube-path tensor when the loop is erased.
     if (item.core == TCoreType::VECTOR)
       if (auto load = dyn_cast<memref::LoadOp>(op)) {
         auto it = counterClones.find(load.getMemRef());
@@ -927,8 +920,6 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
     for (Operation *usr : op->getUsers())
       if (isa<annotation::MarkOp, DebugOp>(usr))
         mapOpToItem(*usr, item);
-
-    // Handle load/fixpipe/copy dealing with memref memref
     if (isMemrefSubnetWriter(op)) {
       if (failed(traceMemrefSubnet(*op, workingStack)))
         return failure();

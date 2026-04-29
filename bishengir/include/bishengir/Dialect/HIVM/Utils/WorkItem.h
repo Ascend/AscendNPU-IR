@@ -27,14 +27,9 @@
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKITEM_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKITEM_H
-
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/IR/Value.h"
-#include "llvm/ADT/SetVector.h"
-
 namespace mlir {
 namespace hivm {
 
@@ -78,6 +73,15 @@ struct WorkItem {
 
   /// ScopeOp wrapper for skew-mode preload pipelining.
   scope::ScopeOp scopeOp;
+
+  // The containing for loop
+  scf::ForOp parentFor;
+
+  // Number of multibuffer
+  unsigned multibuffer;
+
+  // Guesstimate of runtime cost of this work item
+  float cost;
 
 #ifndef NDEBUG
   int id = -1;

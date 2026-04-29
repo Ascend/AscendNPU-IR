@@ -499,8 +499,10 @@ bool hasOnlySplittableRegions(Block *block) {
       }
       continue;
     }
-    // Non-scf.if region ops are allowed only if their body is uniform-core.
-    // WorklistBuilder treats such ops atomically via pipeline annotations.
+    // Non-scf.if region ops (scf.for, scf.while, ...) are allowed only if
+    // their body is uniform-core. WorklistBuilder treats such ops atomically
+    // via pipeline.cubeonly / pipeline.veconly annotations. Mixed-core region
+    // ops need a different transformation (hoisting / unrolling) first.
     bool hasC = false, hasV = false;
     for (Region &region : op.getRegions()) {
       for (Block &nestedBlock : region) {
@@ -509,10 +511,36 @@ bool hasOnlySplittableRegions(Block *block) {
         hasV = hasV || nv;
       }
     }
-    if (hasC && hasV)
+    if (hasC && hasV) {
       return false;
+    }
   }
   return true;
+}
+
+//===----------------------------------------------------------------------===//
+// Termination Check
+//===----------------------------------------------------------------------===//
+bool needsSplit(scf::IfOp ifOp) {
+  if (!hasOnlySplittableRegions(ifOp.thenBlock()) ||
+      !hasOnlySplittableRegions(ifOp.elseBlock())) {
+    return false;
+  }
+
+  auto [thenHasC, thenHasV] = analyzeCoreTypes(ifOp.thenBlock());
+  auto [elseHasC, elseHasV] = ifOp.getElseRegion().empty()
+                                  ? std::pair<bool, bool>{false, false}
+                                  : analyzeCoreTypes(ifOp.elseBlock());
+
+  if ((thenHasC && thenHasV) || (elseHasC && elseHasV)) {
+    return true;
+  }
+
+  if ((thenHasC && elseHasV) || (thenHasV && elseHasC)) {
+    return true;
+  }
+
+  return false;
 }
 
 namespace util {

@@ -44,6 +44,7 @@
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -51,7 +52,9 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_SPLITMIXEDIFCONDITIONALS
@@ -68,7 +71,16 @@ static constexpr llvm::StringLiteral kBranchSplitDoneAttr =
 static constexpr llvm::StringLiteral kCoreSplitDoneAttr =
     "hivm.core_split_done";
 
+//===----------------------------------------------------------------------===//
+// Marker attribute names
+//===----------------------------------------------------------------------===//
+
 namespace {
+constexpr llvm::StringLiteral kCubeOnlyAttr = "hivm.cube_only";
+constexpr llvm::StringLiteral kVecOnlyAttr = "hivm.vec_only";
+constexpr llvm::StringLiteral kBranchSplitDoneAttr = "hivm.branch_split_done";
+constexpr llvm::StringLiteral kCoreSplitDoneAttr = "hivm.core_split_done";
+
 struct SplitMixedIfConditionalsPass
     : public impl::SplitMixedIfConditionalsBase<SplitMixedIfConditionalsPass> {
   using Base::Base;
@@ -342,7 +354,7 @@ struct SplitMixedIfConditionalsPattern : public OpRewritePattern<scf::IfOp> {
 
     auto [hasC, hasV] = coreTypesIn(op);
     if (!hasC && !hasV)
-      return failure();
+      return failure(); // No CUBE/VECTOR ops → nothing to do.
 
     if (!hasOnlySplittableRegions(op.thenBlock()))
       return failure();

@@ -22,14 +22,9 @@
 //===----------------------------------------------------------------------===//
 #ifndef BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
 #define BISHENGIR_DIALECT_HIVM_UTILS_WORKLISTBUILDER_H
-
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Interfaces/DestinationStyleOpInterface.h"
-#include "mlir/Support/LogicalResult.h"
-
-#include <memory>
 
 namespace mlir {
 namespace hivm {
