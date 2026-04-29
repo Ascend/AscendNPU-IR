@@ -697,4 +697,19 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
   }];
 }
 
+def SignBitOp : HFusion_Op<"signbit", [
+    Pure, 
+    Elementwise,
+    SameOperandsAndResultShape 
+]> {
+    let summary = "Extracts the sign bit of floating-point values";
+    let description = [{
+        Returns 1 (i8) or true (i1) if the sign bit is set, 0 otherwise.
+    }];
+
+    let arguments = (ins RankedTensorOf<[F16, F32]>:$input); 
+    
+    let results = (outs RankedTensorOf<[I1, I8]>:$output); 
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

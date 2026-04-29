@@ -2805,6 +2805,33 @@ func.func @test_gathermask(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memr
 }
 
 // -----
+// CHECK-LABEL: func.func @test_hfusion_signbit_f32
+// CHECK-DAG: %[[CST0:.*]] = arith.constant 0 : i32
+// CHECK-DAG: %[[CST_MASK:.*]] = arith.constant -2147483648 : i32
+// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%{{.*}} : tensor<4xf32>)
+// CHECK: %[[AND:.*]] = hfusion.elemwise_binary {{.*}} ins(%[[BITCAST]], %[[CST_MASK]] : tensor<4xi32>, i32)
+// CHECK: %[[CMP:.*]] = hfusion.compare {{.*}} ins(%[[AND]], %[[CST0]] : tensor<4xi32>, i32)
+// CHECK: %[[NOT:.*]] = hfusion.elemwise_unary {{.*}} ins(%[[CMP]] : tensor<4xi1>)
+// CHECK: return %[[NOT]] : tensor<4xi1>
+func.func @test_hfusion_signbit_f32(%arg0 : tensor<4xf32>) -> tensor<4xi1> {
+  %ret = "hfusion.signbit"(%arg0) : (tensor<4xf32>) -> tensor<4xi1>
+  return %ret : tensor<4xi1>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_hfusion_signbit_f16
+// CHECK-DAG: %[[CST0_H:.*]] = arith.constant 0 : i16
+// CHECK-DAG: %[[CST_MASK_H:.*]] = arith.constant -32768 : i16
+// CHECK: %[[BITCAST_H:.*]] = hfusion.bitcast ins(%{{.*}} : tensor<4xf16>)
+// CHECK: %[[AND_H:.*]] = hfusion.elemwise_binary {{.*}} ins(%[[BITCAST_H]], %[[CST_MASK_H]] : tensor<4xi16>, i16)
+// CHECK: %[[CMP_H:.*]] = hfusion.compare {{.*}} ins(%[[AND_H]], %[[CST0_H]] : tensor<4xi16>, i16)
+// CHECK: %[[NOT_H:.*]] = hfusion.elemwise_unary {{.*}} ins(%[[CMP_H]] : tensor<4xi1>)
+// CHECK: return %[[NOT_H]] : tensor<4xi1>
+func.func @test_hfusion_signbit_f16(%arg0 : tensor<4xf16>) -> tensor<4xi1> {
+  %ret = "hfusion.signbit"(%arg0) : (tensor<4xf16>) -> tensor<4xi1>
+  return %ret : tensor<4xi1>
+}
+
 // CHECK-LABEL: func.func @test_compare_i32_lt
 // CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_lt(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
@@ -2905,3 +2932,4 @@ func.func @test_insert_slice_i8(%arg0: tensor<32xi8>, %arg1: tensor<1024xi8>, %a
   %ret = tensor.insert_slice %arg0 into %arg1[%args2] [32] [1] : tensor<32xi8> into tensor<1024xi8>
   return %ret : tensor<1024xi8>
 }
+
