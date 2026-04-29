@@ -274,8 +274,13 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
 
   // In Ascend950 arch, the load decompose will be completed before
   // auto-vectorize, so that extract vbrc will not be introduced
+  auto funcOp = this->getOperation()->getParentOfType<func::FuncOp>();
+  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
+      mlir::hivm::queryFuncCoreType(funcOp);
   auto coreType = getCoreType(*this);
-  if (failed(coreType) || coreType.value() != TCoreType::VECTOR) {
+  bool isAiv = funcCoreType.has_value() && funcCoreType.value() == TFuncCoreType::AIV;
+  bool isVector = succeeded(coreType) && coreType.value() == TCoreType::VECTOR;
+  if (!isAiv && !isVector) {
     return failure();
   }
 

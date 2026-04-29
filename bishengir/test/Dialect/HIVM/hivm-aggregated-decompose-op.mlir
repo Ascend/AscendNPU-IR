@@ -619,8 +619,8 @@ func.func @test_all_zero_pad(%in: memref<128x2048xf32>, %out: memref<128x2048xf3
 
 
 // -----
-// BEFOREALIGN-LABLE: func.func @test_brc_decompose_tensor
-func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) -> tensor<32x16xf16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+// BEFOREALIGN-LABLE: func.func @brc_tensor
+func.func @brc_tensor(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) -> tensor<32x16xf16> {
   %c0 = arith.constant 0 : index
   %cst = arith.constant 0.000000e+00 : f16
   %alloc = memref.alloc() : memref<16x32xf16>
@@ -636,7 +636,7 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
 }
 
 // -----
-// BEFOREALIGN-LABLE: func.func @test_brc_decompose_tensor
+// BEFOREALIGN-LABLE: func.func @brc_tensor_aic
 func.func @brc_tensor_aic(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
   %c0 = arith.constant 0 : index
   %cst = arith.constant 0.000000e+00 : f16
@@ -647,4 +647,21 @@ func.func @brc_tensor_aic(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   // BEFOREALIGN-NOT: hivm.hir.vbrc
   hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 eviction_policy = <EvictFirst>
   return
+}
+
+// -----
+// BEFOREALIGN-LABLE: func.func @brc_tensor_aiv
+func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) -> tensor<16x32xf16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x32xf16>
+  %subview = memref.subview %arg0[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, strided<[?, 1], offset: ?>> to memref<?x32xf16, strided<[?, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16> to memref<?x32xf16, strided<[32, 1]>>
+  // BEFOREALIGN: scf.if
+  // BEFOREALIGN: hivm.hir.vbrc
+  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 eviction_policy = <EvictFirst>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16>
+  %1 = tensor.empty() : tensor<32x16xf16>
+  %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
+  return %0 : tensor<16x32xf16>
 }
