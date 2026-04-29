@@ -22,6 +22,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
@@ -260,7 +261,7 @@ static bool calculateMapAndVerifyResult(OpBuilder &builder,
 }
 
 static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
-                                        ValueRange offsets,
+                                        ArrayRef<OpFoldResult> mixedOffsets,
                                         ArrayRef<int64_t> srcShape,
                                         size_t tilingDim, scf::ForOp tilingLoop,
                                         int64_t tileSize, int64_t tileCounts) {
@@ -276,8 +277,15 @@ static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
 
   // Offset at tiling dim should be tileSize * loop index;
   // First check the affine map is calculating N * tileSize;
+  // Use mixed offsets: getOffsets() only lists SSA values for dynamic
+  // dimensions, so indexing it by tilingDim is invalid when that offset is
+  // folded into static attributes alongside other dynamic operands.
+  Value tilingOffsetVal =
+      llvm::dyn_cast_if_present<Value>(mixedOffsets[tilingDim]);
+  if (!tilingOffsetVal)
+    return false;
   auto offsetAffineMap =
-      offsets[tilingDim].getDefiningOp<affine::AffineApplyOp>();
+      tilingOffsetVal.getDefiningOp<affine::AffineApplyOp>();
   // If it's created by tiling, then the offset at tiling dim must be
   // calculated by AffineApplyOp.
   if (!offsetAffineMap)
@@ -333,7 +341,7 @@ bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
   auto tileSize = maybeTileSizeCountPair.value().first;
   auto tileCount = maybeTileSizeCountPair.value().second;
   if (!checkOffsetsCreatedByTiling(offsetSizeAndStrideOp.getStaticOffsets(),
-                                   offsetSizeAndStrideOp.getOffsets(),
+                                   offsetSizeAndStrideOp.getMixedOffsets(),
                                    originalShape->getShape(), tilingDim,
                                    tilingLoop, tileSize, tileCount)) {
     return false;
