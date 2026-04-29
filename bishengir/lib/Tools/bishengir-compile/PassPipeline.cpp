@@ -162,6 +162,8 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
       config.shouldDisableAutoInjectBlockSync();
   hivmPipelineOptions.enableHIVMGraphSyncSolver =
       config.shouldEnableHIVMGraphSyncSolver();
+  hivmPipelineOptions.enableHIVMCrossCoreGSS =
+      config.shouldEnableHIVMCrossCoreGSS();
   hivmPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
   hivmPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
   hivmPipelineOptions.target =
@@ -561,6 +563,7 @@ public:
     enableInjectBlockAllSync = pass.enableInjectBlockAllSync;
     disableAutoInjectBlockSync = pass.disableAutoInjectBlockSync;
     enableHIVMGraphSyncSolver = pass.enableHIVMGraphSyncSolver;
+    enableHIVMCrossCoreGSS = pass.enableHIVMCrossCoreGSS;
     enableUnitFlagSync = pass.enableUnitFlagSync;
     enableGlobalWorkspaceReuse = pass.enableGlobalWorkspaceReuse;
     enableAutoStorageAlign = pass.enableAutoStorageAlign;
@@ -647,6 +650,7 @@ public:
         .injectBlockAllSync(enableInjectBlockAllSync)
         .disableAutoInjectBlockSync(disableAutoInjectBlockSync)
         .enableHIVMGraphSyncSolver(enableHIVMGraphSyncSolver)
+        .enableHIVMCrossCoreGSS(enableHIVMCrossCoreGSS)
         .unitFlagSync(enableUnitFlagSync)
         .globalWorkspaceReuse(enableGlobalWorkspaceReuse)
         .autoStorageAlign(enableAutoStorageAlign)
@@ -915,6 +919,11 @@ protected:
   Pass::Option<bool> enableHIVMGraphSyncSolver{
       *this, "enable-hivm-graph-sync-solver",
       llvm::cl::desc("Enable HIVM Graph-Sync-Solver pass to do auto-sync."),
+      llvm::cl::init(false)};
+  Pass::Option<bool> enableHIVMCrossCoreGSS{
+      *this, "enable-hivm-cross-core-gss",
+      llvm::cl::desc(
+          "Enable HIVM cross-core GSS (CrossCoreGSS) pass. (Default = ON)"),
       llvm::cl::init(false)};
   Pass::Option<bool> enableUnitFlagSync{
       *this, "enable-hivm-unit-flag-sync",

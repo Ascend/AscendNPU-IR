@@ -610,6 +610,14 @@ public:
     return enableHIVMGraphSyncSolverFlag;
   }
 
+  BiShengIRCompileMainConfig &enableHIVMCrossCoreGSS(bool enable) {
+    enableHIVMCrossCoreGSSFlag = enable;
+    return *this;
+  }
+  bool shouldEnableHIVMCrossCoreGSS() const {
+    return enableHIVMCrossCoreGSSFlag;
+  }
+
   BiShengIRCompileMainConfig &enableDropUnitDims(bool enable) {
     enableDropUnitDimsFlag = enable;
     return *this;
@@ -1066,6 +1074,10 @@ protected:
 
   /// Enable HIVM Graph-Sync-Solver pass to do auto-sync.
   bool enableHIVMGraphSyncSolverFlag{false};
+
+  /// Enable HIVM cross-core GSS (CrossCoreGSS) pass. Default ON. Falls back to
+  /// InjectBlockSync when enableInjectBlockAllSyncFlag is set.
+  bool enableHIVMCrossCoreGSSFlag{false};
 
 
   /// Enable inject sync pass to use unit-flag modes for synchronization

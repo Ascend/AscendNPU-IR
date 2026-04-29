@@ -6,11 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Pass/PassManager.h"
 
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
@@ -20,6 +24,8 @@
 
 namespace mlir {
 #define GEN_PASS_DEF_INJECTSYNC
+#define GEN_PASS_DEF_GRAPHSYNCSOLVER
+#define GEN_PASS_DEF_CROSSCOREGSS
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
@@ -31,10 +37,16 @@ using namespace mlir;
 
 struct DummyInjectSyncPass : public impl::InjectSyncBase<DummyInjectSyncPass> {
 };
+struct DummyGraphSyncSolverPass
+    : public impl::GraphSyncSolverBase<DummyGraphSyncSolverPass> {};
+struct DummyCrossCoreGSSPass
+    : public impl::CrossCoreGSSBase<DummyCrossCoreGSSPass> {};
 
 /// WhiListed passes that are allowed to print IR before/after execution.
 static std::set<std::string> kAllowedPassList = {
-    DummyInjectSyncPass::getArgumentName().str()};
+    DummyInjectSyncPass::getArgumentName().str(),
+    DummyGraphSyncSolverPass::getArgumentName().str(),
+    DummyCrossCoreGSSPass::getArgumentName().str()};
 
 namespace {
 struct PassManagerOptions {

@@ -1,10 +1,15 @@
 // REQUIRES: hivmc-a5
 // RUN: bishengir-compile -enable-lir-compile=false \
-// RUN:   -bishengir-print-ir-after='hivm-inject-sync' \
+// RUN:   -bishengir-print-ir-after='hivm-graph-sync-solver' \
 // RUN:   -bishengir-print-ir-before='hfusion-auto-schedule' %s 2>&1 | FileCheck %s
-
-// CHECK: IR Dump After InjectSync (hivm-inject-sync)
+// CHECK: IR Dump After GraphSyncSolver (hivm-graph-sync-solver)
 // CHECK-NOT: IR Dump After AutoSchedule (hfusion-auto-schedule)
+
+// RUN: bishengir-compile -enable-lir-compile=false \
+// RUN:   -mlir-print-ir-after=hivm-cross-core-gss %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CROSS-CORE
+// CROSS-CORE: IR Dump After CrossCoreGSS (hivm-cross-core-gss)
+
 module {
   func.func @foo(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>) attributes {hacc.entry} {
     %alloc = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>

@@ -571,7 +571,14 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
     static cl::opt<bool, /*ExternalStorage=*/true> enableHIVMGraphSyncSolver(
         "enable-hivm-graph-sync-solver",
         cl::desc("Enable HIVM Graph-Sync-Solver pass to do auto-sync."),
-        cl::location(enableHIVMGraphSyncSolverFlag), cl::init(false),
+        cl::location(enableHIVMGraphSyncSolverFlag), cl::init(true),
+        cl::cat(hivmOptCategory));
+
+    static cl::opt<bool, /*ExternalStorage=*/true> enableHIVMCrossCoreGSS(
+        "enable-hivm-cross-core-gss",
+        cl::desc(
+            "Enable HIVM cross-core GSS (CrossCoreGSS) pass. (Default = ON)"),
+        cl::location(enableHIVMCrossCoreGSSFlag), cl::init(true),
         cl::cat(hivmOptCategory));
 
     static cl::opt<bool, /*ExternalStorage=*/true> enableUnitFlagSync(

@@ -108,7 +108,7 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   // insert needed sync operations.
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createMarkRealCoreTypePass());
-  if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
+  if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
       !hivmPipelineOptions.enableInjectBlockAllSync) {
     pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
   } else {

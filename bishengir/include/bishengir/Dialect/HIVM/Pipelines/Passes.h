@@ -135,6 +135,12 @@ struct HIVMPipelineOptions
       llvm::cl::desc("Enable HIVM Graph-Sync-Solver Auto-Sync Pass"),
       llvm::cl::init(false)};
 
+  PassOptions::Option<bool> enableHIVMCrossCoreGSS{
+      *this, "enable-hivm-cross-core-gss",
+      llvm::cl::desc("Enable HIVM cross-core GSS (CrossCoreGSS) pass "
+                     "(Default = ON)"),
+      llvm::cl::init(false)};
+
 
   PassOptions::Option<bool> enableUnitFlagSync{
       *this, "enable-hivm-unit-flag-sync",
