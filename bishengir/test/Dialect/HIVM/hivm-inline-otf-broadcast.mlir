@@ -132,3 +132,46 @@ func.func @test_inline_unit_dim_brc(%arg0: tensor<1x?x16xf32>, %arg1: tensor<1x?
   %5 = hivm.hir.vmul ins(%4, %3 : tensor<1x?x16xf32>, tensor<1x?x16xf32>) outs(%2 : tensor<1x?x16xf32>) -> tensor<1x?x16xf32>
   return %5 : tensor<1x?x16xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_vmul_vadds
+func.func @test_vmul_vadds(%arg0: tensor<5x128xf32>, %arg1: tensor<1x128xf32>) -> (tensor<5x128xf32>, tensor<1x128xf32>) {
+  // CHECK-NOT: hivm.hir.vbrc
+  // CHECK: hivm.hir.vmul ins(%[[ins0:.*]], %[[ins1:.*]] : tensor<5x128xf32>, tensor<1x128xf32>) outs(%[[outs:.*]] : tensor<5x128xf32>)
+  // CHECK: hivm.hir.vadd ins(%[[ins1:.*]], %[[cst:.*]] : tensor<1x128xf32>, f32) outs(%[[outs1:.*]] : tensor<1x128xf32>)
+  %cst = arith.constant 1.000000e+00 : f32
+  %empty0 = tensor.empty() : tensor<5x128xf32>
+  %empty1 = tensor.empty() : tensor<5x128xf32>
+  %empty2 = tensor.empty() : tensor<1x128xf32>
+  %brc = hivm.hir.vbrc ins(%arg1 : tensor<1x128xf32>) outs(%empty0 : tensor<5x128xf32>) broadcast_dims = [0] -> tensor<5x128xf32>
+  %ret = hivm.hir.vmul ins(%arg0, %brc : tensor<5x128xf32>, tensor<5x128xf32>) outs(%empty1 : tensor<5x128xf32>) -> tensor<5x128xf32>
+  %ret1 = hivm.hir.vadd ins(%arg1, %cst : tensor<1x128xf32>, f32) outs(%empty2 : tensor<1x128xf32>) -> tensor<1x128xf32>
+  return %ret, %ret1 : tensor<5x128xf32>, tensor<1x128xf32>
+}
+
+// -----
+// CHECK-CANONICALIZE-LABEL: func.func @simple_erasing_brc_tensor
+// CHECK-CANONICALIZE-NOT: broadcast
+func.func @simple_erasing_brc_tensor(%arg0: tensor<1x2xf32>, %arg1: tensor<1x2xf32>) {
+  %0 = hivm.hir.vadd ins(%arg0, %arg0 : tensor<1x2xf32>, tensor<1x2xf32>) outs(%arg1 : tensor<1x2xf32>) broadcast = [0] -> tensor<1x2xf32>
+  return
+}
+
+// -----
+// CHECK-CANONICALIZE-LABEL: func.func @not_erasing_brc
+// CHECK-CANONICALIZE: broadcast = [0]
+func.func @not_erasing_brc(%arg0: memref<1x2xf32>, %arg1: memref<2x2xf32>) {
+  hivm.hir.vadd ins(%arg0, %arg0 : memref<1x2xf32>, memref<1x2xf32>) outs(%arg1 : memref<2x2xf32>) broadcast = [0]
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @test_vbrc_memref_skip
+func.func @test_vbrc_memref_skip(%arg0: memref<64x64xf16>) {
+  %cst = arith.constant 1.000000e+00 : f16
+  // CHECK: hivm.hir.vbrc
+  // CHECK-SAME: ins(%{{.*}} : f16)
+  // CHECK-SAME: outs(%{{.*}} : memref<64x64xf16>)
+  hivm.hir.vbrc ins(%cst : f16) outs(%arg0 : memref<64x64xf16>)
+  return
+}

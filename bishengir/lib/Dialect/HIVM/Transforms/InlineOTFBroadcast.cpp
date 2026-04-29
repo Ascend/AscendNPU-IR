@@ -1,8 +1,17 @@
 //===- InlineOTFBroadcast.cpp ----- inline OTF broadcast ------------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
@@ -92,6 +101,10 @@ struct VBrcInlinePattern : public OpRewritePattern<hivm::VBrcOp> {
   LogicalResult matchAndRewrite(hivm::VBrcOp vbrcOp,
                                 PatternRewriter &rewriter) const override {
     LLVM_DEBUG(llvm::dbgs() << "operation: " << *vbrcOp << "\n");
+    if (!vbrcOp.hasPureTensorSemantics()) {
+      return failure();
+    }
+    
     Value src = vbrcOp.getSrc();
     Value dst = vbrcOp.getResult()[0];
     if (!isa<TensorType>(src.getType()))
@@ -111,19 +124,21 @@ struct VBrcInlinePattern : public OpRewritePattern<hivm::VBrcOp> {
     if (broadDims.size() != 1)
       return failure();
     bool isBrcInlined = false;
-    for (Operation *user : dst.getUsers()) {
+    SmallVector<Operation *> users = llvm::to_vector(dst.getUsers());
+    for (Operation *user : users) {
       if (!isValidUser(user, axisKind))
         continue;
       auto hivmOp = dyn_cast<HIVMStructuredOp>(user);
       LLVM_DEBUG(llvm::dbgs() << "validUser: " << *user << "\n");
       // IR modification
       isBrcInlined = true;
-      updateBroadcastAttr(hivmOp, broadDims[0]);
+      rewriter.modifyOpInPlace(hivmOp,
+                                   [&hivmOp, broadDims]() { updateBroadcastAttr(hivmOp, broadDims[0]); });
       for (auto &opOperand : hivmOp.getDpsInputOperands())
         if (opOperand->get() == dst) {
           // Inline the broadcast src in the user's operands
           rewriter.modifyOpInPlace(opOperand->getOwner(),
-                                   [&]() { opOperand->set(src); });
+                                   [&opOperand, &src]() { opOperand->set(src); });
         }
     }
     return success(isBrcInlined);
