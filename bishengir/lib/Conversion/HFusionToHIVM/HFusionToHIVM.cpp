@@ -574,7 +574,7 @@ struct LinalgToHIVMTransposeOp : public OpRewritePattern<linalg::TransposeOp> {
           "linalg::TansposeOp should have pure buffer or tensor Semantics!");
     }
     Value outputValue = op.hasPureBufferSemantics() ? op.getInit() : op.getResult().getBase();
-      
+
     Operation *withoutAlignMarkOp = nullptr;
     for (auto *user : outputValue.getUsers()) {
       if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
@@ -653,7 +653,7 @@ struct HFusionToHIVMGatherOp : public OpRewritePattern<hfusion::GatherOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// HFusionToHIVMGatherMaskOp 
+// HFusionToHIVMGatherMaskOp
 //===----------------------------------------------------------------------===//
 struct HFusionToHIVMGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
   using OpRewritePattern<hfusion::GatherMaskOp>::OpRewritePattern;
@@ -666,9 +666,9 @@ struct HFusionToHIVMGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp
     }
 
     auto resultTypeRange = op.hasPureBufferSemantics()
-                               ? TypeRange()  
-                               : TypeRange(op->getResultTypes());  
-    mlir::ValueRange dstOperands = op.getInit();                        
+                               ? TypeRange()
+                               : TypeRange(op->getResultTypes());
+    mlir::ValueRange dstOperands = op.getInit();
     rewriter.replaceOpWithNewOp<hivm::VGatherMaskOp>(
         op,
         resultTypeRange,
@@ -1313,6 +1313,12 @@ public:
       if (markOp.isAnnotatedBy(hivm::TileMixCubeNumAttr::name))
         markOp.erase();
     });
+
+    moduleOp->walk([&](annotation::MarkOp markOp) {
+      if (markOp.isAnnotatedBy("enable_i4"))
+        markOp.erase();
+    });
+
   }
 };
 } // namespace

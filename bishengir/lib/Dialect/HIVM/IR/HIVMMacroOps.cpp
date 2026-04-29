@@ -192,9 +192,9 @@ bool isInitFirstLoopIterForLocalMmadOp(LocalMmadTy *localMatmulOp) {
         isConstantRhs = false;
       }
       auto forLowerConst = getConstantFromDefine(forOp.getLowerBound());
-      
+
       if (cmpConst.has_value() && forLowerConst.has_value()) {
-        return isConstantRhs 
+        return isConstantRhs
                ? (cmpConst.value() == forLowerConst.value()) && (cmpOp.getLhs() == forOp.getInductionVar())
                : (cmpConst.value() == forLowerConst.value()) && (cmpOp.getRhs() == forOp.getInductionVar());
       }
@@ -233,11 +233,11 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      Value init_condition, Value real_m, Value real_k,
                      Value real_n, Value c, Value per_channel_bias,
                      UnitAttr a_transpose, UnitAttr b_transpose,
-                     UnitAttr enable_HF32) {
+                     UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
+        enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -410,7 +410,7 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 /// %init = tensor.empty()
 /// %mat = for (%iterator = %init) {
 ///   %acc_mad = mmadL1 dst(%iterator)
-///   %vec_res = VectorOp %acc_mad 
+///   %vec_res = VectorOp %acc_mad
 //    yield %vec_res
 /// }
 
@@ -574,11 +574,11 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           Value init_condition, Value real_m, Value real_k,
                           Value real_n, Value c, Value per_channel_bias,
                           UnitAttr a_transpose, UnitAttr b_transpose,
-                          UnitAttr enable_HF32) {
+                          UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
+        enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }

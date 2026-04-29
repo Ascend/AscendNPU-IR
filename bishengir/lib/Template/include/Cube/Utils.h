@@ -70,4 +70,11 @@ mad_intrin_core(mmad_intrin_args<SRC_TYPE, DST_TYPE> args) {
             args.cmatrixInitVal);
 }
 
+template <typename DST_TYPE>
+__aicore__ __attribute__((always_inline)) void
+mad_intrin_core_s4(mmad_intrin_args<void, DST_TYPE> args) {
+  INTRINSIC(mad_s4, args.dst_ptr, args.src0_ptr, args.src1_ptr, args.m, args.k,
+            args.n, args.unitFlag, args.kDirectionAlign, args.cmatrixSource,
+            args.cmatrixInitVal);
+}
 #endif // HIVM_MLIR_TEMPLATE_CUBE_UTILS_H

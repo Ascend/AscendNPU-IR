@@ -73,6 +73,14 @@ public:
     }
 
     mmadL0C_ = op_.getDpsInitOperand(0)->get();
+
+    std::string wasI4ToI8ConversionStr{"enable_i4"};
+    std::optional<Operation *> wasI4ToI8ConversionMarkOp =
+      utils::getAnnotateOpWithAttr(op_.getResult(0), wasI4ToI8ConversionStr);
+
+    if (wasI4ToI8ConversionMarkOp.has_value()) {
+      wasI4ToI8Conversion_ = true;
+    }
   }
 
   T getSourceMatmulOp() const { return op_; };
@@ -84,18 +92,19 @@ public:
         getSourceMatmulOp().getLoc(), 0);
     auto newOp = rewriter.template create<ReplaceOpTy>(
         getSourceMatmulOp().getLoc(),
-        getMmadL1OpResultTypes(),          // result types
-        mmadL1A_,                          // Matrix A on L1
-        mmadL1B_,                          // Matrix B on L1
-        initCondition_,                    // L0C init condition
-        constZero,                         // MMAD Real M
-        constZero,                         // MMAD Real K
-        constZero,                         // MMAD Real N
-        mmadL0C_,                          // init operand
-        Value{},                           // per channel bias
-        getMmadL1TransposeAFlag(rewriter), // transpose A
-        getMmadL1TransposeBFlag(rewriter), // transpose B
-        getMmadL1EnableHF32Flag(rewriter)  // enable hf32 mode
+        getMmadL1OpResultTypes(),           // result types
+        mmadL1A_,                           // Matrix A on L1
+        mmadL1B_,                           // Matrix B on L1
+        initCondition_,                     // L0C init condition
+        constZero,                          // MMAD Real M
+        constZero,                          // MMAD Real K
+        constZero,                          // MMAD Real N
+        mmadL0C_,                           // init operand
+        Value{},                            // per channel bias
+        getMmadL1TransposeAFlag(rewriter),  // transpose A
+        getMmadL1TransposeBFlag(rewriter),  // transpose B
+        getMmadL1EnableHF32Flag(rewriter),  // enable hf32 mode
+        getMmadL1WasI4ToI8ConversionFlag(rewriter) // was i4 -> i8 conversion
     );
     return newOp.getOperation();
   }
@@ -182,6 +191,7 @@ private:
   UnitAttr getMmadL1TransposeAFlag(OpBuilder &rewriter) const;
   UnitAttr getMmadL1TransposeBFlag(OpBuilder &rewriter) const;
   UnitAttr getMmadL1EnableHF32Flag(OpBuilder &rewriter) const;
+  UnitAttr getMmadL1WasI4ToI8ConversionFlag(OpBuilder &rewriter) const;
 
   /// Original Op
   T op_;
@@ -189,6 +199,7 @@ private:
   bool transposeA_{false};
   bool transposeB_{false};
   bool enableHF32_{false};
+  bool wasI4ToI8Conversion_{false};
 
   /// Operands for MmadL1Op
   Value mmadL1A_;
@@ -218,6 +229,12 @@ template <typename T, typename U>
 UnitAttr
 MmadL1InfoCollector<T, U>::getMmadL1EnableHF32Flag(OpBuilder &rewriter) const {
   return enableHF32_ ? rewriter.getUnitAttr() : UnitAttr();
+}
+
+template <typename T, typename U>
+UnitAttr
+MmadL1InfoCollector<T, U>::getMmadL1WasI4ToI8ConversionFlag(OpBuilder &rewriter) const {
+  return wasI4ToI8Conversion_ ? rewriter.getUnitAttr() : UnitAttr();
 }
 
 template <typename T, typename U>
@@ -295,7 +312,7 @@ MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
         if (forOp.getInitArgs()[i] != info.currentValue) {
           continue;
         }
-        
+
         BlockArgument regionIterArg = forOp.getRegionIterArg(i);
         OpOperand *tiedYielded = forOp.getTiedLoopYieldedValue(regionIterArg);
         if (!tiedYielded) {
