@@ -936,6 +936,25 @@ std::string NoMaxRankExternalModel<Conv1DL1Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<Conv2DL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<Conv2DL1Op>(op);
+  auto baseCallName = std::string("conv2d_group");
+
+  auto srcTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType()));
+  auto dstTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+  return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+}
+
+//===----------------------------------------------------------------------===//
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
@@ -1194,6 +1213,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     // Macro Ops
     REGISTER_NO_MAX_RANK(MmadL1Op);
     REGISTER_NO_MAX_RANK(Conv1DL1Op);
+    REGISTER_NO_MAX_RANK(Conv2DL1Op);
     REGISTER_NO_MAX_RANK(MatmulOp);
     REGISTER_NO_MAX_RANK(MixMatmulOp);
     REGISTER_NO_MAX_RANK(MixGroupMatmulOp);
