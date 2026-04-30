@@ -593,6 +593,13 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
         cl::location(enableAutoCVBalanceFlag), cl::init(true),
         cl::cat(hivmOptCategory));
 
+    static cl::opt<bool, /*ExternalStorage=*/true> enableCVPipelineLazyLoading(
+        "cv-pipeline-lazy-loading",
+        cl::desc("Enable lazy loading in CV pipelining to reduce buffer "
+                 "expansion"),
+        cl::location(enableCVPipelineLazyLoadingFlag), cl::init(false),
+        cl::cat(hivmOptCategory));
+
     static cl::opt<bool, /*ExternalStorage=*/true> enableGlobalWorkspaceReuse(
         "enable-hivm-global-workspace-reuse",
         cl::desc("Enable global workspace reuse"),

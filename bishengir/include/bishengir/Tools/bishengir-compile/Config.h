@@ -653,6 +653,14 @@ public:
   }
   bool shouldAutoCVBalance() const { return enableAutoCVBalanceFlag; }
 
+  BiShengIRCompileMainConfig &enableCVPipelineLazyLoading(bool enable) {
+    enableCVPipelineLazyLoadingFlag = enable;
+    return *this;
+  }
+  bool shouldEnableCVPipelineLazyLoading() const {
+    return enableCVPipelineLazyLoadingFlag;
+  }
+
   BiShengIRCompileMainConfig &globalWorkspaceReuse(bool enable) {
     enableGlobalWorkspaceReuseFlag = enable;
     return *this;
@@ -995,6 +1003,9 @@ protected:
 
   /// Enable auto balancing during CV Pipelining pass
   bool enableAutoCVBalanceFlag{false};
+
+  /// Enable lazy loading in CV pipelining to reduce buffer expansion
+  bool enableCVPipelineLazyLoadingFlag{false};
 
   /// When `enable-auto-multi-buffer=true`, limit it only work for local buffer
   // TODO: change default value to be false

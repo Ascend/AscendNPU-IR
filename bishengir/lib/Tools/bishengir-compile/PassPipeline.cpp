@@ -156,6 +156,8 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   hivmPipelineOptions.workspaceMultiBufferNum =
       config.getWorkspaceMultiBufferNum();
   hivmPipelineOptions.enableAutoCVBalance = config.shouldAutoCVBalance();
+  hivmPipelineOptions.enableLazyLoading =
+      config.shouldEnableCVPipelineLazyLoading();
   hivmPipelineOptions.enableInjectBlockAllSync =
       config.shouldInjectBlockAllSync();
   hivmPipelineOptions.disableAutoInjectBlockSync =
