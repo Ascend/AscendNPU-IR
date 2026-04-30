@@ -2165,3 +2165,24 @@ func.func @test_vsel_i64_rhs_scalar(%arg2: i64)
   hivm.hir.vsel ins(%alloc_3, %arg1, %arg2 : memref<1024xi1>, memref<1024xi64>, i64) outs(%alloc_4 : memref<1024xi64>)
   return
 }
+
+// CHECK-LABEL: func.func @test_bug_194_regression(
+// CHECK-SAME: %[[VAL_0:.*]]: memref<1024xi64>,
+// CHECK-SAME: %[[VAL_1:.*]]: memref<1024xi64>) {
+// CHECK: %[[VAL_2:.*]] = memref.alloc() {alignment = 64 : i64} : memref<1024xi1>
+// CHECK: %[[VAL_3:.*]] = memref.alloc() : memref<1024xi8>
+// CHECK: hivm.hir.vcmp ins(%[[VAL_0]], %[[VAL_1]] : memref<1024xi64>, memref<1024xi64>) outs(%[[VAL_3]] : memref<1024xi8>) compare_mode = <lt>
+// CHECK: annotation.mark %[[VAL_2]] {buffer_size_in_byte = 1024 : i64} : memref<1024xi1>
+// CHECK: %[[VAL_4:.*]] = memref.alloc() {alignment = 64 : i64} : memref<1024xi64>
+// CHECK: hivm.hir.vsel ins(%[[VAL_3]], %[[VAL_0]], %[[VAL_1]] : memref<1024xi8>, memref<1024xi64>, memref<1024xi64>) outs(%[[VAL_4]] : memref<1024xi64>)
+// CHECK: return
+// CHECK: }
+func.func @test_bug_194_regression(%arg0: memref<1024xi64>, %arg1: memref<1024xi64>)
+{
+  %alloc_3 = memref.alloc() {alignment = 64 : i64} : memref<1024xi1>
+  hivm.hir.vcmp ins(%arg0, %arg1 : memref<1024xi64>, memref<1024xi64>) outs(%alloc_3 : memref<1024xi1>) compare_mode = <lt>
+  annotation.mark %alloc_3 {buffer_size_in_byte = 1024 : i64} : memref<1024xi1>
+  %alloc_4 = memref.alloc() {alignment = 64 : i64} : memref<1024xi64>
+  hivm.hir.vsel ins(%alloc_3, %arg0, %arg1 : memref<1024xi1>, memref<1024xi64>, memref<1024xi64>) outs(%alloc_4 : memref<1024xi64>)
+  return
+}

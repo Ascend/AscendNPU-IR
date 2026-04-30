@@ -707,39 +707,27 @@ struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
       return failure();
     }
 
-    // [[Guard 3]] Find the vcmp producing the condition filter for vsel.
+    // Find a vcmp producing the condition filter for vsel.
     hivm::VCmpOp cmpOp = nullptr;
-    {
-      size_t usersCount = 0;
-      for (Operation *user : condUB.getUsers()) {
-        // [[Guard 3.1]] There should only be 2 users:
-        if (++usersCount > 2) {
-          return failure();
-        }
-        // - one of the users is the vsel itself:
-        if (op == dyn_cast<hivm::VSelOp>(user)) {
-          continue;
-        }
-        // - the second user should be a vcmp:
-        cmpOp = dyn_cast<hivm::VCmpOp>(user);
+    for (Operation *user : condUB.getUsers()) {
+      // Do not count annotation marks as true users:
+      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
+        continue;
       }
-
-      // [[Guard 3.2]] Quit if no vcmp user is found.
-      if (nullptr == cmpOp) {
-        return failure();
+      // The user may be the vsel itself:
+      if (op == dyn_cast<hivm::VSelOp>(user)) {
+        continue;
       }
-
-      // [[Guard 3.3]] Quit if the vcmp does not produce the output for the vsel.
-      if (cmpOp.getDst()[0] != condUB) {
-        return failure();
+      // The user may be the required vcmp producing the condition for the vsel:
+      if ((cmpOp = dyn_cast<hivm::VCmpOp>(user)) && (cmpOp.getDst()[0] == condUB)) {
+        continue;
       }
+      // [[Guard 3]] There must be no other users:
+      return failure();
     }
 
-    // [[Guard 4]] Quit if the vcmp uses something other than il for the output.
-    // This should never happen if [[Guard 1]] is passed, but who knows...
-    Value dst = cmpOp.getDst()[0];
-    auto dstElemType = getElementTypeOrSelf(dst);
-    if (!dstElemType.isInteger(1)) {
+    // [[Guard 4]] Quit if no vcmp produces the condition for the vsel:
+    if (nullptr == cmpOp) {
       return failure();
     }
 
