@@ -569,8 +569,8 @@ def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
                         data in L0C is cleared before use
                       }]>:$init_condition,
                       Arg<Variadic<I64>, [{
-                        Arguments required by conv2d_group to insert 
-                        synchronization instructions, they are 
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
                       I32Attr:$padding,
@@ -641,8 +641,8 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
                         data in L0C is cleared before use
                       }]>:$init_condition,
                       Arg<Variadic<I64>, [{
-                        Arguments required by conv2d_group to insert 
-                        synchronization instructions, they are 
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
                         managed by inject-sync passes.
                       }]>:$sync_related_args,
                       I32Attr:$padding,
@@ -693,4 +693,62 @@ def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// HIVM Conv3DL1Op definitions.
+//===----------------------------------------------------------------------===//
+
+def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  AttrSizedOperandSegments,
+]>{
+  let arguments = (ins Arg<TensorOrMemref, "Conv3d input">:$input,
+                      Arg<TensorOrMemref, "Conv3d weight">:$weight,
+                      Arg<Optional<TensorOrMemref>, "Conv3d bias">:$bias,
+                      Arg<TensorOrMemref, "Conv3d init">:$init,
+                      Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                      }]>:$init_condition,
+                      Arg<Variadic<I64>, [{
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
+                        managed by inject-sync passes.
+                      }]>:$sync_related_args,
+                      I32Attr:$padding,
+                      I32Attr:$groups
+                      );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let summary = [{
+    3D convolution operator with inputs from L1 memory hierarchy.
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+      $input `,` $weight
+      `,` $init_condition
+      (`,` $bias^)?
+      `:` type($input) `,` type($weight)
+      `,` type($init_condition)
+      (`,` type($bias)^)?
+    `)`
+    `outs` `(` $init `:` type($init) `)`
+    (`sync_related_args`
+      `(` $sync_related_args^ `:` type($sync_related_args) `)`
+    )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getInitMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+
+    static StringRef getOpName() { return "Conv3dL1"; }
+  }];
+}
+ 	 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD

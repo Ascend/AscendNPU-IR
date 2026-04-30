@@ -461,4 +461,76 @@ def Conv2DOp
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Conv3DOp
+//===----------------------------------------------------------------------===//
+
+def Conv3DOp
+    : HFusionStructuredBase_Op<
+          "conv3d", [AllElementTypesMatch<["input","weight","bias", "init"]>,
+                    ResultOnlyIfTensor]>
+{
+
+  let description = [{
+    3D convolution operator with semantics aligned to
+    triton.language.extra.cann.extension.conv3d(
+        input, weight, bias, groups, padding_size
+    ),
+    and default parameters matching
+    torch.nn.functional.conv3d(
+        stride=1, dilation=1, padding_mode='zeros'
+    ).
+
+    Dimension constraints:
+    - input: [iC, iD, iH, iW] (input channel count, input depth, input height, input width)
+      / [N, iC, iD, iH, iW] (batch size, input channel count, input depth, input height, input width)
+    - weight: [oC, iC/groups, wD, wH, wW] (output channel count,
+      input channel count per group, convolution kernel depth, convolution kernel height, convolution kernel width)
+    - bias (optional): [oC] (output channel bias)
+    - init/result: [oC, oD, oH, oW] (output channel count, output depth, output height, output width)
+      / [N, oC, oD, oH, oW] (batch size, output channel count, output depth, output height, output width)
+
+    Configurable parameters (with default values):
+    - padding: Number of zero-padding elements on both sides, default=0
+    - groups: Number of groups for grouped convolution, default=1
+    }];
+
+  let arguments = (ins AnyShaped:$input,
+                      AnyShaped:$weight,
+                      Optional<AnyShaped>:$bias,
+                      AnyShaped:$init,
+                      I32Attr:$stride,
+                      I32Attr:$padding,
+                      I32Attr:$dilation,
+                      I32Attr:$groups);
+  let results = (outs AnyTensor:$result);
+  let regions = (region AnyRegion:$region);
+  let skipDefaultBuilders = 1;
+  let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "int32_t":$stride,
+                        "int32_t":$padding,
+                        "int32_t":$dilation,
+                        "int32_t":$groups)>];
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = structuredOpsBaseDecls#[{
+    // Declare functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable();
+    // Declare functions necessary for LinalgStructuredInterface.
+    SmallVector<utils::IteratorType> getIteratorTypesArray();
+    ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
+    getRegionBuilder();
+
+  }];
+}
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONSTRUCTUREDOPS_TD

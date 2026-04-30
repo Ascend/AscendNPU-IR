@@ -988,3 +988,14 @@ Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
 
   return libParams;
 }
+//===----------------------------------------------------------------------===//
+// Conv3DL1Op
+//===----------------------------------------------------------------------===//
+
+bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv3DL1Op>(this, cst);
+}
+
+void Conv3DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
