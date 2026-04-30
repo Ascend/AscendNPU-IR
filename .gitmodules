@@ -1,6 +1,7 @@
-[submodule "third-party/llvm-project"]
-	path = third-party/llvm-project
-	url = https://github.com/llvm/llvm-project.git
 [submodule "third-party/triton"]
 	path = third-party/triton
 	url = https://github.com/triton-lang/triton.git
+[submodule "third-party/llvm-project"]
+	path = third-party/llvm-project
+	url = https://gitcode.com/Ascend/llvm-project.git
+	branch = Ascend/AscendNPU-IR-Dev/llvmorg-19.1.7
