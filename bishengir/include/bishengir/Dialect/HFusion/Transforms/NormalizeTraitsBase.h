@@ -47,6 +47,9 @@ public:
 
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);
+
+  static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
+                               Type resultType, Value source);
 };
 
 } // namespace mlir::hfusion

@@ -18,7 +18,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
-#include "bishengir/Transforms/Normalize/NormalizeComparison.h"
+#include "bishengir/Transforms/Normalize/NormalizeComparisonTemplate.h"
 
 namespace mlir::hfusion {
 
@@ -105,228 +105,57 @@ public:
   }
 };
 
-/// get the constant integer value which is used mask sign bit
-/// e.g. 8 bit mask value is 0b01111111
-Value getSignMaskConstValue(PatternRewriter &rewriter, Location loc,
-                            int bitwidth) {
-  if (bitwidth == 32) {
-    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI32IntegerAttr(0x7FFFFFFF));
-    return maskCstOp->getResults()[0];
+struct HFusionIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
+  static bool isSupportedElementType(Type elemType) {
+    return elemType.isF16() || elemType.isBF16() || elemType.isF32();
   }
-  if (bitwidth == 16) {
-    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI16IntegerAttr(0x7FFF));
-    return maskCstOp->getResults()[0];
+
+  // HFusion isinf/isnan are not DestinationStyleOpInterface ops today.
+  // They expose one input / one result through getInput()/getOutput(), so the
+  // shared template cannot use the same DPS accessor shape as HIVM here.
+  template <typename OpTy>
+  static Value getInput(OpTy op) {
+    return op.getInput();
   }
-  llvm_unreachable("unsupported bitwidth");
-}
 
-/// get the complement of constant integer value of inf
-/// e.g. 16 bit float inf is 0b0111110000000000
-///      32 bit float inf is 0b01111111100000000000000000000000
-Value getComplementOfInfConstValue(PatternRewriter &rewriter, Location loc,
-                                   int bitwidth) {
-  if (bitwidth == 32) {
-    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI32IntegerAttr(-1 * (0x7F800000)));
-    return maskCstOp->getResults()[0];
+  template <typename OpTy>
+  static Value getOutput(OpTy op) {
+    return op.getOutput();
   }
-  if (bitwidth == 16) {
-    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI16IntegerAttr(-1 * (0x7C00)));
-    return maskCstOp->getResults()[0];
-  }
-  llvm_unreachable("unsupported bitwidth");
-}
 
-/// mask the sign bit of f32/f16 type input
-Value maskSignBit(PatternRewriter &rewriter, Location loc, Value input) {
-  Type elemType = getElementTypeOrSelf(input.getType());
-  Type castType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
-  // 1. init mask constant
-  // 2. vdup(7FFF) : (I32/I16)
-  auto fillInit =
-      utils::createEmptyOpWithTargetElemType(rewriter, loc, input, castType);
-  auto fillOp = rewriter.create<linalg::FillOp>(
-      loc,
-      ValueRange{getSignMaskConstValue(rewriter, loc,
-                                       elemType.getIntOrFloatBitWidth())},
-      ValueRange{fillInit});
-  auto bitcastEmptyOp =
-      utils::createEmptyOpWithTargetElemType(rewriter, loc, fillInit, castType);
-  auto shapedType = dyn_cast_if_present<ShapedType>(input.getType());
-  auto bitcastOp = rewriter.create<hfusion::BitcastOp>(
-      loc, TypeRange{shapedType.clone(castType)}, ValueRange{input},
-      ValueRange{bitcastEmptyOp});
-  auto bitcastInit = bitcastOp->getResults()[0];
-  auto vandInit = utils::createEmptyOp(rewriter, loc, bitcastInit);
-
-  // 3. vand(input, input, vdup) : (I32/I16)
-  auto vandOP =
-      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                              hfusion::BinaryFnAttr>(
-          rewriter, loc, hfusion::BinaryFn::vand,
-          ValueRange{bitcastInit, fillOp->getResults()[0]},
-          ValueRange{vandInit});
-  return vandOP->getResults()[0];
-}
-
-/// minus the input with integer value of inf
-Value minusInfConstValue(PatternRewriter &rewriter, Location loc, Value input) {
-  // namely add complement of integer value of inf
-  // e.g. vadd(input, input, -1 * f16_inf).
-  auto addInit = utils::createEmptyOp(rewriter, loc, input);
-  Type elemType = getElementTypeOrSelf(input.getType());
-  auto addOp = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-      rewriter, loc, linalg::BinaryFn::add,
-      ValueRange{input, getComplementOfInfConstValue(
-                            rewriter, loc, elemType.getIntOrFloatBitWidth())},
-      ValueRange{addInit});
-  return addOp->getResults()[0];
-}
-
-struct NormalizeIsInfOp : public OpRewritePattern<hfusion::IsInfOp> {
-public:
-  using OpRewritePattern<hfusion::IsInfOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::IsInfOp op,
-                                PatternRewriter &rewriter) const override {
-    Value input = op.getInput();
-    Type elemType = getElementTypeOrSelf(input.getType());
-    if (!elemType.isF16() && !elemType.isBF16() && !elemType.isF32()) {
-      return failure();
-    }
-
-    // step 1: mask sign bit.
-    // 1. vdup(7FFF) : (I32/I16)
-    auto loc = op->getLoc();
-    auto maskedSignValue = maskSignBit(rewriter, loc, input);
-
-    // step 2: compared with negtive Infinity
-    // 3.vadd(input, input, neg_inf_bitcast_as_int).
-    auto minusInfValue = minusInfConstValue(rewriter, loc, maskedSignValue);
-    // 4.vabs(input, input) : (F16/F32)
-    auto rebitcastEmptyOp = utils::createEmptyOpWithTargetElemType(
-        rewriter, loc, minusInfValue, elemType);
-    auto shapedType = dyn_cast_if_present<ShapedType>(input.getType());
-    auto rebitcastOp = rewriter.create<hfusion::BitcastOp>(
-        loc, TypeRange{shapedType.clone(elemType)}, ValueRange{minusInfValue},
-        ValueRange{rebitcastEmptyOp});
-    Value rebitcastInit = rebitcastOp->getResults()[0];
-    auto absInit = utils::createEmptyOp(rewriter, loc, rebitcastInit);
-    auto absOP = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, linalg::UnaryFn::abs, ValueRange{rebitcastInit},
-        ValueRange{absInit});
-
-    // 5.vmin(input, input, 1) : (I32/I16)
-    Type castType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
-    auto bitcastOpForMinEmptyOp = utils::createEmptyOpWithTargetElemType(
-        rewriter, loc, absOP->getResults()[0], castType);
-    auto bitcastOpForMin = rewriter.create<hfusion::BitcastOp>(
-        loc, TypeRange{shapedType.clone(castType)},
-        ValueRange{absOP->getResults()[0]}, ValueRange{bitcastOpForMinEmptyOp});
-    Value bitcastOpForMinInit = bitcastOpForMin.getResults()[0];
-    auto minInit = utils::createEmptyOp(rewriter, loc, bitcastOpForMinInit);
-    arith::ConstantOp posOneOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 1));
-    auto minOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::min_signed,
-            ValueRange{bitcastOpForMinInit, posOneOp->getResults()[0]},
-            ValueRange{minInit});
-
-    // 6.vmuls(input, input, -1) : (I32/I16)
-    arith::ConstantOp negOneOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, -1));
-    auto mulOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange({minOp->getResults()[0], negOneOp->getResults()[0]}),
-            minOp->getResults()[0]);
-
-    // 7.vadds(input, input, 1) : (I32/I16)
-    auto addsOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::add,
-            ValueRange({mulOp->getResults()[0], posOneOp->getResults()[0]}),
-            mulOp->getResults()[0]);
-
-    // 8.cast(input, int->i1)
+  /// Converts the intermediate integer mask in `{0, 1}` to the final bool
+  /// result tensor by reusing the op's destination and issuing an explicit
+  /// `hfusion.cast(... -> i1)`.
+  static Value lowerIntMaskToBoolResult(PatternRewriter &rewriter, Location loc,
+                                        Value input, Value output) {
     auto roundingAttr =
         rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
     auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                           roundingAttr);
-    hfusion::CastOp castToDst = rewriter.create<hfusion::CastOp>(
-        loc, TypeRange(op.getOutput()), addsOp->getResults()[0], op.getOutput(),
-        modeAttr);
-    rewriter.replaceOp(op, castToDst);
-    return success();
+    return rewriter
+        .create<hfusion::CastOp>(loc, TypeRange(output), input, output, modeAttr)
+        .getResult(0);
   }
 };
 
-struct NormalizeIsNanOp : public OpRewritePattern<hfusion::IsNanOp> {
-public:
-  using OpRewritePattern<hfusion::IsNanOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::IsNanOp op,
-                                PatternRewriter &rewriter) const override {
-    Value input = op.getInput();
-    Type elemType = getElementTypeOrSelf(input.getType());
-    if (!elemType.isF16() && !elemType.isBF16() && !elemType.isF32()) {
-      return failure();
-    }
-
-    // step 1: mask sign bit.
-    // 1. vdup(7FFF) : (I32/I16)
-    auto loc = op->getLoc();
-    auto maskedSignValue = maskSignBit(rewriter, loc, input);
-
-    // step 2: compared with negtive Infinity
-    // 3.vadd(input, input, neg_inf_bitcast_as_int).
-    auto minusInfValue = minusInfConstValue(rewriter, loc, maskedSignValue);
-
-    // step3: change temp result to 1 which is > 1
-    // vmin(input, input, 1) : (I32/I16)
-    Type castType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
-    arith::ConstantOp posOneOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 1));
-    auto minOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::min_signed,
-            ValueRange{minusInfValue, posOneOp->getResults()[0]},
-            ValueRange{minusInfValue});
-
-    // step4. change temp result to 0 which is < 0
-    // vmax(input, input, 0) : (I32/I16)
-    arith::ConstantOp zeroOp = rewriter.create<arith::ConstantOp>(
-        loc, castType, rewriter.getIntegerAttr(castType, 0));
-    auto maxOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::max_signed,
-            ValueRange({minOp->getResults()[0], zeroOp->getResults()[0]}),
-            minOp->getResults()[0]);
-
-    // step5. cast int32 to int1
-    // cast(input, i32 -> i1)
-    auto roundingAttr =
-        rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
-    auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
-                                          roundingAttr);
-    hfusion::CastOp castToDst = rewriter.create<hfusion::CastOp>(
-        loc, TypeRange(op.getOutput()), maxOp->getResults()[0], op.getOutput(),
-        modeAttr);
-    rewriter.replaceOp(op, castToDst);
-    return success();
-  }
+/// Normalizes `hfusion.is_inf` to existing HFusion primitive ops:
+///   bitcast -> vand(sign_mask) -> add(-inf_bits) -> bitcast -> abs
+///   -> bitcast -> min_signed(1) -> mul(-1) -> add(1) -> cast(i1)
+struct HFusionIsInfTraits : public HFusionIsInfNanNormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::IsInfOp) { return true; }
 };
+
+/// Normalizes `hfusion.is_nan` to existing HFusion primitive ops:
+///   bitcast -> vand(sign_mask) -> add(-inf_bits) -> min_signed(1)
+///   -> max_signed(0) -> cast(i1)
+struct HFusionIsNanTraits : public HFusionIsInfNanNormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::IsNanOp) { return true; }
+};
+
+using NormalizeIsInfOp =
+    mlir::NormalizeIsInfOpTemplate<hfusion::IsInfOp, HFusionIsInfTraits>;
+using NormalizeIsNanOp =
+    mlir::NormalizeIsNanOpTemplate<hfusion::IsNanOp, HFusionIsNanTraits>;
 
 /// normalize i8/i32 CompareOp
 ///   i8 -> f16

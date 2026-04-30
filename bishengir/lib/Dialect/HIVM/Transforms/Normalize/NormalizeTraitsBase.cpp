@@ -22,7 +22,6 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 using namespace mlir;
 namespace mlir::hivm {
@@ -73,6 +72,9 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Div, createHIVMBinaryOp<hivm::VDivOp>},
     {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
+    {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
+    {BinaryKind::MinSigned, createHIVMBinaryOp<hivm::VMinOp>},
+    {BinaryKind::MaxSigned, createHIVMBinaryOp<hivm::VMaxOp>},
 };
 
 static const llvm::DenseMap<UnaryKind, UnaryOpMatcherFn> unaryOpMatcherMap = {
@@ -90,6 +92,9 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Div, matchHIVMOp<hivm::VDivOp>},
     {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
+    {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
+    {BinaryKind::MinSigned, matchHIVMOp<hivm::VMinOp>},
+    {BinaryKind::MaxSigned, matchHIVMOp<hivm::VMaxOp>},
 };
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, UnaryKind kind) {
@@ -150,9 +155,8 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     UnaryKind kind) {
   auto it = unaryOpMap.find(kind);
-  if (it == unaryOpMap.end()) {
+  if (it == unaryOpMap.end())
     llvm_unreachable("unsupported unary kind");
-  }
   return it->second(rewriter, loc, input, dst);
 }
 
@@ -160,9 +164,8 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
   auto it = binaryOpMap.find(kind);
-  if (it == binaryOpMap.end()) {
+  if (it == binaryOpMap.end())
     llvm_unreachable("unsupported binary kind");
-  }
   return it->second(rewriter, loc, lhs, rhs, dst);
 }
 
@@ -185,20 +188,16 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::castTo(
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst) {
-  // Rebuild scalar-like broadcasts as scalar-source `hivm.hir.vbrc`.
-  // VBrcOp requires a scalar src; extract if input is a 0-rank tensor.
-  if (auto shapedType = dyn_cast<ShapedType>(input.getType());
-      shapedType && shapedType.getRank() == 0) {
-    input = rewriter.create<tensor::ExtractOp>(loc, input, ArrayRef<Value>{});
-  }
-  const bool isTensor = isa<TensorType>(dst.getType());
-  auto resultTypeRange = isTensor ? TypeRange(dst.getType()) : TypeRange();
-  // Use the scalar-broadcast builder directly instead of materializing an
-  // explicit empty `broadcast_dims` attribute. This matches the verifier-clean
-  // textual form `hivm.hir.vbrc ins(%scalar) outs(%dst)` and avoids
-  // reintroducing vector-broadcast semantics while normalizing scalar-like
-  // inputs.
-  auto fillOp = rewriter.create<hivm::VBrcOp>(loc, resultTypeRange, input, dst);
-  return isTensor ? fillOp->getResult(0) : dst;
+  if (isa<ShapedType>(input.getType()) || !isa<TensorType>(dst.getType()))
+    llvm_unreachable(
+        "NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
+  return rewriter
+      .create<hivm::VBrcOp>(loc, TypeRange(dst.getType()), input, dst)
+      .getResult()[0];
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
+    PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
+  return rewriter.create<BitcastOp>(loc, resultType, source).getResult();
 }
 } // namespace mlir::hivm

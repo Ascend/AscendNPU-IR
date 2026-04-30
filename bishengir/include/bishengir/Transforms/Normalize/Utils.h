@@ -21,7 +21,17 @@
 namespace mlir {
 
 enum class UnaryKind { Rec, Sqrt, Abs, Not, Exp };
-enum class BinaryKind { Add, Sub, Mul, Div, Min, Max };
+enum class BinaryKind {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  And,
+  Min,
+  Max,
+  MinSigned,
+  MaxSigned
+};
 enum class CompareKind { EQ, NE, LT, GT, GE, LE };
 enum class CastRoundKind { Round, Floor };
 

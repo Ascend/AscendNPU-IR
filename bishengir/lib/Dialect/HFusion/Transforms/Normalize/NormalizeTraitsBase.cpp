@@ -69,6 +69,8 @@ mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
       {BinaryKind::Sub, linalg::BinaryFn::sub},
       {BinaryKind::Mul, linalg::BinaryFn::mul},
       {BinaryKind::Div, linalg::BinaryFn::div},
+      {BinaryKind::MinSigned, linalg::BinaryFn::min_signed},
+      {BinaryKind::MaxSigned, linalg::BinaryFn::max_signed},
   };
 
   return lookupMappedFn(kindToFn, kind);
@@ -79,6 +81,7 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
   static const llvm::DenseMap<BinaryKind, hfusion::BinaryFn> kindToFn = {
       {BinaryKind::Min, hfusion::BinaryFn::minf},
       {BinaryKind::Max, hfusion::BinaryFn::maxf},
+      {BinaryKind::And, hfusion::BinaryFn::vand},
   };
 
   return lookupMappedFn(kindToFn, kind);
@@ -215,5 +218,15 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createFillOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst) {
   auto fillOp = rewriter.create<linalg::FillOp>(loc, ValueRange{input}, dst);
   return fillOp->getResult(0);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
+    PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
+  Value init = utils::createEmptyOpWithTargetElemType(
+      rewriter, loc, source, getElementTypeOrSelf(resultType));
+  return rewriter
+      .create<hfusion::BitcastOp>(loc, TypeRange{resultType}, ValueRange{source},
+                                  ValueRange{init})
+      .getResult(0);
 }
 } // namespace mlir::hfusion

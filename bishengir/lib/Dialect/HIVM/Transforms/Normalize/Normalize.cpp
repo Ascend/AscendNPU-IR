@@ -40,7 +40,7 @@ struct NormalizeHIVMPass
     populateNormalizeArithmeticPatterns(patterns);
     populateNormalizeTrigPatterns(patterns);
     if (!isRegbased)
-      populateNormalizeCmpVnePatterns(patterns);
+      populateNormalizeComparisonPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,
     // but not an arith.constant dense tensor. Dense constants are handled by

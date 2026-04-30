@@ -15,11 +15,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Transforms/Normalize/NormalizeComparison.h"
+#include "bishengir/Transforms/Normalize/NormalizeComparisonTemplate.h"
 
 #include "mlir/IR/PatternMatch.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 
 namespace mlir::hivm {
@@ -39,8 +40,80 @@ struct HIVMCmpVneTraits : public NormalizeTraitsBase {
 
 using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<VCmpOp, HIVMCmpVneTraits>;
 
-void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeCmpVneOp>(patterns.getContext());
+struct HIVMIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
+  /// HIVM `visinf`/`visnan` normalize rewrites through `vabs`, and `vabs`
+  /// only supports F16/F32 here. BF16 therefore cannot be normalized by this
+  /// pattern and stays outside the supported op contract.
+  static bool isSupportedElementType(Type elemType) {
+    return elemType.isF16() || elemType.isF32();
+  }
+
+  template <typename OpTy>
+  static Value getInput(OpTy op) {
+    return op.getDpsInputs()[0];
+  }
+
+  template <typename OpTy>
+  static Value getOutput(OpTy op) {
+    return op.getDpsInits()[0];
+  }
+
+  /// Converts the intermediate integer mask in `{0, 1}` to the final bool
+  /// output tensor.
+  static Value lowerIntMaskToBoolResult(PatternRewriter &rewriter, Location loc,
+                                        Value input, Value output) {
+    Type intElemType = getElementTypeOrSelf(input.getType());
+    Type elemType = intElemType.getIntOrFloatBitWidth() == 32
+                        ? static_cast<Type>(rewriter.getF32Type())
+                        : static_cast<Type>(rewriter.getF16Type());
+    Value castValue = hivm::castTo(
+                          rewriter, loc, input,
+                          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT),
+                          elemType)
+                          .getResult()[0];
+    Value zeroValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(elemType, 0.0));
+    Value cmpValue = NormalizeTraitsBase::createCmpOp(rewriter, loc, castValue,
+                                                      zeroValue, CompareKind::EQ);
+    return NormalizeTraitsBase::createUnaryOp(rewriter, loc, cmpValue, output,
+                                              UnaryKind::Not);
+  }
+
+  template <typename OpTy>
+  static bool shouldNormalize(OpTy op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+};
+
+struct HIVMIsInfTraits : public HIVMIsInfNanNormalizeTraitsBase {
+  static bool shouldNormalize(VIsInfOp op) {
+    return HIVMIsInfNanNormalizeTraitsBase::shouldNormalize(op);
+  }
+};
+
+struct HIVMIsNanTraits : public HIVMIsInfNanNormalizeTraitsBase {
+  static bool shouldNormalize(VIsNanOp op) {
+    return HIVMIsInfNanNormalizeTraitsBase::shouldNormalize(op);
+  }
+};
+
+/// Normalizes `hivm.hir.visinf` to existing HIVM primitive ops:
+///   bitcast -> vand(sign_mask) -> vadd(-inf_bits) -> bitcast -> vabs
+///   -> bitcast -> vmin(1) -> vmul(-1) -> vadd(1) -> vcast -> vcmp(eq, 0)
+///   -> vnot
+using NormalizeIsInfOp = mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTraits>;
+
+/// Normalizes `hivm.hir.visnan` to existing HIVM primitive ops:
+///   bitcast -> vand(sign_mask) -> vadd(-inf_bits) -> vmin(1) -> vmax(0)
+///   -> vcast -> vcmp(eq, 0) -> vnot
+using NormalizeIsNanOp = mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
+
+void populateNormalizeComparisonPatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<NormalizeIsInfOp>(ctx);
+  patterns.add<NormalizeIsNanOp>(ctx);
+  patterns.add<NormalizeCmpVneOp>(ctx);
 }
 
 } // namespace mlir::hivm

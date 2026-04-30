@@ -1862,4 +1862,74 @@ def VSortOp : HIVM_VectorOp<"vsort",
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// HIVM Vector IsInf Op
+//===----------------------------------------------------------------------===//
+
+// Note: BF16 is not supported because VAbsOp does not support BF16 element type.
+// The normalization uses VAbsOp after bitcast, which requires F16 or F32.
+def VIsInfOp : HIVM_ElementwiseUnaryOp<"visinf",
+    [VectorOnlyTrait<0>,
+     NoLibraryFunctionTrait,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     BroadcastableOTF
+    ]> {
+  let summary = "Elementwise Vector IsInfinity Op";
+  let description = baseClassDescription # [{
+    Returns 1 if the input element is positive or negative infinity, 0 otherwise.
+
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The element type of `dst` must be bool (i1).
+  }];
+  let arguments = (ins Variadic<AnyShaped>:$src,
+                       Variadic<AnyShaped>:$dst,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
+  );
+  let assemblyFormat = [{
+      attr-dict `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst  `:` type($dst) `)`
+      (`broadcast` `=` $broadcast^)?
+      (`transpose` `=` $transpose^)?
+      (`->` type($result)^)?
+    }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Vector IsNan Op
+//===----------------------------------------------------------------------===//
+
+// Note: BF16 is not supported because VAbsOp does not support BF16 element type.
+// The normalization uses VAbsOp after bitcast, which requires F16 or F32.
+def VIsNanOp : HIVM_ElementwiseUnaryOp<"visnan",
+    [VectorOnlyTrait<0>,
+     NoLibraryFunctionTrait,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     BroadcastableOTF
+    ]> {
+  let summary = "Elementwise Vector IsNaN Op";
+  let description = baseClassDescription # [{
+    Returns 1 if the input element is NaN (Not a Number), 0 otherwise.
+
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The element type of `dst` must be bool (i1).
+  }];
+  let arguments = (ins Variadic<AnyShaped>:$src,
+                       Variadic<AnyShaped>:$dst,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
+  );
+  let assemblyFormat = [{
+      attr-dict `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst  `:` type($dst) `)`
+      (`broadcast` `=` $broadcast^)?
+      (`transpose` `=` $transpose^)?
+      (`->` type($result)^)?
+    }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMVECTOROPS_TD
