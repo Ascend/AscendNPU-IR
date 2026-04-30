@@ -1,0 +1,239 @@
+diff --git a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+index 411921cbb640..08196bd39069 100644
+--- a/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
++++ b/mlir/lib/Dialect/Linalg/TransformOps/LinalgTransformOps.cpp
+@@ -38,9 +38,11 @@
+ #include "mlir/IR/PatternMatch.h"
+ #include "mlir/IR/TypeUtilities.h"
+ #include "mlir/Interfaces/TilingInterface.h"
++#include "mlir/Pass/PassManager.h"
+ #include "mlir/Support/LLVM.h"
+ #include "mlir/Support/TypeID.h"
+ #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
++#include "mlir/Transforms/Passes.h"
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/ScopeExit.h"
+ #include "llvm/ADT/TypeSwitch.h"
+@@ -1078,6 +1080,186 @@ tileAndFuseFirstExtractUseThroughContainingOpBlockArgument(
+   return tileAndFuseResult->tiledOps;
+ }
+ 
++#if BSPUB_DAVINCI_BISHENGIR
++static void replaceInnerForWithNewSignature(
++    RewriterBase &rewriter, std::deque<scf::ForOp> &oldInnerForOps,
++    scf::ForOp oldForOp, scf::ForOp newForOp, Operation *fusedProducerOp) {
++  std::deque<std::pair<scf::ForOp, scf::ForOp>> oldAndNewForOpPairs;
++  oldAndNewForOpPairs.push_front(std::make_pair(oldForOp, newForOp));
++  // Create new nested scf::ForOp from outside to inside
++  scf::ForOp newParentForOpOfOldInnerForOp = newForOp;
++  for (scf::ForOp oldInnerForOp : oldInnerForOps) {
++    // Build new args
++    rewriter.setInsertionPoint(oldInnerForOp);
++    Location loc = oldInnerForOp.getLoc();
++    SmallVector<Value> newInitArgs(oldInnerForOp.getInitArgs());
++    newInitArgs.push_back(
++        newParentForOpOfOldInnerForOp.getRegionIterArgs().back());
++    // Create new scf.for op
++    auto newInnerForOp = rewriter.create<scf::ForOp>(
++        loc, oldInnerForOp.getLowerBound(), oldInnerForOp.getUpperBound(),
++        oldInnerForOp.getStep(), newInitArgs);
++    newInnerForOp->setAttrs(oldInnerForOp->getAttrs());
++    rewriter.eraseBlock(newInnerForOp.getBody());
++    // Build new body
++    newInnerForOp.getRegion().takeBody(oldInnerForOp.getRegion());
++    newInnerForOp.getBody()->addArgument(newInitArgs.back().getType(),
++                                         newInitArgs.back().getLoc());
++    auto bbArgs = newInnerForOp.getBody()->getArguments();
++    rewriter.replaceUsesWithIf(newInitArgs.back(), bbArgs.back(),
++                               [&](OpOperand &use) {
++                                 Operation *op = use.getOwner();
++                                 return newInnerForOp->isProperAncestor(op);
++                               });
++    oldAndNewForOpPairs.push_front(
++        std::make_pair(oldInnerForOp, newInnerForOp));
++    newParentForOpOfOldInnerForOp = newInnerForOp;
++  }
++  // Create new terminator for newForOps and replace uses of oldForOp results
++  // by newForOp results from inside to outside.
++  scf::ForOp oldInnerForOp = oldAndNewForOpPairs.begin()->first;
++  scf::ForOp newInnerForOp = oldAndNewForOpPairs.begin()->second;
++  auto oldInnerYieldOp = newInnerForOp.getBody()->getTerminator();
++  rewriter.setInsertionPoint(oldInnerYieldOp);
++  SmallVector<Value> newInnerYieldResults;
++  for (Value operand : oldInnerYieldOp->getOperands())
++    newInnerYieldResults.push_back(operand);
++  for (Value result : fusedProducerOp->getResults())
++    newInnerYieldResults.push_back(result);
++  auto newInnerYieldOp = rewriter.create<scf::YieldOp>(
++      oldInnerYieldOp->getLoc(), newInnerYieldResults);
++  rewriter.replaceOp(oldInnerYieldOp, newInnerYieldOp);
++  for (auto oldInnerForOpResult : llvm::enumerate(oldInnerForOp.getResults())) {
++    rewriter.replaceAllUsesWith(
++        oldInnerForOpResult.value(),
++        newInnerForOp->getResult(oldInnerForOpResult.index()));
++  }
++  for (auto oldAndNewForOpPair : llvm::drop_begin(oldAndNewForOpPairs)) {
++    scf::ForOp oldForOp = oldAndNewForOpPair.first;
++    scf::ForOp newForOp = oldAndNewForOpPair.second;
++    auto oldYieldOp = newForOp.getBody()->getTerminator();
++    rewriter.setInsertionPoint(oldYieldOp);
++    SmallVector<Value> newYieldResults;
++    for (Value operand : oldYieldOp->getOperands())
++      newYieldResults.push_back(operand);
++    for (unsigned i = 0; i < fusedProducerOp->getNumResults(); i++)
++      newYieldResults.push_back(
++          newInnerForOp.getResult(oldYieldOp->getNumOperands() + i));
++    auto newYieldOp =
++        rewriter.create<scf::YieldOp>(oldYieldOp->getLoc(), newYieldResults);
++    rewriter.replaceOp(oldYieldOp, newYieldOp);
++    for (auto oldForOpResult : llvm::enumerate(oldForOp.getResults())) {
++      rewriter.replaceAllUsesWith(oldForOpResult.value(),
++                                  newForOp->getResult(oldForOpResult.index()));
++    }
++    newInnerForOp = newForOp;
++  }
++  for (scf::ForOp oldInnerForOp : oldInnerForOps) {
++    rewriter.eraseOp(oldInnerForOp);
++  }
++}
++
++static Operation *replaceForWithNewSignature(
++    RewriterBase &rewriter, Diagnostic &diag, Operation *producerOp,
++    Operation *containingOp, Operation *fusedProducerOp) {
++  // Count number of users not including the containing op
++  SetVector<Operation *> dominatedUsers;
++  DominanceInfo domInfo(containingOp);
++  for (Operation *user : producerOp->getUsers()) {
++    if (!containingOp->isAncestor(user) && domInfo.dominates(containingOp, user)) {
++      dominatedUsers.insert(user);
++    }
++  }
++  if (dominatedUsers.empty())
++    return nullptr;
++
++  // If producer op has other users which are dominated by containing op, the
++  // result of producer op should be yielded from the containing op and used
++  // by those users, see issue:
++  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/2705
++  auto forOp = cast<scf::ForOp>(containingOp);
++  OpBuilder::InsertionGuard g(rewriter);
++  rewriter.setInsertionPoint(forOp);
++
++  Location loc = forOp.getLoc();
++  auto genericOp = dyn_cast<linalg::GenericOp>(producerOp);
++  if (!genericOp)
++    return nullptr;
++
++  // If producer op is fused into inner ForOp of containing op, for example:
++  // scf.for {   -> this is containing op
++  //   scf.for { -> this is inner ForOp
++  //       producer op
++  //   }
++  // }
++  // both inner ForOps and outermost ForOp should yield the result of producer op.
++  // here we collect all ForOps which containing producer op and handle all inner
++  // ForOps in `replaceInnerForWithNewSignature`
++  std::deque<scf::ForOp> innerForOps;
++  Operation *parentOp = fusedProducerOp;
++  while (auto parentForOp = dyn_cast<scf::ForOp>(parentOp->getParentOp())) {
++    if (parentForOp != forOp) {
++      innerForOps.push_front(parentForOp);
++      parentOp = parentOp->getParentOp();
++    } else {
++      break;
++    }
++  }
++
++  // Build new init args
++  SmallVector<Value> newInitArgs(forOp.getInitArgs());
++  for (Value output : genericOp.getOutputs())
++    newInitArgs.push_back(output);
++
++  // Create new scf.for op
++  auto newForOp = rewriter.create<scf::ForOp>(loc, forOp.getLowerBound(),
++                                              forOp.getUpperBound(),
++                                              forOp.getStep(), newInitArgs);
++  newForOp->setAttrs(forOp->getAttrs());
++  rewriter.eraseBlock(newForOp.getBody());
++  newForOp.getRegion().takeBody(forOp.getRegion());
++
++  // Add additional block argument for new value being returned
++  // and replaces all uses of the new output with corresponding bbArg
++  // inside the scf.for to enable fusion into this new scf.for.
++  newForOp.getBody()->addArgument(newInitArgs.back().getType(),
++                                  newInitArgs.back().getLoc());
++  auto bbArgs = newForOp.getBody()->getArguments();
++  rewriter.replaceUsesWithIf(newInitArgs.back(), bbArgs.back(),
++                             [&](OpOperand &use) {
++                               Operation *op = use.getOwner();
++                               return newForOp->isProperAncestor(op);
++                             });
++
++  if (innerForOps.size() > 0) {
++    replaceInnerForWithNewSignature(rewriter, innerForOps, forOp, newForOp,
++                                    fusedProducerOp);
++  } else {
++    auto yieldOp = newForOp.getBody()->getTerminator();
++    rewriter.setInsertionPoint(yieldOp);
++    SmallVector<Value> yieldResults;
++    for (Value operand : yieldOp->getOperands())
++      yieldResults.push_back(operand);
++    for (Value result : fusedProducerOp->getResults())
++      yieldResults.push_back(result);
++    auto newYieldOp =
++        rewriter.create<scf::YieldOp>(yieldOp->getLoc(), yieldResults);
++    rewriter.replaceOp(yieldOp, newYieldOp);
++    for (auto result : llvm::enumerate(forOp.getResults())) {
++      rewriter.replaceAllUsesWith(result.value(),
++                                  newForOp->getResult(result.index()));
++    }
++  }
++  rewriter.replaceUsesWithIf(producerOp->getResult(0),
++                             newForOp->getResults().back(),
++                             [&](OpOperand &use) {
++                               Operation *user = use.getOwner();
++                               return dominatedUsers.contains(user);
++                             });
++  return newForOp;
++}
++#endif
++
+ static Operation *cloneAndFuseFirstUse(RewriterBase &rewriter, Diagnostic &diag,
+                                        Operation *producerOp,
+                                        Operation *containingOp) {
+@@ -1319,6 +1501,9 @@ static void findAndMergeMultipleExtractUses(transform::TransformRewriter &rewrit
+       rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
+     }
+   }
++  PassManager pm(containingOp->getContext());
++  pm.addPass(createLoopInvariantCodeMotionPass());
++  std::ignore = pm.run(containingOp);
+ }
+ #endif
+ 
+@@ -1435,6 +1620,22 @@ transform::FuseIntoContainingOp::apply(transform::TransformRewriter &rewriter,
+     if (cloned) {
+       LLVM_DEBUG(DBGS() << "\nFused an use by cloning\n" << *containingOp);
+       fusedOps.push_back(cloned);
++#if BSPUB_DAVINCI_BISHENGIR
++      if (isa<scf::ForOp>(containingOp)) {
++        Operation *newContainingOp = replaceForWithNewSignature(
++            rewriter, diag, producerOp, containingOp, cloned);
++        if (newContainingOp) {
++          LogicalResult replacementStatus =
++              rewriter.notifyPayloadOperationReplaced(containingOp,
++                                                      newContainingOp);
++          (void)replacementStatus;
++          assert(succeeded(replacementStatus) &&
++                "unable to update transform state mapping");
++          rewriter.eraseOp(containingOp);
++          containingOp = newContainingOp;
++        }
++      }
++#endif
+       continue;
+     }
+     return DiagnosedSilenceableFailure::silenceableFailure(std::move(diag));
+-- 
+2.34.1
+

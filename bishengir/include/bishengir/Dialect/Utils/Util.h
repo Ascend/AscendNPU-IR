@@ -391,7 +391,8 @@ bool areShapesAligned(ArrayRef<int64_t> staticShapes, int64_t alignment);
 std::optional<bool>
 checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn);
+                           const std::function<bool(Operation *op)> &skipFn,
+                           DenseSet<Value> &visited);
 /// Check if any of op's users satisfies the condition function.
 bool
 checkUsersAnyWithCondition(Value v, Operation *rootOp,

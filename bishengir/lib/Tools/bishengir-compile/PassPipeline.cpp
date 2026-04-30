@@ -115,8 +115,6 @@ void setupHFusionPipelineOptions(
   hfusionPipelineOptions.vfFusionMode = config.getVFFusionMode();
   hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
   hfusionPipelineOptions.enableTreeReduceV2 = config.shouldEnableTreeReduceV2();
-  hfusionPipelineOptions.enableMultipleConsumerFusion =
-      config.shouldEnableMultipleConsumerFusion();
   hfusionPipelineOptions.skipScope = config.shouldSkipScope();
   hfusionPipelineOptions.enableCountBufferDmaOpt =
       config.shouldEnableCountBufferDmaOpt();

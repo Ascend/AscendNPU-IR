@@ -262,13 +262,19 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
 std::optional<bool>
 checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn) {
+                           const std::function<bool(Operation *op)> &skipFn,
+                           DenseSet<Value> &visited) {
+  if (visited.contains(v))
+    return std::nullopt;
+  visited.insert(v);
+
+  LLVM_DEBUG(llvm::dbgs() << "[VISITING] " << v << "\n";);
   // Flag initialization is nullopt which means we can't infer flag now
   std::optional<bool> flag = std::nullopt;
 
   for (auto &use : v.getUses()) {
     auto *op = use.getOwner();
-    LLVM_DEBUG(llvm::dbgs() << "[TRACING USERS]" << *op << "\n";);
+    LLVM_DEBUG(llvm::dbgs() << "[TRACING USERS] " << *op << "\n";);
     if (op == rootOp)
       // When meet rootOp, just ignore it and keep original state
       continue;
@@ -285,7 +291,8 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
 
     // For all skipped ops, just continue searching its result
     for (auto opRes : op->getResults()) {
-      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn);
+      auto resCheck =
+          checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn, visited);
       if (!resCheck.has_value())
         continue;
 
@@ -300,8 +307,9 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
       if (resNum >= op->getParentOp()->getNumResults()) {
         continue;
       }
-      auto resCheck = checkUsersAllWithCondition(
-          op->getParentOp()->getResult(resNum), rootOp, condFn, skipFn);
+      auto resCheck =
+          checkUsersAllWithCondition(op->getParentOp()->getResult(resNum),
+                                     rootOp, condFn, skipFn, visited);
       if (!resCheck.has_value())
         continue;
 

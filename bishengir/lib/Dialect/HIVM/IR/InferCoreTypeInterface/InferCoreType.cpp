@@ -252,6 +252,7 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
     return dstAllocAddrSpace.value() == hivm::AddressSpace::UB ? TCoreType::VECTOR
                                                               : TCoreType::CUBE;
   }
+  DenseSet<Value> visitedCube;
   auto userAllCube = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
@@ -261,10 +262,12 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
       [](Operation *op) {
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
-      });
+      },
+      visitedCube);
   if (userAllCube.has_value() && userAllCube.value()) {
     return TCoreType::CUBE;
   }
+  DenseSet<Value> visitedVec;
   auto userAllVec = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
@@ -274,7 +277,8 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
       [](Operation *op) {
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
-      });
+      },
+      visitedVec);
   if (userAllVec.has_value() && userAllVec.value()) {
     return TCoreType::VECTOR;
   }

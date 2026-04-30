@@ -711,14 +711,6 @@ public:
   }
   int getMaxReductionSplitNum() const { return maxReductionSplitNumFlag; }
 
-  BiShengIRCompileMainConfig &enableMultipleConsumerFusion(bool enable) {
-    enableMultipleConsumerFusionFlag = enable;
-    return *this;
-  }
-  bool shouldEnableMultipleConsumerFusion() const {
-    return enableMultipleConsumerFusionFlag;
-  }
-
   // -------------------------------------------------------------------------//
   //                            Target options                                //
   // -------------------------------------------------------------------------//
@@ -1056,9 +1048,6 @@ protected:
   int32_t maxHorizontalFusionSizeFlag{-1};
   /// Maximum number of elementwise ops to fuse in PreVectorizationFusion.
   int32_t maxFusedElementwiseOpsFlag{-1};
-
-  /// Enable multiple consumer fusion in AutoVectorizeV2
-  bool enableMultipleConsumerFusionFlag{false};
 
   /// Max buffer count tuning in HFusion auto schedule.
   int64_t maxBufferCntTuningFlag{0};
