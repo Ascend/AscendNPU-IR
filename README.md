@@ -1,6 +1,18 @@
-![AscendNPU IR README](./docs/source/images/introduction/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
+<div align="center">
+
+# AscendNPU-IR
+
+### MLIR for Ascend, delivering comprehensive support
+
+[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg?style=flat)](https://ascendnpu-ir.gitcode.com)
+[![license](https://img.shields.io/badge/license-Apache%20License%202.0-blue)](https://gitcode.com/Ascend/AscendNPU-IR/blob/master/LICENSE)
+[![contributing](https://img.shields.io/badge/CONTRIBUTING-teal)](https://gitcode.com/Ascend/AscendNPU-IR/blob/master/docs/source/zh_cn/contributing_guide/contribute.md)
+[![SIG](https://img.shields.io/badge/SIG-AscendNPU-IR)](https://etherpad.ascend.osinfra.cn/p/sig-AscendNPU-IR)
+</div>
 
 ## 🎯 Introduction
+
+![AscendNPU IR README](./docs/source/images/introduction/ascendnpu-ir-in-cann.png "ascendnpu-ir-in-cann.png")
 
 AscendNPU IR (AscendNPU Intermediate Representation) is built on MLIR (Multi-Level Intermediate Representation). It serves as an intermediate representation for compiling Ascend-compatible operators and provides comprehensive Ascend expression capabilities. It enhances the computational efficiency of Ascend AI processors through compilation optimization and supports deep tuning via ecosystem frameworks.
 
@@ -15,8 +27,10 @@ AscendNPU IR supports flexible integration with ecosystem frameworks and efficie
 - **Documentation:** [Documentation](https://ascendnpu-ir.gitcode.com)
 
 ## 🔍 Repository Structure
+
 Key directories within the AscendNPU IR repository are as follows:
-```
+
+```plaintext
 ├── bishengir            // Source code directory
 │   ├── cmake
 │   ├── include          // Header files
@@ -66,7 +80,9 @@ For an example of building E2E cases, see: [README.md](./bishengir/test/Integrat
 | HIVM VecAdd |  [VecAdd README.md](./bishengir/test/Integration/HIVM/VecAdd/README.md) |
 
 ## 📝 Version Compatibility Notes
+
 Please refer to the relevant sections of the [CANN Community Edition Documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/800alpha003/softwareinst/instg/instg_0001.html) for installation and preparation of Ascend hardware, CANN software, and corresponding deep learning frameworks.
 
 ## 📄 License
+
 [Apache License v2.0](LICENSE)
