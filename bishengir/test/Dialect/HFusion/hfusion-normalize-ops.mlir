@@ -558,6 +558,104 @@ func.func @test_hfusion_elemwise_unary_log2(%arg0: tensor<1024xf32>) -> tensor<1
 }
 
 // -----
+// CHECK-LABEL: func.func @test_hfusion_elemwise_unary_sinh
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
+// CHECK-DAG: %[[CST_SMALL_POS:.*]] = arith.constant 1.000000e-01 : f32
+// CHECK-DAG: %[[CST_SMALL_NEG:.*]] = arith.constant -1.000000e-01 : f32
+// CHECK-DAG: %[[CST_NEG5:.*]] = arith.constant -5.000000e+00 : f32
+// CHECK-DAG: %[[CST_POS5:.*]] = arith.constant 5.000000e+00 : f32
+// CHECK-DAG: %[[CST_NEG1:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK-DAG: %[[CST_HALF:.*]] = arith.constant 5.000000e-01 : f32
+// CHECK-DAG: %[[CST_NEG_HALF:.*]] = arith.constant -5.000000e-01 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EXP0:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[ARG0]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[NEGX:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[ARG0]], %[[CST_NEG1]] : tensor<1024xf32>, f32) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EXP1:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[NEGX]] : tensor<1024xf32>) outs(%[[EMPTY2]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SUB:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[EXP0]], %[[EXP1]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[EMPTY3]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[MID:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[SUB]], %[[CST_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY4]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LPOS:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[EXP0]], %[[CST_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY5]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY6:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LNEG:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[EXP1]], %[[CST_NEG_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY6]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY7:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[POS5_T:.*]] = linalg.fill ins(%[[CST_POS5]] : f32) outs(%[[EMPTY7]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[GT_BIG:.*]] = arith.cmpf ogt, %[[ARG0]], %[[POS5_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY8:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[NEG5_T:.*]] = linalg.fill ins(%[[CST_NEG5]] : f32) outs(%[[EMPTY8]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LT_BIG:.*]] = arith.cmpf olt, %[[ARG0]], %[[NEG5_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY9:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SMALL_NEG_T:.*]] = linalg.fill ins(%[[CST_SMALL_NEG]] : f32) outs(%[[EMPTY9]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[GT_SMALL_NEG:.*]] = arith.cmpf ogt, %[[ARG0]], %[[SMALL_NEG_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY10:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SMALL_POS_T:.*]] = linalg.fill ins(%[[CST_SMALL_POS]] : f32) outs(%[[EMPTY10]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LT_SMALL_POS:.*]] = arith.cmpf olt, %[[ARG0]], %[[SMALL_POS_T]] : tensor<1024xf32>
+// CHECK: %[[SMALL_MASK:.*]] = arith.andi %[[GT_SMALL_NEG]], %[[LT_SMALL_POS]] : tensor<1024xi1>
+// CHECK: %[[BASE:.*]] = arith.select %[[SMALL_MASK]], %[[ARG0]], %[[MID]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: %[[TMP:.*]] = arith.select %[[GT_BIG]], %[[LPOS]], %[[BASE]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: %[[RES:.*]] = arith.select %[[LT_BIG]], %[[LNEG]], %[[TMP]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: return %[[RES]] : tensor<1024xf32>
+func.func @test_hfusion_elemwise_unary_sinh(%arg0: tensor<1024xf32>) -> tensor<1024xf32> {
+  %0 = tensor.empty() : tensor<1024xf32>
+  %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sinh>} ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
+  return %1 : tensor<1024xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_hfusion_elemwise_unary_sinh_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf16>)
+// CHECK-DAG: %[[CST_SMALL_POS:.*]] = arith.constant 1.000000e-01 : f32
+// CHECK-DAG: %[[CST_SMALL_NEG:.*]] = arith.constant -1.000000e-01 : f32
+// CHECK-DAG: %[[CST_NEG5:.*]] = arith.constant -5.000000e+00 : f32
+// CHECK-DAG: %[[CST_POS5:.*]] = arith.constant 5.000000e+00 : f32
+// CHECK-DAG: %[[CST_NEG_HALF:.*]] = arith.constant -5.000000e-01 : f32
+// CHECK-DAG: %[[CST_HALF:.*]] = arith.constant 5.000000e-01 : f32
+// CHECK-DAG: %[[CST_NEG1:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[CAST0:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%[[ARG0]] : tensor<1024xf16>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EXP0:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[CAST0]] : tensor<1024xf32>) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[NEGX:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[CAST0]], %[[CST_NEG1]] : tensor<1024xf32>, f32) outs(%[[EMPTY2]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EXP1:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} ins(%[[NEGX]] : tensor<1024xf32>) outs(%[[EMPTY3]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SUB:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[EXP0]], %[[EXP1]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[EMPTY4]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[MID:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[SUB]], %[[CST_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY5]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY6:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LPOS:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[EXP0]], %[[CST_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY6]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY7:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LNEG:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[EXP1]], %[[CST_NEG_HALF]] : tensor<1024xf32>, f32) outs(%[[EMPTY7]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY8:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[POS5_T:.*]] = linalg.fill ins(%[[CST_POS5]] : f32) outs(%[[EMPTY8]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[GT_BIG:.*]] = arith.cmpf ogt, %[[CAST0]], %[[POS5_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY9:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[NEG5_T:.*]] = linalg.fill ins(%[[CST_NEG5]] : f32) outs(%[[EMPTY9]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LT_BIG:.*]] = arith.cmpf olt, %[[CAST0]], %[[NEG5_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY10:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SMALL_NEG_T:.*]] = linalg.fill ins(%[[CST_SMALL_NEG]] : f32) outs(%[[EMPTY10]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[GT_SMALL_NEG:.*]] = arith.cmpf ogt, %[[CAST0]], %[[SMALL_NEG_T]] : tensor<1024xf32>
+// CHECK: %[[EMPTY11:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SMALL_POS_T:.*]] = linalg.fill ins(%[[CST_SMALL_POS]] : f32) outs(%[[EMPTY11]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LT_SMALL_POS:.*]] = arith.cmpf olt, %[[CAST0]], %[[SMALL_POS_T]] : tensor<1024xf32>
+// CHECK: %[[SMALL_MASK:.*]] = arith.andi %[[GT_SMALL_NEG]], %[[LT_SMALL_POS]] : tensor<1024xi1>
+// CHECK: %[[BASE:.*]] = arith.select %[[SMALL_MASK]], %[[CAST0]], %[[MID]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: %[[TMP:.*]] = arith.select %[[GT_BIG]], %[[LPOS]], %[[BASE]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: %[[RES32:.*]] = arith.select %[[LT_BIG]], %[[LNEG]], %[[TMP]] : tensor<1024xi1>, tensor<1024xf32>
+// CHECK: %[[EMPTY12:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[CAST1:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%[[RES32]] : tensor<1024xf32>) outs(%[[EMPTY12]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: return %[[CAST1]] : tensor<1024xf16>
+func.func @test_hfusion_elemwise_unary_sinh_f16(%arg0: tensor<1024xf16>) -> tensor<1024xf16> {
+  %0 = tensor.empty() : tensor<1024xf16>
+  %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sinh>} ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
+  return %1 : tensor<1024xf16>
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_hfusion_elemwise_unary_log10
 // CHECK: %[[CSTTEN:.*]] : f32

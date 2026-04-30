@@ -92,6 +92,16 @@ func.func @test_acos(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_sinh
+func.func @test_sinh(%arg0 : tensor<6x6xf32>) -> tensor<6x6xf32> {
+  // CHECK:       %[[EMPTY:.*]] = tensor.empty()
+  // CHECK:       %[[RET:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sinh>}
+  %ret = math.sinh %arg0 : tensor<6x6xf32>
+  return %ret : tensor<6x6xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func @test_asin
 // CHECK-SAME: (%[[ARG:.*]]: tensor<10x20xf32>) -> tensor<10x20xf32>
 func.func @test_asin(%arg0: tensor<10x20xf32>) -> tensor<10x20xf32> {
