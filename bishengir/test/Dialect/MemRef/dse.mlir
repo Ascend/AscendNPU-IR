@@ -556,3 +556,42 @@ func.func @mark_with_mem_write_read(%arg0: tensor<16x16xf32>) {
   "some_operation" (%alloc_0) : (memref<16x16xf32, #hivm.address_space<ub>>) -> ()
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @remove_unused_load(
+// CHECK-NOT: hivm.hir.load
+module {
+  func.func @remove_unused_load(%arg0: index, %arg1: index, %arg2: index, %arg3: memref<32xf32, strided<[1]>, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i1, %arg5: memref<32xf32, strided<[1]>, #hivm.address_space<gm>>) {
+    %alloc = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+    %alloc_0 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+    %subview = memref.subview %arg3[0] [%arg2] [1] : memref<32xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_1 = memref.subview %alloc[0] [%arg2] [1] : memref<32xf32, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %cst = arith.constant 1.000000e-01 : f32
+    scf.if %arg4 {
+      hivm.hir.vbrc ins(%cst : f32) outs(%alloc : memref<32xf32, #hivm.address_space<ub>>)
+    }
+    hivm.hir.load ins(%subview : memref<?xf32, strided<[1]>, #hivm.address_space<gm>>) outs(%subview_1 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32
+    hivm.hir.store ins(%alloc_0 : memref<32xf32, #hivm.address_space<ub>>) outs(%arg5 : memref<32xf32, strided<[1]>, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @dont_remove_load_with_indirect_use(
+// CHECK: hivm.hir.load
+module {
+  func.func @dont_remove_load_with_indirect_use(%arg0: index, %arg1: index, %arg2: index, %arg3: memref<32xf32, strided<[1]>, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i1) {
+    %alloc = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+    %subview = memref.subview %arg3[0] [%arg2] [1] : memref<32xf32, strided<[1]>, #hivm.address_space<gm>> to memref<?xf32, strided<[1]>, #hivm.address_space<gm>>
+    %subview_0 = memref.subview %alloc[0] [%arg2] [1] : memref<32xf32, #hivm.address_space<ub>> to memref<?xf32, strided<[1]>, #hivm.address_space<ub>>
+    %cst = arith.constant 1.000000e-01 : f32
+    scf.if %arg4 {
+      hivm.hir.vbrc ins(%cst : f32) outs(%alloc : memref<32xf32, #hivm.address_space<ub>>)
+    }
+    hivm.hir.load ins(%subview : memref<?xf32, strided<[1]>, #hivm.address_space<gm>>) outs(%subview_0 : memref<?xf32, strided<[1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32
+    hivm.hir.store ins(%alloc : memref<32xf32, #hivm.address_space<ub>>) outs(%arg3 : memref<32xf32, strided<[1]>, #hivm.address_space<gm>>)
+    return
+  }
+}
