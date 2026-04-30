@@ -396,12 +396,29 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
                               memref_t<__gm__ T, 1> *dst) {
+  constexpr int bytes = sizeof(T);
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
   for (int i = 0; i < src->sizes[0]; i++) {
-    *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
+    __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0];
+    __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0];
+#if defined(__DAV_C310__)
+    if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
+      INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
+    } else if constexpr (bytes == BYTES_B16) {
+      auto *ub_ptr_u = reinterpret_cast<__ubuf__ uint16_t *>(ub_ptr);
+      auto *gm_ptr_u = reinterpret_cast<__gm__ uint16_t *>(gm_ptr);
+      INTRINSIC(st_dev, *ub_ptr_u, gm_ptr_u, 0);
+    } else if constexpr (bytes == BYTES_B8) {
+      auto *ub_ptr_u = reinterpret_cast<__ubuf__ uint8_t *>(ub_ptr);
+      auto *gm_ptr_u = reinterpret_cast<__gm__ uint8_t *>(gm_ptr);
+      INTRINSIC(st_dev, *ub_ptr_u, gm_ptr_u, 0);
+    }
+#else
+    *gm_ptr = *ub_ptr;
+#endif
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
@@ -414,14 +431,30 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
                               memref_t<__gm__ T, 2> *dst) {
+  constexpr int bytes = sizeof(T);
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
   for (int i = 0; i < src->sizes[0]; i++) {
     for (int j = 0; j < src->sizes[1]; j++) {
-      *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
-          *(src_ptr + i * src->strides[0] + j * src->strides[1]);
+      __gm__ T *gm_ptr = dst_ptr + i * dst->strides[0] + j * dst->strides[1];
+      __ubuf__ T *ub_ptr = src_ptr + i * src->strides[0] + j * src->strides[1];
+#if defined(__DAV_C310__)
+      if constexpr (bytes == BYTES_B32 || bytes == BYTES_B64) {
+        INTRINSIC(st_dev, (T)*ub_ptr, (__gm__ T *)gm_ptr, 0);
+      } else if constexpr (bytes == BYTES_B16) {
+        auto *ub_ptr_u = reinterpret_cast<__ubuf__ uint16_t *>(ub_ptr);
+        auto *gm_ptr_u = reinterpret_cast<__gm__ uint16_t *>(gm_ptr);
+        INTRINSIC(st_dev, *ub_ptr_u, gm_ptr_u, 0);
+      } else if constexpr (bytes == BYTES_B8) {
+        auto *ub_ptr_u = reinterpret_cast<__ubuf__ uint8_t *>(ub_ptr);
+        auto *gm_ptr_u = reinterpret_cast<__gm__ uint8_t *>(gm_ptr);
+        INTRINSIC(st_dev, *ub_ptr_u, gm_ptr_u, 0);
+      }
+#else
+      *gm_ptr = *ub_ptr;
+#endif
     }
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
@@ -1956,25 +1989,21 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
 // constant will be automatically generated, which is not allowed in the LLVM IR
 // received by bisheng. Thus, the conversion here is only to avoid generating
 // FP8 constants.
-template <typename T>
-struct PadValueType {
+template <typename T> struct PadValueType {
   using type = T;
 };
 
 #if defined(__DAV_C310__)
-template <>
-struct PadValueType<float8_e4m3_t> {
+template <> struct PadValueType<float8_e4m3_t> {
   using type = float;
 };
 
-template <>
-struct PadValueType<float8_e5m2_t> {
+template <> struct PadValueType<float8_e5m2_t> {
   using type = float;
 };
 #endif
 
-template <typename T>
-using PadValueT = typename PadValueType<T>::type;
+template <typename T> using PadValueT = typename PadValueType<T>::type;
 
 #define DECLARE_DMA_LOAD(dim, type)                                            \
   __aiv__ __attribute__((always_inline)) void                                  \
