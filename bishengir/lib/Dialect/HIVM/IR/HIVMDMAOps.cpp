@@ -712,6 +712,7 @@ int FixpipeOp::getFixpipeState() {
 
 void getElidedAttrs(FixpipeOp op,
                     llvm::SmallVector<llvm::StringRef, 2> &elidedAttrs) {
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("unit_flag_mode");
   Builder odsBuilder(op.getContext());
   {
@@ -765,6 +766,7 @@ OptionalAttr<UnitAttr>:$enable_nz2nd
 */
 static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
   ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("unit_flag_mode");
   {
     ::mlir::Builder odsBuilder(op.getContext());
@@ -887,6 +889,7 @@ FixpipeOp assemblyFormat in HIVMC version == 0.2.*
 */
 static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
   ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("dual_dst_mode");
   elidedAttrs.push_back("unit_flag_mode");
   {
@@ -1154,6 +1157,12 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   if (parser.resolveOperands(unit_flag_condOperands, odsBuildableType0,
                              unit_flag_condOperandsLoc, result.operands))
     return ::mlir::failure();
+  // AttrSizedOperandSegments / Properties: must match ODS-generated build()
+  // (src, dst, unit_flag_cond variadic, optional quant_scale — not in assembly).
+  ::llvm::copy(::llvm::ArrayRef<int32_t>(
+                   {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()), 0}),
+               result.getOrAddProperties<FixpipeOp::Properties>()
+                   .operandSegmentSizes.begin());
   return ::mlir::success();
 }
 

@@ -1,3 +1,4 @@
+// REQUIRES: asserts
 // RUN: bishengir-opt -hivm-cross-core-gss --debug-only=hivm-cross-core-gss -split-input-file %s 2>&1 | FileCheck %s
 
 // CHECK: after:
