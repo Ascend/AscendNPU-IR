@@ -566,6 +566,8 @@ static bool isFusableOutputNode(Operation *op, Block *block) {
   if (op->getUsers().empty())
     return true;
   for (Operation *user : op->getUsers()) {
+    if (isa<hfusion::AssertOp>(user))
+      continue;
     if (isa<annotation::MarkOp>(user))
       continue;
     if (!(isNonVectorizableOp(user) || !isOpInBlock(user, block) ||
