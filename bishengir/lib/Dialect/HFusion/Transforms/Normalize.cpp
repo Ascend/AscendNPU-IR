@@ -965,6 +965,185 @@ private:
   }
 };
 
+/// atanh(x)
+/// Two-path piecewise implementation:
+/// 1. |x| < 0.5:  atanh(x) = 0.5 * log1p(2|x| + 2|x|²/(1-|x|))
+/// 2. |x| >= 0.5: atanh(x) = 0.5 * log1p(2|x|/(1-|x|))
+/// Final result is multiplied by sign(x).
+struct NormalizeAtanhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::atanh) {
+      return failure();
+    }
+
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+
+    // FP16 -> FP32 for precision
+    if (inTy.isF16()) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    Location loc = op.getLoc();
+    Value resultAbs = calculateAbsAtanh(rewriter, loc, input);
+    Value result = applySign(rewriter, loc, input, resultAbs);
+
+    // FP32 -> FP16
+    if (inTy.isF16()) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(empty),
+                                   ValueRange{cond, t, f}, ValueRange(empty))
+        ->getResult(0);
+  }
+
+  // Case 1: |x| < 0.5, atanh(x) = 0.5 * log1p(2x + 2x^2/(1-x))
+  Value calculateSmallAbs(PatternRewriter &rewriter, Location loc, Value xAbs,
+                          Value oneMinusX, Value twoX) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xAbs);
+    // 2 * |x| * |x|
+    Value twoXSq =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{twoX, xAbs}, empty)
+            ->getResult(0);
+    // (2 * |x| * |x|) / (1 - |x|)
+    Value term2 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::div, ValueRange{twoXSq, oneMinusX},
+            empty)
+            ->getResult(0);
+    // numerator_small = 2|x| + ...
+    Value numSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{twoX, term2},
+            empty)
+            ->getResult(0);
+    // log1p(numerator_small)
+    Value log1pSmall =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{numSmall}, empty)
+            ->getResult(0);
+    // resSmall = 0.5 * ...
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::mul,
+               ValueRange{f32Const(rewriter, loc, 0.5f), log1pSmall}, empty)
+        ->getResult(0);
+  }
+
+  // Case 2: 0.5 <= |x| < 1, atanh(x) = 0.5 * log1p(2x / (1-x))
+  Value calculateLargeAbs(PatternRewriter &rewriter, Location loc,
+                          Value oneMinusX, Value twoX) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, twoX);
+    // numerator_large = 2|x| / (1-|x|)
+    Value numLarge =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::div, ValueRange{twoX, oneMinusX},
+            empty)
+            ->getResult(0);
+    // log1p(numerator_large)
+    Value log1pLarge =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{numLarge}, empty)
+            ->getResult(0);
+    // resLarge = 0.5 * ...
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::mul,
+               ValueRange{f32Const(rewriter, loc, 0.5f), log1pLarge}, empty)
+        ->getResult(0);
+  }
+
+  // Calculate |atanh(x)|
+  Value calculateAbsAtanh(PatternRewriter &rewriter, Location loc,
+                          Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // Common Ops: abs(x)
+    Value xAbs =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
+    // 1 - |x|
+    Value oneMinusX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, 1.0f), xAbs}, empty)
+            ->getResult(0);
+    // 2 * |x|
+    Value twoX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{f32Const(rewriter, loc, 2.0f), xAbs}, empty)
+            ->getResult(0);
+
+    // -------------------------------------------------------------
+    // Case 1: |x| < 0.5
+    // -------------------------------------------------------------
+    Value resSmall = calculateSmallAbs(rewriter, loc, xAbs, oneMinusX, twoX);
+
+    // -------------------------------------------------------------
+    // Case 2: 0.5 <= |x| < 1
+    // -------------------------------------------------------------
+    Value resLarge = calculateLargeAbs(rewriter, loc, oneMinusX, twoX);
+
+    // -------------------------------------------------------------
+    // Combine Selection
+    // -------------------------------------------------------------
+    // Condition: |x| < 0.5 ?
+    Value isSmall = createCmpOp(rewriter, loc, xAbs,
+                                f32Const(rewriter, loc, 0.5f), CompareFn::vlt)
+                        ->getResult(0);
+    return createSelect(rewriter, loc, isSmall, resSmall, resLarge);
+  }
+
+  // Apply sign to the result: sign(x) * |atanh(x)|
+  Value applySign(PatternRewriter &rewriter, Location loc, Value input,
+                  Value resultAbs) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // result = x < 0 ? -resultAbs : resultAbs
+    Value negResultAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{resultAbs, f32Const(rewriter, loc, -1.0f)}, empty)
+            ->getResult(0);
+    Value isNeg = createCmpOp(rewriter, loc, input,
+                              f32Const(rewriter, loc, 0.0f), CompareFn::vlt)
+                      ->getResult(0);
+    return createSelect(rewriter, loc, isNeg, negResultAbs, resultAbs);
+  }
+};
 
 /// acosh(x)
 /// Three-path piecewise implementation for x >= 1:
@@ -7157,6 +7336,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeAcoshOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
   patterns.add<NormalizeAtan2Op>(patterns.getContext());
+  patterns.add<NormalizeAtanhOp>(patterns.getContext());
   patterns.add<NormalizeTanOp>(patterns.getContext());
   patterns.add<NormalizeTanhOp>(patterns.getContext());
   patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());
