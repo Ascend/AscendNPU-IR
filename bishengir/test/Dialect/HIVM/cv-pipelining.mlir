@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefixes=CHECK
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2 enable-lazy-loading=true" -allow-unregistered-dialect -split-input-file %s | FileCheck %s --check-prefixes=CHECK,CHECK-LAZY
+// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK
+// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2 enable-lazy-loading=true" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK,CHECK-LAZY
 
 // CHECK-LABEL: func.func @test_pipeline
 // CHECK: scf.for
@@ -185,6 +185,51 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
 
       scf.yield %next, %newinc : memref<16x16xf16>, index
+    }
+    return
+  }
+}
+
+// -----
+
+// GM-alias rejection: a hivm.hir.fixpipe (cube-only) writes directly to a
+// function argument; a hivm.hir.load in the vector work item reads the same
+// function argument. markOutputs must reject this cross-workitem pattern.
+
+// CHECK-LABEL: func.func @test_gm_alias_rejected
+// CHECK-NOT: hivm.loop_core_type
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_gm_alias_rejected(%gmArg: memref<16x16xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %input1 = "some_op"() : () -> memref<16x16xf16>
+    %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+    %input2 = "some_op"() : () -> memref<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    scf.for %i = %c0 to %bound step %step : i32 {
+      // CUBE work item: mmad then fixpipe writes directly to the GM func arg.
+      %allocC = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%input2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
+      %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%gmArg : memref<16x16xf16>)
+
+      // VECTOR work item: loads from gmArg — the same function argument the
+      // cube work item just wrote to. Pipelining would reorder the fixpipe
+      // past the load.
+      %allocV = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      %allocV_cast = memref.memory_space_cast %allocV : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      // expected-warning@+1 {{using GM as intermediate buffer is unsupported}}
+      hivm.hir.load ins(%gmArg : memref<16x16xf16>) outs(%allocV_cast : memref<16x16xf16>)
+      %tv = bufferization.to_tensor %allocV_cast : memref<16x16xf16>
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%tv : tensor<16x16xf16>) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
     }
     return
   }

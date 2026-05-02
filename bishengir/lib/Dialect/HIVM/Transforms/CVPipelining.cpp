@@ -113,7 +113,7 @@ private:
 
   void collectAtomicEffects();
 
-  void markOutputs();
+  LogicalResult markOutputs();
 
   LogicalResult expandOutputInits(WorkItem *item);
   LogicalResult expandOutputInitsForPreload(WorkItem *item);
@@ -232,13 +232,11 @@ static Value traceValueDef(Value v) {
     Operation *defining = result.getOwner();
     Value srcVal =
         TypeSwitch<Operation *, Value>(defining)
-            .Case<tensor::ReshapeOp, tensor::ExtractSliceOp,
-                  tensor::CollapseShapeOp, tensor::ExpandShapeOp,
-                  bufferization::ToTensorOp, bufferization::ToMemrefOp,
-                  memref::CastOp, memref::CollapseShapeOp,
-                  memref::ExpandShapeOp, memref::MemorySpaceCastOp,
-                  memref::ReinterpretCastOp, memref::ReshapeOp, memref::ViewOp,
-                  memref::SubViewOp>([](auto op) { return op->getOperand(0); })
+            .Case<CastOpInterface, ViewLikeOpInterface, tensor::CollapseShapeOp,
+                  tensor::ExpandShapeOp, tensor::ExtractSliceOp,
+                  tensor::ReshapeOp, bufferization::ToTensorOp,
+                  bufferization::ToMemrefOp>(
+                [](auto op) { return op->getOperand(0); })
             .Case([](tensor::InsertSliceOp insert) { return insert.getDest(); })
             .Case([result](LoopLikeOpInterface loop) {
               return loop.getTiedLoopInit(result)->get();
@@ -555,6 +553,11 @@ CVPipelineImpl::traceMemrefSubnet(Operation *start,
   if (isa<TensorType>(targetOperand.getType()))
     writer = cast<DestinationStyleOpInterface>(start);
 
+  // Remember the original separator so we don't re-queue it onto
+  // workingStack — otherwise it would be popped again and re-enter
+  // traceMemrefSubnet in an infinite loop (e.g. when a Fixpipe writes
+  // directly to a func-arg memref and the upward trace yields no alloc).
+  Operation *separatorOp = start;
   Operation *defining = targetOperand.getDefiningOp();
   // First trace all the way up
   while (defining) {
@@ -577,9 +580,17 @@ CVPipelineImpl::traceMemrefSubnet(Operation *start,
 
   while (!userTraceStack.empty()) {
     Operation *def = userTraceStack.pop_back_val();
-    workingStack.push_back(def);
-    for (Operation *usr : def->getUsers()) {
+    if (def != separatorOp)
+      workingStack.push_back(def);
+    for (OpOperand &use : def->getUses()) {
+      Operation *usr = use.getOwner();
       if (auto dps = dyn_cast<DestinationStyleOpInterface>(usr)) {
+        // Only count dps as a writer if this use is its init operand.
+        // Reads via `ins` (e.g. hivm.hir.store's src) do not constitute
+        // a write to the traced memref.
+        OpOperand *init = dps.getDpsInitOperand(0);
+        if (!init || init != &use)
+          continue;
         if (writer)
           return usr->emitWarning("[cv-pipelining] expecting only one op "
                                   "writing to a defined memref");
@@ -978,7 +989,39 @@ LogicalResult CVPipelineImpl::createWorkItems() {
 
 /// Check ops in each work item to see if they will be used by other WorkItems
 /// (localOutputs) or yielded into the next iteration (yieldedOutputs)
-void CVPipelineImpl::markOutputs() {
+// Trace a memref/tensor value through memref & tensor casts / views and
+// loop iter_arg inits to find the func-op block argument it ultimately
+// aliases, or nullptr if it does not originate from a function argument.
+static BlockArgument traceToFuncArg(Value v) {
+  while (v) {
+    if (auto blkArg = dyn_cast<BlockArgument>(v)) {
+      Operation *parent = blkArg.getOwner()->getParentOp();
+      if (isa<func::FuncOp>(parent))
+        return blkArg;
+      if (auto loop = dyn_cast<LoopLikeOpInterface>(parent)) {
+        OpOperand *init = loop.getTiedLoopInit(blkArg);
+        if (!init)
+          return nullptr;
+        v = init->get();
+        continue;
+      }
+      return nullptr;
+    }
+    Operation *defining = v.getDefiningOp();
+    if (!defining)
+      return nullptr;
+    if (isa<CastOpInterface, ViewLikeOpInterface, tensor::CollapseShapeOp,
+            tensor::ExpandShapeOp, tensor::ExtractSliceOp, tensor::ReshapeOp,
+            bufferization::ToTensorOp, bufferization::ToMemrefOp>(defining)) {
+      v = defining->getOperand(0);
+      continue;
+    }
+    return nullptr;
+  }
+  return nullptr;
+}
+
+LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
       if (isa<tensor::EmptyOp>(op))
@@ -1014,6 +1057,41 @@ void CVPipelineImpl::markOutputs() {
       } // End loop over item->ops
     } // End loop over worklist
   }
+
+  // Detect cross-workitem aliasing on function arguments: if a Fixpipe/Store
+  // writes to a func arg that another workitem loads from, pipelining would
+  // reorder the store past the load and break correctness.
+  DenseMap<BlockArgument, WorkItem *> storedFuncArgs;
+  for (const auto &item : worklist) {
+    for (Operation *op : item->ops) {
+      Value dst;
+      if (auto fixpipe = dyn_cast<FixpipeOp>(op))
+        dst = fixpipe.getDst();
+      else if (auto store = dyn_cast<StoreOp>(op))
+        dst = store.getDst();
+      else
+        continue;
+      BlockArgument funcArg = traceToFuncArg(dst);
+      if (!funcArg)
+        continue;
+      storedFuncArgs[funcArg] = item.get();
+    }
+  }
+  for (const auto &item : worklist) {
+    for (Operation *op : item->ops) {
+      auto load = dyn_cast<LoadOp>(op);
+      if (!load)
+        continue;
+      BlockArgument funcArg = traceToFuncArg(load.getSrc());
+      if (!funcArg)
+        continue;
+      auto it = storedFuncArgs.find(funcArg);
+      if (it != storedFuncArgs.end() && it->second != item.get())
+        return op->emitWarning(
+            "[cv-pipelining] using GM as intermediate buffer is unsupported");
+    }
+  }
+  return success();
 }
 
 Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
@@ -1628,7 +1706,8 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
-  markOutputs();
+  if (failed(markOutputs()))
+    return failure();
   LLVM_DEBUG({
     for (auto item : worklist) {
       dbgs() << "WorkItem #" << item->id << ":\n";
