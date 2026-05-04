@@ -28,6 +28,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -87,13 +88,9 @@ using namespace mlir::hivm;
 namespace {
 static constexpr llvm::StringLiteral kLimitedSubBlockOpAttrName =
     "limit_sub_block_id0";
-static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
-    "MayImplicitTransposeWithLastAxis";
 static constexpr llvm::StringLiteral tiledOp = "tiled_op";
 static constexpr llvm::StringLiteral tileAndBindLeaf =
     "hivm.tile_and_bind_leaf";
-static constexpr llvm::StringLiteral tileAndSliceFailure =
-    "tile_and_slice_failure";
 } // namespace
 
 namespace {
@@ -665,7 +662,7 @@ public:
 
 } // namespace
 
-static LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp) {
+LogicalResult mlir::hivm::limitUniqueSubBlockToStore(func::FuncOp funcOp) {
   RewritePatternSet patterns(funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StoreOp>>(
       funcOp.getContext());
@@ -960,309 +957,6 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   return newFunc;
 }
 
-struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
-public:
-  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(memref::AllocOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op->hasOneUse())
-      return failure();
-    auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(*op->user_begin());
-    if (!toTensorOp)
-      return failure();
-    auto tensorType = toTensorOp.getType();
-    rewriter.replaceOpWithNewOp<tensor::EmptyOp>(
-        toTensorOp, tensorType.getShape(), tensorType.getElementType());
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-namespace {
-struct splitFixpipe : public OpRewritePattern<hivm::FixpipeOp> {
-public:
-  using OpRewritePattern<hivm::FixpipeOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hivm::FixpipeOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op->hasAttr(tileAndSliceFailure)) {
-      return failure();
-    }
-    Value dst = op.getDst();
-    if (auto dualDstModeAttr = op.getDualDstModeAttr();
-        dualDstModeAttr &&
-        dualDstModeAttr.getDualDstMode() != hivm::FixpipeDualDstMode::NO_DUAL) {
-      return failure();
-    }
-    // Determine the address space of the destination operand of the fixpipe
-    // instruction.
-    auto dstMemrefType = dyn_cast<MemRefType>(dst.getType());
-    if (!dstMemrefType)
-      return failure();
-    auto dstMemorySpace = dstMemrefType.getMemorySpace();
-    if (!dstMemorySpace)
-      return failure();
-    auto toAddrSpace =
-        cast<hivm::AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
-    if ((!dstMemorySpace) || (toAddrSpace != hivm::AddressSpace::UB)) {
-      return success();
-    }
-
-    // Determine whether to enable the CV pipeline.
-    bool cvpipeFlag = true;
-    auto subviewOp = dst.getDefiningOp<memref::SubViewOp>();
-    if (!subviewOp)
-      cvpipeFlag = false;
-    auto maybeAllocOp = traceDefOp<memref::AllocOp>(dst);
-    if (!maybeAllocOp)
-      return failure();
-    memref::AllocOp allocOp = cast<memref::AllocOp>(*maybeAllocOp);
-    mlir::Value allocVal = allocOp.getResult();
-    auto maybeMarkOpRaw =
-        utils::getAnnotateOpWithAttr(allocVal, "hivm.tightly_coupled_buffer");
-    if (!maybeMarkOpRaw)
-      return failure();
-    auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
-    if (!markOp)
-      return failure();
-    auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-        "hivm.tightly_coupled_buffer");
-    if (!attr || !attr.getId().has_value())
-      return failure();
-
-    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
-    if (!tilingDimAttr)
-      return failure();
-    int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
-    auto rank = allocOp.getType().getRank();
-    if (tilingDim == -1 || (tilingDim != rank - 2 && tilingDim != rank - 1))
-      return failure();
-    auto splitMode = tilingDim == rank - 2
-                         ? hivm::FixpipeDualDstMode::ROW_SPLIT
-                         : hivm::FixpipeDualDstMode::COLUMN_SPLIT;
-    auto oldTy = cast<MemRefType>(allocVal.getType());
-    auto shape = llvm::to_vector(oldTy.getShape());
-    auto splitShape = [](bool cvpipeFlag, hivm::FixpipeDualDstMode splitMode,
-                         SmallVector<int64_t> &shape) -> LogicalResult {
-      int64_t splitIdx = 0;
-      splitIdx += cvpipeFlag;
-      int64_t constraints;
-      if (splitMode == FixpipeDualDstMode::ROW_SPLIT)
-        constraints = 2;
-      else {
-        constraints = 32;
-        ++splitIdx;
-      }
-      auto size = shape[splitIdx];
-      if (ShapedType::isDynamicShape(size)) {
-        return failure();
-      }
-      if ((size % constraints) != 0) {
-        return failure();
-      }
-      shape[splitIdx] = size / 2;
-      return success();
-    };
-
-    if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-      return failure();
-    }
-    if (!cvpipeFlag) {
-      if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
-        op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-        return failure();
-      }
-      auto newTy = MemRefType::get(shape, oldTy.getElementType(),
-                                   oldTy.getLayout(), oldTy.getMemorySpace());
-      // new alloc + new mark + new fixpipe
-      rewriter.setInsertionPoint(allocOp);
-      auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
-
-      rewriter.setInsertionPoint(markOp);
-      auto newMark =
-          rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
-      rewriter.modifyOpInPlace(newMark,
-                               [&] { newMark->setAttrs(markOp->getAttrs()); });
-      auto dualAttr =
-          hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
-      rewriter.setInsertionPoint(op);
-      SmallVector<Value> oprs({op.getSrc(), newAlloc});
-      if (auto quantScale = op.getQuantScale())
-        oprs.push_back(quantScale);
-      auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-          op.getLoc(), TypeRange{}, oprs, op->getAttrs());
-      newFixpipeOp.setDualDstModeAttr(dualAttr);
-
-      rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
-      rewriter.replaceOp(op, newFixpipeOp->getResults());
-      rewriter.eraseOp(markOp);
-      rewriter.eraseOp(allocOp);
-      return success();
-    }
-
-    if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-      return failure();
-    }
-    auto newTy = MemRefType::get(shape, oldTy.getElementType(),
-                                 oldTy.getLayout(), oldTy.getMemorySpace());
-
-    rewriter.setInsertionPoint(allocOp);
-    auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
-
-    rewriter.setInsertionPoint(markOp);
-    auto newMark =
-        rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
-    rewriter.modifyOpInPlace(newMark,
-                             [&] { newMark->setAttrs(markOp->getAttrs()); });
-    rewriter.setInsertionPoint(subviewOp);
-    SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
-    switch (splitMode) {
-    case hivm::FixpipeDualDstMode::ROW_SPLIT:
-      if (sizes[1].is<Attribute>()) {
-        int64_t oldSize = cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
-        sizes[1] = rewriter.getIndexAttr(oldSize / 2);
-      }
-      break;
-    case hivm::FixpipeDualDstMode::COLUMN_SPLIT:
-      if (sizes[2].is<Attribute>()) {
-        int64_t oldSize = cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
-        sizes[2] = rewriter.getIndexAttr(oldSize / 2);
-      }
-      break;
-    default:
-      break;
-    }
-
-    int64_t dim1 = sizes[1].is<Attribute>()
-                       ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt()
-                       : ShapedType::kDynamic;
-    int64_t dim2 = sizes[2].is<Attribute>()
-                       ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt()
-                       : ShapedType::kDynamic;
-    SmallVector<int64_t> new2DShape = {dim1, dim2};
-
-    auto srcType = cast<MemRefType>(newAlloc.getType());
-    Type elementType = srcType.getElementType();
-    Attribute memorySpace = srcType.getMemorySpace();
-    auto layout = StridedLayoutAttr::get(rewriter.getContext(),
-                                         ShapedType::kDynamic, {dim2, 1});
-    auto result2DType =
-        MemRefType::get(new2DShape, elementType, layout, memorySpace);
-
-    auto newSubview = rewriter.create<memref::SubViewOp>(
-        subviewOp.getLoc(), result2DType, newAlloc, subviewOp.getMixedOffsets(),
-        sizes, subviewOp.getMixedStrides());
-
-    auto dualAttr =
-        hivm::FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
-    rewriter.setInsertionPoint(op);
-    NamedAttrList attrs(op->getAttrs());
-    attrs.set(op.getDualDstModeAttrName(), dualAttr);
-
-    auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
-        op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
-        attrs.getAttrs());
-
-    rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
-    rewriter.replaceAllUsesWith(subviewOp.getResult(), newSubview.getResult());
-    rewriter.replaceOp(op, newFixpipeOp->getResults());
-
-    rewriter.eraseOp(subviewOp);
-    rewriter.eraseOp(markOp);
-    rewriter.eraseOp(allocOp);
-    return success();
-  }
-};
-} // namespace
-
-static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
-  RewritePatternSet patterns(funcOp.getContext());
-  patterns.add<splitFixpipe>(funcOp.getContext());
-  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-    return failure();
-  }
-  if (funcOp
-          .walk([](hivm::FixpipeOp fixpipeOp) {
-            return fixpipeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
-                       ? WalkResult::interrupt()
-                       : WalkResult::advance();
-          })
-          .wasInterrupted()) {
-    return failure();
-  }
-  return success();
-}
-
-static LogicalResult tileAndSliceOpAIC(func::FuncOp func) {
-  return runSplitFixpipe(func);
-}
-
-namespace {
-struct FuncRollbackBackup {
-  std::string originalName;
-  Operation *backupOp = nullptr;
-};
-} // namespace
-
-static void createFuncBackups(ArrayRef<func::FuncOp> funcs,
-                              SmallVectorImpl<FuncRollbackBackup> &backups) {
-  backups.reserve(backups.size() + funcs.size());
-  for (func::FuncOp func : funcs) {
-    backups.push_back({func.getSymNameAttr().str(), func->clone()});
-  }
-}
-
-static void destroyFuncBackups(SmallVectorImpl<FuncRollbackBackup> &backups) {
-  for (auto &entry : backups) {
-    if (entry.backupOp) {
-      entry.backupOp->destroy();
-      entry.backupOp = nullptr;
-    }
-  }
-  backups.clear();
-}
-
-static LogicalResult
-restoreFunctionsFromBackups(ModuleOp moduleOp,
-                            SmallVectorImpl<FuncRollbackBackup> &backups,
-                            bool limitSubBlockToStore) {
-  for (auto &entry : backups) {
-    if (!entry.backupOp) {
-      continue;
-    }
-    if (auto currentFunc =
-            moduleOp.lookupSymbol<func::FuncOp>(entry.originalName)) {
-      currentFunc.erase();
-    }
-    moduleOp.push_back(entry.backupOp);
-    auto restoredFunc = cast<func::FuncOp>(entry.backupOp);
-    restoredFunc.setName(entry.originalName);
-    entry.backupOp = nullptr;
-
-    if (limitSubBlockToStore &&
-        failed(limitUniqueSubBlockToStore(restoredFunc)))
-      return failure();
-  }
-  backups.clear();
-  return success();
-}
-
-static void eraseTilingDimMappingMarksInModule(ModuleOp moduleOp) {
-  SmallVector<Operation *> toBeErased;
-  moduleOp->walk([&toBeErased](Operation *op) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp.isAnnotatedBy(kTilingDimMappingAttrName)) {
-      toBeErased.push_back(op);
-    }
-  });
-  for (auto *op : toBeErased) {
-    op->erase();
-  }
-}
-
 /// Walks through all functions in the module and attempts to tile and bind
 /// sub-blocks for vector functions.
 ///
@@ -1282,29 +976,12 @@ void TileAndBindSubBlockPass::runOnOperation() {
   uint64_t tiledFunctionCount = 0;
 #endif
 
-  RewritePatternSet patterns(&getContext());
-  patterns.add<CanonicalizeAllocToTensor>(&getContext());
-  (void)applyPatternsGreedily(moduleOp, std::move(patterns));
+  runTileAndBindSubBlockEarlyPatterns(moduleOp);
 
-  // Collect AIC and AIV functions to process (can't modify while iterating)
+  // Collect the AIV and AIC funcs in moduleOp to tile.
   SmallVector<func::FuncOp> aicFunctions;
   SmallVector<func::FuncOp> aivFunctions;
-  auto collectMixAicAndAivFuncs = [&moduleOp, &aicFunctions, &aivFunctions]() {
-    moduleOp.walk([&aicFunctions, &aivFunctions](func::FuncOp func) {
-      auto funcCoreType = queryFuncCoreType(func);
-      if (!funcCoreType.has_value() ||
-          !func->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name)) {
-        return;
-      }
-      if (funcCoreType.value() == TFuncCoreType::AIC) {
-        aicFunctions.push_back(func);
-      } else if (funcCoreType.value() == TFuncCoreType::AIV) {
-        aivFunctions.push_back(func);
-      }
-    });
-  };
-
-  collectMixAicAndAivFuncs();
+  collectMixAicAndAivFuncs(moduleOp, aicFunctions, aivFunctions);
 
   auto limitAllAivToSubBlock0 = [this, &aivFunctions]() -> LogicalResult {
     for (func::FuncOp aivFunc : aivFunctions) {
@@ -1319,30 +996,6 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return success();
   };
 
-  auto hasBatchMatmulLoopInAic = [&aicFunctions]() -> bool {
-    return llvm::any_of(aicFunctions, [](func::FuncOp aicFunc) {
-      return aicFunc
-          .walk([](hivm::MmadL1Op mmad) {
-            return mmad->hasAttrOfType<UnitAttr>(hivm::batchMatmulAttr)
-                       ? WalkResult::interrupt()
-                       : WalkResult::advance();
-          })
-          .wasInterrupted();
-    });
-  };
-
-  auto hasImplicitTransWithAxis = [&aivFunctions]() -> bool {
-    return llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
-      return aivFunc
-          .walk([](annotation::MarkOp markOp) {
-            return markOp.isAnnotatedBy(kMayImplicitTransposeWithLastAxis)
-                       ? WalkResult::interrupt()
-                       : WalkResult::advance();
-          })
-          .wasInterrupted();
-    });
-  };
-
   if (!this->enableTile) {
     (void)limitAllAivToSubBlock0();
     return;
@@ -1350,7 +1003,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // limitUniqueSubBlockToStore vector function and skip this pass if
   // BatchMatmul is found
-  if (hasBatchMatmulLoopInAic()) {
+  if (hasBatchMatmulLoopInAicFuncs(aicFunctions)) {
     (void)limitAllAivToSubBlock0();
     return;
   }
@@ -1360,7 +1013,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
   // into the vector function, which will lead to precision error because of the
   // function boundary setting of one-shot-bufferize. So we don't tile cases
   // with implicit transpose at all to avoid the problem for now.
-  if (hasImplicitTransWithAxis()) {
+  if (hasImplicitTransposeWithLastAxisInAiv(aivFunctions)) {
     (void)limitAllAivToSubBlock0();
     return;
   }
@@ -1374,7 +1027,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
     destroyFuncBackups(aicRollbackBackups);
   };
 
-  // Tile AIV functions
+  // Step 1: Tile AIV functions
   bool aivSuccessFlag = false;
   auto tileAivFuncs = [this, &aivFunctions, &aivSuccessFlag
 #ifndef NDEBUG
@@ -1417,46 +1070,16 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  // Tile AIC functions for Ascend 950
+  // Step 2: Tile the AIC funcs, tiling AIC is only needed in Ascend910_95 Arch
   bool archIs950 = hacc::utils::isAscend910_95(moduleOp);
-  auto tileAicFixpipeFuncs = [this, &aivSuccessFlag, archIs950,
-                              &aicFunctions]() -> LogicalResult {
-    if (!(aivSuccessFlag && archIs950)) {
-      return success();
-    }
-
-    for (func::FuncOp originalFunc : aicFunctions) {
-      originalFunc->walk([this](annotation::MarkOp markOp) {
-        if (auto attr =
-                markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
-                    hivm::HIVMTightlyCoupledBufferAttr::name)) {
-          auto maybeId = attr.getId();
-          if (!maybeId) {
-            markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
-            return;
-          }
-          auto id = maybeId.value();
-          int64_t tilingDim = -1;
-          if (tightlyCoupledBufferToTilingDim.contains(id)) {
-            tilingDim = tightlyCoupledBufferToTilingDim.at(id);
-          }
-          markOp->setAttr(
-              "hivm.tiling_dim",
-              IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
-        }
-      });
-      if (failed(tileAndSliceOpAIC(originalFunc))) {
-        return failure();
-      }
-    }
-    return success();
-  };
-
-  if (failed(tileAicFixpipeFuncs())) {
+  if (failed(tileAicFixpipeFuncsIfNeeded(
+          aicFunctions, aivSuccessFlag, archIs950,
+          tightlyCoupledBufferToTilingDim))) {
     if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
                                            /*limitSubBlockToStore=*/false)) ||
         failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
                                            /*limitSubBlockToStore=*/true))) {
+      LLVM_DEBUG(DBGS() << "Failed to restore from backups.\n " );
       signalPassFailure();
     }
     destroyAllBackups();
