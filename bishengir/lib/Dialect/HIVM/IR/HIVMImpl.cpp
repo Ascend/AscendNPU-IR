@@ -303,7 +303,7 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
     return kTFuncCoreType2TCoreType.find(funcCoreType.value())->second;
   }
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
-    if (auto attr = forOp->getAttr("ExtractedLoadOrStore")) {
+    if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;

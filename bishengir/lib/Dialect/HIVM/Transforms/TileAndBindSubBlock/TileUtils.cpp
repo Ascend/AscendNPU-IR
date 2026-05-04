@@ -44,9 +44,6 @@ using namespace mlir;
 
 namespace {
 
-constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
-    "MayImplicitTransposeWithLastAxis";
-
 struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
 public:
   using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
@@ -103,24 +100,31 @@ public:
     memref::AllocOp allocOp = cast<memref::AllocOp>(*maybeAllocOp);
     mlir::Value allocVal = allocOp.getResult();
     auto maybeMarkOpRaw =
-        utils::getAnnotateOpWithAttr(allocVal, "hivm.tightly_coupled_buffer");
+        utils::getAnnotateOpWithAttr(allocVal, tilghlyCoupledBufferAttr);
     if (!maybeMarkOpRaw)
       return failure();
     auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
     if (!markOp)
       return failure();
     auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
-        "hivm.tightly_coupled_buffer");
+        tilghlyCoupledBufferAttr);
     if (!attr || !attr.getId().has_value())
       return failure();
 
-    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>("hivm.tiling_dim");
+    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
     if (!tilingDimAttr)
       return failure();
     int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
     auto rank = allocOp.getType().getRank();
-    if (tilingDim == -1 || (tilingDim != rank - 2 && tilingDim != rank - 1))
+    if (tilingDim == -1){
+      op->emitWarning("The tilingDim in AIC does not exist!");
       return failure();
+    }
+    if (tilingDim != rank - 2 && tilingDim != rank - 1){
+      op->emitWarning("The tilingDim in AIC does not match row_split or column split!");
+      return failure();
+    }
+      
     auto splitMode = tilingDim == rank - 2 ? FixpipeDualDstMode::ROW_SPLIT
                                            : FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
@@ -331,17 +335,11 @@ LogicalResult restoreFunctionsFromBackups(
   return success();
 }
 
-void eraseTilingDimMappingMarksInModule(ModuleOp moduleOp) {
-  SmallVector<Operation *> toBeErased;
-  moduleOp->walk([&toBeErased](Operation *op) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-        markOp && markOp.isAnnotatedBy(kTilingDimMappingAttrName)) {
-      toBeErased.push_back(op);
-    }
+void removeTilingDimMappingMarksFromModule(ModuleOp moduleOp) {
+  moduleOp->walk([](annotation::MarkOp markOp) {
+    if (markOp.isAnnotatedBy(kTilingDimMappingAttrName))
+      removeMarkOpAttr(markOp, kTilingDimMappingAttrName);
   });
-  for (auto *op : toBeErased) {
-    op->erase();
-  }
 }
 
 void collectMixAicAndAivFuncs(
@@ -410,7 +408,7 @@ LogicalResult tileAicFixpipeFuncsIfNeeded(
           tilingDim = tightlyCoupledBufferToTilingDim.at(id);
         }
         markOp->setAttr(
-            "hivm.tiling_dim",
+            AICAttrTilingDim,
             IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
       }
     });

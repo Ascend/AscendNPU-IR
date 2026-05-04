@@ -747,7 +747,7 @@ tileAndSliceOp(func::FuncOp func,
             hivm::HIVMTightlyCoupledBufferAttr::name)) {
       auto tilingDim = analyzer.getTilingDim(markOp.getSrc());
       markOp->setAttr(
-          "hivm.tiling_dim",
+          AICAttrTilingDim,
           IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
       auto maybeId = attr.getId();
       if (!maybeId) {
@@ -770,7 +770,7 @@ tileAndSliceOp(func::FuncOp func,
         if (!srcShapedType || !dstShapedType)
           return true;
         auto parentForOp = storeOp->getParentOfType<scf::ForOp>();
-        if (parentForOp && parentForOp->hasAttr("ExtractedLoadOrStore"))
+        if (parentForOp && parentForOp->hasAttr(ExtractLoadStoreAttr))
           return true;
         if (ShapedType::isDynamicShape(srcShapedType.getShape()) ||
             ShapedType::isDynamicShape(dstShapedType.getShape())) {
@@ -966,8 +966,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 void TileAndBindSubBlockPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   // Ensure temporary tiling-dim mapping marks are removed on every exit path.
-  auto eraseTilingDimMappingMarksOnExit = llvm::make_scope_exit(
-      [moduleOp]() { eraseTilingDimMappingMarksInModule(moduleOp); });
+  auto removeTilingDimMappingMarksOnExit = llvm::make_scope_exit(
+      [moduleOp]() { removeTilingDimMappingMarksFromModule(moduleOp); });
 
   if (moduleOp->hasAttr("hivm.disable_auto_tile_and_bind_subblock")) {
     return;
@@ -1038,7 +1038,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
     for (func::FuncOp originalFunc : aivFunctions) {
       auto symNameStr = originalFunc.getSymNameAttr().str();  
       FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
-      eraseTilingDimMappingMarksInModule(
+      removeTilingDimMappingMarksFromModule(
           originalFunc->getParentOfType<ModuleOp>());
       if (failed(res)) {
         if (failed(limitUniqueSubBlockToStore(originalFunc))) {

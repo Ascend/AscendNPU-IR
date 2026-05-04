@@ -33,6 +33,13 @@ class Operation;
 
 namespace hivm {
 
+constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
+constexpr llvm::StringLiteral AICAttrTilingDim =
+    "hivm.tiling_dim";
+constexpr llvm::StringLiteral tilghlyCoupledBufferAttr = 
+    "hivm.tightly_coupled_buffer";
+
 LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp);
 
 struct FuncRollbackBackup {
@@ -49,7 +56,7 @@ LogicalResult restoreFunctionsFromBackups(
     ModuleOp moduleOp, SmallVectorImpl<FuncRollbackBackup> &backups,
     bool limitSubBlockToStore);
 
-void eraseTilingDimMappingMarksInModule(ModuleOp moduleOp);
+void removeTilingDimMappingMarksFromModule(ModuleOp moduleOp);
 
 void runTileAndBindSubBlockEarlyPatterns(ModuleOp moduleOp);
 
