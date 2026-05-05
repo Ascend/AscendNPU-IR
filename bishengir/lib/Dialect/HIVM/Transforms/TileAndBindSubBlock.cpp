@@ -265,6 +265,7 @@ public:
     /// We differentiate storeOp and copyOp
     if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
       if (!Op.getResults().empty()) { // If copy Op with results
+        // TODO: Check if there is case of copyOp with result, if no, delete here.
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
             })) {
@@ -891,7 +892,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
         << "Selected tiling dim might have broadcast two different axis. "
            "Automatically disables strict mode.";
     if (!func.walk([](scf::ForOp forOp) {
-               return forOp->hasAttr("ExtractedLoadOrStore")
+               return forOp->hasAttr(ExtractLoadStoreAttr)
                           ? WalkResult::interrupt()
                           : WalkResult::advance();
              })

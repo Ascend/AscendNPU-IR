@@ -56,7 +56,7 @@ class HIVMBubbleUpExtractSlicePass
 public:
   using Base::Base;
 
-  static bool traceAndCheckIsGM(Value value) {
+  static bool traceAndCheckIsGMOrTightCoupledBuffer(Value value) {
     auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
     if (!maybeAlloc.has_value())
       return true;
@@ -84,7 +84,7 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0)) &&
+          if (!traceAndCheckIsGMOrTightCoupledBuffer(bufferizeToTensor->getOperand(0)) &&
               strictMode) {
             return WalkResult::interrupt();
           } else {
@@ -128,7 +128,7 @@ public:
     SmallVector<std::string> disabledPatterns(
         {"ReinterpretCastConstantArgumentFolder"});
     options.disabledPatterns = disabledPatterns;
-    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));  //The canonicalizer pass is different from A5
+    pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
     pm.addPass(createCSEPass());
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();

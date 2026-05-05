@@ -49,9 +49,6 @@
 
 namespace mlir::hivm::detail {
 
-static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
-    "MayImplicitTransposeWithLastAxis";
-
 static bool areOperandsUpperLevel(tensor::ExtractSliceOp sliceOp) {
   // can bubble up if all of the dependencies are on the equal or ancestor
   // of the source op
@@ -1833,7 +1830,7 @@ bool VInterleaveBubbleUpStrategy::isSupportedOperation(
   if (!sourceOp) {
     return false;
   }
-  bool isVInterleaveOp = dyn_cast<hivm::VInterleaveOp>(sourceOp);
+  bool isVInterleaveOp = isa<hivm::VInterleaveOp>(sourceOp);
   return isVInterleaveOp;
 }
 

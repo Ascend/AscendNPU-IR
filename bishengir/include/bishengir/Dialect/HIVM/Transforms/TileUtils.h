@@ -1,4 +1,4 @@
-//===- TileAndBindSubBlockRun.h - Tile/bind pass run pipeline helpers ------===//
+//===- TileUtils.h - Tile/bind pass run pipeline helpers ------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,8 +33,6 @@ class Operation;
 
 namespace hivm {
 
-constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
-    "MayImplicitTransposeWithLastAxis";
 constexpr llvm::StringLiteral AICAttrTilingDim =
     "hivm.tiling_dim";
 constexpr llvm::StringLiteral tilghlyCoupledBufferAttr = 

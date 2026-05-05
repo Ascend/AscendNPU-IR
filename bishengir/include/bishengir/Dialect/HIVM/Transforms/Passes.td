@@ -692,6 +692,7 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
     "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
   let options = [Option<
+  // TODO: Please remove the strictMode option,
     "strictMode", "strict-mode", "bool",
     /*default=*/"true",
     "Run on strict mode when bubble up extract slice">,
