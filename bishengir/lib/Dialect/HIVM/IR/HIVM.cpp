@@ -525,9 +525,9 @@ std::string debugCallNameMangleSuffix(Operation *op) {
     std::optional<TFuncCoreType> funcCoreType = queryFuncCoreType(funcOp);
     if (funcCoreType.has_value()) {
       if (funcCoreType.value() == TFuncCoreType::AIC) {
-        suffix = "_mix_aic";
+        suffix = ".cube";
       } else if (funcCoreType.value() == TFuncCoreType::AIV) {
-        suffix = "_mix_aiv";
+        suffix = ".vector";
       }
     }
   }
