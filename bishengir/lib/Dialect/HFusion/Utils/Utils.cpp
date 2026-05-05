@@ -1561,19 +1561,6 @@ bool hfusion::isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
   return true;
 }
 
-bool hfusion::isInCubeScope(Operation *op) {
-  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
-  if (!scopeOp)
-    return false;
-
-  auto attr =
-      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
-  if (!attr)
-    return false;
-
-  return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
-}
-
 bool hfusion::isFP8(Type type, Builder builder) {
   return type == builder.getFloat8E5M2Type() ||
          type == builder.getFloat8E4M3Type() ||

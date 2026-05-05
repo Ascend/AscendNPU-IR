@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 namespace mlir {
 namespace scope {
@@ -14,6 +16,19 @@ namespace scope {
 // check if funcOp is manual vf scope
 bool utils::isManualVFScope(func::FuncOp funcOp) {
   return funcOp->hasAttr("vector_mode");
+}
+
+bool utils::isInCubeScope(Operation *op) {
+  auto scopeOp = op->getParentOfType<ScopeOp>();
+  if (!scopeOp)
+    return false;
+
+  auto attr =
+      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+  if (!attr)
+    return false;
+
+  return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
 }
 
 } // namespace scope

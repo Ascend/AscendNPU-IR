@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -136,7 +137,7 @@ struct HFusionGeneralizationPatterns
   LogicalResult matchAndRewrite(linalg::LinalgOp op,
                                 PatternRewriter &rewriter) const override {
     // TODO: Skip AIC temporary. Move VF to HIVM
-    if (isInCubeScope(op)) {
+    if (scope::utils::isInCubeScope(op)) {
       return failure();
     }
     // Load/Store ops will be converted to DMAs
@@ -407,7 +408,7 @@ struct HFusionMatmulDecomposePatterns : public OpRewritePattern<MatmulOpTy> {
   LogicalResult matchAndRewrite(MatmulOpTy op,
                                 PatternRewriter &rewriter) const override {
     // TODO: Skip AIC temporary. Move VF to HIVM
-    if (isInCubeScope(op)) {
+    if (scope::utils::isInCubeScope(op)) {
       return failure();
     }
 

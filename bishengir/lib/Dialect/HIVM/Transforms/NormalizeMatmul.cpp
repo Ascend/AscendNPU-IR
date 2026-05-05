@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -591,7 +592,7 @@ public:
     }
 
     Value mmadResult = op.getResults()[0];
-    if (hasDebugUse(mmadResult)) {
+    if (scope::utils::isInCubeScope(op) && hasDebugUse(mmadResult)) {
       return failure();
     }
 

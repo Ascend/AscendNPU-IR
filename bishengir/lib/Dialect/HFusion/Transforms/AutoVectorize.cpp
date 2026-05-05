@@ -192,7 +192,7 @@ void computeInitialVecScopeRanges(
 
   func.walk([&](Operation *op) {
     // TODO: Move VF to HIVM
-    if (mlir::hfusion::isInCubeScope(op))
+    if (scope::utils::isInCubeScope(op))
       return;
 
     // If op is a linalg op, check the "inside forall" condition using the

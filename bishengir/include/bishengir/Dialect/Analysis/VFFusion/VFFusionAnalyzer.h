@@ -12,8 +12,8 @@
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionBlock.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFUnionFind.h"
+#include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 
@@ -133,7 +133,7 @@ protected:
     // For CV affinity cases: split-mix-kernel is unavailable before vffusion pass.
     // Temporarily avoid vectorizing into vf functions via isInCubeScope
     // for vector ops in cube scope.
-    if (mlir::hfusion::isInCubeScope(x) || mlir::hfusion::isInCubeScope(y))
+    if (scope::utils::isInCubeScope(x) || scope::utils::isInCubeScope(y))
       return false;
 
     if (!this->isOutlineableOp(x) || !this->isOutlineableOp(y))

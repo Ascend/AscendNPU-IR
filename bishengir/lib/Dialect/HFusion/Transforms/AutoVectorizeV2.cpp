@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -1147,7 +1148,7 @@ void AutoVectorizeV2::initFusableOpInfo(
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
   unsigned fusableOpCount = 1;
   func.walk([&](Operation *op) {
-    if (mlir::hfusion::isInCubeScope(op))
+    if (scope::utils::isInCubeScope(op))
       return;
 
     if (!isFusableOp(op))
@@ -1615,7 +1616,7 @@ void AutoVectorizeV2::runOnOperation() {
         otherVectorizableOps;
     transform::SequenceOp seqOp = buildTransformSequenceOp(builder, func);
     func.walk([&](Block *block) {
-      if (mlir::hfusion::isInCubeScope(block->getParentOp()) ||
+      if (scope::utils::isInCubeScope(block->getParentOp()) ||
           isCubeScopeOp(block->getParentOp()))
         return;
 

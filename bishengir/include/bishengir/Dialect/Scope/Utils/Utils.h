@@ -9,7 +9,6 @@
 #ifndef BISHENGIR_SCOPE_DIALECT_UTILS_H
 #define BISHENGIR_SCOPE_DIALECT_UTILS_H
 
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Value.h"
 
@@ -19,6 +18,9 @@ namespace utils {
 
 // check if funcOp is manual vf scope
 bool isManualVFScope(func::FuncOp funcOp);
+
+// Check if operations is in cube scope
+bool isInCubeScope(Operation *op);
 
 } // namespace utils
 } // namespace scope

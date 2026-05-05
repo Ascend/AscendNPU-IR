@@ -324,8 +324,6 @@ bool isZeroOrEmptyTensor(Value op);
 // Check if only unit dimensions are flattened
 bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
                             ArrayRef<int64_t> newShape);
-// Check if operations is in cube scope
-bool isInCubeScope(Operation *op);
 
 bool isFP8(Type type, Builder builder);
 
