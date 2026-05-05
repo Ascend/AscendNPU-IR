@@ -98,11 +98,18 @@ public:
         op.getTrueShape().getDefiningOp());
     if (min && min.getNumOperands() >= 1) {
       scf::ForOp forOp = scf::getForInductionVarOwner(min->getOperand(0));
+      auto forUB = getConstantUB(forOp);
+
       if (forOp && isAffineMapComputingTailBlock(
-                       min.getAffineMap(), getConstantUB(forOp),
+                       min.getAffineMap(), forUB,
                        forOp.getConstantStep()->getSExtValue())) {
         if (min->getNumOperands() == 2 &&
             min->getOperand(1) != forOp.getUpperBound())
+          return failure();
+
+        // UB > 256 will may cause mask overflow and undefined
+        // behaviour
+        if (forUB.has_value() && forUB.value() > 256)
           return failure();
 
         // replace the PLT with PLTM
