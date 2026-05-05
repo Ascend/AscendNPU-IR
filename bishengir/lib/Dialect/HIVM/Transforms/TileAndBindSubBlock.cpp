@@ -1073,9 +1073,12 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // Step 2: Tile the AIC funcs, tiling AIC is only needed in Ascend910_95 Arch
   bool archIs950 = hacc::utils::isAscend910_95(moduleOp);
-  if (failed(tileAicFixpipeFuncsIfNeeded(
-          aicFunctions, aivSuccessFlag, archIs950,
-          tightlyCoupledBufferToTilingDim))) {
+  if (!(aivSuccessFlag && archIs950)) {
+    destroyAllBackups();
+    return;
+  } else {
+    if (failed(tileAicFixpipeFuncsIfNeeded(
+          aicFunctions, tightlyCoupledBufferToTilingDim))) {
     if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
                                            /*limitSubBlockToStore=*/false)) ||
         failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
@@ -1085,8 +1088,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
     }
     destroyAllBackups();
     return;
+    }
   }
-  destroyAllBackups();
 
 #ifndef NDEBUG
   LLVM_DEBUG(DBGS() << "TileAndBindSubBlock pass completed. "

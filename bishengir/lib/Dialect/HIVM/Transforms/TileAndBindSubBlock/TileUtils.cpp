@@ -386,11 +386,8 @@ bool hasImplicitTransposeWithLastAxisInAiv(
 }
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(
-    ArrayRef<func::FuncOp> aicFunctions, bool aivSuccessFlag, bool archIs950,
+    ArrayRef<func::FuncOp> aicFunctions,
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
-  if (!(aivSuccessFlag && archIs950)) {
-    return success();
-  }
 
   for (func::FuncOp originalFunc : aicFunctions) {
     originalFunc->walk([&](annotation::MarkOp markOp) {
