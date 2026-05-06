@@ -882,6 +882,31 @@ struct HFusionToHIVMMulExtOp : public OpRewritePattern<hfusion::MulExtOp> {
 };
 
 //===----------------------------------------------------------------------===//
+// HFusionToHIVMMulExtUiOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMMulExtUiOp : public OpRewritePattern<hfusion::MulExtUiOp> {
+  using OpRewritePattern<hfusion::MulExtUiOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::MulExtUiOp op,
+                                PatternRewriter &rewriter) const override {
+    // convert hfusion::MulExtUiOp to hivm::VMulExtUiOp
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
+    SmallVector<Value> dsts;
+    if (failed(
+            tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
+      return failure();
+    auto hivmMulExtUiOp = rewriter.create<hivm::VMulExtUiOp>(
+        op->getLoc(), op->getResultTypes(), ValueRange({lhs, rhs}),
+        ValueRange{dsts});
+    convertInvalidScalarOperands(hivmMulExtUiOp);
+    rewriter.replaceOp(op, hivmMulExtUiOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // HfusionToHIVMInterleaveOp
 //===----------------------------------------------------------------------===//
 struct HfusionToHIVMInterleaveOp
@@ -1261,6 +1286,7 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionAssertOpToHIVMDebugOp,
     HFusionToHIVMBarrierOp,
     HFusionToHIVMMulExtOp,
+    HFusionToHIVMMulExtUiOp,
     HfusionToHIVMInterleaveOp,
     HFusionToHIVMDeinterleaveOp,
     HFusionToHIVMFlipOp,

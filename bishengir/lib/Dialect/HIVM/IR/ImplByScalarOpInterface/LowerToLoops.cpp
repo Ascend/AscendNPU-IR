@@ -51,10 +51,15 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMulExtOp, HIVMOP>::value) {
-    auto mulextOp = rewriter.create<arith::MulUIExtendedOp>(
+    auto mulextOp = rewriter.create<arith::MulSIExtendedOp>(
         op.getLoc(), scalarInputs[0], scalarInputs[1]);
     resTensors.push_back(mulextOp.getLow());
     resTensors.push_back(mulextOp.getHigh());
+  } else if constexpr (std::is_same<hivm::VMulExtUiOp, HIVMOP>::value) {
+    auto mulextuiOp = rewriter.create<arith::MulUIExtendedOp>(
+        op.getLoc(), scalarInputs[0], scalarInputs[1]);
+    resTensors.push_back(mulextuiOp.getLow());
+    resTensors.push_back(mulextuiOp.getHigh());
   } else if constexpr (std::is_same<hivm::VModOp, HIVMOP>::value) {
     resTensor = getScalarResult<hivm::VModOp, arith::RemSIOp>(
         rewriter, op.getLoc(), scalarInputs);
@@ -570,6 +575,14 @@ FailureOr<SmallVector<Value>> VInterleaveOp::lowerToLoops(RewriterBase &b) {
 
 FailureOr<SmallVector<Value>> VMulExtOp::lowerToLoops(RewriterBase &b) {
   return decomposeVectorOpToScalarOp<VMulExtOp>(b, *this);
+}
+
+//===----------------------------------------------------------------------===//
+// VMulExtUiOp
+//===----------------------------------------------------------------------===//
+
+FailureOr<SmallVector<Value>> VMulExtUiOp::lowerToLoops(RewriterBase &b) {
+  return decomposeVectorOpToScalarOp<VMulExtUiOp>(b, *this);
 }
 
 //===----------------------------------------------------------------------===//

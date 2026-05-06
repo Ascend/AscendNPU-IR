@@ -820,6 +820,20 @@ template <typename ExtOp>
 struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
   using OpRewritePattern<ExtOp>::OpRewritePattern;
 
+  Value createExtOp(PatternRewriter &rewriter, Location loc,
+                    Value value, bool isUnsigned) const {
+    return isUnsigned ? 
+        rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), value).getResult() :
+        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), value).getResult();
+  }
+
+  Value createShROp(PatternRewriter &rewriter, Location loc,
+                    Value value, Value shift, bool isUnsigned) const {
+    return isUnsigned ?
+        rewriter.create<arith::ShRUIOp>(loc, value, shift).getResult() :
+        rewriter.create<arith::ShRSIOp>(loc, value, shift).getResult();
+  }
+
   LogicalResult matchAndRewrite(ExtOp op,
                                 PatternRewriter &rewriter) const final {
     // The type of operand is i32(scalar)
@@ -827,34 +841,32 @@ struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
     if (!oper.getType().isInteger(32)) {
       return failure();
     }
-    if constexpr (std::is_same<arith::MulUIExtendedOp, ExtOp>::value) {
-      // cast i32 inputs to i64
-      auto lhsExtSIOp = rewriter.create<arith::ExtSIOp>(
-          op.getLoc(), rewriter.getI64Type(), op.getLhs());
-      auto rhsExtSIOp = rewriter.create<arith::ExtSIOp>(
-          op.getLoc(), rewriter.getI64Type(), op.getRhs());
-      // mul i64
+
+    if constexpr (std::is_same<arith::MulSIExtendedOp, ExtOp>::value ||
+                  std::is_same<arith::MulUIExtendedOp, ExtOp>::value) {
+      constexpr bool isUnsigned =
+          std::is_same<arith::MulUIExtendedOp, ExtOp>::value;
+      auto lhsExtOp = createExtOp(rewriter, op.getLoc(), op.getLhs(), isUnsigned);
+      auto rhsExtOp = createExtOp(rewriter, op.getLoc(), op.getRhs(), isUnsigned);
       auto mulI64Res =
-          rewriter.create<arith::MulIOp>(op.getLoc(), lhsExtSIOp, rhsExtSIOp);
-      // get low 32 bits of a 64-bit number
+          rewriter.create<arith::MulIOp>(op.getLoc(), lhsExtOp, rhsExtOp);
       auto constThirtyTwo = rewriter.create<arith::ConstantIntOp>(
           op.getLoc(), 32, rewriter.getI64Type());
       auto shLIOp = rewriter.create<arith::ShLIOp>(op.getLoc(), mulI64Res,
                                                    constThirtyTwo);
-      auto shRSIOp1 = rewriter.create<arith::ShRSIOp>(
-          op.getLoc(), shLIOp.getResult(), constThirtyTwo);
+      auto shROpForLow = createShROp(rewriter, op.getLoc(),
+                                      shLIOp.getResult(), constThirtyTwo, isUnsigned);
       auto resLow32Bits =
           rewriter
               .create<arith::TruncIOp>(op.getLoc(), rewriter.getI32Type(),
-                                       shRSIOp1.getResult())
+                                       shROpForLow)
               .getResult();
-      // get high 32 bits of a 64-bit number
-      auto shRSIOp = rewriter.create<arith::ShRSIOp>(op.getLoc(), mulI64Res,
-                                                     constThirtyTwo);
+      auto shROpForHigh = createShROp(rewriter, op.getLoc(),
+                                       mulI64Res, constThirtyTwo, isUnsigned);
       auto resHigh32Bits =
           rewriter
               .create<arith::TruncIOp>(op.getLoc(), rewriter.getI32Type(),
-                                       shRSIOp.getResult())
+                                       shROpForHigh)
               .getResult();
       rewriter.replaceOp(op, {resLow32Bits, resHigh32Bits});
     }
@@ -1751,6 +1763,7 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeCastScalarToVecOp<arith::SIToFPOp>,
                DecomposeCastScalarToVecOp<arith::TruncFOp>,
                DecomposeScalarOpToVecOp<math::LogOp, hivm::VLnOp>,
+               DecomposeI32ScalarExtOp<arith::MulSIExtendedOp>,
                DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
