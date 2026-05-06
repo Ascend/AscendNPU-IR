@@ -1894,9 +1894,21 @@ LogicalResult CVPipelineImpl::migrateOps() {
           // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
           // copy case), leave it alone — rewriting the inner toTensor's
           // memref operand below is enough to redirect the writer.
+          //
+          // The fixpipe writes to a UB-typed memref but `toTensorSubview`
+          // has been address-space-stripped to match the to_tensor's memref
+          // operand. Recover the pre-cast UB-typed subview for the writer
+          // so the fixpipe verifier and downstream codegen see the correct
+          // address space; otherwise the writer is treated as an
+          // unspecified-aspace store and the staged result is corrupted.
           if (!updatedSubview &&
-              isa<MemRefType>(initOperand->get().getType()))
-            initOperand->set(toTensorSubview);
+              isa<MemRefType>(initOperand->get().getType())) {
+            Value writerSubview = toTensorSubview;
+            if (auto cast = toTensorSubview
+                                .getDefiningOp<memref::MemorySpaceCastOp>())
+              writerSubview = cast.getSource();
+            initOperand->set(writerSubview);
+          }
           memrefOperand->set(toTensorSubview);
         }
         builder.setInsertionPointAfter(item->forOp);
