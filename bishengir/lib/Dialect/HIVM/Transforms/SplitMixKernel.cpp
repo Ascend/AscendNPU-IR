@@ -265,6 +265,12 @@ struct RemoveUselessMarkOps : public OpRewritePattern<annotation::MarkOp> {
     }
 
     Value src = markOp.getSrc();
+    // TODO: The subsequent logic should be handled correctly for mark, rather
+    // than applying special processing.
+    Operation *defOp = src.getDefiningOp();
+    if (isa<hivm::FixpipeOp, hivm::StoreOp>(defOp)) {
+      return failure();
+    }
 
     bool isOnlyMark = llvm::all_of(src.getUsers(), [](Operation *user) {
       return isa<annotation::MarkOp>(user);
