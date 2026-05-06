@@ -1,8 +1,17 @@
 //===- HIVMBubbleUpExtractSlice.cpp - Bubble Up ExtractSliceOp on HIVM ops ===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //============================================================================//
 
@@ -13,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -46,7 +56,7 @@ class HIVMBubbleUpExtractSlicePass
 public:
   using Base::Base;
 
-  static bool traceAndCheckIsGM(Value value) {
+  static bool traceAndCheckIsGMOrTightCoupledBuffer(Value value) {
     auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
     if (!maybeAlloc.has_value())
       return true;
@@ -74,7 +84,8 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0))) {
+          if (!traceAndCheckIsGMOrTightCoupledBuffer(bufferizeToTensor->getOperand(0)) &&
+              strictMode) {
             return WalkResult::interrupt();
           } else {
             return WalkResult::advance();
@@ -87,10 +98,8 @@ public:
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
             return WalkResult::interrupt();
-          } else {
-            extractSliceOp->emitWarning(
-                "Extract slice is not fully bubbled up");
           }
+          extractSliceOp->emitWarning("Extract slice is not fully bubbled up");
         }
       }
       return WalkResult::advance();
@@ -151,16 +160,16 @@ private:
     strategies.push_back(std::make_shared<LoopArgsBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VInterleaveBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
 
-    // Add pattern with strategies
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
 };

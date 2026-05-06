@@ -24,6 +24,8 @@
 namespace mlir {
 namespace hivm {
 
+static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+
 /// Enum to control trace result matching behavior for multi-source cases
 enum class TraceResultMode {
   // Default behaviour, insert every matched op to final result for all traced

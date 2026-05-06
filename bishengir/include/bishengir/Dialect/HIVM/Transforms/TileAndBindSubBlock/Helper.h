@@ -1,8 +1,17 @@
 //===- Helper.h --Helper functions for HIVMTileAndBindSubBlock pass--------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,6 +34,8 @@ namespace hivm {
 
 static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
 inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
+inline constexpr llvm::StringLiteral tileAndSliceFailure =
+    "tile_and_slice_failure";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 
@@ -47,7 +58,7 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
 /// @param input The input tensor to be tiled
 /// @return The computed tile size as an OpFoldResult, or failure if the
 ///         static dimension size is less than kSubBlockDim
-FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &rewriter, Location loc,
+FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
                                           Value input, int64_t tileDimension,
                                           scf::ForOp containingLoop);
 
@@ -63,6 +74,10 @@ DenseSet<size_t> getIntersectionDims(DenseSet<size_t> dims1,
                                      const DenseSet<size_t> &dims2);
 
 bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp);
+
+void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
+                            OpFoldResult tiledOffset, OpFoldResult tiledSize,
+                            Location loc, OpBuilder &builder);
 
 } // namespace hivm
 } // namespace mlir

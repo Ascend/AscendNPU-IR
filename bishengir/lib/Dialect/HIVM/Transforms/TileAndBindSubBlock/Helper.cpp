@@ -1,8 +1,17 @@
 //===- Helper.cpp --Helper functions for HIVMTileAndBindSubBlock pass -----===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //============================================================================//
 
@@ -13,6 +22,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
@@ -67,7 +77,7 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
     return failure();
   auto inputShape = inputType.getShape();
 
-  if (tileDimension >= inputType.getRank())
+  if (tileDimension > inputType.getRank())
     return failure();
 
   auto upperBound =
@@ -83,7 +93,9 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
   // Case 1: Static dimension - compute tile size at compile time
   if (!ShapedType::isDynamic(dimensionSize)) {
     if (dimensionSize < denominator) {
-      return failure(); // Can not select the dimension of size 1.
+      return emitError(loc)
+             << "dimension size (" << dimensionSize
+             << ") is less than minimum tile size (" << denominator << ")";
     }
     // can be fully divided
     size_t tileSize = llvm::divideCeil(dimensionSize, denominator);
@@ -249,7 +261,7 @@ static bool calculateMapAndVerifyResult(OpBuilder &builder,
 }
 
 static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
-                                        ValueRange offsets,
+                                        ArrayRef<OpFoldResult> mixedOffsets,
                                         ArrayRef<int64_t> srcShape,
                                         size_t tilingDim, scf::ForOp tilingLoop,
                                         int64_t tileSize, int64_t tileCounts) {
@@ -263,12 +275,17 @@ static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
       return false;
   }
 
-  if (offsets.size() <= tilingDim)
-    return false;
   // Offset at tiling dim should be tileSize * loop index;
   // First check the affine map is calculating N * tileSize;
+  // Use mixed offsets: getOffsets() only lists SSA values for dynamic
+  // dimensions, so indexing it by tilingDim is invalid when that offset is
+  // folded into static attributes alongside other dynamic operands.
+  Value tilingOffsetVal =
+      llvm::dyn_cast_if_present<Value>(mixedOffsets[tilingDim]);
+  if (!tilingOffsetVal)
+    return false;
   auto offsetAffineMap =
-      offsets[tilingDim].getDefiningOp<affine::AffineApplyOp>();
+      tilingOffsetVal.getDefiningOp<affine::AffineApplyOp>();
   // If it's created by tiling, then the offset at tiling dim must be
   // calculated by AffineApplyOp.
   if (!offsetAffineMap)
@@ -324,7 +341,7 @@ bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
   auto tileSize = maybeTileSizeCountPair.value().first;
   auto tileCount = maybeTileSizeCountPair.value().second;
   if (!checkOffsetsCreatedByTiling(offsetSizeAndStrideOp.getStaticOffsets(),
-                                   offsetSizeAndStrideOp.getOffsets(),
+                                   offsetSizeAndStrideOp.getMixedOffsets(),
                                    originalShape->getShape(), tilingDim,
                                    tilingLoop, tileSize, tileCount)) {
     return false;
@@ -332,6 +349,35 @@ bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
 
   // All checked, we are safe to conclude this insert is from tiling.
   return true;
+}
+
+void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
+                            OpFoldResult tiledOffset, OpFoldResult tiledSize,
+                            Location loc, OpBuilder &builder) {
+  auto lb = getValueOrCreateConstantIndexOp(builder, loc, tiledOffset);
+  auto ub = getValueOrCreateConstantIndexOp(builder, loc, tiledSize);
+  auto curLB = getValueOrCreateConstantIndexOp(builder, loc, offset);
+  auto curUB = getValueOrCreateConstantIndexOp(builder, loc, size);
+  if (getConstantIntValue(offset).value_or(ShapedType::kDynamic) == 0) {
+    lb = builder.createOrFold<arith::MinSIOp>(loc, lb, curUB);
+    curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, lb);
+    curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
+    size = curUB;
+    return;
+  }
+
+  ub = builder.createOrFold<arith::AddIOp>(loc, lb, ub);
+  curUB = builder.createOrFold<arith::AddIOp>(loc, curLB, curUB);
+
+  curLB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, lb);
+  curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);
+  curUB = builder.createOrFold<arith::MaxSIOp>(loc, curLB, curUB);
+
+  curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, curLB);
+  curLB = builder.createOrFold<arith::SubIOp>(loc, curLB, lb);
+
+  offset = curLB;
+  size = curUB;
 }
 
 } // namespace hivm

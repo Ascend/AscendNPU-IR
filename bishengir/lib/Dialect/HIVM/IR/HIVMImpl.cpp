@@ -253,7 +253,7 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
   } else if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
     if (Attribute attr = forOp->getAttr(kPipelinedLoopCoreTypeAttrName)) {
       return cast<TCoreTypeAttr>(attr).getTcoretype();
-    } else if (auto attr = forOp->getAttr("ExtractedLoadOrStore")) {
+    } else if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;

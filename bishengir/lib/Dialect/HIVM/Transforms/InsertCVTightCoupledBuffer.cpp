@@ -57,8 +57,6 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-constexpr static llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
- 	     "MayImplicitTransposeWithLastAxis";
 constexpr static llvm::StringLiteral maybeUnCollapsibleReshape =
        "maybeUnCollapsibleReshape";
 struct InsertCVTightCoupledBufferPass
@@ -499,7 +497,7 @@ struct InsertMoveL1BetweenVectorAndCube
       for (Operation *producer : producerOps) {
         if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
           auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
-          if (!scfForOp->hasAttr("ExtractedLoadOrStore")) {
+          if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
             continue;
           }
         }

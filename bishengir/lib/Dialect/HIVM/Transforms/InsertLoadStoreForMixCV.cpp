@@ -199,7 +199,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>
       auto scfForDef = traceDefOp<scf::ForOp>(operand.get());
       if (scfForDef.has_value()) {
         auto forOp = llvm::cast<scf::ForOp>(scfForDef.value());
-        if (forOp->getAttr("ExtractedLoadOrStore") != nullptr) {
+        if (forOp->getAttr(ExtractLoadStoreAttr) != nullptr) {
           consumerOperands.push_back(&operand);
         }
       }

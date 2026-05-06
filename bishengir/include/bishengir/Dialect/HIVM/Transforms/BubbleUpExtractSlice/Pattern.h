@@ -1,8 +1,17 @@
 //===- Pattern.h ----------------------------------------------------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //============================================================================//
 
@@ -84,6 +93,14 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
+class BitcastBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
 class ExtractSliceBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
@@ -98,37 +115,6 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
-class VTransposeBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
-
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
-class FixpipeBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
-class VarangeBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
- 
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
-class VInterleaveBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
- 
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
-
 class BufferizationBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
@@ -137,7 +123,15 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
-class BitcastBubbleUpStrategy : public BubbleUpStrategy {
+class VTransposeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class VInterleaveBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
 
@@ -153,10 +147,10 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
-class SelectBubbleUpStrategy : public BubbleUpStrategy {
+class VarangeBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
-
+ 
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,
                         PatternRewriter &rewriter) const override;
 };
@@ -203,6 +197,30 @@ private:
   FailureOr<memref::SubViewOp> createNewSubviewOpAfterBubbleUp(
       RewriterBase &rewriter, size_t tilingDim, memref::SubViewOp subviewOp,
       memref::SubViewOp parentViewOp, memref::SubViewOp newSrc) const;
+};
+
+class ScopeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class SelectBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class FixpipeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
 };
 
 } // namespace mlir::hivm::detail

@@ -48,6 +48,8 @@ struct ValueComparator {
 namespace hivm {
 
 static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
+static constexpr llvm::StringLiteral kMapForToForallAttrName =
+    "map_for_to_forall";
 
 // Attribute names used by the hivm-mark-disable-load pass and consumed by the
 // MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
@@ -63,6 +65,9 @@ static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
 static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
     "tiling_dim_mapping";
+
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
 
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr int VBITSORT_NUM_PER_REPEAT = 32;

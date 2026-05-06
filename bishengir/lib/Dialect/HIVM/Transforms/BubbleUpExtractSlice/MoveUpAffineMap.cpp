@@ -15,11 +15,11 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Transforms/Transforms.h"
 
@@ -61,7 +61,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
   using OpRewritePattern<AffineOpTy>::OpRewritePattern;
 
   explicit HoistAffinePattern(MLIRContext *ctx, PatternBenefit benefit = 100)
-      : OpRewritePattern<AffineOpTy>(ctx, benefit) {};
+      : OpRewritePattern<AffineOpTy>(ctx, benefit){};
 
   LogicalResult matchAndRewrite(AffineOpTy op,
                                 PatternRewriter &rewriter) const final {
@@ -77,7 +77,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
         } else {
           Block *currentBlock = ba.getParentBlock();
           Block *lastBlock = lastBlockArg.getParentBlock();
-
+          
           if (dominance.dominates(lastBlock, currentBlock)) {
             lastBlockArg = ba;
           }
@@ -97,7 +97,7 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
     Operation *insertPoint = nullptr;
 
     // If 'lastDefOp' is null, it means that the lowest dominating value is
-    // a block argument. So we use 'lastBlockArg' as 'lastDefVal'
+    // a block argument. So we use 'lastBlockArg' as 'lastDefVal' 
     // and set the insertion point to the front of the block.
     if (!lastDefOp && lastBlockArg) {
       lastDefVal = lastBlockArg;
@@ -105,12 +105,13 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       insertPoint = &anchorBlock->front();
     }
 
-    // If the 'lastDefOp' is null, after updating 'lastDefVal' with
-    // 'lastBlockArg', if 'lastDefVal' is still null, it is abnormal.
+    // If the 'lastDefOp' is null, after updating 'lastDefVal' with 'lastBlockArg',
+    // if 'lastDefVal' is still null, it is abnormal.
     if (!lastDefOp && !lastDefVal)
-      return rewriter.notifyMatchFailure(op, "no valid operands found");
+      return rewriter.notifyMatchFailure(
+          op, "no valid operands found");
 
-    // If we have 'lastDefOp' and 'lastBlockArg' is null,
+    // If we have 'lastDefOp' and 'lastBlockArg' is null, 
     // it means all operands have defining Op,
     // we can directly use 'lastDefOp' and 'lastDefVal'
     // and set the insertion point to the next node of 'lastDefOp'.
@@ -118,19 +119,15 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       insertPoint = lastDefOp->getNextNode();
     }
 
-    // If we have both 'lastDefOp' and 'lastBlockArg', we might either
-    // set the insertion point to the next node of 'lastDefOp' or to the front
-    // of 'argBlock', so we need to verify the dominance relationship between
-    // 'defOpBlock' and 'argBlock' and might update 'lastDefVal' with
-    // 'lastBlockArg'.
+    // If we have both 'lastDefOp' and 'lastBlockArg', we might either 
+    // set the insertion point to the next node of 'lastDefOp' or to the front of 'argBlock',
+    // so we need to verify the dominance relationship between 'defOpBlock' and 'argBlock'
+    // and might update 'lastDefVal' with 'lastBlockArg'.
     if (lastDefOp && lastBlockArg) {
       Block *defOpBlock = lastDefOp->getBlock();
       Block *argBlock = lastBlockArg.getParentBlock();
-      insertPoint = dominance.dominates(argBlock, defOpBlock)
-                        ? lastDefOp->getNextNode()
-                        : &argBlock->front();
-      lastDefVal =
-          dominance.dominates(argBlock, defOpBlock) ? lastDefVal : lastBlockArg;
+      insertPoint = dominance.dominates(argBlock, defOpBlock) ? lastDefOp->getNextNode() : &argBlock->front();
+      lastDefVal = dominance.dominates(argBlock, defOpBlock) ? lastDefVal : lastBlockArg;
     }
 
     if (insertPoint->getBlock() != op->getBlock()) {
@@ -148,14 +145,14 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
     // ...
     // third_use(%def)
     // ```
-    // Potential problem: If we matched the "second_use", the `insertPoint`
-    // will be "first_use", and vice versa. Because there is no domination
+    // Potential problem: If we matched the "second_use", the `insertPoint` 
+    // will be "first_use", and vice versa. Because there is no domination 
     // relationship between the two.
     // We can break the tie by moving the insertion point to end of the
     // consecutive chain of users before current op.
     auto lastDefValUser = SetVector<Operation *>{lastDefVal.getUsers().begin(),
                                                  lastDefVal.getUsers().end()};
-
+    
     while (insertPoint && lastDefValUser.contains(insertPoint))
       insertPoint = insertPoint->getNextNode();
 
@@ -189,8 +186,9 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
 };
 
 void populateHoistAffinePattern(RewritePatternSet &patterns) {
-  patterns.add<HoistAffinePattern<affine::AffineApplyOp>,
-               HoistAffinePattern<affine::AffineMinOp>,
-               HoistAffinePattern<affine::AffineMaxOp>>(patterns.getContext());
+  patterns
+      .add<HoistAffinePattern<affine::AffineApplyOp>, 
+           HoistAffinePattern<affine::AffineMinOp>,
+           HoistAffinePattern<affine::AffineMaxOp>>(patterns.getContext());
 }
 } // namespace mlir::hivm::detail
