@@ -375,7 +375,6 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   if (hfusionOptions.enableTreeReduceV2) {
  	     pm.addPass(createTreeReduceV2Pass());
   }
-  pm.addPass(createPullSliceIntoVectorFunctionPass());
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
@@ -384,6 +383,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     // Eliminate VFFusion outline
     pm.addPass(mlir::createInlinerPass());
   }
+  // Run after Inliner so VFFusion can pull cross-scope extract_slices into VF.
+  pm.addPass(createPullSliceIntoVectorFunctionPass());
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);

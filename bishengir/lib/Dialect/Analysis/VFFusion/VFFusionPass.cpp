@@ -110,6 +110,31 @@ void VFFusionPass::runOnOperation() {
     }
   }
 
+  // clone multi-use extract_slice to ensure each can be independently fused
+  // into its uses.
+  SmallVector<tensor::ExtractSliceOp> sliceOps;
+  moduleOp.walk([&](tensor::ExtractSliceOp sliceOp) {
+    if (sliceOp->use_empty() || sliceOp->hasOneUse())
+      return;
+      
+    sliceOps.push_back(sliceOp);
+  });
+
+  for (tensor::ExtractSliceOp sliceOp : sliceOps) {
+    // collect all uses
+    SmallVector<OpOperand *> uses;
+    for (OpOperand &use : sliceOp->getUses()) {
+      uses.push_back(&use);
+    }
+
+    // keep first use, clone others
+    builder.setInsertionPointAfter(sliceOp);
+    for (size_t i = 1; i < uses.size(); ++i) {
+      Operation *clonedOp = builder.clone(*sliceOp);
+      uses[i]->set(clonedOp->getResult(0));
+    }
+  }
+
   auto walkResult = moduleOp.walk([&](func::FuncOp funcOp) -> WalkResult {
     // Cube/MixCV function requires special fusion strategy (refer to
     // SplitMixKernel).

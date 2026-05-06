@@ -113,6 +113,10 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     }
   }
 
+  // Only producer ExtractSliceOps need to be fused to VF.
+  if (isa<tensor::ExtractSliceOp>(consumerOp))
+    return false;
+
   if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
 
