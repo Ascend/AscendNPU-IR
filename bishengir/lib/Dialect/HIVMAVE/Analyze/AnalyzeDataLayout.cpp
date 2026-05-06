@@ -178,6 +178,46 @@ void DataLayoutAnalysisPass::runOnOperation() {
       markedForOps.insert(parentOp);
     }
   });
+
+  auto funcAlignmentAttr = func->getAttrOfType<IntegerAttr>(
+      utils::elementAlignmentBitWidth);
+  int funcAlignment = funcAlignmentAttr ? funcAlignmentAttr.getInt() : -1;
+  if (funcAlignment != -1) {
+    func.walk([&](Operation *op) {
+      if (isa<scf::ForOp>(op) || isa<hivmave::VFPgeOp>(op))
+        return WalkResult::advance();
+      for (auto result : op->getResults()) {
+        if (!isa<VectorType>(result.getType()))
+          continue;
+
+        for (auto *user : result.getUsers()) {
+          Operation *parentOp = user->getParentOp();
+          if (!parentOp || isa<func::FuncOp>(parentOp))
+            continue;
+          if (!isa<scf::ForOp>(parentOp))
+            continue;
+          if (markedForOps.count(parentOp) > 0) {
+            auto parentAlignmentAttr = parentOp->getAttrOfType<IntegerAttr>(
+                utils::elementAlignmentBitWidth);
+            if (!parentAlignmentAttr) {
+              continue;
+            }
+
+            int parentAlignment = parentAlignmentAttr.getInt();
+            if (parentAlignment == -1 || parentAlignment == funcAlignment) {
+              continue;
+            }
+
+            func->setAttr(
+                utils::elementAlignmentBitWidth,
+                rewriter.getIntegerAttr(rewriter.getIntegerType(32), -1));
+            return WalkResult::interrupt();
+          }
+        }
+      }
+      return WalkResult::advance();
+    });
+  }
 }
 
 std::unique_ptr<Pass> hivmave::createDataLayoutAnalysisPass() {
