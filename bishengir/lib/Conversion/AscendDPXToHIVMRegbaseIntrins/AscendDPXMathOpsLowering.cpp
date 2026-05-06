@@ -225,6 +225,68 @@ TCCC *libFuncNameI16<PowOp> = "_mlir_ciface_simt_pow_int16_t";
 TCCC *libFuncNameI32<PowOp> = "_mlir_ciface_simt_pow_int32_t";
 TCCC *libFuncNameI64<PowOp> = "_mlir_ciface_simt_pow_int64_t";
 TCCC *libFuncName<FloatAsIntOp> = "_mlir_ciface_simt_float_as_int_float";
+
+TCCC *libFuncName<TruncOp> = "_mlir_ciface_simt_trunc_float";
+TCCC *libFuncName<NearbyintOp> = "_mlir_ciface_simt_nearbyint_float";
+TCCC *libFuncName<Log10Op> = "_mlir_ciface_simt_log10_float";
+TCCC *libFuncName<AsinOp> = "_mlir_ciface_simt_asin_float";
+TCCC *libFuncName<AcosOp> = "_mlir_ciface_simt_acos_float";
+TCCC *libFuncName<SinhOp> = "_mlir_ciface_simt_sinh_float";
+TCCC *libFuncName<CoshOp> = "_mlir_ciface_simt_cosh_float";
+TCCC *libFuncName<AsinhOp> = "_mlir_ciface_simt_asinh_float";
+TCCC *libFuncName<AcoshOp> = "_mlir_ciface_simt_acosh_float";
+TCCC *libFuncName<AtanhOp> = "_mlir_ciface_simt_atanh_float";
+TCCC *libFuncName<Expm1Op> = "_mlir_ciface_simt_expm1_float";
+TCCC *libFuncName<CylBesselI0Op> = "_mlir_ciface_simt_cyl_bessel_i0_float";
+TCCC *libFuncName<ErfinvOp> = "_mlir_ciface_simt_erfinv_float";
+TCCC *libFuncName<LgammaOp> = "_mlir_ciface_simt_lgamma_float";
+TCCC *libFuncName<SignbitOp> = "_mlir_ciface_simt_signbit_float";
+TCCC *libFuncNameI32<ClzOp> = "_mlir_ciface_simt_clz_int32_t";
+TCCC *libFuncNameI32<PopcOp> = "_mlir_ciface_simt_popc_int32_t";
+TCCC *libFuncNameI32<FfsOp> = "_mlir_ciface_simt_ffs_int32_t";
+TCCC *libFuncName<AbsOp> = "_mlir_ciface_simt_abs_float";
+TCCC *libFuncNameI32<AbsOp> = "_mlir_ciface_simt_abs_int32_t";
+TCCC *libFuncName<SaturatefOp> = "_mlir_ciface_simt_saturatef_float";
+TCCC *libFuncName<Exp10Op> = "_mlir_ciface_simt_exp10_float";
+TCCC *libFuncNameI32<BrevOp> = "_mlir_ciface_simt_brev_int32_t";
+TCCC *libFuncName<RcpRnOp> = "_mlir_ciface_simt_rcp_rn_float";
+TCCC *libFuncName<RcpRzOp> = "_mlir_ciface_simt_rcp_rz_float";
+TCCC *libFuncName<RcpRdOp> = "_mlir_ciface_simt_rcp_rd_float";
+TCCC *libFuncName<RcpRuOp> = "_mlir_ciface_simt_rcp_ru_float";
+TCCC *libFuncName<RsqrtRnOp> = "_mlir_ciface_simt_rsqrt_rn_float";
+ 
+TCCC *libFuncName<CopysignOp> = "_mlir_ciface_simt_copysign_float";
+TCCC *libFuncName<Atan2Op> = "_mlir_ciface_simt_atan2_float";
+TCCC *libFuncName<NextafterOp> = "_mlir_ciface_simt_nextafter_float";
+TCCC *libFuncName<HypotOp> = "_mlir_ciface_simt_hypot_float";
+TCCC *libFuncNameI32<MulhiOp> = "_mlir_ciface_simt_mulhi_int32_t";
+TCCC *libFuncNameI32<Mul24Op> = "_mlir_ciface_simt_mul24_int32_t";
+TCCC *libFuncNameI32<HaddOp> = "_mlir_ciface_simt_hadd_int32_t";
+TCCC *libFuncNameI32<RhaddOp> = "_mlir_ciface_simt_rhadd_int32_t";
+TCCC *libFuncName<FdimOp> = "_mlir_ciface_simt_fdim_float";
+TCCC *libFuncName<FastDividefOp> = "_mlir_ciface_simt_fast_dividef_float";
+TCCC *libFuncName<DivRnOp> = "_mlir_ciface_simt_div_rn_float";
+TCCC *libFuncName<DivRzOp> = "_mlir_ciface_simt_div_rz_float";
+TCCC *libFuncName<DivRdOp> = "_mlir_ciface_simt_div_rd_float";
+TCCC *libFuncName<DivRuOp> = "_mlir_ciface_simt_div_ru_float";
+TCCC *libFuncName<FmodOp> = "_mlir_ciface_simt_fmod_float";
+TCCC *libFuncName<RemainderOp> = "_mlir_ciface_simt_remainder_float";
+TCCC *libFuncName<AddRnOp> = "_mlir_ciface_simt_add_rn_float";
+TCCC *libFuncName<AddRzOp> = "_mlir_ciface_simt_add_rz_float";
+TCCC *libFuncName<AddRdOp> = "_mlir_ciface_simt_add_rd_float";
+TCCC *libFuncName<AddRuOp> = "_mlir_ciface_simt_add_ru_float";
+TCCC *libFuncName<MulRnOp> = "_mlir_ciface_simt_mul_rn_float";
+TCCC *libFuncName<MulRzOp> = "_mlir_ciface_simt_mul_rz_float";
+TCCC *libFuncName<MulRdOp> = "_mlir_ciface_simt_mul_rd_float";
+TCCC *libFuncName<MulRuOp> = "_mlir_ciface_simt_mul_ru_float";
+ 
+TCCC *libFuncNameI32<BytePermOp> = "_mlir_ciface_simt_byte_perm_int32_t";
+TCCC *libFuncNameI32<SadOp> = "_mlir_ciface_simt_sad_int32_t";
+TCCC *libFuncName<FmaRnOp> = "_mlir_ciface_simt_fma_rn_float";
+TCCC *libFuncName<FmaRzOp> = "_mlir_ciface_simt_fma_rz_float";
+TCCC *libFuncName<FmaRdOp> = "_mlir_ciface_simt_fma_rd_float";
+TCCC *libFuncName<FmaRuOp> = "_mlir_ciface_simt_fma_ru_float";
+TCCC *libFuncName<FmaOp> = "_mlir_ciface_simt_fma_float";
 #undef TCCC
 
 template <typename DPX_OP>
@@ -312,6 +374,68 @@ LibCallLowering<SinOp>,
 LibCallLowering<TanhOp>,
 LibCallLowering<TanOp>,
 LibCallLowering<FloatAsIntOp>,
+
+LibCallLowering<TruncOp>,
+LibCallLowering<NearbyintOp>,
+LibCallLowering<Log10Op>,
+LibCallLowering<AsinOp>,
+LibCallLowering<AcosOp>,
+LibCallLowering<SinhOp>,
+LibCallLowering<CoshOp>,
+LibCallLowering<AsinhOp>,
+LibCallLowering<AcoshOp>,
+LibCallLowering<AtanhOp>,
+LibCallLowering<Expm1Op>,
+LibCallLowering<CylBesselI0Op>,
+LibCallLowering<ErfinvOp>,
+LibCallLowering<LgammaOp>,
+LibCallLowering<SignbitOp>,
+LibCallLowering<ClzOp>,
+LibCallLowering<PopcOp>,
+LibCallLowering<FfsOp>,
+LibCallLowering<AbsOp>,
+LibCallLowering<SaturatefOp>,
+LibCallLowering<Exp10Op>,
+LibCallLowering<Log2Op>,
+LibCallLowering<BrevOp>,
+LibCallLowering<RcpRnOp>,
+LibCallLowering<RcpRzOp>,
+LibCallLowering<RcpRdOp>,
+LibCallLowering<RcpRuOp>,
+LibCallLowering<RsqrtRnOp>,
+
+LibCallLowering<CopysignOp>,
+LibCallLowering<Atan2Op>,
+LibCallLowering<NextafterOp>,
+LibCallLowering<HypotOp>,
+LibCallLowering<MulhiOp>,
+LibCallLowering<Mul24Op>,
+LibCallLowering<HaddOp>,
+LibCallLowering<RhaddOp>,
+LibCallLowering<FdimOp>,
+LibCallLowering<FastDividefOp>,
+LibCallLowering<DivRnOp>,
+LibCallLowering<DivRzOp>,
+LibCallLowering<DivRdOp>,
+LibCallLowering<DivRuOp>,
+LibCallLowering<FmodOp>,
+LibCallLowering<RemainderOp>,
+LibCallLowering<AddRnOp>,
+LibCallLowering<AddRzOp>,
+LibCallLowering<AddRdOp>,
+LibCallLowering<AddRuOp>,
+LibCallLowering<MulRnOp>,
+LibCallLowering<MulRzOp>,
+LibCallLowering<MulRdOp>,
+LibCallLowering<MulRuOp>,
+
+LibCallLowering<BytePermOp>,
+LibCallLowering<SadOp>,
+LibCallLowering<FmaRnOp>,
+LibCallLowering<FmaRzOp>,
+LibCallLowering<FmaRdOp>,
+LibCallLowering<FmaRuOp>,
+LibCallLowering<FmaOp>,
 UnaryDirect<CeilOp, hivm_regbaseintrins::CeilOpF16, hivm_regbaseintrins::CeilOpF32, hivm_regbaseintrins::CeilOpBF16>,
 UnaryDirect<ExpOp, LLVM::ExpOp>,
 UnaryDirect<FloorOp, hivm_regbaseintrins::FloorOpF16, hivm_regbaseintrins::FloorOpF32, hivm_regbaseintrins::FloorOpBF16>,
