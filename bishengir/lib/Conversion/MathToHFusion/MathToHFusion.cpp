@@ -183,6 +183,7 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
       ElementwiseOpToHFusionUnary<math::AsinOp, hfusion::UnaryFn::asin>,
       ElementwiseOpToHFusionUnary<math::CosOp, hfusion::UnaryFn::cos>,
       ElementwiseOpToHFusionUnary<math::AcosOp, hfusion::UnaryFn::acos>,
+      ElementwiseOpToHFusionUnary<math::SinhOp, hfusion::UnaryFn::sinh>,
       ElementwiseOpToHFusionUnary<math::AcoshOp, hfusion::UnaryFn::acosh>,
       ElementwiseOpToHFusionUnary<math::AbsIOp, hfusion::UnaryFn::absi>,
       ElementwiseOpToHFusionUnary<math::ErfOp, hfusion::UnaryFn::erf>,

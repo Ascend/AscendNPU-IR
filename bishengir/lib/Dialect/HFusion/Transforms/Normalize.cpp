@@ -2468,6 +2468,172 @@ private:
 /// y = hfusion elemwise unary {expm1} (x)
 /// is normalized to
 ///  y = linalg.elemwise_unary{exp}(x) -1
+static Value createScalarConst(PatternRewriter &rewriter, Location loc,
+                               Type elemType, float value) {
+  return rewriter
+      .create<arith::ConstantOp>(
+          loc, elemType, rewriter.getFloatAttr(elemType, value))
+      ->getResult(0);
+}
+
+static Value createTensorConst(PatternRewriter &rewriter, Location loc,
+                               Value reference, float value) {
+  auto elementType = getElementTypeOrSelf(reference.getType());
+  auto constOp = rewriter.create<arith::ConstantOp>(
+      loc, elementType, rewriter.getFloatAttr(elementType, value));
+  auto empty = utils::createEmptyOp(rewriter, loc, reference);
+  return rewriter
+      .create<linalg::FillOp>(loc, ValueRange{constOp->getResult(0)},
+                              ValueRange{empty})
+      ->getResult(0);
+}
+
+static Value createCmpMask(PatternRewriter &rewriter, Location loc, Value src,
+                           float threshold,
+                           arith::CmpFPredicate predicate) {
+  Value thresholdTensor = createTensorConst(rewriter, loc, src, threshold);
+  return rewriter
+      .create<arith::CmpFOp>(loc, predicate, src, thresholdTensor)
+      ->getResult(0);
+}
+
+/// normalize sinh(x) implementation
+///
+/// Formula:
+///   sinh(x) = (exp(x) - exp(-x)) / 2
+///
+/// For better numerical stability, use range-based handling:
+///   if x > 5:
+///     result = 0.5 * exp(x)
+///   else if x < -5:
+///     result = -0.5 * exp(-x)
+///   else if -0.1 < x < 0.1:
+///     result = x
+///   else:
+///     result = (exp(x) - exp(-x)) * 0.5
+struct NormalizeSinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::sinh)
+      return failure();
+
+    Value src = op.getInputs()[0];
+    auto inType = getElementTypeOrSelf(src.getType());
+    assert((inType.isF16() || inType.isF32()) &&
+           "only support input Type is f16 or f32");
+
+    if (inType.isF16()) {
+      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    Value res = buildSinh(rewriter, op->getLoc(), src);
+
+    if (inType.isF16()) {
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  Value buildSinh(PatternRewriter &rewriter, Location loc, Value src) const {
+    auto elementType = getElementTypeOrSelf(src.getType());
+
+    Value negOne = createScalarConst(rewriter, loc, elementType, -1.0f);
+    Value half = createScalarConst(rewriter, loc, elementType, 0.5f);
+    Value negHalf = createScalarConst(rewriter, loc, elementType, -0.5f);
+
+    auto exp0Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp0 =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(rewriter, loc,
+                                                    linalg::UnaryFn::exp,
+                                                    ValueRange{src},
+                                                    ValueRange{exp0Empty})
+            ->getResult(0);
+
+    auto negXEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value negX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{src, negOne},
+            ValueRange{negXEmpty})
+            ->getResult(0);
+
+    auto exp1Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp1 =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(rewriter, loc,
+                                                    linalg::UnaryFn::exp,
+                                                    ValueRange{negX},
+                                                    ValueRange{exp1Empty})
+            ->getResult(0);
+
+    auto subEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value sub =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{exp0, exp1}, ValueRange{subEmpty})
+            ->getResult(0);
+
+    auto midResEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value midRes =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{sub, half},
+            ValueRange{midResEmpty})
+            ->getResult(0);
+
+    auto largePosEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value largePos =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{exp0, half},
+            ValueRange{largePosEmpty})
+            ->getResult(0);
+
+    auto largeNegEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value largeNeg =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{exp1, negHalf},
+            ValueRange{largeNegEmpty})
+            ->getResult(0);
+
+    Value gtMask =
+        createCmpMask(rewriter, loc, src, 5.0f, arith::CmpFPredicate::OGT);
+    Value ltMask =
+        createCmpMask(rewriter, loc, src, -5.0f, arith::CmpFPredicate::OLT);
+    Value smallNegMask =
+        createCmpMask(rewriter, loc, src, -0.1f, arith::CmpFPredicate::OGT);
+    Value smallPosMask =
+        createCmpMask(rewriter, loc, src, 0.1f, arith::CmpFPredicate::OLT);
+
+    Value smallMask =
+        rewriter.create<arith::AndIOp>(loc, smallNegMask, smallPosMask);
+
+    Value base =
+        rewriter.create<arith::SelectOp>(loc, smallMask, src, midRes);
+    Value tmp =
+        rewriter.create<arith::SelectOp>(loc, gtMask, largePos, base);
+    return rewriter.create<arith::SelectOp>(loc, ltMask, largeNeg, tmp);
+  }
+};
+
+/// normalize expm1(x) to exp(x) - 1
+/// eg.
+/// y = hfusion elemwise unary {expm1} (x)
+/// is normalized to
+///  y = linalg.elemwise_unary{exp}(x) -1
 struct NormalizeExpM1Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
@@ -7558,6 +7724,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeLog1pOp>(patterns.getContext());
   patterns.add<NormalizeExp2Op>(patterns.getContext());
   patterns.add<NormalizeExpM1Op>(patterns.getContext());
+  patterns.add<NormalizeSinhOp>(patterns.getContext());
   patterns.add<NormalizeErfOp>(patterns.getContext());
   patterns.add<NormalizeBrcCast>(patterns.getContext());
   patterns.add<NormalizefillCastToTensorBrc>(patterns.getContext());
