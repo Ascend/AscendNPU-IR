@@ -250,6 +250,23 @@ std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp) {
   return std::nullopt;
 }
 
+// TODO: Refactor, expand getCoreType of copy op
+bool isCopytoL1(Operation *op) {
+  if (!isa<hivm::CopyOp>(op))
+    return false;
+
+  auto copy = dyn_cast<hivm::CopyOp>(op);
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(copy.getDst());
+  if (!maybeAlloc.has_value())
+    return false;
+  auto allocOp = dyn_cast<memref::AllocOp>(maybeAlloc.value());
+  auto mayAddrSpace =
+      mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
+  if (mayAddrSpace.has_value())
+    return mayAddrSpace.value() == AddressSpace::L1;
+  return false;
+}
+
 FailureOr<TCoreType> getCoreType(Operation *op) {
   // coretype attribute has the highest priority.
   if (auto coreTypeAttr =
@@ -286,7 +303,7 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
     return kTFuncCoreType2TCoreType.find(funcCoreType.value())->second;
   }
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
-    if (auto attr = forOp->getAttr("ExtractedLoadOrStore")) {
+    if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;

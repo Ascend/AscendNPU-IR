@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 //============================================================================//
-
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"

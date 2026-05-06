@@ -32,6 +32,8 @@ namespace mlir {
 namespace hivm {
 static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
 
+static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);
 
@@ -310,6 +312,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope);
 
 } // namespace util
+bool isCopytoL1(Operation *op);
 } // namespace hivm
 } // namespace mlir
 

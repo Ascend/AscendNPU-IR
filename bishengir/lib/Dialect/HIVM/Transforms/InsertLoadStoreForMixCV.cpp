@@ -409,7 +409,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
       auto scfForDef = traceDefOp<scf::ForOp>(operand.get());
       if (scfForDef.has_value()) {
         auto forOp = llvm::cast<scf::ForOp>(scfForDef.value());
-        if (forOp->getAttr("ExtractedLoadOrStore") != nullptr) {
+        if (forOp->getAttr(ExtractLoadStoreAttr) != nullptr) {
           consumerOperands.push_back(&operand);
         }
       }
@@ -504,7 +504,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
       auto toTensorOp =
           llvm::cast<bufferization::ToTensorOp>(toTensorOpDef.value());
       auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
-          toTensorOp->getResult(0), "MayImplicitTransposeWithLastAxis");
+          toTensorOp->getResult(0), kMayImplicitTransposeWithLastAxis);
 
       if (maybeAnnotateOp.has_value()) {
         consumerOperands.push_back(&operand);

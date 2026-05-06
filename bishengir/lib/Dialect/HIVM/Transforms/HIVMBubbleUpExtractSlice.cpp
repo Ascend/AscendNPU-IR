@@ -27,6 +27,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/TileUsingInterface.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
@@ -35,6 +36,7 @@
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_HIVMBUBBLEUPEXTRACTSLICE
@@ -54,8 +56,14 @@ class HIVMBubbleUpExtractSlicePass
 public:
   using Base::Base;
 
-  static bool traceAndCheckIsGM(Value value) {
-    return !traceDefOp<memref::AllocOp>(value).has_value();
+  static bool traceAndCheckIsGMOrTightCoupledBuffer(Value value) {
+    auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
+    if (!maybeAlloc.has_value())
+      return true;
+    auto allocOp = cast<memref::AllocOp>(maybeAlloc.value());
+    return utils::getAnnotateOpWithAttr(
+               allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name)
+        .has_value();
   }
 
   LogicalResult
@@ -76,11 +84,16 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGM(bufferizeToTensor->getOperand(0)) &&
+          if (!traceAndCheckIsGMOrTightCoupledBuffer(bufferizeToTensor->getOperand(0)) &&
               strictMode) {
             return WalkResult::interrupt();
+          } else {
+            return WalkResult::advance();
           }
-          return WalkResult::advance();
+        }
+        if (auto whileOp =
+                dyn_cast<scf::WhileOp>((extractSrc.getDefiningOp()))) {
+          return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
           if (strictMode) {
@@ -156,7 +169,10 @@ private:
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<VInterleaveBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }

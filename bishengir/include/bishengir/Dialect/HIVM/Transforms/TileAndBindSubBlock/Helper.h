@@ -33,6 +33,9 @@ namespace mlir {
 namespace hivm {
 
 static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
+inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
+inline constexpr llvm::StringLiteral tileAndSliceFailure =
+    "tile_and_slice_failure";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 

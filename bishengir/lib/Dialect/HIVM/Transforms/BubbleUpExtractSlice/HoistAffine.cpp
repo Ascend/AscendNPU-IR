@@ -156,6 +156,23 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
     while (insertPoint && lastDefValUser.contains(insertPoint))
       insertPoint = insertPoint->getNextNode();
 
+    auto isTargetAffine = [](Operation *op) {
+      return isa<affine::AffineApplyOp, affine::AffineMinOp,
+                 affine::AffineMaxOp>(op);
+    };
+
+    bool allAffineBetween = true;
+    auto lastIt = op->getIterator();
+    for (auto it = insertPoint->getIterator(); it != lastIt; ++it) {
+      if (!isTargetAffine(&*it)) {
+        allAffineBetween = false;
+        break;
+      }
+    }
+
+    if (allAffineBetween)
+      return rewriter.notifyMatchFailure(op, "already in affine cluster");
+
     if (!insertPoint || insertPoint->getBlock() != op->getBlock())
       return rewriter.notifyMatchFailure(op, "invalid insertion point");
 
@@ -163,18 +180,6 @@ struct HoistAffinePattern : public OpRewritePattern<AffineOpTy> {
       return rewriter.notifyMatchFailure(
           op, "op cannot be moved to a higher place in block");
 
-    bool isOtherOp = false;
-    auto lastIt = op->getIterator();
-    for (auto it = insertPoint->getIterator(); it != lastIt; ++it) {
-      if (!isa<affine::AffineApplyOp, affine::AffineMinOp, affine::AffineMaxOp>(
-              &*it)) {
-        isOtherOp = true;
-        break;
-      }
-    }
-    if (!isOtherOp) {
-      return failure();
-    }
     rewriter.moveOpBefore(op, insertPoint);
     return success();
   }

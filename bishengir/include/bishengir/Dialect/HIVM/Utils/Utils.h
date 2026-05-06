@@ -73,6 +73,12 @@ static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
 
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
+static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
+    "tiling_dim_mapping";
+
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
+
 const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
 const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
