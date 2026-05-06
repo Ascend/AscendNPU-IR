@@ -1784,8 +1784,10 @@ struct HIVMGatherOpLowering : public ConvertOpToLLVMPattern<VFGatherOp> {
         result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
     } else if (elementType.isBF16()) {
-      auto result = rewriter.create<VGatherV128BF16InstrOp>(loc, vtype, dataPtr,
+      Value result = rewriter.create<VGatherV128BF16InstrOp>(loc, vtype, dataPtr,
                                                             indexVec, mask);
+      if (!isAlignByElementAlignment(gather))
+        result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
     } else {
       return failure();
