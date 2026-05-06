@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Arith/Transforms/MeshShardingInterfaceImpl.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
+#include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
@@ -32,6 +33,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
+#include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/HMAP/IR/HMAP.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -99,6 +101,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::hfusion::registerShardingInterfaceExternalModels(registry);
   mlir::hfusion::registerDecomposeInterfaceExternalModels(registry);
   mlir::hivm::registerTilingInterfaceExternalModels(registry);
+  mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerShardingInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);
   bishengir::tensor::registerMeshShardingInterfaceExternalModels(registry);
