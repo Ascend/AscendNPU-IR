@@ -23,14 +23,7 @@ readonly OPTION="${1:-}"
 
 # will be inside third-party folder with basename as the submodule folder name
 readonly SUBMODULES=(
-  "llvm-project"
   "triton"
-)
-
-readonly SUBMODULE_INCLUDES=(
-  ""
-  "--include=mlir/* --include=llvm/*"
-  ""
 )
 
 usage_and_exit() {
