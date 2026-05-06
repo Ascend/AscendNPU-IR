@@ -5,8 +5,7 @@
 // CHECK-DAG: define private void @print_2d_half_gm
 // CHECK-DAG: declare extern_weak dso_local void @_mlir_ciface_print_2d_half_gm
 // CHECK-DAG: declare extern_weak dso_local void @_mlir_ciface_finish_debug
-// CHECK-DAG: define dso_local void @matmul_kernel_mix_aic(
-// CHECK-DAG: define dso_local void @matmul_kernel_mix_aiv(
+// CHECK-DAG: define dso_local void @matmul_kernel(
 module {
   func.func private @triton_print_0(tensor<16x16xf16>) attributes {hex = false, prefix = " c: "}
   func.func @matmul_kernel(%arg0: memref<?xi8>, %arg1: memref<?xf32> {tt.divisibility = 16 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32 {tt.divisibility = 16 : i32}, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32, %arg12: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "mix"} {

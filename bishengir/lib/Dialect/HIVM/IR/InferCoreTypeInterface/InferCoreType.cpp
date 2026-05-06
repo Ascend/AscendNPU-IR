@@ -140,20 +140,27 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
     return maybeTCoreTypeAttr.value().getTcoretype();
   } else {
     mlir::Value arg = this->getArg();
-    if (auto maybeSpaceCast = traceDefOp<memref::MemorySpaceCastOp>(arg)) {
-      auto spaceCastOp = cast<memref::MemorySpaceCastOp>(*maybeSpaceCast);
-      auto hivmSpace = dyn_cast<hivm::AddressSpaceAttr>(spaceCastOp.getSource().getType().getMemorySpace());
-      if (hivmSpace) {
-        if (hivmSpace.getAddressSpace() == hivm::AddressSpace::UB) {
-          return TCoreType::VECTOR;
-        }
+    // TODO: After insert load/store refactoring, revert this change and prioritize
+    // getting core type from debug op's info. After refactoring, debug op's core type
+    // will be derived directly from memscope.
+    // first try the definingOp
+    Operation *definingOp = arg.getDefiningOp();
+    FailureOr<hivm::TCoreType> res;
+    if (definingOp) {
+res = getCoreType(definingOp);
+      if (succeeded(res) && (res.value() != hivm::TCoreType::CUBE_OR_VECTOR)) {
+        this->setTcoretypeAttr(
+            hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
+        return res.value();
       }
     }
-    // first try the definingOp (TODO: change to tracing)
-    Operation *definingOp = arg.getDefiningOp();
-    if (definingOp) {
-      auto res = getCoreType(definingOp);
-      if (succeeded(res) && (res.value() != TCoreType::CUBE_OR_VECTOR)) {
+    // then try to infer from arg users
+    for (Operation *user : arg.getUsers()) {
+      // avoid inferCoreType for DebugOp recuresively
+      if (isa<hivm::DebugOp>(user))
+        continue;
+      res = getCoreType(user);
+      if (succeeded(res) && (res.value() != hivm::TCoreType::CUBE_OR_VECTOR)) {
         this->setTcoretypeAttr(
             hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
         return res.value();
@@ -260,6 +267,8 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
         return coreType == TCoreType::CUBE;
       },
       [](Operation *op) {
+        if (isa<hivm::DebugOp>(op))
+          return true;
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
       },
@@ -275,6 +284,8 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
         return coreType == TCoreType::VECTOR;
       },
       [](Operation *op) {
+        if (isa<hivm::DebugOp>(op))
+          return true;
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
       },

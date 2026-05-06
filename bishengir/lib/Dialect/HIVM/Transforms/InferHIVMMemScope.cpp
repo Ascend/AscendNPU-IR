@@ -176,6 +176,12 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           // Same as above
           return success();
         })
+        .Case<hivm::FixpipeOp>([&](hivm::FixpipeOp op) {
+          // FixpipeOp moves data from L0C to other memory hierarchies (GM/L1/UB).
+          // The dst operand should be inferred independently based on its usage,
+          // not propagated from the src. Stop propagation.
+          return success();
+        })
         .Default([&](Operation *op) {
           // Don't need to update Ops that don't have results.
           if (op->getNumResults() == 0) {

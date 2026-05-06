@@ -222,11 +222,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
-  if (!hacc::utils::isAscend950(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) ||
-      hivmPipelineOptions.enableDotScaledCompile) {
-    pm.addPass(createInsertWorkSpaceForMixCVPass());
-  }
+  pm.addPass(createInsertWorkSpaceForMixCVPass());
   // keep this for the debug feature (device print, etc.)
   pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
 
