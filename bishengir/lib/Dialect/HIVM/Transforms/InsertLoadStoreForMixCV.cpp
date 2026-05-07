@@ -650,8 +650,7 @@ struct DuplicateTensorExtractForCube
       }
 
       currentOp->walk([&hasCubeUser](Operation *nestedOp) {
-        if (getCoreType(nestedOp) == TCoreType::CUBE ||
-            getCoreType(nestedOp) == TCoreType::CUBE_OR_VECTOR) {
+        if (getCoreType(nestedOp) == TCoreType::CUBE) {
           hasCubeUser = true;
           return WalkResult::interrupt();
         } else if (getCoreType(nestedOp) == TCoreType::VECTOR) {
