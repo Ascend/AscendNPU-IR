@@ -109,10 +109,14 @@ using NormalizeIsInfOp = mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTrait
 ///   -> vcast -> vcmp(eq, 0) -> vnot
 using NormalizeIsNanOp = mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
 
-void populateNormalizeComparisonPatterns(RewritePatternSet &patterns) {
+void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeIsInfOp>(ctx);
   patterns.add<NormalizeIsNanOp>(ctx);
+}
+
+void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeCmpVneOp>(ctx);
 }
 

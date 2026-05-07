@@ -15,6 +15,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
+  Normalize/NormalizeMath.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp
   AllocToPointerCast.cpp

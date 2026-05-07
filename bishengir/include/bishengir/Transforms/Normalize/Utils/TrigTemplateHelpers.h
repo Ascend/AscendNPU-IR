@@ -165,8 +165,8 @@ Value buildRoundedPiMultiple(PatternRewriter &rewriter, Location loc,
                                           offsetValue, empty, BinaryKind::Add);
   }
 
-  return Traits::castTo(rewriter, loc, quotientByPi, roundedElementType,
-                        CastRoundKind::Round);
+  return Traits::createCastOp(rewriter, loc, quotientByPi, roundedElementType,
+                              CastRoundKind::Round);
 }
 
 // Builds r = x - k * pi
@@ -297,8 +297,8 @@ Value buildSinParitySign(PatternRewriter &rewriter, Location loc,
   Value halfPiMultiple = Traits::createBinaryOp(
       rewriter, loc, roundedPiMultiple, half, empty, BinaryKind::Mul);
   Value flooredHalfPiMultiple =
-      Traits::castTo(rewriter, loc, halfPiMultiple, rewriter.getF32Type(),
-                     CastRoundKind::Floor);
+      Traits::createCastOp(rewriter, loc, halfPiMultiple,
+                           rewriter.getF32Type(), CastRoundKind::Floor);
 
   Value four = createFloatConstant(rewriter, loc, elementType, 4.0);
   Value scaledFlooredHalfPiMultiple = Traits::createBinaryOp(

@@ -131,7 +131,23 @@ def VExpOp : HIVM_ElementwiseUnaryOp<"vexp",
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?
-    }];
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VExp2Op : HIVM_ElementwiseUnaryOp<"vexp2",
+    [SameOperandsElementType,
+     OperElemTypeConstraints<[0, 1], [F16, F32]>,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-2 Exponential Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The supported element types are f16 and f32.
+      3. This op is a normalize-only source form and should be lowered by
+         HIVM normalize
+  }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 

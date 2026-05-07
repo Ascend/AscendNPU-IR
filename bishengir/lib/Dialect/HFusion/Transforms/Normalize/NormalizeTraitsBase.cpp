@@ -88,30 +88,30 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
 }
 
 static bool matchUnaryOp(Operation *op, UnaryKind kind) {
-  if (auto unaryFn = mapUnaryKindToLinalgUnaryFn(kind)) {
+  if (auto linalgFn = mapUnaryKindToLinalgUnaryFn(kind)) {
     auto unaryOp = dyn_cast_or_null<linalg::ElemwiseUnaryOp>(op);
     return unaryOp && unaryOp.hasPureTensorSemantics() &&
-           unaryOp.getFun() == *unaryFn;
+           unaryOp.getFun() == *linalgFn;
   }
-  if (auto unaryFn = mapUnaryKindToHFusionUnaryFn(kind)) {
+  if (auto hfusionFn = mapUnaryKindToHFusionUnaryFn(kind)) {
     auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
     return unaryOp && unaryOp.hasPureTensorSemantics() &&
-           unaryOp.getFun() == *unaryFn;
+           unaryOp.getFun() == *hfusionFn;
   }
 
   llvm_unreachable("unsupported unary kind");
 }
 
 static bool matchBinaryOp(Operation *op, BinaryKind kind) {
-  if (auto binaryFn = mapBinaryKindToLinalgBinaryFn(kind)) {
+  if (auto linalgFn = mapBinaryKindToLinalgBinaryFn(kind)) {
     auto binaryOp = dyn_cast_or_null<linalg::ElemwiseBinaryOp>(op);
     return binaryOp && binaryOp.hasPureTensorSemantics() &&
-           binaryOp.getFun() == *binaryFn;
+           binaryOp.getFun() == *linalgFn;
   }
-  if (auto binaryFn = mapBinaryKindToHFusionBinaryFn(kind)) {
+  if (auto hfusionFn = mapBinaryKindToHFusionBinaryFn(kind)) {
     auto binaryOp = dyn_cast_or_null<hfusion::ElemwiseBinaryOp>(op);
     return binaryOp && binaryOp.hasPureTensorSemantics() &&
-           binaryOp.getFun() == *binaryFn;
+           binaryOp.getFun() == *hfusionFn;
   }
 
   llvm_unreachable("unsupported binary kind");
@@ -170,16 +170,16 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createCmpOp(
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     UnaryKind kind) {
-  if (auto unaryFn = mapUnaryKindToLinalgUnaryFn(kind)) {
+  if (auto linalgFn = mapUnaryKindToLinalgUnaryFn(kind)) {
     auto *op = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
                                       linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, loc, *unaryFn, ValueRange{input}, ValueRange{dst});
+        rewriter, loc, *linalgFn, ValueRange{input}, ValueRange{dst});
     return op->getResult(0);
   }
-  if (auto unaryFn = mapUnaryKindToHFusionUnaryFn(kind)) {
+  if (auto hfusionFn = mapUnaryKindToHFusionUnaryFn(kind)) {
     auto *op = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
                                       hfusion::UnaryFn, hfusion::UnaryFnAttr>(
-        rewriter, loc, *unaryFn, ValueRange{input}, ValueRange{dst});
+        rewriter, loc, *hfusionFn, ValueRange{input}, ValueRange{dst});
     return op->getResult(0);
   }
 
@@ -189,25 +189,25 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
-  if (auto binaryFn = mapBinaryKindToLinalgBinaryFn(kind)) {
+  if (auto linalgFn = mapBinaryKindToLinalgBinaryFn(kind)) {
     auto *op =
         hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                 linalg::BinaryFnAttr>(
-            rewriter, loc, *binaryFn, ValueRange{lhs, rhs}, ValueRange{dst});
+            rewriter, loc, *linalgFn, ValueRange{lhs, rhs}, ValueRange{dst});
     return op->getResult(0);
   }
-  if (auto binaryFn = mapBinaryKindToHFusionBinaryFn(kind)) {
+  if (auto hfusionFn = mapBinaryKindToHFusionBinaryFn(kind)) {
     auto *op =
         hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
                                 hfusion::BinaryFnAttr>(
-            rewriter, loc, *binaryFn, ValueRange{lhs, rhs}, ValueRange{dst});
+            rewriter, loc, *hfusionFn, ValueRange{lhs, rhs}, ValueRange{dst});
     return op->getResult(0);
   }
 
   llvm_unreachable("unsupported binary kind");
 }
 
-mlir::Value mlir::hfusion::NormalizeTraitsBase::castTo(
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind) {
   hfusion::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
@@ -225,8 +225,8 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
   Value init = utils::createEmptyOpWithTargetElemType(
       rewriter, loc, source, getElementTypeOrSelf(resultType));
   return rewriter
-      .create<hfusion::BitcastOp>(loc, TypeRange{resultType}, ValueRange{source},
-                                  ValueRange{init})
+      .create<hfusion::BitcastOp>(loc, TypeRange{resultType},
+                                  ValueRange{source}, ValueRange{init})
       .getResult(0);
 }
 } // namespace mlir::hfusion

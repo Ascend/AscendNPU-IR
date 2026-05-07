@@ -42,9 +42,9 @@ public:
                               Value lhs, Value rhs, Value dst,
                               BinaryKind kind);
 
-  static Value castTo(PatternRewriter &rewriter, Location loc, Value input,
-                      Type targetElemType, CastRoundKind kind);
-
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Type targetElemType,
+                            CastRoundKind kind);
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);
 

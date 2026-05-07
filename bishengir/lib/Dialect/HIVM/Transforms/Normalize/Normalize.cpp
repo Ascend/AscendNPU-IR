@@ -37,10 +37,10 @@ struct NormalizeHIVMPass
     bool isRegbased = hacc::utils::isRegBasedArch(moduleOp);
     auto *context = &getContext();
     RewritePatternSet patterns(context);
-    populateNormalizeArithmeticPatterns(patterns);
     populateNormalizeTrigPatterns(patterns);
-    if (!isRegbased)
-      populateNormalizeComparisonPatterns(patterns);
+    populateNormalizeArithmeticPatterns(patterns);
+    populateNormalizePrimaryMathPatterns(patterns);
+    populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,
     // but not an arith.constant dense tensor. Dense constants are handled by
@@ -48,6 +48,8 @@ struct NormalizeHIVMPass
     // pass extracts the single runtime value and rebuilds the broadcast.
     populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns,
                                                          isRegbased);
+    if (!isRegbased)
+      populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

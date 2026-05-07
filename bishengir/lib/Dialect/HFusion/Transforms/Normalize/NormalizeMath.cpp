@@ -16,8 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
 #include "bishengir/Transforms/Normalize/ScalarUtils.h"
+#include "bishengir/Transforms/Normalize/NormalizeMathTemplate.h"
 
 namespace mlir::hfusion {
 
@@ -540,59 +542,15 @@ public:
 /// y = hfusion elemwise unary {exp2} (x)
 /// is normalized to
 ///  y = linalg.elemwise_unary{vexp}(ln2 * x)
-struct NormalizeExp2Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::exp2) {
-      return failure();
-    }
-
-    Value src = op.getInputs()[0];
-    auto inType = getElementTypeOrSelf(src.getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    auto elementType = getElementTypeOrSelf(src.getType());
-    Value constLnTwo = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), elementType,
-        rewriter.getFloatAttr(elementType, std::log(2)));
-
-    auto emptyLnCntOp = utils::createEmptyOp(rewriter, op->getLoc(), src);
-    auto *mulOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op->getLoc(), linalg::BinaryFn::mul,
-            ValueRange({src, constLnTwo}), ValueRange(emptyLnCntOp));
-
-    auto emptyResOp = utils::createEmptyOp(rewriter, op->getLoc(), src);
-    auto *expOp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::exp,
-        ValueRange{mulOp->getResults()[0]}, ValueRange(emptyResOp));
-
-    Value res = expOp->getResult(0);
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    rewriter.replaceOp(op, res);
-    return success();
+struct HFusionNormalizeExp2Traits : public NormalizeTraitsBase {
+  static bool shouldNormalizeExp2(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == hfusion::UnaryFn::exp2;
   }
 };
+
+using NormalizeExp2Op =
+    mlir::NormalizeExp2OpTemplate<hfusion::ElemwiseUnaryOp,
+                                  HFusionNormalizeExp2Traits>;
 
 struct NormalizeMinMax {
   /// Returns a new operand for BinaryFn::maxf (BinaryFn::minf)
@@ -795,101 +753,15 @@ public:
 /// step 2. numer=((((((CST0*y)+T1)*y+T2)*y+T3)*y+T4)*y+T5)*x, y=x^2
 /// step 3. demon=((((y+P1)*y+P2)*y+P3)*y+P4)*y+P5, y=x^2
 /// step 4: erf(x) = numer / denom
-struct NormalizeErfOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    auto hfusionFun = op.getFun();
-    if (hfusionFun != hfusion::UnaryFn::erf) {
-      return failure();
-    }
-
-    Value src = op.getInputs()[0];
-    auto inType = getElementTypeOrSelf(src);
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    if (getElementTypeOrSelf(src).isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      // TODO: remove cast after enable automatical high precision computing
-      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    // 1. clip input into [-3.92, 3.92]
-    auto loc = op->getLoc();
-    Value clipedInput = ClipInput(rewriter, loc, src, 3.92, -3.92);
-
-    // 2. step 2 numer=((((((CST0*y)+T1)*y+T2)*y+T3)*y+T4)*y+T5)*x,
-    auto squareInput = utils::createEmptyOp(rewriter, loc, clipedInput);
-    auto *squareOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{clipedInput, clipedInput}, ValueRange(squareInput));
-
-    // 2.1. first z = CST0*y,CST0=0.53443748819e-1,
-    double CST0 = 0.53443748819e-1;
-    auto numerInit = utils::createEmptyOp(rewriter, loc, clipedInput);
-    auto constValInit = rewriter.create<arith::ConstantOp>(
-        loc, getElementTypeOrSelf(src),
-        rewriter.getFloatAttr(getElementTypeOrSelf(src), CST0));
-    auto *numerInitOp = hfusion::createBinaryOp<
-        linalg::ElemwiseBinaryOp, linalg::BinaryFn, linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::mul,
-        ValueRange{squareOp->getResults()[0], constValInit->getResults()[0]},
-        ValueRange(numerInit));
-
-    // 2.2. get polyexpr in the format z = (((((z+T1)*y+T2)*y+T3)*y+T4)*y+T5)
-    // {T1, T2, T3, T4, T5}={0.75517016694e1, 0.10162808918e3, 0.13938061484e4,
-    // 0.50637915060e4, 0.29639384698e5}
-    const llvm::SmallVector<double> numerCoeff{0.75517016694e1, 0.10162808918e3,
-                                               0.13938061484e4, 0.50637915060e4,
-                                               0.29639384698e5};
-    Value numerRes =
-        genPolyExpr(rewriter, loc, squareOp->getResults()[0],
-                    numerInitOp->getResults()[0], numerCoeff, false);
-
-    // 2.3. mul x , z = z * x
-    auto *numerResOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{clipedInput, numerRes}, ValueRange(numerInit));
-
-    // 3. get denom
-    // let y=x^2, demon=((((y+P1)*y+P2)*y+P3)*y+P4)*y+P5,
-    // P={P1, P2, P3, P4, P5}={0.31212858877e2, 0.39856963806e3,
-    // 0.30231248150e4, 0.13243365831e5, 0.26267224157e5}
-    const llvm::SmallVector<double> demonCoeff{0.31212858877e2, 0.39856963806e3,
-                                               0.30231248150e4, 0.13243365831e5,
-                                               0.26267224157e5};
-    Value demonRes = genPolyExpr(rewriter, loc, squareOp->getResults()[0],
-                                 squareOp->getResults()[0], demonCoeff, false);
-
-    // 4. res = numer / denom
-    auto emptyResOp = utils::createEmptyOp(rewriter, op->getLoc(), clipedInput);
-    Value res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                    rewriter, loc, linalg::BinaryFn::div,
-                    ValueRange{numerResOp->getResults()[0], demonRes},
-                    ValueRange(emptyResOp))
-                    ->getResult(0);
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    rewriter.replaceOp(op, res);
-    return success();
+struct HFusionNormalizeErfTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeErf(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == hfusion::UnaryFn::erf;
   }
 };
+
+using NormalizeErfOp =
+    mlir::NormalizeErfOpTemplate<hfusion::ElemwiseUnaryOp,
+                                 HFusionNormalizeErfTraits>;
 
 /// normalize ilogb(x), which is exponent of frexp(x), to floor(log2(abs(x)))
 struct NormalizeIlogbOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {

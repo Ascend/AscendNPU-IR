@@ -113,13 +113,12 @@ bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, BinaryKind kind) {
 
 CompareMode mapCompareKindToCompareMode(CompareKind kind) {
   static const llvm::DenseMap<CompareKind, CompareMode> compareKindMap = {
-    {CompareKind::EQ, CompareMode::EQ},
-    {CompareKind::NE, CompareMode::NE},
-    {CompareKind::LT, CompareMode::LT},
-    {CompareKind::GT, CompareMode::GT},
-    {CompareKind::GE, CompareMode::GE},
-    {CompareKind::LE, CompareMode::LE}
-  };
+      {CompareKind::EQ, CompareMode::EQ},
+      {CompareKind::NE, CompareMode::NE},
+      {CompareKind::LT, CompareMode::LT},
+      {CompareKind::GT, CompareMode::GT},
+      {CompareKind::GE, CompareMode::GE},
+      {CompareKind::LE, CompareMode::LE}};
   auto it = compareKindMap.find(kind);
   if (it == compareKindMap.end())
     llvm_unreachable("Unknown CompareKind");
@@ -169,7 +168,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
   return it->second(rewriter, loc, lhs, rhs, dst);
 }
 
-mlir::Value mlir::hivm::NormalizeTraitsBase::castTo(
+mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind) {
   Type srcElemType = getElementTypeOrSelf(input.getType());
@@ -178,7 +177,6 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::castTo(
     // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
     roundMode = hivm::RoundMode::RINT;
   }
-
   auto castOp = hivm::castTo(
       rewriter, loc, input, rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
       targetElemType);

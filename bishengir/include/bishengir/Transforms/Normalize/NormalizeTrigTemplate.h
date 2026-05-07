@@ -52,8 +52,8 @@ public:
     Location loc = op.getLoc();
     Value input = originalInput;
     if (inputType.isF16()) {
-      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
-                             CastRoundKind::Round);
+      input = Traits::createCastOp(rewriter, loc, input, rewriter.getF32Type(),
+                                   CastRoundKind::Round);
     }
 
     // Reuse the same empty tensor result shape for the elementwise ops created
@@ -79,8 +79,9 @@ public:
                                           sinSign, empty, BinaryKind::Mul);
 
     if (inputType.isF16()) {
-      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
-                              CastRoundKind::Round);
+      result =
+          Traits::createCastOp(rewriter, loc, result, rewriter.getF16Type(),
+                               CastRoundKind::Round);
     }
 
     rewriter.replaceOp(op, result);
@@ -115,8 +116,8 @@ public:
     Location loc = op.getLoc();
     Value input = originalInput;
     if (inputType.isF16()) {
-      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
-                             CastRoundKind::Round);
+      input = Traits::createCastOp(rewriter, loc, input, rewriter.getF32Type(),
+                                   CastRoundKind::Round);
     }
 
     Value empty = utils::createEmptyOp(rewriter, loc, input);
@@ -138,8 +139,9 @@ public:
                                           cosSign, empty, BinaryKind::Mul);
 
     if (inputType.isF16()) {
-      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
-                              CastRoundKind::Round);
+      result =
+          Traits::createCastOp(rewriter, loc, result, rewriter.getF16Type(),
+                               CastRoundKind::Round);
     }
 
     rewriter.replaceOp(op, result);
@@ -184,14 +186,16 @@ public:
     Location loc = op.getLoc();
     Value input = originalInput;
     if (inputType.isF16()) {
-      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
-                             CastRoundKind::Round);
+      input = Traits::createCastOp(rewriter, loc, input,
+                                   rewriter.getF32Type(),
+                                   CastRoundKind::Round);
     }
 
     Value result = buildAtanApproximation<Traits>(rewriter, loc, input);
     if (inputType.isF16()) {
-      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
-                              CastRoundKind::Round);
+      result = Traits::createCastOp(rewriter, loc, result,
+                                    rewriter.getF16Type(),
+                                    CastRoundKind::Round);
     }
 
     rewriter.replaceOp(op, result);
@@ -233,14 +237,16 @@ public:
     Location loc = op.getLoc();
     Value input = originalInput;
     if (inputType.isF16()) {
-      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
-                             CastRoundKind::Round);
+      input = Traits::createCastOp(rewriter, loc, input,
+                                   rewriter.getF32Type(),
+                                   CastRoundKind::Round);
     }
 
     Value result = buildTanApproximation<Traits>(rewriter, loc, input);
     if (inputType.isF16()) {
-      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
-                              CastRoundKind::Round);
+      result = Traits::createCastOp(rewriter, loc, result,
+                                    rewriter.getF16Type(),
+                                    CastRoundKind::Round);
     }
 
     rewriter.replaceOp(op, result);
@@ -273,14 +279,16 @@ public:
     Location loc = op.getLoc();
     Value input = originalInput;
     if (inputType.isF16()) {
-      input = Traits::castTo(rewriter, loc, input, rewriter.getF32Type(),
-                             CastRoundKind::Round);
+      input = Traits::createCastOp(rewriter, loc, input,
+                                   rewriter.getF32Type(),
+                                   CastRoundKind::Round);
     }
 
     Value result = buildTanhApproximation<Traits>(rewriter, loc, input);
     if (inputType.isF16()) {
-      result = Traits::castTo(rewriter, loc, result, rewriter.getF16Type(),
-                              CastRoundKind::Round);
+      result = Traits::createCastOp(rewriter, loc, result,
+                                    rewriter.getF16Type(),
+                                    CastRoundKind::Round);
     }
 
     rewriter.replaceOp(op, result);

@@ -28,7 +28,9 @@ namespace mlir::hivm {
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
-void populateNormalizeComparisonPatterns(RewritePatternSet &patterns);
+void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
+void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns, bool isRegbased);
