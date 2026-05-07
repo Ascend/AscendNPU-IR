@@ -276,7 +276,11 @@ std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
-std::unique_ptr<Pass> createPropagateConvertLayoutPass();
+std::unique_ptr<Pass> createPropagateConvertLayoutPass(
+    const PropagateConvertLayoutOptions &options = {});
+
+/// Create a pass to insert convert layout operations for matmul ops
+std::unique_ptr<Pass> createInsertConvertLayoutPass();
 
 /// Create a pass to normalize conv1d operation.
 std::unique_ptr<Pass> createNormalizeConvOpsPass();

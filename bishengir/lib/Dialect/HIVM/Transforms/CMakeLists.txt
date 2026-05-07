@@ -33,6 +33,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
   ConvertLayout/ConvertLayoutUtils.cpp
   ConvertLayout/HoistConvertLayout.cpp
+  ConvertLayout/InsertConvertLayout.cpp
   ConvertLayout/Propagate/PropagateConvertLayout.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutElementwise.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
