@@ -235,6 +235,8 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(gpuLaunchOp->getOperands()));
       UpdateOpTempGenInfo(curOpInfo);
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }
@@ -558,8 +560,7 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
   // TODO: Can Func CallOp be skipped?
-  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DebugOp,
-             hivm::DCCIOp>(op);
+  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp>(op);
 }
 
 LogicalResult
