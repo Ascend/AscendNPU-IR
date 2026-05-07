@@ -81,7 +81,66 @@ public:
     return success();
   }
 };
- 
+
+class LegalizeSelectLikeUiToFp : public OpRewritePattern<arith::UIToFPOp> {
+  static Value createFilledTensor(PatternRewriter &rewriter, Location loc, RankedTensorType type, double value) {
+    auto elementType = cast<FloatType>(type.getElementType());
+    
+    Value scalar = rewriter.create<arith::ConstantOp>(loc, rewriter.getFloatAttr(elementType, value));
+    assert(type.getNumDynamicDims() == 0);
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, type.getShape(), elementType);
+    return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
+  }
+
+public:
+  using OpRewritePattern<arith::UIToFPOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::UIToFPOp op, PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value input = op.getIn();
+    Value output = op.getOut();
+    if (!input.getType() || !output.getType()) {
+      return failure();
+    }
+
+    auto inputType = dyn_cast<RankedTensorType>(input.getType());
+    auto outputType = dyn_cast<RankedTensorType>(output.getType());
+    if (!inputType || !outputType) {
+      return failure();
+    }
+    if (inputType.getRank() != outputType.getRank()) {
+      return failure();
+    }
+    auto inputRank = inputType.getRank();
+    
+    if (!inputType.getElementType().isInteger(1)) {
+      return failure();
+    }
+    auto outputElementType = dyn_cast<FloatType>(outputType.getElementType());
+    if (!outputElementType) {
+      return failure();
+    }
+
+    for (int i = 0; i < inputRank; i++) {
+      auto inDim = inputType.getDimSize(i);
+      auto outDim = outputType.getDimSize(i);
+      if (ShapedType::isDynamic(inDim) || ShapedType::isDynamic(outDim)) {
+        return failure();
+      }
+      if (inDim != outDim) {
+        return failure();
+      }
+    }
+    auto zeros = createFilledTensor(rewriter, loc, outputType, 0);
+    auto ones = createFilledTensor(rewriter, loc, outputType, 1);
+    auto outEmpty = utils::createEmptyOp(rewriter, loc, output);
+    auto select = rewriter.create<hfusion::SelectOp>(loc, TypeRange{outputType}, ValueRange{input, ones, zeros}, ValueRange{outEmpty});
+
+    rewriter.replaceOp(op, select);
+    return success();
+  }
+};
+
 template <typename OpType>
 struct LegalizeScalarMathOps : public OpRewritePattern<OpType> {
 public:
@@ -209,6 +268,7 @@ void populateLegalizeScalarConversionPatterns(
   patterns.add<LegalizeScalarCastOps<arith::FPToSIOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::UIToFPOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::FPToUIOp>>(patterns.getContext());
+  patterns.add<LegalizeSelectLikeUiToFp>(patterns.getContext());
 }
  
 namespace {
