@@ -1,5 +1,4 @@
 add_bishengir_conversion_library(MLIRAnalyzeArithVectorMask
-  AnalyzeArithVectorMask.cpp
   AnalyzeDataLayout.cpp
 
   ADDITIONAL_HEADER_DIRS
