@@ -1,4 +1,4 @@
-//===--------- LegalizeBool.cpp - Legalize BF16 type Pass -----------------===//
+//===--------- LegalizeBool.cpp - Legalize Bool type Pass -----------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -201,6 +201,51 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
     }
 
     rewriter.replaceOp(op, clampedResult);
+    return success();
+  }
+};
+
+bool isIntegerElemType(Type type, unsigned width) {
+  auto elemTy = getElementTypeOrSelf(type);
+  return elemTy.isInteger(width);
+}
+
+bool isI1ElemType(Type type) { return isIntegerElemType(type, 1); }
+bool isI8ElemType(Type type) { return isIntegerElemType(type, 8); }
+
+template <auto OpFn, auto LogicOpFn>
+struct BoolBinaryFnToLogicOp
+    : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
+  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+
+    if (op.getFun() != OpFn) {
+      return failure();
+    }
+
+    if (op->getNumResults() != 1) {
+      return failure();
+    }
+
+    auto inputs = op.getInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+    if (!isI1ElemType(lhs.getType()) || !isI1ElemType(rhs.getType())) {
+      return failure();
+    }
+
+    Location location = op.getLoc();
+
+    Value logicResult =
+        createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                       hfusion::BinaryFnAttr>(rewriter, location, LogicOpFn,
+                                              ValueRange{lhs, rhs},
+                                              ValueRange{op.getOutputs()[0]})
+            ->getResult(0);
+
+    rewriter.replaceOp(op, logicResult);
     return success();
   }
 };
@@ -415,14 +460,6 @@ private:
     return success();
   }
 
-  bool isIntegerElemType(Type type, unsigned width) const {
-    auto elemTy = getElementTypeOrSelf(type);
-    return elemTy.isInteger(width);
-  }
-
-  bool isI1ElemType(Type type) const { return isIntegerElemType(type, 1); }
-  bool isI8ElemType(Type type) const { return isIntegerElemType(type, 8); }
-
   Type convertBoolToInt8(Type type) {
     if (!isI1ElemType(type)) {
       return type;
@@ -446,22 +483,33 @@ void LegalizeBoolPass::runOnOperation() {
   OpBuilder builder(context);
 
   ModuleOp mod = getOperation();
-  
+
   // Conditional Execution Branch
   if (this->enableClamp) {
     RewritePatternSet clampPatterns(context);
     clampPatterns.add<ClampPseudoBoolArithOp<arith::AddIOp>,
                       ClampPseudoBoolArithOp<arith::SubIOp>>(context);
-                      
+
     if (failed(applyPatternsGreedily(mod, std::move(clampPatterns)))) {
       LLVM_DEBUG(llvm::dbgs() << "Legalize Bool Arithmetic Clamp Failed\n");
     }
-    
+
     // Exit early if only clamp is requested
     return;
   }
 
   // Standard LegalizeBool logic executes when enableClamp is false
+
+  // Convert bool MulI and AddI to AndI and OrI
+  RewritePatternSet logicPatterns(context);
+  logicPatterns.add<
+      BoolBinaryFnToLogicOp<linalg::BinaryFn::mul, hfusion::BinaryFn::vand>,
+      BoolBinaryFnToLogicOp<linalg::BinaryFn::add, hfusion::BinaryFn::vor>>(
+      context);
+  if (failed(applyPatternsGreedily(mod, std::move(logicPatterns)))) {
+    LLVM_DEBUG(llvm::dbgs() << "Legalize Bool on linalg::BinaryFn Failed\n");
+  }
+
   SmallVector<func::FuncOp> deviceEntryFuncs;
   mod.walk([&](func::FuncOp func) {
     if (hacc::utils::isDeviceEntry(func)) {
