@@ -411,6 +411,10 @@ constexpr static unsigned BITS_PER_BYTE = 8;
 constexpr static unsigned VL_BITS = VL * BITS_PER_BYTE;
 constexpr static unsigned PREDICATE_BITS = 256;
 
+constexpr static unsigned VL_B32 = VL / 4;
+constexpr static unsigned VL_B16 = VL / 2;
+constexpr static unsigned VL_B8 = VL;
+
 // ======= for sync operations =======
 constexpr static unsigned INTRA_BLOCK_FLAG_ID_OFFSET = 16;
 

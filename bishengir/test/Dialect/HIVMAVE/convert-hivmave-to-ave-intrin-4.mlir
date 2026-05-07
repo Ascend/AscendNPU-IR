@@ -1,5 +1,5 @@
 // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
-// RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse -split-input-file %s | FileCheck %s
+// RUN: -remove-vector-layout-attr -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse -split-input-file %s | FileCheck %s
 // CHECK-LABEL: @test_ext_user_is_call
 #map = affine_map<()[s0, s1, s2] -> (s0 * 256 + s1 * 64 + s2 * 8)>
 #map1 = affine_map<(d0)[s0] -> (d0 + s0)>

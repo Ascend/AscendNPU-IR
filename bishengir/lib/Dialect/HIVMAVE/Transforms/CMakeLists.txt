@@ -1,4 +1,5 @@
 add_bishengir_dialect_library(MLIRHIVMAVETransforms
+  AVENormalizeOps.cpp
   ComplexReductionIntermediateLowering.cpp
   I1opSoftImpl.cpp
   LegalizeOptHIVMAVE.cpp

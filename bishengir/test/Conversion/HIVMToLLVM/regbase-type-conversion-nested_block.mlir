@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -convert-hivmave-to-ave-intrin -split-input-file -o %t.mlir
+// RUN: bishengir-opt %s -ave-normalize-ops -convert-hivmave-to-ave-intrin -split-input-file -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
 
 func.func @test_store_in_nested_for(%arg0: vector<64xf32>, %arg1: memref<128xf16, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32} {
