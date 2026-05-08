@@ -15,10 +15,10 @@
 //
 //============================================================================//
 
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -136,7 +136,7 @@ template <typename OpTy, typename OpTy2, typename... Arg>
 static FailureOr<OpTy>
 createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
                                OpTy childOp, OpTy2 parentOp,
-                               OpTy createdNewParent, Arg &&... args) {
+                               OpTy createdNewParent, Arg &&...args) {
   if (!isa<OffsetSizeAndStrideOpInterface>(childOp.getOperation()) ||
       !isa<OffsetSizeAndStrideOpInterface>(parentOp.getOperation())) {
     return failure();
@@ -1582,13 +1582,14 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           subViewOpGM.getSource().getDefiningOp<memref::ReinterpretCastOp>();
       if (!castOp)
         continue;
-      auto allocOp = subViewOp.getSource().getDefiningOp<memref::AllocOp>();
-      if (!allocOp)
+      auto *allocLikeOp = subViewOp.getSource().getDefiningOp();
+      if (!isa_and_nonnull<memref::AllocOp, memref::MemorySpaceCastOp>(
+              allocLikeOp))
         continue;
       LDBG("Pattern 2:\n"
            << castOp << "\n"
            << subViewOpGM << "\n"
-           << allocOp << "\n"
+           << *allocLikeOp << "\n"
            << subViewOp << "\n"
            << loadOp);
       rewriter.setInsertionPoint(subViewOpGM);
@@ -1617,15 +1618,22 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
           subViewOpGM.getLoc(), newCastValue, newOffsetsGM, newSizesGM,
           subViewOpGM.getMixedStrides());
-      rewriter.setInsertionPoint(allocOp);
-      auto resultType =
-          dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-      allocOp = rewriter.replaceOpWithNewOp<memref::AllocOp>(
-          allocOp,
-          MemRefType::get(resultType.getShape(), resultType.getElementType()));
+      rewriter.setInsertionPointAfter(allocLikeOp);
+
+      if (isa<memref::AllocOp>(allocLikeOp)) {
+        auto resultType =
+            dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
+        allocLikeOp = rewriter.replaceOpWithNewOp<memref::AllocOp>(
+            allocLikeOp, MemRefType::get(resultType.getShape(),
+                                         resultType.getElementType()));
+      } else {
+        allocLikeOp = rewriter.create<memref::SubViewOp>(
+            allocLikeOp->getLoc(), allocLikeOp->getResult(0), offsets, sizes,
+            strides);
+      }
       rewriter.setInsertionPoint(subViewOp);
       auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-          subViewOp.getLoc(), allocOp, newOffsets, newSizes,
+          subViewOp.getLoc(), allocLikeOp->getResult(0), newOffsets, newSizes,
           subViewOp.getMixedStrides());
 
       rewriter.modifyOpInPlace(loadOp, [&]() {
@@ -1636,14 +1644,14 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       rewriter.setInsertionPoint(sliceOp);
       auto newToTensorOp =
           rewriter.replaceOpWithNewOp<bufferization::ToTensorOp>(
-              sliceOp, allocOp.getResult(), true, true);
+              sliceOp, allocLikeOp->getResult(0), true, true);
 
       rewriter.replaceOp(toTensorOp, newToTensorOp);
 
       LDBG("After Pattern 2:\n"
            << newCastValue << "\n"
            << newSubViewOpGM << "\n"
-           << allocOp << "\n"
+           << *allocLikeOp << "\n"
            << newSubViewOp << "\n"
            << loadOp);
       LDBG(newSubViewOp->getParentOfType<func::FuncOp>());
