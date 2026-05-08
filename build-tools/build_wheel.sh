@@ -155,6 +155,115 @@ if [ $? -eq 0 ]; then
   echo "Built packages:"
   ls -lh "${OUTPUT_DIR}"
   
+  # Use auditwheel to automatically set the correct manylinux platform tag
+  # This is the standard way to ensure binary compatibility
+  echo ""
+  echo "Setting platform tag with auditwheel (auto-detecting manylinux version)..."
+  
+  # Check if auditwheel is available
+  if ! python3 -c "import auditwheel" 2>/dev/null; then
+    echo "Installing auditwheel..."
+    python3 -m pip install --upgrade auditwheel
+  fi
+  
+  # Auto-detect the best manylinux platform for current environment
+  MANYLINUX_PLATFORM=$(python3 -c "
+import platform
+import sys
+import os
+
+machine = platform.machine().lower()
+
+if platform.system() != 'Linux':
+    print('')
+    sys.exit(0)
+
+# Let's use auditwheel's own policies to find the best one
+try:
+    from auditwheel.policy import POLICIES
+    if POLICIES:
+        # Find the highest priority policy that starts with 'manylinux_'
+        highest_priority = -1
+        best_policy = None
+        for policy in POLICIES:
+            if policy['name'].startswith('manylinux_') and policy['priority'] > highest_priority:
+                highest_priority = policy['priority']
+                best_policy = policy
+        if best_policy:
+            print(best_policy['name'])
+            sys.exit(0)
+except Exception:
+    pass
+
+# Fallback: if we can't detect, use a reasonable default
+# Check common patterns in manylinux containers
+version = '2_28'  # Default for modern containers
+
+# Final fallback
+print(f'manylinux_{version}_{machine}')
+")
+  
+  # Create directory for processed wheels
+  PROCESSED_DIR="${OUTPUT_DIR}/processed"
+  mkdir -p "${PROCESSED_DIR}"
+  
+  # Process the wheel with auditwheel
+  for wheel_file in "${OUTPUT_DIR}"/*.whl; do
+    if [ -f "${wheel_file}" ]; then
+      echo "Processing: $(basename "${wheel_file}")"
+      
+      # Use auto-detected platform to force a single, clean tag
+      if [ -n "${MANYLINUX_PLATFORM}" ]; then
+        if python3 -m auditwheel repair "${wheel_file}" --plat "${MANYLINUX_PLATFORM}" -w "${PROCESSED_DIR}"; then
+          echo "Successfully set platform tag to ${MANYLINUX_PLATFORM}!"
+        else
+          echo "Warning: auditwheel failed, keeping original wheel"
+          cp "${wheel_file}" "${PROCESSED_DIR}/"
+        fi
+      else
+        if python3 -m auditwheel repair "${wheel_file}" -w "${PROCESSED_DIR}"; then
+          echo "Successfully set platform tag!"
+        else
+          echo "Warning: auditwheel failed, keeping original wheel"
+          cp "${wheel_file}" "${PROCESSED_DIR}/"
+        fi
+      fi
+    fi
+  done
+  
+  # Replace original wheels with processed ones and ensure a single clean tag
+  if [ -n "$(ls -A "${PROCESSED_DIR}")" ]; then
+    echo ""
+    echo "Using processed wheels:"
+    ls -lh "${PROCESSED_DIR}"
+    
+    # Remove original wheels before replacing with processed ones
+    rm -f "${OUTPUT_DIR}"/*.whl
+    
+    # Move and rename to ensure only one platform tag
+    for wheel_file in "${PROCESSED_DIR}"/*.whl; do
+      if [ -f "${wheel_file}" ]; then
+        wheel_name=$(basename "${wheel_file}")
+        
+        # If we detected a specific platform tag, rename to use only that
+        if [ -n "${MANYLINUX_PLATFORM}" ]; then
+          # Replace any multiple tags with just our desired platform tag
+          new_wheel_name=$(echo "${wheel_name}" | sed -E "s/-[^-]+\\.whl/-${MANYLINUX_PLATFORM}.whl/")
+          mv "${wheel_file}" "${OUTPUT_DIR}/${new_wheel_name}"
+        else
+          mv "${wheel_file}" "${OUTPUT_DIR}/"
+        fi
+      fi
+    done
+  fi
+  
+  # Clean up processed directory
+  rmdir "${PROCESSED_DIR}" 2>/dev/null || true
+  
+  echo ""
+  echo "Final wheels:"
+  ls -lh "${OUTPUT_DIR}"
+  
   # Upload to PyPI if requested
   if [ "${UPLOAD_TO_PYPI}" = true ]; then
     echo ""

@@ -243,6 +243,15 @@ please check ${BISHENG_TOOL} or ${LLVM_LINK_TOOL} exist or not!")
 
     add_subdirectory(lib)
     link_all_to_meta_op()
+
+    install(FILES
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.bc
+            ${CMAKE_BINARY_DIR}/lib/host.bc
+            DESTINATION lib
+            COMPONENT bishengir-publish-products)
 endif ()
 
 option(ENABLE_SYCL "If enable sycl, use bishengcpp. Otherwise use bisheng." OFF)

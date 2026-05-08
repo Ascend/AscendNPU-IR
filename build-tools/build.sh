@@ -131,7 +131,13 @@ init_variables() {
   else
     NCPU=$(grep -c "processor" /proc/cpuinfo 2>/dev/null) || NCPU=1
   fi
-  THREADS=$((NCPU * 3 / 4))
+  if [ "${GITHUB_ACTIONS}" = "true" ] || [ "${CI}" = "true" ]; then
+    # 在 CI 环境中，用满核心
+    THREADS=$(nproc)
+  else
+    # 普通环境，用 3/4 核心
+    THREADS=$((NCPU * 3 / 4))
+  fi
   (( THREADS > 1 )) || THREADS=1
 }
 
@@ -480,6 +486,7 @@ cmake_generate() {
     if [ ! -d "$BISHENG_COMPILER" ]; then
         echo "Path to bisheng compiler "$BISHENG_COMPILER" does not exist"
       else
+        BISHENG_COMPILER="$(cd "$BISHENG_COMPILER" && pwd)"
         BISHENG_INSTALL_PATH="${BISHENG_COMPILER}"
     fi
   fi
