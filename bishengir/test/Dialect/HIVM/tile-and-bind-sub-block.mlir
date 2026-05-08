@@ -1416,3 +1416,83 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @check_split_indirect_store
+// CHECK: scf.for
+// CHECK: hivm.hir.indirect_store ins(%{{.*}} : tensor<8x64xf16>, %{{.*}} : tensor<8x64xi64>, %{{.*}} : tensor<8x64xi1>) outs(%arg0 : memref<?xf16>)
+// CHECK-NOT: limit_sub_block_id0
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_split_indirect_store(%arg0: memref<?xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty() : tensor<16x64xf16>
+    %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<16x64xf16>) -> tensor<16x64xf16>
+    %2 = tensor.empty() : tensor<16x64xi64>
+    %3 = hivm.hir.vbrc ins(%c0_i64 : i64) outs(%2 : tensor<16x64xi64>) -> tensor<16x64xi64>
+    %4 = tensor.empty() : tensor<16x64xi1>
+    %5 = hivm.hir.vbrc ins(%true : i1) outs(%4 : tensor<16x64xi1>) -> tensor<16x64xi1>
+    hivm.hir.indirect_store ins(%1 : tensor<16x64xf16>, %3 : tensor<16x64xi64>, %5 : tensor<16x64xi1>) outs(%arg0 : memref<?xf16>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @check_indirect_store_with_batch_matmul_mix_aiv
+// CHECK: %[[SUB_BLOCK:.*]] = hivm.hir.get_sub_block_idx
+// CHECK: %[[SUB_BLOCK_IDX:.*]] = arith.index_cast %[[SUB_BLOCK]] : i64 to index
+// CHECK: %[[IS_SUB_BLOCK_0:.*]] = arith.cmpi eq, %[[SUB_BLOCK_IDX]], %{{.*}} : index
+// CHECK: scf.if %[[IS_SUB_BLOCK_0]] {
+// CHECK:   hivm.hir.indirect_store
+// CHECK: } {limit_sub_block_id0}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_indirect_store_with_batch_matmul_mix_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix} {
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %1 = tensor.empty() : tensor<16x16xf16>
+    %2 = tensor.empty() : tensor<16x16xf32>
+    %3 = hivm.hir.mmadL1 {batch_matmul} ins(%0, %1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return
+  }
+
+  func.func @check_indirect_store_with_batch_matmul_mix_aiv(%arg0: memref<?xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %true = arith.constant true
+    %0 = tensor.empty() : tensor<16x64xf16>
+    %1 = tensor.empty() : tensor<16x64xi64>
+    %2 = linalg.fill ins(%c0_i64 : i64) outs(%1 : tensor<16x64xi64>) -> tensor<16x64xi64>
+    %3 = tensor.empty() : tensor<16x64xi1>
+    %4 = linalg.fill ins(%true : i1) outs(%3 : tensor<16x64xi1>) -> tensor<16x64xi1>
+    hivm.hir.indirect_store ins(%0 : tensor<16x64xf16>, %2 : tensor<16x64xi64>, %4 : tensor<16x64xi1>) outs(%arg0 : memref<?xf16>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @check_indirect_store_in_dynamic_shape_mix_aiv
+// CHECK: %[[SUB_BLOCK:.*]] = hivm.hir.get_sub_block_idx
+// CHECK: %[[SUB_BLOCK_IDX:.*]] = arith.index_cast %[[SUB_BLOCK]] : i64 to index
+// CHECK: %[[IS_SUB_BLOCK_0:.*]] = arith.cmpi eq, %[[SUB_BLOCK_IDX]], %{{.*}} : index
+// CHECK: scf.if %[[IS_SUB_BLOCK_0]] {
+// CHECK:   hivm.hir.indirect_store
+// CHECK: } {limit_sub_block_id0}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_indirect_store_in_dynamic_shape_mix_aiv(%arg0: memref<?xf16>, %arg1: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty(%arg1) : tensor<?x64xf16>
+    %1 = linalg.fill ins(%cst : f16) outs(%0 : tensor<?x64xf16>) -> tensor<?x64xf16>
+    %2 = tensor.empty(%arg1) : tensor<?x64xi64>
+    %3 = linalg.fill ins(%c0_i64 : i64) outs(%2 : tensor<?x64xi64>) -> tensor<?x64xi64>
+    %4 = tensor.empty(%arg1) : tensor<?x64xi1>
+    %5 = linalg.fill ins(%true : i1) outs(%4 : tensor<?x64xi1>) -> tensor<?x64xi1>
+    hivm.hir.indirect_store ins(%1 : tensor<?x64xf16>, %3 : tensor<?x64xi64>, %5 : tensor<?x64xi1>) outs(%arg0 : memref<?xf16>)
+    return
+  }
+}
