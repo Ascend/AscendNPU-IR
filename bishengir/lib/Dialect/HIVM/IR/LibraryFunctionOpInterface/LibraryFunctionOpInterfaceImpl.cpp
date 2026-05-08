@@ -544,6 +544,19 @@ struct StaticMaxRankExternalModel
     if constexpr (std::is_same_v<ConcreteOp, VGatherMaskOp>) {
       return getVGatherMaskOpLibraryCallName(concreteOp, isOpsAligned);
     }
+    if constexpr (std::is_same_v<ConcreteOp, IndirectStoreOp>) {
+      auto offsetType = cast<ShapedType>(concreteOp.getOffsets().getType());
+      int rank = offsetType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      std::string hasMaskStr = concreteOp.getMask() ? "" : "_no_mask";
+      Type srcType = concreteOp.getSrc().getType();
+      std::string srcTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+      std::string offsetTypeStr = getTypeName(
+          concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
+      return concreteOp.getOpName().str() + hasMaskStr + "_" + libCallDim + "_" +
+             srcTypeStr + "_" + offsetTypeStr;
+    }
     if constexpr (std::is_same_v<ConcreteOp, DebugOp>) {
       return getDebugOpLibraryCallName(concreteOp, isOpsAligned);
     } else {
@@ -1202,6 +1215,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     // Dma Ops
     REGISTER_STATIC_MAX_RANK(LoadOp, 3);
     REGISTER_STATIC_MAX_RANK(StoreOp, 3);
+    REGISTER_STATIC_MAX_RANK(IndirectStoreOp, 5);
     REGISTER_STATIC_MAX_RANK(CopyOp, 3);
     REGISTER_STATIC_MAX_RANK(NZ2NDOp, 2);
     REGISTER_NO_MAX_RANK(FixpipeOp);

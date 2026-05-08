@@ -568,6 +568,76 @@ def CustomOp
   let hasCanonicalizer = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+def IndirectStoreOp : HIVM_StructuredOp<"indirect_store",[
+                            StaticMaxRankTrait<5>,
+                            SinglePipeOpTrait,
+                            OpPipeTrait<"PIPE::PIPE_V">,
+                            VectorCoreTypeTrait,
+                            DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+                                     ["getIteratorTypesArray",
+                                      "getIndexingMaps"]>,
+                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+                            ]> {
+  let summary = [{
+    Performs indirect memory storing with SIMT template.
+  }];
+
+  let description = [{
+    This operation takes a source tensor and a tensor of offsets from UB,
+    and stores elements from the source into the destination GM buffer
+    at the specified offset positions with SIMT template. The operation
+    supports masking to conditionally control which elements are stored.
+    This operation supports 1D-5D.
+
+    For each position in the source tensor:
+      1D:
+          if (mask[i]) dst[offsets[i]] = src[i]
+      2D:
+          if (mask[i][j]) dst[offsets[i][j]] = src[i][j]
+      3D:
+          if (mask[i][j][k]) dst[offsets[i][j][k]] = src[i][j][k]
+      4D:
+          if (mask[i][j][k][l]) dst[offsets[i][j][k][l]] = src[i][j][k][l]
+      5D:
+          if (mask[i][j][k][l][m]) dst[offsets[i][j][k][l][m]] = src[i][j][k][l][m]
+
+    Where:
+      - src: source tensor containing values to store from UB
+      - offsets: indices specifying positions in the destination buffer
+      - dst: destination memory buffer to store into GM
+      - mask: optional boolean mask controlling which elements to store
+
+    When no mask is provided, all elements from the source tensor are stored
+    to the corresponding offset positions in the destination buffer.
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       TensorOrMemref:$offsets,
+                       TensorOrMemref:$src,
+                       Optional<TensorOrMemref>:$mask
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `,` $offsets `:` type($offsets)
+      (`,` $mask^ `:` type($mask))? `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "indirect_store"; }
+      ::mlir::MutableOperandRange getDpsInitsMutable() {
+          return getDstMutable();
+      }
+  }];
+
+  let hasVerifier = 1;
+}
+
 // TODO: Add CustomMacroOp
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

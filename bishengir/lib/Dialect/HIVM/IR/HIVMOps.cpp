@@ -691,6 +691,85 @@ void ScatterStoreOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndirectStoreOp::verify() {
+  auto dstType = getDst().getType();
+  auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+  if (!dstMemrefType) {
+    return emitError("dst must be a memref type");
+  }
+
+  auto offsetsType = getOffsets().getType();
+  auto offsetsTensorType = dyn_cast<TensorType>(offsetsType);
+  auto offsetsMemrefType = dyn_cast<MemRefType>(offsetsType);
+  if (!(offsetsTensorType || offsetsMemrefType)) {
+    return emitOpError("offset must be tensor or memref type");
+  }
+
+  auto srcType = getSrc().getType();
+  auto srcTensorType = dyn_cast<TensorType>(srcType);
+  auto srcMemrefType = dyn_cast<MemRefType>(srcType);
+  if (!(srcTensorType || srcMemrefType)) {
+    return emitOpError("src must be tensor or memref type");
+  }
+
+  auto dstElementType = dstMemrefType.getElementType();
+  auto srcElementType = srcMemrefType ? srcMemrefType.getElementType()
+                                      : srcTensorType.getElementType();
+  if (srcElementType != dstElementType) {
+    return emitOpError(
+        "src of hivm::IndirectStoreOp must have the same element type as dst");
+  }
+
+  auto offsetShape = offsetsMemrefType ? offsetsMemrefType.getShape()
+                                       : offsetsTensorType.getShape();
+  auto srcShape =
+      srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
+  if (offsetShape != srcShape) {
+    return emitOpError("offsets of hivm::IndirectStoreOp must have the same "
+                       "shape and rank as src");
+  }
+
+  if (auto mask = getMask()) {
+    auto maskType = mask.getType();
+    auto maskTensorType = dyn_cast<TensorType>(maskType);
+    auto maskMemrefType = dyn_cast<MemRefType>(maskType);
+    if (!(maskTensorType || maskMemrefType)) {
+      return emitOpError("mask must be tensor or memref type");
+    }
+
+    auto maskShape =
+        maskMemrefType ? maskMemrefType.getShape() : maskTensorType.getShape();
+    if (maskShape != offsetShape) {
+      return emitOpError("mask of hivm::IndirectStoreOp must have the same "
+                         "shape and rank as offsets");
+    }
+  }
+
+  return success();
+}
+
+void IndirectStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  if (getMask()) {
+    effects.emplace_back(
+        MemoryEffects::Read::get(),
+        &getOperation()->getOpOperand(getODSOperandIndexAndLength(3).first),
+        SideEffects::DefaultResource::get());
+  }
+}
+
 PIPE CustomOp::getPipe() {
   if (auto pipAttr =
           getOperation()->template getAttrOfType<PipeAttr>(PipeAttr::name))
