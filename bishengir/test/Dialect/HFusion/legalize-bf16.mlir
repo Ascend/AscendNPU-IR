@@ -307,6 +307,80 @@ func.func @test_max_with_index(%arg0: tensor<1x22x39xbf16>, %arg1: tensor<1x22x3
 }
 
 // -----
+// CHECK-LABEL: func.func @test_arith_addf_tensor
+// CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<6x4xf32>
+// CHECK: %[[VAL_1:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>{{.*}}} ins(%arg0 : tensor<6x4xbf16>) outs(%[[VAL_0]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+// CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<6x4xf32>
+// CHECK: %[[VAL_3:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>{{.*}}} ins(%arg1 : tensor<6x4xbf16>) outs(%[[VAL_2]] : tensor<6x4xf32>) -> tensor<6x4xf32>
+// CHECK: %[[VAL_4:.*]] = arith.addf %[[VAL_1]], %[[VAL_3]] : tensor<6x4xf32>
+// CHECK: %[[VAL_5:.*]] = tensor.empty() : tensor<6x4xbf16>
+// CHECK: %[[VAL_6:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>{{.*}}} ins(%[[VAL_4]] : tensor<6x4xf32>) outs(%[[VAL_5]] : tensor<6x4xbf16>) -> tensor<6x4xbf16>
+// CHECK: return %[[VAL_6]] : tensor<6x4xbf16>
+func.func @test_arith_addf_tensor(%arg0 : tensor<6x4xbf16>, %arg1 : tensor<6x4xbf16>) -> tensor<6x4xbf16> {
+  %res = arith.addf %arg0, %arg1 : tensor<6x4xbf16>
+  return %res : tensor<6x4xbf16>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_arith_addf_scalar
+// CHECK: %[[VAL_0:.*]] = arith.extf %arg0 : bf16 to f32
+// CHECK: %[[VAL_1:.*]] = arith.extf %arg1 : bf16 to f32
+// CHECK: %[[VAL_2:.*]] = arith.addf %[[VAL_0]], %[[VAL_1]] : f32
+// CHECK: %[[VAL_3:.*]] = arith.truncf %[[VAL_2]] : f32 to bf16
+// CHECK: return %[[VAL_3]] : bf16
+func.func @test_arith_addf_scalar(%arg0 : bf16, %arg1 : bf16) -> bf16 {
+  %res = arith.addf %arg0, %arg1 : bf16
+  return %res : bf16
+}
+
+// -----
+// CHECK-LABEL: func.func @test_arith_addf_in_loop
+// CHECK: %[[VAL_0:.*]] = arith.extf {{.*}} : bf16 to f32
+// CHECK: %[[VAL_1:.*]] = arith.extf {{.*}} : bf16 to f32
+// CHECK: %[[VAL_2:.*]] = arith.addf %[[VAL_0]], %[[VAL_1]] : f32
+// CHECK: %[[VAL_3:.*]] = arith.truncf %[[VAL_2]] : f32 to bf16
+// CHECK: %[[VAL_4:.*]] = arith.extf {{.*}} : bf16 to f32
+// CHECK: %[[VAL_5:.*]] = arith.cmpf oeq, %[[VAL_4]], {{.*}} : f32
+// CHECK: %[[VAL_6:.*]] = arith.select %[[VAL_5]], {{.*}} : bf16
+// CHECK: %[[VAL_7:.*]] = arith.extf %[[VAL_6]] : bf16 to f32
+// CHECK: %[[VAL_8:.*]] = arith.extf {{.*}} : bf16 to f32
+// CHECK: %[[VAL_9:.*]] = arith.addf %[[VAL_7]], %[[VAL_8]] : f32
+// CHECK: %[[VAL_10:.*]] = arith.truncf %[[VAL_9]] : f32 to bf16
+func.func @test_arith_addf_in_loop(%arg0: memref<?xbf16>) -> tensor<32x32xbf16> {
+  %c32 = arith.constant 32 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 1.000000e+00 : f32
+  %cst_1 = arith.constant 0.000000e+00 : bf16
+  %0 = tensor.empty() : tensor<32x32xbf16>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [32, 32], strides: [32, 1] : memref<?xbf16> to memref<32x32xbf16, strided<[32, 1]>>
+  %alloc = memref.alloc() : memref<32x32xbf16>
+  memref.copy %reinterpret_cast, %alloc : memref<32x32xbf16, strided<[32, 1]>> to memref<32x32xbf16>
+  %1 = bufferization.to_tensor %alloc restrict writable : memref<32x32xbf16>
+  %alloc_2 = memref.alloc() : memref<32x32xbf16>
+  %alloc_3 = memref.alloc() : memref<32x32xbf16>
+  scf.for %arg1 = %c0 to %c32 step %c1 {
+    %extracted = tensor.extract %1[%c0, %arg1] : tensor<32x32xbf16>
+    memref.store %extracted, %alloc_2[%c0, %arg1] : memref<32x32xbf16>
+    scf.for %arg2 = %c1 to %c32 step %c1 {
+      %2 = arith.subi %arg2, %c1 : index
+      %extracted_0 = tensor.extract %1[%arg2, %arg1] : tensor<32x32xbf16>
+      %3 = memref.load %alloc_2[%2, %arg1] : memref<32x32xbf16>
+      %4 = memref.load %alloc[%arg2, %arg1] : memref<32x32xbf16>
+      %5 = arith.addf %3, %extracted_0 : bf16
+      %6 = arith.extf %extracted_0 : bf16 to f32
+      %7 = arith.cmpf oeq, %6, %cst : f32
+      %8 = arith.select %7, %4, %cst_1 : bf16
+      %9 = arith.addf %8, %extracted_0 : bf16
+      memref.store %5, %alloc_2[%arg2, %arg1] : memref<32x32xbf16>
+      memref.store %9, %alloc_3[%arg2, %arg1] : memref<32x32xbf16>
+    }
+  }
+  %2 = bufferization.to_tensor %alloc_3 restrict : memref<32x32xbf16>
+  return %2 : tensor<32x32xbf16>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_select_bf16
 // CHECK: hfusion.select ins({{.*}} : tensor<16x32x4xi1>, tensor<16x32x4xbf16>, tensor<16x32x4xbf16>)
 func.func @test_select_bf16(%arg0 : tensor<16x32x4xbf16>, %arg1 : tensor<16x32x4xbf16>, %arg2 : tensor<16x32x4xi1>) -> tensor<16x32x4xbf16> {
