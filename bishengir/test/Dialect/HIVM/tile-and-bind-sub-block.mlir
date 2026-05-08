@@ -1496,3 +1496,28 @@ func.func @store_with_nonzero_offset_dynamic_mask(%arg0: tensor<64xf32>, %arg1: 
   hivm.hir.store ins(%extracted_slice : tensor<?xf32>) outs(%subview : memref<?xf32>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @check_split_indirect_store
+// CHECK: %[[SBIDX:.*]] = hivm.hir.get_sub_block_idx -> i64
+// CHECK: %[[SBIDX_I:.*]] = arith.index_cast %[[SBIDX]] : i64 to index
+// CHECK: %[[IS_SB0:.*]] = arith.cmpi eq, %[[SBIDX_I]], %{{.*}} : index
+// CHECK: scf.if %[[IS_SB0]] {
+// CHECK:   hivm.hir.indirect_store ins(%{{.*}} : tensor<16x64xf16>, %{{.*}} : tensor<16x64xi64>, %{{.*}} : tensor<16x64xi1>) outs(%{{.*}} : memref<?xf16>)
+// CHECK: } {limit_sub_block_id0}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_split_indirect_store(%arg0: memref<?xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %true = arith.constant true
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty() : tensor<16x64xf16>
+    %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<16x64xf16>) -> tensor<16x64xf16>
+    %2 = tensor.empty() : tensor<16x64xi64>
+    %3 = hivm.hir.vbrc ins(%c0_i64 : i64) outs(%2 : tensor<16x64xi64>) -> tensor<16x64xi64>
+    %4 = tensor.empty() : tensor<16x64xi1>
+    %5 = hivm.hir.vbrc ins(%true : i1) outs(%4 : tensor<16x64xi1>) -> tensor<16x64xi1>
+    hivm.hir.indirect_store ins(%1 : tensor<16x64xf16>, %3 : tensor<16x64xi64>, %5 : tensor<16x64xi1>) outs(%arg0 : memref<?xf16>)
+    return
+  }
+}
