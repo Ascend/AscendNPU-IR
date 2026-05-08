@@ -114,9 +114,8 @@ static void preProcess(OpPassManager &pm,
   if (!options.enableSymbolAnalysis) {
     pm.nest<func::FuncOp>().addPass(symbol::createEraseSymbolPass());
   }
-  auto targetEnum = hacc::symbolizeTargetDeviceEnum(options.target);
   if (options.enableTritonKernelCompile &&
-      hacc::utils::isRegBasedArch(targetEnum)) {
+      hacc::utils::isRegBasedArch(options.target)) {
     if (options.enableFuseReductionIntoLoop)
       pm.nest<func::FuncOp>().addPass(
           bishengir::createFuseReductionIntoLoopPass());
@@ -228,7 +227,8 @@ static void inferAndOutlineOp(OpPassManager &pm,
   opFusionPassOption.alwaysInline = false;
   opFusionPassOption.moveOutToParam = false;
   opFusionPassOption.outputMode = OutputMode::Multiple;
-  opFusionPassOption.maxHorizontalFusionSize = options.maxHorizontalFusionSize;
+  opFusionPassOption.maxHorizontalFusionSize =
+      options.hfusionMaxHorizontalFusionSize;
   opFusionPassOption.enableMultiKernel = options.enableMultiKernel;
   pm.addPass(createHFusionOpFusionPass(opFusionPassOption));
   canonicalizationPipeline(pm, options, AfterFlattenBeforeAutoSchedule);
@@ -248,7 +248,8 @@ hfusionTilingOptimizationPipeline(OpPassManager &pm,
   pm.addPass(createConstantizeTilingDataPass());
   canonicalizationPipeline(pm, options, AfterAutoSchedule);
   PackTilingDataOptions packOptions;
-  packOptions.emitGetTilingStructSizeFunction = !options.enableMultiKernel;
+  packOptions.emitGetTilingStructSizeFunction =
+      !options.enableMultiKernel;
   packOptions.packTilingKey = false;
   pm.addPass(createPackTilingDataPass(packOptions));
   // after tiling is all constantized and packed, try to simplify loops
@@ -274,9 +275,10 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
   autoScheduleOptions.enableAutoMultiBuffer = options.enableAutoMultiBuffer;
   autoScheduleOptions.enableDeterministicComputing =
       options.enableDeterministicComputing;
-  autoScheduleOptions.maxBufferCntTuning = options.maxBufferCntTuning;
+  autoScheduleOptions.maxBufferCntTuning = options.hfusionMaxBufferCountTuning;
   autoScheduleOptions.cubeTilingTuning = options.cubeTilingTuning;
-  autoScheduleOptions.enableCountBufferDmaOpt = options.enableCountBufferDmaOpt;
+  autoScheduleOptions.enableCountBufferDmaOpt =
+      options.enableHfusionCountBufferDmaOpt;
   autoScheduleOptions.externalTilingFuncPath = options.externalTilingFuncPath;
   autoScheduleOptions.enableManageHostResources =
       options.enableManageHostResources;
@@ -285,8 +287,7 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createDecomposeMulti());
   // Auto Schedule might generated generic ops.
   // If we want to vectorize, it is easier with generic ops
-  if (!hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(options.target)))
+  if (!hacc::utils::isRegBasedArch(options.target))
     pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
   if (options.enableOpsReorder) {
     canonicalizationPipeline(pm, options, AfterAutoSchedule);
@@ -353,14 +354,15 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   }
   PreVectorizationFusionOptions options;
   options.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
-  options.maxFusedElementwiseOps = hfusionOptions.maxFusedElementwiseOps;
+  options.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
   pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(options));
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
-    if (hfusionOptions.maxFusedOpsInAutoVectorizeV2 >= 0)
+    if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)
       vecOptions.maxFusedOps =
-          static_cast<unsigned>(hfusionOptions.maxFusedOpsInAutoVectorizeV2);
+          static_cast<unsigned>(
+              hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {
@@ -394,9 +396,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
 
 void buildHFusionPipelines(OpPassManager &pm,
                            const HFusionPipelineOptions &options) {
-  bool runRegBasePasses = !options.enableMixedCV &&
-                          hacc::utils::isRegBasedArch(
-                              hacc::symbolizeTargetDeviceEnum(options.target));
+  bool runRegBasePasses =
+      !options.enableMixedCV && hacc::utils::isRegBasedArch(options.target);
   preProcess(pm, options);
   canonicalizationPipeline(pm, options);
   if (!options.enableTritonKernelCompile) {
@@ -452,7 +453,7 @@ void buildHFusionPipelines(OpPassManager &pm,
   postProcess(pm, options);
 
   if (runRegBasePasses) {
-    if (!options.disableHFusionVectorize) {
+    if (!options.disableHfusionVectorize) {
       hfusionAutoVectorizePipeline(pm, options);
     }
   }

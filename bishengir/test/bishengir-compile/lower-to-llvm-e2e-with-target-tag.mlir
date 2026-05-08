@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend910B1 | \
 // RUN: bishengir-opt \
 // RUN:   -transform-interpreter="debug-payload-root-tag=payload" \

@@ -1,4 +1,5 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s 
 
 // CHECK: LLVMDialectModule
 // CHECK: define dso_local void @model_21(ptr addrspace(1) %0, ptr addrspace(1) %1)

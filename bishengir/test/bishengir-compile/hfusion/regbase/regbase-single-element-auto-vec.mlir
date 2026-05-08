@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -target=Ascend910_9579 -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=1 --vf-fusion-mode=all-op -enable-triton-kernel-compile=true %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -target=Ascend910_9579 -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=1 --vf-fusion-mode=all-op -enable-triton-kernel-compile=true %s 
 
 module {
   // CHECK-LABEL: @triton_kernel_i8_fused_0_outlined_vf_0

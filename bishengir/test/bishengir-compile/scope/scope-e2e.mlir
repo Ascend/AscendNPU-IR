@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile %s --target=Ascend950PR_9589 --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-lir-compile=false
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {

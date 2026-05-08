@@ -1,12 +1,14 @@
 // REQUIRES: hivmc-a5
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile -enable-lir-compile=false \
-// RUN:   -bishengir-print-ir-after='hivm-graph-sync-solver' \
-// RUN:   -bishengir-print-ir-before='hfusion-auto-schedule' %s 2>&1 | FileCheck %s
+// RUN:   -enable-hivm-graph-sync-solver=true -mlir-print-ir-after='hivm-graph-sync-solver' \
+// RUN:   -mlir-print-ir-before='hfusion-auto-schedule' %s 2>&1 | FileCheck %s
 // CHECK: IR Dump After GraphSyncSolver (hivm-graph-sync-solver)
 // CHECK-NOT: IR Dump After AutoSchedule (hfusion-auto-schedule)
 
 // RUN: bishengir-compile -enable-lir-compile=false \
-// RUN:   -mlir-print-ir-after=hivm-cross-core-gss %s 2>&1 \
+// RUN:   -enable-hivm-cross-core-gss=true -mlir-print-ir-after=hivm-cross-core-gss %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CROSS-CORE
 // CROSS-CORE: IR Dump After CrossCoreGSS (hivm-cross-core-gss)
 

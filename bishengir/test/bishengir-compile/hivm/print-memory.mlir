@@ -1,4 +1,6 @@
 // REQUIRES: hivmc-a5
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile -enable-triton-kernel-compile -enable-lir-compile=false -enable-hfusion-compile -enable-print-memory-allocated-size=true %s | FileCheck %s
 
 // CHECK: [AscendNPU IR] Allocated UB size = 512 bits

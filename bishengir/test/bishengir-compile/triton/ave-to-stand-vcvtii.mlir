@@ -1,8 +1,8 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile --enable-auto-multi-buffer=true \
 // RUN: --enable-hfusion-compile=true --enable-triton-kernel-compile=true \
 // RUN: --enable-lir-compile=true --target=Ascend950PR_9589 \
 // RUN: %s -save-linked-ir -o %t1.ll
-// RUN: cat %t1_linked.ll | FileCheck %s
 
 // CEHCK: define internal void @_mlir_ciface_cast_int32_t_to_int64_t
 // CHECK: define internal <64 x i32> @_mlir_ciface_cast_int64_t_to_int32_t

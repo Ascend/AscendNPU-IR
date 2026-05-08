@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile %s --target=Ascend950PR_9589 --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-lir-compile=false -o %t
 
 #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>

@@ -25,7 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
-#include <asm-generic/errno.h>
+#include <cerrno>
 #include <memory>
 #include <utility>
 #include <vector>

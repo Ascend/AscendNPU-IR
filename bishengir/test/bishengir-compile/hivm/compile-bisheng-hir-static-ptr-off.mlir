@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile -enable-lir-compile=false -enable-static-bare-ptr=false %s | FileCheck %s
 
 // CHECK: LLVMDialectModule

@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true %s | FileCheck %s
 
 // CHECK-DAG: @_debug_prefix_0

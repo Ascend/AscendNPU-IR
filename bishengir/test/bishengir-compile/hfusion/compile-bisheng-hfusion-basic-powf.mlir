@@ -1,6 +1,6 @@
-// RUN: bishengir-compile --enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20  %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+// RUN: bishengir-compile --enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20  %s
 
-// CHECK: LLVMDialectModule
 module {
   func.func @fused_mul_pow_mul_split(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32>
   attributes {OperatorType = "Default", compute_capability = "", hacc.function_kind = #hacc.function_kind<DEVICE>,

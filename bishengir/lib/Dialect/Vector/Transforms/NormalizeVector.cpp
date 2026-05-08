@@ -443,7 +443,7 @@ struct UnitDimMultiReductionToReduction
     } else {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
           loc,
-          VectorType::get(ArrayRef<long>(),
+          VectorType::get(ArrayRef<int64_t>(),
                           dstBrc.getResultVectorType().getElementType()),
           reductionOp->getResult(0));
       rewriter.modifyOpInPlace(dstBrc, [&]() {
@@ -530,7 +530,7 @@ struct UnitDimMultiReductionToReduction
     } else {
       auto dstUcc = rewriter.create<UnrealizedConversionCastOp>(
           loc,
-          VectorType::get(ArrayRef<long>(),
+          VectorType::get(ArrayRef<int64_t>(),
                           dstBrc.getResultVectorType().getElementType()),
           res->getResult(0));
       rewriter.modifyOpInPlace(dstBrc, [&]() {

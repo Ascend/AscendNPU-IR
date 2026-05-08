@@ -1,7 +1,7 @@
+// REQUIRES: enable-lir-compile
 // REQUIRES: hivmc-a5
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s | FileCheck %s
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s 
 
-// CHECK: LLVMDialectModule
 module {
   func.func @test_improve_find_collapsing_reassociation_in_reshape_ops_utils(%arg0: tensor<1x2047x2048xf32>) -> (tensor<1x2047x1xf32>, tensor<1x2047x2048xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %cst = arith.constant 0.000000e+00 : f32

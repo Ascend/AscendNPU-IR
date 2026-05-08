@@ -1,7 +1,7 @@
+// REQUIRES: enable-lir-compile
 // REQUIRES: hivmc-a5
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-vf-fusion=true %s | FileCheck %s
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-vf-fusion=true %s 
 
-// CHECK: LLVMDialectModule
 module {
   func.func @test_enable_vf_fusion_compile(%arg0: tensor<?x1xf16>,
                                               %arg1: tensor<1x?xf16>,

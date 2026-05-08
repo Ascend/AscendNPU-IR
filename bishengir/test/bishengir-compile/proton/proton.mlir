@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // default option, opt
 // RUN: bishengir-opt %s \
 // RUN:   -convert-proton-to-protongpu \

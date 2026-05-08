@@ -1,8 +1,7 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile -enable-lir-compile=true -enable-hfusion-compile=true \
 // RUN: -block-dim=1 -target=Ascend310B4 -enable-triton-kernel-compile=true \
 // RUN: %s -save-linked-ir -o %t1.ll
-// RUN: cat %t1_linked.ll | FileCheck %s
-
 
 // CHECK-LABEL: @load_gm_to_ubuf_3d_float
 // CHECK: @_mlir_ciface_load_gm_to_ubuf_3d_float

@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <type_traits>
@@ -132,8 +133,10 @@ bool isMemBasedArch(TargetDevice targetDevice);
 bool isAscend310B(TargetDevice targetDevice);
 
 bool isAscend950(TargetDevice targetDevice);
+bool isAscend950(llvm::StringRef targetDevice);
 
 bool isRegBasedArch(TargetDevice targetDevice);
+bool isRegBasedArch(llvm::StringRef targetDevice);
 
 bool isFFTSSupportedArch(TargetDevice targetDevice);
 

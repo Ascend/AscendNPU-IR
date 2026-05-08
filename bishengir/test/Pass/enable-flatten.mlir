@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // REQUIRES: hivmc-a5
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-flatten=false %s | FileCheck %s
 

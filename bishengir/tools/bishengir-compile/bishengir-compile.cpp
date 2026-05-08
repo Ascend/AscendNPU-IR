@@ -69,6 +69,12 @@ std::string registerAndParseCLIOptions(int argc, char **argv) {
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
 
+  // Save original CLI arguments before parsing so they can be forwarded to
+  // the downstream hivmc toolchain.
+  std::vector<std::string> originalCLArgs;
+  for (int i = 1; i < argc; ++i)
+    originalCLArgs.emplace_back(argv[i]);
+
   // Register dialects.
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
@@ -95,8 +101,26 @@ int main(int argc, char **argv) {
   config.setExecutablePath(getExecutablePath(
       argv[0], reinterpret_cast<void *>(&bishengirCompileExecutableAnchor)));
 
-  // TODO: remove it after seperate the config from hfusion and hivm
-  config.readCLArgs(argc, argv);
+  // Forward original CLI arguments as fallback for downstream hivmc toolchain.
+  // Filter out arguments that are handled purely by bishengir-compile itself.
+  {
+    std::vector<std::string> filteredArgs;
+    for (const auto &arg : originalCLArgs) {
+      llvm::StringRef argRef(arg);
+      // Skip positional (input file) and output file arguments.
+      if (!argRef.starts_with("-"))
+        continue;
+      // Skip arguments handled directly by bishengir-compile, not hivmc.
+      if (argRef.starts_with("-o=") || argRef == "-o")
+        continue;
+      if (argRef.starts_with("--hivmc-args"))
+        continue;
+      if (argRef.contains("enable-lir-compile"))
+        continue;
+      filteredArgs.push_back(arg);
+    }
+    config.setClArgs(std::move(filteredArgs));
+  }
 
   std::string errorMessage;
   auto file = mlir::openInputFile(inputFile, &errorMessage);
@@ -109,7 +133,7 @@ int main(int argc, char **argv) {
 
   // create context
   mlir::MLIRContext context(registry);
-  context.allowUnregisteredDialects(config.shouldAllowUnregisteredDialects());
+  context.allowUnregisteredDialects(config.getAllowUnregisteredDialects());
 
   llvm::SourceMgr sourceMgr;
   sourceMgr.AddNewSourceBuffer(std::move(file), mlir::SMLoc());
@@ -122,7 +146,7 @@ int main(int argc, char **argv) {
   }
 
   mlir::ModuleOp module = *moduleRef;
-  if (config.shouldCompileTriton()) {
+  if (config.getEnableTritonKernelCompile()) {
     if (failed(inferMixedCV(module, config))) {
       llvm::errs() << "[ERROR] Failed to infer mix mode\n";
       return EXIT_FAILURE;

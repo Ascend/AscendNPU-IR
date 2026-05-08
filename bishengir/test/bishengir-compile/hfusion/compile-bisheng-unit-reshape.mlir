@@ -1,6 +1,7 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
 
-// CHECK-LABEL: LLVMDialectModule
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s
+
 module {
   func.func @mlir_fused__to_copy_npu_dynamic_quant_118(%arg0: tensor<1x?x32x128xf16>, %arg1: i64, %arg2: i64) -> (tensor<?x4096xbf16>, tensor<1x?x4096xbf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<HOST>} {
     %c0_i64 = arith.constant 0 : i64

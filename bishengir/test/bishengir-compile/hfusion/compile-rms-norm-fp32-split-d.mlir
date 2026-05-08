@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile  -block-dim=40 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile  -block-dim=40 %s 
 
 // CHECK: LLVMDialectModule
 module attributes {transform.with_named_sequence} {

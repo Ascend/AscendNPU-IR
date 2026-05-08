@@ -1,4 +1,6 @@
-// RUN: bishengir-compile --target=Ascend950PR_9589 %s -enable-triton-ir-compile -pure-simt -enable-lir-compile=false | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile --target=Ascend950PR_9589 %s -enable-triton-ir-compile -pure-simt -enable-lir-compile=false
 
 // CHECK: define internal simt_entry void @add_kernel_vf_simt
 #loc1 = loc("x_ptr")

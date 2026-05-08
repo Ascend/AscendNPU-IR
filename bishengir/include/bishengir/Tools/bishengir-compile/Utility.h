@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
@@ -22,6 +23,7 @@
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Metadata.h"
@@ -39,7 +41,8 @@
 constexpr static unsigned kTmpMaxPath = 128;
 
 using StringTmpPath = llvm::SmallString<kTmpMaxPath>;
-using MixedModules = std::pair<ModuleOp,SmallVector<ModuleOp,2>>;
+using MixedModules =
+    std::pair<mlir::ModuleOp, llvm::SmallVector<mlir::ModuleOp, 2>>;
 
 /// Get the HIVMC binary name.
 llvm::StringRef getHIVMCName();
@@ -80,15 +83,15 @@ struct TempDirectoriesStore {
 std::unique_ptr<llvm::ToolOutputFile>
 getTempFile(const std::string &outputFile, TempDirectoriesStore &tempDirsStore);
 
-MixedModules getMixedModules(ModuleOp topMod);
+MixedModules getMixedModules(mlir::ModuleOp topMod);
 
-bool hasSplitModules(ModuleOp topMod);
+bool hasSplitModules(mlir::ModuleOp topMod);
 
 // FIXME: This will be refactored after vectorize is moved to HIVM.
-llvm::LogicalResult inferMixedCV(ModuleOp &module,
+llvm::LogicalResult inferMixedCV(mlir::ModuleOp &module,
                                  bishengir::BiShengIRCompileMainConfig &config);
 
-llvm::LogicalResult inferDotScale(ModuleOp &module,
+llvm::LogicalResult inferDotScale(mlir::ModuleOp &module,
                                   bishengir::BiShengIRCompileMainConfig &config);
 
 /// Get the absolute path of the current executable. Resolves symlinks and

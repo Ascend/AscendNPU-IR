@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-debug-info=true %s
 
 module {

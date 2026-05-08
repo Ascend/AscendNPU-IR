@@ -6,11 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-
-#ifdef BISHENGIR_ENABLE_EXECUTION_ENGINE
-#include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Pass/CPURunnerMetadata.h"
+
+#if (defined(MLIR_ENABLE_EXECUTION_ENGINE) && MLIR_ENABLE_EXECUTION_ENGINE) || \
+    defined(BISHENGIR_ENABLE_EXECUTION_ENGINE)
+#include "bishengir/ExecutionEngine/Passes.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -21,132 +23,84 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
+using namespace bishengir;
 
-namespace {
-template <bool includePassInfo> struct CPURunnerMetadata;
-
-template <> struct CPURunnerMetadata<false> {
-  mlir::execution_engine::CPURunnerPipelineOptions options;
-};
-
-template <> struct CPURunnerMetadata<true> : public CPURunnerMetadata<false> {
-  std::string passName;
-  std::size_t passIndex = 1;
-};
+namespace bishengir {
 
 template <bool includePassInfo>
-struct CPURunnerMetadataParser
-    : public llvm::cl::parser<CPURunnerMetadata<includePassInfo>> {
-  using parser_data_type = CPURunnerMetadata<includePassInfo>;
+void CPURunnerMetadataParser<includePassInfo>::printOptionInfo(
+    const llvm::cl::Option &opt, size_t globalWidth) const {
+  auto helpMsg = "  --" + llvm::to_string(opt.ArgStr) + "=";
 
-  explicit CPURunnerMetadataParser(llvm::cl::Option &o)
-      : llvm::cl::parser<parser_data_type>(o) {}
+  if constexpr (includePassInfo)
+    helpMsg += "<pass>[,<index>][,<options>]";
+  else
+    helpMsg += "[<options>]";
 
-  void printOptionInfo(const llvm::cl::Option &opt,
-                       size_t globalWidth) const final {
-    auto helpMsg = "  --" + llvm::to_string(opt.ArgStr) + "=";
+  llvm::outs() << helpMsg;
+  opt.printHelpStr(opt.HelpStr, globalWidth, helpMsg.size() + 3);
+  execution_engine::CPURunnerPipelineOptions().printHelp(2, globalWidth);
+}
 
-    if constexpr (includePassInfo)
-      helpMsg += "<pass>[,<index>][,<options>]";
-    else
-      helpMsg += "[<options>]";
+template <bool includePassInfo>
+bool CPURunnerMetadataParser<includePassInfo>::parse(llvm::cl::Option &opt,
+                                                     StringRef argName,
+                                                     StringRef arg,
+                                                     parser_data_type &value) {
+  if (opt.getNumOccurrences() > 1)
+    return opt.error("Option shouldn't be used multiple times!");
 
-    llvm::outs() << helpMsg;
-    opt.printHelpStr(opt.HelpStr, globalWidth, helpMsg.size() + 3);
-    execution_engine::CPURunnerPipelineOptions().printHelp(2, globalWidth);
-  }
+  SmallVector<StringRef> args;
+  arg.split(args, ',', 2, false);
+  args = llvm::to_vector(llvm::reverse(args));
 
-  // Return true on error.
-  static bool parse(llvm::cl::Option &opt, StringRef argName, StringRef arg,
-                    parser_data_type &value) {
-    if (opt.getNumOccurrences() > 1)
-      return opt.error("Option shouldn't be used multiple times!");
+  if constexpr (includePassInfo) {
+    if (args.empty())
+      return opt.error("At least the pass name should be provided!");
 
-    SmallVector<StringRef> args;
-    arg.split(args, ',', 2, false);
-    args = llvm::to_vector(llvm::reverse(args));
-
-    if constexpr (includePassInfo) {
-      if (args.empty())
-        return opt.error("At least the pass name should be provided!");
-
-      if (args.back().empty() || !PassInfo::lookup(args.back()))
-        return opt.error("\"" + args.back() + "\" is not a pass!");
-      value.passName = args.pop_back_val();
-
-      if (args.empty())
-        return false;
-
-      if (std::ptrdiff_t passIndex; !args.back().getAsInteger(10, passIndex)) {
-        args.pop_back();
-        if (value.passIndex <= 0)
-          return opt.error(
-              "Pass index should be a positive non-zero integer, but found " +
-              llvm::to_string(value.passIndex) + "!");
-        value.passIndex = static_cast<size_t>(passIndex);
-      }
-    }
+    if (args.back().empty() || !PassInfo::lookup(args.back()))
+      return opt.error("\"" + args.back() + "\" is not a pass!");
+    value.passName = args.pop_back_val();
+    value.numOccurrences++;
 
     if (args.empty())
       return false;
 
-    return failed(value.options.parseFromString(args.back()));
+    if (std::ptrdiff_t passIndex; !args.back().getAsInteger(10, passIndex)) {
+      args.pop_back();
+      if (passIndex <= 0)
+        return opt.error(
+            "Pass index should be a positive non-zero integer, but found " +
+            llvm::to_string(passIndex) + "!");
+      value.passIndex = static_cast<decltype(value.passIndex)>(passIndex);
+    }
   }
-};
 
-//===--------------------------------------------------------------------===//
-// CPU Runner Options
-//===--------------------------------------------------------------------===//
-static llvm::cl::OptionCategory enableCPURunnerCategory{
-    "BiShengIR Runner Options"};
-static llvm::cl::opt<CPURunnerMetadata<false>, false,
-                     CPURunnerMetadataParser<false>>
-    enableCPURunner{
-        "enable-cpu-runner",
-        llvm::cl::desc(
-            "Enable CPU runner lowering pipeline on the final output."),
-        llvm::cl::cat(enableCPURunnerCategory)};
-static llvm::cl::opt<CPURunnerMetadata<true>, false,
-                     CPURunnerMetadataParser<true>>
-    enableCPURunnerBefore{
-        "enable-cpu-runner-before",
-        llvm::cl::desc("Enable BiShengIR CPU runner before "
-                       "the specified pass and stop the execution."),
-        llvm::cl::cat(enableCPURunnerCategory)};
-static llvm::cl::opt<CPURunnerMetadata<true>, false,
-                     CPURunnerMetadataParser<true>>
-    enableCPURunnerAfter{
-        "enable-cpu-runner-after",
-        llvm::cl::desc("Enable BiShengIR CPU runner after the specified pass "
-                       "and stop the execution."),
-        llvm::cl::cat(enableCPURunnerCategory)};
+  if (args.empty())
+    return false;
 
-// A hacked version of mlir::Pass to allow bishengir::BiShengPassManager to
-// access everything
+  return failed(value.options.parseFromString(args.back()));
+}
+
+template struct bishengir::CPURunnerMetadataParser<true>;
+template struct bishengir::CPURunnerMetadataParser<false>;
+
+} // namespace bishengir
+
+namespace {
+
 class BiShengIRPass : public Pass {
-  BiShengIRPass() = delete; // should never be instantiated
+  BiShengIRPass() = delete;
   friend bishengir::BiShengIRPassManager;
 };
 
-static void verifyOptionUsage() {
-  if (enableCPURunner.getNumOccurrences() +
-          enableCPURunnerBefore.getNumOccurrences() +
-          enableCPURunnerAfter.getNumOccurrences() >
+static void verifyOptionUsage(const BiShengIRCompileConfigBase &config) {
+  if (config.CPURunnerOpt().numOccurrences +
+          config.CPURunnerBeforeOpt().numOccurrences +
+          config.CPURunnerAfterOpt().numOccurrences >
       1)
-    llvm::report_fatal_error("Cannot combine any of \"" +
-                             enableCPURunner.ArgStr + "\", \"" +
-                             enableCPURunnerBefore.ArgStr + "\", or \"" +
-                             enableCPURunnerAfter.ArgStr + "\".");
-
-  const auto compileConfig =
-      bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
-  if (compileConfig.shouldCompileLIR())
     llvm::report_fatal_error(
-        "LIR compilation should be disabled for the CPU runner.");
-
-  if (!compileConfig.shouldManageHostResource())
-    llvm::report_fatal_error(
-        "Managing host resources should be enabled for the CPU runner.");
+        "Cannot combine multiple cpu-runner options.");
 }
 
 [[maybe_unused]] static void
@@ -164,15 +118,16 @@ dumpPassNames(const OpPassManager &pm, llvm::raw_ostream &out = llvm::dbgs()) {
   out << '\n';
 }
 
-static void executeCPURunnerPasses(Operation *op) {
+static void executeCPURunnerPasses(Operation *op,
+                                   const BiShengIRCompileConfigBase &config) {
   PassManager pm(op->getContext());
   execution_engine::buildCPURunnerPipeline(
-      pm,
-      enableCPURunner.getNumOccurrences()
-          ? enableCPURunner.options
-          : (enableCPURunnerBefore.getNumOccurrences() ? enableCPURunnerBefore
-                                                       : enableCPURunnerAfter)
-                .options);
+      pm, (config.CPURunnerOpt().numOccurrences != 0)
+              ? config.CPURunnerOpt().options
+              : ((config.CPURunnerBeforeOpt().numOccurrences != 0)
+                     ? config.CPURunnerBeforeOpt()
+                     : config.CPURunnerAfterOpt())
+                    .options);
   LDBG("Op before CPU runner:\n" << *op);
   if (failed(mlir::applyPassManagerCLOptions(pm)) || failed(pm.run(op))) {
     LDBG("Op after CPU runner failed:\n" << *op);
@@ -180,50 +135,48 @@ static void executeCPURunnerPasses(Operation *op) {
         "[CPU Runner] Failed to run the CPU runner pipeline!");
   }
 }
+
 } // namespace
 
 void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
     OpPassManager &originalPM) {
-  // only pick the CPU runner passes
+  assert(config && "CPU runner filtering requires a compile config");
+  const auto &cfg = *config;
   llvm::StringMap<decltype(CPURunnerMetadata<true>::passIndex)> passCnt;
   bool passHit = false;
   for (auto &pass : originalPM.getPasses()) {
     const auto passArg = pass.getArgument();
-    llvm::dbgs() << passArg << '\n';
+    LLVM_DEBUG(llvm::dbgs() << passArg << '\n');
     auto wasPassReached = [passArg, &passCnt](const auto &option) {
-      return option.getNumOccurrences() && passArg == option.passName &&
+      return (option.numOccurrences != 0) && passArg == option.passName &&
              passCnt.at(passArg) == option.passIndex;
     };
-    // filter the pass before
     if (!passArg.empty()) {
       ++passCnt[passArg];
-      if (wasPassReached(enableCPURunnerBefore)) {
+      if (wasPassReached(cfg.CPURunnerBeforeOpt())) {
         passHit = true;
         break;
       }
     }
 
-    // correct the nesting if needed
     OpPassManager *nesting = this;
     if (const auto passOpName = pass.getOpName(),
         pmOpName = nesting->getOpName();
         passOpName && pmOpName && *passOpName != *pmOpName)
       nesting = &nest(*passOpName);
 
-    // call the original addPass on the clone using the hacked mlir::Pass
     nesting->addPass(static_cast<BiShengIRPass *>(&pass)->clone());
 
-    // filter the pass after
-    if (!passArg.empty() && wasPassReached(enableCPURunnerAfter)) {
+    if (!passArg.empty() && wasPassReached(cfg.CPURunnerAfterOpt())) {
       passHit = true;
       break;
     }
   }
 
   if (!passHit) {
-    const auto &passInfo = enableCPURunnerBefore.getNumOccurrences()
-                               ? enableCPURunnerBefore
-                               : enableCPURunnerAfter;
+    const auto &passInfo = (cfg.CPURunnerBeforeOpt().numOccurrences != 0)
+                               ? cfg.CPURunnerBeforeOpt()
+                               : cfg.CPURunnerAfterOpt();
     llvm::report_fatal_error(
         ("[CPU Runner] Failed to find the specified pass: " +
          passInfo.passName +
@@ -234,34 +187,29 @@ void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
 }
 
 LogicalResult bishengir::BiShengIRPassManager::run(Operation *op) {
-  if (!bishengir::BiShengIRCompileMainConfig::shouldEnableCPURunner())
+  if (!config || !config->shouldEnableCPURunner())
     return PassManager::run(op);
 
-  verifyOptionUsage();
+  const auto &cfg = *config;
+  verifyOptionUsage(cfg);
 
-  if (enableCPURunner.getNumOccurrences()) {
-    // No need to filter any passes
+  if (cfg.CPURunnerOpt().numOccurrences != 0) {
     if (failed(PassManager::run(op)))
       return failure();
 
-    executeCPURunnerPasses(op);
+    executeCPURunnerPasses(op, cfg);
     return success();
   }
 
   LLVM_DEBUG(DBGS() << "Before filtering passes: ");
   LLVM_DEBUG(dumpPassNames(*this));
 
-  // copy the OpPassManager part
   OpPassManager originalPM(*this);
-
-  // restore the original OpPassManager part on return
   auto onReturn = llvm::make_scope_exit([this, &originalPM]() {
     *static_cast<OpPassManager *>(this) = std::move(originalPM);
   });
 
-  // remove the existing passes
   clear();
-
   filterCPURunnerPasses(originalPM);
 
   LLVM_DEBUG(DBGS() << "After filtering passes: ");
@@ -270,17 +218,7 @@ LogicalResult bishengir::BiShengIRPassManager::run(Operation *op) {
   if (failed(PassManager::run(op)))
     return failure();
 
-  executeCPURunnerPasses(op);
+  executeCPURunnerPasses(op, cfg);
   return success();
 }
-#endif // BISHENGIR_ENABLE_EXECUTION_ENGINE
-
-bool bishengir::BiShengIRCompileMainConfig::shouldEnableCPURunner() {
-#ifdef BISHENGIR_ENABLE_EXECUTION_ENGINE
-  return enableCPURunner.getNumOccurrences() ||
-         enableCPURunnerBefore.getNumOccurrences() ||
-         enableCPURunnerAfter.getNumOccurrences();
-#else
-  return false;
-#endif // BISHENGIR_ENABLE_EXECUTION_ENGINE
-}
+#endif

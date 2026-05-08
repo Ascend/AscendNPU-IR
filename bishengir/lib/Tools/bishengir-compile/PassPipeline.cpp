@@ -47,6 +47,8 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/Support/Debug.h"
 
+#include <set>
+
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
 #include "bishengir/Dialect/Torch/Pipelines/Passes.h"
 #endif
@@ -76,174 +78,87 @@ getProtonGPUCompileConfig();
 void setupHFusionPipelineOptions(
     hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
     const BiShengIRCompileMainConfig &config) {
-  hfusionPipelineOptions.enableManageHostResources =
-      config.shouldManageHostResource();
-  hfusionPipelineOptions.enableTritonKernelCompile =
-      config.shouldCompileTriton();
-  hfusionPipelineOptions.enableLayoutOptimization =
-      config.shouldEnableLayoutOptimization();
-  hfusionPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
-  hfusionPipelineOptions.disableHFusionVectorize =
-      config.shouldDisableHFusionVectorize();
-  hfusionPipelineOptions.disableFFTS = config.shouldDisableFFTS();
+  auto &options = hfusionPipelineOptions;
+#define GEN_HFUSION_OPTION_SETUP
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
   hfusionPipelineOptions.insertFFTS =
       !hfusionPipelineOptions.disableFFTS &&
-      hacc::utils::isFFTSSupportedArch(config.getTargetBackend());
-  hfusionPipelineOptions.blockDim = config.blockDim();
-  hfusionPipelineOptions.maxHorizontalFusionSize =
-      config.maxHorizontalFusionSize();
-  hfusionPipelineOptions.maxFusedElementwiseOps =
-      config.maxFusedElementwiseOps();
-  hfusionPipelineOptions.enableDropUnitDims = config.shouldEnableDropUnitDims();
-  hfusionPipelineOptions.enableFlatten = config.shouldEnableFlatten();
-  hfusionPipelineOptions.enableFuseReductionIntoLoop =
-      config.shouldEnableFuseReductionIntoLoop();
-  hfusionPipelineOptions.enableAutoMultiBuffer =
-      config.shouldEnableAutoMultiBuffer();
-  hfusionPipelineOptions.enableDeterministicComputing =
-      config.isDeterministicComputing();
-  hfusionPipelineOptions.enableOpsReorder = config.shouldEnableOpsReorder();
-  hfusionPipelineOptions.maxBufferCntTuning = config.maxBufferCountTuning();
-  hfusionPipelineOptions.enableMultiKernel = config.shouldEnableMultiKernel();
-  hfusionPipelineOptions.enableSymbolAnalysis =
-      config.shouldEnableSymbolAnalysis();
-  hfusionPipelineOptions.enableAutoVectorizeV2 =
-      config.shouldEnableAutoVectorizeV2();
-  hfusionPipelineOptions.maxFusedOpsInAutoVectorizeV2 =
-      config.maxFusedOpsInAutoVectorizeV2();
-  hfusionPipelineOptions.enableVFFusion = config.shouldEnableVFFusion();
-  hfusionPipelineOptions.vfFusionMode = config.getVFFusionMode();
-  hfusionPipelineOptions.enableTreeReduce = config.shouldEnableTreeReduce();
-  hfusionPipelineOptions.enableTreeReduceV2 = config.shouldEnableTreeReduceV2();
-  hfusionPipelineOptions.skipScope = config.shouldSkipScope();
-  hfusionPipelineOptions.enableCountBufferDmaOpt =
-      config.shouldEnableCountBufferDmaOpt();
-  hfusionPipelineOptions.cubeTilingTuning = config.cubeTilingTuningParams();
+      hacc::utils::isFFTSSupportedArch(config.getTarget());
   hfusionPipelineOptions.target =
-      hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
-  hfusionPipelineOptions.enableHighPrecision =
-      config.shouldEnableHighPrecision();
-  hfusionPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
+      hacc::stringifyTargetDeviceEnum(config.getTarget());
 }
 
 void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
                               const BiShengIRCompileMainConfig &config) {
-  hivmPipelineOptions.enableTritonKernelCompile = config.shouldCompileTriton();
-  hivmPipelineOptions.enableLayoutOptimization =
-      config.shouldEnableLayoutOptimization();
-  hivmPipelineOptions.enableDotScaledCompile = config.shouldcompileDotScaled();
-  hivmPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
-  hivmPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
-  hivmPipelineOptions.enableAutoBlockifyLoop = config.shouldAutoBlockifyLoop();
-  hivmPipelineOptions.enableAutoMultiBuffer =
-      config.shouldEnableAutoMultiBuffer();
-  hivmPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer =
-      config.shouldLimitAutoMultiBufferForLocalBuffer();
-  hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer =
-      config.getLimitAutoMultiBufferBufferOfLocalBuffer();
-  hivmPipelineOptions.limitMixAutoMultiBufferBuffer =
-      config.getLimitAutoMultiBufferBuffer();
-  hivmPipelineOptions.enableAutoBindSubBlock =
-      config.shouldEnableAutoBindSubBlock();
-  hivmPipelineOptions.enableAutoStorageAlign =
-      config.shouldEnableAutoStorageAlign();
-  hivmPipelineOptions.enableGlobalWorkspaceReuse =
-      config.shouldEnableGlobalWorkspaceReuse();
-  hivmPipelineOptions.enableHIVMInjectBarrierAllSync =
-      config.shouldInjectBarrierAllSync();
-  hivmPipelineOptions.workspaceMultiBufferNum =
-      config.getWorkspaceMultiBufferNum();
-  hivmPipelineOptions.enableAutoCVBalance = config.shouldAutoCVBalance();
-  hivmPipelineOptions.enableLazyLoading =
-      config.shouldEnableCVPipelineLazyLoading();
-  hivmPipelineOptions.enableInjectBlockAllSync =
-      config.shouldInjectBlockAllSync();
-  hivmPipelineOptions.disableAutoInjectBlockSync =
-      config.shouldDisableAutoInjectBlockSync();
-  hivmPipelineOptions.enableHIVMGraphSyncSolver =
-      config.shouldEnableHIVMGraphSyncSolver();
-  hivmPipelineOptions.enableHIVMCrossCoreGSS =
-      config.shouldEnableHIVMCrossCoreGSS();
-  hivmPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
-  hivmPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
+  auto &options = hivmPipelineOptions;
+#define GEN_HIVM_OPTION_SETUP
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
   hivmPipelineOptions.target =
-      hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
-  hivmPipelineOptions.enableVfMergeLevel = config.enableVfMergeLevel();
+      hacc::stringifyTargetDeviceEnum(config.getTarget());
   // UB-aware fusion splits groups to avoid overflow; disable later VF merging
   // so the split is preserved through the HIVM pipeline.
   if (config.isUBAwareVfFusion() && hivmPipelineOptions.enableVfMergeLevel > 0)
     hivmPipelineOptions.enableVfMergeLevel = 0;
-  hivmPipelineOptions.enableDirectHIVMLowering =
-      config.enableDirectHIVMLowering();
-  hivmPipelineOptions.enableND2NZOnVector = config.shouldEnableND2NZOnVector();
-  hivmPipelineOptions.enableFusedMultiplyAdd =
-      config.shouldEnableFusedMultiplyAdd();
-  hivmPipelineOptions.enablePrintMemoryAllocatedSize =
-      config.shouldenablePrintMemoryAllocatedSize();
-  hivmPipelineOptions.disableTightlyCoupledBufferReuse =
-      config.shouldDisableTightlyCoupledBufferReuse();
-  hivmPipelineOptions.maxReductionSplitNum =
-      config.getMaxReductionSplitNum();
-  hivmPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplitNum();
-  hivmPipelineOptions.injectIrFromFile = config.getInjectIrFromFile();
 }
 
 void setupHIVMAVEPipelineOptions(
     hivmave::HIVMAVEPipelineOptions &hivmAVEPipelineOptions,
     const BiShengIRCompileMainConfig &config) {
   hivmAVEPipelineOptions.enableTritonKernelCompile =
-      config.shouldCompileTriton();
+      config.getEnableTritonKernelCompile();
   hivmAVEPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hivmAVEPipelineOptions.enableLayoutOptimization =
       config.shouldEnableLayoutOptimization();
   hivmAVEPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
   hivmAVEPipelineOptions.enableAutoBlockifyLoop =
-      config.shouldAutoBlockifyLoop();
+      config.getEnableAutoBlockifyLoop();
   hivmAVEPipelineOptions.enableAutoMultiBuffer =
-      config.shouldEnableAutoMultiBuffer();
+      config.getEnableAutoMultiBuffer();
   hivmAVEPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer =
-      config.shouldLimitAutoMultiBufferForLocalBuffer();
+      config.getLimitAutoMultiBufferOnlyForLocalBuffer();
   hivmAVEPipelineOptions.limitAutoMultiBufferOfLocalBuffer =
-      config.getLimitAutoMultiBufferBufferOfLocalBuffer();
+      config.getLimitAutoMultiBufferOfLocalBuffer();
   hivmAVEPipelineOptions.limitMixAutoMultiBufferBuffer =
       config.getLimitAutoMultiBufferBuffer();
   hivmAVEPipelineOptions.enableAutoBindSubBlock =
-      config.shouldEnableAutoBindSubBlock();
+      config.getEnableAutoBindSubBlock();
   hivmAVEPipelineOptions.enableAutoStorageAlign =
-      config.shouldEnableAutoStorageAlign();
+      config.getEnableHIVMAutoStorageAlign();
   hivmAVEPipelineOptions.enableGlobalWorkspaceReuse =
-      config.shouldEnableGlobalWorkspaceReuse();
+      config.getEnableHIVMGlobalWorkspaceReuse();
   hivmAVEPipelineOptions.enableHIVMInjectBarrierAllSync =
-      config.shouldInjectBarrierAllSync();
+      config.getEnableHIVMInjectBarrierAllSync();
   hivmAVEPipelineOptions.workspaceMultiBufferNum =
-      config.getWorkspaceMultiBufferNum();
-  hivmAVEPipelineOptions.enableAutoCVBalance = config.shouldAutoCVBalance();
+      config.getSetWorkspaceMultibuffer();
+  hivmAVEPipelineOptions.enableAutoCVBalance =
+      config.getEnableHIVMAutoCVBalance();
   hivmAVEPipelineOptions.enableInjectBlockAllSync =
-      config.shouldInjectBlockAllSync();
+      config.getEnableHIVMInjectBlockAllSync();
   hivmAVEPipelineOptions.disableAutoInjectBlockSync =
-      config.shouldDisableAutoInjectBlockSync();
+      config.getDisableAutoInjectBlockSync();
   hivmAVEPipelineOptions.enableHIVMGraphSyncSolver =
-      config.shouldEnableHIVMGraphSyncSolver();
-  hivmAVEPipelineOptions.enableUnitFlagSync = config.shouldEnableUnitFlagSync();
-  hivmAVEPipelineOptions.enableCodeMotion = config.shouldEnableCodeMotion();
+      config.getEnableHIVMGraphSyncSolver();
+  hivmAVEPipelineOptions.enableUnitFlagSync =
+      config.getEnableHIVMUnitFlagSync();
+  hivmAVEPipelineOptions.enableCodeMotion = config.getEnableCodeMotion();
   hivmAVEPipelineOptions.target =
-      hacc::stringifyTargetDeviceEnum(config.getTargetBackend());
-  hivmAVEPipelineOptions.enableVfMergeLevel = config.enableVfMergeLevel();
-  hivmAVEPipelineOptions.useDPX = config.shouldUseDPX();
+      hacc::stringifyTargetDeviceEnum(config.getTarget());
+  hivmAVEPipelineOptions.enableVfMergeLevel = config.getEnableVfMergeLevel();
+  hivmAVEPipelineOptions.useDPX = config.getUseDPX();
   hivmAVEPipelineOptions.enableND2NZOnVector =
-      config.shouldEnableND2NZOnVector();
+      config.getEnableHivmNd2nzOnVector();
   hivmAVEPipelineOptions.enableFusedMultiplyAdd =
-      config.shouldEnableFusedMultiplyAdd();
+      config.getEnableFusedMultiplyAdd();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
-      config.shouldenablePrintMemoryAllocatedSize();
+      config.getEnablePrintMemoryAllocatedSize();
   hivmAVEPipelineOptions.maxReductionSplitNum =
-      config.getMaxReductionSplitNum();
+      config.getMaxReductionSplit();
 }
 
 void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
-  auto tritonGridDim = config.getTritonGridDim();
+  auto tritonGridDim = config.getSimtTritonGrid();
   bishengir::TritonRemapOptions options;
   if (!tritonGridDim.empty()) {
     options.gridDimX = static_cast<int>(tritonGridDim[0]);
@@ -257,7 +172,7 @@ void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &conf
 
   // TODO: When DPX covers all remapper features correctly, remove
   // createTritonRemapPass completely.
-  if (!config.shouldUseDPX())
+  if (!config.getUseDPX())
     pm.addPass(bishengir::triton::createTritonRemapPass(options));
   CanonicalizerOptions canonicalizerOptions;
   pm.addPass(createCanonicalizerPass(canonicalizerOptions));
@@ -272,18 +187,18 @@ void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &conf
 
 void buildBiShengHIRAVEToLLVMPipeline(
     OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
-  if (config.shouldCompileHost()) {
-    hacc::buildLowerHACCToLLVMPipeline(pm, config.hostOutputFile());
+  if (config.getCompileHost()) {
+    hacc::buildLowerHACCToLLVMPipeline(pm, config.getHostOutputFile());
     return;
   }
 
-  if (config.shouldCompileHIVM()) {
+  if (config.getEnableHIVMCompile()) {
     hivmave::HIVMAVEPipelineOptions hivmAVEPipelineOptions;
     setupHIVMAVEPipelineOptions(hivmAVEPipelineOptions, config);
     hivmave::buildLowerAVEPipelines(pm, hivmAVEPipelineOptions);
   }
 
-  if (config.shouldLowerToLLVM()) {
+  if (config.getLowerToLLVM()) {
     buildLowerToLLVMPipeline(pm, config);
   }
 }
@@ -310,15 +225,15 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(
       hivm::createInsertInitAndFinishForDebugPass());
   ConvertHIVMToStandardOptions hivmToStdOptions;
-  hivmToStdOptions.isOpsAligned = config.shouldEnableAutoStorageAlign();
+  hivmToStdOptions.isOpsAligned = config.getEnableHIVMAutoStorageAlign();
   pm.addPass(hivm::createMarkDisableLoadPass());
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   pm.addPass(hivmave::createHoistVstasPass());
-  if (config.shouldCompileFullSIMT() && config.shouldUseDPX()) {
-    auto tritonGridDim = config.getTritonGridDim();
+  if (config.getPureSimt() && config.getUseDPX()) {
+    auto tritonGridDim = config.getSimtTritonGrid();
     bishengir::TritonRemapOptions options;
     if (!tritonGridDim.empty()) {
       options.gridDimX = static_cast<int>(tritonGridDim[0]);
@@ -343,7 +258,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
 static void buildDelayedHFusionRegBaseVectorizePipeline(
     mlir::OpPassManager &pm, const BiShengIRCompileMainConfig &config,
     bool shouldInferFuncCoreType = true) {
-  if (config.shouldDisableHFusionVectorize()) {
+  if (config.getDisableHfusionVectorize()) {
     return;
   }
 
@@ -357,17 +272,17 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode =
-      config.shouldCompileTriton() ? hfusion::MmMapMode::MacroInstr
-                                  : hfusion::MmMapMode::CoreOp;
+      config.getEnableTritonKernelCompile() ? hfusion::MmMapMode::MacroInstr
+                                            : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
 }
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
-  if (config.shouldCompileHIVM()) {
+  if (config.getEnableHIVMCompile()) {
     hivm::HIVMPipelineOptions hivmPipelineOptions;
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
-    if (config.shouldEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimdSimtMixCompile()) {
       buildDelayedHFusionRegBaseVectorizePipeline(
           pm, config, /*shouldInferFuncCoreType=*/true);
     }
@@ -383,23 +298,22 @@ void setupLowerTritonPipelineOptions(
   options.numWarps = config.getNumWarps();
   options.threadsPerWarp = config.getThreadsPerWarp();
   options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
-  options.useDPX = config.shouldUseDPX();
+  options.useDPX = config.getUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
 #if BSPUB_DAVINCI_BISHENGIR
-  if (config.getSharedDynamicSize() < 122880 ||
-      config.getSharedDynamicSize() > 221184)
+  if (config.getSharedMemDynamicSize() < 122880 ||
+      config.getSharedMemDynamicSize() > 221184)
     llvm::report_fatal_error(
         "shared-mem-dynamic-size should range from 122880 to 221184.");
   // max size of shared memory available for simt vf.
-  options.sharedDynamicSize = config.getSharedDynamicSize();
+  options.sharedDynamicSize = config.getSharedMemDynamicSize();
   // encode our own compile optimization
   options.enableBishengirSimtOptimization =
-      config.getEnableBishengirSimtOptimize();
-  options.enableSimtReorderInstruction =
-      config.getEnableSimtReorderInstruction();
+      config.getEnableBishengirSimtOptimization();
+  options.enableSimtReorderInstruction = config.getEnableSimtReorderInstruction();
 #endif
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   options.protonGPUCompileConfig = getProtonGPUCompileConfig();
@@ -408,16 +322,16 @@ void setupLowerTritonPipelineOptions(
 
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
-  if (config.shouldEnableSimdSimtMixCompile()) {
+  if (config.getEnableSimdSimtMixCompile()) {
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
-    pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
+    pm.addPass(hivm::createMaterializeSimtVFMemScopePass());    
     pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
-  if (!config.shouldCompileHost()) {
+  if (!config.getCompileHost()) {
     pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTargetBackend()}));
+        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
   }
   pm.addPass(createCanonicalizeModulePass());
   triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
@@ -433,41 +347,39 @@ void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
-  if (!config.shouldCompileHost()) {
+  if (!config.getCompileHost()) {
     pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTargetBackend()}));
+        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
   }
 
   pm.addPass(createCanonicalizeModulePass());
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-  if (config.shouldCompileTorch()) {
+  if (config.getEnableTorchCompile()) {
     TorchToNamedOpPipelineOptions torchToNamedOpOptions;
     torchToNamedOpOptions.ensureNoImplicitBroadcast =
-        config.shouldEnforceNoImplicitBroadcast();
+        config.getEnsureNoImplicitBroadcast();
     createTorchBackendToNamedOpBackendPipeline(pm, torchToNamedOpOptions);
   }
 #endif
 
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
-  if (config.shouldCompileHFusion()) {
+  if (config.getEnableHfusionCompile()) {
     setupHFusionPipelineOptions(hfusionPipelineOptions, config);
-    if (config.shouldEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimdSimtMixCompile()) {
       // Delay reg-based vectorization until SIMT code is split out and we can
       // re-run it only on the main module.
-      hfusionPipelineOptions.disableHFusionVectorize = true;
+      hfusionPipelineOptions.disableHfusionVectorize = true;
     }
     hfusion::buildHFusionPipelines(pm, hfusionPipelineOptions);
   }
 
-  if (config.shouldCompileHIVM()) {
+  if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
     hivm::ConvertToHIVMPipelineOptions convertToHIVMOptions;
     convertToHIVMOptions.enableTritonKernelCompile =
-        config.shouldCompileTriton();
-    convertToHIVMOptions.enableAutoBlockifyLoop =
-        config.shouldAutoBlockifyLoop();
+        config.getEnableTritonKernelCompile();
     convertToHIVMOptions.enableRegBaseHIVMPipe =
-        hacc::utils::isRegBasedArch(config.getTargetBackend());
+        hacc::utils::isRegBasedArch(config.getTarget());
     hivm::HIVMPipelineOptions hivmPipelineOptions;
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
     hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
@@ -478,11 +390,11 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
       pm.nest<func::FuncOp>().addPass(
           mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
       // delay vectorization after split simd/simt
-      if (!config.shouldEnableSimdSimtMixCompile())
+      if (!config.getEnableSimdSimtMixCompile())
         buildDelayedHFusionRegBaseVectorizePipeline(
             pm, config, /*shouldInferFuncCoreType=*/true);
     }
-    if (config.shouldEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimdSimtMixCompile()) {
       pm.addPass(hivm::createAutoScopePass());
       pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
@@ -507,70 +419,7 @@ public:
   BiShengIRCompilePass() = default;
   BiShengIRCompilePass &operator=(const BiShengIRCompilePass &pass) = delete;
   BiShengIRCompilePass(const BiShengIRCompilePass &pass)
-      : PassWrapper<BiShengIRCompilePass, OperationPass<ModuleOp>>(pass) {
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-    enableTorchCompile = pass.enableTorchCompile;
-#endif
-    enableTritonKernelCompile = pass.enableTritonKernelCompile;
-    enableAutoBlockifyLoop = pass.enableAutoBlockifyLoop;
-    simtVFDynamicSize = pass.simtVFDynamicSize;
-    disableFFTS = pass.disableFFTS;
-    disableHFusionVectorize = pass.disableHFusionVectorize;
-    enableDropUnitDims = pass.enableDropUnitDims;
-    enableFlatten = pass.enableFlatten;
-    enableFuseReductionIntoLoop = pass.enableFuseReductionIntoLoop;
-    enableHFusionCompile = pass.enableHFusionCompile;
-    enableHIVMCompile = pass.enableHIVMCompile;
-    enableLIRCompile = pass.enableLIRCompile;
-    targetBackend = pass.targetBackend;
-    enableManageHostResources = pass.enableManageHostResources;
-    enableStaticBarePtr = pass.enableStaticBarePtr;
-    enableBinRelocation = pass.enableBinRelocation;
-    saveLinkedIR = pass.saveLinkedIR;
-    enableSymbolAnalysis = pass.enableSymbolAnalysis;
-    enableAutoVectorizeV2 = pass.enableAutoVectorizeV2;
-    maxFusedOpsInAutoVectorizeV2 = pass.maxFusedOpsInAutoVectorizeV2;
-    enableVFFusion = pass.enableVFFusion;
-    vfFusionMode = pass.vfFusionMode;
-    enableTreeReduceV2 = pass.enableTreeReduceV2;
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-    ensureNoImplicitBroadcast = pass.ensureNoImplicitBroadcast;
-#endif
-#if (!BISHENGIR_PUBLISH)
-    enableCpuTraceIntrinsic = pass.enableCpuTraceIntrinsic;
-#endif
-    enableSanitizer = pass.enableSanitizer;
-    enableDebugInfo = pass.enableDebugInfo;
-    enablePrintMemoryAllocatedSize = pass.enablePrintMemoryAllocatedSize;
-    outputFile = pass.outputFile;
-    appendBishengOptions = pass.appendBishengOptions;
-    enableAutoMultiBuffer = pass.enableAutoMultiBuffer;
-    limitAutoMultiBufferOnlyForLocalBuffer =
-        pass.limitAutoMultiBufferOnlyForLocalBuffer;
-    limitAutoMultiBufferOfLocalBuffer = pass.limitAutoMultiBufferOfLocalBuffer;
-    limitMixAutoMultiBufferBuffer = pass.limitMixAutoMultiBufferBuffer;
-    enableCodeMotion = pass.enableCodeMotion;
-    enableOpsReorder = pass.enableOpsReorder;
-    enableTuningMode = pass.enableTuningMode;
-    blockDim = pass.blockDim;
-    maxHorizontalFusionSize = pass.maxHorizontalFusionSize;
-    maxFusedElementwiseOps = pass.maxFusedElementwiseOps;
-    enableMultiKernel = pass.enableMultiKernel;
-    enableCountBufferDmaOpt = pass.enableCountBufferDmaOpt;
-    maxBufferCntTuning = pass.maxBufferCntTuning;
-    cubeTilingTuning = pass.cubeTilingTuning;
-    enableHIVMInjectBarrierAllSync = pass.enableHIVMInjectBarrierAllSync;
-    enableInjectBlockAllSync = pass.enableInjectBlockAllSync;
-    disableAutoInjectBlockSync = pass.disableAutoInjectBlockSync;
-    enableHIVMGraphSyncSolver = pass.enableHIVMGraphSyncSolver;
-    enableHIVMCrossCoreGSS = pass.enableHIVMCrossCoreGSS;
-    enableUnitFlagSync = pass.enableUnitFlagSync;
-    enableGlobalWorkspaceReuse = pass.enableGlobalWorkspaceReuse;
-    enableAutoStorageAlign = pass.enableAutoStorageAlign;
-    enableND2NZOnVector = pass.enableND2NZOnVector;
-    enablefusedMultiplyAdd = pass.enablefusedMultiplyAdd;
-    enableHighPrecision = pass.enableHighPrecision;
-  }
+      : PassWrapper<BiShengIRCompilePass, OperationPass<ModuleOp>>(pass) {}
   StringRef getArgument() const override { return "bishengir-compile"; }
   StringRef getDescription() const override {
     return "Compile BiShengIR module to binary.";
@@ -579,85 +428,11 @@ public:
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
     BiShengIRCompileMainConfig config;
-    // Use fluent API to set the pass option into config.
-
-    // Feature control options
-    config
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-        .compileTorch(enableTorchCompile)
-#endif
-        .compileTriton(enableTritonKernelCompile)
-        .setDisableHFusionVectorize(disableHFusionVectorize)
-        .setSimtVFDynamicSize(simtVFDynamicSize)
-        .setDisableFFTS(disableFFTS)
-        .compileHFusion(enableHFusionCompile)
-        .compileHIVM(enableHIVMCompile)
-        .compileLIR(enableLIRCompile)
-        .targetBackend(targetBackend)
-        .manageHostResource(enableManageHostResources)
-        .barePtrCallConvForStaticShape(enableStaticBarePtr)
-        .relocateBinary(enableBinRelocation)
-        .setSaveLinkedIR(saveLinkedIR)
-        .symbolAnalysis(enableSymbolAnalysis)
-        .autoVectorizeV2(enableAutoVectorizeV2)
-        .setMaxFusedOpsInAutoVectorizeV2(maxFusedOpsInAutoVectorizeV2)
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-        .noImplicitBroadcast(ensureNoImplicitBroadcast)
-#endif
-        .multiKernel(enableMultiKernel)
-        .highPrecision(enableHighPrecision);
-
-    config
-#if (!BISHENGIR_PUBLISH)
-        // DFX control options
-        .cpuTraceIntrinsic(enableCpuTraceIntrinsic)
-#endif
-        .enableSanitizer(enableSanitizer)
-        .enableDebugInfo(enableDebugInfo)
-        .enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize);
-
-    // Output setting options
+    // Use generated metadata from Options.td to map pass options back to the
+    // compile config.
+#define GEN_PASS_OPTION_TO_CONFIG
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
     config.setOutputFile(outputFile);
-
-    // BiSheng options
-    config.appendBishengOptions(appendBishengOptions);
-
-    // General optimization control options
-    config.autoMultiBuffer(enableAutoMultiBuffer)
-        .limitAutoMultiBufferForLocalBuffer(
-            limitAutoMultiBufferOnlyForLocalBuffer)
-        .limitAutoMultiBufferOfLocalBuffer(limitAutoMultiBufferOfLocalBuffer)
-        .limitMixAutoMultiBufferBuffer(limitMixAutoMultiBufferBuffer)
-        .autoBindSubBlock(enableAutoBindSubBlock)
-        .deterministicComputing(enableDeterministicComputing)
-        .codeMotion(enableCodeMotion)
-        .reorderOps(enableOpsReorder)
-        .tuningMode(enableTuningMode)
-        .setBlockDim(blockDim)
-        .enableDropUnitDims(enableDropUnitDims)
-        .enableFlatten(enableFlatten)
-        .enableFuseReductionIntoLoop(enableFuseReductionIntoLoop);
-
-    // HFusion optimization control options
-    config.setMaxHorizontalFusionSize(maxHorizontalFusionSize)
-        .setMaxFusedElementwiseOps(maxFusedElementwiseOps)
-        .setMaxBufferCountTuning(maxBufferCntTuning)
-        .optimizeCountBufferForDma(enableCountBufferDmaOpt)
-        .setCubeTilingTuningParams(cubeTilingTuning);
-
-    // HIVM optimization control options
-    config.injectBarrierAllSync(enableHIVMInjectBarrierAllSync)
-        .injectBlockAllSync(enableInjectBlockAllSync)
-        .disableAutoInjectBlockSync(disableAutoInjectBlockSync)
-        .enableHIVMGraphSyncSolver(enableHIVMGraphSyncSolver)
-        .enableHIVMCrossCoreGSS(enableHIVMCrossCoreGSS)
-        .unitFlagSync(enableUnitFlagSync)
-        .globalWorkspaceReuse(enableGlobalWorkspaceReuse)
-        .autoStorageAlign(enableAutoStorageAlign)
-        .enableND2NZOnVector(enableND2NZOnVector)
-        .enablefusedMultiplyAdd(enablefusedMultiplyAdd)
-        .autoBlockifyLoop(enableAutoBlockifyLoop);
-
     std::string arg;
     std::vector<std::string> args;
     std::set<std::string> skip = {" ", "{", "}", getArgument().str()};
@@ -675,7 +450,8 @@ public:
 
     mlir::detail::CallbackOstream stream(callback, nullptr);
     this->printAsTextualPipeline(stream);
-    config.clArgs(args);
+    config.setClArgs(args);
+    BiShengIRCompileMainConfig::collectHIVMCArgs(config);
 
     if (failed(runBiShengIRPipeline(moduleOp, config))) {
       signalPassFailure();
@@ -683,283 +459,12 @@ public:
   }
 
 protected:
-  // -------------------------------------------------------------------------//
-  //                       Feature control options
-  // -------------------------------------------------------------------------//
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-  Pass::Option<bool> enableTorchCompile{
-      *this, "enable-torch-compile",
-      llvm::cl::desc("Enable compile from Torch dialect"),
-      llvm::cl::init(false)};
-#endif
-  Pass::Option<bool> enableTritonKernelCompile{
-      *this, "enable-triton-kernel-compile",
-      llvm::cl::desc("Enable Triton kernel compile"), llvm::cl::init(false)};
-  Pass::Option<bool> disableHFusionVectorize{
-      *this, "disable-hfusion-vectorize",
-      llvm::cl::desc("Disable hfusion auto vectorize"), llvm::cl::init(false)};
-  Pass::Option<int> simtVFDynamicSize{
-      *this, "simt-vf-dynamic-size",
-      llvm::cl::desc("Dynamic ub size(KB) for simt VF. Default is 216"),
-      llvm::cl::init(216)};
-  Pass::Option<bool> disableFFTS{*this, "disable-ffts",
-                                 llvm::cl::desc("force disable FFTS"),
-                                 llvm::cl::init(false)};
-  Pass::Option<bool> enableHFusionCompile{
-      *this, "enable-hfusion-compile",
-      llvm::cl::desc("Enable BiShengHIR HFusion compile"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableHIVMCompile{
-      *this, "enable-hivm-compile",
-      llvm::cl::desc("Enable BiShengHIR HIVM compile"), llvm::cl::init(true)};
-  Pass::Option<bool> enableLIRCompile{
-      *this, "enable-lir-compile", llvm::cl::desc("Enable BiShengLIR compile"),
-      llvm::cl::init(true)};
-  Pass::Option<bool> enableManageHostResources{
-      *this, "enable-manage-host-resources",
-      llvm::cl::desc("Enable managing resource for Host functions"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableStaticBarePtr{
-      *this, "enable-static-bare-ptr",
-      llvm::cl::desc("Enable generating bare ptr calling convention for static "
-                     "shaped kernels"),
-      llvm::cl::init(true)};
-  Pass::Option<bool> enableBinRelocation{
-      *this, "enable-bin-relocation",
-      llvm::cl::desc("Enable binary relocation"), llvm::cl::init(true)};
-  Pass::Option<bool> enableSymbolAnalysis{
-      *this, "enable-symbol-analysis", llvm::cl::desc("Enable symbol analysis"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableAutoVectorizeV2{
-      *this, "enable-auto-vectorize-v2",
-      llvm::cl::desc("Enable auto vectorize v2"), llvm::cl::init(true)};
-  Pass::Option<bool> enableTreeReduceV2{
- 	       *this, "enable-tree-reduce-v2",
- 	       llvm::cl::desc("Enable tree reduce v2"), llvm::cl::init(false)};
-  Pass::Option<int> maxFusedOpsInAutoVectorizeV2{
-      *this, "hfusion-max-fused-ops-in-auto-vectorize-v2",
-      llvm::cl::desc("Maximum number of ops to fuse in AutoVectorizeV2 "
-                     "(Default: pass default)"),
-      llvm::cl::init(-1)};
-  Pass::Option<bool> enableVFFusion{*this, "enable-vf-fusion",
-                                    llvm::cl::desc("Enable vf fusion"),
-                                    llvm::cl::init(false)};
-  Pass::Option<mlir::analysis::FusionMode> vfFusionMode{
-      *this, "vf-fusion-mode", llvm::cl::desc("VF fusion mode"),
-      llvm::cl::init(mlir::analysis::FusionMode::MaxParallel)};
-  Pass::Option<bool> enableHighPrecision{
-      *this, "enable-high-precision",
-      llvm::cl::desc(
-          "Enable high precision calculation for sin/cos in HFusion"),
-      llvm::cl::init(true)};
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-  Pass::Option<bool> ensureNoImplicitBroadcast{
-      *this, "ensure-no-implicit-broadcast",
-      llvm::cl::desc("Whether to ensure that there is no implicit broadcast "
-                     "semantics.If there is a dynamic to dynamic dim "
-                     "broadcast, raise a runtime error."),
-      llvm::cl::init(false)};
-#endif
-  Pass::Option<bool> saveLinkedIR{
-      *this, "save-linked-ir",
-      llvm::cl::desc("Enable saving linked ir before compile to binary"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableMultiKernel{
-      *this, "enable-hfusion-multi-kernel",
-      llvm::cl::desc("When disabled, graph must fuse as single kernel; when "
-                     "enabled, outline multiple kernels."),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableDropUnitDims{
-      *this, "enable-drop-unit-dims",
-      llvm::cl::desc("Enable drop-unit-dims pass"), llvm::cl::init(true)};
-  Pass::Option<bool> enableFlatten{*this, "enable-flatten",
-                                   llvm::cl::desc("Enable flatten pass"),
-                                   llvm::cl::init(true)};
-  Pass::Option<bool> enableFuseReductionIntoLoop{
-      *this, "enable-fuse-reduction-into-loop",
-      llvm::cl::desc("Enable fuse post-loop reductions into the loop body"),
-      llvm::cl::init(false)};
-  // -------------------------------------------------------------------------//
-  //                           DFX control options
-  // -------------------------------------------------------------------------//
-#if (!BISHENGIR_PUBLISH)
-  Pass::Option<bool> enableCpuTraceIntrinsic{
-      *this, "enable-cpu-trace-intrinsic",
-      llvm::cl::desc("Enable to generate cpu-accepted IR by eliminating HIVM "
-                     "special traits"),
-      llvm::cl::init(false)};
-#endif
-  Pass::Option<bool> enableSanitizer{*this, "enable-sanitizer",
-                                     llvm::cl::desc("Enable ascend sanitizer"),
-                                     llvm::cl::init(false)};
-  Pass::Option<bool> enableDebugInfo{*this, "enable-debug-info",
-                                     llvm::cl::desc("Enable debug info"),
-                                     llvm::cl::init(false)};
-  Pass::Option<bool> enablePrintMemoryAllocatedSize{
-      *this, "enable-print-memory-allocated-size",
-      llvm::cl::desc("Enable print memory allocated size"),
-      llvm::cl::init(false)};
-  // -------------------------------------------------------------------------//
-  //                        Output setting options
-  // -------------------------------------------------------------------------//
+#define GEN_ALL_OPTION_REGISTRATION
+#include "bishengir/Tools/bishengir-compile/PassOptions.cpp.inc"
+
   Pass::Option<std::string> outputFile{
       *this, "o", llvm::cl::desc("Specify output bin name"),
       llvm::cl::init("-")};
-  // -------------------------------------------------------------------------//
-  //                  General optimization control options
-  // -------------------------------------------------------------------------//
-  Pass::Option<bool> enableLayoutOptimization{
-      *this, "enable-layout-optimization",
-      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
-
-  Pass::Option<bool> enableMixedCV{
-      *this, "enable-mixed-cv", llvm::cl::desc("Enable mixed CV compilation"),
-      llvm::cl::init(false)};
-
-  Pass::Option<bool> enableAutoMultiBuffer{
-      *this, "enable-auto-multi-buffer",
-      llvm::cl::desc("Enable auto multi buffer"), llvm::cl::init(false)};
-
-  Pass::Option<bool> limitAutoMultiBufferOnlyForLocalBuffer{
-      *this, "limit-auto-multi-buffer-only-for-local-buffer",
-      llvm::cl::desc("Disable workspace multi-buffer optimization"),
-      llvm::cl::init(false)};
-
-  Pass::Option<MultiBufferStrategy> limitAutoMultiBufferOfLocalBuffer{
-      *this, "limit-auto-multi-buffer-of-local-buffer",
-      llvm::cl::desc("When enable-auto-multi-buffer = true, limit local buffer "
-                     "mode"),
-      llvm::cl::init(MultiBufferStrategy::CUBE_NO_L0C),
-      llvm::cl::values(
-          clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit", "No limit"),
-          clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
-                     "Disable l0c multi buffer"))};
-
-  Pass::Option<MultiBufferStrategy> limitMixAutoMultiBufferBuffer{
-      *this, "limit-auto-multi-buffer-buffer",
-      llvm::cl::desc("When enable-auto-multi-buffer = true, limit it only work"
-                     "for NO_LIMIT, ONLY_CUBE, ONLY_VECTOR"),
-      llvm::cl::values(clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
-                                  "limited to cube and vector"),
-                       clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
-                                  "limited to cube"),
-                       clEnumValN(MultiBufferStrategy::ONLY_VECTOR,
-                                  "only-vector", "limited to vector")),
-      llvm::cl::init(MultiBufferStrategy::ONLY_CUBE)};
-
-  Pass::Option<bool> enableAutoBindSubBlock{
-      *this, "enable-auto-bind-sub-block",
-      llvm::cl::desc("Enable auto bind sub block"), llvm::cl::init(true)};
-
-  Pass::Option<bool> enableDeterministicComputing{
-      *this, "enable-deterministic-computing",
-      llvm::cl::desc("If enabled, the computation result is deterministic. If "
-                     "disabled, we will enable extra optimizations that might "
-                     "boost performance, e.g. bind reduce to multiple cores. "
-                     "However, the result will be non-deterministic."),
-      llvm::cl::init(true)};
-
-  Pass::Option<bool> enableCodeMotion{
-      *this, "enable-code-motion",
-      llvm::cl::desc("Enable code-motion and subset-hoist (Default = ON)"),
-      llvm::cl::init(true)};
-  Pass::Option<bool> enableOpsReorder{
-      *this, "enable-ops-reorder",
-      llvm::cl::desc("Enable ops reorder to opt pipeline (Default = ON)"),
-      llvm::cl::init(true)};
-  Pass::Option<bool> enableTuningMode{
-      *this, "enable-tuning-mode",
-      llvm::cl::desc("Enable tuning mode and will not try compile multi times"),
-      llvm::cl::init(false)};
-
-  Pass::Option<unsigned> blockDim{*this, "block-dim",
-                                  llvm::cl::desc("Number of blocks to use"),
-                                  llvm::cl::init(1)};
-  // -------------------------------------------------------------------------//
-  //                  HFusion optimization control options
-  // -------------------------------------------------------------------------//
-  Pass::Option<int> maxHorizontalFusionSize{
-      *this, "hfusion-max-horizontal-fusion-size",
-      llvm::cl::desc(
-          "Number of horizontal fusion attempt (Default: unlimited)"),
-      llvm::cl::init(-1)};
-  Pass::Option<int> maxFusedElementwiseOps{
-      *this, "hfusion-max-fused-elementwise-ops",
-      llvm::cl::desc("Maximum number of elementwise ops to fuse in "
-                     "PreVectorizationFusion (Default: unlimited)"),
-      llvm::cl::init(-1)};
-  Pass::Option<bool> enableCountBufferDmaOpt{
-      *this, "enable-hfusion-count-buffer-dma-opt",
-      llvm::cl::desc("If enabled, the buffer used by DMA operations will not "
-                     "bereused by vector operations"),
-      llvm::cl::init(false)};
-  Pass::Option<int64_t> maxBufferCntTuning{
-      *this, "hfusion-max-buffer-count-tuning",
-      llvm::cl::desc("Allow tuning auto-schedule max buffer count"),
-      llvm::cl::init(0)};
-  Pass::ListOption<int64_t> cubeTilingTuning{
-      *this, "hfusion-cube-tiling-tuning",
-      llvm::cl::desc("Allow tuning auto-schedule cube block sizes")};
-  // -------------------------------------------------------------------------//
-  //                  HIVM optimization control options
-  // -------------------------------------------------------------------------//
-  Pass::Option<bool> enableHIVMInjectBarrierAllSync{
-      *this, "enable-hivm-inject-barrier-all-sync",
-      llvm::cl::desc("Enable barrier all mode for HIVM inject sync"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableInjectBlockAllSync{
-      *this, "enable-hivm-inject-block-all-sync",
-      llvm::cl::desc("Enable inject all block sync for HIVM inject block sync"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> disableAutoInjectBlockSync{
-      *this, "disable-auto-inject-block-sync",
-      llvm::cl::desc("Disable auto generating sync block wait/set by "
-                     "InjectBlockSync pass"),
-    llvm::cl::init(false)};
-  Pass::Option<bool> enableHIVMGraphSyncSolver{
-      *this, "enable-hivm-graph-sync-solver",
-      llvm::cl::desc("Enable HIVM Graph-Sync-Solver pass to do auto-sync."),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableHIVMCrossCoreGSS{
-      *this, "enable-hivm-cross-core-gss",
-      llvm::cl::desc(
-          "Enable HIVM cross-core GSS (CrossCoreGSS) pass. (Default = ON)"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableUnitFlagSync{
-      *this, "enable-hivm-unit-flag-sync",
-      llvm::cl::desc(
-          "Enable inject sync pass to use unit-flag modes for synchronization"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableGlobalWorkspaceReuse{
-      *this, "enable-hivm-global-workspace-reuse",
-      llvm::cl::desc("Enable global workspace reuse for plan memory"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enableAutoStorageAlign{
-      *this, "enable-hivm-auto-storage-align",
-      llvm::cl::desc("Enable mark/enable HIVM storage align (Default = ON)"),
-      llvm::cl::init(true)};
-  Pass::Option<bool> enableND2NZOnVector{
-      *this, "enable-hivm-nd2nz-on-vector",
-      llvm::cl::desc("Enable nd2nz on vector (Default = OFF)"),
-      llvm::cl::init(false)};
-  Pass::Option<bool> enablefusedMultiplyAdd{
-      *this, "enable-fused-multiply-add",
-      llvm::cl::desc("Enable fused multiply add"), llvm::cl::init(false)};
-  Pass::Option<bool> enableAutoBlockifyLoop{
-      *this, "enable-auto-blockify-loop",
-      llvm::cl::desc(
-          "Enable auto loop on blocks for all parallel (Default = OFF)"),
-      llvm::cl::init(false)};
-  Pass::Option<std::string> appendBishengOptions{
-      *this, "append-bisheng-options",
-      llvm::cl::desc("Append options when calling bisheng"),
-      llvm::cl::init("")};
-  // -------------------------------------------------------------------------//
-  //                  Target options
-  // -------------------------------------------------------------------------//
-  Pass::Option<std::string> targetBackend{*this, "target",
-                                          llvm::cl::desc("Target device name"),
-                                          llvm::cl::init("Ascend910B1")};
 };
 
 } // namespace bishengir

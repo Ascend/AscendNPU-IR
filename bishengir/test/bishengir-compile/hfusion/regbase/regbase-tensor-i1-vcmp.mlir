@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile %s --enable-auto-multi-buffer=True --enable-hfusion-compile=true \
 // RUN: -enable-lir-compile=false -target=Ascend310B4 --enable-triton-kernel-compile=true
 

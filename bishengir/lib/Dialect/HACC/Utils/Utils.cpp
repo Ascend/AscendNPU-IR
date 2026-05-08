@@ -261,8 +261,16 @@ bool isAscend950(TargetDevice targetDevice) {
   return ascend950Devices.find(targetDevice) != ascend950Devices.end();
 }
 
+bool isAscend950(llvm::StringRef targetDevice) {
+  return isAscend950(symbolizeTargetDeviceEnum(targetDevice));
+}
+
 bool isRegBasedArch(TargetDevice targetDevice) {
   return isAscend310B(targetDevice) || isAscend950(targetDevice);
+}
+
+bool isRegBasedArch(llvm::StringRef targetDevice) {
+  return isRegBasedArch(symbolizeTargetDeviceEnum(targetDevice));
 }
 
 bool isFFTSSupportedArch(TargetDevice targetDevice) {

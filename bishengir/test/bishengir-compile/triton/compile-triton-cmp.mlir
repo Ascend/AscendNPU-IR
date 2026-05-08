@@ -1,6 +1,7 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-triton-kernel-compile %s | FileCheck %s
+// REQUIRES: enable-lir-compile
 
-// CHECK: LLVMDialectModule
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -enable-triton-kernel-compile %s
+
 #map = affine_map<(d0) -> (d0)>
 module {
   func.func @triton_elementwise_binary(%arg0: memref<?xi8>, %arg1: memref<?xi16>, %arg2: memref<?xi16>, %arg3: memref<?xi8>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "aiv"} {

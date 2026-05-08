@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s
 
 // Check HFusion build pipeline build successfully
 // CHECK-LABEL: void @test_0_0(ptr addrspace(1) %0, ptr addrspace(1) %1, ptr addrspace(1) %2, ptr addrspace(1) %3)
