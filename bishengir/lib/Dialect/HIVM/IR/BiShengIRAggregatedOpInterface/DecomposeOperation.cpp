@@ -278,7 +278,8 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
   std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
       mlir::hivm::queryFuncCoreType(funcOp);
   auto coreType = getCoreType(*this);
-  bool isAiv = funcCoreType.has_value() && funcCoreType.value() == TFuncCoreType::AIV;
+  bool isAiv =
+      funcCoreType.has_value() && funcCoreType.value() == TFuncCoreType::AIV;
   bool isVector = succeeded(coreType) && coreType.value() == TCoreType::VECTOR;
   if (!isAiv && !isVector) {
     return failure();
@@ -291,6 +292,8 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
   if (getInitCondition()) {
     scf::IfOp ifOp =
         b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name,
+                  UnitAttr::get(b.getContext()));
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
@@ -336,6 +339,8 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   if (getInitCondition()) {
     scf::IfOp ifOp =
         b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name,
+                  UnitAttr::get(b.getContext()));
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), vbrcTarget,

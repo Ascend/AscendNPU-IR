@@ -364,6 +364,7 @@ func.func @mm_nd2nz_trans_if_brc_nd2nz(%arg0: memref<?x?x?x?xf32, #hivm.address_
   %alloc = memref.alloc() : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>
   // AFTERLAYOUT: scf.if
   // AFTERLAYOUT: hivm.hir.vbrc
+  // AFTERLAYOUT: } {hivm.unlikely_condition}
   // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous}  ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %arg1 : i1
   return
@@ -628,6 +629,7 @@ func.func @brc_tensor(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg
   %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16> to memref<?x32xf16, strided<[32, 1]>>
   // BEFOREALIGN: scf.if
   // BEFOREALIGN: hivm.hir.vbrc
+  // BEFOREALIGN: } {hivm.unlikely_condition}
   hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 eviction_policy = <EvictFirst>
   %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16>
   %1 = tensor.empty() : tensor<32x16xf16>
@@ -659,6 +661,7 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16> to memref<?x32xf16, strided<[32, 1]>>
   // BEFOREALIGN: scf.if
   // BEFOREALIGN: hivm.hir.vbrc
+  // BEFOREALIGN: } {hivm.unlikely_condition}
   hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 eviction_policy = <EvictFirst>
   %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16>
   %1 = tensor.empty() : tensor<32x16xf16>
@@ -709,7 +712,7 @@ func.func @nd2nz_unmarked_alloc_subview_targets_whole_alloc(%arg0: memref<?x?x?x
    to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
   // AFTERLAYOUT: scf.if %{{.*}} {
   // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%alloc
-  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT-NEXT: } {hivm.unlikely_condition}
   // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
@@ -726,7 +729,7 @@ func.func @nd2nz_no_slot_dim_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hiv
   %alloc = memref.alloc() : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>
   // AFTERLAYOUT: scf.if %{{.*}} {
   // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%alloc
-  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT-NEXT: } {hivm.unlikely_condition}
   // AFTERLAYOUT: hivm.hir.nd2nz
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
