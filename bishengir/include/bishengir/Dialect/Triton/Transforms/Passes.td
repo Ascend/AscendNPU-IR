@@ -43,6 +43,23 @@ def AdaptTritonIRKernel
   ];
 }
 
+def SIMTAutoBlockify
+   : Pass<"simt-auto-blockify", "mlir::triton::FuncOp"> {
+  let summary = "Blockify Triton SIMT kernels when logical grid is larger than the physical core count";
+  let description = [{
+    This pass wraps the original Triton kernel body with an outer `scf.for`
+    loop so one hardware wave of physical cores can process multiple logical
+    programs in batches.
+  }];
+  let constructor = "bishengir::triton::createSIMTAutoBlockifyPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "gpu::GPUDialect",
+    "scf::SCFDialect",
+    "mlir::triton::TritonDialect",
+  ];
+}
+
 def EnableAscendDPXMMA
    : Pass<"enable-ascend-dpx-mma", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createEnableAscendDPXMMAPass()";
@@ -227,7 +244,8 @@ def TritonRemap : Pass<"triton-remap", "mlir::ModuleOp"> {
     Option<"gridDimY", "dim-y", "int", "1", "Grid dimension for y axis">,
     Option<"gridDimZ", "dim-z", "int", "1", "Grid dimension for z axis">,
     Option<"useIfElse", "use-if-else", "bool", "true", "Replace inline asm load/stores with scf and llvm.load/store">,
-    Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">
+    Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">,
+    Option<"blockified", "enabled-blockify", "bool", "false", "Indicates that blockify is enabled">
   ];
 }
 #endif

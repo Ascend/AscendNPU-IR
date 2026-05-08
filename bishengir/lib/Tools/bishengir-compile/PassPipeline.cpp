@@ -31,8 +31,8 @@
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-#include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
+#include "bishengir/Transforms/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Conversion/ArithToEmitC/ArithToEmitCPass.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
@@ -170,6 +170,7 @@ void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &conf
   if (tritonGridDim.size() > 2)
     options.gridDimZ = static_cast<int>(tritonGridDim[2]);
 
+  options.blockified = config.getEnableAutoBlockifyLoop();
   // TODO: When DPX covers all remapper features correctly, remove
   // createTritonRemapPass completely.
   if (!config.getUseDPX())
@@ -244,6 +245,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
 
     if (tritonGridDim.size() > 2)
       options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+    options.blockified = config.getEnableAutoBlockifyLoop();
     pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
     pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
@@ -303,6 +305,7 @@ void setupLowerTritonPipelineOptions(
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
+  options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedMemDynamicSize() < 122880 ||
       config.getSharedMemDynamicSize() > 221184)

@@ -33,7 +33,6 @@ struct FuncInfo {
   ArrayAttr funcArgAttr;
 };
 
-
 static Value castValueToType(OpBuilder &builder, Location loc, Value val,
                              Type targetType) {
   OpBuilder::InsertionGuard g(builder);
@@ -196,7 +195,10 @@ struct AdaptGPUKernelPass
     args.push_back(gridX);
     args.push_back(gridY);
     args.push_back(gridZ);
-    args.push_back(px);
+    if (options.blockified)
+      args.push_back(newIdx);
+    else
+      args.push_back(px);
     args.push_back(py);
     args.push_back(pz);
     args.push_back(ub);
