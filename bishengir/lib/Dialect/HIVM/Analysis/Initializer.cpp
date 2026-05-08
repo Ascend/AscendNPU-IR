@@ -34,6 +34,7 @@ LogicalResult DimensionAnalyzer::initialize() {
   propagateConnection();
   spreadConnection();
   markDimensionKind();
+  markTransposedDims();
   return result;
 }
 

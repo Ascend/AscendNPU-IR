@@ -10,7 +10,9 @@
 #define BISHENGIR_DIALECT_HIVM_DIMENSION_ANALYZER_H
 
 #include "bishengir/Dialect/Analysis/DimensionAnalyzer.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 namespace mlir {
 namespace hivm {
@@ -99,6 +101,7 @@ protected:
   void processVReduceOp(hivm::VReduceOp op);
   void processVTransposeOp(hivm::VTransposeOp op);
   void processVGatherOp(hivm::VGatherOp op);
+  // TODO: Support VGatherMaskOp
   void processVConcatOp(hivm::VConcatOp op);
   void processVInterleaveOp(hivm::VInterleaveOp op);
   void processVDeinterleaveOp(hivm::VDeinterleaveOp op);
@@ -109,10 +112,12 @@ protected:
   void processVCumOp(T op);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);
+  void processConditionOp(scf::ConditionOp op);
   template <typename T, typename = std::enable_if_t<
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
                             std::is_same_v<T, tensor::CollapseShapeOp>>>
   void processReshapeOp(T op);
+  void processScopeOp(scope::ScopeOp op);
   void processTilingDimMapping(tensor::ExpandShapeOp expandShapeOp,
                                DictionaryAttr tilingDimMapping);
 
@@ -125,17 +130,41 @@ protected:
   /// solverCollapserElem_. If map doesn't exist, it means its a parallel
   void markDimensionKind();
 
+  /// Marks transposed dimensions in the operation graph and records the mapping
+  /// of transposed dimensions to their original indices.
+  void markTransposedDims();
+
+  void markTransposedDimImpl(hivm::VTransposeOp op);
+  void markTransposedDimImpl(annotation::MarkOp op);
+
   template <typename StoreOpTy>
   void computeTilingDimImpl(
-      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMaps,
+      DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+          &parallelDimMaps,
       DenseMap<int64_t, int> &numStoreOps);
 
 protected:
+  /// Chosen tiling axis index per SSA \c Value; \c -1 when not chosen.
   DenseMap<Value, int64_t> tilingDim_;
+
+  /// How each solver dimension behaves for tiling (\c Parallel, \c RankReduced,
+  /// \c Reduce). Keys follow \c markDimensionKind (via \c solverCollapserElem_).
   DenseMap<int64_t, TilingDimensionKind> tilingDimKindMap;
+
+  /// Collapsed \c parentIndex values (\c solverCollapserElem_) picked as tiling
+  /// parents after the store-walk heuristics in \c computeTilingDim.
   llvm::SmallDenseSet<int> selectedTilingParIdx;
- 	std::unique_ptr<mlir::detail::SimpleUnionFind> solverGroup_;
+
+  /// Union-find over \c argumentsRefPointer_ ids: merges SSA values that should
+  /// be tiled together
+  std::unique_ptr<mlir::detail::SimpleUnionFind> solverGroup_;
+
+  /// For transposed tensors: maps a \c solverShapeElem_ index to the pre-transpose
+  /// axis index used when matching tiling dims.
   DenseMap<int64_t, int64_t> transposedDimMap;
+
+  /// \c parentIndex values where one store had two parallel axes mapping to the
+  /// same collapsed parent (possible broadcast / ambiguous tiling).
   llvm::SmallDenseSet<int64_t> broadcastAxisCaseCandidate;
 };
 

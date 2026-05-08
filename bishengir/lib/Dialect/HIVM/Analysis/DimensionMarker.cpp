@@ -1,8 +1,17 @@
 //===- DimensionMarker.cpp ------------------------------------------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 
@@ -11,6 +20,9 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
+#include "mlir/Interfaces/LoopLikeInterface.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -87,8 +99,31 @@ void DimensionAnalyzer::processBFS() {
           auto regionArg = forOp.getTiedLoopRegionIterArg(&use);
           auto res = forOp.getTiedLoopResult(&use);
           createDummyRefIfNotExist({regionArg, res});
+          if (visited.insert(regionArg).second) {
+            bfsQueue.push(regionArg);
+          }
           solverGroup_->join(curRef, argumentsRefPointer_.at(regionArg));
           solverGroup_->join(curRef, argumentsRefPointer_.at(res));
+        } else if (auto whileOp = dyn_cast<scf::WhileOp>(user)) {
+          auto oprNum = use.getOperandNumber();
+          auto arg = whileOp.getBeforeArguments()[oprNum];
+          createDummyRefIfNotExist({arg});
+          if (visited.insert(arg).second) {
+            bfsQueue.push(arg);
+          }
+          solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
+        } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(user)) {
+          auto whileOp = cast<scf::WhileOp>(user->getParentOp());
+          auto oprNum = use.getOperandNumber() - 1;
+          for (auto arg :
+               SmallVector<Value>{whileOp.getAfterArguments()[oprNum],
+                                  whileOp->getResult(oprNum)}) {
+            createDummyRefIfNotExist({arg});
+            if (visited.insert(arg).second) {
+              bfsQueue.push(arg);
+            }
+            solverGroup_->join(curRef, argumentsRefPointer_.at(arg));
+          }
         } else {
           for (auto res : user->getResults()) {
             if (isa<ShapedType>(res.getType())) {
@@ -107,18 +142,22 @@ void DimensionAnalyzer::processBFS() {
           bfsQueue.push(result);
         }
       }
-      if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
-        auto yieldParentOp = yieldOp->getParentOp();
-        if (!yieldParentOp) {
-          LDBG("Encounter yieldOp with null parent, skipping");
-          continue;
-        }
-        LDBG("Encounter yieldOp. Parent " << *yieldParentOp);
-        processOperation(yieldParentOp, current);
-        for (Value result : yieldParentOp->getResults()) {
+      if (isa<scf::YieldOp, scope::ReturnOp>(user)) {
+        auto parentOp = user->getParentOp();
+        LDBG("Encounter terminator. Parent " << *parentOp);
+        processOperation(parentOp, current);
+        for (Value result : parentOp->getResults()) {
           updatePreviousType(result);
           if (visited.insert(result).second) {
             bfsQueue.push(result);
+          }
+        }
+        if (auto loopOp = dyn_cast<LoopLikeOpInterface>(parentOp)) {
+          for (Value init : loopOp.getInits()) {
+            updatePreviousType(init);
+            if (visited.insert(init).second) {
+              bfsQueue.push(init);
+            }
           }
         }
       }
@@ -188,6 +227,10 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       })
       .Case<tensor::CollapseShapeOp>([this](auto op) {
         processReshapeOp(op);
+        return true;
+      })
+      .Case<scope::ScopeOp>([this](auto op) {
+        processScopeOp(op);
         return true;
       })
       .Case<annotation::MarkOp>([this](auto op) {
@@ -385,20 +428,29 @@ template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
   }
   auto input = op.getSrc();
   auto output = op.getDst();
+  auto reverse = op.getReverse();
   SmallVector<Value> outputs(op.getResult());
 
   assert(outputs.size() <= 1 &&
          "result size must be 1 if tensor type and 0 if memref type");
 
   outputs.push_back(output);
-  mergeValues({input}, outputs, getMutatedDims(op));
+  mergeValues({input}, outputs, getMutatedDims(op), reverse);
 }
 
 void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
   LDBG("Processing YieldOp " << op);
-  auto parentOp = op->getParentOp();
+  auto *parentOp = op->getParentOp();
   if (!parentOp) {
     llvm::report_fatal_error("YieldOp doesn't have a parent");
+  }
+  if (auto whileOp = dyn_cast<scf::WhileOp>(parentOp)) {
+    for (auto [beforeArg, yieldOpResult] :
+         llvm::zip_equal(whileOp.getBeforeArguments(), op.getOperands())) {
+      if (isa<ShapedType>(beforeArg.getType()))
+        mergeValues({beforeArg}, {yieldOpResult});
+    }
+    return;
   }
   for (auto [parentResult, yieldOpResult] :
        llvm::zip_equal(parentOp->getResults(), op.getOperands())) {
@@ -413,6 +465,16 @@ void DimensionAnalyzer::processForOp(scf::ForOp op) {
        zip_equal(op.getRegionIterArgs(), op.getInitArgs())) {
     createDummyRefIfNotExist({regionArg, initArg});
     processValue(regionArg, initArg);
+  }
+}
+
+void DimensionAnalyzer::processConditionOp(scf::ConditionOp op) {
+  LDBG("Processing ConditionOp " << op);
+  auto whileOp = cast<scf::WhileOp>(op->getParentOp());
+  for (auto [afterArg, arg] :
+       llvm::zip_equal(whileOp.getAfterArguments(), op.getArgs())) {
+    if (isa<ShapedType>(afterArg.getType()))
+      mergeValues({afterArg}, {arg});
   }
 }
 
@@ -501,6 +563,16 @@ template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
   }
 }
 
+void DimensionAnalyzer::processScopeOp(scope::ScopeOp op) {
+  LDBG("Processing ScopeOp " << op);
+  auto returnOp = cast<scope::ReturnOp>(op.getRegion().front().getTerminator());
+  for (auto [res, ret] :
+       llvm::zip_equal(op.getResults(), returnOp.getResults())) {
+    createDummyRefIfNotExist({res, ret});
+    processValue(res, ret);
+  }
+}
+
 void DimensionAnalyzer::combineInferable() {
   DimensionAnalyzerBase::combineInferable();
   for (const auto &arg : argumentList_) {
@@ -528,102 +600,126 @@ void DimensionAnalyzer::combineInferable() {
 }
 
 void DimensionAnalyzer::markDimensionKind() {
-  op_->walk<WalkOrder::PreOrder>([&](VReduceOp reduceOp) {
-    // By default reduce would connect with each other
-    LDBG("Trying to mark this reduce op " << reduceOp);
-    auto reduceResRef = getArgumentRef(reduceOp.getSrc());
-    for (auto reduceDim : reduceOp.getReduceDims()) {
-      tilingDimKindMap[solverCollapserElem_->find(reduceResRef[reduceDim])] =
-          TilingDimensionKind::Reduce;
-    }
-  });
   auto processSlice = [this](auto sliceOp) {
     if (!argumentsRefPointer_.contains(sliceOp.getSource()))
       return;
     LDBG("Trying to mark this slice op " << sliceOp);
     llvm::SmallBitVector droppedDimsMask = sliceOp.getDroppedDims();
-    SmallVector<int64_t> sliceRef;
-    if (isa<tensor::ExtractSliceOp>(sliceOp.getOperation())) {
-      sliceRef = getArgumentRef(sliceOp.getSource());
-    } else {
-      sliceRef = getArgumentRef(sliceOp.getResult());
+    auto origType = dyn_cast<ShapedType>(sliceOp.getSource().getType());
+    auto sliceType = dyn_cast<ShapedType>(sliceOp.getResult().getType());
+    auto origRef = getArgumentRefOrCreateDummy(sliceOp.getSource());
+    auto sliceRef = getArgumentRefOrCreateDummy(sliceOp.getResult());
+    if (isa<tensor::InsertSliceOp>(sliceOp.getOperation())) {
+      std::swap(origRef, sliceRef);
+      std::swap(origType, sliceType);
     }
-    for (size_t i = 0; i < sliceRef.size(); ++i) {
+    size_t sliceIdx = 0;
+    for (size_t i = 0; i < origRef.size(); ++i) {
       if (droppedDimsMask[i]) {
-        tilingDimKindMap[solverCollapserElem_->find(sliceRef[i])] =
+        tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
             TilingDimensionKind::RankReduced;
+        LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
+                    << ") is marked as RankReduced");
+      } else {
+        if (isa<tensor::InsertSliceOp>(sliceOp.getOperation()) &&
+            sliceType.getDimSize(sliceIdx) == 1) {
+          tilingDimKindMap[solverCollapserElem_->find(origRef[i])] =
+              TilingDimensionKind::Reduce;
+          LDBG("Dim " << i << "(" << solverCollapserElem_->find(origRef[i])
+                      << ") is marked as Reduce");
+        }
+        sliceIdx++;
       }
     }
   };
 
   op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (isa<tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
-      if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(op)) {
-        processSlice(insertOp);
-      } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-        processSlice(extractOp);
+    if (auto reduceOp = dyn_cast<hivm::VReduceOp>(op)) {
+      // By default reduce would connect with each other
+      LDBG("Trying to mark this reduce op " << reduceOp);
+      auto reduceResRef = getArgumentRef(reduceOp.getSrc());
+      for (auto reduceDim : reduceOp.getReduceDims()) {
+        tilingDimKindMap[solverCollapserElem_->find(reduceResRef[reduceDim])] =
+            TilingDimensionKind::Reduce;
       }
-    } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
-      auto src = vtransposeOp.getSrc();
-      auto dst = vtransposeOp.getDst();
-      SmallVector<int64_t> srcNonUnitDims;
-      SmallVector<int64_t> dstNonUnitDims;
-      for (auto dim : utils::getShape(src.getType())) {
-        if (dim != 1)
-          srcNonUnitDims.push_back(dim);
-      }
-      for (auto dim : utils::getShape(dst.getType())) {
-        if (dim != 1)
-          dstNonUnitDims.push_back(dim);
-      }
-      if (srcNonUnitDims == dstNonUnitDims) {
-        return;
-      }
-      auto srcRef = getArgumentRef(src);
-      auto dstRef = getArgumentRef(dst);
-
-      auto perm = vtransposeOp.getPermutation();
-      for (auto [dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
-        auto srcSolverIdx = solverShapeElem_->find(srcRef[perm[dimIdx]]);
-        auto dstSolverIdx = solverShapeElem_->find(parentIdx);
-        if (auto it = transposedDimMap.find(srcSolverIdx);
-            it != transposedDimMap.end()) {
-          LDBG("Successfully moved");
-          transposedDimMap[dstSolverIdx] = it->second;
-        } else {
-          transposedDimMap[dstSolverIdx] = perm[dimIdx];
-        }
-        LDBG(dstSolverIdx << " is now transposed dim("
-                          << transposedDimMap[dstSolverIdx] << ")");
-      }
-    } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
-               markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
-      auto expandShapeOp =
-          markOp.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
-      auto tilingDimMapping =
-          markOp->getAttrOfType<DictionaryAttr>(kTilingDimMappingAttrName);
-      auto src = expandShapeOp.getSrc();
-      auto res = expandShapeOp.getResult();
-
-      auto srcArgs = getArgumentRef(src);
-      auto resArgs = getArgumentRef(res);
-      for (auto dimMappingAttr : tilingDimMapping) {
-        int srcDim;
-        int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
-        llvm::to_integer(dimMappingAttr.getName(), srcDim);
-        srcDim = solverShapeElem_->find(srcArgs[srcDim]);
-        resDim = solverShapeElem_->find(resArgs[resDim]);
-        LDBG("Checking if transposed dim of " << srcDim << " is moved to "
-                                              << resDim);
-        if (auto it = transposedDimMap.find(srcDim);
-            it != transposedDimMap.end()) {
-          LDBG("Successfully moved");
-          transposedDimMap[resDim] = it->second;
-        }
-      }
+    } else if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      processSlice(insertOp);
+    } else if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
+      processSlice(extractOp);
     }
   });
 }
+
+void DimensionAnalyzer::markTransposedDims() {
+  op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
+      markTransposedDimImpl(vtransposeOp);
+    } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
+               markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
+      markTransposedDimImpl(markOp);
+    }
+  });
+}
+
+void DimensionAnalyzer::markTransposedDimImpl(hivm::VTransposeOp op) {
+  auto src = op.getSrc();
+  auto dst = op.getDst();
+  SmallVector<int64_t> srcNonUnitDims;
+  SmallVector<int64_t> dstNonUnitDims;
+  for (auto dim : utils::getShape(src.getType())) {
+    if (dim != 1)
+      srcNonUnitDims.push_back(dim);
+  }
+  for (auto dim : utils::getShape(dst.getType())) {
+    if (dim != 1)
+      dstNonUnitDims.push_back(dim);
+  }
+  if (srcNonUnitDims == dstNonUnitDims) {
+    return;
+  }
+  auto srcRef = getArgumentRef(src);
+  auto dstRef = getArgumentRef(dst);
+
+  auto perm = op.getPermutation();
+  for (auto [dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
+    auto srcSolverIdx = solverShapeElem_->find(srcRef[perm[dimIdx]]);
+    auto dstSolverIdx = solverShapeElem_->find(parentIdx);
+    if (auto it = transposedDimMap.find(srcSolverIdx);
+        it != transposedDimMap.end()) {
+      LDBG("Successfully moved");
+      transposedDimMap[dstSolverIdx] = it->second;
+    } else {
+      transposedDimMap[dstSolverIdx] = perm[dimIdx];
+    }
+    LDBG(dstSolverIdx << " is now transposed dim("
+                      << transposedDimMap[dstSolverIdx] << ")");
+  }
+}
+
+void DimensionAnalyzer::markTransposedDimImpl(annotation::MarkOp op) {
+  auto expandShapeOp = op.getSrc().getDefiningOp<tensor::ExpandShapeOp>();
+  auto tilingDimMapping =
+      op->getAttrOfType<DictionaryAttr>(kTilingDimMappingAttrName);
+  auto src = expandShapeOp.getSrc();
+  auto res = expandShapeOp.getResult();
+
+  auto srcArgs = getArgumentRef(src);
+  auto resArgs = getArgumentRef(res);
+  for (auto dimMappingAttr : tilingDimMapping) {
+    int srcDim;
+    int resDim = cast<IntegerAttr>(dimMappingAttr.getValue()).getInt();
+    llvm::to_integer(dimMappingAttr.getName(), srcDim);
+    srcDim = solverShapeElem_->find(srcArgs[srcDim]);
+    resDim = solverShapeElem_->find(resArgs[resDim]);
+    LDBG("Checking if transposed dim of " << srcDim << " is moved to "
+                                          << resDim);
+    if (auto it = transposedDimMap.find(srcDim); it != transposedDimMap.end()) {
+      LDBG("Successfully moved");
+      transposedDimMap[resDim] = it->second;
+    }
+  }
+}
+
 } // namespace detail
 } // namespace hivm
 } // namespace mlir

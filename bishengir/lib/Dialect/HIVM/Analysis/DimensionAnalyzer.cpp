@@ -29,9 +29,8 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
                                   << solverShapeElem_->find(args[dim.second])
                                   << ")");
   auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
-  if (tilingDimKindVal != tilingDimKindMap.end()) {
+  if (tilingDimKindVal != tilingDimKindMap.end())
     return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
-  }
   // By default, assume it's parallel
   return true;
 }
@@ -46,6 +45,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, int> numStoreOps;
   DenseMap<int64_t, SmallVector<Dimension>> parallelDimMap;
   bool isBroadcastAxisCase = false;
+
   for (auto [value, _] : argumentsRefPointer_)
     tilingDim_[value] = -1;
 
@@ -86,7 +86,9 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
           if (curDim == -1 || curDim > dim)
             higherDimCnt++;
         }
-        LDBG("Candidate of " << parentIndex << " in group " << groupIndex << " is " << utils::debugger::to_string(candidateDims));
+        LDBG("Candidate of " << parentIndex << " in group " << groupIndex
+                             << " is "
+                             << utils::debugger::to_string(candidateDims));
         // try to find majority of dimension is higher
         if (2 * higherDimCnt >= numStoreOp) {
           selectedTilingParIdxMap[groupIndex] = parentIndex;
@@ -130,40 +132,99 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   return tilingDim;
 }
 
+/// Tells us if we can still treat axis \p i as a tiling candidate for every
+/// \c StoreOpTy, even when the *view* on that axis has unknown size or
+/// size 1. This will try to recover the size of the parent buffer.
+///
+/// Example: axis \p i is 0. The store operands are \c memref.subview results;
+/// axis 0 of each view may be `?` (or a length-1 row), but the parent buffers
+/// are still \c 16x16, so the helper can recover size 16 for both sides.
+/// \code
+/// %subSrc = memref.subview %ub[0, 0] [1, 16] [1, 1]
+///     : memref<16x16xf16, #hivm.address_space<ub>>
+///     to memref<?x16xf16, strided<[16, 1]>, #hivm.address_space<ub>>
+/// %subDst = memref.subview %gm[0, 0] [1, 16] [1, 1]
+///     : memref<16x16xf16, #hivm.address_space<gm>>
+///     to memref<?x16xf16, strided<[16, 1]>, #hivm.address_space<gm>>
+/// hivm.store
+///     ins(%subSrc : memref<?x16xf16, strided<[16, 1]>,
+///     #hivm.address_space<ub>>) outs(%subDst : memref<?x16xf16, strided<[16, 1]>, #hivm.address_space<gm>>)
+/// \endcode
+template <typename StoreOpTy>
+static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
+  auto src = storeOp.getSrc();
+  auto dst = storeOp.getDst();
+  int64_t srcOrigDim = ShapedType::kDynamic;
+  int64_t dstOrigDim = ShapedType::kDynamic;
+  if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>()) {
+    srcOrigDim = extractSliceOp.getSourceType().getDimSize(i);
+  } else if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>()) {
+    srcOrigDim = subviewOp.getSourceType().getDimSize(i);
+  }
+  if (auto extractSliceOp = dst.template getDefiningOp<tensor::ExtractSliceOp>()) {
+    dstOrigDim = extractSliceOp.getSourceType().getDimSize(i);
+  } else if (auto subviewOp = dst.template getDefiningOp<memref::SubViewOp>()) {
+    dstOrigDim = subviewOp.getSourceType().getDimSize(i);
+  }
+  return srcOrigDim != ShapedType::kDynamic && srcOrigDim != 1 &&
+         srcOrigDim == dstOrigDim;
+}
+
+/// Walks every \c StoreOpTy under the analyzed op. For each source axis that
+/// is parallel, appends that \c Dimension to \p parallelDimMap (keyed by solver
+/// group and parent index) unless the axis is dynamic or size 1; for
+/// \c hivm::StoreOp, \c checkTileableMaskedStore may still allow the latter.
+///
+/// A \b solver group is a union-find bucket: during analysis, \c solverGroup_
+/// (a \c SimpleUnionFind over \c argumentsRefPointer_ indices)
+/// (See DimensionAnalyzer::processBFS)
+///
+/// The implementation runs \c op_->walk<WalkOrder::PreOrder> on a root op
+/// with a callback that only fires for operations of type \c StoreOpTy.
+/// Each time a store is hit, \c numStoreOps for that source's solver group
+/// (\c srcRef) is bumped, then we scan every rank index \c i of
+/// the source: if the dimension is parallel and passes
+/// the dynamic/broadcast (and optional masked-store) rules, we record
+/// (Value, DimensionIndex) pair under parallelDimMap for that group and
+/// collapsed parent index. The same op kind is used for \c hivm::CopyOp, \c
+/// hivm::IndirectStoreOp, or \c hivm::FixpipeOp depending on how \c
+/// computeTilingDim was invoked.
 template <typename StoreOpTy>
 void DimensionAnalyzer::computeTilingDimImpl(
-    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>> &parallelDimMap,
+    DenseMap<int64_t, DenseMap<int64_t, SmallVector<Dimension>>>
+        &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
     auto src = op.getSrc();
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
     auto args = getArgumentRefOrCreateDummy(src);
-    auto srcRef = solverGroup_->find(argumentsRefPointer_.at(src));
-    numStoreOps[srcRef]++;
-    LDBG("Checking operation: " << op << " in group " << srcRef);
+    // See that each tiling dimension differs for each \c groupIndex.
+    // Each operation in a group is independent, horizontal, and totally
+    // separated to other operations in a different group. In common kernels,
+    // there will only be 1 group.
+    auto groupIndex = solverGroup_->find(argumentsRefPointer_.at(src));
+    numStoreOps[groupIndex]++;
+    LDBG("Checking operation: " << op << " in group " << groupIndex);
     if (rank == 0)
       return;
     auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
-      if (isParallelDim(dim) && shape[i] != 1) {
-        LDBG("Dim " << i << " is selected in group " << srcRef);
-        if (ShapedType::isDynamic(shape[i])) {
-          if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>();
-              extractSliceOp && extractSliceOp.getSourceType().getDimSize(i) == 1)
-              continue;
-          if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>();
-              subviewOp && subviewOp.getSourceType().getDimSize(i) == 1)
-              continue;
+      if (isParallelDim(dim)) {
+        if (ShapedType::isDynamic(shape[i]) || shape[i] == 1) {
+          if (!checkTileableMaskedStore(op, i))
+            continue;
         }
+        LDBG("Dim " << i << " is selected in group " << groupIndex);
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
-          parallelDimMap[srcRef][parentIndex].push_back(dim);
+          parallelDimMap[groupIndex][parentIndex].push_back(dim);
         } else {
-          op->emitWarning() << "Detected dimensions are in the same group in one "
-                               "storeOp. It is recommended to try with "
-                               "strict-mode=false if TileAndBindSubBlock fails";
+          op->emitWarning()
+              << "Detected dimensions are in the same group in one "
+                 "storeOp. It is recommended to try with "
+                 "strict-mode=false if TileAndBindSubBlock fails";
           broadcastAxisCaseCandidate.insert(parentIndex);
         }
       }
