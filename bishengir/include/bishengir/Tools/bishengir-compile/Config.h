@@ -69,8 +69,6 @@ public:
     return *this;
   }
 
-  bool getEnableLIRCompile() const { return enableLIRCompileFlag; }
-
   bool shouldEnableLayoutOptimization() const {
     return getEnableLayoutOptimization() &&
            mlir::hacc::utils::isAscend950(getTarget());
