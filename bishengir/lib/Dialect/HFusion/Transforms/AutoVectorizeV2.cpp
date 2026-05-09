@@ -50,7 +50,6 @@ struct FusedNode {
   std::string loopLabel;
   DenseSet<Operation *> fusedOps;
   DenseSet<Operation *> fusedLeafNodes;
-  Operation *lastLeafNode;
 };
 
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
@@ -661,46 +660,6 @@ visitUsersOfLeafNodeRecursively(Operation *op, Operation *lastLeafNode,
   }
 }
 
-static bool isUserInfluenced(
-    Operation *producer, Operation *userToBeMoved, Operation *lastLeafNode, Block *block,
-    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
-  if (fusableOpInfoMap.contains(userToBeMoved) && fusableOpInfoMap[userToBeMoved].fusedNode) {
-    for (Value operand : userToBeMoved->getOperands()) {
-      Operation *operandOp = operand.getDefiningOp();
-      if (!operandOp || operandOp == producer || !isOpInBlock(operandOp, block))
-        continue;
-      if (fusableOpInfoMap.contains(operandOp) &&
-          fusableOpInfoMap[operandOp].fusedNode == fusableOpInfoMap[userToBeMoved].fusedNode) {
-        for (Operation *anotherUser : operandOp->getUsers()) {
-          if (anotherUser != userToBeMoved && isFusableOp(anotherUser) &&
-              (anotherUser == lastLeafNode || anotherUser->isBeforeInBlock(lastLeafNode))) {
-            return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
-}
-
-static bool isUsersInfluenced(
-    Operation *producer, SmallVector<Operation *> &leafNodeGroup, Block *block,
-    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
-  llvm::sort(leafNodeGroup,
-             [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
-  Operation *lastLeafNode = leafNodeGroup.back();
-  DenseSet<Operation *> usersToBeMovedSet;
-  visitUsersOfLeafNodeRecursively(producer, lastLeafNode, block,
-                                  usersToBeMovedSet);
-  if (llvm::any_of(usersToBeMovedSet, [&] (Operation *userToBeMoved) {
-        return isUserInfluenced(producer, userToBeMoved, lastLeafNode, block,
-                                fusableOpInfoMap);
-      })) {
-    return true;
-  }
-  return false;
-}
-
 // fuse sibling will clone all users of those front siblings behind fused loop
 // which will cause existing handle lost or IR order changed. So we move those
 // front siblings and their users to their new positions after fuse. For
@@ -735,6 +694,55 @@ static void moveLeafNodesAndTheirUsers(SmallVector<Operation *> &leafNodeGroup,
     userToBeMoved->moveAfter(prevMovedUser);
     prevMovedUser = userToBeMoved;
   }
+}
+
+/// Returns true if an op's results are used by "many" distinct users.
+/// We count distinct owning operations across all result values.
+static bool hasManyUsers(Operation *op, unsigned threshold = 2) {
+  if (!op)
+    return false;
+
+  DenseSet<Operation *> users;
+  for (Value res : op->getResults()) {
+    for (OpOperand &use : res.getUses())
+      users.insert(use.getOwner());
+  }
+  return users.size() >= threshold;
+}
+
+/// Pre validation for fusion opportunity of Linalg's tileAndFuseFirstExtractUse.
+/// 
+/// Returns true if all consumers of the producer will fuse into a single loop.
+/// When consumers fuse into different loops (different fusedNode labels), the
+/// producer has no valid fusion opportunity and should remain a standalone op.
+static bool hasFusionOpportunity(
+    Operation *producer,
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
+  if (!producer)
+    return false;
+
+  auto tileableProducer = dyn_cast<TilingInterface>(producer);
+  if (!tileableProducer)
+    return false;
+
+  if (llvm::any_of(tileableProducer->getUsers(), [&](Operation *user) {
+        return !fusableOpInfoMap.contains(user) ||
+               !fusableOpInfoMap[user].fusedNode;
+      })) {
+    // Sanity check for nullptr
+    return false;
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "======== FusionOpportunity ========\n");
+  LLVM_DEBUG(llvm::dbgs() << "producer: " << *producer << "\n");
+  // If all consumers share the same fusedNode (loop), producer can fuse there.
+  std::set<std::string> consumerLabels;
+  llvm::for_each(tileableProducer->getUsers(), [&](Operation *user) {
+    std::string fusedNodeLabel = fusableOpInfoMap[user].fusedNode->loopLabel;
+    LLVM_DEBUG(llvm::dbgs() << "fusedNodeLabel: " << fusedNodeLabel << "\n");
+    consumerLabels.insert(fusedNodeLabel);
+  });
+  return consumerLabels.size() == 1;
 }
 
 static bool becomesTileLocalInFusedNode(
@@ -853,23 +861,6 @@ static bool reductionConsumerNeedsFullProducerDomain(
   return false;
 }
 
-static std::shared_ptr<FusedNode> findClosestFusedNodeForProducer(
-    Block *block, Operation *producer,
-    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
-  Operation *closestUser = nullptr;
-  for (auto user : producer->getUsers()) {
-    if (isOpInBlock(user, block)) {
-      if (isFusableOp(user))
-        user = fusableOpInfoMap[user].fusedNode->lastLeafNode;
-      if (!closestUser || user->isBeforeInBlock(closestUser))
-        closestUser = user;
-    }
-  }
-  if (!closestUser || !isFusableOp(closestUser))
-    return nullptr;
-  return fusableOpInfoMap[closestUser].fusedNode;
-}
-
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
@@ -880,7 +871,8 @@ static std::shared_ptr<FusedNode> findClosestFusedNodeForProducer(
 static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     Block *block, Operation *producer,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    unsigned maxFusedOps, int64_t vectorLength) {
+    unsigned maxFusedOps, int64_t vectorLength,
+    bool enableMultipleConsumerFusion) {
   // here we do not fuse FillOp and put FillOp into a single VF, see issue:
   // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
   if (mlir::hfusion::isFillOp(producer))
@@ -895,10 +887,24 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   // transpose op into op2
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
-  std::shared_ptr<FusedNode> bestFusedNode =
-      findClosestFusedNodeForProducer(block, producer, fusableOpInfoMap);
-  if (!bestFusedNode)
+
+  if (!enableMultipleConsumerFusion && hasManyUsers(producer) &&
+      !hasFusionOpportunity(producer, fusableOpInfoMap)) {
     return nullptr;
+  }
+
+  Operation *closestUser = nullptr;
+  for (auto user : producer->getUsers()) {
+    if (isOpInBlock(user, block)) {
+      if (!closestUser || user->isBeforeInBlock(closestUser))
+        closestUser = user;
+    }
+  }
+  if (!closestUser || !isFusableOp(closestUser))
+    return nullptr;
+
+  auto bestFusedNode = fusableOpInfoMap[closestUser].fusedNode;
+  assert(bestFusedNode);
   if (bestFusedNode->fusedOps.size() > maxFusedOps)
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
@@ -1238,7 +1244,6 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
     }
     moveLeafNodesAndTheirUsers(leafNodeGroup, block);
     updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
-    fusedNode->lastLeafNode = leafNodeGroup.back();
   }
 }
 
@@ -1291,7 +1296,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   std::shared_ptr<FusedNode> bestFusedNode = findBestFusedNodeForProducer(
-      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength);
+      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength,
+      enableMultipleConsumerFusion);
   if (bestFusedNode) {
     producersToBeFusedInto.push_back(producer);
     bestFusedNode->fusedOps.insert(producer);
@@ -1331,7 +1337,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
           llvm::all_of(leafNodeGroup, [&](Operation *otherLeafNode) {
             return !producerInfo.conflictList.contains(otherLeafNode) &&
                    !isProducerConsumed(producer, otherLeafNode);
-          }) && !isUsersInfluenced(producer, leafNodeGroup, block, fusableOpInfoMap)) {
+          })) {
         std::shared_ptr<FusedNode> fusedNode =
             fusableOpInfoMap[leafNodeGroup[0]].fusedNode;
         fusedNode->fusedOps.insert(producer);
@@ -1341,7 +1347,6 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
         isInserted = true;
         moveLeafNodesAndTheirUsers(leafNodeGroup, block);
         updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
-        fusedNode->lastLeafNode = leafNodeGroup.back();
         break;
       };
     }
@@ -1353,7 +1358,6 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
           "outlined-loop-target-" + std::to_string(++loopCount);
       fusedNode->fusedOps.insert(producer);
       fusedNode->fusedLeafNodes.insert(producer);
-      fusedNode->lastLeafNode = producer;
       producerInfo.fusedNode = fusedNode;
     }
   }
@@ -1443,12 +1447,6 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
     Value producerHandle =
         getOpTransformHandle(producerInfo.label, builder, seqOp);
     std::shared_ptr<FusedNode> fusedNode = producerInfo.fusedNode;
-    Value funcHandle = builder.create<transform::MatchOp>(
-        loc, seqOp.getBodyBlock()->getArguments().front(),
-        ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
-    builder.create<transform::ApplyRegisteredPassOp>(
-        loc, builder.getType<transform::AnyOpType>(), funcHandle,
-        builder.getStringAttr("eliminate-single-iteration-scf-for"));
     Value containingLoopHandle =
         getOpTransformHandle(fusedNode->loopLabel, builder, seqOp);
     builder.create<transform::ApplyPatternsOp>(

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -transform-interpreter -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -transform-interpreter -verify-diagnostics -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func @test_producer_has_other_users_dominated_by_containing_op(
 // CHECK:      %2:2 = scf.for %arg4 = %c0 to %c256 step %c64 iter_args(%arg5 = %1, %arg6 = %arg1) -> (tensor<256xf32>, tensor<256xf32>) {

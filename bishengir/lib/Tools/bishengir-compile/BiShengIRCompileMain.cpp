@@ -202,6 +202,7 @@ runExternalHIVMC(ModuleOp &module,
   // TODO: Support options in hivmc
   std::set<std::string> blacklist = {"inject-ir-from-file", "print-pass-id",
                                      "inject-ir-before", "inject-ir-after",
+                                     "hfusion-enable-multiple-consumer-fusion",
                                      "disable-tightly-coupled-buffer-reuse",
                                      "enable-hivm-cross-core-gss",
                                      "enable-tree-reduce-v2",
