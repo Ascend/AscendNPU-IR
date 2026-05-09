@@ -242,27 +242,42 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   if (failed(checkOptionValidity(config))) {
     return failure();
   }
-
+  bool hasUboverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
   // Collect diagnostics and emit them afterwards because we have tuning
   // mechanism.
   auto handlerID = diagEngine.registerHandler([&](Diagnostic &diag) {
+  // VF fusion may cause ub overflow. in this case, it will fallback to allop fused to decrease ub occupation
+  // Todo: use Enum to standardize the format of error message printing
+    if (diag.getSeverity() == mlir::DiagnosticSeverity::Error) {
+      std::string errMsg;
+      llvm::raw_string_ostream errStream(errMsg);
+      errStream << diag;
+      if (errStream.str().find("ub overflow") != std::string::npos) {
+        hasUboverflow = true;
+      }
+    }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = config.getEnableTuningMode() ? 1 : 5;
+  int tryTimes = 5;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
-  tryTimes = config.getEnableTritonKernelCompile() ? 1 : tryTimes;
+  if (config.getEnableVFFusion()) {
+    tryTimes = 2;
+  } else if (config.getEnableTuningMode() || config.getEnableTritonKernelCompile()) {
+    tryTimes = 1;
+  }
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
     ModuleOp hirCompileMode = mod.clone();
     // simt-simd mixed pipeline
     bool success = true;
+    hasUboverflow = false;
     if (config.getEnableSimdSimtMixCompile()) {
         success &= succeeded(runPipeline(
             hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
@@ -284,7 +299,15 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       success = succeeded(runPipeline(
           hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                         config, "buildFinalHIVMPipelines"));
+                                       config, "buildFinalHIVMPipelines"));
+      if (!success && hasUboverflow && config.getEnableVFFusion()) {
+        diagEngine.eraseHandler(handlerID);
+        for (auto &diag : llvm::reverse(collectedDiagnostics)) {
+            diagEngine.emit(std::move(diag));
+        }
+        LDBG("ub overflow, fallback with disabled vffusion");
+        config.setEnableVFFusion(false);
+      }
     }
 
     // hivmc pipepine
