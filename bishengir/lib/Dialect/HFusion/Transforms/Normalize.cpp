@@ -118,7 +118,7 @@ static SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
     return taylerParams;
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 static Value getSinSign(PatternRewriter &rewriter, Location loc, Value x) {
@@ -232,7 +232,7 @@ static Value sign(PatternRewriter &rewriter, Location loc, Value x) {
     return getAtanSign(rewriter, loc, x);
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 Value constructTaylerSeries(PatternRewriter &rewriter, Location loc,
@@ -1656,7 +1656,7 @@ private:
     } else if (hfusionFun == hfusion::UnaryFn::log10) {
       return 10;
     }
-    llvm_unreachable("unsupport log op");
+    llvm::report_fatal_error("unsupport log op");
   }
 
   Value logBaseChange(PatternRewriter &rewriter, hfusion::ElemwiseUnaryOp op,
@@ -1725,7 +1725,7 @@ public:
     if (hfusionFun == hfusion::UnaryFn::log1p) {
       logOffset = 1;
     } else {
-      llvm_unreachable("unsupport log op");
+      llvm::report_fatal_error("unsupport log op");
     }
     Value plusValue = rewriter.create<arith::ConstantOp>(
         op->getLoc(), elementType,
@@ -2664,7 +2664,7 @@ public:
     if (hfusionFun == hfusion::UnaryFn::expm1) {
       downOffset = 1;
     } else {
-      llvm_unreachable("unsupport exp op");
+      llvm::report_fatal_error("unsupport exp op");
     }
     Value subValue = rewriter.create<arith::ConstantOp>(
         op->getLoc(), elementType,
@@ -3017,7 +3017,7 @@ static Value castSrcTypeToI1ByVCmp(hfusion::CastOp &op, Type srcType,
   } else if (srcType.isF32() || srcType.isF16()) {
     castF16OrF32Value = inValue;
   } else {
-    llvm_unreachable("unsupport srcType to i1.");
+    llvm::report_fatal_error("unsupport srcType to i1.");
   }
 
   // 2. cast: f16/f32 -> i1, dst = vcmpvs_ne(src, 0)
@@ -3075,7 +3075,7 @@ hfusion::CastMode getCastMode(hfusion::CastOp op) {
   if (isI16ToI8)
     return hfusion::CastMode::I16TOI8;
 
-  llvm_unreachable("unsupported cast mode");
+  llvm::report_fatal_error("unsupported cast mode");
 }
 
 std::optional<StringRef> getAnnotateOverflowMode(hfusion::CastOp op) {
@@ -3709,7 +3709,7 @@ Value getSignMaskConstValue(PatternRewriter &rewriter, Location loc,
         loc, rewriter.getI16IntegerAttr(0x7FFF));
     return maskCstOp->getResults()[0];
   }
-  llvm_unreachable("unsupported bitwidth");
+  llvm::report_fatal_error("unsupported bitwidth");
 }
 
 /// get the complement of constant integer value of inf
@@ -3727,7 +3727,7 @@ Value getComplementOfInfConstValue(PatternRewriter &rewriter, Location loc,
         loc, rewriter.getI16IntegerAttr(-1 * (0x7C00)));
     return maskCstOp->getResults()[0];
   }
-  llvm_unreachable("unsupported bitwidth");
+  llvm::report_fatal_error("unsupported bitwidth");
 }
 
 /// mask the sign bit of f32/f16 type input
@@ -4234,7 +4234,7 @@ static SmallVector<NamedAttribute> getOpAttr(OpType op,
     // no extra attrs
     return {};
   } else
-    llvm_unreachable("Unsupport Normalize OpType.");
+    llvm::report_fatal_error("Unsupport Normalize OpType.");
 }
 
 static void replaceI1ResultsWithTargetType(const SmallVector<Value> &oldResults,
@@ -4401,7 +4401,7 @@ arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   case arith::CmpIPredicate::uge:
     return arith::CmpFPredicate::OGE;
   }
-  llvm_unreachable("unexpected arith::CmpIPredicate");
+  llvm::report_fatal_error("unexpected arith::CmpIPredicate");
 }
 
 Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
@@ -4620,7 +4620,7 @@ public:
     } else if (computeByF32) {
       targetType = rewriter.getF32Type();
     } else {
-      llvm_unreachable("Unsupported Op.");
+      llvm::report_fatal_error("Unsupported Op.");
     }
     SmallVector<Value> newInputs = normalizeToTargetType<ElemType>(
         rewriter, op.getInputs(), targetType, castOpts);
@@ -4783,7 +4783,7 @@ private:
       return rewriter.create<hfusion::ElemwiseUnaryOp>(
           loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
     }
-    llvm_unreachable("Unsupport OpType to create with F16 operand.");
+    llvm::report_fatal_error("Unsupport OpType to create with F16 operand.");
   }
 };
 
@@ -5200,7 +5200,7 @@ Operation *createInterleaveLikeOp(OpType op, SmallVector<Value> &newInputs,
         loc, TypeRange(newOutputs), newInputs[0],
         op.getDeInterLeaveChannelIdx());
   }
-  llvm_unreachable(
+  llvm::report_fatal_error(
       "Unsupport interleaveLike OpType to create with F16 Operand.");
 }
 

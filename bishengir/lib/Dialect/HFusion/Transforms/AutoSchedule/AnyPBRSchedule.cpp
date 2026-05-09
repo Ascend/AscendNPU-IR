@@ -336,13 +336,13 @@ void AnyPBRKernelInfo::recordFusibleProducerAnalysisResult(
 
     auto [_, isInserted] = consumer2Producer_.try_emplace(key, value);
     if (!isInserted)
-      llvm_unreachable("duplicate consumer + axis pair");
+      llvm::report_fatal_error("duplicate consumer + axis pair");
   }
   assert(consumer != nullptr);
   auto [_, isInserted] =
       consumer2Info_.try_emplace(consumer, result.consumerInfo);
   if (!isInserted)
-    llvm_unreachable("duplicate consumer");
+    llvm::report_fatal_error("duplicate consumer");
 }
 
 SmallVector<NamedAttribute>

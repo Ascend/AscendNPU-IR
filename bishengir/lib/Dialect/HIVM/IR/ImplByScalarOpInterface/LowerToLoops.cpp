@@ -124,7 +124,7 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else {
-    llvm_unreachable("Unsupport op type.");
+    llvm::report_fatal_error("Unsupport op type.");
   }
   return resTensors;
 }
@@ -233,7 +233,7 @@ createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
                     : getScalarResult<hivm::VCumprodOp, arith::MulFOp>(
                           rewriter, op.getLoc(), scalarInputs);
   } else {
-    llvm_unreachable("Unsupport op type.");
+    llvm::report_fatal_error("Unsupport op type.");
   }
   llvm::SmallVector<Value> resTensors;
   resTensors.push_back(resTensor);
@@ -732,7 +732,7 @@ createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
             arith::CmpIPredicate::sle, arith::CmpFPredicate::OLE);
     break;
   default:
-    llvm_unreachable("Unsupport Reduction Arith Attr.");
+    llvm::report_fatal_error("Unsupport Reduction Arith Attr.");
   }
   llvm::SmallVector<Value> resTensors;
   resTensors.push_back(resTensor);

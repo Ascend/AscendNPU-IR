@@ -871,7 +871,7 @@ void VArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
     else if (isa<TensorType>(shapedTy))
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);

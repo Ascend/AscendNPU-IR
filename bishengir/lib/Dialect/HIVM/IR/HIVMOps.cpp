@@ -59,11 +59,11 @@ int64_t AddressSpaceAttr::getMappingId() const {
 }
 
 bool AddressSpaceAttr::isLinearMapping() const {
-  llvm_unreachable("AddressSpaceAttr does not support linear mapping");
+  llvm::report_fatal_error("AddressSpaceAttr does not support linear mapping");
 }
 
 int64_t AddressSpaceAttr::getRelativeIndex() const {
-  llvm_unreachable("AddressSpaceAttr does not support relative index");
+  llvm::report_fatal_error("AddressSpaceAttr does not support relative index");
 }
 
 //===----------------------------------------------------------------------===//
@@ -121,11 +121,11 @@ int64_t HIVMSubBlockMappingAttr::getMappingId() const {
 }
 
 bool HIVMSubBlockMappingAttr::isLinearMapping() const {
-  llvm_unreachable("HIVMSubBlockMappingAttr does not support linear mapping");
+  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support linear mapping");
 }
 
 int64_t HIVMSubBlockMappingAttr::getRelativeIndex() const {
-  llvm_unreachable("HIVMSubBlockMappingAttr does not support relative index");
+  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support relative index");
 }
 
 void hivm::populateHIVMAddressSpaceAttributeConversions(

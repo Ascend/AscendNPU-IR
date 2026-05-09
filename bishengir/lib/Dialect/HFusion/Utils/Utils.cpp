@@ -51,7 +51,7 @@ using namespace mlir::utils::debugger;
 Value hfusion::OverflowProcess(OpBuilder &builder, Value src,
                                Type targetElemType) {
   if (!getElementTypeOrSelf(targetElemType).isInteger()) {
-    llvm_unreachable("unsupport int type");
+    llvm::report_fatal_error("unsupport int type");
   }
   uint32_t bits = targetElemType.getIntOrFloatBitWidth();
   double MAXINT = static_cast<double>(1ULL << bits);
@@ -372,7 +372,7 @@ Value hfusion::getReshapeSource(Operation *op) {
       .Case([](tensor::ExpandShapeOp expand) { return expand.getSrc(); })
       .Case([](tensor::CollapseShapeOp collapse) { return collapse.getSrc(); })
       .Default([](Operation *op) {
-        llvm_unreachable("Unsupported reshape op");
+        llvm::report_fatal_error("Unsupported reshape op");
         return Value();
       });
 }
@@ -383,7 +383,7 @@ Value hfusion::getReshapeResult(Operation *op) {
       .Case(
           [](tensor::CollapseShapeOp collapse) { return collapse.getResult(); })
       .Default([](Operation *op) {
-        llvm_unreachable("Unsupported reshape op");
+        llvm::report_fatal_error("Unsupported reshape op");
         return Value();
       });
 }
@@ -395,7 +395,7 @@ Value hfusion::getReshapeOrSliceSource(Operation *op) {
       .Case([](tensor::ExtractSliceOp extract) { return extract.getSource(); })
       .Case([](tensor::InsertSliceOp insert) { return insert.getSource(); })
       .Default([](Operation *op) {
-        llvm_unreachable("Unsupported reshape or slice op");
+        llvm::report_fatal_error("Unsupported reshape or slice op");
         return Value();
       });
 }
@@ -408,7 +408,7 @@ Value hfusion::getReshapeOrSliceResult(Operation *op) {
       .Case([](tensor::ExtractSliceOp extract) { return extract.getResult(); })
       .Case([](tensor::InsertSliceOp insert) { return insert.getResult(); })
       .Default([](Operation *op) {
-        llvm_unreachable("Unsupported reshape or slice op");
+        llvm::report_fatal_error("Unsupported reshape or slice op");
         return Value();
       });
 }
@@ -1242,7 +1242,7 @@ void hfusion::offsetArangeOp(OpBuilder &builder, Operation *tiledOp,
       assert(val.getType() == builder.getIndexType());
       offsetVal = val;
     } else
-      llvm_unreachable("Expecting integer attribute or value as offset");
+      llvm::report_fatal_error("Expecting integer attribute or value as offset");
     Value stride = std::get<1>(offsetStride);
     Value dimOffset =
         builder.createOrFold<arith::MulIOp>(loc, offsetVal, stride);

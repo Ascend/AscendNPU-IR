@@ -90,7 +90,7 @@ std::optional<int> getExpandedDim(
   if (alignDimAttrName == hivm::StrideAlignDimsAttr::name.str()) {
     return lastDimOfNotOne.value_or(expandReassociations[dim].back());
   }
-  llvm_unreachable("unsupport propagation mode");
+  llvm::report_fatal_error("unsupport propagation mode");
 }
 
 std::optional<int> getCollapsedDim(
@@ -124,7 +124,7 @@ std::optional<int> getCollapsedDim(
       }
     }
   }
-  llvm_unreachable("unsupported propagation mode");
+  llvm::report_fatal_error("unsupported propagation mode");
 }
 
 template <typename OP, typename = std::enable_if_t<
@@ -351,7 +351,7 @@ LogicalResult propagateAlignDown(
         rewriter, reshapeOp, mayReassociations.value(), alignDims, alignBytes,
         alignDimAttrName, alignBytesAttrName, false /*isPropagateUp*/);
   }
-  llvm_unreachable("");
+  llvm::report_fatal_error("");
 }
 
 LogicalResult propagateAlignDown(

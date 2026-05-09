@@ -90,7 +90,7 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
       return std::nullopt;
     } else {
       // TODO : support unalign
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "unsupport unalign and unknown align middle-axis broadcast");
     }
   }
@@ -217,7 +217,7 @@ std::optional<int64_t> getExtraBufferSizeForBroadcastOp(Operation *op,
   if (auto vBrcOp = dyn_cast<hivm::VBrcOp>(op)) {
     broadcastDims = vBrcOp.getBroadcastDims();
   } else {
-    llvm_unreachable("Not implemented!");
+    llvm::report_fatal_error("Not implemented!");
   }
   for (auto broadcastDim : broadcastDims) {
     std::optional<int64_t> bufSizeMaybe =
@@ -411,7 +411,7 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
     return refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
                                        reductionDim, arithOp, saveUbUf);
   }
-  llvm_unreachable("unsupported reduce case");
+  llvm::report_fatal_error("unsupported reduce case");
 }
 
 std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,

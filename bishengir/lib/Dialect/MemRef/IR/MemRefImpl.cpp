@@ -109,7 +109,7 @@ struct FoldRedundantCopy : public OpRewritePattern<memref::CopyOp> {
             expand.getReassociationIndices());
         continue;
       }
-      llvm_unreachable("invalid reshape op");
+      llvm::report_fatal_error("invalid reshape op");
     }
 
     rewriter.setInsertionPointAfter(copyFromDst);

@@ -295,7 +295,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
     int64_t eventIdNum = TEST_CROSS_CORE_EVENT_ID_NUM;
     return eventIdNum;
   }
-  llvm_unreachable("getHWAvailableEventIdNum: unhandled SyncMode");
+  llvm::report_fatal_error("getHWAvailableEventIdNum: unhandled SyncMode");
 }
 
 SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
@@ -339,7 +339,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
               static_cast<int64_t>(0));
     return availableEventIds;
   }
-  llvm_unreachable("getHWAvailableEventIds: unhandled SyncMode");
+  llvm::report_fatal_error("getHWAvailableEventIds: unhandled SyncMode");
 }
 
 // Build a Value that is true for the first iteration of the given scf::ForOp.
@@ -411,7 +411,7 @@ Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val) {
       val = rewriter.create<arith::ExtSIOp>(loc, rewriter.getIntegerType(64),
                                             val);
     } else {
-      llvm_unreachable("unhandled casting type");
+      llvm::report_fatal_error("unhandled casting type");
     }
   }
   return val;

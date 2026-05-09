@@ -38,7 +38,7 @@ def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
     /*methodName=*/"getOperandsTargetFractalLayout",
     /*args=*/(ins), /*methodBody=*/[{}],
     /*defaultImplementation=*/[{
-      llvm_unreachable("getOperandsTargetFractalLayout is not implemented.");
+      llvm::report_fatal_error("getOperandsTargetFractalLayout is not implemented.");
     }]
     >,
     InterfaceMethod<

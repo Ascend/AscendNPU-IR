@@ -422,7 +422,7 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   } else if (isa<MemRefType>(src.getType())) {
     resultTypeRange = TypeRange({});
   } else {
-    llvm_unreachable("Cast src is neither in tensor type nor in memref type");
+    llvm::report_fatal_error("Cast src is neither in tensor type nor in memref type");
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
@@ -489,7 +489,7 @@ static bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
   case IntegerType::Unsigned:
     return true;
   }
-  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
+  llvm::report_fatal_error("Unexpected IntegerType::SignednessSemantics");
 }
 
 std::string getTypeName(Location loc, Type type,
@@ -702,7 +702,7 @@ LogicalResult getUnAlignSizeInfo(
     castAlignDims.push_back(rank - 2);
     castAlignDims.push_back(rank - 1);
   } else {
-    llvm_unreachable("cast op rank need lager than 0.");
+    llvm::report_fatal_error("cast op rank need lager than 0.");
   }
 
 
@@ -828,7 +828,7 @@ uint32_t getHWAlignBytes(Attribute spaceAttr) {
   case hivm::AddressSpace::L1:
     return hivm::util::BL;
   default:
-    llvm_unreachable("Unsupported address space");
+    llvm::report_fatal_error("Unsupported address space");
   }
 }
 
@@ -850,7 +850,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
     return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
                                    targetMemScope);
   }
-  llvm_unreachable("Unexpected BaseMemRefType");
+  llvm::report_fatal_error("Unexpected BaseMemRefType");
   return type;
 }
 

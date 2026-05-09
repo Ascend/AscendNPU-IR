@@ -662,7 +662,7 @@ getSliceModifyingOp(PatternRewriter &rewriter, T slicingOp,
                      dyn_cast<ExtractSliceOp>(slicingOp.getOperation())) {
         superview = extractOp.getSource();
       } else {
-        llvm_unreachable("Matcher is neither insert or extract");
+        llvm::report_fatal_error("Matcher is neither insert or extract");
       }
       // Fall back to non-hyperrectangle case
       if (failed(handleMutation(rewriter, constantFullExpandedRef,

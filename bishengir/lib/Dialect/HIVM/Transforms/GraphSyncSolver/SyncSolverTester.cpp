@@ -703,9 +703,9 @@ llvm::LogicalResult SyncTester::test() {
 // If environment indicates tester mode, parse env vars and run SyncTester.
 void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
   if (options.size() != SyncTester::getOptionsNum()) {
-    llvm_unreachable(("Expected size of sync-tester options to be equal to " +
-                      std::to_string(SyncTester::getOptionsNum()))
-                         .c_str());
+    llvm::report_fatal_error(("Expected size of sync-tester options to be equal to " +
+                              std::to_string(SyncTester::getOptionsNum()))
+                              .c_str());
     return;
   }
 

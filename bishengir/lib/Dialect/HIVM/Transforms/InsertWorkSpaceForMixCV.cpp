@@ -91,7 +91,7 @@ traceStaticAllocShape(ShapedType dstType,
 
     // Cannot trace further: e.g. init from dynamic tensor.empty (EmptyOp has
     // no inits), or unsupported op.
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "Unable to trace to a static alloc shape from a dynamic shape");
   }
 }

@@ -412,7 +412,7 @@ public:
     case UnaryFn::vnot:
       return buildUnaryVNot(builder, arg);
     }
-    llvm_unreachable("unsupported unary function");
+    llvm::report_fatal_error("unsupported unary function");
   }
 
   Value buildUnaryRelu(OpBuilder &builder, Value arg) {
@@ -428,7 +428,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 0));
       return builder.create<arith::MaxSIOp>(arg.getLoc(), zero, arg);
     }
-    llvm_unreachable("unsupported type for relu");
+    llvm::report_fatal_error("unsupported type for relu");
   }
 
   Value buildUnaryRec(OpBuilder &builder, Value arg) {
@@ -444,7 +444,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 1));
       return builder.create<arith::DivSIOp>(arg.getLoc(), one, arg);
     }
-    llvm_unreachable("unsupported type for reciprocal");
+    llvm::report_fatal_error("unsupported type for reciprocal");
   }
 
   Value buildUnaryVNot(OpBuilder &builder, Value arg) {
@@ -454,7 +454,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 0));
       return builder.create<arith::XOrIOp>(arg.getLoc(), zero, arg);
     }
-    llvm_unreachable("unsupported type for not");
+    llvm::report_fatal_error("unsupported type for not");
   }
 
   // Build the binary functions defined by OpDSL.
@@ -463,91 +463,91 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg0) && isFloatingPoint(arg1);
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (binaryFn) {
     case BinaryFn::vor:
       if (allInteger)
         return builder.create<arith::OrIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vor");
+      llvm::report_fatal_error("unsupported type for vor");
     case BinaryFn::vxor:
       if (allInteger)
         return builder.create<arith::XOrIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vxor");
+      llvm::report_fatal_error("unsupported type for vxor");
     case BinaryFn::vand:
       if (allInteger)
         return builder.create<arith::AndIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vand");
+      llvm::report_fatal_error("unsupported type for vand");
     case BinaryFn::minf:
       if (allFloatingPoint)
         return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmin");
+      llvm::report_fatal_error("unsupported type for vmin");
     case BinaryFn::maxf:
       if (allFloatingPoint)
         return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmax");
+      llvm::report_fatal_error("unsupported type for vmax");
     case BinaryFn::minnumf:
       if (allFloatingPoint)
         return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmin");
+      llvm::report_fatal_error("unsupported type for vmin");
     case BinaryFn::maxnumf:
       if (allFloatingPoint)
         return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmax");
+      llvm::report_fatal_error("unsupported type for vmax");
     case BinaryFn::powf:
       if (allFloatingPoint)
         return builder.create<math::PowFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vpow");
+      llvm::report_fatal_error("unsupported type for vpow");
     case BinaryFn::atan2:
       if (allFloatingPoint)
         return builder.create<math::Atan2Op>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for atan2");
+      llvm::report_fatal_error("unsupported type for atan2");
     case BinaryFn::powi:
       if (allInteger)
         return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vpowi");
+      llvm::report_fatal_error("unsupported type for vpowi");
     case BinaryFn::mod:
       if (allInteger)
         return builder.create<arith::RemSIOp>(arg0.getLoc(), arg0, arg1);
       if (allFloatingPoint)
         return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for mod");
+      llvm::report_fatal_error("unsupported type for mod");
     case BinaryFn::modui:
       if (allInteger)
         return builder.create<arith::RemUIOp>(arg0.getLoc(), arg0, arg1);
       if (allFloatingPoint)
         return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for modui");
+      llvm::report_fatal_error("unsupported type for modui");
     case BinaryFn::shli:
       if (allInteger)
         return builder.create<arith::ShLIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shli");
+      llvm::report_fatal_error("unsupported type for shli");
     case BinaryFn::shrsi:
       if (allInteger)
         return builder.create<arith::ShRSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shrsi");
+      llvm::report_fatal_error("unsupported type for shrsi");
     case BinaryFn::shrui:
       if (allInteger)
         return builder.create<arith::ShRUIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shrui");
+      llvm::report_fatal_error("unsupported type for shrui");
     case BinaryFn::ldexp:
       if (allFloatingPoint)
         return builder.create<mathExt::LdexpOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ldexp");
+      llvm::report_fatal_error("unsupported type for ldexp");
     case BinaryFn::floordivsi:
       if (allInteger)
         return builder.create<arith::FloorDivSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for floordivsi");
+      llvm::report_fatal_error("unsupported type for floordivsi");
     case BinaryFn::ceildivsi:
       if (allInteger)
         return builder.create<arith::CeilDivSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ceildivsi");
+      llvm::report_fatal_error("unsupported type for ceildivsi");
     case BinaryFn::ceildivui:
       if (allInteger)
         return builder.create<arith::CeilDivUIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ceildivui");
+      llvm::report_fatal_error("unsupported type for ceildivui");
     }
-    llvm_unreachable("unsupported binary function");
+    llvm::report_fatal_error("unsupported binary function");
   }
 
   // Build the compare functions defined by OpDSL.
@@ -556,7 +556,7 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg0) && isFloatingPoint(arg1);
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (compareFn) {
     case CompareFn::veq:
@@ -566,7 +566,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OEQ, arg0, arg1);
-      llvm_unreachable("unsupported type for veq");
+      llvm::report_fatal_error("unsupported type for veq");
     case CompareFn::vne:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
@@ -574,7 +574,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::UNE, arg0, arg1);
-      llvm_unreachable("unsupported type for vne");
+      llvm::report_fatal_error("unsupported type for vne");
     case CompareFn::vle:
     case CompareFn::vule:
       if (allInteger)
@@ -583,7 +583,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLE, arg0, arg1);
-      llvm_unreachable("unsupported type for vle");
+      llvm::report_fatal_error("unsupported type for vle");
     case CompareFn::vlt:
     case CompareFn::vult:
       if (allInteger)
@@ -592,7 +592,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLT, arg0, arg1);
-      llvm_unreachable("unsupported type for vlt");
+      llvm::report_fatal_error("unsupported type for vlt");
     case CompareFn::vge:
     case CompareFn::vuge:
       if (allInteger)
@@ -601,7 +601,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGE, arg0, arg1);
-      llvm_unreachable("unsupported type for vge");
+      llvm::report_fatal_error("unsupported type for vge");
     case CompareFn::vgt:
     case CompareFn::vugt:
       if (allInteger)
@@ -610,9 +610,9 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGT, arg0, arg1);
-      llvm_unreachable("unsupported type for vgt");
+      llvm::report_fatal_error("unsupported type for vgt");
     }
-    llvm_unreachable("unsupported binary function");
+    llvm::report_fatal_error("unsupported binary function");
   }
 
   // Build the Ternary functions defined by OpDSL.
@@ -622,15 +622,15 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg1) && isFloatingPoint(arg2);
     bool allInteger = isInteger(arg1) && isInteger(arg2);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (ternaryFn) {
     case TernaryFn::select:
       if (allInteger || allFloatingPoint)
         return builder.create<arith::SelectOp>(arg0.getLoc(), arg0, arg1, arg2);
-      llvm_unreachable("unsupported type for select");
+      llvm::report_fatal_error("unsupported type for select");
     }
-    llvm_unreachable("unsupported select function");
+    llvm::report_fatal_error("unsupported select function");
   }
 
   // Build the type functions defined by OpDSL.
@@ -646,7 +646,7 @@ public:
       auto op = builder.create<arith::BitcastOp>(loc, toType, operand);
       return op;
     }
-    llvm_unreachable("unsupported type conversion function");
+    llvm::report_fatal_error("unsupported type conversion function");
   }
 
   // Build the type functions defined by OpDSL.
@@ -1953,7 +1953,7 @@ void ArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
     else if (isa<TensorType>(shapedTy))
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);
@@ -2010,7 +2010,7 @@ MutableOperandRange GatherOp::getDpsInitsMutable() { return getInitMutable(); }
 
 SmallVector<utils::IteratorType> GatherOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-  llvm_unreachable("Not implemented");
+  llvm::report_fatal_error("Not implemented");
 #else
   SmallVector<utils::IteratorType> result(getInit().getType().getRank() + 1,
                                           utils::IteratorType::parallel);
@@ -2299,7 +2299,7 @@ MutableOperandRange GatherMaskOp::getDpsInitsMutable() {
 
 SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-  llvm_unreachable("Not implemented");
+  llvm::report_fatal_error("Not implemented");
 #else
   mlir::Value initData = getInit()[0];
   mlir::Type initDataType = initData.getType();

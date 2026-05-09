@@ -160,7 +160,7 @@ UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
   if (!hasParentLoop && hasLinkedLoop) {
     return getUnitFlagLinkedLoopArgs(op, rewriter);
   }
-  llvm_unreachable("unexpected unit-flag-info state");
+  llvm::report_fatal_error("unexpected unit-flag-info state");
 }
 
 namespace mlir {

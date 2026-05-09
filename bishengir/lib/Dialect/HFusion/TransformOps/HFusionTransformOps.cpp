@@ -172,7 +172,7 @@ CacheReadOp::apply(TransformRewriter &rewriter,
       cachedOp =
           createCacheRead(rewriter, blockArgument, insertPoint->getLoc());
     } else {
-      llvm_unreachable("unsupported type");
+      llvm::report_fatal_error("unsupported type");
     }
     cachedOps.push_back(cachedOp.getOperation());
   }
@@ -206,7 +206,7 @@ CacheWriteOp::apply(TransformRewriter &rewriter,
           /*cacheWriteToOutputInit=*/getCacheWriteToOutputInit()};
       maybeCachedOp = createCacheWrite(rewriter, opResult, options);
     } else {
-      llvm_unreachable("unsupported type");
+      llvm::report_fatal_error("unsupported type");
     }
     if (failed(maybeCachedOp))
       return DiagnosedSilenceableFailure::definiteFailure();
@@ -518,14 +518,14 @@ calculateBufferSize(int64_t bufferSize, SetBufferSizeMode unitMode,
     return result;
   }
   if (referenceTypeWidth == 0) {
-    llvm_unreachable("Reference type's width should be positive");
+    llvm::report_fatal_error("Reference type's width should be positive");
     result.diag =
         emitDefiniteFailure(loc, "reference type's width should be positive");
     return result;
   }
   auto factor = elementBitWidth / referenceTypeWidth;
   if (referenceTypeWidth == 0)
-    llvm_unreachable("Reference type's with should be positive");
+    llvm::report_fatal_error("Reference type's with should be positive");
   if (elementBitWidth % referenceTypeWidth != 0)
     factor = (elementBitWidth + referenceTypeWidth - 1) / referenceTypeWidth;
   result.bufferSizeInBytes *= static_cast<int>(factor);

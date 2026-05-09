@@ -248,7 +248,7 @@ generateResultTileValueImpl(Operation *op, OpBuilder &b, unsigned resultNumber,
 inline LogicalResult generateScalarImplementationImpl(
     [[maybe_unused]] Operation *op, [[maybe_unused]] OpBuilder &builder,
     [[maybe_unused]] Location loc, [[maybe_unused]] ValueRange ivs) {
-  llvm_unreachable("HIVM Op doesn't have body");
+  llvm::report_fatal_error("HIVM Op doesn't have body");
 }
 
 //===----------------------------------------------------------------------===//
@@ -398,7 +398,7 @@ private:
                         ArrayRef<OpFoldResult> offsets,
                         ArrayRef<OpFoldResult> tileSizes) const {
     if (tileSizes.size() != tiledOp.getNumLoops())
-      llvm_unreachable("Invalid tiling");
+      llvm::report_fatal_error("Invalid tiling");
 
     OpBuilder::InsertionGuard g(b);
     Location loc = tiledOp->getLoc();

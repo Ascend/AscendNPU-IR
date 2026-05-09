@@ -182,7 +182,7 @@ static SmallVector<Value> getOutOperands(Operation *op) {
   }
 
   // TODO: should we get the last operands as out operands by default?
-  llvm_unreachable("unsupported op to get out operands");
+  llvm::report_fatal_error("unsupported op to get out operands");
 }
 
 void replaceResultWithInitOperand(Operation *op) {

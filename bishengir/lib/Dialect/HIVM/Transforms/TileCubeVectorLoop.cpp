@@ -558,7 +558,7 @@ public:
                    Attribute value) {
     recordLazyAction([op, attrName, value]() {
       if (!op)
-        llvm_unreachable("corrupted operation");
+        llvm::report_fatal_error("corrupted operation");
 
       op->setAttr(attrName, value);
     });

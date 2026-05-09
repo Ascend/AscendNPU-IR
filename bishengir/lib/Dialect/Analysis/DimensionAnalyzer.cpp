@@ -69,7 +69,7 @@ DimensionAnalyzerBase::getDimension(int64_t parentIndex) {
       return Dimension(value, i);
     }
   }
-  llvm_unreachable("Element shape index cannot be inferred");
+  llvm::report_fatal_error("Element shape index cannot be inferred");
 }
 
 SmallVector<int64_t> DimensionAnalyzerBase::getArgumentRef(Value v) const {

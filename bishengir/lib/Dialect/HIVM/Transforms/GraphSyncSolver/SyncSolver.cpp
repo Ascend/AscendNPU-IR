@@ -2625,5 +2625,5 @@ void Solver::solve() {
       return;
     }
   }
-  llvm_unreachable("GSS: runSolver() failed.");
+  llvm::report_fatal_error("GSS: runSolver() failed.");
 }

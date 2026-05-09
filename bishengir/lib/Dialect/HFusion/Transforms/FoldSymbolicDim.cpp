@@ -58,7 +58,7 @@ LogicalResult processTensorEmpty(OpBuilder &builder, tensor::EmptyOp emptyOp) {
     if (isa_and_nonnull<hfusion::SymbolicDimOp>(valUsage.getDefiningOp()))
       continue;
     if (emptyOperandIdx >= rankedType.value().size()) {
-      llvm_unreachable("Constant dim value is greater than tensor symbol size");
+      llvm::report_fatal_error("Constant dim value is greater than tensor symbol size");
     }
     auto wantedSymbol = rankedType.value()[emptyOperandIdx];
     auto symbolAttr = dyn_cast<SymbolRefAttr>(wantedSymbol);
@@ -86,7 +86,7 @@ LogicalResult processTensorDim(OpBuilder &builder, tensor::DimOp dimOp) {
   if (!tensorSymbol.has_value())
     return failure();
   if (constantDim.value() >= static_cast<size_t>(tensorSymbol->size())) {
-    llvm_unreachable("Constant dim value is greater than tensor symbol size");
+    llvm::report_fatal_error("Constant dim value is greater than tensor symbol size");
   }
   auto symbolAttr =
       dyn_cast<SymbolRefAttr>(tensorSymbol.value()[constantDim.value()]);

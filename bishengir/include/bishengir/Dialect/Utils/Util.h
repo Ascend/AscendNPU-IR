@@ -154,7 +154,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isInteger() && outType.isInteger()) {
     return T::RINT;
   }
-  llvm_unreachable("unsupported type cast.");
+  llvm::report_fatal_error("unsupported type cast.");
 }
 
 inline Type getMostElementType(
@@ -423,7 +423,7 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
     v = static_cast<T>(valFPAttr.getValueAsDouble());
   } else {
-    llvm_unreachable("getArithConstantOpValue supports only IntOrFloat");
+    llvm::report_fatal_error("getArithConstantOpValue supports only IntOrFloat");
   }
   return v;
 }

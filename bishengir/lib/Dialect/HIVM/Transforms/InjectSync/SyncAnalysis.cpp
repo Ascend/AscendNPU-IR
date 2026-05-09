@@ -663,7 +663,7 @@ void SyncAnalyzer::InsertBlockSyncOperation(
     } else {
       // currently it is only expected to have cube-cube pipe-barrier-cube
       // sync-operations. as vecto-vector is not supported yet.
-      llvm_unreachable("unsupported vector-vector sync mode");
+      llvm::report_fatal_error("unsupported vector-vector sync mode");
     }
   } else {
     std::unique_ptr<SyncOperation, std::default_delete<SyncOperation>>

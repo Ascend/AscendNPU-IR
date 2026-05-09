@@ -116,7 +116,7 @@ void InjectSyncPass::runOnOperation() {
   } else if (syncMode == SyncMode::NORMAL) {
     injectsyncAnalysis.AutoInjectSync(enableUnitFlag, assumeAliveLoops);
   } else {
-    llvm_unreachable("Illegal synchronization mode! ");
+    llvm::report_fatal_error("Illegal synchronization mode! ");
   }
 }
 

@@ -169,7 +169,7 @@ getOriginalType(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
   if (auto op =
           dyn_cast<memref::SubViewOp>(offsetSizeAndStrideOp.getOperation()))
     return op.getSourceType();
-  llvm_unreachable("There should not be such case");
+  llvm::report_fatal_error("There should not be such case");
   return std::nullopt;
 }
 

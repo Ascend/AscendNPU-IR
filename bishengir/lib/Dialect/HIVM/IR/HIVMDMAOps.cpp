@@ -593,7 +593,7 @@ LogicalResult CopyOp::verify() {
 SmallVector<ReassociationIndices, 4>
 CopyOp::getReassociationIndices(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   SmallVector<ReassociationIndices, 4> reassociationIndices;
   auto collapseReassociation = getCollapseReassociation();
@@ -610,7 +610,7 @@ CopyOp::getReassociationIndices(bool isCollapse) {
 
 SmallVector<AffineMap, 4> CopyOp::getReassociationMaps(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   return getSymbolLessAffineMaps(getReassociationExprs(isCollapse));
 }
@@ -618,7 +618,7 @@ SmallVector<AffineMap, 4> CopyOp::getReassociationMaps(bool isCollapse) {
 SmallVector<ReassociationExprs, 4>
 CopyOp::getReassociationExprs(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   return convertReassociationIndicesToExprs(
       getContext(), getReassociationIndices(isCollapse));

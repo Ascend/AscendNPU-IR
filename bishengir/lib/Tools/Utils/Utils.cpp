@@ -132,7 +132,7 @@ void TempDirectoriesStore::assertInsideTmp(StringTmpPath path) const {
                  "failed to canonicalize system temp directory");
   llvm::sys::path::remove_dots(tempRoot, /*remove_dot_dot=*/true);
   if (!isPathUnderPrefix(path, tempRoot))
-    llvm_unreachable("unexpected temp folder created outside of system temp dir");
+    llvm::report_fatal_error("unexpected temp folder created outside of system temp dir");
 }
 
 TempDirectoriesStore::~TempDirectoriesStore() {

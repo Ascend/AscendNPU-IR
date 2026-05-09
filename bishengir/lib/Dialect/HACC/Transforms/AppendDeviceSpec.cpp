@@ -52,7 +52,7 @@ getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
   auto maybeSpec = getTargetSpec(target);
   if (!maybeSpec.has_value() ||
       maybeSpec.value()->device == TargetDevice::Unknown)
-    llvm_unreachable("Unknown target device");
+    llvm::report_fatal_error("Unknown target device");
 
   ImplicitLocOpBuilder builder(loc, context);
   SmallVector<DataLayoutEntryInterface> entries;

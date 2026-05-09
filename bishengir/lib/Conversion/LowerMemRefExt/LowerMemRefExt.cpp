@@ -79,7 +79,7 @@ public:
     if (offset.size() > 1) { // loop of double buffer
       auto loopOp = op->getParentOfType<LoopLikeOpInterface>();
       if (!loopOp)
-        llvm_unreachable("Illegal state where DB workspace is not in loop");
+        llvm::report_fatal_error("Illegal state where DB workspace is not in loop");
 
       Value selectCounter;
       {

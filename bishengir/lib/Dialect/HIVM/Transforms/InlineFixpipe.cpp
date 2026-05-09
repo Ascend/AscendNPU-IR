@@ -98,7 +98,7 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto yieldValueIndx = findIdx(llvm::to_vector(yieldOperand->getOperands()),
                                 op->getResult(resultIndx));
   if (!yieldValueIndx.has_value())
-    llvm_unreachable("yield value must have user");
+    llvm::report_fatal_error("yield value must have user");
   resultIndx = yieldValueIndx.value();
   return getInsertPoint(yieldParentOp, resultIndx);
 }
@@ -310,7 +310,7 @@ std::optional<FixpipePreReluMode> getReluMode(OpType op) {
   if constexpr (std::is_same_v<OpType, hivm::VReluOp>) {
     return hivm::symbolizeFixpipePreReluMode("NORMAL_RELU");
   }
-  llvm_unreachable("unsupported ReluValue");
+  llvm::report_fatal_error("unsupported ReluValue");
 }
 
 Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
@@ -323,7 +323,7 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
     return rewriter.getBF16Type();
   if (quant == FixpipePreQuantMode::S322I8)
     return rewriter.getI8Type();
-  llvm_unreachable("unsupported QuantMode");
+  llvm::report_fatal_error("unsupported QuantMode");
 }
 
 int64_t getSiftedUsersNum(Value v) {

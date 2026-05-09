@@ -382,6 +382,6 @@ std::optional<TCoreType> VBrcOp::inferCoreType() {
   } else if (mayAddrSpace.value() == hivm::AddressSpace::UB) {
     return TCoreType::VECTOR;
   } else {
-    llvm_unreachable("unsupport mem scope for vbrc");
+    llvm::report_fatal_error("unsupport mem scope for vbrc");
   }
 }

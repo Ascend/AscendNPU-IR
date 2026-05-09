@@ -60,7 +60,7 @@ Type getExpandShapeOpResType(ShapedType shapedType, ArrayRef<int64_t> dimsArr) {
       }
     } else {
       if (static_cast<size_t>(dimsArr[i]) >= strides.size() + 1)
-        llvm_unreachable("strides accessed index out-of-bounds");
+        llvm::report_fatal_error("strides accessed index out-of-bounds");
       strideVal = strides[dimsArr[i] - 1];
     }
     strides.insert(strides.begin() + dimsArr[i], strideVal);

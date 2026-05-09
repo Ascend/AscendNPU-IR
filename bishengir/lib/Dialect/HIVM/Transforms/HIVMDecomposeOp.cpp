@@ -299,7 +299,7 @@ private:
               loc, rewriter.getFloatAttr(floatType, 1.0));
         })
         .Default([](Type) {
-          llvm_unreachable("Unsupported type!");
+          llvm::report_fatal_error("Unsupported type!");
           return Value{};
         });
   }
@@ -567,7 +567,7 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
     } else if (syncBlockMode == SyncBlockMode::ALL) {
       insertBlockAll(op, rewriter);
     } else {
-      llvm_unreachable("unsupported sync mode");
+      llvm::report_fatal_error("unsupported sync mode");
     }
     rewriter.eraseOp(op);
     return success();
@@ -612,7 +612,7 @@ struct HIVMSetAtomicOpLowering : public OpRewritePattern<SetAtomicOp> {
       ctrlIdxEnableMap[kAtomicKindBit1] = true;
       break;
     default:
-      llvm_unreachable("unsupported atomic kind");
+      llvm::report_fatal_error("unsupported atomic kind");
     }
 
     if (type.isF32()) {
@@ -640,7 +640,7 @@ struct HIVMSetAtomicOpLowering : public OpRewritePattern<SetAtomicOp> {
       ctrlIdxEnableMap[kAtomicTypeBit1] = true;
       ctrlIdxEnableMap[kAtomicTypeBit2] = true;
     } else {
-      llvm_unreachable("unsupported atomic type");
+      llvm::report_fatal_error("unsupported atomic type");
     }
 
     generateSetCtrlOps(ctrlIdxEnableMap, loc, rewriter, op);
@@ -1266,7 +1266,7 @@ struct DecomposeVSubScalarOp : public OpRewritePattern<hivm::VSubOp> {
               return rewriter.create<arith::SubFOp>(loc, zero, scalarSrc);
             })
             .Default([](Type) {
-              llvm_unreachable("Unsupported type!");
+              llvm::report_fatal_error("Unsupported type!");
               return Value{};
             });
 

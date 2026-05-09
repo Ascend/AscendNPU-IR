@@ -357,7 +357,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
         if ($_op.isElemwiseNaryOp())
           return hivm::detail::getIteratorTypesArrayForElemwiseOp($_op);
 
-        llvm_unreachable("get iterator not implemented");
+        llvm::report_fatal_error("get iterator not implemented");
       }]
     >,
     InterfaceMethod<
@@ -372,7 +372,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
         if ($_op.isElemwiseNaryOp())
            return hivm::detail::setIteratorTypesArrayForElemwiseOp($_op, iteratorType, arrayAttr);
 
-        llvm_unreachable("set iterator not implemented");
+        llvm::report_fatal_error("set iterator not implemented");
       }]
     >,
     InterfaceMethod<
@@ -497,7 +497,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm_unreachable("getIndexingMaps not implemented");
+        llvm::report_fatal_error("getIndexingMaps not implemented");
         return ::mlir::ArrayAttr();
       }]
     >,

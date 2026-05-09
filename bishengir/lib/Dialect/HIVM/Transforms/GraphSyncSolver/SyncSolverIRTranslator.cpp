@@ -520,7 +520,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
   scopeOp->parentOp = parentOp;
 
   if (!isa_and_present<Function>(parentOp) && region.getBlocks().size() > 1) {
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "unsupported non-function region to have multiple blocks.");
   }
 
