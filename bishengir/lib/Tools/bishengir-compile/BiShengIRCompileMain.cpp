@@ -304,9 +304,11 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
 
   auto res = runExternalHIVMC(mod, config);
-  if (res.failed())
-    mod.emitWarning("External hivmc run fails, returning module before running "
-                    "external compiler");
+  if (res.failed()) {
+    mod.emitError("External hivmc run fails, returning module before running "
+                  "external compiler");
+    return failure();
+  }
 
   return OwningModuleRef(mod);
 }
