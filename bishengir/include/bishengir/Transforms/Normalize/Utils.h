@@ -20,7 +20,7 @@
 
 namespace mlir {
 
-enum class UnaryKind { Rec, Sqrt, Abs, Not, Exp };
+enum class UnaryKind { Rec, Sqrt, Abs, Not, Exp, Ln };
 enum class BinaryKind {
   Add,
   Sub,

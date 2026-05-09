@@ -43,15 +43,58 @@ struct HIVMNormalizeErfTraits : public NormalizeTraitsBase {
   }
 };
 
-using NormalizeExp2Op = mlir::NormalizeExp2OpTemplate<VExp2Op,
-                                                      HIVMNormalizeExp2Traits>;
+/// normalize vlogb(x) to vln(x) / vln(b) when log base b is not e
+/// eg.
+/// y = hivm.hir.vlog2 x
+///  is normalized to
+///  y = hivm.hir.vln x / hivm.hir.vln 2
+template <typename OpType, int Base>
+struct HIVMNormalizeLogLikeTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLogLike(OpType op) {
+    return shouldNormalizeNonBroadcastUnaryOp(op);
+  }
+
+  static float getLogBase(OpType) { return static_cast<float>(Base); }
+
+  static Value castBackLogLikeF16Result(PatternRewriter &rewriter, Location loc,
+                                        Value result, Value dst) {
+    return createCastOp(rewriter, loc, result,
+                        getElementTypeOrSelf(dst.getType()),
+                        CastRoundKind::Round);
+  }
+};
+
+/// normalize vlog1p(x) to vln(x + 1)
+/// eg.
+/// y = hivm.hir.vlog1p x
+///  is normalized to
+///  y = hivm.hir.vln (x + 1)
+struct HIVMNormalizeLog1pTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLog1p(hivm::VLog1pOp op) {
+    return shouldNormalizeNonBroadcastUnaryOp(op);
+  }
+};
+
+using NormalizeExp2Op =
+    mlir::NormalizeExp2OpTemplate<VExp2Op, HIVMNormalizeExp2Traits>;
 using NormalizeErfOp =
     mlir::NormalizeErfOpTemplate<VErfOp, HIVMNormalizeErfTraits>;
+using NormalizeVLog2Op =
+    mlir::NormalizeLogLikeOpTemplate<
+        hivm::VLog2Op, HIVMNormalizeLogLikeTraits<hivm::VLog2Op, 2>>;
+using NormalizeVLog10Op =
+    mlir::NormalizeLogLikeOpTemplate<
+        hivm::VLog10Op, HIVMNormalizeLogLikeTraits<hivm::VLog10Op, 10>>;
+using NormalizeVLog1pOp =
+    mlir::NormalizeLog1pOpTemplate<hivm::VLog1pOp, HIVMNormalizeLog1pTraits>;
 
 } // namespace
 
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
+  patterns.add<NormalizeVLog2Op>(ctx);
+  patterns.add<NormalizeVLog10Op>(ctx);
+  patterns.add<NormalizeVLog1pOp>(ctx);
   patterns.add<NormalizeExp2Op>(ctx);
   patterns.add<NormalizeErfOp>(ctx);
 }

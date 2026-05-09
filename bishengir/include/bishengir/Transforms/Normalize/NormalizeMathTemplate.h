@@ -19,9 +19,11 @@
 #define BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEMATHTEMPLATE_H
 
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Transforms/Normalize/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/DestinationStyleOpInterface.h"
 
 #include <cmath>
 
@@ -138,8 +140,8 @@ public:
                                      0.30231248150e4, 0.13243365831e5,
                                      0.26267224157e5};
     Value denom = genPolyExpr(
-        rewriter, loc, square, square, utils::createEmptyOp(rewriter, loc, square),
-        denomCoeff);
+        rewriter, loc, square, square,
+        utils::createEmptyOp(rewriter, loc, square), denomCoeff);
 
     // Step 5: finish the rational approximation numer / denom.
     Value result =
@@ -180,6 +182,104 @@ private:
                                         BinaryKind::Mul);
     }
     return result;
+  }
+};
+
+/// Shared normalize template for base-changing logarithms.
+/// Normalize logb(x) to ln(x) / ln(b) when log base b is not e
+/// eg.
+/// y = hfusion elemwise unary {log2} (x)
+///  is normalized to
+///  y = linalg.elemwise_unary {log}(x) / linalg.elemwise_unary {log}(2)
+template <typename LogLikeOpType, typename Traits>
+struct NormalizeLogLikeOpTemplate : public OpRewritePattern<LogLikeOpType> {
+public:
+  using OpRewritePattern<LogLikeOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(LogLikeOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeLogLike(op))
+      return failure();
+
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value input = dpsOp.getDpsInputs()[0];
+    Value dst = dpsOp.getDpsInits()[0];
+    Type inputElemType = getElementTypeOrSelf(input.getType());
+    if (!inputElemType.isF16() && !inputElemType.isF32())
+      return failure();
+
+    Location loc = op->getLoc();
+    if (inputElemType.isF16())
+      input = Traits::createCastOp(rewriter, loc, input, rewriter.getF32Type(),
+                                   CastRoundKind::Round);
+
+    Value result = logBaseChange(rewriter, loc, op, input);
+
+    if (inputElemType.isF16())
+      result = Traits::castBackLogLikeF16Result(rewriter, loc, result, dst);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value logBaseChange(PatternRewriter &rewriter, Location loc,
+                      LogLikeOpType op, Value input) const {
+    Value lnInit = utils::createEmptyOp(rewriter, loc, input);
+    Value outInit = utils::createEmptyOp(rewriter, loc, input);
+    Value ln = Traits::createUnaryOp(rewriter, loc, input, lnInit,
+                                     UnaryKind::Ln);
+
+    Type elementType = getElementTypeOrSelf(input.getType());
+    Value logBaseValue = rewriter.create<arith::ConstantOp>(
+        loc, elementType,
+        rewriter.getFloatAttr(elementType, Traits::getLogBase(op)));
+
+    Value logBaseTensor =
+        Traits::createFillOp(rewriter, loc, logBaseValue, lnInit);
+    Value lnBase = Traits::createUnaryOp(rewriter, loc, logBaseTensor, lnInit,
+                                         UnaryKind::Ln);
+    return Traits::createBinaryOp(rewriter, loc, ln, lnBase, outInit,
+                                  BinaryKind::Div);
+  }
+};
+
+/// Shared normalize template for `log1p(x)`.
+/// Normalize vlog1p(x) to vln(x + 1)
+/// eg.
+/// y = hivm.hir.vlog1p x
+///  is normalized to
+///  y = hivm.hir.vln (x + 1)
+template <typename Log1pOpType, typename Traits>
+struct NormalizeLog1pOpTemplate : public OpRewritePattern<Log1pOpType> {
+public:
+  using OpRewritePattern<Log1pOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(Log1pOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeLog1p(op))
+      return failure();
+
+    Location loc = op->getLoc();
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value input = dpsOp.getDpsInputs()[0];
+    Type inputElemType = getElementTypeOrSelf(input.getType());
+    if (!inputElemType.isF16() && !inputElemType.isF32())
+      return failure();
+
+    Type elementType = getElementTypeOrSelf(input.getType());
+    Value plusValue = rewriter.create<arith::ConstantOp>(
+        loc, elementType, rewriter.getFloatAttr(elementType, 1.0f));
+    Value add =
+        Traits::createBinaryOp(rewriter, loc, input, plusValue,
+                               utils::createEmptyOp(rewriter, loc, input),
+                               BinaryKind::Add);
+    Value result = Traits::createUnaryOp(rewriter, loc, add,
+                                         utils::createEmptyOp(rewriter, loc, add),
+                                         UnaryKind::Ln);
+
+    rewriter.replaceOp(op, result);
+    return success();
   }
 };
 

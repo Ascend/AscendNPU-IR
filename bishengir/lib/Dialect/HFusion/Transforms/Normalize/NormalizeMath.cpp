@@ -28,92 +28,32 @@ namespace mlir::hfusion {
 /// y = hfusion elemwise unary {log2} (x)
 ///  is normalized to
 ///  y = linalg.elemwise_unary {log}(x) / linalg.elemwise_unary {log}(2)
-struct NormalizeLogLikeOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    auto hfusionFun = op.getFun();
-    if (hfusionFun != hfusion::UnaryFn::log2 &&
-        hfusionFun != hfusion::UnaryFn::log10) {
-      return failure();
-    }
-
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    Value input = op.getDpsInputs()[0];
-    Value output = op.getOutputs()[0];
-    if (inType.isF16()) {
-      // for precision, cast input to fp32 and compute and then cast it back.
-      input = castTo(rewriter, op.getDpsInputs()[0], rewriter.getF32Type());
-      output = castTo(rewriter, op.getOutputs()[0], rewriter.getF32Type());
-    }
-
-    auto res = logBaseChange(rewriter, op, hfusionFun, input, output);
-
-    if (inType.isF16()) {
-      auto roundingAttr =
-          rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
-      auto modeAttr = rewriter.getNamedAttr(
-          hfusion::RoundModeAttr::getMnemonic(), roundingAttr);
-      auto resF16 = rewriter.create<hfusion::CastOp>(
-          op.getLoc(), TypeRange(op.getResults()), ValueRange(res),
-          ValueRange(op.getOutputs()[0]), modeAttr);
-      rewriter.replaceOp(op, resF16);
-    } else {
-      rewriter.replaceOp(op, res);
-    }
-
-    return success();
+struct HFusionNormalizeLogLikeTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLogLike(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    return op.getFun() == hfusion::UnaryFn::log2 ||
+           op.getFun() == hfusion::UnaryFn::log10;
   }
 
-private:
-  float getBaseNum(hfusion::UnaryFn hfusionFun) const {
-    if (hfusionFun == hfusion::UnaryFn::log2) {
-      return 2;
-    } else if (hfusionFun == hfusion::UnaryFn::log10) {
-      return 10;
-    }
+  static float getLogBase(hfusion::ElemwiseUnaryOp op) {
+    if (op.getFun() == hfusion::UnaryFn::log2)
+      return 2.0f;
+    if (op.getFun() == hfusion::UnaryFn::log10)
+      return 10.0f;
     llvm_unreachable("unsupport log op");
   }
 
-  Value logBaseChange(PatternRewriter &rewriter, hfusion::ElemwiseUnaryOp op,
-                      hfusion::UnaryFn hfusionFun, Value input,
-                      Value output) const {
-    auto emptyLnCntOp = utils::createEmptyOp(rewriter, op->getLoc(), input);
-    auto emptyOutOp = utils::createEmptyOp(rewriter, op->getLoc(), output);
-    auto lnOp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                       linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::log, ValueRange{input},
-        ValueRange(emptyLnCntOp));
-
-    auto elementType = getElementTypeOrSelf(input.getType());
-
-    float logBase = getBaseNum(hfusionFun);
-
-    auto logBaseValue = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), elementType, rewriter.getFloatAttr(elementType, logBase));
-
-    auto fillOp = rewriter.create<linalg::FillOp>(
-        op->getLoc(), TypeRange(emptyOutOp), ValueRange{logBaseValue},
-        ValueRange{emptyLnCntOp});
-    auto ln2Op = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::log,
-        ValueRange{fillOp.getResults()[0]}, ValueRange(emptyLnCntOp));
-    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                   linalg::BinaryFnAttr>(
-               rewriter, op->getLoc(), linalg::BinaryFn::div,
-               ValueRange({lnOp->getResults()[0], ln2Op->getResults()[0]}),
-               ValueRange(emptyOutOp))
-        ->getResults()[0];
+  static Value castBackLogLikeF16Result(PatternRewriter &rewriter, Location loc,
+                                        Value result, Value dst) {
+    auto roundingAttr =
+        rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
+    auto modeAttr = rewriter.getNamedAttr(
+        hfusion::RoundModeAttr::getMnemonic(), roundingAttr);
+    return rewriter
+        .create<hfusion::CastOp>(loc, TypeRange(dst.getType()), ValueRange(result),
+                                 ValueRange(dst), modeAttr)
+        .getResult(0);
   }
 };
 
@@ -122,55 +62,19 @@ private:
 /// y = hfusion elemwise unary {log1p} (x)
 ///  is normalized to
 ///  y = linalg.elemwise_unary {log}(x + 1)
-struct NormalizeLog1pOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    auto hfusionFun = op.getFun();
-    if (hfusionFun != hfusion::UnaryFn::log1p) {
-      return failure();
-    }
-
-#ifndef NDEBUG
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-#endif
-
-    auto input = op.getDpsInputs()[0];
-    auto emptyOp = utils::createEmptyOp(rewriter, op->getLoc(), input);
-    auto elementType = getElementTypeOrSelf(input.getType());
-    float logOffset;
-    if (hfusionFun == hfusion::UnaryFn::log1p) {
-      logOffset = 1;
-    } else {
-      llvm_unreachable("unsupport log op");
-    }
-    Value plusValue = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), elementType,
-        rewriter.getFloatAttr(elementType, logOffset));
-    auto addOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op->getLoc(), linalg::BinaryFn::add,
-            ValueRange({input, plusValue}), ValueRange(emptyOp));
-
-    auto emptyResOp = utils::createEmptyOp(rewriter, op->getLoc(), input);
-    auto lnOp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                       linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::log,
-        ValueRange{addOp->getResults()}, ValueRange(emptyResOp));
-
-    rewriter.replaceOp(op, lnOp);
-    return success();
+struct HFusionNormalizeLog1pTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLog1p(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::UnaryFn::log1p;
   }
 };
+
+using NormalizeLogLikeOp =
+    mlir::NormalizeLogLikeOpTemplate<hfusion::ElemwiseUnaryOp,
+                                     HFusionNormalizeLogLikeTraits>;
+using NormalizeLog1pOp =
+    mlir::NormalizeLog1pOpTemplate<hfusion::ElemwiseUnaryOp,
+                                   HFusionNormalizeLog1pTraits>;
 
 ///  normalize mod op to rec op
 ///   z = x % y

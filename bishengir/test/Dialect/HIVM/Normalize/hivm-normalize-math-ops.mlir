@@ -69,3 +69,107 @@ func.func @test_NormalizeErfOp_f16(%src : tensor<8xf16>, %dst : tensor<8xf16>) -
   %ret = hivm.hir.verf ins(%src : tensor<8xf16>) outs(%dst : tensor<8xf16>) -> tensor<8xf16>
   return %ret : tensor<8xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog2_hivm_vlog2
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
+// CHECK: %[[CST:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[ARG0]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LNBASE:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN]], %[[LNBASE]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: return %[[DIV]]
+func.func @test_NormalizeVLog2_hivm_vlog2(%arg0: tensor<1024xf32>) -> tensor<1024xf32> {
+  %0 = tensor.empty() : tensor<1024xf32>
+  %1 = hivm.hir.vlog2 ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
+  return %1 : tensor<1024xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog2_hivm_vlog2_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf16>)
+// CHECK: %[[CST:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[CASTIN:.*]] = hivm.hir.vcast
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[CASTIN]] : tensor<1024xf32>)
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32)
+// CHECK: %[[LNBASE:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<1024xf32>)
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN]], %[[LNBASE]] : tensor<1024xf32>, tensor<1024xf32>)
+// CHECK: %[[CASTOUT:.*]] = hivm.hir.vcast
+// CHECK: return %[[CASTOUT]]
+func.func @test_NormalizeVLog2_hivm_vlog2_f16(%arg0: tensor<1024xf16>) -> tensor<1024xf16> {
+  %0 = tensor.empty() : tensor<1024xf16>
+  %1 = hivm.hir.vlog2 ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
+  return %1 : tensor<1024xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog10_hivm_vlog10
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+01 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[ARG0]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[LNBASE:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN]], %[[LNBASE]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: return %[[DIV]]
+func.func @test_NormalizeVLog10_hivm_vlog10(%arg0: tensor<1024xf32>) -> tensor<1024xf32> {
+  %0 = tensor.empty() : tensor<1024xf32>
+  %1 = hivm.hir.vlog10 ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
+  return %1 : tensor<1024xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog10_hivm_vlog10_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf16>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+01 : f32
+// CHECK: %[[CASTIN:.*]] = hivm.hir.vcast
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[CASTIN]] : tensor<1024xf32>)
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32)
+// CHECK: %[[LNBASE:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<1024xf32>)
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN]], %[[LNBASE]] : tensor<1024xf32>, tensor<1024xf32>)
+// CHECK: %[[CASTOUT:.*]] = hivm.hir.vcast
+// CHECK: return %[[CASTOUT]]
+func.func @test_NormalizeVLog10_hivm_vlog10_f16(%arg0: tensor<1024xf16>) -> tensor<1024xf16> {
+  %0 = tensor.empty() : tensor<1024xf16>
+  %1 = hivm.hir.vlog10 ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
+  return %1 : tensor<1024xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog1p_hivm_vlog1p
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[ADD:.*]] = hivm.hir.vadd ins(%[[ARG0]], %[[CST]] : tensor<1024xf32>, f32) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[ADD]] : tensor<1024xf32>) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: return %[[LN]]
+func.func @test_NormalizeVLog1p_hivm_vlog1p(%arg0: tensor<1024xf32>) -> tensor<1024xf32> {
+  %0 = tensor.empty() : tensor<1024xf32>
+  %1 = hivm.hir.vlog1p ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
+  return %1 : tensor<1024xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLog1p_hivm_vlog1p_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf16>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f16
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[ADD:.*]] = hivm.hir.vadd ins(%[[ARG0]], %[[CST]] : tensor<1024xf16>, f16) outs(%[[EMPTY0]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[LN:.*]] = hivm.hir.vln ins(%[[ADD]] : tensor<1024xf16>) outs(%[[EMPTY1]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: return %[[LN]]
+func.func @test_NormalizeVLog1p_hivm_vlog1p_f16(%arg0: tensor<1024xf16>) -> tensor<1024xf16> {
+  %0 = tensor.empty() : tensor<1024xf16>
+  %1 = hivm.hir.vlog1p ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
+  return %1 : tensor<1024xf16>
+}

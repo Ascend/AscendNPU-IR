@@ -63,6 +63,7 @@ static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
     {UnaryKind::Abs, createHIVMUnaryOp<hivm::VAbsOp>},
     {UnaryKind::Not, createHIVMUnaryOp<hivm::VNotOp>},
     {UnaryKind::Exp, createHIVMUnaryOp<hivm::VExpOp>},
+    {UnaryKind::Ln, createHIVMUnaryOp<hivm::VLnOp>},
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
