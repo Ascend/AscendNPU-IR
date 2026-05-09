@@ -19,6 +19,7 @@ readonly LONG_OPTS=(
   "build:"
   "build-bishengir-so"
   "build-template"
+  "coverage"
   "disable-cann"
   "build-bishengir-doc"
   "build-test"
@@ -130,6 +131,7 @@ BISHENGIR_PUBLISH="OFF"
 BUILD_TARGETS="host"
 BISHENGIR_BUILD_TEMPLATE="OFF"
 BUILD_DIR="${GIT_ROOT}/build"
+COVERAGE="OFF"
 
 # help infomation
 usage() {
@@ -144,6 +146,7 @@ usage() {
                 [--shared-libs] [--add-cmake-options CMAKE_OPTIONS] [--disable-ccache] [--safety_options]
                 [--safety_ld_options] [--skip_rpath] [--install-prefix INSTALL_PREFIX] [--fast-build]
                 [--build-torch-mlir] [--build-triton] [--enalbe-pydsl] [--bishengir-publish] [--build-bishengir-doc]
+                [--coverage]
 
     Options:
       -h, --help                           Print this help message
@@ -181,6 +184,9 @@ usage() {
       --enable-pydsl                       Enable the PyDSL(BiShengTile) project.
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: OFF)
       -t, --build-bishengir-template       Build BiShengIR Template (Default: OFF)
+      --coverage                           Build with gcov-compatible coverage instrumentation
+                                           (adds -fprofile-arcs -ftest-coverage -fprofile-update=atomic).
+                                           Use clang/clang++.
       "
 }
 
@@ -238,6 +244,10 @@ while true; do
     ;;
   --build-bishengir-doc)
     BUILD_BISHENGIR_DOC="ON"
+    shift
+    ;;
+  --coverage)
+    COVERAGE="ON"
     shift
     ;;
   --build-type)
@@ -409,6 +419,20 @@ cmake_generate() {
   C_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wstrict-prototypes"
   CXX_FLAGS="${SAFETY_OPTIONS} ${COMMON_FLAGS} -Wnon-virtual-dtor -Wno-unknown-warning-option"
   LD_FLAGS="${SAFETY_LD_OPTIONS} -Wl,-Bsymbolic-functions -rdynamic"
+  local cmake_c_flags="${SAFETY_OPTIONS}"
+  local cmake_cxx_flags="${SAFETY_OPTIONS}"
+  local cmake_exe_linker_flags="${SAFETY_LD_OPTIONS}"
+  local cmake_module_linker_flags="${SAFETY_LD_OPTIONS}"
+  local cmake_shared_linker_flags="${SAFETY_LD_OPTIONS}"
+  if [ "${COVERAGE}" = "ON" ]; then
+    local coverage_compile_flags="-fprofile-arcs -ftest-coverage -fprofile-update=atomic"
+    local coverage_link_flags="--coverage"
+    cmake_c_flags="${cmake_c_flags} ${coverage_compile_flags}"
+    cmake_cxx_flags="${cmake_cxx_flags} ${coverage_compile_flags}"
+    cmake_exe_linker_flags="${cmake_exe_linker_flags} ${coverage_link_flags}"
+    cmake_module_linker_flags="${cmake_module_linker_flags} ${coverage_link_flags}"
+    cmake_shared_linker_flags="${cmake_shared_linker_flags} ${coverage_link_flags}"
+  fi
   echo "cmake $LLVM_SOURCE_DIR/llvm -G Ninja \
             -DCMAKE_C_COMPILER="${C_COMPILER}" \
             -DCMAKE_CXX_COMPILER="${CXX_COMPILER}" \
@@ -437,11 +461,11 @@ cmake_generate() {
             -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5=ON\
             -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5_NPUIR=ON\
             -DLLVM_CCACHE_BUILD="${build_ccache_build}" \
-            -DCMAKE_C_FLAGS="${SAFETY_OPTIONS}" \
-            -DCMAKE_CXX_FLAGS="${SAFETY_OPTIONS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
-            -DCMAKE_MODULE_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
+            -DCMAKE_C_FLAGS="${cmake_c_flags}" \
+            -DCMAKE_CXX_FLAGS="${cmake_cxx_flags}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${cmake_exe_linker_flags}" \
+            -DCMAKE_MODULE_LINKER_FLAGS="${cmake_module_linker_flags}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${cmake_shared_linker_flags}" \
             -DCMAKE_SKIP_RPATH="${build_skip_rpath_option}" \
             -DLLVM_INSTALL_UTILS=ON \
             -DBISHENGIR_PUBLISH="${BISHENGIR_PUBLISH}" \
@@ -479,11 +503,11 @@ cmake_generate() {
     -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5=ON\
     -DLLVM_BSPUB_DAVINCI_BISHENGIR_A5_NPUIR=ON\
     -DLLVM_CCACHE_BUILD="${build_ccache_build}" \
-    -DCMAKE_C_FLAGS="${SAFETY_OPTIONS}" \
-    -DCMAKE_CXX_FLAGS="${SAFETY_OPTIONS}" \
-    -DCMAKE_EXE_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
-    -DCMAKE_MODULE_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
-    -DCMAKE_SHARED_LINKER_FLAGS="${SAFETY_LD_OPTIONS}" \
+    -DCMAKE_C_FLAGS="${cmake_c_flags}" \
+    -DCMAKE_CXX_FLAGS="${cmake_cxx_flags}" \
+    -DCMAKE_EXE_LINKER_FLAGS="${cmake_exe_linker_flags}" \
+    -DCMAKE_MODULE_LINKER_FLAGS="${cmake_module_linker_flags}" \
+    -DCMAKE_SHARED_LINKER_FLAGS="${cmake_shared_linker_flags}" \
     -DCMAKE_SKIP_RPATH="${build_skip_rpath_option}" \
     -DLLVM_INSTALL_UTILS=ON \
     -DBISHENGIR_PUBLISH="${BISHENGIR_PUBLISH}" \
