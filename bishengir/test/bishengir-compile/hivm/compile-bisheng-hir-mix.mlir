@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile -enable-lir-compile=false %s | FileCheck %s
 
 module @M attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {

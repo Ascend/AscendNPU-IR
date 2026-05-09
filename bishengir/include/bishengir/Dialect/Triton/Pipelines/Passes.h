@@ -51,7 +51,8 @@ struct LowerTritonPipelineOptions
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableSimtReorderInstruction{
       *this, "enable-simt-reorder-instruction",
-      llvm::cl::desc("enable simt reorder instruction pattern"), llvm::cl::init(false)};
+      llvm::cl::desc("enable simt reorder instruction pattern"),
+      llvm::cl::init(false)};
   PassOptions::Option<bool> enableSIMTFastDiv{
       *this, "enable-simt-fast-div",
       llvm::cl::desc("enable SIMT fast division optimization"),
@@ -64,6 +65,10 @@ struct LowerTritonPipelineOptions
       *this, "triton-metadata-output",
       llvm::cl::desc("File to dump triton metadata. -- means stdout"),
       llvm::cl::init("")};
+  PassOptions::Option<bool> enableSIMTAutoBlockify{
+      *this, "enable-simt-auto-blockify",
+      llvm::cl::desc("Enable auto blockify for SIMT kernel"),
+      llvm::cl::init(false)};
   mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 };
 

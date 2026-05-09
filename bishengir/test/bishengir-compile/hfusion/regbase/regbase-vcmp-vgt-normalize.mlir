@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=1 -target=Ascend310B4  \
 // RUN: -enable-triton-kernel-compile=true %s | FileCheck %s
 

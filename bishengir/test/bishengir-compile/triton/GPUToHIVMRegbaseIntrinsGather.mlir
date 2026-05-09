@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile -target=Ascend950PR_9589 -enable-hfusion-compile=true -enable-triton-kernel-compile -mix-simt -enable-lir-compile=false %s | FileCheck %s
 // XFAIL: *
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {

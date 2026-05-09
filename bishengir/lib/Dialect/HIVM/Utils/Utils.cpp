@@ -157,6 +157,19 @@ FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
   return getMemRefForOpResult(result);
 }
 
+SmallVector<Value> getMemRefAllocs(Value operand) {
+  if (auto selectOp = operand.getDefiningOp<arith::SelectOp>()) {
+    SmallVector<Value> results = getMemRefAllocs(selectOp.getTrueValue());
+    SmallVector<Value> falseResults = getMemRefAllocs(selectOp.getFalseValue());
+    results.append(falseResults);
+    return results;
+  }
+  FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
+  if (failed(alloc))
+    return {};
+  return SmallVector<Value>{*alloc};
+}
+
 // New helper function to get the updated BaseMemRefType
 BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope) {

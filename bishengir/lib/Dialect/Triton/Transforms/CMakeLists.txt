@@ -14,6 +14,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLoads.cpp
     SetBishengirSimtOptAttr.cpp
     PopulateSharedMemoryOffsetToDPX.cpp
+    SIMTAutoBlockify.cpp
     SIMTFastDiv.cpp
     LoopRestructureArangeOptimization.cpp
     EnableAscendDPXMMA.cpp

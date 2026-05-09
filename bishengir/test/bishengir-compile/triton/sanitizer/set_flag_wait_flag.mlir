@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-sanitizer=true %s | FileCheck %s
 
 // CHECK-DAG: call void @llvm.hivm.SET.FLAG.IMM({{.*}}, {{.*}}, {{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[S_API:.*]], !asan.stub.mangling.name ![[S_STUB:.*]]

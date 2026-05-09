@@ -1,3 +1,5 @@
+// REQUIRES: enable-lir-compile
+
 // RUN: bishengir-compile --enable-hfusion-compile=true \
 // RUN:                   --target=Ascend950PR_9589 \
 // RUN:                   --enable-triton-kernel-compile=true \

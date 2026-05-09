@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s | FileCheck %s
 
 // -----

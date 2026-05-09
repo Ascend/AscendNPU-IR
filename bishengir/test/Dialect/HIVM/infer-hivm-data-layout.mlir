@@ -585,3 +585,69 @@ func.func @mm_erase_convert_layout_op(%arg0: memref<128x128xf16, strided<[?, ?],
   hivm.hir.mmadL1 ins(%2, %alloc_0, %true, %c0, %c0, %c0 : memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%alloc_2 : memref<128x128xf32, #hivm.address_space<cc>>)
   return
 }
+
+// -----
+// CHECK-LABEL: test_select_op_data_layout
+// Test that arith.select between two double-buffered allocs feeds into mmadL1
+// and both loads are converted to nd2nz.
+func.func @test_select_op_data_layout(%arg0: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg1: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32) attributes {func_dyn_memref_args = dense<[true, true, true, false, false, false]> : vector<6xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, mix_mode = "mix"} {
+  %c128 = arith.constant 128 : index
+  %c2 = arith.constant 2 : index
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %true = arith.constant true
+  %false = arith.constant false
+  %c0_i32 = arith.constant 0 : i32
+  %c128_i32 = arith.constant 128 : i32
+
+  // Double-buffered allocs
+  %alloc = memref.alloc() : memref<128x128xf16, #hivm.address_space<cbuf>>
+  %alloc_0 = memref.alloc() : memref<128x128xf16, #hivm.address_space<cbuf>>
+
+  %10:4 = scf.for %arg6 = %c0_i32 to %c128_i32 step %c128_i32 iter_args(%arg7 = %false, %arg8 = %false, %arg9 = %c0, %arg10 = %c0) -> (i1, i1, index, index) : i32 {
+    %11 = arith.cmpi eq, %arg7, %false : i1
+    %12 = arith.select %11, %true, %arg7 : i1
+
+    // Load from GM to alloc — should be converted to nd2nz
+    %offset1 = arith.index_cast %arg9 : index to i32
+    %offset1_64 = arith.extsi %offset1 : i32 to i64
+    %offset1_idx = arith.index_cast %offset1_64 : i64 to index
+    %reinterpret1 = memref.reinterpret_cast %arg0 to offset: [%offset1_idx], sizes: [128, 128], strides: [128, 1] : memref<?xf16, #hivm.address_space<gm>> to memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>
+    // CHECK: hivm.hir.nd2nz
+    hivm.hir.load ins(%reinterpret1 : memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>) outs(%alloc : memref<128x128xf16, #hivm.address_space<cbuf>>) eviction_policy = <EvictFirst>
+
+    // Load from GM to alloc_0 — should also be converted to nd2nz
+    %offset2 = arith.index_cast %arg10 : index to i32
+    %offset2_64 = arith.extsi %offset2 : i32 to i64
+    %offset2_idx = arith.index_cast %offset2_64 : i64 to index
+    %reinterpret2 = memref.reinterpret_cast %arg0 to offset: [%offset2_idx], sizes: [128, 128], strides: [128, 1] : memref<?xf16, #hivm.address_space<gm>> to memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>
+    // CHECK: hivm.hir.nd2nz
+    hivm.hir.load ins(%reinterpret2 : memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>) outs(%alloc_0 : memref<128x128xf16, #hivm.address_space<cbuf>>) eviction_policy = <EvictFirst>
+
+    // Select between double buffers — should be rewritten with new shapes
+    %21 = arith.remui %arg10, %c2 : index
+    %22 = arith.cmpi eq, %21, %c0 : index
+    %selected = arith.select %22, %alloc, %alloc_0 : memref<128x128xf16, #hivm.address_space<cbuf>>
+    // CHECK: arith.select {{.*}} : memref<?x?x?x?xf16
+
+    // B operand load — should also be converted to nd2nz
+    %b_offset = arith.index_cast %arg9 : index to i32
+    %b_offset_64 = arith.extsi %b_offset : i32 to i64
+    %b_offset_idx = arith.index_cast %b_offset_64 : i64 to index
+    %reinterpret_b = memref.reinterpret_cast %arg1 to offset: [%b_offset_idx], sizes: [128, 128], strides: [128, 1] : memref<?xf16, #hivm.address_space<gm>> to memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>
+    %alloc_b = memref.alloc() : memref<128x128xf16, #hivm.address_space<cbuf>>
+    // CHECK: hivm.hir.nd2nz
+    hivm.hir.load ins(%reinterpret_b : memref<128x128xf16, strided<[128, 1], offset: ?>, #hivm.address_space<gm>>) outs(%alloc_b : memref<128x128xf16, #hivm.address_space<cbuf>>) eviction_policy = <EvictFirst>
+
+    %alloc_c = memref.alloc() {alignment = 64 : i64} : memref<128x128xf32, #hivm.address_space<cc>>
+    // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: ins({{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index)
+    // CHECK-SAME: outs({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+    hivm.hir.mmadL1 {already_set_real_mkn, b_transpose} ins(%selected, %alloc_b, %true, %c128, %c128, %c128 : memref<128x128xf16, #hivm.address_space<cbuf>>, memref<128x128xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%alloc_c : memref<128x128xf32, #hivm.address_space<cc>>)
+
+    %next = arith.addi %arg10, %c1 : index
+    scf.yield %12, %12, %next, %next : i1, i1, index, index
+  }
+
+  return
+}

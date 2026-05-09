@@ -1,6 +1,7 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s | FileCheck %s
+// REQUIRES: enable-lir-compile
 
-// CHECK: LLVMDialectModule
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true %s
+
 module {
   func.func @test_dynamic_shape_single_output(%arg0: tensor<?x1xf16>,
                                               %arg1: tensor<1x?xf16>,

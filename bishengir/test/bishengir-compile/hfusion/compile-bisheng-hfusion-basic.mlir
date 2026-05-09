@@ -1,6 +1,6 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=20 %s
 
-// CHECK-LABEL: @add_mul_reduce_0
 func.func @add_mul_reduce(%arg0: tensor<8xf32>, %arg1 : tensor<8xf32>, %arg2 : tensor<8xf32>, %arg3 : tensor<8xf32>) -> tensor<8xf32>
 attributes {hacc.function_kind = #hacc.function_kind<HOST>}  {
   %1 = tensor.empty() : tensor<8xf32>

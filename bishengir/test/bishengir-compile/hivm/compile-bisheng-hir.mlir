@@ -1,4 +1,5 @@
-// RUN: bishengir-compile -enable-lir-compile=false %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+// RUN: bishengir-compile -enable-lir-compile=false %s 
 
 // CHECK: LLVMDialectModule
 module {

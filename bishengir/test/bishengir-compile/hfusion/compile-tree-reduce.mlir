@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -enable-lir-compile=false --enable-tree-reduce=true -enable-hfusion-compile=true -enable-hivm-compile=true --enable-triton-kernel-compile=true     --target=Ascend950PR_9589  %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -enable-lir-compile=false --enable-tree-reduce=true -enable-hfusion-compile=true -enable-hivm-compile=true --enable-triton-kernel-compile=true     --target=Ascend950PR_9589  %s
 
 // -----
 

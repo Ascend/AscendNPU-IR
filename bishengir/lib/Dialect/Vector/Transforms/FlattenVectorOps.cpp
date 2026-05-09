@@ -123,7 +123,7 @@ std::optional<Value> collapseAllDims(Value value, OpBuilder &builder,
   Type typeWithAttr = setUBMemScopeAttr(resultType, ctx);
 
   SmallVector<ReassociationIndices> reassociations = {
-      llvm::to_vector(llvm::seq(0L, rank))};
+      llvm::to_vector(llvm::seq<int64_t>(0, rank))};
   Value collapse = builder.create<memref::CollapseShapeOp>(
       loc, typeWithAttr, value, reassociations);
   setUBMemScopeAttr(collapse, ctx);

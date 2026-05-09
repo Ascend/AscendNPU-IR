@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/Utility.h"
+#include "bishengir/Pass/PassManager.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/Parser/Parser.h"
@@ -15,6 +16,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -83,7 +85,7 @@ LogicalResult execute(StringRef binName, StringRef installPath,
 }
 
 LogicalResult checkOptionValidity(const BiShengIRCompileMainConfig &config) {
-  const std::string outputFile = config.outputFile();
+  const std::string outputFile = config.getOutputFile();
   if (outputFile == "-")
     return success();
 
@@ -114,7 +116,7 @@ runPipeline(ModuleOp mod,
                 &buildPipeline,
             const BiShengIRCompileMainConfig &config,
             const std::string &pipelineName) {
-  bishengir::BiShengIRPassManager passManager(mod->getContext(),
+  bishengir::BiShengIRPassManager passManager(config, mod->getContext(),
                                               ModuleOp::getOperationName(),
                                               OpPassManager::Nesting::Implicit);
   buildPipeline(passManager, config);
@@ -126,10 +128,10 @@ runPipeline(ModuleOp mod,
   (void)bishengir::applyPassManagerCLOptions(passManager);
 
   // Add InjectIR instrumentation if any of the options are enabled.
-  if (config.shouldPrintPassId() || !config.getInjectIrBefore().empty() ||
+  if (config.getPrintPassId() || !config.getInjectIrBefore().empty() ||
       !config.getInjectIrAfter().empty()) {
     passManager.addInstrumentation(std::make_unique<InjectIRInstrumentation>(
-        config.shouldPrintPassId(), config.getInjectIrBefore(),
+        config.getPrintPassId(), config.getInjectIrBefore(),
         config.getInjectIrAfter()));
   }
 
@@ -143,9 +145,12 @@ runPipeline(ModuleOp mod,
 void TempDirectoriesStore::assertInsideTmp(StringTmpPath path) const {
   llvm::cantFail(llvm::errorCodeToError(canonicalizePath(path)),
                  "failed to canonicalize temp path.");
-  if (!path.starts_with("/tmp")) {
-    llvm_unreachable("unexpected temp folder created outside of /tmp");
-  }
+  StringTmpPath tmpRoot;
+  llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/true, tmpRoot);
+  llvm::cantFail(llvm::errorCodeToError(canonicalizePath(tmpRoot)),
+                 "failed to canonicalize system temp path.");
+  if (!path.starts_with(tmpRoot))
+    llvm_unreachable("unexpected temp folder created outside of system temp");
 }
 
 std::unique_ptr<llvm::ToolOutputFile>
@@ -243,7 +248,7 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     return WalkResult::advance();
   });
   if (foundDotScaled) {
-    config.mixedCV(false);
+    config.setEnableMixedCV(false);
     return success();
   }
 
@@ -254,14 +259,14 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
       }))
     return failure();
 
-  config.mixedCV(first != StringRef{"aiv"});
+  config.setEnableMixedCV(first != StringRef{"aiv"});
   return success();
 }
 
 llvm::LogicalResult
 inferDotScale(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
   module.walk([&](hfusion::MatMulMxOp op) {
-    config.compileDotScaled(true);
+    config.setEnableDotScaledCompile(true);
     return WalkResult::interrupt();
   });
   return success();

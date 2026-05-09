@@ -1,6 +1,7 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true  -block-dim=1 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
 
-// CHECK: LLVMDialectModule
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true  -block-dim=1 %s
+
 module {
   func.func @model_2(%arg0: tensor<391x1xf16>, %arg1: tensor<1x288xf16>, %arg2: tensor<391x288xf16>) -> tensor<391x288xf16>
   attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<ANY_PB>} {

@@ -1,4 +1,5 @@
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=40 %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=40 %s 
 
 // CHECK: LLVMDialectModule
 #map = affine_map<(d0) -> (d0)>

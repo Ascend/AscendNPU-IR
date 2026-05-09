@@ -62,8 +62,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   // space-specific memref into a pure to_tensor + memory_space_cast. It is
   // recommended to do this in canonicalization pass
 
-  if (hacc::utils::isAscend950(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target)) &&
+  if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
       !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     if (hivmPipelineOptions.enableLayoutOptimization) {
@@ -85,11 +84,11 @@ hivmIntraCoreSyncPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
       !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
     GraphSyncSolverOptions gssOptions;
-    gssOptions.enableUnitFlag = hivmPipelineOptions.enableUnitFlagSync;
+    gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
   } else {
     InjectSyncOptions syncOptions;
-    syncOptions.enableUnitFlag = hivmPipelineOptions.enableUnitFlagSync;
+    syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     if (hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
       syncOptions.syncMode = SyncMode::BARRIERALL;
     }
@@ -109,11 +108,12 @@ hivmCrossCoreSyncPipeline(OpPassManager &pm,
   canonicalizationHIVMPipeline(pm);
   pm.addPass(createMarkRealCoreTypePass());
   if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
-      !hivmPipelineOptions.enableInjectBlockAllSync) {
+      !hivmPipelineOptions.enableHIVMInjectBlockAllSync) {
     pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
   } else {
     InjectBlockSyncOptions blockSyncOption;
-    blockSyncOption.blockAllSync = hivmPipelineOptions.enableInjectBlockAllSync;
+    blockSyncOption.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
     pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
   }
   // Clear inserted core-type attributes as they are not needed for other
@@ -171,8 +171,7 @@ bufferizationPipeline(OpPassManager &pm,
 
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
-  if (!hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+  if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     // HIVM brc/reduce op's operands have the same rank, so after
     // converting from Linalg/HFusion to HIVM, reshape ops will be
     // inserted. Need to propagate them.
@@ -213,8 +212,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
   } else {
-    if (hacc::utils::isAscend950(
-            hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+    if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
       pm.addPass(createInsertL12UBForDebugPass());
     } else {
       pm.addPass(createInsertNZ2NDForDebugPass());
@@ -241,22 +239,23 @@ static void hivmPreBufferizationOptimizationPipeline(
   multiBufferOptions.limitAutoMultiBufferOfLocalBuffer =
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
-      hivmPipelineOptions.limitMixAutoMultiBufferBuffer;
+      hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
-      hivmPipelineOptions.workspaceMultiBufferNum;
+      hivmPipelineOptions.setWorkspaceMultibuffer;
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
   ADD_CANONICALIZER_PASS;
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
   if (hivmPipelineOptions.enableMixedCV) {
-    if (hivmPipelineOptions.workspaceMultiBufferNum > 1) {
+    if (hivmPipelineOptions.setWorkspaceMultibuffer > 1) {
       pm.nest<func::FuncOp>().addPass(
           mlir::hivm::createSplitMixedIfConditionalsPass());
     }
     // Software pipelining Cube and Vector operations
     CVPipeliningOptions pipelineOptions;
-    pipelineOptions.pipelineDepth = (int)hivmPipelineOptions.workspaceMultiBufferNum;
+    pipelineOptions.pipelineDepth =
+        (int)hivmPipelineOptions.setWorkspaceMultibuffer;
     pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
   }
@@ -266,14 +265,13 @@ static void hivmPreBufferizationOptimizationPipeline(
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
   planMemoryOption.enableGlobalReuse =
-      hivmPipelineOptions.enableGlobalWorkspaceReuse;
+      hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
-  if (hacc::utils::isRegBasedArch(
-      hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     pm.addPass(createNormalizeFixpipePass());
   }
 
@@ -309,7 +307,7 @@ static void
 alignStoragePipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.addPass(createAlignAllocSizePass());
-  if (hivmPipelineOptions.enableAutoStorageAlign) {
+  if (hivmPipelineOptions.enableHIVMAutoStorageAlign) {
     pm.nest<func::FuncOp>().addPass(createMarkStrideAlignPass());
   }
   pm.nest<func::FuncOp>().addPass(memref::createFoldAllocReshapePass());
@@ -328,8 +326,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(
       createInsertInferSyncBlockLockNumAndInitFuncPass());
   pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
-  if (hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     // make sure no alloc within vf and no value returned by vf,
     // so InferHIVMMemScope can work correctly
     pm.addPass(createOutlineAllocInVFPass());
@@ -352,8 +349,7 @@ static void hivmPostBufferizationOptimizationPipeline(
       bishengir::DecomposePhase::BEFORE_HIVM_STRIDE_ALIGNMENT;
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
-  if (!hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+  if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     // Transform uncontinuous access to deinterleave op
     pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDeinterleaveOpPass());
     decomposeOption.decomposePhase =
@@ -397,8 +393,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createReduceRankSubviewPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   pm.nest<func::FuncOp>().addPass(createAllocExtraBufferPass());
-  if (hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     // make sure no alloc within vf and no value returned by vf,
     // so InferHIVMMemScope can work correctly
     pm.addPass(createOutlineAllocInVFPass());
@@ -416,7 +411,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   multiBufferOptions.limitAutoMultiBufferOfLocalBuffer =
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
-      hivmPipelineOptions.limitMixAutoMultiBufferBuffer;
+      hivmPipelineOptions.limitAutoMultiBufferBuffer;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;
@@ -437,8 +432,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   canonicalizationHIVMPipeline(pm);
   if (!hivmPipelineOptions.enableDirectHIVMLowering &&
-      hacc::utils::isRegBasedArch(
-          hacc::symbolizeTargetDeviceEnum(hivmPipelineOptions.target))) {
+      hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     pm.nest<func::FuncOp>().addPass(arith::createNormalizeArithPass());
     pm.nest<func::FuncOp>().addPass(arith::createLiftArithIndexCastPass());
     pm.nest<func::FuncOp>().addPass(
@@ -496,7 +490,7 @@ void buildLowerHIVMPipelines(OpPassManager &pm,
   pm.addPass(
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
   pm.addPass(
-      bishengir::createInjectIRPass(hivmPipelineOptions.injectIrFromFile));
+      bishengir::createInjectIRPass(hivmPipelineOptions.injectIRFromFile));
 }
 
 //===----------------------------------------------------------------------===//

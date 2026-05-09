@@ -1,4 +1,6 @@
  // REQUIRES: issue893
+ // REQUIRES: enable-lir-compile
+
  // RUN: bishengir-compile -enable-triton-kernel-compile -enable-lir-compile=false -enable-hfusion-compile -block-dim=1 -target=Ascend310B4  %s | FileCheck %s
 
 module {

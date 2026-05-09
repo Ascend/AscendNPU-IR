@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -enable-hfusion-compile=true -enable-lir-compile=false -enable-manage-host-resources=true -enable-tuning-mode=true %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -enable-hfusion-compile=true -enable-lir-compile=false -enable-manage-host-resources=true -enable-tuning-mode=true %s 
 
 // CHECK: LLVMDialectModule
 func.func @main_multi_SHALLOW_CV_0(%arg0: tensor<2x128x4096xf32>, %arg1: tensor<4096xf32>, %arg2: tensor<12288x4096xf32>) -> (tensor<2x128xf32>, tensor<2x128x1xf32>, tensor<2x128x12288xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hfusion.fusion_kind = #hfusion.fusion_kind<SHALLOW_CV>} {

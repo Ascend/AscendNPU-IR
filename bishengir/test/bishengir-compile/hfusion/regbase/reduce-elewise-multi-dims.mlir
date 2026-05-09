@@ -1,4 +1,6 @@
-// RUN: bishengir-compile -target=Ascend310B4 --enable-hfusion-compile=true  --enable-triton-kernel-compile=true -enable-lir-compile=false  %s | FileCheck %s
+// REQUIRES: enable-lir-compile
+
+// RUN: bishengir-compile -target=Ascend310B4 --enable-hfusion-compile=true  --enable-triton-kernel-compile=true -enable-lir-compile=false %s
 
 module {
 // CHECK-LABEL: triton_mul_reduce_4d_5d

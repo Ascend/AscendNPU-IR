@@ -120,6 +120,11 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
 /// AllocOp.
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand);
 
+/// Collect all root memref allocs for the input operand.
+/// Unlike getMemRefAlloc which returns failure for arith::SelectOp, this
+/// function recursively collects allocs from both branches of a SelectOp.
+SmallVector<Value> getMemRefAllocs(Value operand);
+
 SmallVector<Value>
 getValueListFromMixedTypeLists(SmallVector<Value> dynamicValues,
                                ArrayRef<int64_t> staticValues, Location loc,

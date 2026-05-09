@@ -207,8 +207,8 @@ public:
         static_cast<unsigned>(oldpadOp.getResultType().getRank());
     if (padrank != oldPadrank)
       return failure();
-    SmallVector<long> newTotalHigh;
-    SmallVector<long> newTotalLow;
+    SmallVector<int64_t> newTotalHigh;
+    SmallVector<int64_t> newTotalLow;
     SmallVector<OpFoldResult> newHighFold;
     SmallVector<OpFoldResult> newLowFold;
     llvm::ArrayRef<int64_t> oldHighStatic = oldpadOp.getStaticHigh();

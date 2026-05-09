@@ -17,6 +17,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/VersionTuple.h"
 #include <functional>
+#include <set>
 
 #define DEBUG_TYPE "bishengir-compile"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -66,7 +67,7 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
         attrName, createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
   };
 
-  if(hacc::utils::isAscend950(config.getTargetBackend())) {
+  if (hacc::utils::isAscend950(config.getTarget())) {
     addIfExists("meta_op.aic.c310.bc", mlir::hivm::AIC_BITCODEAttr::name,
                 [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                   return mlir::hivm::AIC_BITCODEAttr::get(c, s);
@@ -108,18 +109,23 @@ static void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
 }
 
 static std::vector<std::string>
-skipOptions(const std::vector<std::string> &options,
-            const std::set<std::string> &skip) {
+filterSharedHIVMCOptions(const std::vector<std::string> &options) {
   std::vector<std::string> result;
   for (const std::string &arg : options) {
     StringRef argRef = arg;
+    // Keep the fixed input/output wiring in runExternalHIVMC unchanged and
+    // only filter user-facing options that may be forwarded to hivmc.
+    if (!argRef.starts_with("-")) {
+      continue;
+    }
     SmallVector<StringRef> parts;
     argRef.split(parts, '=');
     if (parts.empty()) {
       continue;
     }
     std::string trimArg = parts[0].trim().ltrim('-').str();
-    if (skip.count(trimArg) != 0) {
+    if (!BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(
+            trimArg)) {
       continue;
     }
     result.push_back(arg);
@@ -127,12 +133,40 @@ skipOptions(const std::vector<std::string> &options,
   return result;
 }
 
+static std::vector<std::string>
+skipOptions(const std::vector<std::string> &options,
+            const std::set<std::string> &skip) {
+  std::vector<std::string> result;
+  for (const std::string &arg : options) {
+    StringRef argRef = arg;
+    SmallVector<StringRef> parts;
+    argRef.split(parts, '=');
+    if (parts.empty())
+      continue;
+    std::string trimArg = parts[0].trim().ltrim('-').str();
+    if (skip.count(trimArg) != 0)
+      continue;
+    result.push_back(arg);
+  }
+  return result;
+}
+
+static bool hasCLIArg(const std::vector<std::string> &arguments,
+                      StringRef argName) {
+  return llvm::any_of(arguments, [&](const std::string &arg) {
+    StringRef argRef = arg;
+    if (!argRef.starts_with("-"))
+      return false;
+    return argRef.ltrim('-').split('=').first == argName;
+  });
+}
+
 llvm::LogicalResult
 runExternalHIVMC(ModuleOp &module,
                  const bishengir::BiShengIRCompileMainConfig &config) {
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
-  std::string outputFile = config.outputFile();
+  std::string outputFile = config.getOutputFile();
 
   auto inputFileHandler = getTempFile(inputFile, tempDirsStore);
   if (!inputFileHandler) {
@@ -144,19 +178,22 @@ runExternalHIVMC(ModuleOp &module,
   inputFile = inputFileHandler->outputFilename();
 
   module.print(inputFileHandler->os(), mlir::OpPrintingFlags().enableDebugInfo(
-                                           config.shouldEnableSanitizer() ||
-                                           config.shouldEnableDebugInfo()));
+                                           config.getEnableSanitizer() ||
+                                           config.getEnableDebugInfo()));
   inputFileHandler->os().flush();
 
   std::vector<std::string> arguments;
   arguments.push_back("");
   arguments.push_back(inputFile);
 
-  auto clArgs = config.getClArgs();
-  llvm::copy_if(clArgs, std::back_inserter(arguments),
-                [](const std::string &arg) {
-                  return !llvm::StringRef(arg).starts_with("--proton-");
-                });
+  auto hivmcOptions = filterSharedHIVMCOptions(config.getHIVMCArgsDashDash());
+  llvm::append_range(arguments, hivmcOptions);
+  for (const auto &arg : filterSharedHIVMCOptions(config.getClArgs())) {
+    auto argName = StringRef(arg).ltrim('-').split('=').first;
+    if (!hasCLIArg(arguments, argName))
+      arguments.push_back(arg);
+  }
+
 
   arguments.push_back("-o");
   arguments.push_back(outputFile);
@@ -183,7 +220,7 @@ runExternalHIVMC(ModuleOp &module,
 
 bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
                           BiShengIRCompileMainConfig config) {
-  config.compileFullSIMT(true);
+  config.setPureSimt(true);
   bool result = true;
   for (auto module : modules) {
     result &= runPipeline(module, buildSIMTPipeline, config, "BiShengSIMT")
@@ -216,19 +253,19 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = config.isTuning() ? 1 : 5;
+  int tryTimes = config.getEnableTuningMode() ? 1 : 5;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
-  tryTimes = config.shouldCompileTriton() ? 1 : tryTimes;
+  tryTimes = config.getEnableTritonKernelCompile() ? 1 : tryTimes;
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
-                            << config.maxBufferCountTuning());
+                            << config.getHfusionMaxBufferCountTuning());
     ModuleOp hirCompileMode = mod.clone();
     // simt-simd mixed pipeline
     bool success = true;
-    if (config.shouldEnableSimdSimtMixCompile()) {
-      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
-                                       config, "BiShengHIR"));
+    if (config.getEnableSimdSimtMixCompile()) {
+        success &= succeeded(runPipeline(
+            hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
@@ -236,22 +273,22 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
                                          config, "BiShengTTIR"));
       }
-      success &= succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BishengHIR"));
-      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines, config,
-                                       "buildFinalHIVMPipelines"));
-    } else if (config.shouldCompileTritonDialect()) {
-      success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
-                                      config, "BiShengTTIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRFinishPipeline,
+                                         config, "BishengHIR"));
+      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines,
+                                         config, "buildFinalHIVMPipelines"));
+    } else if (config.getEnableTritonIRCompile()) {
+      success = succeeded(runPipeline(
+          hirCompileMode, buildBiShengTTIRPipeline, config, "BiShengTTIR"));
     } else {
-      success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
-                                      config, "BiShengHIR"));
+      success = succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                       config, "buildFinalHIVMPipelines"));
+                                         config, "buildFinalHIVMPipelines"));
     }
 
     // hivmc pipepine
-    if (config.shouldEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimdSimtMixCompile()) {
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // SIMT modules run triton lowering pipeline
       // Main module runs regular pipeline
@@ -262,7 +299,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         //                                  buildFinalMixVFCompilePipeline,
         //                                  config, "BiShengFinishLLVM"));
       }
-    } else if (config.shouldCompileFullSIMT()) {
+    } else if (config.getPureSimt()) {
       success &= runSIMTToLLVMCompile(hirCompileMode, config);
     } else {
       success &= runSIMDToLLVMCompile(hirCompileMode, config);
@@ -275,7 +312,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     }
 
     // increase max buffers by 2 in HFusion auto schedule
-    config.increaseMaxBufferCountTuning(2);
+    config.increaseHfusionMaxBufferCountTuning(2);
   }
 
   // Restore to the default handler.
@@ -289,7 +326,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   }
 
   if (config.shouldEnableCPURunner()) {
-    auto fileHandle = mlir::openOutputFile(config.outputFile());
+    auto fileHandle = mlir::openOutputFile(config.getOutputFile());
     assert(fileHandle != nullptr);
     fileHandle->os() << mod << '\n';
     fileHandle->keep();
