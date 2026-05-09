@@ -845,6 +845,14 @@ def EnableTreeReduceV2 : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
+  "Enable multiple consumer fusion in AutoVectorizeV2",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableHighPrecision : FeatureControlOptions<
   "Enable high precision calculation for sin/cos in HFusion",
   "bool",
