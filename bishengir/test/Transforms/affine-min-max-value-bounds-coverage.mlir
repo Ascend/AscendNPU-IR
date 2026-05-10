@@ -1,7 +1,15 @@
-// RUN: bishengir-opt --eliminate-single-iteration-scf-for="dump-affine-minmax-bounds=true" -split-input-file %s -o - | FileCheck --check-prefixes=CHECK,CHECK-BOUNDS %s
+// RUN: bishengir-opt --eliminate-single-iteration-scf-for="dump-affine-minmax-bounds=true" %s -o - | FileCheck --check-prefixes=CHECK,CHECK-BOUNDS %s
 
 // Bounds dump is printed at the start of stdout; CHECK-BOUNDS must run before any
 // CHECK-LABEL so FileCheck's scan cursor is still at the beginning of the tool output.
+
+// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
+// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_iv_negative_step_for{{.*}} LB=1 UB=5
+// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_max_two_results{{.*}} LB=5 UB=10
+// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_min_ceildiv_mod{{.*}} LB=0 UB=6
+// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_min_two_results_floordiv{{.*}} LB=0 UB=1
+// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=header_proof_interval_upper{{.*}} LB=1 UB=4
+// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
 
 // Coverage for `AffineMinMaxValueBoundsCollector` + `provesSingleIterationScfFor`:
 // trip-count (positive/negative step), discrete `affine.min`/`affine.max` over IVs,
@@ -11,8 +19,7 @@
 // -----
 
 // `computeTripCountFromHeader` + negative step: single iteration (lb=4, ub=3, step=-1).
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 module {
   func.func @trip_count_neg_step_one(%arg : i32) -> i32 {
     %c0 = arith.constant 0 : i32
@@ -33,9 +40,7 @@ module {
 // -----
 
 // Discrete `affine.min` with two map results -> min(floordiv, linear) over IV samples.
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_min_two_results_floordiv{{.*}} LB=0 UB=1
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 #map_min_fd = affine_map<(d0) -> (d0 floordiv 2, d0 + 1)>
 
 module {
@@ -57,9 +62,7 @@ module {
 // -----
 
 // Discrete `affine.min` with ceildiv + mod (evalAffineExprWithDims CeilDiv/Mod paths).
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_min_ceildiv_mod{{.*}} LB=0 UB=6
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 #map_min_ceil_mod = affine_map<(d0) -> (d0 ceildiv 3, d0 mod 7)>
 
 module {
@@ -81,9 +84,7 @@ module {
 // -----
 
 // Discrete `affine.max` with two results (isMin=false reduction uses max).
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_max_two_results{{.*}} LB=5 UB=10
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 #map_max_two = affine_map<(d0) -> (d0 - 1, 10 - d0)>
 
 module {
@@ -105,9 +106,7 @@ module {
 // -----
 
 // Negative-step `scf.for` IV in discrete enumeration + `affine.min`.
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=discrete_iv_negative_step_for{{.*}} LB=1 UB=5
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 #map_min_simple = affine_map<(d0) -> (d0, 5)>
 
 module {
@@ -129,8 +128,7 @@ module {
 // -----
 
 // Multi-dim `affine.min` -> `tryRecordConstantBounds` only (no discrete IV path).
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 #map2d = affine_map<(d0, d1) -> (d0, d1)>
 
 module {
@@ -147,9 +145,7 @@ module {
 
 // `provesSingleIterationViaAffineMinMaxHeader` with step>0 and upper bound an
 // `affine.min` interval (not a single constant): inner eliminated, outer kept.
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS-DAG: AFFINE_MINMAX_BOUNDS func=header_proof_interval_upper{{.*}} LB=1 UB=4
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 module {
   func.func @header_proof_interval_upper(%init : index) -> index {
     %c0 = arith.constant 0 : index
@@ -174,8 +170,7 @@ module {
 // -----
 
 // Constant trip count > 1 => loop must remain (trip-count path rejects elimination).
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP START ===
-// CHECK-BOUNDS: === AFFINE_MINMAX_BOUNDS DUMP END ===
+
 module {
   func.func @trip_count_two_keeps_loop(%arg : i32) -> i32 {
     %c0 = arith.constant 0 : index

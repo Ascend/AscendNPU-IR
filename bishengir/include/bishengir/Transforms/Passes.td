@@ -90,7 +90,7 @@ def FuseReductionIntoLoop : Pass<"fuse-reduction-into-loop",
 }
 
 def EliminateSingleIterationScfFor
-    : Pass<"eliminate-single-iteration-scf-for", "mlir::func::FuncOp"> {
+    : Pass<"eliminate-single-iteration-scf-for", "mlir::ModuleOp"> {
   let summary = "Eliminate scf.for loops that iterate exactly once";
   let description = [{
     Removes each `scf.for` that is proven to run exactly one iteration.

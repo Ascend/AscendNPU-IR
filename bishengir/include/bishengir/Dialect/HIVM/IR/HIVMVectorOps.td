@@ -219,6 +219,48 @@ def VLnOp : HIVM_ElementwiseUnaryOp<"vln",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+def VLog2Op : HIVM_ElementwiseUnaryOp<"vlog2",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-2 Logarithm Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VLog10Op : HIVM_ElementwiseUnaryOp<"vlog10",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-10 Logarithm Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VLog1pOp : HIVM_ElementwiseUnaryOp<"vlog1p",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector log(1 + x) Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 def VReluOp : HIVM_ElementwiseUnaryOp<"vrelu",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
      VectorOnlyTrait<0>,

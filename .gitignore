@@ -3,6 +3,8 @@ build*/
 .vscode
 .cache
 .idea/
+__pycache__/
+*.py[cod]
 *.orig
 *.rej
 .codemate

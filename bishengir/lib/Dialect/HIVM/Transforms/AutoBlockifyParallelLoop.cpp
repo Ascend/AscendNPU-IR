@@ -35,6 +35,8 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hivm;
 
+static constexpr llvm::StringLiteral BlockifyLoopAttrName = "autoblockify.subloop";
+
 namespace {
 /// This pass will add a loop over the blocks when the logical block num is
 /// larger than physical one.
@@ -87,18 +89,13 @@ FailureOr<int> getPhysicalBlockNum(func::FuncOp funcOp) {
 
 void replaceBlockIdUsers(IRRewriter &rewriter,
                          hivm::GetBlockIdxOp getBlockIdxOp, Value iv,
-                         Value physicalBlockNum, Value logicBlockNum) {
+                         Value logicBlockNum, Operation *castedBlockID) {
   // block idx returns i64 meanwhile all other args are i32 so we cast it
-  rewriter.setInsertionPointAfterValue(getBlockIdxOp);
+  rewriter.setInsertionPointAfterValue(iv);
   auto loc = getBlockIdxOp->getLoc();
-  auto castedBlockID = rewriter.create<arith::TruncIOp>(
-      loc, rewriter.getI32Type(), getBlockIdxOp.getResult());
-  Value mulOp = rewriter.create<arith::MulIOp>(loc, iv, physicalBlockNum);
-  auto sumOp = rewriter.create<arith::AddIOp>(loc, mulOp, castedBlockID);
-  auto minVal = rewriter.create<arith::MinSIOp>(loc, sumOp, logicBlockNum);
-  auto castedMinVal =
-      rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), minVal);
-  rewriter.replaceAllUsesExcept(getBlockIdxOp, castedMinVal, castedBlockID);
+  auto castedIV =
+      rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), iv);
+  rewriter.replaceAllUsesExcept(getBlockIdxOp, castedIV, castedBlockID);
 }
 
 LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
@@ -112,15 +109,16 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
     if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
       if (markOp->hasAttr(kLogicalBlockNumAttr)) {
         logicBlockNum = markOp->getOperand(0);
-        rewriter.setInsertionPointAfter(markOp);
         continue;
       }
     }
     if (!isa<func::ReturnOp>(op)) {
       opsToMove.push_back(&op);
     }
-    if (isa<hivm::GetBlockIdxOp>(op))
+    if (isa<hivm::GetBlockIdxOp>(op)) {
       getBlockIdxOp = dyn_cast<hivm::GetBlockIdxOp>(op);
+      rewriter.setInsertionPointAfter(getBlockIdxOp);
+    }
   }
   if (!logicBlockNum)
     return funcOp->emitError("Logical Block number not found");
@@ -129,17 +127,17 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
   }
 
   traceExceptions(logicBlockNum, exceptions);
+  exceptions.insert(getBlockIdxOp);
   const int intBits = 32;
-  Value lowerBound = rewriter.create<arith::ConstantIntOp>(loc, 0, intBits);
   auto kPhysicalBlockNum = getPhysicalBlockNum(funcOp);
   if (failed(kPhysicalBlockNum))
     return funcOp->emitError("Physical block num cannot be inferred");
   Value physicalBlockNum = rewriter.create<arith::ConstantIntOp>(
       loc, kPhysicalBlockNum.value(), intBits);
-  Value upperBound =
-      rewriter.create<arith::CeilDivSIOp>(loc, logicBlockNum, physicalBlockNum);
-  Value step = rewriter.create<arith::ConstantIntOp>(loc, 1, intBits);
-  auto forOp = rewriter.create<scf::ForOp>(loc, lowerBound, upperBound, step);
+  auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
+                                                  getBlockIdxOp);
+  auto forOp = rewriter.create<scf::ForOp>(loc, blockID, logicBlockNum,
+                                           physicalBlockNum);
 
   Block *loopBody = forOp.getBody();
   Operation *yieldOp = loopBody->getTerminator();
@@ -149,7 +147,9 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
     }
   }
   replaceBlockIdUsers(rewriter, getBlockIdxOp, forOp.getInductionVar(),
-                      physicalBlockNum, logicBlockNum);
+                      logicBlockNum, blockID);
+  auto unit = UnitAttr::get(forOp->getContext());
+  forOp->setAttr(BlockifyLoopAttrName, unit);
   return success();
 }
 } // namespace
