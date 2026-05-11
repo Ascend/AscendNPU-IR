@@ -211,54 +211,123 @@ class AscendDPX_UnaryMathOp<string mnemonic>
 }
 
 // sorted alphabetically
+def AbsOp : AscendDPX_UnaryMathOp<"abs">;
+def AcosOp : AscendDPX_UnaryMathOp<"acos">;
+def AcoshOp : AscendDPX_UnaryMathOp<"acosh">;
+def AsinOp : AscendDPX_UnaryMathOp<"asin">;
+def AsinhOp : AscendDPX_UnaryMathOp<"asinh">;
 def AtanOp : AscendDPX_UnaryMathOp<"atan">;
+def AtanhOp : AscendDPX_UnaryMathOp<"atanh">;
+def BrevOp : AscendDPX_UnaryMathOp<"brev">;
+def CbrtOp : AscendDPX_UnaryMathOp<"cbrt">;
 def CeilOp : AscendDPX_UnaryMathOp<"ceil">;
+def ClzOp : AscendDPX_UnaryMathOp<"clz">;
 def CosOp : AscendDPX_UnaryMathOp<"cos">;
+def CoshOp : AscendDPX_UnaryMathOp<"cosh">;
+def CospiOp : AscendDPX_UnaryMathOp<"cospi">;
+def CylBesselI0Op : AscendDPX_UnaryMathOp<"cyl_bessel_i0">;
+def CylBesselI1Op : AscendDPX_UnaryMathOp<"cyl_bessel_i1">;
 def ErfOp : AscendDPX_UnaryMathOp<"erf">;
+def ErfcOp : AscendDPX_UnaryMathOp<"erfc">;
+def ErfcinvOp : AscendDPX_UnaryMathOp<"erfcinv">;
+def ErfcxOp : AscendDPX_UnaryMathOp<"erfcx">;
+def ErfinvOp : AscendDPX_UnaryMathOp<"erfinv">;
+def Exp10Op : AscendDPX_UnaryMathOp<"exp10">;
 def Exp2Op : AscendDPX_UnaryMathOp<"exp2">;
 def ExpOp : AscendDPX_UnaryMathOp<"exp">;
+def Expm1Op : AscendDPX_UnaryMathOp<"expm1">;
+def FastCosfOp : AscendDPX_UnaryMathOp<"fast_cosf">;
+def FastExp10fOp : AscendDPX_UnaryMathOp<"fast_exp10f">;
+def FastExpfOp : AscendDPX_UnaryMathOp<"fast_expf">;
+def FastLog10fOp : AscendDPX_UnaryMathOp<"fast_log10f">;
+def FastLog2fOp : AscendDPX_UnaryMathOp<"fast_log2f">;
+def FastLogfOp : AscendDPX_UnaryMathOp<"fast_logf">;
+def FastSinfOp : AscendDPX_UnaryMathOp<"fast_sinf">;
+def FastTanfOp : AscendDPX_UnaryMathOp<"fast_tanf">;
+def Float2IntRnOp : AscendDPX_UnaryMathOp<"float2int_rn">;
+def Float2IntRzOp : AscendDPX_UnaryMathOp<"float2int_rz">;
+def Float2IntRdOp : AscendDPX_UnaryMathOp<"float2int_rd">;
+def Float2IntRuOp : AscendDPX_UnaryMathOp<"float2int_ru">;
+def Float2LlRnOp : AscendDPX_UnaryMathOp<"float2ll_rn">;
+def Float2LlRzOp : AscendDPX_UnaryMathOp<"float2ll_rz">;
+def Float2LlRdOp : AscendDPX_UnaryMathOp<"float2ll_rd">;
+def Float2LlRuOp : AscendDPX_UnaryMathOp<"float2ll_ru">;
+def Float2UintRnOp : AscendDPX_UnaryMathOp<"float2uint_rn">;
+def Float2UintRzOp : AscendDPX_UnaryMathOp<"float2uint_rz">;
+def Float2UintRdOp : AscendDPX_UnaryMathOp<"float2uint_rd">;
+def Float2UintRuOp : AscendDPX_UnaryMathOp<"float2uint_ru">;
+def Float2UllRnOp : AscendDPX_UnaryMathOp<"float2ull_rn">;
+def Float2UllRzOp : AscendDPX_UnaryMathOp<"float2ull_rz">;
+def Float2UllRdOp : AscendDPX_UnaryMathOp<"float2ull_rd">;
+def Float2UllRuOp : AscendDPX_UnaryMathOp<"float2ull_ru">;
 def FloatAsIntOp : AscendDPX_UnaryMathOp<"float_as_int">;
+def FloatAsUintOp : AscendDPX_UnaryMathOp<"float_as_uint">;
 def FloorOp : AscendDPX_UnaryMathOp<"floor">;
+def FfsOp : AscendDPX_UnaryMathOp<"ffs">;
+def GammaOp : AscendDPX_UnaryMathOp<"gamma">;
 def ILogbOp : AscendDPX_UnaryMathOp<"ilogb">;
+def Int2FloatRnOp : AscendDPX_UnaryMathOp<"int2float_rn">;
+def Int2FloatRzOp : AscendDPX_UnaryMathOp<"int2float_rz">;
+def Int2FloatRdOp : AscendDPX_UnaryMathOp<"int2float_rd">;
+def Int2FloatRuOp : AscendDPX_UnaryMathOp<"int2float_ru">;
+def IntAsFloatOp : AscendDPX_UnaryMathOp<"int_as_float">;
+def J0Op : AscendDPX_UnaryMathOp<"j0">;
+def J1Op : AscendDPX_UnaryMathOp<"j1">;
+def Ll2FloatRnOp : AscendDPX_UnaryMathOp<"ll2float_rn">;
+def Ll2FloatRzOp : AscendDPX_UnaryMathOp<"ll2float_rz">;
+def Ll2FloatRdOp : AscendDPX_UnaryMathOp<"ll2float_rd">;
+def Ll2FloatRuOp : AscendDPX_UnaryMathOp<"ll2float_ru">;
+def LlrintOp : AscendDPX_UnaryMathOp<"llrint">;
+def LlroundOp : AscendDPX_UnaryMathOp<"llround">;
+def Log10Op : AscendDPX_UnaryMathOp<"log10">;
 def Log1pOp : AscendDPX_UnaryMathOp<"log1p">;
 def Log2Op : AscendDPX_UnaryMathOp<"log2">;
 def LogOp : AscendDPX_UnaryMathOp<"log">;
+def LogbOp : AscendDPX_UnaryMathOp<"logb">;
+def LgammaOp : AscendDPX_UnaryMathOp<"lgamma">;
+def NearbyintOp : AscendDPX_UnaryMathOp<"nearbyint">;
+def NormcdfOp : AscendDPX_UnaryMathOp<"normcdf">;
+def NormcdfinvOp : AscendDPX_UnaryMathOp<"normcdfinv">;
+def PopcOp : AscendDPX_UnaryMathOp<"popc">;
+def RcpRdOp : AscendDPX_UnaryMathOp<"rcp_rd">;
+def RcpRnOp : AscendDPX_UnaryMathOp<"rcp_rn">;
+def RcpRuOp : AscendDPX_UnaryMathOp<"rcp_ru">;
+def RcpRzOp : AscendDPX_UnaryMathOp<"rcp_rz">;
+def RcbrtOp : AscendDPX_UnaryMathOp<"rcbrt">;
 def RecipOp : AscendDPX_UnaryMathOp<"recip">;
 def ReluOp : AscendDPX_UnaryMathOp<"relu">;
 def RintOp : AscendDPX_UnaryMathOp<"rint">;
 def RoundOp : AscendDPX_UnaryMathOp<"round">;
 def RSqrtOp : AscendDPX_UnaryMathOp<"rsqrt">;
-def SinOp : AscendDPX_UnaryMathOp<"sin">;
-def SqrtOp : AscendDPX_UnaryMathOp<"sqrt">; 
-def TanhOp : AscendDPX_UnaryMathOp<"tanh">;
-def TanOp : AscendDPX_UnaryMathOp<"tan">;
-def TruncOp : AscendDPX_UnaryMathOp<"trunc">;
-def NearbyintOp : AscendDPX_UnaryMathOp<"nearbyint">;
-def Log10Op : AscendDPX_UnaryMathOp<"log10">;
-def AsinOp : AscendDPX_UnaryMathOp<"asin">;
-def AcosOp : AscendDPX_UnaryMathOp<"acos">;
-def SinhOp : AscendDPX_UnaryMathOp<"sinh">;
-def CoshOp : AscendDPX_UnaryMathOp<"cosh">;
-def AsinhOp : AscendDPX_UnaryMathOp<"asinh">;
-def AcoshOp : AscendDPX_UnaryMathOp<"acosh">;
-def AtanhOp : AscendDPX_UnaryMathOp<"atanh">;
-def Expm1Op : AscendDPX_UnaryMathOp<"expm1">;
-def CylBesselI0Op : AscendDPX_UnaryMathOp<"cyl_bessel_i0">;
-def ErfinvOp : AscendDPX_UnaryMathOp<"erfinv">;
-def LgammaOp : AscendDPX_UnaryMathOp<"lgamma">;
-def SignbitOp : AscendDPX_UnaryMathOp<"signbit">;
-def ClzOp : AscendDPX_UnaryMathOp<"clz">;
-def PopcOp : AscendDPX_UnaryMathOp<"popc">;
-def FfsOp : AscendDPX_UnaryMathOp<"ffs">;
-def AbsOp : AscendDPX_UnaryMathOp<"abs">;
-def SaturatefOp : AscendDPX_UnaryMathOp<"saturatef">;
-def Exp10Op : AscendDPX_UnaryMathOp<"exp10">;
-def RcpRnOp : AscendDPX_UnaryMathOp<"rcp_rn">;
-def RcpRzOp : AscendDPX_UnaryMathOp<"rcp_rz">;
-def RcpRdOp : AscendDPX_UnaryMathOp<"rcp_rd">;
-def RcpRuOp : AscendDPX_UnaryMathOp<"rcp_ru">;
+def RsqrtRdOp : AscendDPX_UnaryMathOp<"rsqrt_rd">;
 def RsqrtRnOp : AscendDPX_UnaryMathOp<"rsqrt_rn">;
-def BrevOp : AscendDPX_UnaryMathOp<"brev">;
+def RsqrtRuOp : AscendDPX_UnaryMathOp<"rsqrt_ru">;
+def RsqrtRzOp : AscendDPX_UnaryMathOp<"rsqrt_rz">;
+def SaturatefOp : AscendDPX_UnaryMathOp<"saturatef">;
+def SignbitOp : AscendDPX_UnaryMathOp<"signbit">;
+def SinOp : AscendDPX_UnaryMathOp<"sin">;
+def SinhOp : AscendDPX_UnaryMathOp<"sinh">;
+def SinpiOp : AscendDPX_UnaryMathOp<"sinpi">;
+def SqrtOp : AscendDPX_UnaryMathOp<"sqrt">;
+def SqrtRdOp : AscendDPX_UnaryMathOp<"sqrt_rd">;
+def SqrtRnOp : AscendDPX_UnaryMathOp<"sqrt_rn">;
+def SqrtRuOp : AscendDPX_UnaryMathOp<"sqrt_ru">;
+def SqrtRzOp : AscendDPX_UnaryMathOp<"sqrt_rz">;
+def TanOp : AscendDPX_UnaryMathOp<"tan">;
+def TanhOp : AscendDPX_UnaryMathOp<"tanh">;
+def TgammaOp : AscendDPX_UnaryMathOp<"tgamma">;
+def TruncOp : AscendDPX_UnaryMathOp<"trunc">;
+def Uint2FloatRnOp : AscendDPX_UnaryMathOp<"uint2float_rn">;
+def Uint2FloatRzOp : AscendDPX_UnaryMathOp<"uint2float_rz">;
+def Uint2FloatRdOp : AscendDPX_UnaryMathOp<"uint2float_rd">;
+def Uint2FloatRuOp : AscendDPX_UnaryMathOp<"uint2float_ru">;
+def UintAsFloatOp : AscendDPX_UnaryMathOp<"uint_as_float">;
+def Ull2FloatRnOp : AscendDPX_UnaryMathOp<"ull2float_rn">;
+def Ull2FloatRzOp : AscendDPX_UnaryMathOp<"ull2float_rz">;
+def Ull2FloatRdOp : AscendDPX_UnaryMathOp<"ull2float_rd">;
+def Ull2FloatRuOp : AscendDPX_UnaryMathOp<"ull2float_ru">;
+def Y0Op : AscendDPX_UnaryMathOp<"y0">;
+def Y1Op : AscendDPX_UnaryMathOp<"y1">;
 
 class AscendDPX_BinaryMathOp<string mnemonic>
     : AscendDPX_Op<mnemonic> {
@@ -280,6 +349,7 @@ def MulhiOp : AscendDPX_BinaryMathOp<"mulhi">;
 def Mul24Op : AscendDPX_BinaryMathOp<"mul24">;
 def HaddOp : AscendDPX_BinaryMathOp<"hadd">;
 def RhaddOp : AscendDPX_BinaryMathOp<"rhadd">;
+def ScalbnOp : AscendDPX_BinaryMathOp<"scalbn">;
 def FdimOp : AscendDPX_BinaryMathOp<"fdim">;
 def FastDividefOp : AscendDPX_BinaryMathOp<"fast_dividef">;
 def DivRnOp : AscendDPX_BinaryMathOp<"div_rn">;
@@ -296,6 +366,14 @@ def MulRnOp : AscendDPX_BinaryMathOp<"mul_rn">;
 def MulRzOp : AscendDPX_BinaryMathOp<"mul_rz">;
 def MulRdOp : AscendDPX_BinaryMathOp<"mul_rd">;
 def MulRuOp : AscendDPX_BinaryMathOp<"mul_ru">;
+def FastPowfOp : AscendDPX_BinaryMathOp<"fast_powf">;
+def JnOp : AscendDPX_BinaryMathOp<"jn">;
+def RhypotOp : AscendDPX_BinaryMathOp<"rhypot">;
+def SubRdOp : AscendDPX_BinaryMathOp<"sub_rd">;
+def SubRnOp : AscendDPX_BinaryMathOp<"sub_rn">;
+def SubRuOp : AscendDPX_BinaryMathOp<"sub_ru">;
+def SubRzOp : AscendDPX_BinaryMathOp<"sub_rz">;
+def YnOp : AscendDPX_BinaryMathOp<"yn">;
 
 class AscendDPX_TernaryMathOp<string mnemonic>
     : AscendDPX_Op<mnemonic> {
@@ -310,7 +388,19 @@ def FmaRzOp : AscendDPX_TernaryMathOp<"fma_rz">;
 def FmaRdOp : AscendDPX_TernaryMathOp<"fma_rd">;
 def FmaRuOp : AscendDPX_TernaryMathOp<"fma_ru">;
 def FmaOp : AscendDPX_TernaryMathOp<"fma">;
+def Norm3dOp : AscendDPX_TernaryMathOp<"norm3d">;
+def Rnorm3dOp : AscendDPX_TernaryMathOp<"rnorm3d">;
 def SadOp : AscendDPX_TernaryMathOp<"sad">;
+
+class AscendDPX_QuaternaryMathOp<string mnemonic>
+    : AscendDPX_Op<mnemonic> {
+  let arguments = (ins LLVM_Type:$in1, LLVM_Type:$in2, LLVM_Type:$in3, LLVM_Type:$in4);
+  let results = (outs LLVM_Type:$res);
+  let assemblyFormat = "$in1 `,` $in2 `,` $in3 `,` $in4 attr-dict `:` functional-type(operands, results)";
+}
+
+def Norm4dOp : AscendDPX_QuaternaryMathOp<"norm4d">;
+def Rnorm4dOp : AscendDPX_QuaternaryMathOp<"rnorm4d">;
 
 class AscendDPX_NumberCheckOp<string mnemonic>
     : AscendDPX_Op<mnemonic> {
@@ -319,6 +409,7 @@ class AscendDPX_NumberCheckOp<string mnemonic>
   let assemblyFormat = "$in attr-dict `:` functional-type(operands, results)";
 }
 
+def FinitefOp : AscendDPX_NumberCheckOp<"finitef">;
 def IsFiniteOp : AscendDPX_NumberCheckOp<"isfinite">;
 def IsInfOp : AscendDPX_NumberCheckOp<"isinf">;
 def IsNanOp : AscendDPX_NumberCheckOp<"isnan">;

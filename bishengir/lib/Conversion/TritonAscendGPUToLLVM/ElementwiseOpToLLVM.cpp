@@ -451,16 +451,361 @@ private:
                               loc, elemTy, operand);
                         })
                   .Case("__hmf_rsqrt_rn_fp32",
-                        [&] {
-                          return rewriter.create<ascend_dpx::RsqrtRnOp>(
-                              loc, elemTy, operand);
-                        })
-                  .Case("__hmf_brev_i32",
-                        [&] {
-                          return rewriter.create<ascend_dpx::BrevOp>(
-                              loc, elemTy, operand);
-                        })
-                  .Default(nullptr)) {
+                         [&] {
+                           return rewriter.create<ascend_dpx::RsqrtRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_rsqrt_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::RsqrtRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_rsqrt_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::RsqrtRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_rsqrt_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::RsqrtRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_sqrt_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::SqrtRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_sqrt_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::SqrtRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_sqrt_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::SqrtRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_sqrt_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::SqrtRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_brev_i32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::BrevOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_cbrt_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::CbrtOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_rcbrt_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::RcbrtOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_cospi_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::CospiOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_sinpi_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::SinpiOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_cyl_bessel_i1_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::CylBesselI1Op>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_erfc_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::ErfcOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_erfcx_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::ErfcxOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_erfcinv_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::ErfcinvOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_normcdf_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::NormcdfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_normcdfinv_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::NormcdfinvOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_tgamma_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::TgammaOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_gamma_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::GammaOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_llrint_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::LlrintOp>(
+                               loc, elemTy, operand);
+                         })
+                  .Case("__hmf_llround_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::LlroundOp>(
+                                loc, elemTy, operand);
+                          })
+                   .Case("__hmf_logb_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::LogbOp>(
+                                loc, elemTy, operand);
+                          })
+                   .Case("__hmf_j0_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::J0Op>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_j1_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::J1Op>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_y0_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Y0Op>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_y1_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Y1Op>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_int_as_float_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::IntAsFloatOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float_as_uint_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FloatAsUintOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_uint_as_float_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::UintAsFloatOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_sin_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastSinfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_cos_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastCosfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_log2_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastLog2fOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_log_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastLogfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_exp_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastExpfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_tan_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastTanfOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_exp10_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastExp10fOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_fast_log10_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastLog10fOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2int_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2IntRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2int_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2IntRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2int_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2IntRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2int_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2IntRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2uint_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UintRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2uint_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UintRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2uint_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UintRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2uint_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UintRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ll_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2LlRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ll_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2LlRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ll_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2LlRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ll_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2LlRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ull_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UllRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ull_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UllRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ull_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UllRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2ull_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2UllRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_int2float_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Int2FloatRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_int2float_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Int2FloatRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_int2float_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Int2FloatRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_int2float_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Int2FloatRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_uint2float_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Uint2FloatRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_uint2float_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Uint2FloatRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_uint2float_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Uint2FloatRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_uint2float_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Uint2FloatRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ll2float_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ll2FloatRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ll2float_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ll2FloatRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ll2float_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ll2FloatRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ll2float_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ll2FloatRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ull2float_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ull2FloatRnOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ull2float_rz_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ull2FloatRzOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ull2float_rd_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ull2FloatRdOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_ull2float_ru_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Ull2FloatRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Default(nullptr)) {
         return unaryOp();
       }
 
@@ -474,6 +819,11 @@ private:
                   .Case("__hmf_isinf",
                         [&] {
                           return rewriter.create<ascend_dpx::IsInfOp>(
+                              loc, rewriter.getI1Type(), operand);
+                        })
+                  .Case("__hmf_finitef",
+                        [&] {
+                          return rewriter.create<ascend_dpx::FinitefOp>(
                               loc, rewriter.getI1Type(), operand);
                         })
                   .Default(nullptr)) {
@@ -513,11 +863,16 @@ private:
                               loc, elemTy, lhs, rhs);
                         })
                   .Case("__hmf_ldexpDh",
-                        [&] {
-                          return rewriter.create<ascend_dpx::LdExpOp>(
-                              loc, elemTy, lhs, rhs);
-                        })
-                  .Case("__hmf_copysign_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::LdExpOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
+                   .Case("__hmf_scalbn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::ScalbnOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
+                   .Case("__hmf_copysign_fp32",
                         [&] {
                           return rewriter.create<ascend_dpx::CopysignOp>(
                               loc, elemTy, lhs, rhs);
@@ -627,12 +982,52 @@ private:
                           return rewriter.create<ascend_dpx::MulRdOp>(
                               loc, elemTy, lhs, rhs);
                         })
-                  .Case("__hmf_mul_ru_fp32",
-                        [&] {
-                          return rewriter.create<ascend_dpx::MulRuOp>(
-                              loc, elemTy, lhs, rhs);
-                        })
-                  .Default(nullptr)) {
+.Case("__hmf_mul_ru_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::MulRuOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_sub_rn_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::SubRnOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_sub_rz_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::SubRzOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_sub_rd_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::SubRdOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_sub_ru_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::SubRuOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_fast_pow_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::FastPowfOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_rhypot_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::RhypotOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_jn_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::JnOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Case("__hmf_yn_fp32",
+                          [&] {
+                            return rewriter.create<ascend_dpx::YnOp>(
+                                loc, elemTy, lhs, rhs);
+                          })
+                   .Default(nullptr)) {
         return binaryOp();
       }
     }
@@ -679,8 +1074,41 @@ private:
                           return rewriter.create<ascend_dpx::FmaOp>(
                               loc, elemTy, op1, op2, op3);
                         })
+                  .Case("__hmf_norm3d_fp32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::Norm3dOp>(
+                              loc, elemTy, op1, op2, op3);
+                        })
+                  .Case("__hmf_rnorm3d_fp32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::Rnorm3dOp>(
+                              loc, elemTy, op1, op2, op3);
+                        })
                   .Default(nullptr)) {
         return ternaryOp();
+      }
+    }
+
+    if (operands[0].size() == 4) {
+      Value op1 = operands[0][0];
+      Value op2 = operands[0][1];
+      Value op3 = operands[0][2];
+      Value op4 = operands[0][3];
+
+      if (auto quaternaryOp =
+              llvm::StringSwitch<std::function<Value()>>(funcName)
+                  .Case("__hmf_norm4d_fp32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::Norm4dOp>(
+                              loc, elemTy, op1, op2, op3, op4);
+                        })
+                  .Case("__hmf_rnorm4d_fp32",
+                        [&] {
+                          return rewriter.create<ascend_dpx::Rnorm4dOp>(
+                              loc, elemTy, op1, op2, op3, op4);
+                        })
+                  .Default(nullptr)) {
+        return quaternaryOp();
       }
     }
 
