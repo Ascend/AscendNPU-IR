@@ -431,6 +431,27 @@ public:
     return finalResult;
   }
 
+  // Insert a convert_layout from `newValue` back to `origResult`'s type and
+  // reroute origResult's users through it. Uses owned by `excludeOp` (if
+  // given) are left alone — pass the op when it is itself being erased.
+  void redirectRemainingUses(Value origResult, Value newValue, Location loc,
+                             OpBuilder &builder,
+                             const Operation *excludeOp = nullptr) const {
+    bool hasOtherUsers =
+        llvm::any_of(origResult.getUses(), [excludeOp](OpOperand &use) {
+          return use.getOwner() != excludeOp;
+        });
+    if (!hasOtherUsers)
+      return;
+    builder.setInsertionPointAfterValue(newValue);
+    auto backCvt = builder.create<mlir::triton::gpu::ConvertLayoutOp>(
+        loc, origResult.getType(), newValue);
+    origResult.replaceUsesWithIf(backCvt->getResult(0),
+                                 [excludeOp](OpOperand &use) {
+                                   return use.getOwner() != excludeOp;
+                                 });
+  }
+
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
     MLIRContext *ctx = moduleOp->getContext();
@@ -474,6 +495,8 @@ public:
           Value finalResult =
               createDecomposeConvertReduceSequence(ctx, reduceOp, builder);
           convertLayoutOp->setOperands(finalResult);
+          redirectRemainingUses(reduceOp->getResult(0), finalResult,
+                                reduceOp.getLoc(), builder);
           opsToErase.push_back(reduceOp);
           return WalkResult::advance();
         }
@@ -495,6 +518,11 @@ public:
           SmallVector<Value> newLayoutOperands;
           newLayoutOperands.push_back(*newReshapeOp);
           convertLayoutOp->setOperands(newLayoutOperands);
+          redirectRemainingUses(reshapeOp->getResult(0),
+                                (*newReshapeOp).getResult(),
+                                reshapeOp.getLoc(), builder);
+          redirectRemainingUses(reduceOp->getResult(0), rOut,
+                                reduceOp.getLoc(), builder, reshapeOp);
           // Record erase order:
           //   reshapeOp uses reduceOp
           //   -> push reshapeOp first, reductOp second
@@ -562,6 +590,8 @@ public:
       SmallVector<Value> newLayoutOperands;
       newLayoutOperands.push_back(finalResult);
       convertLayoutOp->setOperands(newLayoutOperands);
+      redirectRemainingUses(reduceOp->getResult(0), finalResult,
+                            reduceOp.getLoc(), builder);
       opsToErase.push_back(reduceOp);
       return WalkResult::advance();
     });
