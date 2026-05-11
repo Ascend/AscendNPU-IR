@@ -383,6 +383,8 @@ public:
       return builder.create<math::AcoshOp>(arg.getLoc(), arg);
     case UnaryFn::asin:
       return builder.create<math::AsinOp>(arg.getLoc(), arg);
+    case UnaryFn::asinh:
+      return builder.create<math::AsinhOp>(arg.getLoc(), arg);
     case UnaryFn::atan:
       return builder.create<math::AtanOp>(arg.getLoc(), arg);
     case UnaryFn::atanh:
