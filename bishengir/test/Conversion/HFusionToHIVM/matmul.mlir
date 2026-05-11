@@ -146,3 +146,32 @@ func.func @test_enable_hf32(%arg1:memref<16x16xf32>) -> tensor<16x16xf32> {
                              outs(%mc: tensor<16x16xf32>) -> tensor<16x16xf32>
   return %ret : tensor<16x16xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_mmadL1_iter_arg_extra_user
+// CHECK-DAG: %[[INIT:.*]] = arith.constant false
+// CHECK-DAG: %[[FILL:.*]] = hivm.hir.vbrc
+// CHECK: scf.for {{.*}} iter_args(%[[ARG:.*]] = %[[FILL]])
+// CHECK:   hivm.hir.vcast ins(%[[ARG]]
+// CHECK-NOT: arith.cmpi eq
+// CHECK:   hivm.hir.mmadL1 ins({{.*}}, {{.*}}, %[[INIT]],
+// CHECK-SAME:                outs(%[[ARG]] : tensor<128x128xf32>)
+func.func @test_mmadL1_iter_arg_extra_user() -> tensor<128x128xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 4 : index
+  %step = arith.constant 1 : index
+  %mc = tensor.empty() : tensor<128x128xf32>
+  %mc_fill = linalg.fill ins(%cst : f32) outs(%mc : tensor<128x128xf32>) -> tensor<128x128xf32>
+  %ret = scf.for %i = %lb to %ub step %step iter_args(%acc = %mc_fill) -> (tensor<128x128xf32>) {
+    %ma = memref.alloc() : memref<128x128xf16>
+    %ma_t = bufferization.to_tensor %ma restrict writable : memref<128x128xf16>
+    %cast_dst = tensor.empty() : tensor<128x128xf16>
+    %acc_cast = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+                ins(%acc : tensor<128x128xf32>) outs(%cast_dst : tensor<128x128xf16>) -> tensor<128x128xf16>
+    %next = linalg.matmul ins(%ma_t, %acc_cast : tensor<128x128xf16>, tensor<128x128xf16>)
+                          outs(%acc : tensor<128x128xf32>) -> tensor<128x128xf32>
+    scf.yield %next : tensor<128x128xf32>
+  }
+  return %ret : tensor<128x128xf32>
+}
