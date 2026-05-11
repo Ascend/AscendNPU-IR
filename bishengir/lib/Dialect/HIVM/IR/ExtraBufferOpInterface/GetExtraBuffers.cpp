@@ -186,7 +186,7 @@ std::optional<int64_t> getExtraBufferSizeForBinaryOp(HIVMOP op) {
   bool isSrc0BrcInline = false;
   bool isSrc1BrcInline = false;
   
-  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getSrc()[0]);
+  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getDst()[0]);
   if (!srcAllocTotalSize.has_value()) {
     return std::nullopt;
   }

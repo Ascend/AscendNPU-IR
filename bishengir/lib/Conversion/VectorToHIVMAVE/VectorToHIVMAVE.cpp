@@ -992,7 +992,7 @@ void mlir::hivmave::populateVectorToHIVMAVEConversionPatterns(
   patterns
       .add<MaskedLoadOpPattern, LoadOpRewritePattern, StoreOpPattern,
            MaskedStoreOpPattern, ConstantMaskOpConversionPattern,
-           CreateMaskOpConversionPattern, BroadcastOpPattern,
+           CreateMaskOpConversionPattern, BroadcastOpPattern, VecInterleaveOpPattern,
            VecInterleaveOpPattern, VecDeinterleaveOpPattern,
            TransferReadOpPattern, TransferWriteOpPattern, VecGatherOpPattern,
            VecScatterOpPattern, VecBroadcastOpPattern, ShapeCastOpPattern>(
