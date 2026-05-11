@@ -1486,11 +1486,124 @@ BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+// This strategy handles odd tiling scenarios where a static tensor.empty is
+// sliced into a dynamic-sized extract_slice (e.g., tensor<115xf32> ->
+// tensor<?xf32>). It marks the buffer size for the sliced tensor to support
+// double buffering.
+bool EmptyBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  if (!sourceOp)
+    return false;
+  auto emptyOp = dyn_cast<tensor::EmptyOp>(sourceOp);
+  if (!emptyOp)
+    return false;
+
+  // Must be dynamic slice (odd tiling produces dynamic sizes)
+  // e.g., 115 -> ceil(115/2) = 58 (dynamic)
+  if (!isDynamicSlice(sliceOp))
+    return false;
+
+  // EmptyOp must have static shape (key characteristic of odd tiling)
+  // Odd tiling: static empty -> dynamic slice
+  // Non-odd tiling or dynamic input: dynamic empty -> dynamic slice
+  auto emptyType = cast<RankedTensorType>(emptyOp.getType());
+  if (!emptyType.hasStaticShape())
+    return false;
+
+  // Must slice only one dimension (1:2 tiling pattern)
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return false;
+  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(), kBufferSizeInByteAttr))
+    return false;
+  return true;
+}
+
+LogicalResult EmptyBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                             PatternRewriter &rewriter) const {
+  auto emptyOp = cast<tensor::EmptyOp>(sliceOp.getSource().getDefiningOp());
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  auto tilingDim = *extractDims.begin();
+  auto bufferSize = calculateBufferSizeInBytes(
+      sliceOp.getType(), emptyOp.getType().getShape(),
+      static_cast<int64_t>(tilingDim));
+
+  rewriter.setInsertionPointAfter(sliceOp);
+  // Mark on sliceOp instead of emptyOp because emptyOp may have multiple users
+  // (multiple extract_slice ops). Marking on emptyOp would prevent folding due
+  // to multiple users. Each slice gets its own buffer_size_in_byte annotation.
+  //
+  // After tensor.empty folding pass (FoldTensorEmptyPatterns), the sliceOp will
+  // be folded: emptyOp + extract_slice -> smaller emptyOp (sliced shape).
+  // The MarkOp will follow the fold and eventually annotate the new emptyOp.
+  auto newMarkOp = rewriter.create<annotation::MarkOp>(sliceOp->getLoc(),
+                                                       sliceOp.getResult());
+  newMarkOp->setAttr(kBufferSizeInByteAttr,
+                     rewriter.getI64IntegerAttr(bufferSize));
+
+  return success();
+}
+
+static LogicalResult
+markOddTilingBufferSizeIfNeeded(tensor::ExtractSliceOp sliceOp,
+                                TensorType sourceTensorType, Value buffer,
+                                PatternRewriter &rewriter) {
+  auto bufferType = dyn_cast<ShapedType>(buffer.getType());
+  if (!bufferType || bufferType.hasStaticShape() || !isDynamicSlice(sliceOp))
+    return success();
+
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  auto bufferSize = calculateBufferSizeInBytes(
+      sliceOp.getType(), sourceTensorType.getShape(),
+      static_cast<int64_t>(*extractDims.begin()));
+
+  auto newMarkOp = rewriter.create<annotation::MarkOp>(
+      buffer.getLoc(), buffer);
+  newMarkOp->setAttr(kBufferSizeInByteAttr,
+                     rewriter.getI64IntegerAttr(bufferSize));
+  return success();
+}
+
+static FailureOr<memref::AllocOp>
+createSlicedAlloc(tensor::ExtractSliceOp sliceOp, TensorType sourceTensorType,
+                  ArrayRef<OpFoldResult> sizes, Location loc,
+                  PatternRewriter &rewriter) {
+  auto resultType = dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
+  if (!resultType)
+    return failure();
+
+  auto memrefType =
+      MemRefType::get(resultType.getShape(), resultType.getElementType());
+
+  memref::AllocOp newAllocOp;
+  if (resultType.hasStaticShape()) {
+    newAllocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
+    return newAllocOp;
+  }
+
+  SmallVector<Value, 4> dynamicSizes;
+  for (auto [idx, dimSize] : llvm::enumerate(resultType.getShape())) {
+    if (ShapedType::isDynamic(dimSize)) {
+      dynamicSizes.push_back(
+          getValueOrCreateConstantIndexOp(rewriter, loc, sizes[idx]));
+    }
+  }
+
+  newAllocOp = rewriter.create<memref::AllocOp>(loc, memrefType,
+                                                dynamicSizes);
+  rewriter.setInsertionPointAfter(newAllocOp);
+  if (failed(markOddTilingBufferSizeIfNeeded(
+          sliceOp, sourceTensorType, newAllocOp.getResult(), rewriter)))
+    return failure();
+
+  return newAllocOp;
+}
+
 bool BufferizationBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  return isa_and_nonnull<bufferization::ToTensorOp>(sourceOp) &&
-         !isDynamicSlice(sliceOp);
+  return isa_and_nonnull<bufferization::ToTensorOp>(sourceOp);
 }
 
 LogicalResult
@@ -1517,7 +1630,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp)) {
       LDBG("Pattern 1:\n" << loadOp);
 
-      // For Operand(0): if the Operand(0) of LoadOP is memref.reinterpret_cast
+      // For Operand(0): if the Operand(0) of LoadOp is memref.reinterpret_cast
       auto castOp = dyn_cast<memref::ReinterpretCastOp>(
           loadOp.getOperand(0).getDefiningOp());
       if (castOp) {
@@ -1526,44 +1639,34 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
             castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
 
         rewriter.modifyOpInPlace(
-            loadOp, [&]() { loadOp.setOperand(0, castSubviewOp.getResult()); });
+            loadOp,
+            [&]() { loadOp.setOperand(0, castSubviewOp.getResult()); });
       }
 
-      // For Operand(1): if the Operand(1) of LoadOP is memref.alloc()
-      auto AllocOp =
+      // For Operand(1): if the Operand(1) of LoadOp is memref.alloc()
+      auto allocOp =
           dyn_cast<memref::AllocOp>(loadOp.getOperand(1).getDefiningOp());
-      if (AllocOp) {
-        rewriter.setInsertionPoint(AllocOp);
-        Location loc = AllocOp.getLoc();
-
-        auto resultType =
-            dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-
-        auto memrefType =
-            MemRefType::get(resultType.getShape(), resultType.getElementType());
-        // Create a newAllocOp
-        auto newAllocOp = rewriter.create<memref::AllocOp>(loc, memrefType);
+      if (allocOp) {
+        rewriter.setInsertionPoint(allocOp);
+        auto maybeNewAllocOp =
+            createSlicedAlloc(sliceOp, toTensorOp.getType(), sizes,
+                              allocOp.getLoc(), rewriter);
+        if (failed(maybeNewAllocOp))
+          return sliceOp.emitError(
+              "failed to create sliced alloc for bufferization bubble-up load "
+              "pattern");
+        auto newAllocOp = maybeNewAllocOp.value();
 
         rewriter.modifyOpInPlace(
             loadOp, [&]() { loadOp.setOperand(1, newAllocOp.getResult()); });
 
         rewriter.setInsertionPoint(sliceOp);
-        // Create a newsubViewOp, (it is used to create newToTensorOp)
-        auto subviewOp = rewriter.create<memref::SubViewOp>(
-            sliceOp.getLoc(), newAllocOp.getResult(), offsets, sizes, strides);
-
-        // Create a new ToTensorOp
         auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
-            sliceOp.getLoc(), subviewOp.getResult(), true, true);
-
-        rewriter.modifyOpInPlace(newToTensorOp, [&]() {
-          newToTensorOp->setOperand(0, newAllocOp.getResult());
-        });
+            sliceOp.getLoc(), newAllocOp.getResult(), true, true);
 
         rewriter.replaceOp(sliceOp, newToTensorOp);
-        rewriter.replaceOp(toTensorOp, newToTensorOp);
-        if (subviewOp->use_empty())
-          rewriter.eraseOp(subviewOp);
+        if (toTensorOp->use_empty())
+          rewriter.eraseOp(toTensorOp);
       }
       return success();
     }
@@ -1620,12 +1723,17 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           subViewOpGM.getMixedStrides());
       rewriter.setInsertionPointAfter(allocLikeOp);
 
-      if (isa<memref::AllocOp>(allocLikeOp)) {
-        auto resultType =
-            dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-        allocLikeOp = rewriter.replaceOpWithNewOp<memref::AllocOp>(
-            allocLikeOp, MemRefType::get(resultType.getShape(),
-                                         resultType.getElementType()));
+      if (auto allocOp = dyn_cast<memref::AllocOp>(allocLikeOp)) {
+        auto maybeNewAllocOp =
+            createSlicedAlloc(sliceOp, toTensorOp.getType(), sizes,
+                              allocOp.getLoc(), rewriter);
+        if (failed(maybeNewAllocOp))
+          return sliceOp.emitError(
+              "failed to create sliced alloc for bufferization bubble-up "
+              "subview-load pattern");
+        auto newAllocOp = maybeNewAllocOp.value();
+        rewriter.replaceOp(allocOp, newAllocOp->getResults());
+        allocLikeOp = newAllocOp.getOperation();
       } else {
         allocLikeOp = rewriter.create<memref::SubViewOp>(
             allocLikeOp->getLoc(), allocLikeOp->getResult(0), offsets, sizes,
@@ -1684,13 +1792,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         // get the alloc result shape from sliceOp
         auto resultType =
             dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
-        ArrayRef<int64_t> shape = resultType.getShape();
-        SmallVector<int64_t> staticShape;
-
-        for (int64_t i = 0; i < static_cast<int64_t>(shape.size()); ++i) {
-          int64_t dim = shape[i];
-          staticShape.push_back(dim);
-        }
+        auto staticShape = llvm::to_vector(resultType.getShape());
 
         auto originalType =
             dyn_cast<MemRefType>(UbAllocOp.getResult().getType());

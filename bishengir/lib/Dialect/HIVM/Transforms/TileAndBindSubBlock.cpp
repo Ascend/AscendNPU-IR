@@ -107,72 +107,6 @@ private:
 };
 } // namespace
 
-/// Calculates the buffer size in bytes for a tensor value.
-///
-/// This function computes the total buffer size needed for a tensor by:
-/// 1. Getting the total size in bits (shape × element type size)
-/// 2. Dividing by the number of tiles (kSubBlockDim)
-/// 3. Converting from bits to bytes (with ceiling division)
-///
-/// @param v The tensor value whose buffer size is to be calculated
-/// @return The buffer size in bytes
-static int64_t calculateBufferSize(Value v) {
-  auto tensorType = cast<RankedTensorType>(v.getType());
-  assert(tensorType.hasStaticShape() &&
-         "Tensor must have static shape for buffer size calculation");
-  auto shape = tensorType.getShape();
-  auto elementType = tensorType.getElementType();
-  auto totalBits = mlir::utils::getStaticTotalSizeInBits(shape, elementType);
-  if (!totalBits.has_value())
-    llvm::report_fatal_error("Failed to calculate total size in bits");
-
-  // Calculate buffer size: (totalBits / tileNum) converted to bytes
-  constexpr int64_t tileCount = kSubBlockDim; // Currently 2 sub-blocks
-  int64_t bitsPerTile = totalBits.value() / tileCount;
-  int64_t bytesPerTile = llvm::divideCeilSigned(
-      bitsPerTile, static_cast<int64_t>(utils::kBitsToByte));
-
-  return bytesPerTile;
-}
-
-void setBufferSizeInLoopOp(RewriterBase &rewriter, Location loc,
-                           Operation *loop,
-                           DenseMap<Operation *, Operation *> &map) {
-  auto forOp = dyn_cast<scf::ForOp>(loop);
-  assert(forOp && "tile loop must be scf.for");
-  Block *block = &forOp.getRegion().front();
-  for (Operation &bodyOp : *block) {
-    if (map.find(&bodyOp) == map.end())
-      continue;
-    for (OpResult result : bodyOp.getResults()) {
-      auto maybeShapedType = dyn_cast<ShapedType>(result.getType());
-      if (!maybeShapedType || maybeShapedType.hasStaticShape())
-        continue;
-
-      if (bodyOp.getDialect()->getNamespace() !=
-          HIVMDialect::getDialectNamespace())
-        continue;
-
-      // calculate buffer size
-      auto maybeInit =
-          traceDefOp<tensor::EmptyOp>(map[&bodyOp]->getOperands().back());
-      if (!maybeInit.has_value()) {
-        llvm::report_fatal_error("Cannot trace inits for op");
-      }
-      auto calculationBufferSizeResult =
-          calculateBufferSize(maybeInit.value()->getResult(0));
-      OpBuilder::InsertionGuard g(rewriter);
-      rewriter.setInsertionPointAfter(&bodyOp);
-      auto mark = rewriter.create<annotation::MarkOp>(
-          loc, bodyOp.getResult(result.getResultNumber()));
-      rewriter.modifyOpInPlace(mark, [&]() {
-        mark->setAttr(kBufferSizeInByteAttr,
-                      rewriter.getI64IntegerAttr(calculationBufferSizeResult));
-      });
-    }
-  }
-}
-
 static void modifyOpToSliced(RewriterBase &rewriter, OpOperand *operand,
                              SmallVector<OpFoldResult, 4> mixedOffsets,
                              SmallVector<OpFoldResult, 4> mixedSize,
@@ -205,7 +139,8 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   auto maybeSingleTileSize =
       getSingleTileSize(rewriter, loc, src, tilingDim, containingLoop);
   if (failed(maybeSingleTileSize))
-    return failure();
+    return rewriter.notifyMatchFailure(
+        Op, "failed to calculate tile size for tiled store/copy source");
   rewriter.setInsertionPointToStart(containingLoop.getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
       rewriter, loc, containingLoop, maybeSingleTileSize.value());
@@ -378,10 +313,6 @@ public:
       }
     }
 
-    // Maybe we need to maintain this map when doing bubble up.
-    DenseMap<Operation *, Operation *> map;
-    map[Op] = Op;
-    setBufferSizeInLoopOp(rewriter, Op.getLoc(), containingLoop, map);
     LDBG("Success");
     return success();
   }
@@ -438,10 +369,12 @@ private:
                                  containingLoop, rewriter)))
       return failure();
     auto loc = storeOp.getLoc();
-    rewriter.setInsertionPoint(storeOp);
+    rewriter.setInsertionPointToStart(containingLoop.getBody());
     auto maybeSingleTileSize =
         getSingleTileSize(rewriter, loc, src, tilingDim, containingLoop);
-    rewriter.setInsertionPointToStart(containingLoop.getBody());
+    if (failed(maybeSingleTileSize))
+      return storeOp.emitError("failed to calculate masked store tile size");
+
     auto offsetAtTileDim = calculateOffsetAtTilingDim(
         rewriter, loc, containingLoop, maybeSingleTileSize.value());
 
@@ -525,10 +458,6 @@ public:
       return failure();
     }
 
-    DenseMap<Operation *, Operation *> map;
-    map[op] = op;
-    setBufferSizeInLoopOp(rewriter, op.getLoc(), maybeContainingLoop.value(),
-                          map);
     LDBG("Success");
     return success();
   }
@@ -596,11 +525,6 @@ public:
 
     modifyDebugOpToSliced(rewriter, debugOp, mixedOffsets, mixedSize,
                           mixedStrides, newShape);
-
-    // Maybe we need to maintain this map when doing bubble up.
-    DenseMap<Operation *, Operation *> map;
-    map[debugOp] = debugOp;
-    setBufferSizeInLoopOp(rewriter, loc, containingLoop, map);
 
     return success();
   }

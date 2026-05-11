@@ -293,10 +293,6 @@ makeTiledShapes(OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
 }
 } // namespace
 
-static bool isDynamicSlice(tensor::ExtractSliceOp op) {
-  return ShapedType::isDynamicShape(op.getStaticSizes());
-}
-
 bool ElementwiseBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
   // Check if source is a block argument of a for loop
@@ -306,8 +302,7 @@ bool ElementwiseBubbleUpStrategy::isSupportedOperation(
   }
   bool isValidElementwise =
       (isElemwiseNaryOpImpl(sourceOp) ||
-       isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp>(sourceOp)) &&
-      !isDynamicSlice(sliceOp);
+       isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp>(sourceOp));
   return isValidElementwise;
 }
 

@@ -266,6 +266,65 @@ func.func @bubble_up_select(
   return %slice : tensor<32x128xf32>
 }
 
+// -----
+// CHECK-LABEL:   func.func @bubble_up_empty_odd_buffer_size(
+// CHECK:           %[[EMPTY:.*]] = tensor.empty(%arg0) : tensor<?x80xf16>
+// CHECK:           annotation.mark %[[EMPTY]] {buffer_size_in_byte = 9280 : i64} : tensor<?x80xf16>
+func.func @bubble_up_empty_odd_buffer_size(%arg0: index) -> tensor<?x80xf16> {
+  %empty = tensor.empty() : tensor<115x80xf16>
+  %slice = tensor.extract_slice %empty[0, 0] [%arg0, 80] [1, 1] {to_be_bubbled_slice}
+      : tensor<115x80xf16> to tensor<?x80xf16>
+  return %slice : tensor<?x80xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_alloc_odd_buffer_size(
+// CHECK-SAME:                                                    %[[SRC:.*]]: memref<?xf16>,
+// CHECK-SAME:                                                    %[[SIZE:.*]]: index) -> tensor<?x80xf16> {
+// CHECK:           %[[SLICED_ALLOC:.*]] = memref.alloc(%[[SIZE]]) : memref<?x80xf16>
+// CHECK:           annotation.mark %[[SLICED_ALLOC]] {buffer_size_in_byte = 9280 : i64} : memref<?x80xf16>
+// CHECK:           hivm.hir.load ins({{.*}} : memref<?x80xf16, strided<[80, 1], offset: ?>>) outs(%[[SLICED_ALLOC]] : memref<?x80xf16>)
+// CHECK:           %[[TENSOR:.*]] = bufferization.to_tensor %[[SLICED_ALLOC]] restrict writable : memref<?x80xf16>
+// CHECK:           return %[[TENSOR]] : tensor<?x80xf16>
+// CHECK:         }
+func.func @bubble_up_alloc_odd_buffer_size(
+    %arg0: memref<?xf16>, %arg1: index) -> tensor<?x80xf16> {
+  %alloc = memref.alloc() : memref<115x80xf16>
+  %src = memref.reinterpret_cast %arg0 to offset: [0], sizes: [115, 80], strides: [80, 1]
+      : memref<?xf16> to memref<115x80xf16, strided<[80, 1], offset: ?>>
+  hivm.hir.load ins(%src : memref<115x80xf16, strided<[80, 1], offset: ?>>) outs(%alloc : memref<115x80xf16>)
+  %tensor = bufferization.to_tensor %alloc restrict writable : memref<115x80xf16>
+  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice}
+      : tensor<115x80xf16> to tensor<?x80xf16>
+  return %slice : tensor<?x80xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @bubble_up_subview_alloc_odd_buffer_size(
+// CHECK-SAME:                                                            %[[SRC:.*]]: memref<?xf16>,
+// CHECK-SAME:                                                            %[[SIZE:.*]]: index) -> tensor<?x80xf16> {
+// CHECK:           %[[SLICED_ALLOC:.*]] = memref.alloc(%[[SIZE]]) : memref<?x80xf16>
+// CHECK:           annotation.mark %[[SLICED_ALLOC]] {buffer_size_in_byte = 9280 : i64} : memref<?x80xf16>
+// CHECK:           %[[DST_SUBVIEW:.*]] = memref.subview %[[SLICED_ALLOC]]
+// CHECK:           hivm.hir.load ins({{.*}} : memref<?x80xf16, strided<[80, 1], offset: ?>>) outs(%[[DST_SUBVIEW]] : memref<?x80xf16, strided<[80, 1]>>)
+// CHECK:           %[[TENSOR:.*]] = bufferization.to_tensor %[[SLICED_ALLOC]] restrict writable : memref<?x80xf16>
+// CHECK:           return %[[TENSOR]] : tensor<?x80xf16>
+// CHECK:         }
+func.func @bubble_up_subview_alloc_odd_buffer_size(
+    %arg0: memref<?xf16>, %arg1: index) -> tensor<?x80xf16> {
+  %alloc = memref.alloc() : memref<115x80xf16>
+  %dst = memref.subview %alloc[0, 0] [115, 80] [1, 1]
+      : memref<115x80xf16> to memref<115x80xf16, strided<[80, 1]>>
+  %src_base = memref.reinterpret_cast %arg0 to offset: [0], sizes: [115, 80], strides: [80, 1]
+      : memref<?xf16> to memref<115x80xf16, strided<[80, 1], offset: ?>>
+  %src = memref.subview %src_base[0, 0] [115, 80] [1, 1]
+      : memref<115x80xf16, strided<[80, 1], offset: ?>> to memref<115x80xf16, strided<[80, 1], offset: ?>>
+  hivm.hir.load ins(%src : memref<115x80xf16, strided<[80, 1], offset: ?>>) outs(%dst : memref<115x80xf16, strided<[80, 1]>>)
+  %tensor = bufferization.to_tensor %alloc restrict writable : memref<115x80xf16>
+  %slice = tensor.extract_slice %tensor[0, 0] [%arg1, 80] [1, 1] {to_be_bubbled_slice}
+      : tensor<115x80xf16> to tensor<?x80xf16>
+  return %slice : tensor<?x80xf16>
+}
 
 // -----
 // CHECK-LABEL:   func.func @bubble_up_extract_of_insert_same_dim_dynamic(

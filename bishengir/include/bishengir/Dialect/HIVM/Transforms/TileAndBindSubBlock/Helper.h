@@ -79,6 +79,9 @@ void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
                             OpFoldResult tiledOffset, OpFoldResult tiledSize,
                             Location loc, OpBuilder &builder);
 
+int64_t calculateBufferSizeInBytes(ShapedType tiledType,
+                                   ArrayRef<int64_t> originShape,
+                                   int64_t tilingDim);
 } // namespace hivm
 } // namespace mlir
 
