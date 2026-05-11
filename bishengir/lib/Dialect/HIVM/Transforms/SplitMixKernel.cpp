@@ -475,7 +475,6 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
     LDBG("current op: " << *op);
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       if (isLoopOfCoreType(forOp, filterCoreType)) {
-        forOp.setUpperBound(forOp.getLowerBound());
         return WalkResult::skip();
       }
     }
