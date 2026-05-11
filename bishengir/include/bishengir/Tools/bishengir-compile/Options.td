@@ -479,9 +479,9 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 >;
 
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
-  "Override number of multibuffers for workspace, defaults to 1 (off).",
+  "Override number of multibuffers for workspace, defaults to 2 (double-buffer).",
   "unsigned",
-  "1"
+  "2"
 >;
 
 def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<

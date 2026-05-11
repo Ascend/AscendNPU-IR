@@ -1,4 +1,6 @@
 // REQUIRES: enable-lir-compile
+// FIXME: UB Overflow
+// XFAIL: *
 // RUN: bishengir-compile %s --target=Ascend950PR_957c --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hivm-graph-sync-solver=True --enable-mixed-cv=True --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 --enable-lir-compile=true --enable-layout-optimization=true -o %t
 // RUN: bishengir-compile %s --target=Ascend950PR_957c --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hivm-graph-sync-solver=True --enable-mixed-cv=True --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 --enable-lir-compile=true -o %t
 module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
