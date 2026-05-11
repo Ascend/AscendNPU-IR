@@ -570,6 +570,7 @@ def CustomOp
 
 //===----------------------------------------------------------------------===//
 // IndirectStoreOp
+// TODO: IndirectStoreOp will be not used, and will be removed in future.
 //===----------------------------------------------------------------------===//
 
 def IndirectStoreOp : HIVM_StructuredOp<"indirect_store",[
