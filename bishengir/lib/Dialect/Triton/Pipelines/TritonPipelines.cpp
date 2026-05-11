@@ -118,6 +118,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(bishengir::triton::createFixFusedCatPass());
   pm.addPass(mlir::triton::createTritonRewriteTensorPointer());
   pm.addPass(mlir::triton::createTritonRewriteTensorDescriptorToPointer());
+  pm.addPass(bishengir::triton::createRewriteSliceOpToTritonPass());
   // Convert TTIR to TTGIR
   // TODO: Adapt target for NPU
   mlir::triton::ConvertTritonToTritonGPUOptions convertTritonToTritonGPUOpt;

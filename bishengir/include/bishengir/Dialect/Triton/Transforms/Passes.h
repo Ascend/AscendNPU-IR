@@ -50,6 +50,12 @@ std::unique_ptr<mlir::Pass> createLegalizeF16ForTritonPass();
 /// Create a pass to convert slice-based concatenation to select based.
 std::unique_ptr<mlir::Pass> createFixFusedCatPass();
 
+/// Create a pass to rewrite a restricted form of `tensor.extract_slice` and
+/// `tensor.insert_slice` (single-axis power-of-two block index along any one
+/// axis, with the offset a multiple of the block size) into Triton dialect
+/// ops: `tt.trans`, `tt.reshape`, `tt.split`, `tt.join`.
+std::unique_ptr<mlir::Pass> createRewriteSliceOpToTritonPass();
+
 /// Create a pass to decompose reduction.
 std::unique_ptr<mlir::Pass> createDecomposeReductionPass();
 
