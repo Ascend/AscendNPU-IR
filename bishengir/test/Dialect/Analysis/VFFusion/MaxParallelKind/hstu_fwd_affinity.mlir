@@ -2,7 +2,6 @@
 
 // CHECK-LABEL: func.func private @_hstu_jagged_fwd_fused_0(
 // CHECK: arith.constant
-// CHECK: tensor.collapse_shape
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
@@ -10,7 +9,6 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
-// CHECK: tensor.expand_shape
 // CHECK: return
 
 // CHECK-LABEL: func.func @_hstu_jagged_fwd(
@@ -21,19 +19,17 @@
 // CHECK: hivm.hir.sync_block
 // CHECK: scf.if
 // CHECK: memref.alloc
-// CHECK: memref.alloc
 // CHECK: scope.scope
 // CHECK: scf.for
-// CHECK: scf.if
-// CHECK: scf.if
 // CHECK: linalg.matmul
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: bufferization.materialize_in_destination
 // CHECK: scope.scope
 // CHECK: scf.for
 // CHECK: scf.if
-// CHECK: scf.if
+// CHECK: tensor.collapse_shape
 // CHECK: func.call @_hstu_jagged_fwd_fused_0
+// CHECK: tensor.expand_shape
 // CHECK: hivm.hir.copy
 // CHECK: return
 

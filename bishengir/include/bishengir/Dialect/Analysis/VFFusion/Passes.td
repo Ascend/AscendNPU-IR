@@ -75,9 +75,7 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
       Option<"enableOutlineArith", "enable-outline-arith", "bool", /*default=*/"false",
               "Enable outlining arith operations">,
       Option<"enableOutlineCube", "enable-outline-cube", "bool", /*default=*/"false",
-              "Enable outlining cube operations">,
-      Option<"enableReshapeTiling", "enable-reshape-tiling", "bool", /*default=*/"false",
-              "Enable reshape operation fused">,
+              "Enable outlining cube operations">
       ];
 }
 

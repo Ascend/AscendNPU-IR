@@ -40,7 +40,7 @@ public:
   ///
   /// @param optionArg Configuration options controlling fusion behavior.
   explicit VFFusionAnalyzerBase(const VFFusionKindOption &optionArg)
-      : option(optionArg){};
+      : option(optionArg) {};
 
   /// Implementation of the fusion algorithm
   /// WARN: must be overridden by derived classes.
@@ -120,7 +120,7 @@ protected:
   ///
   /// This allows derived classes to implement fusion-kind-specific checks
   /// beyond the base validation logic.
-  bool isFusibleImpl(const int xIndex, const int yIndex){};
+  bool isFusibleImpl(const int xIndex, const int yIndex) {};
 
   // Check if two operations are fusible. (only fusible if it's on the same
   // block)
@@ -142,14 +142,14 @@ protected:
     if (hasInvalidDependencyIfFused(xIndex, yIndex))
       return false;
 
-    if (!this->option.enableReshapeTiling && !areReshapesValidIfFused(xIndex, yIndex))
+    if (!areReshapesValidIfFused(xIndex, yIndex))
       return false;
 
     return static_cast<AnalyzerClass *>(this)->isFusibleImpl(xIndex, yIndex);
   }
 
   // extended implementation for initialization.
-  void initializeImpl(Block &block){};
+  void initializeImpl(Block &block) {};
 
   void initialize(Block &block) {
     opToIndex.clear();
@@ -241,62 +241,20 @@ bool VFFusionAnalyzerBase<AnalyzerClass>::fuseIndexWith(const int x,
 template <class AnalyzerClass>
 bool VFFusionAnalyzerBase<AnalyzerClass>::areReshapesValidIfFused(
     const size_t xIndex, const size_t yIndex) {
-  const int xUnionIndex = dsu.find(xIndex);
-  const int yUnionIndex = dsu.find(yIndex);
-
-  auto isUnitedWithNonReshapeUsers = [&xUnionIndex, &yUnionIndex,
-                                      this](auto &&self,
-                                            Operation *const op) -> bool {
-    for (auto *user : op->getUsers()) {
-      // op is outside of the block
-      if (!opToIndex.contains(user))
-        continue;
-      const int userUnionIndex = dsu.find(opToIndex.at(user));
-      if (userUnionIndex != xUnionIndex && userUnionIndex != yUnionIndex)
-        continue;
-      if (!isReshapeOp(user))
-        return true;
-      if (self(self, user))
-        return true;
-    }
-    return false;
-  };
-
-  auto isUnitedWithNonReshapeSrc = [&xUnionIndex, &yUnionIndex,
-                                    this](auto &&self,
-                                          Operation *const op) -> bool {
-    for (auto opr : op->getOperands()) {
-      auto *defOp = opr.getDefiningOp();
-      // op is blockArg
-      if (!defOp)
-        continue;
-      // op is outside of the block
-      if (!opToIndex.contains(defOp))
-        continue;
-      const int defOpUnionIndex = dsu.find(opToIndex.at(defOp));
-      if (defOpUnionIndex != xUnionIndex && defOpUnionIndex != yUnionIndex)
-        continue;
-      if (!isReshapeOp(defOp))
-        return true;
-      if (self(self, defOp))
-        return true;
-    }
-    return false;
-  };
-
-  bool valid = true;
-  for (size_t i = 0; i < opsInBlock.size(); ++i) {
-    const int currentUnionIndex = dsu.find(i);
-    if (currentUnionIndex != xUnionIndex && currentUnionIndex != yUnionIndex)
-      continue;
-    if (!isReshapeOp(opsInBlock[i]))
-      continue;
-    valid &=
-        !(isUnitedWithNonReshapeSrc(isUnitedWithNonReshapeSrc, opsInBlock[i]) &&
-          isUnitedWithNonReshapeUsers(isUnitedWithNonReshapeUsers,
-                                      opsInBlock[i]));
+  auto xOp = opsInBlock[xIndex];
+  auto yOp = opsInBlock[yIndex];
+  if (!isReshapeOp(xOp) && !isReshapeOp(yOp)) {
+    return true;
   }
-  return valid;
+  if (isReshapeOp(xOp) &&
+      isExpandShapeOpCanFuseIntoVsstbPatternTranspose(xOp)) {
+    return true;
+  }
+  if (isReshapeOp(yOp) &&
+      isExpandShapeOpCanFuseIntoVsstbPatternTranspose(yOp)) {
+    return true;
+  }
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -311,7 +269,7 @@ public:
   LogicalResult fuseImpl(Block &block);
 
   explicit AllOpKindAnalyzer(const VFFusionKindOption &option)
-      : VFFusionAnalyzerBase<AllOpKindAnalyzer>(option){};
+      : VFFusionAnalyzerBase<AllOpKindAnalyzer>(option) {};
   ~AllOpKindAnalyzer() override = default;
 };
 
@@ -328,7 +286,7 @@ public:
 
   NMostOpKindAnalyzer(const VFFusionKindOption &option,
                       const size_t maxNumberOp)
-      : VFFusionAnalyzerBase<NMostOpKindAnalyzer>(option), N(maxNumberOp){};
+      : VFFusionAnalyzerBase<NMostOpKindAnalyzer>(option), N(maxNumberOp) {};
   ~NMostOpKindAnalyzer() override = default;
 
 private:
@@ -356,7 +314,8 @@ private:
   bool fuseProducerConsumerImpl(Block &block);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
   bool fuseIntoGroup(const int producerIndex, const int consumerIndex);
-  bool areFusibleOps(const int producerIndex, const int consumerIndex, OpOperand *fusedOperand);
+  bool areFusibleOps(const int producerIndex, const int consumerIndex,
+                     OpOperand *fusedOperand);
   DenseMap<Operation *, size_t> opToGroupIndex;
   SmallVector<DenseSet<Operation *>> AllFusedBlocks;
 };

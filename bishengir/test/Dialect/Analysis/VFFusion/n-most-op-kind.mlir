@@ -10,7 +10,7 @@
 // CHECK: tensor.insert_slice
 // CHECK-LABEL: func.func @kernel
 // CHECK: scf.for
-// CHECK-NEXT: func.call @kernel_fused_0
+// CHECK: func.call @kernel_fused_0
 // CHECK: scf.yield
 
 // CHECK-LABEL: func.func private @test_not_affect_affinity_fused_0
@@ -21,14 +21,13 @@
 // CHECK: memref.memory_space_cast
 // CHECK: hivm.hir.fixpipe
 // CHECK: bufferization.to_tensor
-
 // CHECK-LABEL: func.func private @test_not_affect_affinity_fused_2
+// CHECK: memref.memory_space_cast
 // CHECK: bufferization.to_tensor
 // CHECK: hivm.hir.copy
 // CHECK: bufferization.to_tensor
 // CHECK: hivm.hir.mmadL1
 // CHECK-LABEL: func.func @test_not_affect_affinity
-
 // CHECK: call @test_not_affect_affinity_fused_0
 // CHECK: call @test_not_affect_affinity_fused_1
 // CHECK: call @kernel
@@ -86,7 +85,6 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: linalg.elemwise_binary
 
 // CHECK-LABEL: func.func @tensor_empty_with_dim(
-// CHECK: arith.constant
 // CHECK: arith.constant
 // CHECK: call @tensor_empty_with_dim_fused_0
 module {
@@ -253,15 +251,20 @@ module {
 // CHECK-LABEL: func.func private @outline_cf_fused_0(
 // CHECK: linalg.elemwise_binary
 // CHECK: linalg.elemwise_binary
+// CHECK: return
 // CHECK-LABEL: func.func private @outline_cf_fused_1(
 // CHECK: linalg.elemwise_binary
 // CHECK: linalg.elemwise_binary
+// CHECK: return
 // CHECK-LABEL: func.func @outline_cf(
+// CHECK: linalg.fill
 // CHECK: scf.for
 // CHECK: scf.if
-// CHECK-LABEL: func.call @outline_cf_fused_0(
+// CHECK: func.call @outline_cf_fused_0
 // CHECK: scf.for
-// CHECK-LABEL: func.call @outline_cf_fused_1(
+// CHECK: func.call @outline_cf_fused_1
+// CHECK: scf.yield
+// CHECK: return
 module {
   func.func @outline_cf(%arg0: tensor<64x64xi32>, %arg1: tensor<16x4x4x16xf32>, %arg2: i32, %arg3: tensor<64x64xi32>, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: f16) -> tensor<64x64xi32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
     %0 = linalg.fill ins(%arg9 : i32) outs(%arg0 : tensor<64x64xi32>) -> tensor<64x64xi32>

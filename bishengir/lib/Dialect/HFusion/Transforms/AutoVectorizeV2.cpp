@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -43,6 +44,7 @@ namespace mlir {
 } // namespace mlir
 
 using namespace mlir;
+using namespace mlir::analysis;
 
 namespace {
 
@@ -81,75 +83,6 @@ static bool isCubeScopeOp(Operation *op) {
     return false;
 
   return attr.getTcoretype() == mlir::hivm::TCoreType::CUBE;
-}
-
-static bool isVsstbPatternTransposeOp(Operation *op) {
-  auto transpose = dyn_cast<linalg::TransposeOp>(op);
-  if (!transpose) {
-    return false;
-  }
-
-  auto inputType = dyn_cast<ShapedType>(transpose.getInput().getType());
-  if (!inputType || !inputType.hasStaticShape()) {
-    return false;
-  }
-
-  auto elemType = inputType.getElementType();
-  if (!(elemType.isBF16() || elemType.isF16() || elemType.isF32() ||
-        elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2())) {
-    return false;
-  }
-
-  auto perm = transpose.getPermutation();
-  int64_t rank = (int64_t)perm.size();
-  // Rule 0: Should be 3-dim transpose
-  if (rank != 3)
-    return false;
-
-  // Rule 1: Should not be inner axis transpose
-  if (perm[rank - 1] != rank - 1)
-    return false;
-
-  // Rule 2: Last axis should fit in exactly 32 bytes
-  ArrayRef<int64_t> shape = inputType.getShape();
-  // Calculate element width in bytes
-  uint64_t elemByteWidth =
-      llvm::divideCeil(inputType.getElementType().getIntOrFloatBitWidth(),
-                       utils::INTR_BITS_PER_BYTE);
-  int64_t lastDim = shape[rank - 1];
-  return lastDim * (int64_t)elemByteWidth == 32;
-}
-
-static bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
-  if (llvm::any_of(op->getUsers(), [](Operation *user) {
-        return isVsstbPatternTransposeOp(user);
-      })) {
-    return true;
-  }
-  for (Operation *user : op->getUsers()) {
-    if (!isa<linalg::GenericOp>(user))
-      continue;
-    if (userCanFuseIntoVsstbPatternTransposeOp(user))
-      return true;
-  }
-  return false;
-}
-
-static bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
-  auto expandShape = dyn_cast<tensor::ExpandShapeOp>(op);
-  if (!expandShape) {
-    return false;
-  }
-  // FIXME: expand_shape with one-dim src will cause error when tile after
-  // fusing into vsstb pattern transpose, see issue:
-  // https://codehub-y.huawei.com/CompilerKernel/BiShengCompiler/AscendNPU-IR/issues/1100
-  auto srcType = dyn_cast<TensorType>(expandShape.getSrc().getType());
-  auto resType = dyn_cast<TensorType>(expandShape.getResult().getType());
-  if (srcType.getShape().size() != 2 || resType.getShape().size() != 3) {
-    return false;
-  }
-
-  return userCanFuseIntoVsstbPatternTransposeOp(op);
 }
 
 bool isScalarPredSelectOp(Operation *op) {

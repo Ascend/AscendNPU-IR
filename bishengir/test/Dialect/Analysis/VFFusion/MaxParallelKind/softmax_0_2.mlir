@@ -3,7 +3,6 @@
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_0(
 // CHECK: arith.constant
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
-// CHECK: linalg.fill
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
@@ -17,11 +16,9 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_1(
-// CHECK: arith.constant
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
-// CHECK: linalg.fill
 // CHECK: linalg.reduce
 // CHECK: arith.addf
 // CHECK: return
