@@ -213,3 +213,94 @@ attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_typ
     epilogue_p_tiles = %c4_i64 : i64
   return
 }
+
+// -----
+
+// CHECK-LABEL: @triton_dot_hf32
+func.func @triton_dot_hf32(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {enable_HF32} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_hf32
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_ta
+func.func @triton_dot_ta(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {a_transpose} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_ta
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_tb
+func.func @triton_dot_tb(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {b_transpose} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_tb
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_ta_tb
+func.func @triton_dot_ta_tb(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {a_transpose, b_transpose} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_ta_tb
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_ta_hf32
+func.func @triton_dot_ta_hf32(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {a_transpose, enable_HF32} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_ta_hf32
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_tb_hf32
+func.func @triton_dot_tb_hf32(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {b_transpose, enable_HF32} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_tb_hf32
+  return
+}
+
+// -----
+
+// CHECK-LABEL: @triton_dot_ta_tb_hf32
+func.func @triton_dot_ta_tb_hf32(%cast: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %cast_1: memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, %2: memref<1x39xf32, #hivm.address_space<cbuf>>, %cast_3: memref<?x?x?x?xf32, #hivm.address_space<cc>>) {
+  %true = arith.constant true
+  %c39 = arith.constant 39 : index
+  %c35 = arith.constant 35 : index
+  %c13 = arith.constant 13 : index
+  hivm.hir.mmadL1 {a_transpose, b_transpose, enable_HF32} ins(%cast, %cast_1, %true, %c13, %c35, %c39, %2 : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, memref<?x?x?x?xf32, #hivm.address_space<cbuf>>, i1, index, index, index, memref<1x39xf32, #hivm.address_space<cbuf>>) outs(%cast_3 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+  // CHECK: call @mma_tile_with_float_bias_float_to_float_ta_tb_hf32
+  return
+}
