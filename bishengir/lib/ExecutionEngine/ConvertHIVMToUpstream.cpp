@@ -738,7 +738,7 @@ struct RewriteVModOp : public OpRewritePattern<From> {
 };
 
 template <typename FromOp, typename ToIOp, typename ToFOp, int64_t identity>
-struct RewriteVCumOp : public OpRewritePattern<FromOp> {
+struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
 
   using OpRewritePattern<FromOp>::OpRewritePattern;
 
@@ -798,6 +798,27 @@ struct RewriteVCumOp : public OpRewritePattern<FromOp> {
       rewriter.replaceOp(op, genericOp.getResult(0));
     else
       rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+template <typename FromOp, typename ToOp>
+struct RewriteVCumOpToHFusion : public OpRewritePattern<FromOp> {
+
+  using OpRewritePattern<FromOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FromOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getResult().empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    rewriter.replaceOpWithNewOp<ToOp>(
+        op, 
+        /*output=*/op.getDst().getType(),
+        /*input=*/op.getSrc(), 
+        /*cum_dims*/op.getCumDims(),
+        /*reverse=*/op.getReverse());
     return success();
   }
 };
@@ -1406,10 +1427,17 @@ struct ConvertHIVMToUpstream
                  RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>,
                  RewriteVBitwiseOp<hivm::VShLOp, arith::ShLIOp>,
                  RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
-    patterns
-        .add<RewriteVCumOp<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
-             RewriteVCumOp<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
-            &ctx);
+    if (convertToNamedOp) {
+      patterns
+          .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
+               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>>(
+              &ctx);
+    } else {
+      patterns
+          .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
+              RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
+              &ctx);
+    }
     // TODO: delete RewriteLoadOp, relate to issue:897
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
                  RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp,
@@ -1430,6 +1458,7 @@ struct ConvertHIVMToUpstream
 } // namespace
 
 std::unique_ptr<Pass>
-mlir::execution_engine::createConvertHIVMToUpstreamPass() {
-  return std::make_unique<ConvertHIVMToUpstream>();
+mlir::execution_engine::createConvertHIVMToUpstreamPass(
+    const ExecutionEngineHIVMToUpstreamConversionOptions &options) {
+  return std::make_unique<ConvertHIVMToUpstream>(options);
 }

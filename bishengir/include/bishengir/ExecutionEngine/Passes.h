@@ -26,7 +26,8 @@ std::unique_ptr<Pass> createCreateHostMainPass(
     const ExecutionEngineHostMainCreatorOptions &options = {});
 
 /// Create a pass to convert HIVM operations to upstream dialect's equivalent.
-std::unique_ptr<Pass> createConvertHIVMToUpstreamPass();
+std::unique_ptr<Pass> createConvertHIVMToUpstreamPass(
+    const ExecutionEngineHIVMToUpstreamConversionOptions &options = {});
 
 struct CPURunnerPipelineOptions
     : public PassPipelineOptions<CPURunnerPipelineOptions> {
@@ -50,6 +51,11 @@ struct CPURunnerPipelineOptions
       ::llvm::cl::desc("Name of the wrapper function to be generated for the "
                        "single host entry function provided."),
       ::llvm::cl::init("main")};
+
+  PassOptions::Option<bool> convertToNamedOp{
+      *this, "convert-to-named-op",
+      llvm::cl::desc("Convert hir operations to named ones"),
+      llvm::cl::init(true)};
 };
 
 /// Create a pipeline to lower everything to be compatible with the CPU runner.

@@ -266,7 +266,10 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
 
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, config);
-  pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass());
+  ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
+  upstreamOptions.convertToNamedOp = 
+      hacc::utils::isRegBasedArch(config.getTarget());
+  pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
   hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
   if (shouldInferFuncCoreType) {
     pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
