@@ -1,7 +1,7 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend950PR_9589 --arith-vector-mask-analyze --convert-vector-to-hivmave  \
 // RUN: --convert-arith-to-hivmave --annotation-lowering --data-layout-analyze \
 // RUN: --append-vector-layout --annotate-dist-op-layout --eliminate-vector-layout \
-// RUN: --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
+// RUN: --ave-normalize-ops --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
 // RUN: -split-input-file %s | FileCheck %s
 
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {

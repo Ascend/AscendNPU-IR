@@ -22,6 +22,9 @@ namespace mlir {
 
 namespace hivmave {
 
+/// Create a pass to normalize AVE-ops to adapt the register bitwidth
+std::unique_ptr<Pass> createAVENormalizeOpsPass();
+
 /// Create a pass to normalize arith ops for simd backend
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 

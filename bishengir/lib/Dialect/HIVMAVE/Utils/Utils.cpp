@@ -324,14 +324,15 @@ Value hivmave::getElemSizeByStoreMask(Value mask, Type dElemType, Location loc,
 }
 
 Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
-                               Location loc) {
+                               Location loc, bool allTrue) {
   Value mask;
   auto maskType = VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()},
                                   rewriter.getI1Type());
+  auto pgePattern =
+      allTrue ? hivmave::PgePattern::ALL : hivmave::PgePattern::ALLF;
   auto maskOp = rewriter.create<hivmave::VFPgeOp>(
       loc, maskType,
-      hivmave::PgePatternAttr::get(rewriter.getContext(),
-                                   hivmave::PgePattern::ALL));
+      hivmave::PgePatternAttr::get(rewriter.getContext(), pgePattern));
   mask = maskOp->getResult(0);
   return mask;
 }
@@ -536,4 +537,38 @@ void hivmave::tagConstantArguments(ModuleOp module) {
       }
     }
   });
+}
+
+Operation *hivmave::getBroadcastOp(Value scalar, VectorType tileType,
+                                   PatternRewriter &rewriter,
+                                   const Location &loc) {
+  auto maskType = VectorType::get(
+      SmallVector<int64_t>{tileType.getNumElements()}, rewriter.getI1Type());
+  auto mask = rewriter.create<hivmave::VFPgeOp>(
+      loc, maskType,
+      hivmave::PgePatternAttr::get(rewriter.getContext(),
+                                   hivmave::PgePattern::ALL));
+  auto broadcastmaskOp = rewriter.create<hivmave::VFBroadcastScalarMaskOp>(
+      loc, tileType, scalar, mask);
+  return broadcastmaskOp;
+}
+
+Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
+                             const Location &loc, Attribute attr) {
+  hivmave::VFInterleaveOp interOp = rewriter.create<hivmave::VFInterleaveOp>(
+      loc, ArrayRef<Type>({src.getType(), src.getType()}),
+      ValueRange{src, src});
+  if (attr)
+    interOp->setAttr(utils::elementAlignmentBitWidth, attr);
+  return interOp.getResult(0);
+}
+
+Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
+                             const Location &loc, Attribute attr) {
+  hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
+      loc, ArrayRef<Type>({src.getType(), src.getType()}),
+      ValueRange{src, src});
+  if (attr)
+    deionOp->setAttr(utils::elementAlignmentBitWidth, attr);
+  return deionOp.getResult(0);
 }
