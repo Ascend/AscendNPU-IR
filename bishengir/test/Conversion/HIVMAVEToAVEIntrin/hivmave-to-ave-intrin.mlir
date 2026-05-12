@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -append-vector-layout -annotate-dist-op-layout -eliminate-vector-layout -ave-normalize-ops -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
-// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse -canonicalize %s -split-input-file | FileCheck %s --check-prefix=CSE
+// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -append-vector-layout -annotate-dist-op-layout -eliminate-vector-layout -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 -convert-hivmave-to-ave-intrin -cse -canonicalize %s -split-input-file | FileCheck %s --check-prefix=CSE
 
 // CHECK-LABEL: func.func @cast_to_nd_with_overflow_outlined_vf_0
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
@@ -13,9 +13,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %4 = ave.hir.pge <ALL> : vector<64xi1>
     %5 = ave.hir.vtruncf %3, <trunc>, true, <part_even>, %4 : vector<64xf32>, vector<64xf16>, vector<64xi1>
     %6 = ave.hir.pge <ALL> : vector<64xi1>
-     // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtfi.f162s32.x"(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : (vector<128xf16>, vector<256xi1>, i32, i32) -> vector<64xi32>
-     // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtii.s322u16.x"(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<128xi16>
-     // CHECK: builtin.unrealized_conversion_cast %{{.*}} : vector<64xi16> to vector<128xi16>
+    // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtfi.f162s32.x"(%46, %48, %49, %50) : (vector<128xf16>, vector<256xi1>, i32, i32) -> vector<64xi32>
+    // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtii.s322u16.x"(%51, %48, %52, %53) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<128xi16>
+    // CHECK: builtin.unrealized_conversion_cast %55 : vector<64xi16> to vector<128xi16>
     %7 = ave.hir.vfptoui %5, <trunc>, true, <part_even>, %6 : vector<64xf16>, vector<64xi1>, vector<64xi16>
     %8 = ave.hir.pge <ALL> : vector<64xi1>
     ave.hir.masked_store <NORM_B16> %arg1[%c0], %8, %7 : memref<64xi16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi16>

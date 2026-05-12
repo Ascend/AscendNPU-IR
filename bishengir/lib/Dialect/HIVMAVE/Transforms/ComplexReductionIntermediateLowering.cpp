@@ -9,10 +9,10 @@
 
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
-#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -46,7 +46,8 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
     auto initVal = denseAttr.getSplatValue<APInt>();
     if (elemType.isInteger(1)) {
       bool allTrue = denseAttr.getValues<bool>()[0];
-      scalarValue = createMaskByPGE(vecTy, rewriter, loc, allTrue);
+      scalarValue =
+          mlir::utils::createPRegFromConstantOp(vecTy, allTrue, rewriter);
     } else if (elemType.isInteger(8)) {
       scalarValue = rewriter.create<arith::ConstantOp>(
           loc, rewriter.getIntegerType(16),
@@ -75,7 +76,7 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
           rewriter.getIntegerAttr(rewriter.getIntegerType(16), 0));
     }
     // Broadcast the scalar value to i8 vector type and cast back
-    brcOp = getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);
+    brcOp = mlir::utils::getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);
     return rewriter.create<vector::BitCastOp>(loc, TypeRange{vecTy},
                                               brcOp->getResult(0));
   }
@@ -83,7 +84,8 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
     auto trimmedType = mlir::hivm::util::trimNonScalableUnitDims(vecTy);
     trimmedType = VectorType::get({trimmedType.getNumElements()},
                                   trimmedType.getElementType());
-    brcOp = getBroadcastOp(scalarValue, trimmedType, rewriter, loc);
+    brcOp =
+        mlir::utils::getBroadcastOp(scalarValue, trimmedType, rewriter, loc);
     if (vecTy != trimmedType) {
       auto ucc = rewriter.create<UnrealizedConversionCastOp>(
           loc, vecTy, brcOp->getResult(0));
@@ -91,7 +93,7 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
     } else
       return brcOp->getResult(0);
   } else {
-    brcOp = getBroadcastOp(scalarValue, vecTy, rewriter, loc);
+    brcOp = mlir::utils::getBroadcastOp(scalarValue, vecTy, rewriter, loc);
     return brcOp->getResult(0);
   }
 }
