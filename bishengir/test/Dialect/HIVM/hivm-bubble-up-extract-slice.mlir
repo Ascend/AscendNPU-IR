@@ -329,7 +329,7 @@ func.func @bubble_up_subview_alloc_odd_buffer_size(
 // -----
 // CHECK-LABEL:   func.func @bubble_up_extract_of_insert_same_dim_dynamic(
 // CHECK:           %[[VAL_0:.*]] = arith.constant 32 : index
-// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %arg0[%arg3] [32] [1] : tensor<64xf32> to tensor<32xf32>
+// CHECK:           %[[VAL_1:.*]] = tensor.extract_slice %arg0[%arg3] [32] [1] {to_be_bubbled_slice} : tensor<64xf32> to tensor<32xf32>
 // CHECK:           %[[VAL_2:.*]] = arith.minsi %arg3, %arg2 : index
 // CHECK:           %[[VAL_3:.*]] = arith.subi %arg2, %[[VAL_2]] : index
 // CHECK:           %[[VAL_4:.*]] = arith.minsi %[[VAL_3]], %[[VAL_0]] : index
