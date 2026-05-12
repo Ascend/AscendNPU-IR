@@ -222,7 +222,11 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
         return true;
       })
       .Case<tensor::ExpandShapeOp>([this](auto op) {
-        processReshapeOp(op);
+        if (utils::isAnnotationWithAttr(op, kTilingDimMappingAttrName)) {
+          processReshapeOp(op);
+        } else {
+          processExpandShapeOpLeftmostNonUnit(op);
+        }
         return true;
       })
       .Case<tensor::CollapseShapeOp>([this](auto op) {
@@ -512,6 +516,38 @@ void DimensionAnalyzer::processTilingDimMapping(
   }
 }
 
+// [{32}] -> [{2}, 16]
+// [{16}] -> [1, {16}]
+// [{64}] -> [1, {4}, 16]
+void DimensionAnalyzer::processExpandShapeOpLeftmostNonUnit(
+    tensor::ExpandShapeOp op) {
+  auto input = op.getSrc();
+  auto output = op.getResult();
+  auto outputType = op.getType();
+  auto inputArgs = getArgumentRefOrCreateDummy(input);
+  auto outputArgs = getArgumentRefOrCreateDummy(output);
+  auto reassoc = op.getReassociationIndices();
+  SmallVector<std::pair<int64_t, int64_t>> toBeMerged;
+  for (auto [inputIdx, indices] : llvm::enumerate(reassoc)) {
+    int64_t targetIdx = indices[0];
+    for (auto outputIdx : indices) {
+      if (outputType.getDimSize(targetIdx) == 1)
+        targetIdx = outputIdx;
+    }
+    if (outputType.getDimSize(targetIdx) % tilingSize != 0) {
+      return processReshapeOp(op);
+    }
+    toBeMerged.emplace_back(targetIdx, inputIdx);
+  }
+
+  LDBG("Processing ExpandShapeOp " << op);
+  for (auto [outIdx, inIdx] : toBeMerged) {
+    LDBG("Connecting " << inIdx << "th input dim with " << outIdx
+                       << "th output dim");
+    joinCollapser(outputArgs[outIdx], inputArgs[inIdx]);
+  }
+}
+
 template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
   if constexpr (std::is_same_v<T, tensor::ExpandShapeOp>) {
     LDBG("Processing ExpandShapeOp " << op);
@@ -574,8 +610,8 @@ template <typename T, typename> void DimensionAnalyzer::processReshapeOp(T op) {
            << outputArgs[*filteredOutputIdx.begin()]);
       isConnected_[outputArgs[*filteredOutputIdx.begin()]].elementKind =
           tensor::reshape_utils::ElementKind::Unit;
-      joinShape(outputArgs[*filteredOutputIdx.begin()],
-                inputArgs[*filteredInputIdx.begin()]);
+      joinCollapser(outputArgs[*filteredOutputIdx.begin()],
+                    inputArgs[*filteredInputIdx.begin()]);
     }
   }
 }
@@ -674,6 +710,8 @@ void DimensionAnalyzer::markTransposedDims() {
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op);
                markOp && markOp->hasAttr(kTilingDimMappingAttrName)) {
       markTransposedDimImpl(markOp);
+    } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
+      markTransposedDimImpl(expandShapeOp);
     }
   });
 }
@@ -696,8 +734,8 @@ void DimensionAnalyzer::markTransposedDimImpl(hivm::VTransposeOp op) {
   }
   auto srcRef = getArgumentRef(src);
   auto dstRef = getArgumentRef(dst);
-
   auto perm = op.getPermutation();
+  LDBG("Marking transposed dim: " << op);
   for (auto [dimIdx, parentIdx] : llvm::enumerate(dstRef)) {
     auto srcSolverIdx = solverShapeElem_->find(srcRef[perm[dimIdx]]);
     auto dstSolverIdx = solverShapeElem_->find(parentIdx);
@@ -728,6 +766,36 @@ void DimensionAnalyzer::markTransposedDimImpl(annotation::MarkOp op) {
     llvm::to_integer(dimMappingAttr.getName(), srcDim);
     srcDim = solverShapeElem_->find(srcArgs[srcDim]);
     resDim = solverShapeElem_->find(resArgs[resDim]);
+    LDBG("Checking if transposed dim of " << srcDim << " is moved to "
+                                          << resDim);
+    if (auto it = transposedDimMap.find(srcDim); it != transposedDimMap.end()) {
+      LDBG("Successfully moved");
+      transposedDimMap[resDim] = it->second;
+    }
+  }
+}
+
+void DimensionAnalyzer::markTransposedDimImpl(tensor::ExpandShapeOp op) {
+  auto input = op.getSrc();
+  auto output = op.getResult();
+  auto outputType = op.getType();
+  auto inputArgs = getArgumentRefOrCreateDummy(input);
+  auto outputArgs = getArgumentRefOrCreateDummy(output);
+  auto reassoc = op.getReassociationIndices();
+  LDBG("Marking transposed dim: " << op);
+  for (auto [inputIdx, indices] : llvm::enumerate(reassoc)) {
+    int64_t targetIdx = indices[0];
+    for (auto outputIdx : indices) {
+      if (outputType.getDimSize(targetIdx) == 1)
+        targetIdx = outputIdx;
+    }
+    auto srcDim = inputArgs[inputIdx];
+    auto resDim = outputArgs[targetIdx];
+    if (solverCollapserElem_->find(srcDim) !=
+        solverCollapserElem_->find(resDim))
+      continue;
+    srcDim = solverShapeElem_->find(srcDim);
+    resDim = solverShapeElem_->find(resDim);
     LDBG("Checking if transposed dim of " << srcDim << " is moved to "
                                           << resDim);
     if (auto it = transposedDimMap.find(srcDim); it != transposedDimMap.end()) {
