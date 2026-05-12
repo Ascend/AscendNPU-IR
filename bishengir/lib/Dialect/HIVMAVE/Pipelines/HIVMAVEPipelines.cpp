@@ -76,7 +76,6 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(hivmave::createAppendVectorLayoutPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAnnotateDistOpLayoutPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createEliminateVectorLayoutPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
   }
 }
 

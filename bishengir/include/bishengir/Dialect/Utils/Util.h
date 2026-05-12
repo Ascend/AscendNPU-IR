@@ -584,6 +584,9 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
   virtual ~ForOpLegalization() = default;
 };
 
+Operation *getBroadcastOp(Value scalar, VectorType tileType,
+                          PatternRewriter &rewriter, const Location &loc);
+
 bool isValidHIVMTileElementType(Type type);
 
 unsigned getHIVMTileSliceMinNumElts(Type type);
@@ -591,6 +594,9 @@ unsigned getHIVMTileSliceMinNumElts(Type type);
 bool isValidHIVMTileVectorType(VectorType vType);
 
 bool isValidTwoDimVectorType(VectorType vType);
+
+Value createPRegFromConstantOp(VectorType vecTy, bool condition,
+                               PatternRewriter &rewriter);
 
 } // namespace utils
 

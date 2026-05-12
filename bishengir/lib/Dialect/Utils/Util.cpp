@@ -833,6 +833,19 @@ LogicalResult ForOpLegalization<DropUnitDimOnly>::matchAndRewrite(
 template struct utils::ForOpLegalization<true>;
 template struct utils::ForOpLegalization<false>;
 
+Operation *getBroadcastOp(Value scalar, VectorType tileType,
+                          PatternRewriter &rewriter, const Location &loc) {
+  auto maskType = VectorType::get(
+      SmallVector<int64_t>{tileType.getNumElements()}, rewriter.getI1Type());
+  auto mask = rewriter.create<hivmave::VFPgeOp>(
+      loc, maskType,
+      hivmave::PgePatternAttr::get(rewriter.getContext(),
+                                   hivmave::PgePattern::ALL));
+  auto broadcastmaskOp = rewriter.create<hivmave::VFBroadcastScalarMaskOp>(
+      loc, tileType, scalar, mask);
+  return broadcastmaskOp;
+}
+
 bool isValidHIVMTileElementType(Type type) {
   return type.isInteger(1) || type.isInteger(8) || type.isInteger(16) ||
          type.isInteger(32) || type.isInteger(64) || type.isF16() ||
@@ -879,6 +892,16 @@ bool isValidTwoDimVectorType(VectorType vType) {
     return false;
 
   return true;
+}
+
+Value createPRegFromConstantOp(VectorType vecTy, bool condition,
+                               PatternRewriter &rewriter) {
+  auto pgePattern =
+      condition ? hivmave::PgePattern::ALL : hivmave::PgePattern::ALLF;
+  auto pgeAttr = hivmave::PgePatternAttr::get(vecTy.getContext(), pgePattern);
+  auto maskOp = rewriter.create<hivmave::VFPgeOp>(rewriter.getUnknownLoc(),
+                                                  vecTy, pgeAttr);
+  return maskOp;
 }
 
 } // namespace utils

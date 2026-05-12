@@ -11,12 +11,6 @@
 
 include "mlir/Pass/PassBase.td"
 
-def AVENormalizeOps : Pass<"ave-normalize-ops", "func::FuncOp"> {
-  let summary = "Normalize AVE-Ops to adapt the preg/vector register bitwidth.";
-  let constructor = "mlir::hivmave::createAVENormalizeOpsPass()";
-  let dependentDialects = ["hivmave::AVEDialect", "arith::ArithDialect", "hivm::HIVMDialect"];
-}
-
 def ReplaceWithVectorScalar : Pass<"ave-replace-with-vector-scalar", "func::FuncOp"> {
   let summary = "Replace vector-vector op with vector-scalar op if possible";
   let constructor = "mlir::hivmave::createReplaceWithVectorScalarPass()";

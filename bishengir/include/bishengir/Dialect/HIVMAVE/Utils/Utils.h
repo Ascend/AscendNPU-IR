@@ -41,8 +41,8 @@ Value getElemSizeByStoreMask(Value mask, Type dElemType, Location loc,
                              PatternRewriter &rewriter, bool getCnt = false);
 
 /// Create mask using PGE
-Value createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter, Location loc,
-                     bool allTrue = true);
+Value createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
+                      Location loc);
 
 /// Find the reuseable mask for the masked op.
 Value findReuseableMask(Operation *maskedOp, PatternRewriter &rewriter);
@@ -67,18 +67,6 @@ std::optional<int64_t> getConstantIntValue(Value val);
 
 /// Tags constant arguments on callee FuncOps for inter-procedural analysis.
 void tagConstantArguments(ModuleOp module);
-
-/// Create broadcast op
-Operation *getBroadcastOp(Value scalar, VectorType tileType,
-                          PatternRewriter &rewriter, const Location &loc);
-
-/// Sparse vector by interleave
-Value sparseByIntlv(Value src, RewriterBase &rewriter, const Location &loc,
-                    Attribute attr = mlir::Attribute());
-
-/// Dense vector by deinterleave
-Value denseByDIntlv(Value src, RewriterBase &rewriter, const Location &loc,
-                    Attribute attr = mlir::Attribute());
 
 /// Checks if a Vector Store/Write operation accesses memory continuously.
 /// Logic: LoopStep * MemRefStride == VectorLength

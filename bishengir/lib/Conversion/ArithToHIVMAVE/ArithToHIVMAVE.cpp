@@ -591,7 +591,7 @@ struct ConstantOpToHivmBroadcastLowering
       auto initVal = denseAttr.getSplatValue<APInt>();
       if (tileElementType.isInteger(1)) {
         bool allTrue = denseAttr.getValues<bool>()[0];
-        scalarValue = createMaskByPGE(tileType, rewriter, loc, allTrue);
+        scalarValue = mlir::utils::createPRegFromConstantOp(tileType, allTrue, rewriter);
         rewriter.replaceOp(constantOp, scalarValue);
         return success();
       } else if (tileElementType.isInteger(8)) {
@@ -622,7 +622,7 @@ struct ConstantOpToHivmBroadcastLowering
             rewriter.getIntegerAttr(rewriter.getIntegerType(16), 0));
       }
       // Broadcast the scalar value to i8 vector type and cast back
-      brcOp = getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);
+      brcOp = mlir::utils::getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);
       rewriter.replaceOpWithNewOp<vector::BitCastOp>(
           constantOp, TypeRange{tileType}, brcOp->getResult(0));
       return success();
@@ -632,7 +632,7 @@ struct ConstantOpToHivmBroadcastLowering
       auto trimmedType = trimNonScalableUnitDims(tileType);
       trimmedType = VectorType::get({trimmedType.getNumElements()},
                                     trimmedType.getElementType());
-      brcOp = getBroadcastOp(scalarValue, trimmedType, rewriter, loc);
+      brcOp = mlir::utils::getBroadcastOp(scalarValue, trimmedType, rewriter, loc);
       if (tileType != trimmedType) {
         auto ucc = rewriter.create<UnrealizedConversionCastOp>(
             loc, tileType, brcOp->getResult(0));
@@ -640,7 +640,7 @@ struct ConstantOpToHivmBroadcastLowering
       } else
         rewriter.replaceOp(constantOp, brcOp);
     } else {
-      brcOp = getBroadcastOp(scalarValue, tileType, rewriter, loc);
+      brcOp = mlir::utils::getBroadcastOp(scalarValue, tileType, rewriter, loc);
 
       rewriter.replaceOp(constantOp, brcOp);
     }
@@ -1258,7 +1258,7 @@ struct ConstantOpToHivmVCIVCPLowering
     if (!scalarValue)
       return nullptr;
     
-    auto brcOp = getBroadcastOp(scalarValue, tileType, rewriter, loc);
+    auto brcOp = mlir::utils::getBroadcastOp(scalarValue, tileType, rewriter, loc);
     auto maskType =
         VectorType::get({tileType.getNumElements()}, rewriter.getI1Type());
     auto pgePatternAttr =
