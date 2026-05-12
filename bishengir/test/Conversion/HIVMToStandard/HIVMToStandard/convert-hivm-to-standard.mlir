@@ -243,6 +243,28 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: @copyop1d_with_eviction_policy
+  func.func @copyop1d_with_eviction_policy() {
+    %src = memref.alloc() : memref<16xi8, #hivm.address_space<gm>>
+    %dst_first = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
+    %dst_last = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
+
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c0_i32)
+    hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
+                  outs(%dst_first : memref<16xi8, #hivm.address_space<ub>>)
+                  eviction_policy = <EvictFirst>
+
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c1_i32)
+    hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
+                  outs(%dst_last : memref<16xi8, #hivm.address_space<ub>>)
+                  eviction_policy = <EvictLast>
+
+    return
+  }
+}
+
+// -----
+module {
   func.func @copyop2d() {
     // CHECK: func.func private @store_ubuf_to_gm_2d_float(memref<{{.*}}, #hivm.address_space<ub>>,
     // CHECK: memref<{{.*}}, #hivm.address_space<gm>>, i32)

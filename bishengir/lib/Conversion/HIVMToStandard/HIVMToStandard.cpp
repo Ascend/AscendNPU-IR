@@ -59,6 +59,11 @@ static const DenseMap<std::pair<AddressSpace, AddressSpace>,
          std::pair{true, true}}, // DMA OUT TO UB
     };
 
+static const DenseMap<hivm::EvictionPolicy, uint32_t> EvictionPolicyMap{
+    {hivm::EvictionPolicy::EvictFirst, 0},
+    {hivm::EvictionPolicy::EvictLast, 1},
+};
+
 static MemRefType makeStridedLayoutAndShapeDynamic(MemRefType type) {
   return MemRefType::Builder(type)
       .setLayout(StridedLayoutAttr::get(
@@ -905,10 +910,14 @@ private:
                            SmallVector<Value> &inputOperands) const {
     Value evictionPolicy;
     if (op.getEvictionPolicy()) {
-      evictionPolicy = this->constantI32(
-          rewriter, op->getLoc(),
-          static_cast<uint32_t>(
-              op.getEvictionPolicyAttr().getPolicy()));
+      auto policy = op.getEvictionPolicyAttr().getPolicy();
+      if (!EvictionPolicyMap.contains(policy)) {
+        op->emitWarning() << "Only support EvictFirst & EvictLast Policy for "
+                             "now, fallback to EvictFirst instead.\n";
+        policy = hivm::EvictionPolicy::EvictFirst;
+      }
+      evictionPolicy = this->constantI32(rewriter, op->getLoc(),
+                                         EvictionPolicyMap.at(policy));
       inputOperands.push_back(evictionPolicy);
     }
   }
