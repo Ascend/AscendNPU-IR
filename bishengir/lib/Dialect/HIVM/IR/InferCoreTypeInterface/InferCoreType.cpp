@@ -186,10 +186,6 @@ res = getCoreType(definingOp);
   }
 }
 
-std::optional<TCoreType> FilterCVScopeOp::inferCoreType() {
-  return TCoreType::CUBE_AND_VECTOR;
-}
-
 //===----------------------------------------------------------------------===//
 // HIVM Synchronization Ops
 //===----------------------------------------------------------------------===//

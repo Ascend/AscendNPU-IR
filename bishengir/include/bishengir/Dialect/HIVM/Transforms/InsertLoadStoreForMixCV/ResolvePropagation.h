@@ -61,6 +61,34 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
+class CVDataMovementResolvePropagationPattern
+    : public OpRewritePattern<UnrealizedConversionCastOp> {
+public:
+  using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
+
+  explicit CVDataMovementResolvePropagationPattern(MLIRContext *ctx)
+      : OpRewritePattern(ctx, /*benefit=*/2) {}
+
+  LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
+                                PatternRewriter &rewriter) const override;
+};
+
+class TightCoupledBufferResolvePropagationPattern
+    : public OpRewritePattern<UnrealizedConversionCastOp> {
+public:
+  using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
+
+  explicit TightCoupledBufferResolvePropagationPattern(MLIRContext *ctx)
+      : OpRewritePattern(ctx, /*benefit=*/2) {}
+
+  LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
+                                PatternRewriter &rewriter) const override;
+  
+  LogicalResult resolveUBToL1(UnrealizedConversionCastOp downPropOp,
+                                   UnrealizedConversionCastOp upPropOp,
+                                   PatternRewriter &rewriter) const;
+};
+
 /// Remove redundant propagation.
 /// Remove the pattern such as
 ///
@@ -88,7 +116,7 @@ public:
 class CloneMultipleAddressSpaceOperation : public RewritePattern {
 public:
   explicit CloneMultipleAddressSpaceOperation(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/10, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;

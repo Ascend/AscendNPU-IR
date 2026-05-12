@@ -620,6 +620,8 @@ bool isValidTwoDimVectorType(VectorType vType);
 Value createPRegFromConstantOp(VectorType vecTy, bool condition,
                                PatternRewriter &rewriter);
 
+bool isUnstructuredMemAccLoop(Operation *op);
+
 } // namespace utils
 
 namespace reshape_utils {

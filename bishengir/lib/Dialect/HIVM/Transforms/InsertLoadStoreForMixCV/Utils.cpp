@@ -20,10 +20,12 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <utility>
@@ -34,6 +36,19 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace mlir::hivm {
+namespace {
+/// Peel `builtin.unrealized_conversion_cast` chains used as propagation
+/// markers so `getTensorDynamicValues` does not build `tensor.dim` / size
+/// producers that depend on downstream UB/L1 buffers or other users of the
+/// same cast (avoids alloc operand cycles and dominance failures).
+Value peelTensorShapeSourceForAllocSizes(Value tensorValue) {
+  Value v = tensorValue;
+  while (auto ucc = dyn_cast_or_null<UnrealizedConversionCastOp>(
+             v.getDefiningOp()))
+    v = ucc.getOperand(0);
+  return v;
+}
+} // namespace
 
 namespace PropagatorUtil {
 
@@ -288,6 +303,78 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
       loc, isBufferized ? TypeRange() : TypeRange(type), value, loadInit);
   loadOp->setAttr("inserted-load", rewriter.getUnitAttr());
   return loadOp;
+}
+
+/// Creates a memref allocation with the specified address space.
+AllocationResult createAddressSpaceAllocation(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> shape,
+    Type elemType, ValueRange dynamicSizes, AddressSpace addrSpace, ArrayRef<int64_t> maybeStaticAllocSize) {
+  MLIRContext *ctx = rewriter.getContext();
+
+  auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
+  auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
+  auto plainType = MemRefType::get(shape, elemType);
+
+
+  Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes, maybeStaticAllocSize, elemType);
+
+  Value cast = rewriter.create<
+    memref::MemorySpaceCastOp>(loc, plainType, alloc);
+
+  return {alloc, cast};
+}
+
+/// Creates a UB (Unified Buffer) allocation matching `tensorValue`'s shape,
+/// including dynamic extents.
+AllocationResult createUBAllocation(PatternRewriter &rewriter, Location loc,
+                                    Value tensorValue, ArrayRef<int64_t> maybeStaticTotalSize) {
+  auto tensorType = cast<RankedTensorType>(tensorValue.getType());
+  Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
+  SmallVector<Value> dynamicSizes =
+      hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
+  return createAddressSpaceAllocation(
+      rewriter, loc, tensorType.getShape(), tensorType.getElementType(),
+      dynamicSizes, AddressSpace::UB, maybeStaticTotalSize);
+}
+
+/// Creates an L1 allocation matching `tensorValue`'s shape, including dynamic
+/// extents.
+AllocationResult createL1Allocation(PatternRewriter &rewriter, Location loc,
+                                    Value tensorValue, ArrayRef<int64_t> maybeStaticTotalSize) {
+  auto tensorType = cast<RankedTensorType>(tensorValue.getType());
+  Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
+  SmallVector<Value> dynamicSizes =
+      hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
+  return createAddressSpaceAllocation(
+      rewriter, loc, tensorType.getShape(), tensorType.getElementType(),
+      dynamicSizes, AddressSpace::L1, maybeStaticTotalSize);
+}
+
+std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToL1(Value value, Location loc,
+                                PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize) {
+  rewriter.setInsertionPointAfterValue(value);
+  auto tensorType = cast<RankedTensorType>(value.getType());
+  auto allocationResult = createL1Allocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto [l1Memref, plainMemref] = allocationResult;
+
+  auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, plainMemref,
+      /*restrict=*/true, /*writable=*/true);
+  return std::make_tuple(allocationResult, toTensorOp);
+}
+
+std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToUB(Value value, Location loc,
+                                PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize) {
+  auto resultType = cast<RankedTensorType>(value.getType());
+
+  auto coupledBuffer = createUBAllocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto [ubMemref, plainMemref] = coupledBuffer;
+
+  // Convert memref back to tensor for users
+  auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+      loc, resultType, plainMemref,
+      /*restrict=*/true, /*writable=*/true);
+  return std::make_tuple(coupledBuffer, toTensorOp);
 }
 
 std::pair<hivm::StoreOp, hivm::LoadOp>

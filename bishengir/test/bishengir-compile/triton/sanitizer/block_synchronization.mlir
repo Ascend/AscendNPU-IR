@@ -1,6 +1,6 @@
 // REQUIRES: enable-lir-compile
 
-// RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-sanitizer=true %s | FileCheck %s
+// RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-legacy-insert-load-store-for-mix-cv=true --enable-sanitizer=true %s | FileCheck %s
 
 // CHECK-DAG: call void @llvm.hivm.SET.CROSS.CORE({{.*}}, {{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[S_API:.*]], !asan.stub.mangling.name ![[S_STUB:.*]]
 // CHECK-DAG: call void @llvm.hivm.WAIT.FLAG.DEV.REG({{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[W_API:.*]], !asan.stub.mangling.name ![[W_STUB:.*]]

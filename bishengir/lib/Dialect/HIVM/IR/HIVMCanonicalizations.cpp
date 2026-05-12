@@ -245,6 +245,8 @@ struct RedudantVReduceOp : public OpRewritePattern<VReduceOp> {
 
 struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
   using OpRewritePattern<VReduceOp>::OpRewritePattern;
+  explicit RedudantVReduceInitOp(MLIRContext *context)
+      : OpRewritePattern<VReduceOp>(context, 2) {};
 
   bool isFillByConst(Value v, Attribute cstAttr) const {
     if (isa<BlockArgument>(v)) {
@@ -472,40 +474,6 @@ void VTransposeOp::getCanonicalizationPatterns(
 void VPadOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
   results.add<FoldLoadAndVPadPattern>(context);
-}
-
-struct FilterCVScopeOpCanonicalizer : public OpRewritePattern<FilterCVScopeOp> {
-  using OpRewritePattern<FilterCVScopeOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(FilterCVScopeOp filterOp,
-                                PatternRewriter &rewriter) const final {
-    auto funcOp = filterOp->getParentOfType<func::FuncOp>();
-    if (!funcOp)
-      return rewriter.notifyMatchFailure(filterOp,
-                                         "requires parent func::FuncOp");
-    hivm::TFuncCoreTypeAttr funcCoreTypeAttr =
-        funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-            hivm::TFuncCoreTypeAttr::name);
-    if (!funcCoreTypeAttr)
-      return rewriter.notifyMatchFailure(
-          filterOp, "requires hivm::TFuncCoreTypeAttr on parent function");
-    switch (funcCoreTypeAttr.getFuncCoreType()) {
-    case TFuncCoreType::AIC:
-      rewriter.replaceAllOpUsesWith(filterOp, filterOp.getCube());
-      return success();
-    case TFuncCoreType::AIV:
-      rewriter.replaceAllOpUsesWith(filterOp, filterOp.getVector());
-      return success();
-    default:
-      return rewriter.notifyMatchFailure(
-          filterOp, "fold only applies to AIC/AIV function core types");
-    }
-  }
-};
-
-void FilterCVScopeOp::getCanonicalizationPatterns(
-    ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
-  results.add<FilterCVScopeOpCanonicalizer>(context);
 }
 
 template <typename CustomOpT>

@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===------------- Util.cpp -----------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -623,6 +636,13 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
       .Default([&](Type t) { return nullptr; });
 }
 
+bool isUnstructuredMemAccLoop(Operation *op) {
+  auto forOp = dyn_cast<scf::ForOp>(op);
+  if (!forOp)
+    return false;
+  return forOp->hasAttr("ExtractedLoadOrStore");
+}
+
 hivm::AxisKind getAxisKind(int dim, int rank) {
   if (dim == rank - 1)
     return hivm::AxisKind::LAST;
@@ -925,15 +945,17 @@ bool utils::isAllocLikeOp(Operation *op) {
 memref::ViewOp
 utils::createAllocWithSettingBufferSize(Operation *op, int64_t bufferSize,
                                         RewriterBase &opBuilder) {
-  assert(isAllocLikeOp(op));
+  assert(isAllocLikeOp(op) && "op is not alloc-like");
   OpBuilder::InsertionGuard g(opBuilder);
   opBuilder.setInsertionPointAfter(op);
   Location loc = op->getLoc();
   auto oldType = dyn_cast<MemRefType>(op->getResultTypes().front());
-  assert(oldType);
+  assert(oldType && "type is not a memref");
   // Create new alloc with static size.
-  auto newMemrefType =
-      MemRefType::get({bufferSize}, opBuilder.getI8Type(), mlir::AffineMap{},
+  MemRefType newMemrefType =
+      MemRefType::get({bufferSize}, opBuilder.getI8Type(),
+                      AffineMapAttr::get(AffineMap::getMultiDimIdentityMap(
+                          1, opBuilder.getContext())),
                       oldType.getMemorySpace());
   Value newAlloc;
   if (isa<memref::AllocOp>(op)) {

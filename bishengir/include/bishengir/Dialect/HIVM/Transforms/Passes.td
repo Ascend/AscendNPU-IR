@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- Passes.td - HIVM pass definition file ---------------*- tablegen -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -568,7 +576,23 @@ def InsertLoadStoreForMixCV
   let options = [Option<
     "enableLegacy", "enable-legacy", "bool",
     /*default=*/"false",
-    "Run legacy logic for insert load store op for mix cv">];
+    "Run legacy logic for insert load store op for mix cv">,
+    Option<
+      "target", "target", "std::string",
+      /*default=*/"\"Ascend910B1\"",
+      "Target device name">,
+    Option<
+      "enableDotScaledCompile", "enable-dot-scaled-compile", "bool",
+      /*default=*/"false",
+      "Enable dot scaled compile">,
+    Option<
+      "enableLayoutOptimization", "enable-layout-optimization", "bool",
+      /*default=*/"false",
+      "Enable Layout Optimization">,
+    Option<
+      "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
+      /*default=*/"false",
+      "Disable Tight Coupled Buffer Allocation">];
 }
 
 def InsertCVTightCoupledBuffer

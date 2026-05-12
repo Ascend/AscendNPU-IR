@@ -21,9 +21,11 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
+#include <optional>
 
 namespace mlir {
 namespace hivm {
@@ -38,6 +40,12 @@ const llvm::SmallDenseMap<hivm::AddressSpace, TCoreType, 2> kAddressSpace2CoreTy
   {hivm::AddressSpace::L1, TCoreType::CUBE},
   {hivm::AddressSpace::GM, TCoreType::CUBE_OR_VECTOR},
   {hivm::AddressSpace::L0C, TCoreType::CUBE_OR_VECTOR},
+};
+
+/// Holds allocated memref and its plain (no address space) cast.
+struct AllocationResult {
+  Value spacedMemref; // Memref with address space attribute
+  Value plainMemref; // Memref without address space (after cast)
 };
 
 /// Read core-type/address-space metadata carried by a propagation cast.
@@ -135,6 +143,12 @@ hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter);
 
 /// Insert a load that rematerializes `value` with matching element type.
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
+
+/// Insert tight coupled buffer to L1 that rematerializes `value` with matching element type.
+std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToL1(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);
+
+/// Insert tight coupled buffer to UB that rematerializes `value` with matching element type.
+std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToUB(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);
 
 /// Convenience helper to insert store followed by load for `value`.
 std::pair<hivm::StoreOp, hivm::LoadOp>

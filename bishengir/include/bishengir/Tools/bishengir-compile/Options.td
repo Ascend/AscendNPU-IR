@@ -710,6 +710,14 @@ def EnableLayoutOptimization : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def DisableTightCoupledBuffer : FeatureControlOptions<
+  "Disable Tight Coupled Buffer Allocation",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def EnableMixedCV : FeatureControlOptions<
   "Enable mixed CV compilation",
   "bool",
