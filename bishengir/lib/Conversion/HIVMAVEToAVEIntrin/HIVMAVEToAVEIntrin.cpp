@@ -29,6 +29,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FloatingPointMode.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstdint>
@@ -3012,6 +3013,35 @@ struct HIVMDeInterleaveOpLowering
 
     Value agg = deintrinOp->getResult(0);
     auto [res0, res1] = extractResults(rewriter, loc, llvmVecVLType, agg);
+    // TODO: Temporary fix, remove it after the official solution is launched
+    // TODO: Unable to handle scenarios with multiple usages have different
+    // bitwidth
+    if (!isAlignByElementAlignment(op)) {
+      int elemBitWidth = elemType.getIntOrFloatBitWidth();
+      int unpackCoefficient = -1;
+      int srcAlignment = getOpElementAlignmentBitWidth(op);
+      llvm::SmallVector<Operation *> workList(op->getUsers());
+      while (!workList.empty()) {
+        Operation *curOp = workList.back();
+        if (isa<UnrealizedConversionCastOp>(curOp)) {
+          workList.pop_back();
+          workList.append(curOp->getUsers().begin(), curOp->getUsers().end());
+          continue;
+        }
+        int dstAlignment = getOpElementAlignmentBitWidth(curOp);
+        if (dstAlignment > srcAlignment) {
+          unpackCoefficient = dstAlignment / elemBitWidth;
+          break;
+        }
+        workList.pop_back();
+      }
+      if (unpackCoefficient == 2 || unpackCoefficient == 4) {
+        res0 = interleaveDataLayoutForExtCast(rewriter, loc, unpackCoefficient,
+                                              true, res0);
+        res1 = interleaveDataLayoutForExtCast(rewriter, loc, unpackCoefficient,
+                                              true, res1);
+      }
+    }
     UnrealizedConversionCastOp res0Casted =
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, res0);
     UnrealizedConversionCastOp res1Casted =
