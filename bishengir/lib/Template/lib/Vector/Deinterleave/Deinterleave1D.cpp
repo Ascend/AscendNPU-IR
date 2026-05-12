@@ -14,10 +14,41 @@
  * limitations under the License.
  */
 
+#include "DMA/DMAUtils.h"
 #include "Utils.h"
 #include "Vector/Deinterleave/DeinterleaveUtils.h"
 #include "Vector/VecUtils.h"
-#include "DMA/DMAUtils.h"
+
+// Deinterleave [c0,c1,...] along logical axis with element stride s:
+// logical ch0 indices 0,2,4,... lie at offsets 0, 2s, 4s,... — model as 2D
+// (pairs,1) with strides {2*s,1} and base offset 0;
+// logical ch1 indices 1,3,5,... lie at offsets s, 3s, 5s,... — model as 2D
+// (pairs,1) with strides {2*s,1} and base offset +s;
+// copy_ubuf_to_ubuf_2d_core uses repeat+gap (vector when 32B-aligned in
+// element strides, else scalar).
+template <DeinterleaveMode MODE, typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_deinterleave_1d_aligned(memref_t<__ubuf__ T, 1> *src,
+                               memref_t<__ubuf__ T, 1> *dst) {
+  int64_t src_size0 = src->sizes[0];
+  int64_t dst_size0 = dst->sizes[0];
+  int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
+  memref_t<__ubuf__ T, 2> src_2d = {src->allocated,
+                                    src->aligned,
+                                    src->offset,
+                                    {src_size0, 1},
+                                    {2 * src_stride0, 1}};
+  if constexpr (MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
+    src_2d.offset += src_stride0;
+  }
+  memref_t<__ubuf__ T, 2> dst_2d = {dst->allocated,
+                                    dst->aligned,
+                                    dst->offset,
+                                    {dst_size0, 1},
+                                    {dst_stride0, 1}};
+  copy_ubuf_to_ubuf_2d_core<T>(&src_2d, &dst_2d);
+}
 
 /// deinterleave op description:
 /// 1. deinterleave src (a,) to dst (a / 2) odd or even depending on mode,
@@ -44,6 +75,7 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   int64_t src_size0 = src->sizes[0];
   int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
 
   if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS) {
     if (src_stride0 % num_per_block == 0) {
@@ -62,6 +94,11 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
                                        src_repeat_stride);
       return;
     }
+  }
+
+  if (src_stride0 % num_per_block == 0 && dst_stride0 % num_per_block == 0) {
+    vector_deinterleave_1d_aligned<MODE, T>(src, dst);
+    return;
   }
 
   memref_t<__ubuf__ T, 1> new_src = *src;
