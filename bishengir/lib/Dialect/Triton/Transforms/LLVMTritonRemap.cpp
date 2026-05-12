@@ -2138,10 +2138,7 @@ private:
     args.push_back(gridX);
     args.push_back(gridY);
     args.push_back(gridZ);
-    if (blockified)
-      args.push_back(newIdx);
-    else
-      args.push_back(px);
+    args.push_back(px);
     args.push_back(py);
     args.push_back(pz);
     args.push_back(ub);

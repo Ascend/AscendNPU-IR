@@ -277,8 +277,7 @@ def TritonRemap : Pass<"triton-remap", "mlir::ModuleOp"> {
     Option<"gridDimY", "dim-y", "int", "1", "Grid dimension for y axis">,
     Option<"gridDimZ", "dim-z", "int", "1", "Grid dimension for z axis">,
     Option<"useIfElse", "use-if-else", "bool", "true", "Replace inline asm load/stores with scf and llvm.load/store">,
-    Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">,
-    Option<"blockified", "enabled-blockify", "bool", "false", "Indicates that blockify is enabled">
+    Option<"useGridFlag", "use-grid-flag", "bool", "false", "Override the argument dim x,y,z with the dim given by flag">
   ];
 }
 #endif

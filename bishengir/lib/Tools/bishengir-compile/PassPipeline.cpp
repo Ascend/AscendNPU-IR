@@ -170,7 +170,6 @@ void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &conf
   if (tritonGridDim.size() > 2)
     options.gridDimZ = static_cast<int>(tritonGridDim[2]);
 
-  options.blockified = config.getEnableAutoBlockifyLoop();
   // TODO: When DPX covers all remapper features correctly, remove
   // createTritonRemapPass completely.
   if (!config.getUseDPX())
@@ -245,7 +244,6 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
 
     if (tritonGridDim.size() > 2)
       options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-    options.blockified = config.getEnableAutoBlockifyLoop();
     pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
     pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
