@@ -1781,6 +1781,21 @@ public:
     return success();
   }
 };
+
+class IndirectStoreOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::IndirectStoreOp> {
+public:
+  using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::IndirectStoreOp op,
+                                PatternRewriter &rewriter) const final {
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        op->getOperands(), {});
+    return success();
+  }
+};
 } // namespace mlir::hivm
 
 void mlir::hivm::populateHIVMToStandardConversionPatterns(
@@ -1799,6 +1814,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CopyOpToLibraryCallPattern<hivm::CopyOp>,
                CopyOpToLibraryCallPattern<hivm::LoadOp>,
                CopyOpToLibraryCallPattern<hivm::StoreOp>,
+               IndirectStoreOpToLibraryCallPattern,
                VectorOpToLibraryCallPattern<hivm::VAddOp>,
                VectorOpToLibraryCallPattern<hivm::VMulOp>,
                VectorOpToLibraryCallPattern<hivm::VSubOp>,
@@ -1878,6 +1894,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::CustomOp,
                       hivm::LoadOp,
                       hivm::StoreOp,
+                      hivm::IndirectStoreOp,
                       hivm::VAddOp,
                       hivm::VMulOp,
                       hivm::VSubOp,

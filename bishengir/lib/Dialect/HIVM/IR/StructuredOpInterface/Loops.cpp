@@ -69,7 +69,17 @@ ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(ND2NZOp)
 ENABLE_COMMON_INDEXING_MAPS(LoadOp)
 ENABLE_COMMON_INDEXING_MAPS(StoreOp)
 ENABLE_COMMON_INDEXING_MAPS(CopyOp)
+ENABLE_COMMON_INDEXING_MAPS(IndirectStoreOp)
 #undef ENABLE_COMMON_INDEXING_MAPS
+
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+SmallVector<hivm::IteratorType> IndirectStoreOp::getIteratorTypesArray() {
+  int64_t rank = getRankFromShapedTypeValue(getSrc());
+  return SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
+}
 
 //===----------------------------------------------------------------------===//
 // VArangeOp

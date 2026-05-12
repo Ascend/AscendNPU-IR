@@ -242,6 +242,58 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
   return success();
 }
 
+/// Tile indirect_store on the parallel tensor tile (src / offsets / mask).
+/// The destination memref is left unchanged: indexing is carried in `offsets`.
+static LogicalResult modifyIndirectStoreOp(hivm::IndirectStoreOp op,
+                                           int64_t tilingDim,
+                                           scf::ForOp containingLoop,
+                                           PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Value srcVal = op.getSrc();
+  auto srcType = dyn_cast<ShapedType>(srcVal.getType());
+  if (!srcType || ShapedType::isDynamicShape(srcType.getShape()))
+    return failure();
+
+  auto maybeSingleTileSize =
+      getSingleTileSize(rewriter, loc, srcVal, tilingDim, containingLoop);
+  if (failed(maybeSingleTileSize))
+    return failure();
+  rewriter.setInsertionPointToStart(containingLoop.getBody());
+  auto offsetAtTileDim = calculateOffsetAtTilingDim(
+      rewriter, loc, containingLoop, maybeSingleTileSize.value());
+
+  rewriter.setInsertionPoint(op);
+
+  SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
+  SmallVector<int64_t, 4> newShape;
+  if (failed(findCorrespondingSizesOffsetsStrides(
+          rewriter, srcType, tilingDim, offsetAtTileDim,
+          maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
+          newShape)))
+    return failure();
+
+  auto sliceOperandLikeSrc = [&](OpOperand *opr) {
+    if (containingLoop.getRegion().isAncestor(opr->get().getParentRegion())) {
+      rewriter.setInsertionPointAfterValue(opr->get());
+    } else {
+      rewriter.setInsertionPointAfterValue(
+          offsetAtTileDim.template get<Value>());
+    }
+    modifyOpToSliced(rewriter, opr, mixedOffsets, mixedSize, mixedStrides,
+                     newShape);
+  };
+
+  sliceOperandLikeSrc(&op.getSrcMutable());
+  sliceOperandLikeSrc(&op.getOffsetsMutable());
+  auto maskMutable = op.getMaskMutable();
+  if (!maskMutable.empty())
+    sliceOperandLikeSrc(&maskMutable[0]);
+
+  rewriter.modifyOpInPlace(
+      op, [&]() { op->setAttr(tiledOp, rewriter.getUnitAttr()); });
+  return success();
+}
+
 namespace {
 
 /// try to tile storeOp and copyOp and bind sub block mapping
@@ -442,6 +494,46 @@ private:
   }
 };
 
+class TileAndSliceIndirectStore
+    : public OpRewritePattern<hivm::IndirectStoreOp> {
+public:
+  hivm::detail::DimensionAnalyzer &analyzer;
+
+  TileAndSliceIndirectStore(MLIRContext *context,
+                            hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<hivm::IndirectStoreOp>(context, /*benefit=*/1),
+        analyzer(analyzer) {}
+
+  LogicalResult matchAndRewrite(hivm::IndirectStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op->hasAttrOfType<UnitAttr>(tiledOp))
+      return failure();
+
+    int64_t tilingDim = analyzer.getTilingDim(op.getSrc());
+    LLVM_DEBUG(DBGS() << "The indirect store op tiling dim is: " << tilingDim
+                      << "\n");
+
+    auto maybeContainingLoop = findContainingSubblockLoop(op);
+    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
+    }
+
+    if (failed(modifyIndirectStoreOp(op, tilingDim, maybeContainingLoop.value(),
+                                     rewriter))) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
+    }
+
+    DenseMap<Operation *, Operation *> map;
+    map[op] = op;
+    setBufferSizeInLoopOp(rewriter, op.getLoc(), maybeContainingLoop.value(),
+                          map);
+    LDBG("Success");
+    return success();
+  }
+};
+
 static void modifyDebugOpToSliced(RewriterBase &rewriter, hivm::DebugOp debugOp,
                                   SmallVector<OpFoldResult, 4> mixedOffsets,
                                   SmallVector<OpFoldResult, 4> mixedSize,
@@ -622,7 +714,7 @@ public:
                                                arith::CmpIPredicate::eq,
                                                subBlockIndex, zero);
 
-    if (op.getResults().empty()) {
+    if (op->getResults().empty()) {
       // case 1: store op without results
       auto ifOp = rewriter.create<scf::IfOp>(loc, TypeRange(), cond, false);
       auto thenBodyBuilder = ifOp.getThenBodyBuilder(rewriter.getListener());
@@ -668,6 +760,8 @@ LogicalResult mlir::hivm::limitUniqueSubBlockToStore(func::FuncOp funcOp) {
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StoreOp>>(
       funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CopyOp>>(
+      funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::IndirectStoreOp>>(
       funcOp.getContext());
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
@@ -805,6 +899,7 @@ tileAndSliceOp(func::FuncOp func,
                                                        analyzer);
   patterns.add<TileAndSliceStoreCopyOp<hivm::CopyOp>>(func->getContext(),
                                                       analyzer);
+  patterns.add<TileAndSliceIndirectStore>(func->getContext(), analyzer);
   patterns.add<TileAndSliceDebugOp>(func->getContext(), analyzer);
   patterns.add<TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
                TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
@@ -902,10 +997,10 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   }
 
   // If all the pattern fails due to the tilingDim=-1
-  // walk through the store op and copy op
+  // walk through the store/copy/indirect_store op
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
-    if (!isa<hivm::StoreOp, hivm::CopyOp>(op)) {
+    if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp>(op)) {
       return WalkResult::advance();
     }
     if (op->hasAttr(tileAndSliceFailure)) {

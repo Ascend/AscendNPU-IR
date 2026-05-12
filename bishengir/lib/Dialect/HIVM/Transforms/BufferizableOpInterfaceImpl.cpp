@@ -492,6 +492,67 @@ struct BitcastOpInterface
   }
 };
 
+struct IndirectStoreOpInterface
+    : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
+                                                  hivm::IndirectStoreOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() > 0;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0;
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto indirectStoreOp = cast<hivm::IndirectStoreOp>(op);
+
+    FailureOr<Value> srcBuffer =
+        getBuffer(rewriter, indirectStoreOp.getSrc(), options);
+    if (failed(srcBuffer))
+      return failure();
+
+    FailureOr<Value> offsetBuffer =
+        getBuffer(rewriter, indirectStoreOp.getOffsets(), options);
+    if (failed(offsetBuffer))
+      return failure();
+
+    auto dstBuffer = indirectStoreOp.getDst();
+
+    FailureOr<Value> maskBuffer = failure();
+    if (indirectStoreOp.getMask()) {
+      maskBuffer = getBuffer(rewriter, indirectStoreOp.getMask(), options);
+      if (failed(maskBuffer))
+        return failure();
+    }
+
+    auto mask = indirectStoreOp.getMask();
+    hivm::IndirectStoreOp newOp;
+    if (mask) {
+      newOp = rewriter.create<hivm::IndirectStoreOp>(
+          indirectStoreOp.getLoc(),
+          /*operands*/
+          dstBuffer, *offsetBuffer, *srcBuffer, *maskBuffer);
+    } else {
+      newOp = rewriter.create<hivm::IndirectStoreOp>(
+          indirectStoreOp.getLoc(),
+          /*operands*/
+          dstBuffer, *offsetBuffer, *srcBuffer, mask);
+    }
+
+    rewriter.replaceOp(op, newOp);
+
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
@@ -507,6 +568,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     CustomOp::attachInterface<HIVMCustomOpInterface>(*ctx);
     LoadOp::attachInterface<HIVMLoadOpInterface>(*ctx);
     StoreOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::StoreOp>>(*ctx);
+    IndirectStoreOp::attachInterface<IndirectStoreOpInterface>(*ctx);
     MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);
     MixMatmulOp::attachInterface<HIVMMixMatmulOpInterface>(*ctx);
     MixGroupMatmulOp::attachInterface<HIVMMixGroupMatmulOpInterface>(*ctx);
