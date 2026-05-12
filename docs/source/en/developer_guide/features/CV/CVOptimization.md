@@ -2,7 +2,7 @@
 
 ## Hardware background
 
-This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Altas A2/A3: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
+This document describes the Cube–Vector (CV) optimization flow in AscendNPU IR at a high level. CV optimizations target NPU hardware such as Atlas A2/A3: they apply a series of transformations in the HIVM (Huawei Intermediate Virtual Machine) layer so that the **Cube** (matrix) and **Vector** (vector) units work together efficiently and Mix kernel execution is improved.
 
 ### Terms and background (read first)
 
@@ -294,4 +294,4 @@ The output MLIR will match the `CHECK:` part in the test file. The execution is 
 ## Constriants
 
 - The createPlanMemoryPass handles the space size for data interaction points. Since the total required space size is dynamically returned, there is no limitation on the size.
-- The createInlineFixpipePass currently can only inline three types of operations: vast, relu, and store.
+- The createInlineFixpipePass currently can only inline three types of operations: vcast, relu, and store.

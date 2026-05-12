@@ -1527,7 +1527,7 @@ There are sync block modes:
 Note:
 
   - SyncBlockOp can only use after data is moved to gm.
-  - `$ffts_base_addr` must be set in Altas A2/A3. Every time FFTS collect
+  - `$ffts_base_addr` must be set in Atlas A2/A3. Every time FFTS collect
     one specific `$flag_id` from all subblocks, FFTS would set the flag ID
     back to the block in the group to do synchronization.
 

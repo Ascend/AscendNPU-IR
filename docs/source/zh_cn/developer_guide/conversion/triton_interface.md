@@ -37,7 +37,7 @@ AscendNPU-IR端到端运行依赖CANN环境。
 
 #### 安装torch_npu & Triton-Ascend
 
-当前配套的torch_npu版本为2.7.1版本。
+当前配套的torch_npu版本为2.7.1。
 
 ```bash
 pip install torch_npu==2.7.1
@@ -225,7 +225,7 @@ def kernel_debug_barrier():
 
 #### sync_block_set & sync_block_wait
 
-昇腾支持在计算单元和向量单元之间的设置同步事件，sync_block_set及sync_block_wait需要同时配套使用。
+昇腾支持在计算单元和向量单元之间设置同步事件，sync_block_set及sync_block_wait需要同时配套使用。
 
 **参数说明**：
 
@@ -293,7 +293,7 @@ def test_sync_block_all():
 
 昇腾提供接口对硬件信息进行查询。
 通过调用`sub_vec_id`接口可获取当前AI Core上的Vector核索引。
-通过调用`sub_vec_num`接口可单个AI Core上的Vector核数量。
+通过调用`sub_vec_num`接口可获取单个AI Core上的Vector核数量。
 
 **写法样例**：
 
@@ -324,7 +324,7 @@ def triton_matmul_exp():
 
 **限制**：
 
-目前 Altas A2 最多支持2个Vector核。
+目前 Atlas A2 最多支持2个Vector核。
 
 **写法样例**：
 
@@ -985,7 +985,7 @@ class my_custom_op:
 
 当输入的src为指向float32类型的指针，index为int32类型的3维tensor时，上述定制操作对应的设备侧函数符号名为：`"my_func_3d_float_int32_t"`；不同的输入参数会对应不同的符号名。
 
-注意这里类型名使用的`cname`，表示对应类型在AscendC语言中的名称，如int32对应的cname就是`int32_t`。因为我们通常会采用宏的方式来来声明这些函数，并将相关类型名嵌入到函数名中，所以`cname`会较为常用。
+注意这里类型名使用的`cname`，表示对应类型在AscendC语言中的名称，如int32对应的cname就是`int32_t`。因为我们通常会采用宏的方式来声明这些函数，并将相关类型名嵌入到函数名中，所以`cname`会较为常用。
 
 ### 源码与编译
 

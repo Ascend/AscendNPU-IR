@@ -2,7 +2,7 @@
 
 ## 硬件背景
 
-本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Altas A2/A3 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
+本文档从宏观角度介绍 AscendNPU IR 中 Cube-Vector（CV）优化的整体流程。CV 优化面向 Atlas A2/A3 等 NPU 硬件，针对 **Cube**（矩阵乘单元）和 **Vector**（向量运算单元）两类核心的协同工作，在 HIVM（华为中间表示虚拟机）层进行一系列变换，以提升混合内核（Mix Kernel）的执行效率。
 
 ### 术语与背景知识（阅读前必读）
 
@@ -37,7 +37,7 @@ Ascend NPU 采用异构计算架构，主要包含：
 | **UB** | 统一缓冲，Vector 运算主存 |256KB |
 | **GM** | 全局内存 | 外部 DDR |
 
-**fixpipe** 是 Cube 与 Vector 之间的数据搬运通道，昇腾芯片的 **Cube**和**Vector**底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说， Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 GM，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。910系列的芯片架构如下
+**fixpipe** 是 Cube 与 Vector 之间的数据搬运通道，昇腾芯片的 **Cube**和**Vector**底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说， Cube 计算完成后，通过 fixpipe 将结果从 L0C 搬运到 GM，供后续 Vector 运算使用。在 IR 中体现为 `hivm.hir.fixpipe` 算子；硬件上对应专门的 L0C→UB 数据通路，可同时完成类型转换、量化等（由 fixpipe 的 `pre_quant`、`pre_relu` 等属性控制）。910系列的芯片架构如下：
 ![V220架构](../../../../images/developer_guide/cvarch.png)
 
 ## 算法原理
@@ -279,7 +279,7 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 
 ### 测试命令
 
-具体的运行命令再每个测试文件的最上面。例如
+具体的运行命令在每个测试文件的最上面。例如
 
 ```bash
 // RUN: bishengir-opt -hivm-normalize-matmul %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
@@ -290,5 +290,5 @@ bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
 
 ## 约束能力
 
-- createPlanMemoryPass处理数据交互处的空间大小，因为会动态返回数据的需要总空间大小，因此对大小没有限制。
-- createInlineFixpipePass目前只能inline vast/relu/store三类op。
+- createPlanMemoryPass处理数据交互处的空间大小，因为会动态返回数据所需的总空间大小，因此对大小没有限制。
+- createInlineFixpipePass目前只能inline vcast/relu/store三类op。

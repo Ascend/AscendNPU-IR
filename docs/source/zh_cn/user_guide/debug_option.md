@@ -336,7 +336,7 @@ if __name__ == "__main__":
 
 ![image](../../images/user_guide/debug_option5.png)
 
-注：想了解更多mssanitizer的检测情况可以参考[详见MindStdudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
+注：想了解更多mssanitizer的检测情况详见[MindStudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
 ### msprof
 

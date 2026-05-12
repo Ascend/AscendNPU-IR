@@ -33,7 +33,7 @@
 
   如果您在本项目中的使用或者其他内容存在疑问，欢迎您新建Issue进行反馈和咨询。
 
-  您可以按照新建 [Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml) 类 Issue 提出自己的疑问。
+  您可以通过新建 [Question|问题咨询](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=Question|%E9%97%AE%E9%A2%98%E5%92%A8%E8%AF%A2&template=.gitcode%252FISSUE_TEMPLATE%252Fquestion.yml) 类 Issue 提出自己的疑问。
 
 - 帮助解决他人 Issue
 

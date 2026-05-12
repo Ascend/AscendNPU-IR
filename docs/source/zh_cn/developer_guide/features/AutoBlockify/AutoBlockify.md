@@ -60,7 +60,7 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
 
 该功能通过 bishengir-compile 中的 `--enable-auto-blockify-loop` 标志控制，也可通过 bishengir-opt 的 `--auto-blockify-parallel-loop` 标志直接调用。
 
-**使用要求** 要正确使用此功能，用户需注意以下几点：
+为正确使用此功能，需注意以下几点：
 
 1. Pass 获取逻辑块数量的方式是查找标有 `kLogicalBlockNumAttr` 属性（IR 中为 `logical_block_num`）的值，用户需确保该值可用，否则 Pass 调用时将失败。
 

@@ -60,7 +60,7 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
 
 this feature is controlled in bishengir-compile with the flag `--enable-auto-blockify-loop`. it can be called directly with bishengir-opt using flag `--auto-blockify-parallel-loop`
 
-**Requirements** To use this feature correctly the user needs to be careful in setting the following :
+To use this feature correctly, please note the following points:
 
 1. the way the pass gets the logical block num is by finding the value marked by the attribute `kLogicalBlockNumAttr` [in IR: logical_block_num] the user needs to make sure this value is available or the pass will fail when called.
 
