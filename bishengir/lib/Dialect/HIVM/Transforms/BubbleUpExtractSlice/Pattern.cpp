@@ -15,10 +15,10 @@
 //
 //============================================================================//
 
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -951,8 +951,8 @@ handleExtractOfInsertSameDimCase(tensor::ExtractSliceOp sliceOp,
 }
 
 static LogicalResult
-handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
-                                      PatternRewriter &rewriter) {
+handleExtractInsertExtractCase(tensor::ExtractSliceOp sliceOp,
+                               PatternRewriter &rewriter) {
   auto parentInsertOp =
       sliceOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
   auto srcExtractOp =
@@ -974,7 +974,7 @@ handleExtractInsertExtractSameDimCase(tensor::ExtractSliceOp sliceOp,
       srcExtractOp->getLoc(), srcExtractOp.getSource(),
       sliceOp.getMixedOffsets(), sliceOp.getMixedSizes(),
       sliceOp.getMixedStrides());
-  markCreatedExtractSliceOp(rewriter, newDst);
+  markCreatedExtractSliceOp(rewriter, newSrcSrc);
 
   auto sizes = srcExtractOp.getMixedSizes();
   auto offsetVal = getValueOrCreateConstantIndexOp(
@@ -1064,26 +1064,27 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return handleInsertRankedReduceCase(sliceOp, rewriter);
   }
 
+  // handling special case
+  // ex)
+  // %extracted_slice = tensor.extract_slice %src[0] [%size] [1] :
+  // tensor<16xf32> to tensor<?xf32> %inserted_slice = tensor.insert_slice
+  // %extracted_slice into %10[0] [%size] [1] : tensor<?xf32> into
+  // tensor<16xf32> %to_bubble_up = tensor.extract_slice
+  // %inserted_slice[%offset] [8] [1] {to_be_bubbled_slice} : tensor<16xf32>
+  // to tensor<8xf32>
+  if (auto srcExtractOp =
+          parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+      srcExtractOp && srcExtractOp->hasOneUse() &&
+      srcExtractOp.getSource().getType() == sliceOp.getSource().getType() &&
+      (!sliceOp.hasZeroOffset() || !srcExtractOp.hasZeroOffset() ||
+       !sliceOp.hasUnitStride() || !srcExtractOp.hasUnitStride())) {
+    return handleExtractInsertExtractCase(sliceOp, rewriter);
+  }
+
   // Handle extract and insert on same dimension case.
   if (!llvm::set_intersection(getExtractOrInsertDim(parentInsertOp),
                               getExtractOrInsertDim(sliceOp))
            .empty()) {
-    // handling special case
-    // ex)
-    // %extracted_slice = tensor.extract_slice %src[0] [%size] [1] :
-    // tensor<16xf32> to tensor<?xf32> %inserted_slice = tensor.insert_slice
-    // %extracted_slice into %10[0] [%size] [1] : tensor<?xf32> into
-    // tensor<16xf32> %to_bubble_up = tensor.extract_slice
-    // %inserted_slice[%offset] [8] [1] {to_be_bubbled_slice} : tensor<16xf32>
-    // to tensor<8xf32>
-    if (auto srcExtractOp =
-            parentInsertOp.getSource().getDefiningOp<tensor::ExtractSliceOp>();
-        srcExtractOp && srcExtractOp->hasOneUse() &&
-        srcExtractOp.getSource().getType() == sliceOp.getSource().getType() &&
-        (!sliceOp.hasZeroOffset() || !srcExtractOp.hasZeroOffset() ||
-         !sliceOp.hasUnitStride() || !srcExtractOp.hasUnitStride())) {
-      return handleExtractInsertExtractSameDimCase(sliceOp, rewriter);
-    }
     if (!isDynamicSlice(parentInsertOp))
       return handleExtractOfInsertSameDimCase(sliceOp, rewriter);
   } else {
