@@ -173,3 +173,82 @@ func.func @test_NormalizeVLog1p_hivm_vlog1p_f16(%arg0: tensor<1024xf16>) -> tens
   %1 = hivm.hir.vlog1p ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
   return %1 : tensor<1024xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVExpM1_hivm_vexpm1
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[EXP:.*]] = hivm.hir.vexp ins(%[[ARG0]] : tensor<1024xf32>) outs(%[[EMPTY0]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[SUB:.*]] = hivm.hir.vsub ins(%[[EXP]], %[[CST]] : tensor<1024xf32>, f32) outs(%[[EMPTY1]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: return %[[SUB]]
+func.func @test_NormalizeVExpM1_hivm_vexpm1(%arg0: tensor<1024xf32>) -> tensor<1024xf32> {
+  %0 = tensor.empty() : tensor<1024xf32>
+  %1 = hivm.hir.vexpm1 ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
+  return %1 : tensor<1024xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVExpM1_hivm_vexpm1_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf16>)
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[CASTIN:.*]] = hivm.hir.vcast
+// CHECK: %[[EXP:.*]] = hivm.hir.vexp ins(%[[CASTIN]] : tensor<1024xf32>)
+// CHECK: %[[SUB:.*]] = hivm.hir.vsub ins(%[[EXP]], %[[CST]] : tensor<1024xf32>, f32)
+// CHECK: %[[CASTOUT:.*]] = hivm.hir.vcast
+// CHECK: return %[[CASTOUT]]
+func.func @test_NormalizeVExpM1_hivm_vexpm1_f16(%arg0: tensor<1024xf16>) -> tensor<1024xf16> {
+  %0 = tensor.empty() : tensor<1024xf16>
+  %1 = hivm.hir.vexpm1 ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf16>) -> tensor<1024xf16>
+  return %1 : tensor<1024xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVIlogb_hivm_vilogb
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>)
+// CHECK: %[[CST:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[ABS_EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[ABS:.*]] = hivm.hir.vabs ins(%[[ARG0]] : tensor<16xf32>) outs(%[[ABS_EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LOG_EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[LOG_EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[LN1:.*]] = hivm.hir.vln ins(%[[ABS]] : tensor<16xf32>) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LN2:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<16xf32>) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN1]], %[[LN2]] : tensor<16xf32>, tensor<16xf32>) outs(%[[LOG_EMPTY1]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[DIV]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+// CHECK: return %[[CAST]]
+func.func @test_NormalizeVIlogb_hivm_vilogb(%arg0: tensor<16xf32>) -> tensor<16xf32> {
+  %0 = tensor.empty() : tensor<16xf32>
+  %1 = hivm.hir.vilogb ins(%arg0 : tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVIlogb_hivm_vilogb_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>)
+// CHECK: %[[CST:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[ABS_EMPTY:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[ABS:.*]] = hivm.hir.vabs ins(%[[ARG0]] : tensor<16xf16>) outs(%[[ABS_EMPTY]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[CAST_EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CASTIN:.*]] = hivm.hir.vcast ins(%[[ABS]] : tensor<16xf16>) outs(%[[CAST_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LOG_EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[LOG_EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[LN1:.*]] = hivm.hir.vln ins(%[[CASTIN]] : tensor<16xf32>) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST]] : f32) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LN2:.*]] = hivm.hir.vln ins(%[[VBRC]] : tensor<16xf32>) outs(%[[LOG_EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN1]], %[[LN2]] : tensor<16xf32>, tensor<16xf32>) outs(%[[LOG_EMPTY1]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[CAST_EMPTY1:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[CASTROUND:.*]] = hivm.hir.vcast ins(%[[DIV]] : tensor<16xf32>) outs(%[[CAST_EMPTY1]] : tensor<16xf16>) round_mode = <round> -> tensor<16xf16>
+// CHECK: %[[CAST_EMPTY2:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[CASTFLOOR:.*]] = hivm.hir.vcast ins(%[[CASTROUND]] : tensor<16xf16>) outs(%[[CAST_EMPTY2]] : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+// CHECK: return %[[CASTFLOOR]]
+func.func @test_NormalizeVIlogb_hivm_vilogb_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = tensor.empty() : tensor<16xf16>
+  %1 = hivm.hir.vilogb ins(%arg0 : tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
+  return %1 : tensor<16xf16>
+}

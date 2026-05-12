@@ -261,6 +261,34 @@ def VLog1pOp : HIVM_ElementwiseUnaryOp<"vlog1p",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+def VExpM1Op : HIVM_ElementwiseUnaryOp<"vexpm1",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector exp(x) - 1 Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VIlogbOp : HIVM_ElementwiseUnaryOp<"vilogb",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector ilogb Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 def VReluOp : HIVM_ElementwiseUnaryOp<"vrelu",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
      VectorOnlyTrait<0>,

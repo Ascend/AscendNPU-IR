@@ -592,67 +592,17 @@ public:
 /// eg.
 /// y = hfusion elemwise unary {expm1} (x)
 /// is normalized to
-///  y = linalg.elemwise_unary{exp}(x) -1
-struct NormalizeExpM1Op : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    auto hfusionFun = op.getFun();
-    if (hfusionFun != hfusion::UnaryFn::expm1) {
-      return failure();
-    }
-
-    Value src = op.getInputs()[0];
-    auto inType = getElementTypeOrSelf(src.getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    auto elementType = getElementTypeOrSelf(src.getType());
-    float downOffset;
-    if (hfusionFun == hfusion::UnaryFn::expm1) {
-      downOffset = 1;
-    } else {
-      llvm_unreachable("unsupport exp op");
-    }
-    Value subValue = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), elementType,
-        rewriter.getFloatAttr(elementType, downOffset));
-
-    auto emptyExpOp = utils::createEmptyOp(rewriter, op->getLoc(), src);
-    auto *expOp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-        rewriter, op->getLoc(), linalg::UnaryFn::exp, ValueRange{src},
-        ValueRange(emptyExpOp));
-
-    auto emptyResOp = utils::createEmptyOp(rewriter, op->getLoc(), src);
-    auto *subOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op->getLoc(), linalg::BinaryFn::sub,
-            ValueRange({expOp->getResults()[0], subValue}),
-            ValueRange(emptyResOp));
-    Value res = subOp->getResult(0);
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
-    return success();
+///  y = linalg.elemwise_unary{exp}(x) - 1
+struct HFusionNormalizeExpM1Traits : public NormalizeTraitsBase {
+  static bool shouldNormalizeExpM1(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::UnaryFn::expm1;
   }
 };
 
+using NormalizeExpM1Op =
+    mlir::NormalizeExpM1OpTemplate<hfusion::ElemwiseUnaryOp,
+                                   HFusionNormalizeExpM1Traits>;
 /// step 1. clip x into [-3.92,3.92]
 /// step 2. numer=((((((CST0*y)+T1)*y+T2)*y+T3)*y+T4)*y+T5)*x, y=x^2
 /// step 3. demon=((((y+P1)*y+P2)*y+P3)*y+P4)*y+P5, y=x^2
@@ -668,55 +618,22 @@ using NormalizeErfOp =
                                  HFusionNormalizeErfTraits>;
 
 /// normalize ilogb(x), which is exponent of frexp(x), to floor(log2(abs(x)))
-struct NormalizeIlogbOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+struct HFusionNormalizeIlogbTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeIlogb(hfusion::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::UnaryFn::ilogb;
+  }
 
-    if (op.getFun() != hfusion::UnaryFn::ilogb) {
-      return failure();
-    }
-
-    Value input = op.getInputs()[0];
-#ifndef NDEBUG
-    auto inType = getElementTypeOrSelf(input.getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-#endif
-    auto loc = op->getLoc();
-
-    auto absEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-
-    auto xAbs =
-        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                               linalg::UnaryFnAttr>(
-            rewriter, loc, linalg::UnaryFn::abs, input, ValueRange(absEmptyOp))
-            ->getResult(0);
-
-    auto log2EmptyOp = utils::createEmptyOp(rewriter, loc, input);
-
-    auto xLog2 = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
-                                        hfusion::UnaryFn, hfusion::UnaryFnAttr>(
-                     rewriter, loc, hfusion::UnaryFn::log2, xAbs,
-                     ValueRange(log2EmptyOp))
-                     ->getResult(0);
-
-    auto floorEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto xFloor = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-                      rewriter, loc, linalg::UnaryFn::floor, xLog2,
-                      ValueRange(floorEmptyOp))
-                      ->getResult(0);
-
-    rewriter.replaceOp(op, xFloor);
-    return success();
+  static Value createIlogbResult(PatternRewriter &rewriter, Location loc,
+                                 Value log2) {
+    Value floorInit = utils::createEmptyOp(rewriter, loc, log2);
+    return createUnaryOp(rewriter, loc, log2, floorInit, UnaryKind::Floor);
   }
 };
 
+using NormalizeIlogbOp =
+    mlir::NormalizeIlogbOpTemplate<hfusion::ElemwiseUnaryOp,
+                                   HFusionNormalizeIlogbTraits>;
 /// nomalize frexp(x), which is mantissa for frexp(x), to x * (ilogb(x) +
 /// 1)^(-1)
 struct NormalizeLdexpOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {

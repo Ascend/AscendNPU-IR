@@ -79,6 +79,38 @@ using NormalizeExp2Op =
     mlir::NormalizeExp2OpTemplate<VExp2Op, HIVMNormalizeExp2Traits>;
 using NormalizeErfOp =
     mlir::NormalizeErfOpTemplate<VErfOp, HIVMNormalizeErfTraits>;
+
+/// normalize vexpm1(x) to vexp(x) - 1
+/// eg.
+/// y = hivm.hir.vexpm1 x
+///  is normalized to
+///  y = hivm.hir.vexp(x) - 1
+struct HIVMNormalizeExpM1Traits : public NormalizeTraitsBase {
+  static bool shouldNormalizeExpM1(hivm::VExpM1Op op) {
+    return shouldNormalizeNonBroadcastUnaryOp(op);
+  }
+};
+
+using NormalizeVExpM1Op =
+    mlir::NormalizeExpM1OpTemplate<hivm::VExpM1Op,
+                                   HIVMNormalizeExpM1Traits>;
+
+/// normalize vilogb(x), which is exponent of frexp(x), to floor(log2(abs(x)))
+struct HIVMNormalizeIlogbTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeIlogb(hivm::VIlogbOp op) {
+    return shouldNormalizeNonBroadcastUnaryOp(op);
+  }
+
+  static Value createIlogbResult(PatternRewriter &rewriter, Location loc,
+                                 Value log2) {
+    return createCastOp(rewriter, loc, log2, getElementTypeOrSelf(log2.getType()),
+                        CastRoundKind::Floor);
+  }
+};
+
+using NormalizeVIlogbOp =
+    mlir::NormalizeIlogbOpTemplate<hivm::VIlogbOp,
+                                   HIVMNormalizeIlogbTraits>;
 using NormalizeVLog2Op =
     mlir::NormalizeLogLikeOpTemplate<
         hivm::VLog2Op, HIVMNormalizeLogLikeTraits<hivm::VLog2Op, 2>>;
@@ -91,12 +123,9 @@ using NormalizeVLog1pOp =
 } // namespace
 
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
-  auto *ctx = patterns.getContext();
-  patterns.add<NormalizeVLog2Op>(ctx);
-  patterns.add<NormalizeVLog10Op>(ctx);
-  patterns.add<NormalizeVLog1pOp>(ctx);
-  patterns.add<NormalizeExp2Op>(ctx);
-  patterns.add<NormalizeErfOp>(ctx);
+  patterns.add<NormalizeExp2Op, NormalizeErfOp, NormalizeVLog2Op,
+               NormalizeVLog10Op, NormalizeVLog1pOp, NormalizeVExpM1Op,
+               NormalizeVIlogbOp>(patterns.getContext());
 }
 
 } // namespace mlir::hivm

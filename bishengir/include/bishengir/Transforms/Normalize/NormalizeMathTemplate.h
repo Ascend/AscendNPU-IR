@@ -283,6 +283,84 @@ public:
   }
 };
 
+/// Normalizes `expm1(x)` to `exp(x) - 1`.
+template <typename ExpM1OpType, typename Traits>
+struct NormalizeExpM1OpTemplate : public OpRewritePattern<ExpM1OpType> {
+public:
+  using OpRewritePattern<ExpM1OpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ExpM1OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeExpM1(op))
+      return failure();
+
+    Location loc = op->getLoc();
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value input = dpsOp.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(input.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Value output = dpsOp.getDpsInits()[0];
+    if (inputType.isF16())
+      input = Traits::createCastOp(rewriter, loc, input, rewriter.getF32Type(),
+                                   CastRoundKind::Round);
+
+    Value expInit = utils::createEmptyOp(rewriter, loc, input);
+    Value exp = Traits::createUnaryOp(rewriter, loc, input, expInit,
+                                      UnaryKind::Exp);
+
+    Type elementType = getElementTypeOrSelf(input.getType());
+    Value one = rewriter.create<arith::ConstantOp>(
+        loc, elementType, rewriter.getFloatAttr(elementType, 1.0f));
+    Value subInit = utils::createEmptyOp(rewriter, loc, input);
+    Value result =
+        Traits::createBinaryOp(rewriter, loc, exp, one, subInit,
+                               BinaryKind::Sub);
+
+    if (inputType.isF16())
+      result = Traits::createCastOp(rewriter, loc, result,
+                                    getElementTypeOrSelf(output.getType()),
+                                    CastRoundKind::Round);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Normalizes `ilogb(x)` to `floor(log2(abs(x)))`.
+template <typename IlogbOpType, typename Traits>
+struct NormalizeIlogbOpTemplate : public OpRewritePattern<IlogbOpType> {
+public:
+  using OpRewritePattern<IlogbOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(IlogbOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeIlogb(op))
+      return failure();
+
+    Location loc = op->getLoc();
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value input = dpsOp.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(input.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Value absInit = utils::createEmptyOp(rewriter, loc, input);
+    Value abs =
+        Traits::createUnaryOp(rewriter, loc, input, absInit, UnaryKind::Abs);
+
+    Value log2Init = utils::createEmptyOp(rewriter, loc, input);
+    Value log2 =
+        Traits::createUnaryOp(rewriter, loc, abs, log2Init, UnaryKind::Log2);
+
+    Value result = Traits::createIlogbResult(rewriter, loc, log2);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEMATHTEMPLATE_H

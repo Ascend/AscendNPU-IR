@@ -46,7 +46,8 @@ mapUnaryKindToHFusionUnaryFn(UnaryKind kind) {
   static const llvm::DenseMap<UnaryKind, hfusion::UnaryFn> kindToFn = {
       {UnaryKind::Rec, hfusion::UnaryFn::rec},
       {UnaryKind::Sqrt, hfusion::UnaryFn::sqrt},
-      {UnaryKind::Not, hfusion::UnaryFn::vnot}
+      {UnaryKind::Not, hfusion::UnaryFn::vnot},
+      {UnaryKind::Log2, hfusion::UnaryFn::log2}
   };
 
   return lookupMappedFn(kindToFn, kind);
@@ -58,6 +59,7 @@ mapUnaryKindToLinalgUnaryFn(UnaryKind kind) {
       {UnaryKind::Abs, linalg::UnaryFn::abs},
       {UnaryKind::Exp, linalg::UnaryFn::exp},
       {UnaryKind::Ln, linalg::UnaryFn::log},
+      {UnaryKind::Floor, linalg::UnaryFn::floor},
   };
 
   return lookupMappedFn(kindToFn, kind);
@@ -67,11 +69,11 @@ static std::optional<linalg::BinaryFn>
 mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
   static const llvm::DenseMap<BinaryKind, linalg::BinaryFn> kindToFn = {
       {BinaryKind::Add, linalg::BinaryFn::add},
-      {BinaryKind::Sub, linalg::BinaryFn::sub},
       {BinaryKind::Mul, linalg::BinaryFn::mul},
       {BinaryKind::Div, linalg::BinaryFn::div},
       {BinaryKind::MinSigned, linalg::BinaryFn::min_signed},
       {BinaryKind::MaxSigned, linalg::BinaryFn::max_signed},
+      {BinaryKind::Sub, linalg::BinaryFn::sub},
   };
 
   return lookupMappedFn(kindToFn, kind);
