@@ -163,7 +163,7 @@ struct LowerAveXorReduction : public OpRewritePattern<hivmave::ReductionOp> {
     while (curSize > 1) {
       unsigned halfSize = curSize / 2;
       auto interOp = rewriter.create<hivmave::VFInterleaveOp>(
-          loc, ArrayRef<Type>({vecTy, vecTy}), ValueRange{reduced, vecZero});
+          loc, vecTy, vecTy, reduced, vecZero, hivmave::Layout_Change::SPARSE);
       Value inter0 = interOp.getResult(0);
       Value inter1 = interOp.getResult(1);
 

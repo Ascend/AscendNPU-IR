@@ -591,21 +591,41 @@ def AVE_VFMaskedStoreOp : AVE_LibFnOp<"masked_store",[DeclareOpInterfaceMethods<
 def AVE_VFInterleaveOp : AVE_LibFnOp<"vintlv", [
     Pure, AllTypesMatch<["src1", "src2"]>, AllTypesMatch<["res1", "res2"]>, DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
   let arguments = (ins AveExtValidVector:$src1,
-                       AveExtValidVector:$src2);
+                       AveExtValidVector:$src2,
+                       OptionalAttr<AVE_LayoutChangeAttr>:$layout_change);
   let results = (outs AveExtValidVector:$res1,
                       AveExtValidVector:$res2);
   let assemblyFormat = "$src1 `,` $src2 attr-dict `:` type($src1) `,` type($res1)";
   let extraClassDeclaration = opNameDeclaration;
+  let builders = [
+    OpBuilder<(ins "mlir::Type":$res1, "mlir::Type":$res2, "mlir::Value":$src1, "mlir::Value":$src2), [{
+      build($_builder, $_state, res1, res2, src1, src2, nullptr);
+    }]>,
+    OpBuilder<(ins "mlir::Type":$res1, "mlir::Type":$res2, "mlir::Value":$src1, "mlir::Value":$src2, "mlir::hivmave::Layout_Change":$layout), [{
+      auto attr = Layout_ChangeAttr::get($_builder.getContext(), layout);
+      build($_builder, $_state, res1, res2, src1, src2, attr);
+    }]>,
+  ];
 }
 
 def AVE_VFDeInterleaveOp : AVE_LibFnOp<"vdintlv", [
     Pure, AllTypesMatch<["src1", "src2"]>, AllTypesMatch<["res1", "res2"]>, DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
   let arguments = (ins AveExtValidVector:$src1,
-                       AveExtValidVector:$src2);
+                       AveExtValidVector:$src2,
+                       OptionalAttr<AVE_LayoutChangeAttr>:$layout_change);
   let results = (outs AveExtValidVector:$res1,
                       AveExtValidVector:$res2);
   let assemblyFormat = "$src1 `,` $src2 attr-dict `:` type($src1) `,` type($res1)";
   let extraClassDeclaration = opNameDeclaration;
+  let builders = [
+    OpBuilder<(ins "mlir::Type":$res1, "mlir::Type":$res2, "mlir::Value":$src1, "mlir::Value":$src2), [{
+      build($_builder, $_state, res1, res2, src1, src2, nullptr);
+    }]>,
+    OpBuilder<(ins "mlir::Type":$res1, "mlir::Type":$res2, "mlir::Value":$src1, "mlir::Value":$src2, "mlir::hivmave::Layout_Change":$layout), [{
+      auto attr = Layout_ChangeAttr::get($_builder.getContext(), layout);
+      build($_builder, $_state, res1, res2, src1, src2, attr);
+    }]>,
+  ];
 }
 
 def AVE_VFMemBarOp : AVE_Op<"membar", [AllTypesMatch<["src"]>]> {

@@ -215,7 +215,7 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
         rewriter.setInsertionPointAfter(vtruncfOps[i]);
         auto deInterleaveOp = rewriter.create<VFDeInterleaveOp>(
             loc, vecType, vecType, vtruncfOps[i].getRes(),
-            vtruncfOps[i].getRes());
+            vtruncfOps[i].getRes(), hivmave::Layout_Change::DENSE);
         Value res1 = deInterleaveOp.getRes1();
         // create new StoreWithStrideOp with new mask and vector
         rewriter.setInsertionPointAfter(oldStoreOps[i]);
@@ -265,7 +265,7 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
       if (useDIntlv) {
         auto deInterleaveOp = rewriter.create<VFDeInterleaveOp>(
             loc, newVecType, newVecType, vtruncfOps[0].getRes(),
-            vtruncfOps[1].getRes());
+            vtruncfOps[1].getRes(), hivmave::Layout_Change::DENSE);
         storeVal = deInterleaveOp.getRes1();
         rewriter.setInsertionPointAfter(deInterleaveOp);
       } else {
