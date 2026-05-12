@@ -246,9 +246,9 @@ public:
       return failure();
     int64_t tilingDim = analyzer.getTilingDim(Op.getSrc());
     auto inputType = Op.getOperand(0).getType();
- 	  if (!inputType) {
- 	    return failure();
- 	  }
+    if (!inputType) {
+      return failure();
+    }
     /// We differentiate storeOp and copyOp
     if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
       if (!Op.getResults().empty()) { // If copy Op with results
@@ -736,20 +736,7 @@ static LogicalResult
 tileAndSliceOp(func::FuncOp func,
                DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
                bool &isBroadcastAxisCase) {
-  IRRewriter rewriter(func.getContext());
-  func->walk([&rewriter](Operation *op) {
-    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp>(op) || op->hasOneUse())
-      return;
-    rewriter.setInsertionPoint(op);
-    SmallVector<OpOperand *> uses;
-    for (auto &use : op->getUses())
-      uses.push_back(&use);
-    for (auto *use : uses) {
-      auto *user = use->getOwner();
-      rewriter.modifyOpInPlace(
-          user, [&]() { use->set(rewriter.clone(*op)->getResult(0)); });
-    }
-  });
+  LDBG("Before analyzer: " << func);
   hivm::detail::DimensionAnalyzer analyzer(func);
   if (failed(analyzer.initialize()))
     return failure();
@@ -840,7 +827,6 @@ tileAndSliceOp(func::FuncOp func,
     return failure();
   }
   return success();
-
 }
 
 /// Attempts to tile and bind sub-blocks within a function
@@ -903,6 +889,20 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 
   bool isBroadcastAxisCase = false;
 
+  newFunc->walk([&builder](Operation *op) {
+    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp,
+             hivm::VArangeOp>(op) ||
+        op->hasOneUse())
+      return;
+    builder.setInsertionPoint(op);
+    SmallVector<OpOperand *> uses;
+    for (auto &use : op->getUses())
+      uses.push_back(&use);
+    for (auto *use : uses) {
+      use->set(builder.clone(*op)->getResult(0));
+    }
+  });
+
   PassManager pm(newFunc->getContext());
   pm.addPass(tensor::createReplicateOutEmptyTensorPass());
 
@@ -948,14 +948,14 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   });
 
   SmallVector<Operation *> toBeRemoved;
- 	   newFunc->walk([&](annotation::MarkOp op) {
- 	     if (op.isAnnotatedBy(kTilingDimMappingAttrName)) {
- 	       toBeRemoved.push_back(op);
- 	     }
- 	   });
- 	   for (auto *op : toBeRemoved) {
- 	     op->erase();
- 	   }
+  newFunc->walk([&](annotation::MarkOp op) {
+    if (op.isAnnotatedBy(kTilingDimMappingAttrName)) {
+      toBeRemoved.push_back(op);
+    }
+  });
+  for (auto *op : toBeRemoved) {
+    op->erase();
+  }
 
   if (isFailed) {
     failAndRevert(newFunc);
@@ -1073,7 +1073,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
 #endif
   ]() -> LogicalResult {
     for (func::FuncOp originalFunc : aivFunctions) {
-      auto symNameStr = originalFunc.getSymNameAttr().str();  
+      auto symNameStr = originalFunc.getSymNameAttr().str();
       FailureOr<func::FuncOp> res = attemptBindSubBlock(originalFunc);
       removeTilingDimMappingMarksFromModule(
           originalFunc->getParentOfType<ModuleOp>());
@@ -1113,17 +1113,17 @@ void TileAndBindSubBlockPass::runOnOperation() {
     destroyAllBackups();
     return;
   } else {
-    if (failed(tileAicFixpipeFuncsIfNeeded(
-          aicFunctions, tightlyCoupledBufferToTilingDim))) {
-    if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
-                                           /*limitSubBlockToStore=*/false)) ||
-        failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
-                                           /*limitSubBlockToStore=*/true))) {
-      LLVM_DEBUG(DBGS() << "Failed to restore from backups.\n " );
-      signalPassFailure();
-    }
-    destroyAllBackups();
-    return;
+    if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
+                                           tightlyCoupledBufferToTilingDim))) {
+      if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
+                                             /*limitSubBlockToStore=*/false)) ||
+          failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
+                                             /*limitSubBlockToStore=*/true))) {
+        LLVM_DEBUG(DBGS() << "Failed to restore from backups.\n ");
+        signalPassFailure();
+      }
+      destroyAllBackups();
+      return;
     }
   }
 
