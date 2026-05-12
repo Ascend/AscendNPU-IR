@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "llvm/ADT/DenseMap.h"
 
 #define DEBUG_TYPE "hivm-infer-vf-mode"
 
@@ -77,10 +78,14 @@ static inline bool isSIMT(Operation *op) {
   return getVFMode(op) == VFMode::SIMT;
 }
 
-static std::optional<VFMode> inferVFMode(Operation *rootOp);
+using Op2VFModeMap = llvm::DenseMap<Operation *, std::optional<VFMode>>;
+
+static std::optional<VFMode> inferVFMode(Operation *rootOp,
+                                         Op2VFModeMap &op2VfMode);
 
 /// Classifies the VFMode of an operation based on its immediate properties.
-static std::optional<VFMode> classifyRootOperation(Operation *op) {
+static std::optional<VFMode> classifyRootOperation(Operation *op,
+                                                   Op2VFModeMap &op2VfMode) {
   if (isMIX(op))
     return VFMode::MIX;
   if (isSIMD(op))
@@ -90,7 +95,7 @@ static std::optional<VFMode> classifyRootOperation(Operation *op) {
   if (auto callOp = dyn_cast<func::CallOp>(op)) {
     SymbolTable symtab(op->getParentOfType<ModuleOp>());
     if (auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee())) {
-      return inferVFMode(callee);
+      return inferVFMode(callee, op2VfMode);
     }
   }
   return std::nullopt;
@@ -102,7 +107,8 @@ static std::optional<VFMode> classifyRootOperation(Operation *op) {
 /// If any nested operation has a different mode than the current mode, the
 /// result becomes MIX. Early exits when MIX mode is already determined.
 static std::optional<VFMode>
-resolveNestedModes(Operation *rootOp, std::optional<VFMode> currentMode) {
+resolveNestedModes(Operation *rootOp, std::optional<VFMode> currentMode,
+                   Op2VFModeMap &op2VfMode) {
   std::optional<VFMode> vfMode = currentMode;
 
   rootOp->walk([&](Operation *op) {
@@ -115,7 +121,7 @@ resolveNestedModes(Operation *rootOp, std::optional<VFMode> currentMode) {
       return WalkResult::interrupt();
 
     // Recursively infer mode for nested operation
-    std::optional<VFMode> nestedMode = inferVFMode(op);
+    std::optional<VFMode> nestedMode = inferVFMode(op, op2VfMode);
 
     // Ops are SIMD defaulty. SIMT ops are specified.
     if (!nestedMode && !isa<func::ReturnOp>(op)) {
@@ -160,11 +166,20 @@ resolveNestedModes(Operation *rootOp, std::optional<VFMode> currentMode) {
 /// - Mixed mode: If nested operations have different modes, result is MIX
 ///
 /// For function operations, the inferred mode is stored as an attribute.
-static std::optional<VFMode> inferVFMode(Operation *rootOp) {
+static std::optional<VFMode> inferVFMode(Operation *rootOp,
+                                         Op2VFModeMap &op2VfMode) {
   if (!rootOp)
     return std::nullopt;
 
-  std::optional<VFMode> vfMode = classifyRootOperation(rootOp);
+  if (auto it = op2VfMode.find(rootOp); it != op2VfMode.end())
+    return it->second;
+
+  if (auto existingMode = getVFMode(rootOp)) {
+    op2VfMode[rootOp] = existingMode;
+    return existingMode;
+  }
+
+  std::optional<VFMode> vfMode = classifyRootOperation(rootOp, op2VfMode);
 
   LLVM_DEBUG({
     llvm::dbgs() << "\n";
@@ -172,12 +187,9 @@ static std::optional<VFMode> inferVFMode(Operation *rootOp) {
     llvm::dbgs() << " Current: " << vfMode << "\n";
   });
 
-  vfMode = resolveNestedModes(rootOp, vfMode);
+  vfMode = resolveNestedModes(rootOp, vfMode, op2VfMode);
 
-  if (vfMode && isa<func::FuncOp>(rootOp)) {
-    rootOp->setAttr(VFModeAttr::name,
-                    VFModeAttr::get(rootOp->getContext(), *vfMode));
-  }
+  op2VfMode[rootOp] = vfMode;
 
   return vfMode;
 }
@@ -194,7 +206,10 @@ void InferVFModePass::runOnOperation() {
   if (!hacc::utils::isDeviceEntry(op))
     return;
 
-  (void)inferVFMode(op);
+  Op2VFModeMap op2VfMode;
+  if (auto vfMode = inferVFMode(op, op2VfMode))
+    op->setAttr(VFModeAttr::name,
+                VFModeAttr::get(op->getContext(), *vfMode));
 }
 
 } // namespace mlir::hivm

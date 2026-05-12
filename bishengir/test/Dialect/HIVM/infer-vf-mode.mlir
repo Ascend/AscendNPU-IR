@@ -31,6 +31,20 @@ func.func @foo() attributes { hacc.entry, hacc.function_kind = #hacc.function_ki
 
 // -----
 
+// Keep intermediate ops unannotated.
+
+func.func private @bar() attributes { hivm.vf_mode = #hivm.vf_mode<SIMT> }
+
+// CHECK-LABEL: @keep_inner_ops_clean()
+// CHECK: hivm.vf_mode<SIMT>
+// CHECK: call @bar() : () -> ()
+func.func @keep_inner_ops_clean() attributes { hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE> } {
+  call @bar() : () -> ()
+  return
+}
+
+// -----
+
 // MIX
 
 func.func private @bar() attributes { hivm.vector_function }
