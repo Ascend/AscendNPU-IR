@@ -665,3 +665,45 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
   return %0 : tensor<16x32xf16>
 }
+// -----
+// When the nd2nz dst is a single-slot subview of a multi-buffered alloc
+// (`alloc[slot, ...][1, ...]`), the pre-load vbrc must zero only that
+// slot at its full inner extent — not the whole alloc, which would wipe
+// sibling slots in flight under cv-pipelining.
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_slot_subview_of_multibuf_alloc
+func.func @nd2nz_slot_subview_of_multibuf_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1]
+    : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+   to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // The vbrc target must be a slot subview into the alloc, NOT the alloc
+  // itself. The size-1 slot dim is preserved; other dims cover the
+  // alloc's full inner extent.
+  // AFTERLAYOUT: %[[SLOT_TGT:.*]] = memref.subview %alloc[{{.*}}] [1,
+  // AFTERLAYOUT-NOT: outs(%alloc :
+  // AFTERLAYOUT: scf.if %{{.*}} {
+  // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%[[SLOT_TGT]]
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
+  return
+}
+
+// -----
+// When there is no slot-dim pattern (dst IS the alloc), the vbrc still
+// targets the alloc — legacy behavior, so we do not regress
+// non-pipelined nd2nz where the alloc itself is the single slot.
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_no_slot_dim_targets_whole_alloc
+func.func @nd2nz_no_slot_dim_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT: scf.if %{{.*}} {
+  // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%alloc
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT: hivm.hir.nd2nz
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
+  return
+}

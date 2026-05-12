@@ -977,11 +977,17 @@ AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank) {
     for (auto i = dim + 1; i < rank; i++)
       if (memrefType.isDynamicDim(i))
         return AlignKind::UNKNOWN;
-    if (layout &&
+    if (layout && dim >= 0 &&
         ShapedType::isDynamicShape(layout.getStrides().slice(dim, rank - dim)))
       return AlignKind::UNKNOWN;
-    // Transforming the static memrefType to the alignment
-    if (layout) {
+    // Transforming the static memrefType to the alignment.
+    //
+    // `dim` may be -1 here when rank == 1 (axisKind == LAST sets
+    // dim = rank - 2). For a strided layout that would OOB at strides[-1];
+    // fall back to the shape-based path which is well-defined for the
+    // empty range `[dim+1 .. rank)` and preserves legacy behavior on
+    // rank-1 no-layout broadcasts.
+    if (layout && dim >= 0) {
       alignKindList.push_back(layout.getStrides()[dim] % alignment == 0
                                   ? AlignKind::ALIGN
                                   : AlignKind::UNALIGNED);
