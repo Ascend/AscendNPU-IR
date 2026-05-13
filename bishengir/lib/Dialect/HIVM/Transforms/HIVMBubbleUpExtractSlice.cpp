@@ -167,6 +167,7 @@ private:
     strategies.push_back(std::make_shared<LoopBubbleUpStrategy>());
     strategies.push_back(std::make_shared<LoopArgsBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<EmptyBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>(
