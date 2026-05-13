@@ -115,6 +115,22 @@ def AVE_MaskWidthAttr : EnumAttr<AVE_Dialect, AVE_MaskWidth, "mask_type"> {
   let assemblyFormat = "`<` $value `>`";
 }
 
+def AVE_Layout_UnChanged : I32EnumAttrCase<"UNCHANGED", 0>;
+def AVE_Layout_Sparse : I32EnumAttrCase<"SPARSE", 1>;
+def AVE_Layout_Dense : I32EnumAttrCase<"DENSE", 2>;
+def AVE_Layout_Change : I32EnumAttr<"Layout_Change", "Whether layout is changed.",
+    [
+      AVE_Layout_UnChanged,
+      AVE_Layout_Sparse,
+      AVE_Layout_Dense
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+def AVE_LayoutChangeAttr : EnumAttr<AVE_Dialect, AVE_Layout_Change, "layout_change"> {
+  let assemblyFormat = [{$value}];
+}
+
 def AVE_Layout_Unknown : I32EnumAttrCase<"UNKNOWN", 0>;
 def AVE_Layout_Interleave : I32EnumAttrCase<"intlv", 1>;
 def AVE_Layout_Planar : I32EnumAttrCase<"planar", 2>;

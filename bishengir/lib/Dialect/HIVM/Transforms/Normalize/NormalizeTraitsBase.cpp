@@ -64,6 +64,7 @@ static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
     {UnaryKind::Not, createHIVMUnaryOp<hivm::VNotOp>},
     {UnaryKind::Exp, createHIVMUnaryOp<hivm::VExpOp>},
     {UnaryKind::Ln, createHIVMUnaryOp<hivm::VLnOp>},
+    {UnaryKind::Log2, createHIVMUnaryOp<hivm::VLog2Op>},
 };
 
 static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
@@ -194,7 +195,6 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
       .create<hivm::VBrcOp>(loc, TypeRange(dst.getType()), input, dst)
       .getResult()[0];
 }
-
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
     PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
   return rewriter.create<BitcastOp>(loc, resultType, source).getResult();

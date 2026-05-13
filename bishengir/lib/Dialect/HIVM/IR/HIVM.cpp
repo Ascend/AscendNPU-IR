@@ -964,12 +964,6 @@ LogicalResult IndirectStoreOp::verify() {
 
   auto offsetShape = offsetsMemrefType ? offsetsMemrefType.getShape()
                                        : offsetsTensorType.getShape();
-  auto srcShape =
-      srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
-  if (offsetShape != srcShape) {
-    return emitOpError("offsets of hivm::IndirectStoreOp must have the same "
-                       "shape and rank as src");
-  }
 
   if (auto mask = getMask()) {
     auto maskType = mask.getType();

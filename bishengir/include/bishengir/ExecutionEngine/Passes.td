@@ -94,6 +94,9 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
     "memref::MemRefDialect",
     "tensor::TensorDialect",
   ];
+  let options =
+      [Option<"convertToNamedOp", "convert-to-named-op", "bool",
+      "true", "Convert hir operations to named ones">];
 }
 
 #endif // BISHENGIR_EXECUTION_ENGINE_TRANSFORMS_PASSES

@@ -22,15 +22,13 @@ enum class FusionMode { AllOp, NMostOp, MaxParallel, UBAwareOp };
 struct VFFusionKindOption {
   VFFusionKindOption(const bool enableOutlineCF, const bool enableOutlineMemref,
                      const bool enableOutlineArith,
-                     const bool enableOutlineCube,
-                     const bool enableReshapeTiling, int64_t ubBudgetBytes = 0,
+                     const bool enableOutlineCube, int64_t ubBudgetBytes = 0,
                      int64_t ubAlignBytes = 0)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
-        enableOutlineCube(enableOutlineCube),
-        enableReshapeTiling(enableReshapeTiling), ubBudgetBytes(ubBudgetBytes),
-        ubAlignBytes(ubAlignBytes){};
+        enableOutlineCube(enableOutlineCube), ubBudgetBytes(ubBudgetBytes),
+        ubAlignBytes(ubAlignBytes) {};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -40,7 +38,6 @@ struct VFFusionKindOption {
   const bool enableOutlineMemref;
   const bool enableOutlineArith;
   const bool enableOutlineCube;
-  const bool enableReshapeTiling;
   const int64_t ubBudgetBytes;
   const int64_t ubAlignBytes;
 };
@@ -56,6 +53,12 @@ bool isSafeToExcludeOps(Operation *op);
 bool isOutlineableOp(const VFFusionKindOption &option, Operation *op);
 
 bool isCubeFunc(func::FuncOp funcOp);
+
+bool isVsstbPatternTransposeOp(Operation *op);
+
+bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op);
+
+bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op);
 
 } // namespace analysis
 } // namespace mlir

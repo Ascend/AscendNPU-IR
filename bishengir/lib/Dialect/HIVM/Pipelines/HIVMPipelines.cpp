@@ -271,9 +271,6 @@ static void hivmPreBufferizationOptimizationPipeline(
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
-  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
-    pm.addPass(createNormalizeFixpipePass());
-  }
 
   // Cross-Core Auto-Sync passes (Inject-Block-Sync, Cross-Core-GSS)
   hivmCrossCoreSyncPipeline(pm, hivmPipelineOptions);

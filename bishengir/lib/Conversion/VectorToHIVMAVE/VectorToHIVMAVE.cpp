@@ -583,9 +583,11 @@ private:
       cstZeroVec = rewriter.create<arith::BitcastOp>(loc, vecTy, cstZeroVec);
     }
     auto resEven = rewriter.create<hivmave::VFDeInterleaveOp>(
-        loc, vecTy, vecTy, gather1Result, cstZeroVec);
+        loc, vecTy, vecTy, gather1Result, cstZeroVec,
+        hivmave::Layout_Change::DENSE);
     auto resOdd = rewriter.create<hivmave::VFDeInterleaveOp>(
-        loc, vecTy, vecTy, gather2Result, cstZeroVec);
+        loc, vecTy, vecTy, gather2Result, cstZeroVec,
+        hivmave::Layout_Change::DENSE);
 
     auto res = rewriter.create<hivmave::VFInterleaveOp>(
         loc, vecTy, vecTy, resEven.getResult(0), resOdd.getResult(0));
@@ -882,6 +884,7 @@ struct VecInterleaveOpPattern : public OpRewritePattern<vector::InterleaveOp> {
     Value rhs = op.getRhs();
     Location loc = op->getLoc();
 
+    // Vector intlv does not change the layout.
     auto aveIntlvOp = rewriter.create<hivmave::VFInterleaveOp>(
         loc, srcType, srcType, lhs, rhs);
     auto aveRes1 = aveIntlvOp.getRes1();
@@ -920,6 +923,7 @@ struct VecDeinterleaveOpPattern
 
     Value lhs = ucc->getResult(0);
     Value rhs = ucc->getResult(1);
+    // Vector deintlv does not change the layout.
     auto aveDeintlvOp = rewriter.create<hivmave::VFDeInterleaveOp>(
         loc, vecResTy, vecResTy, lhs, rhs);
     auto aveRes1 = aveDeintlvOp.getRes1();
@@ -992,7 +996,7 @@ void mlir::hivmave::populateVectorToHIVMAVEConversionPatterns(
   patterns
       .add<MaskedLoadOpPattern, LoadOpRewritePattern, StoreOpPattern,
            MaskedStoreOpPattern, ConstantMaskOpConversionPattern,
-           CreateMaskOpConversionPattern, BroadcastOpPattern,
+           CreateMaskOpConversionPattern, BroadcastOpPattern, VecInterleaveOpPattern,
            VecInterleaveOpPattern, VecDeinterleaveOpPattern,
            TransferReadOpPattern, TransferWriteOpPattern, VecGatherOpPattern,
            VecScatterOpPattern, VecBroadcastOpPattern, ShapeCastOpPattern>(

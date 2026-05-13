@@ -2,12 +2,6 @@
 
 // CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_0(
 // CHECK: arith.constant
-// CHECK: linalg.fill
-// CHECK: linalg.reduce
-// CHECK: return
-
-// CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_1(
-// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
@@ -15,7 +9,9 @@
 // CHECK: linalg.reduce
 // CHECK: return
 
-// CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_2(
+// CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_1(
+// CHECK: arith.constant
+// CHECK: arith.constant
 // CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
@@ -44,11 +40,23 @@
 // CHECK: memref.subview
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
+// CHECK: memref.alloc
+// CHECK: memref.copy
+// CHECK: bufferization.to_tensor
+// CHECK: memref.alloc
+// CHECK: memref.copy
+// CHECK: bufferization.to_tensor
+// CHECK: tensor.empty
+// CHECK: linalg.reduce
+// CHECK: tensor.empty
+// CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused_native_layer_norm_0_fused_0
 // CHECK: func.call @triton_unk_fused_native_layer_norm_0_fused_1
-// CHECK: func.call @triton_unk_fused_native_layer_norm_0_fused_2
 // CHECK: bufferization.materialize_in_destination
 // CHECK: tensor.extract_slice
+// CHECK: bufferization.materialize_in_destination
+// CHECK: tensor.extract_slice
+// CHECK: bufferization.materialize_in_destination
 // CHECK: return
 
 module {

@@ -16,9 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Pass/Pass.h"
 #include <string>
@@ -47,16 +49,27 @@ public:
   explicit VFFusionPass(const mlir::VFFusionOptions &options)
       : impl::VFFusionBase<VFFusionPass>(options) {}
   void runOnOperation() override;
+  LogicalResult preProcess();
 
 private:
   int64_t ubBudgetBytes_ = 0;
   int64_t ubAlignBytes_ = 0;
 };
 
+LogicalResult VFFusionPass::preProcess() {
+  ModuleOp moduleOp = getOperation();
+  RewritePatternSet patterns(&getContext());
+  populateEmptifyReduceInitPatterns(patterns);
+  if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
+    return moduleOp.emitError("fail to preprocess");
+  }
+  return success();
+}
+
 VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
                             enableOutlineArith, enableOutlineCube,
-                            enableReshapeTiling, ubBudgetBytes_, ubAlignBytes_);
+                            ubBudgetBytes_, ubAlignBytes_);
 }
 
 template <typename FusionKind>
@@ -94,6 +107,11 @@ void VFFusionPass::runOnOperation() {
 
   if (enableOutlineCF)
     llvm_unreachable("unsupported at the moment");
+
+  if (failed(preProcess())) {
+    signalPassFailure();
+    return;
+  }
 
   ubBudgetBytes_ = 0;
   ubAlignBytes_ = 0;

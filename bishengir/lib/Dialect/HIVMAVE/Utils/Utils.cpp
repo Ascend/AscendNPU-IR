@@ -199,7 +199,8 @@ uint32_t hivmave::getNumfromPgePattern(VFPgeOp pge) {
     res = 128;
     break;
   case PgePattern::ALL: {
-    res = static_cast<uint32_t>(cast<VectorType>(pge.getType()).getNumElements());
+    res =
+        static_cast<uint32_t>(cast<VectorType>(pge.getType()).getNumElements());
     break;
   }
   case PgePattern::ALLF:
@@ -336,24 +337,31 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
   return mask;
 }
 
-Value hivmave::findReuseableMask(Operation *maskedOp, PatternRewriter &rewriter) {
+Value hivmave::findReuseableMask(Operation *maskedOp,
+                                 PatternRewriter &rewriter) {
   Value mask;
-  if (utils::getAnnotateOpWithAttr(maskedOp->getResults()[0], utils::reachedMaskOpsIdx)) {
+  if (utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
+                                   utils::reachedMaskOpsIdx)) {
     annotation::MarkOp mark = dyn_cast<annotation::MarkOp>(
-        utils::getAnnotateOpWithAttr(maskedOp->getResults()[0], utils::reachedMaskOpsIdx)
+        utils::getAnnotateOpWithAttr(maskedOp->getResults()[0],
+                                     utils::reachedMaskOpsIdx)
             .value());
-    int reachedMaskOpIdx =
-         static_cast<int>(mark->template getAttrOfType<IntegerAttr>(utils::reachedMaskOpsIdx)
-            .getValue().getZExtValue());
+    int reachedMaskOpIdx = static_cast<int>(
+        mark->template getAttrOfType<IntegerAttr>(utils::reachedMaskOpsIdx)
+            .getValue()
+            .getZExtValue());
     auto funcOp = maskedOp->getParentOfType<func::FuncOp>();
     funcOp->walk([&](Operation *op) {
       if (op->getNumResults() > 0 &&
           utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)) {
         annotation::MarkOp candidateMaskOpMark = dyn_cast<annotation::MarkOp>(
-            utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx).value());
+            utils::getAnnotateOpWithAttr(op->getResults()[0], utils::maskOpIdx)
+                .value());
         int candidateMaskOpIdx =
-            candidateMaskOpMark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
-                .getValue().getZExtValue();
+            candidateMaskOpMark
+                ->template getAttrOfType<IntegerAttr>(utils::maskOpIdx)
+                .getValue()
+                .getZExtValue();
         if (reachedMaskOpIdx == candidateMaskOpIdx) {
           DominanceInfo domInfo(op);
           if (domInfo.dominates(op, maskedOp)) {
@@ -369,8 +377,9 @@ Value hivmave::findReuseableMask(Operation *maskedOp, PatternRewriter &rewriter)
   return mask;
 }
 
-Value hivmave::findReuseableMaskOrCreateOne(
-    Operation *maskedOp, VectorType vecTy, PatternRewriter &rewriter) {
+Value hivmave::findReuseableMaskOrCreateOne(Operation *maskedOp,
+                                            VectorType vecTy,
+                                            PatternRewriter &rewriter) {
   Value mask = findReuseableMask(maskedOp, rewriter);
   if (!mask)
     mask = hivmave::createMaskByPGE(vecTy, rewriter, maskedOp->getLoc());
@@ -475,7 +484,8 @@ template struct hivmave::ForOpLegalization<true>;
 template struct hivmave::ForOpLegalization<false>;
 
 std::optional<int64_t> hivmave::getConstantIntValue(Value val) {
-  if (!val) return std::nullopt;
+  if (!val)
+    return std::nullopt;
 
   // 1. Handle arith.constant
   if (auto constOp = val.getDefiningOp<arith::ConstantOp>()) {
@@ -509,7 +519,8 @@ std::optional<int64_t> hivmave::getConstantIntValue(Value val) {
     if (auto funcOp = mlir::dyn_cast<func::FuncOp>(parentOp)) {
       if (&funcOp.getBody().front() == ownerBlock) {
         unsigned argIdx = blockArg.getArgNumber();
-        if (auto attr = funcOp.getArgAttrOfType<IntegerAttr>(argIdx, "hivm.constant_value")) {
+        if (auto attr = funcOp.getArgAttrOfType<IntegerAttr>(
+                argIdx, "hivm.constant_value")) {
           return attr.getInt();
         }
       }
@@ -524,15 +535,19 @@ void hivmave::tagConstantArguments(ModuleOp module) {
   SymbolTable symbolTable(module);
   module.walk([&](func::CallOp callOp) {
     auto calleeFunc = symbolTable.lookup<func::FuncOp>(callOp.getCallee());
-    if (!calleeFunc) return;
+    if (!calleeFunc)
+      return;
 
     for (unsigned i = 0; i < callOp.getNumOperands(); ++i) {
-      if (i >= calleeFunc.getNumArguments()) break;
+      if (i >= calleeFunc.getNumArguments())
+        break;
 
-      std::optional<int64_t> constVal = getConstantIntValue(callOp.getOperand(i));
+      std::optional<int64_t> constVal =
+          getConstantIntValue(callOp.getOperand(i));
       if (constVal.has_value()) {
         OpBuilder builder(calleeFunc.getContext());
-        calleeFunc.setArgAttr(i, "hivm.constant_value", builder.getI64IntegerAttr(*constVal));
+        calleeFunc.setArgAttr(i, "hivm.constant_value",
+                              builder.getI64IntegerAttr(*constVal));
       }
     }
   });

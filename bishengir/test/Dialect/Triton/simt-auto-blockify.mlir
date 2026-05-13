@@ -7,7 +7,8 @@
 
 // CHECK: %[[YZ:.*]] = arith.muli %[[GRID_Y]], %[[GRID_Z]] : i32
 // CHECK: %[[LOGICAL:.*]] = arith.muli %[[GRID_X]], %[[YZ]] : i32
-// CHECK: %[[BLOCK_IDX:.*]] = tt.get_program_id x : i32
+// CHECK: %[[HW_IDX:.*]] = gpu.linear_block_id
+// CHECK: %[[BLOCK_IDX:.*]] = arith.index_cast %[[HW_IDX]] : index to i32
 // CHECK: %[[PHYSICAL:.*]] = arith.constant 64 : i32
 // CHECK: %[[CHUNK:.*]] = arith.ceildivui %[[LOGICAL]], %[[PHYSICAL]] : i32
 // CHECK: %[[START:.*]] = arith.muli %[[BLOCK_IDX]], %[[CHUNK]] : i32
@@ -31,6 +32,7 @@
 // CHECK: }
 // CHECK: }
 // CHECK-NEXT: tt.return
+// CHECK-NOT: tt.get_program_id
 
 
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>>>, hacc.target = #hacc.target<"Ascend910_9589">} {

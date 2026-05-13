@@ -17,10 +17,12 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -31,6 +33,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstddef>
 #include <optional>
@@ -46,6 +49,42 @@ void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op) {
 
 bool isMarkedExtractSliceOp(Operation *op) {
   return op->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice);
+}
+
+int64_t calculateBufferSizeInBytes(ShapedType tiledType,
+                                   ArrayRef<int64_t> originShape,
+                                   int64_t tilingDim) {
+  if (tiledType.getRank() != static_cast<int64_t>(originShape.size()))
+    llvm::report_fatal_error(
+        "odd tiling buffer size calculation requires matching ranks");
+  if (tilingDim < 0 || tilingDim >= tiledType.getRank())
+    llvm::report_fatal_error(
+        "odd tiling buffer size calculation got invalid tiling dimension");
+
+  int64_t numElements = 1;
+  ArrayRef<int64_t> tiledShape = tiledType.getShape();
+  for (auto [idx, size] : llvm::enumerate(tiledShape)) {
+    if (!ShapedType::isDynamic(size)) {
+      numElements *= size;
+      continue;
+    }
+    if (static_cast<int64_t>(idx) != tilingDim ||
+        ShapedType::isDynamic(originShape[idx]))
+      llvm::report_fatal_error(
+          "odd tiling buffer size calculation only supports one dynamic "
+          "tiled dimension with static original size");
+
+    int64_t originalDimSize = originShape[idx];
+    int64_t subBlockDim = static_cast<int64_t>(kSubBlockDim);
+    numElements *=
+        static_cast<int64_t>(llvm::divideCeil(originalDimSize, subBlockDim));
+  }
+
+  int64_t bitWidth =
+      static_cast<int64_t>(tiledType.getElementType().getIntOrFloatBitWidth());
+  int64_t bitsToByte = static_cast<int64_t>(utils::kBitsToByte);
+  return numElements *
+         static_cast<int64_t>(llvm::divideCeil(bitWidth, bitsToByte));
 }
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
@@ -115,6 +154,8 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
     AffineExpr tileSizeExpr = (1 - builder.getAffineSymbolExpr(0)) * tileSize +
                               (builder.getAffineSymbolExpr(0) * tailsize);
     Value inductionVar = containingLoop.getBody()->getArgument(0);
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(containingLoop.getBody());
     auto finalTileSize = affine::makeComposedAffineApply(
         builder, loc, tileSizeExpr, {getAsOpFoldResult(inductionVar)});
     return getAsOpFoldResult(finalTileSize);
@@ -150,9 +191,10 @@ LogicalResult findCorrespondingSizesOffsetsStrides(
       mixedOffsets.push_back(offsetAtTileDim);
       mixedSize.push_back(tileSize);
       if (!getConstantIntValue(tileSize)) {
-        return failure();
+        newShape.push_back(ShapedType::kDynamic);
+      } else {
+        newShape.push_back(getConstantIntValue(tileSize).value());
       }
-      newShape.push_back(getConstantIntValue(tileSize).value());
     }
   }
   return success();

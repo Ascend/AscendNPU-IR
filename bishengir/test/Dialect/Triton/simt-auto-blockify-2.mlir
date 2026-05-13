@@ -7,7 +7,8 @@
 
 // CHECK: %[[YZ:.*]] = arith.muli %[[GRID_Y]], %[[GRID_Z]] : i32
 // CHECK: %[[LOGICAL:.*]] = arith.muli %[[GRID_X]], %[[YZ]] : i32
-// CHECK: %[[BLOCK_IDX:.*]] = tt.get_program_id x : i32
+// CHECK: %[[HW_IDX:.*]] = gpu.linear_block_id
+// CHECK: %[[BLOCK_IDX:.*]] = arith.index_cast %[[HW_IDX]] : index to i32
 // CHECK: %[[PHYSICAL:.*]] = arith.constant 64 : i32
 // CHECK: %[[CHUNK:.*]] = arith.ceildivui %[[LOGICAL]], %[[PHYSICAL]] : i32
 // CHECK: %[[START:.*]] = arith.muli %[[BLOCK_IDX]], %[[CHUNK]] : i32

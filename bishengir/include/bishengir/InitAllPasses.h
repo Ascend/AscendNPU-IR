@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
+#include "bishengir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/Mesh/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -74,6 +75,7 @@ inline void registerAllPasses() {
   mlir::tensor::registerBishengIRTensorPasses();
   mlir::scf::registerBishengIRSCFPasses();
   mlir::vector::registerBishengIRVectorPasses();
+  mlir::LLVM::registerBishengIRLLVMPasses();
   mlir::hacc::registerHACCPasses();
   mlir::scope::registerScopePasses();
   mlir::symbol::registerSymbolPasses();

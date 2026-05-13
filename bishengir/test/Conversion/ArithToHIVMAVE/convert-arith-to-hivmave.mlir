@@ -185,8 +185,8 @@ func.func @fn_npu_021_outlined_vf_0(%arg0: memref<256x256xi8, #hivm.address_spac
     %1 = ave.hir.vgather %subview[%c0, %c0] [%cst_0], %0 : memref<256x1xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xi8>
     %2 = ave.hir.vgather %subview[%c0, %c0] [%cst], %0 : memref<256x1xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xi8>
     %3 = ave.hir.scalar_broadcast %c0_i8 : i8 -> vector<256xi8>
-    %res1, %res2 = ave.hir.vdintlv %1, %3 : vector<256xi8>, vector<256xi8>
-    %res1_2, %res2_3 = ave.hir.vdintlv %2, %3 : vector<256xi8>, vector<256xi8>
+    %res1, %res2 = ave.hir.vdintlv %1, %3 {layout_change = #ave<layout_change DENSE>}: vector<256xi8>, vector<256xi8>
+    %res1_2, %res2_3 = ave.hir.vdintlv %2, %3 {layout_change = #ave<layout_change DENSE>}: vector<256xi8>, vector<256xi8>
     %res1_4, %res2_5 = ave.hir.vintlv %res1, %res1_2 : vector<256xi8>, vector<256xi8>
     %subview_6 = memref.subview %subview_1[0, 0] [1, 256] [1, 1] : memref<1x256xi8, strided<[256, 1], offset: ?>, #hivm.address_space<ub>> to memref<256xi8, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
     %4 = ave.hir.pge <ALL> : vector<256xi1>

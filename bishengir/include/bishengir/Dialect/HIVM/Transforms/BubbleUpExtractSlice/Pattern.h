@@ -122,6 +122,12 @@ public:
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,
                         PatternRewriter &rewriter) const override;
 };
+class EmptyBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
 
 class VTransposeBubbleUpStrategy : public BubbleUpStrategy {
 public:

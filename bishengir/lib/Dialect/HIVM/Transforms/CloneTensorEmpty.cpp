@@ -5,10 +5,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -26,6 +28,30 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+void copyAnnotationMark(Value src, Value dst, PatternRewriter &rewriter) {
+  auto *dstDefiningOp = dst.getDefiningOp();
+  if (!dstDefiningOp)
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(dstDefiningOp);
+  for (Operation *user : llvm::make_early_inc_range(src.getUsers())) {
+    auto markOp = dyn_cast<annotation::MarkOp>(user);
+    if (!markOp)
+      continue;
+    if (markOp.getSrc() != src)
+      continue;
+    // TODO: Remove this restriction after downstream users can safely handle
+    // cloned non-buffer-size annotations.
+    if (!markOp->hasAttr(kBufferSizeInByteAttr))
+      continue;
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
+    for (NamedAttribute attr : markOp->getAttrs())
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+  }
+}
+
 void CloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
   Operation *operation = op.getOperation();
   rewriter.setInsertionPoint(operation);
@@ -43,6 +69,8 @@ void CloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
       continue;
     }
     auto clonedProducer = rewriter.clone(*DstDefiningOp);
+    copyAnnotationMark(DstDefiningOp->getResult(0),
+                       clonedProducer->getResult(0), rewriter);
     rewriter.modifyOpInPlace(
         operation, [&]() { operand.set(clonedProducer->getResult(0)); });
   }
@@ -89,6 +117,8 @@ struct CloneTensorEmptyOperationPattern : public OpRewritePattern<OpTy> {
         continue;
       // clone & modify the producer empty tensor operation
       auto clonedProducer = rewriter.clone(*definingOp);
+      copyAnnotationMark(definingOp->getResult(0),
+                         clonedProducer->getResult(0), rewriter);
       rewriter.modifyOpInPlace(
           operation, [&]() { operand.set(clonedProducer->getResult(0)); });
     }
@@ -126,6 +156,8 @@ struct CloneTensorEmptySCFForPattern : public OpRewritePattern<scf::ForOp> {
       if (emptyDefOp == nullptr)
         llvm::report_fatal_error("EmptyOp is not found");
       auto clonedOp = rewriter.clone(*emptyDefOp);
+      copyAnnotationMark(emptyDefOp->getResult(0), clonedOp->getResult(0),
+                         rewriter);
       mutableInits[idx].assign(clonedOp->getResult(0));
     }
 

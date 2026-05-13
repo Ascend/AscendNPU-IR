@@ -85,3 +85,22 @@ func.func @test_clone_indirect_load_empty(%base: memref<?xf32>,
   %1 = hivm.hir.vadd ins(%0, %rhs : tensor<2x32xf32>, tensor<2x32xf32>) outs(%empty : tensor<2x32xf32>) -> tensor<2x32xf32>
   return %1 : tensor<2x32xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_clone_tensor_empty_mark
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: annotation.mark %[[EMPTY0]] {buffer_size_in_byte = 64 : i64} : tensor<16xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: annotation.mark %[[EMPTY1]] {buffer_size_in_byte = 64 : i64} : tensor<16xf32>
+// CHECK: hivm.hir.vbrc {{.*}} outs(%[[EMPTY1]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: annotation.mark %[[EMPTY2]] {buffer_size_in_byte = 64 : i64} : tensor<16xf32>
+// CHECK: hivm.hir.vrec {{.*}} outs(%[[EMPTY2]] : tensor<16xf32>) -> tensor<16xf32>
+func.func @test_clone_tensor_empty_mark(%arg0: f32, %arg1: tensor<16xf32>) -> tensor<16xf32> {
+  %empty = tensor.empty() : tensor<16xf32>
+  annotation.mark %empty {buffer_size_in_byte = 64 : i64} : tensor<16xf32>
+  %0 = hivm.hir.vbrc ins(%arg0 : f32) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+  %1 = hivm.hir.vrec ins(%0 : tensor<16xf32>) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+  %2 = hivm.hir.vadd ins(%1, %arg1 : tensor<16xf32>, tensor<16xf32>) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+  return %2 : tensor<16xf32>
+}

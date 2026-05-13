@@ -12,14 +12,17 @@
 //   physical launch: [0 .... physicalCoreNum)
 //
 //   chunk = ceildiv(logicalGridSize, physicalCoreNum)
-//   for linear in [GET.BLOCK.IDX * chunk,
-//                  min((GET.BLOCK.IDX + 1) * chunk, logicalGridSize)):
+//   for linear in [hw_block_id * chunk,
+//                  min((hw_block_id + 1) * chunk, logicalGridSize)):
 //     (pidX, pidY, pidZ) = unflatten(linear, gridX, gridY)
 //
-// The pass rewrites only `tt.get_program_id x/y/z`.  Grid metadata
-// (`tt.get_num_programs`) stays intact for later lowering.
-// NOTE: Currently, GET.BLOCK.IDX is represented via tt.get_program_id x. It
-// will be replaced with the actual HIVM intrinsic during AdaptGPUKernel.
+// The hardware (linear) block id is sourced from `gpu.linear_block_id`, which
+// lowers to `ascend_dpx::BlockIdxOp` and ultimately to the linear hardware
+// block-id intrinsic. `tt.get_program_id x/y/z` are 3D indices and would NOT
+// give the linear core id.
+//
+// The pass rewrites all `tt.get_program_id x/y/z` ops in the kernel.
+// Grid metadata (`tt.get_num_programs`) stays intact for later lowering.
 //
 //===----------------------------------------------------------------------===//
 
@@ -152,8 +155,9 @@ struct SIMTAutoBlockifyPass
 
     Value yz = builder.create<arith::MulIOp>(loc, grid.y, grid.z);
     Value logicalBlockNums = builder.create<arith::MulIOp>(loc, grid.x, yz);
-    Value blockIdx = builder.create<mlir::triton::GetProgramIdOp>(
-        loc, static_cast<int32_t>(mlir::triton::ProgramIDDim::X));
+    Value linearHwBlockIdx = builder.create<gpu::LinearBlockIdOp>(loc);
+    Value blockIdx = builder.create<arith::IndexCastOp>(
+        loc, builder.getI32Type(), linearHwBlockIdx);
     Value physicalBlockNum = builder.create<arith::ConstantIntOp>(
         loc, maybePhysicalBlockNum.value(), 32);
     Value chunk = builder.create<arith::CeilDivUIOp>(loc, logicalBlockNums,

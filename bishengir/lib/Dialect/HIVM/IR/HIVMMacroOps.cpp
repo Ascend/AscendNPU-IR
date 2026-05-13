@@ -892,25 +892,24 @@ std::string MmadL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   auto transposeA = getATranspose();
   auto transposeB = getBTranspose();
   auto enableHF32 = getEnable_HF32();
-  std::string transName = "";
-  if (transposeA.has_value()) {
-    transName = transName + "_ta";
-  }
-  if (transposeB.has_value()) {
-    transName = transName + "_tb";
-  }
-  if (enableHF32.has_value()) {
-    transName = transName + "_hf32";
-  }
+  std::string name = baseCallName;
   if (getPerChannelBias()) {
     auto biasTypeName = hivm::detail::getTypeName(
         this->getLoc(),
         getElementTypeOrSelf(this->getPerChannelBias().getType()));
-    return baseCallName + "_with_" + biasTypeName + "_bias_" + srcTypeName +
-           "_to_" + dstTypeName;
-  } else {
-    return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName + transName;
+    name += "_with_" + biasTypeName + "_bias";
   }
+  name += "_" + srcTypeName + "_to_" + dstTypeName;
+  if (transposeA.has_value()) {
+    name += "_ta";
+  }
+  if (transposeB.has_value()) {
+    name += "_tb";
+  }
+  if (enableHF32.has_value()) {
+    name += "_hf32";
+  }
+  return name;
 }
 
 bool MmadL1Op::isInitConstant(std::optional<bool> cst) {

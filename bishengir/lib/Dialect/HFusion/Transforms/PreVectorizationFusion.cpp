@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/PatternMatch.h"
@@ -29,6 +30,7 @@ namespace mlir {
 
 using namespace mlir;
 using namespace mlir::hfusion;
+using namespace mlir::analysis;
 
 static thread_local bool archisAscend950{false};
 
@@ -825,37 +827,6 @@ void InsertPadConstMark(Operation *moduleOp) {
   });
 }
 
-// Replace linalg.fill with empty tensor when its user is linalg.reduce which
-// statisfies shouldUseTileReductionUsingForV2 pattern.
-// before:
-// %2 = linalg.fill ins(%cst : f32) outs(%6 : tensor<64xf32>) ->
-//      tensor<64xf32>
-// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>)
-//      outs(%2 : tensor<64xf32>) dimensions = [1]
-// after:
-// %2 = tensor.empty() : tensor<64xf32>
-// %reduced = linalg.reduce ins(%1 : tensor<64x128xf32>)
-//      outs(%2 : tensor<64xf32>) dimensions = [1]
-void EmptifyReduceInit(Operation *op, IRRewriter &rewriter) {
-  op->walk([&](linalg::ReduceOp reduceOp) {
-    if (!(hfusion::shouldUseTileReductionUsingForV2(reduceOp)))
-      return;
-    Value initValue = reduceOp.getInits()[0];
-    auto initOp = initValue.getDefiningOp();
-    if (!initOp || !mlir::hfusion::isFillOp(initOp))
-      return;
-    RankedTensorType outType = mlir::cast<RankedTensorType>(initValue.getType());
-    rewriter.setInsertionPoint(reduceOp);
-    auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        reduceOp.getLoc(), outType.getShape(), outType.getElementType());
-    rewriter.modifyOpInPlace(reduceOp, [&]() {
-      reduceOp.getInitsMutable()[0].assign(emptyOp.getResult());
-    });
-    if (initOp->use_empty())
-      rewriter.eraseOp(initOp);
-  });
-}
-
 void PreVectorizationFusionPass::runOnOperation() {
   Operation *op = getOperation();
   archisAscend950 =
@@ -893,8 +864,7 @@ void PreVectorizationFusionPass::runOnOperation() {
   }
 
   if (archisAscend950 && this->enableTritonCompile) {
-    IRRewriter rewriter(&getContext());
-    EmptifyReduceInit(op, rewriter);
+    populateEmptifyReduceInitPatterns(patterns);
   }
 
   populatePreVectorizationFusionPatterns(patterns, maxFusedElementwiseOps);

@@ -12,6 +12,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
+    RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
     PopulateSharedMemoryOffsetToDPX.cpp
     SIMTAutoBlockify.cpp

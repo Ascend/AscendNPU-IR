@@ -1005,6 +1005,19 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     tt.return
   }
 
+  // CHECK-LABEL: @test_sub_rn_fp32
+  // CHECK: ascend_dpx.sub_rn {{.*}} : (f32, f32) -> f32
+  tt.func public @test_sub_rn_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_sub_rn_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %5, %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
   // CHECK-LABEL: @test_byte_perm_i32
   // CHECK: ascend_dpx.byte_perm {{.*}} : (i32, i32, i32) -> i32
   tt.func public @test_byte_perm_i32(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<i32>, %arg2: !tt.ptr<i32>, %arg3: !tt.ptr<i32>, %arg4: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg6: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
@@ -1107,6 +1120,176 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     %6 = tt.extern_elementwise %1, %3, %5 {libname = "", libpath = "", pure = true, symbol = "__hmf_fma_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
     %7 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
     tt.store %7, %6 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_sqrt_rn_fp32
+  // CHECK: ascend_dpx.sqrt_rn {{.*}} : (f32) -> f32
+  tt.func public @test_sqrt_rn_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_sqrt_rn_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_cbrt_fp32
+  // CHECK: ascend_dpx.cbrt {{.*}} : (f32) -> f32
+  tt.func public @test_cbrt_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_cbrt_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_erfc_fp32
+  // CHECK: ascend_dpx.erfc {{.*}} : (f32) -> f32
+  tt.func public @test_erfc_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_erfc_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_tgamma_fp32
+  // CHECK: ascend_dpx.tgamma {{.*}} : (f32) -> f32
+  tt.func public @test_tgamma_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_tgamma_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_j0_fp32
+  // CHECK: ascend_dpx.j0 {{.*}} : (f32) -> f32
+  tt.func public @test_j0_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_j0_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_fast_sinf_fp32
+  // CHECK: ascend_dpx.fast_sinf {{.*}} : (f32) -> f32
+  tt.func public @test_fast_sinf_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_fast_sin_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_finitef_fp32
+  // CHECK: ascend_dpx.finitef {{.*}} : (f32) -> i1
+  tt.func public @test_finitef_fp32(%arg0: !tt.ptr<i1>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_finitef"} : (tensor<1xf32, #blocked>) -> tensor<1xi1, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<i1> -> tensor<1x!tt.ptr<i1>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<i1>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_float2int_rn_fp32
+  // CHECK: ascend_dpx.float2int_rn {{.*}} : (f32) -> i32
+  tt.func public @test_float2int_rn_fp32(%arg0: !tt.ptr<i32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_float2int_rn_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xi32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_int_as_float_fp32
+  // CHECK: ascend_dpx.int_as_float {{.*}} : (i32) -> f32
+  tt.func public @test_int_as_float_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<i32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<i32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_int_as_float_fp32"} : (tensor<1xi32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_sub_rz_fp32
+  // CHECK: ascend_dpx.sub_rz {{.*}} : (f32, f32) -> f32
+  tt.func public @test_sub_rz_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_sub_rz_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %5, %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_rhypot_fp32
+  // CHECK: ascend_dpx.rhypot {{.*}} : (f32, f32) -> f32
+  tt.func public @test_rhypot_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_rhypot_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %5, %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_jn_fp32
+  // CHECK: ascend_dpx.jn {{.*}} : (f32, f32) -> f32
+  tt.func public @test_jn_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_jn_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %5, %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_norm3d_fp32
+  // CHECK: ascend_dpx.norm3d {{.*}} : (f32, f32, f32) -> f32
+  tt.func public @test_norm3d_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: !tt.ptr<f32>, %arg4: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg6: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %5 = tt.load %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    %6 = tt.extern_elementwise %1, %3, %5 {libname = "", libpath = "", pure = true, symbol = "__hmf_norm3d_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %7 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %7, %6 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_norm4d_fp32
+  // CHECK: ascend_dpx.norm4d {{.*}} : (f32, f32, f32, f32) -> f32
+  tt.func public @test_norm4d_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: !tt.ptr<f32>, %arg4: !tt.ptr<f32>, %arg5: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg6: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg7: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.splat %arg3 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %5 = tt.load %4 : tensor<1x!tt.ptr<f32>, #blocked>
+    %6 = tt.splat %arg4 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %7 = tt.load %6 : tensor<1x!tt.ptr<f32>, #blocked>
+    %8 = tt.extern_elementwise %1, %3, %5, %7 {libname = "", libpath = "", pure = true, symbol = "__hmf_norm4d_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %9 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %9, %8 : tensor<1x!tt.ptr<f32>, #blocked>
     tt.return
   }
 }

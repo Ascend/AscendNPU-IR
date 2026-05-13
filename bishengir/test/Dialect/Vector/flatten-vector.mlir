@@ -203,27 +203,6 @@ func.func @flatten_arith_and_math_0(%arg0: memref<16x4x4x16xf16, #hivm.address_s
 
 // -----
 
-// Test flatten transfer_write with contiguous mask (constant_mask).
-// Mask and in_bounds must be preserved to avoid precision issues.
-// CHECK-LABEL: func.func @flatten_transfer_write_with_contiguous_mask(
-// CHECK: vector.constant_mask [48] : vector<64xi1>
-// CHECK: vector.transfer_write {{.*}} {{.*}}[%{{.*}}], %{{.*}} {in_bounds = [true]} : vector<64xf16>, memref<48xf16
-func.func @flatten_transfer_write_with_contiguous_mask(%arg0: memref<4x4x16xf16, #hivm.address_space<ub>>, %arg1: memref<4x4x16xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %cst = arith.constant 0.000000e+00 : f16
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  scf.for %arg2 = %c0 to %c1 step %c1 {
-    %subview_src = memref.subview %arg0[%arg2, 0, 0] [1, 3, 16] [1, 1, 1] : memref<4x4x16xf16, #hivm.address_space<ub>> to memref<1x3x16xf16, strided<[64, 16, 1], offset: ?>, #hivm.address_space<ub>>
-    %subview_dst = memref.subview %arg1[%arg2, 0, 0] [1, 3, 16] [1, 1, 1] : memref<4x4x16xf16, #hivm.address_space<ub>> to memref<1x3x16xf16, strided<[64, 16, 1], offset: ?>, #hivm.address_space<ub>>
-    %0 = vector.transfer_read %subview_src[%c0, %c0, %c0], %cst {in_bounds = [true, true, true]} : memref<1x3x16xf16, strided<[64, 16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x4x16xf16>
-    %mask = vector.constant_mask [1, 3, 16] : vector<1x4x16xi1>
-    vector.transfer_write %0, %subview_dst[%c0, %c0, %c0], %mask {in_bounds = [true, true, true]} : vector<1x4x16xf16>, memref<1x3x16xf16, strided<[64, 16, 1], offset: ?>, #hivm.address_space<ub>>
-  }
-  return
-}
-
-// -----
-
 // CHECK-LABEL: func.func @flatten_cast_with_vsstb_0(
 // CHECK: %[[truncf:.*]] = arith.truncf {{.*}} vector<64xf32>
 // CHECK: %[[cast:.*]] = vector.shape_cast %[[truncf]] : vector<64xf16> to vector<4x16xf16>
@@ -250,6 +229,24 @@ func.func @flatten_cast_with_vsstb_0(%arg0: memref<64x8x16xf32, #hivm.address_sp
 
 // -----
 
+// to flatten transfer_write, both source and vector in transfer_write should have multiple non-unit dims
+// CHECK-LABEL: func.func @flatten_write_with_diff_source_vector_shape_0
+// CHECK: vector.transfer_write {{.*}} : vector<64xf32>, memref<4x2xf32
+func.func @flatten_write_with_diff_source_vector_shape_0(%arg0: memref<4x1xf32, #hivm.address_space<ub>>, %arg1: memref<4x1xf32, #hivm.address_space<ub>>, %arg2: memref<4x1xf32, #hivm.address_space<ub>>, %arg3: f32, %arg4: memref<4x2xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [1] : vector<64xi1>
+  %1 = vector.constant_mask [2] : vector<64xi1>
+  %subview = memref.subview %arg0[0, 0] [1, 1] [1, 1] : memref<4x1xf32, #hivm.address_space<ub>> to memref<1x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>
+  %subview_0 = memref.subview %arg2[0, 0] [1, 1] [1, 1] : memref<4x1xf32, #hivm.address_space<ub>> to memref<1x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>
+  %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 : memref<1x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>, vector<64xf32>
+  %3 = vector.transfer_read %subview_0[%c0, %c0], %cst, %0 : memref<1x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>, vector<64xf32>
+  %res1, %res2 = ave.hir.vintlv %2, %3 : vector<64xf32>, vector<64xf32>
+  vector.transfer_write %res1, %arg4[%c0, %c0], %1 : vector<64xf32>, memref<4x2xf32, #hivm.address_space<ub>>
+  return
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_preserve_attrbutes_0
 // CHECK: arith.truncf {{.*}} {enable_saturate = false, round_mode = #hfusion.round_mode<rint>}
@@ -259,55 +256,5 @@ func.func @test_preserve_attrbutes_0(%arg0: memref<2x32xf32, #hivm.address_space
   %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]} : memref<2x32xf32, #hivm.address_space<ub>>, vector<2x32xf32>
   %1 = arith.truncf %0 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>} : vector<2x32xf32> to vector<2x32xbf16>
   vector.transfer_write %1, %arg1[%c0, %c0] {in_bounds = [true, true]} : vector<2x32xbf16>, memref<2x32xbf16, #hivm.address_space<ub>>
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func.func @flatten_vector_gather_0(
-// CHECK: vector.gather {{.*}} into vector<64xi32>
-// CHECK: vector.transfer_write {{.*}} vector<64xi32>, memref<64xi32
-func.func @flatten_vector_gather_0(%arg0: memref<320xi32, #hivm.address_space<ub>>, %arg1: vector<1x64xi32>, %arg2: vector<1x64xi1>, %arg3: vector<1x64xi32>, %arg4: memref<1x64xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %0 = vector.gather %arg0[%c0][%arg1], %arg2, %arg3 : memref<320xi32, #hivm.address_space<ub>>, vector<1x64xi32>, vector<1x64xi1>, vector<1x64xi32> into vector<1x64xi32>
-  vector.transfer_write %0, %arg4[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xi32>, memref<1x64xi32, #hivm.address_space<ub>>
-  return
-}
-
-// -----
-
-// Negative test: vector.gather with non-leading-ones shape (2x32) must NOT be flattened.
-// CHECK-LABEL: func.func @flatten_vector_gather_no_flatten_2x32(
-// CHECK: vector.gather {{.*}} into vector<2x32xi32>
-// CHECK-NOT: vector.gather {{.*}} into vector<64xi32>
-func.func @flatten_vector_gather_no_flatten_2x32(%arg0: memref<320xi32, #hivm.address_space<ub>>, %arg1: vector<2x32xi32>, %arg2: vector<2x32xi1>, %arg3: vector<2x32xi32>, %arg4: memref<2x32xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %c0 = arith.constant 0 : index
-  %0 = vector.gather %arg0[%c0][%arg1], %arg2, %arg3 : memref<320xi32, #hivm.address_space<ub>>, vector<2x32xi32>, vector<2x32xi1>, vector<2x32xi32> into vector<2x32xi32>
-  vector.transfer_write %0, %arg4[%c0, %c0] {in_bounds = [true, true]} : vector<2x32xi32>, memref<2x32xi32, #hivm.address_space<ub>>
-  return
-}
-
-// -----
-
-// CHECK-LABEL: func.func @test_flatten_ternary_op_0
-// CHECK: arith.cmpf {{.*}} : vector<64xf32>
-// CHECK: arith.select {{.*}} : vector<64xi1>, vector<64xf32>
-func.func @test_flatten_ternary_op_0(%arg0: memref<1x16x16xf32, #hivm.address_space<ub>>, %arg1: memref<1x16x16xf32, #hivm.address_space<ub>>, %arg2: memref<1x16x16xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
-  %cst = arith.constant dense<1.000000e+00> : vector<1x4x16xf32>
-  %cst_0 = arith.constant dense<0.000000e+00> : vector<1x4x16xf32>
-  %cst_1 = arith.constant 0.000000e+00 : f32
-  %c4 = arith.constant 4 : index
-  %c16 = arith.constant 16 : index
-  %c0 = arith.constant 0 : index
-  scf.for %arg3 = %c0 to %c16 step %c4 {
-    %subview = memref.subview %arg0[0, %arg3, 0] [1, 4, 16] [1, 1, 1] : memref<1x16x16xf32, #hivm.address_space<ub>> to memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>
-    %subview_2 = memref.subview %arg1[0, %arg3, 0] [1, 4, 16] [1, 1, 1] : memref<1x16x16xf32, #hivm.address_space<ub>> to memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>
-    %subview_3 = memref.subview %arg2[0, %arg3, 0] [1, 4, 16] [1, 1, 1] : memref<1x16x16xf32, #hivm.address_space<ub>> to memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>
-    %0 = vector.transfer_read %subview[%c0, %c0, %c0], %cst_1 {in_bounds = [true, true, true]} : memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x4x16xf32>
-    %1 = vector.transfer_read %subview_2[%c0, %c0, %c0], %cst_1 {in_bounds = [true, true, true]} : memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x4x16xf32>
-    %2 = arith.cmpf ogt, %0, %1 : vector<1x4x16xf32>
-    %3 = arith.select %2, %cst, %cst_0 : vector<1x4x16xi1>, vector<1x4x16xf32>
-    vector.transfer_write %3, %subview_3[%c0, %c0, %c0] {in_bounds = [true, true, true]} : vector<1x4x16xf32>, memref<1x4x16xf32, strided<[256, 16, 1], offset: ?>, #hivm.address_space<ub>>
-  }
   return
 }

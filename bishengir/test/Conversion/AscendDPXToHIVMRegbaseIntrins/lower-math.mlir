@@ -313,6 +313,8 @@ func.func @ascend_dpx_binary_libcall_lowering_f32(%arg1 : f32, %arg2 : f32) {
     %20 = ascend_dpx.mul_rd %arg1, %arg2 : (f32, f32) -> f32
     // CHECK: @_mlir_ciface_simt_mul_ru_float(%[[ARG1]], %[[ARG2]])
     %21 = ascend_dpx.mul_ru %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sub_rn_float(%[[ARG1]], %[[ARG2]])
+    %22 = ascend_dpx.sub_rn %arg1, %arg2 : (f32, f32) -> f32
     return
 }
 
@@ -372,5 +374,223 @@ func.func @ascend_dpx_exp2_lowering_f32(%arg1 : f32) {
     // CHECK-NEXT: %[[MUL:.*]] = llvm.fmul %[[ARG]]
     // CHECK-NEXT: llvm.intr.exp(%[[MUL]])
     %0 = ascend_dpx.exp2 %arg1 : (f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_new_unary_ops_f32
+// CHECK-SAME: %[[ARG:.*]]: f32
+func.func @ascend_dpx_new_unary_ops_f32(%arg1 : f32) {
+    // CHECK: @_mlir_ciface_simt_sqrt_rn_float(%[[ARG]])
+    %1 = ascend_dpx.sqrt_rn %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sqrt_rz_float(%[[ARG]])
+    %2 = ascend_dpx.sqrt_rz %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sqrt_rd_float(%[[ARG]])
+    %3 = ascend_dpx.sqrt_rd %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sqrt_ru_float(%[[ARG]])
+    %4 = ascend_dpx.sqrt_ru %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_cbrt_float(%[[ARG]])
+    %5 = ascend_dpx.cbrt %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rcbrt_float(%[[ARG]])
+    %6 = ascend_dpx.rcbrt %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rsqrt_rz_float(%[[ARG]])
+    %7 = ascend_dpx.rsqrt_rz %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rsqrt_rd_float(%[[ARG]])
+    %8 = ascend_dpx.rsqrt_rd %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rsqrt_ru_float(%[[ARG]])
+    %9 = ascend_dpx.rsqrt_ru %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_cospi_float(%[[ARG]])
+    %10 = ascend_dpx.cospi %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sinpi_float(%[[ARG]])
+    %11 = ascend_dpx.sinpi %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_j0_float(%[[ARG]])
+    %12 = ascend_dpx.j0 %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_j1_float(%[[ARG]])
+    %13 = ascend_dpx.j1 %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_y0_float(%[[ARG]])
+    %14 = ascend_dpx.y0 %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_y1_float(%[[ARG]])
+    %15 = ascend_dpx.y1 %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_cyl_bessel_i1_float(%[[ARG]])
+    %16 = ascend_dpx.cyl_bessel_i1 %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_erfc_float(%[[ARG]])
+    %17 = ascend_dpx.erfc %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_erfcx_float(%[[ARG]])
+    %18 = ascend_dpx.erfcx %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_erfcinv_float(%[[ARG]])
+    %19 = ascend_dpx.erfcinv %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_normcdf_float(%[[ARG]])
+    %20 = ascend_dpx.normcdf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_normcdfinv_float(%[[ARG]])
+    %21 = ascend_dpx.normcdfinv %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_tgamma_float(%[[ARG]])
+    %22 = ascend_dpx.tgamma %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_gamma_float(%[[ARG]])
+    %23 = ascend_dpx.gamma %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_llrint_float(%[[ARG]])
+    %24 = ascend_dpx.llrint %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_llround_float(%[[ARG]])
+    %25 = ascend_dpx.llround %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_logb_float(%[[ARG]])
+    %27 = ascend_dpx.logb %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_sinf_float(%[[ARG]])
+    %28 = ascend_dpx.fast_sinf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_cosf_float(%[[ARG]])
+    %29 = ascend_dpx.fast_cosf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_log2f_float(%[[ARG]])
+    %30 = ascend_dpx.fast_log2f %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_logf_float(%[[ARG]])
+    %31 = ascend_dpx.fast_logf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_expf_float(%[[ARG]])
+    %32 = ascend_dpx.fast_expf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_tanf_float(%[[ARG]])
+    %33 = ascend_dpx.fast_tanf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_exp10f_float(%[[ARG]])
+    %34 = ascend_dpx.fast_exp10f %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_log10f_float(%[[ARG]])
+    %35 = ascend_dpx.fast_log10f %arg1 : (f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_type_conversion_ops_f32
+// CHECK-SAME: %[[ARG:.*]]: f32
+func.func @ascend_dpx_type_conversion_ops_f32(%arg1 : f32) {
+    // CHECK: @_mlir_ciface_simt_float2int_rn_float(%[[ARG]])
+    %1 = ascend_dpx.float2int_rn %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2int_rz_float(%[[ARG]])
+    %2 = ascend_dpx.float2int_rz %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2int_rd_float(%[[ARG]])
+    %3 = ascend_dpx.float2int_rd %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2int_ru_float(%[[ARG]])
+    %4 = ascend_dpx.float2int_ru %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2uint_rn_float(%[[ARG]])
+    %5 = ascend_dpx.float2uint_rn %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2uint_rz_float(%[[ARG]])
+    %6 = ascend_dpx.float2uint_rz %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2uint_rd_float(%[[ARG]])
+    %7 = ascend_dpx.float2uint_rd %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2uint_ru_float(%[[ARG]])
+    %8 = ascend_dpx.float2uint_ru %arg1 : (f32) -> i32
+    // CHECK: @_mlir_ciface_simt_float2ll_rn_float(%[[ARG]])
+    %9 = ascend_dpx.float2ll_rn %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ll_rz_float(%[[ARG]])
+    %10 = ascend_dpx.float2ll_rz %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ll_rd_float(%[[ARG]])
+    %11 = ascend_dpx.float2ll_rd %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ll_ru_float(%[[ARG]])
+    %12 = ascend_dpx.float2ll_ru %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ull_rn_float(%[[ARG]])
+    %13 = ascend_dpx.float2ull_rn %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ull_rz_float(%[[ARG]])
+    %14 = ascend_dpx.float2ull_rz %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ull_rd_float(%[[ARG]])
+    %15 = ascend_dpx.float2ull_rd %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float2ull_ru_float(%[[ARG]])
+    %16 = ascend_dpx.float2ull_ru %arg1 : (f32) -> i64
+    // CHECK: @_mlir_ciface_simt_float_as_uint_float(%[[ARG]])
+    %17 = ascend_dpx.float_as_uint %arg1 : (f32) -> i32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_int_to_float_ops
+// CHECK-SAME: %[[ARG:.*]]: i32
+func.func @ascend_dpx_int_to_float_ops(%arg1 : i32) {
+    // CHECK: @_mlir_ciface_simt_int2float_rn_float(%[[ARG]])
+    %1 = ascend_dpx.int2float_rn %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_int2float_rz_float(%[[ARG]])
+    %2 = ascend_dpx.int2float_rz %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_int2float_rd_float(%[[ARG]])
+    %3 = ascend_dpx.int2float_rd %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_int2float_ru_float(%[[ARG]])
+    %4 = ascend_dpx.int2float_ru %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_uint2float_rn_float(%[[ARG]])
+    %5 = ascend_dpx.uint2float_rn %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_uint2float_rz_float(%[[ARG]])
+    %6 = ascend_dpx.uint2float_rz %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_uint2float_rd_float(%[[ARG]])
+    %7 = ascend_dpx.uint2float_rd %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_uint2float_ru_float(%[[ARG]])
+    %8 = ascend_dpx.uint2float_ru %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_int_as_float_float(%[[ARG]])
+    %9 = ascend_dpx.int_as_float %arg1 : (i32) -> f32
+    // CHECK: @_mlir_ciface_simt_uint_as_float_float(%[[ARG]])
+    %10 = ascend_dpx.uint_as_float %arg1 : (i32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_ll_to_float_ops
+// CHECK-SAME: %[[ARG:.*]]: i64
+func.func @ascend_dpx_ll_to_float_ops(%arg1 : i64) {
+    // CHECK: @_mlir_ciface_simt_ll2float_rn_float(%[[ARG]])
+    %1 = ascend_dpx.ll2float_rn %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ll2float_rz_float(%[[ARG]])
+    %2 = ascend_dpx.ll2float_rz %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ll2float_rd_float(%[[ARG]])
+    %3 = ascend_dpx.ll2float_rd %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ll2float_ru_float(%[[ARG]])
+    %4 = ascend_dpx.ll2float_ru %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ull2float_rn_float(%[[ARG]])
+    %5 = ascend_dpx.ull2float_rn %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ull2float_rz_float(%[[ARG]])
+    %6 = ascend_dpx.ull2float_rz %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ull2float_rd_float(%[[ARG]])
+    %7 = ascend_dpx.ull2float_rd %arg1 : (i64) -> f32
+    // CHECK: @_mlir_ciface_simt_ull2float_ru_float(%[[ARG]])
+    %8 = ascend_dpx.ull2float_ru %arg1 : (i64) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_new_binary_ops_f32
+// CHECK-SAME: %[[ARG1:.*]]: f32, %[[ARG2:.*]]: f32
+func.func @ascend_dpx_new_binary_ops_f32(%arg1 : f32, %arg2 : f32) {
+    // CHECK: @_mlir_ciface_simt_sub_rz_float(%[[ARG1]], %[[ARG2]])
+    %1 = ascend_dpx.sub_rz %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sub_rd_float(%[[ARG1]], %[[ARG2]])
+    %2 = ascend_dpx.sub_rd %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_sub_ru_float(%[[ARG1]], %[[ARG2]])
+    %3 = ascend_dpx.sub_ru %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_powf_float(%[[ARG1]], %[[ARG2]])
+    %4 = ascend_dpx.fast_powf %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rhypot_float(%[[ARG1]], %[[ARG2]])
+    %5 = ascend_dpx.rhypot %arg1, %arg2 : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_scalbn_float(%[[ARG1]], %[[ARG2]])
+    %6 = ascend_dpx.scalbn %arg1, %arg2 : (f32, f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_bessel_ops
+// CHECK-SAME: %[[ORDER:.*]]: i32, %[[ARG:.*]]: f32
+func.func @ascend_dpx_bessel_ops(%order : i32, %arg : f32) {
+    // CHECK: @_mlir_ciface_simt_jn_float(%[[ORDER]], %[[ARG]])
+    %1 = ascend_dpx.jn %order, %arg : (i32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_yn_float(%[[ORDER]], %[[ARG]])
+    %2 = ascend_dpx.yn %order, %arg : (i32, f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_ternary_norm_ops_f32
+// CHECK-SAME: %[[ARG1:.*]]: f32, %[[ARG2:.*]]: f32, %[[ARG3:.*]]: f32
+func.func @ascend_dpx_ternary_norm_ops_f32(%arg1 : f32, %arg2 : f32, %arg3 : f32) {
+    // CHECK: @_mlir_ciface_simt_norm3d_float(%[[ARG1]], %[[ARG2]], %[[ARG3]])
+    %1 = ascend_dpx.norm3d %arg1, %arg2, %arg3 : (f32, f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rnorm3d_float(%[[ARG1]], %[[ARG2]], %[[ARG3]])
+    %2 = ascend_dpx.rnorm3d %arg1, %arg2, %arg3 : (f32, f32, f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_quaternary_norm_ops_f32
+// CHECK-SAME: %[[ARG1:.*]]: f32, %[[ARG2:.*]]: f32, %[[ARG3:.*]]: f32, %[[ARG4:.*]]: f32
+func.func @ascend_dpx_quaternary_norm_ops_f32(%arg1 : f32, %arg2 : f32, %arg3 : f32, %arg4 : f32) {
+    // CHECK: @_mlir_ciface_simt_norm4d_float(%[[ARG1]], %[[ARG2]], %[[ARG3]], %[[ARG4]])
+    %1 = ascend_dpx.norm4d %arg1, %arg2, %arg3, %arg4 : (f32, f32, f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_rnorm4d_float(%[[ARG1]], %[[ARG2]], %[[ARG3]], %[[ARG4]])
+    %2 = ascend_dpx.rnorm4d %arg1, %arg2, %arg3, %arg4 : (f32, f32, f32, f32) -> f32
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_finitef_check
+// CHECK-SAME: %[[ARG:.*]]: f32
+func.func @ascend_dpx_finitef_check(%arg1 : f32) {
+    // CHECK: @_mlir_ciface_simt_finitef_float(%[[ARG]])
+    %1 = ascend_dpx.finitef %arg1 : (f32) -> i1
     return
 }
