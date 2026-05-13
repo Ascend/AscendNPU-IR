@@ -321,7 +321,7 @@ Ascend extends the Python standard`range`capability, adding parallel execution s
 
 **Restriction**:
 
-Currently, the OptiX RTN `Altas A2` supports a maximum of two vectoring cores.
+Currently, the OptiX RTN `Atlas A2` supports a maximum of two vectoring cores.
 
 **Example**:
 

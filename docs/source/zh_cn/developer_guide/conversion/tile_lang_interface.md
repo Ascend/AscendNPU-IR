@@ -83,7 +83,7 @@ pip install pybind11 torch_npu
 
 ## 快速开始
 
-以下代码使用 TileLang（NPU 编程的领域特定语言）实现了向量加法内核。该内核定义了一个并行内核，通过将数据加载到片上统一缓冲区（UB）、使用低级 NPU 指令（`npuir_add`）执行逐元素加法，并将结果写回全局内存，在 NPU 上对两个长度为 4096 的 float32 向量进行加法运算。测试函数将内核输出与 PyTorch 原生向量加法进行比较以验证正确性。示例在 NPU 设备上运行，演示了 TileLang 的基本工作流程：内核定义、编译为 AscendNPU IR，以及使用 PyTorch 张量执行。
+以下代码使用 TileLang（NPU 编程的领域特定语言）实现了向量加法内核。该代码定义了一个并行内核，通过将数据加载到片上统一缓冲区（UB）、使用低级 NPU 指令（`npuir_add`）执行逐元素加法，并将结果写回全局内存，在 NPU 上对两个长度为 4096 的 float32 向量进行加法运算。测试函数将内核输出与 PyTorch 原生向量加法进行比较以验证正确性。示例在 NPU 设备上运行，演示了 TileLang 的基本工作流程：内核定义、编译为 AscendNPU IR，以及使用 PyTorch 张量执行。
 
 ### TileLang 内核（向量加法）
 
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     test_vec_add()
 ```
 
-运行 `python3 test_tilelang.py`, 我们可以看到执行成功的结果
+运行 `python3 test_tilelang.py`，我们可以看到执行成功的结果
 
 ```bash
 Reference result (PyTorch):
@@ -198,7 +198,7 @@ tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
 
 ### AscendNPU-IR（向量加法）
 
-当开启打印选项`export TILELANG_DUMP_IR=1`后，会将TVM IR与AscendNPU IR都打印出来，其中AscendNPU IR部分如下：
+当开启打印选项`export TILELANG_DUMP_IR=1`后，TVM IR与AscendNPU IR均会被打印输出，其中AscendNPU IR部分如下：
 
 ```mlir
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {

@@ -22,13 +22,13 @@ flowchart LR
 
 关键硬件资源约束：
 
-- **UB打印缓冲区**： 每个aicore 固定分配**16KB**空间用于数据暂存，且同一个aicore内的所有打印操作共享这16KB缓冲区，写满后新数据提示warning大小超过缓冲区最大值后丢弃。
+- **UB打印缓冲区**： 每个aicore 固定分配**16KB**空间用于数据暂存，且同一个aicore内的所有打印操作共享这16KB缓冲区，写满后新数据提示warning，大小超过缓冲区最大值后丢弃。
 
 - **多核并发**：每个aicore独立执行内核代码，最终host侧呈现每个核的打印结果。
 
 ### 算法原理
 
-实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合，实现该功能主要以AscendNPU IR为重点展开说明
+实现原理涉及Triton Ascend, AscendNPU IR, 毕昇编译器三部分配合，实现该功能主要以AscendNPU IR为重点展开说明。
 
 #### Triton Ascend
 
@@ -103,7 +103,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 
 ##### InsertNZ2NDForDebug
 
-device_print仅支持ub/gm上的数据打印因此当打印L1的数据时需要将数据先从L1搬至gm，该pass的作用就是当识别到`hivm::MmadL1Op`时检查该op的输入若输入被`hivm::DebugOp`用到则需要申请一块workspace的大小然后插入NZ2ND的op确保搬至gm打印
+device_print仅支持ub/gm上的数据打印，因此当打印L1的数据时，需要将数据先从L1搬至gm。该pass的作用就是：当识别到`hivm::MmadL1Op`时，检查该op的输入；若输入被`hivm::DebugOp`用到，则需要申请一块workspace的大小，然后插入NZ2ND的op，确保搬至gm打印。
 
 ```mlir
 // Before InsertNZ2NDForDebug
@@ -145,7 +145,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretyp
 
 ##### SplitMixKernel
 
-mix类用例 Debug op会在该pass内先进行InferCoreType推断出精确的coretype(VECTOR/CUBE)，默认是CUBE_OR_VECTOR, 然后对mix函数进行拆分后生成纯cube函数和纯vector函数，这将决定Debug op最终在cube核上运行还是vector核上运行
+mix类用例 Debug op会在该pass内先进行InferCoreType推断出精确的coretype(VECTOR/CUBE)，默认是CUBE_OR_VECTOR，然后对mix函数进行拆分后生成纯cube函数和纯vector函数，这将决定Debug op最终在cube核上运行还是vector核上运行。
 
 ##### InsertInitAndFinishForDebug
 
@@ -197,7 +197,7 @@ triton-ascend 产生的 host 侧 launcher调用 bisheng 编译器编好的 kerne
 
 ### 接口说明
 
-通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能，开启后triton ascend侧会设置相关宏信息__CCE_ENABLE_PRINT__，该宏信息在毕昇编译器侧会影响是否开启打印，其次编译meta op库的时候需要开启--cce-enable-print（当前默认一直开启）以确保开启打印
+通过设置环境变量 `TRITON_DEVICE_PRINT=1`来开启该功能。开启后，triton ascend侧会设置相关宏信息`__CCE_ENABLE_PRINT__`，该宏信息在毕昇编译器侧会影响是否开启打印。此外，编译meta op库的时候需开启`--cce-enable-print`（当前默认一直开启），以确保开启打印。
 
 ```mlir
 // hfusion op接口
@@ -212,7 +212,7 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 ### 约束能力
 
 - 仅支持tensor和scalar的打印
-- 当前device_print打印的大小固定为16k
+- 当前device_print打印的大小固定为16KB
 - 目前triton侧sanitizer和device_print不支持同时开启
 - 打印支持如下数据类型：bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
 - device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印，防止因为打印的tensor生命周期变化而引起异常
