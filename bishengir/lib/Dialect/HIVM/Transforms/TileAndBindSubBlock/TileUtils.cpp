@@ -64,8 +64,13 @@ public:
 };
 
 struct splitFixpipe : public OpRewritePattern<FixpipeOp> {
+  const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds;
+
 public:
-  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+  splitFixpipe(MLIRContext *context,
+                 const DenseSet<int32_t> &aivUbTightlyCoupledBufferIdsIn)
+      : OpRewritePattern<FixpipeOp>(context),
+        aivUbTightlyCoupledBufferIds(aivUbTightlyCoupledBufferIdsIn) {}
 
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -109,6 +114,11 @@ public:
     auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
         tilghlyCoupledBufferAttr);
     if (!attr || !attr.getId().has_value())
+      return failure();
+    /// FIXME: If the fixpipe dual dst mode is not specified, will defautly fixpipe
+    /// the whole data into two aiv cores. So if ub is not tiled, just keep fixpipe
+    /// as default.
+    if (!aivUbTightlyCoupledBufferIds.contains(attr.getId().value()))
       return failure();
 
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
@@ -262,9 +272,11 @@ public:
   }
 };
 
-static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
+static LogicalResult
+runSplitFixpipe(func::FuncOp funcOp,
+                const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
   RewritePatternSet patterns(funcOp.getContext());
-  patterns.add<splitFixpipe>(funcOp.getContext());
+  patterns.add<splitFixpipe>(funcOp.getContext(), aivUbTightlyCoupledBufferIds);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return failure();
   }
@@ -280,8 +292,10 @@ static LogicalResult runSplitFixpipe(func::FuncOp funcOp) {
   return success();
 }
 
-static LogicalResult tileAndSliceOpAIC(func::FuncOp func) {
-  return runSplitFixpipe(func);
+static LogicalResult
+tileAndSliceOpAIC(func::FuncOp func,
+                  const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
+  return runSplitFixpipe(func, aivUbTightlyCoupledBufferIds);
 }
 
 } // namespace
@@ -387,7 +401,8 @@ bool hasImplicitTransposeWithLastAxisInAiv(
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+    const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
 
   for (func::FuncOp originalFunc : aicFunctions) {
     originalFunc->walk([&](annotation::MarkOp markOp) {
@@ -409,7 +424,8 @@ LogicalResult tileAicFixpipeFuncsIfNeeded(
             IntegerAttr::get(IndexType::get(markOp.getContext()), tilingDim));
       }
     });
-    if (failed(tileAndSliceOpAIC(originalFunc))) {
+    if (failed(
+            tileAndSliceOpAIC(originalFunc, aivUbTightlyCoupledBufferIds))) {
       return failure();
     }
   }

@@ -14,6 +14,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "llvm/ADT/DenseSet.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
@@ -250,8 +251,12 @@ std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
 
 /// Create a pass to bubble up extract slice for hivm ops.
+/// When \p aivUbTightlyCoupledBufferIds is non-null, successful UB half-tiling
+/// in BufferizationBubbleUpStrategy inserts the corresponding
+/// `hivm.tightly_coupled_buffer` id into the set.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
-    const HIVMBubbleUpExtractSliceOptions &options = {});
+    const HIVMBubbleUpExtractSliceOptions &options = {},
+    llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIds = nullptr);
 
 /// Create a pass to vectorize hivm ops.
 std::unique_ptr<Pass> createHIVMVectorizeOpsPass();

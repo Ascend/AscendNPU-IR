@@ -22,6 +22,8 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 #include <memory>
 
 namespace mlir::hivm::detail {
@@ -116,7 +118,13 @@ public:
 };
 
 class BufferizationBubbleUpStrategy : public BubbleUpStrategy {
+  llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIds = nullptr;
+
 public:
+  explicit BufferizationBubbleUpStrategy(
+      llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIdsIn = nullptr)
+      : aivUbTightlyCoupledBufferIds(aivUbTightlyCoupledBufferIdsIn) {}
+
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
 
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,

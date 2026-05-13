@@ -22,6 +22,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -69,7 +70,8 @@ bool hasImplicitTransposeWithLastAxisInAiv(
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
+    const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds);
 
 } // namespace hivm
 } // namespace mlir

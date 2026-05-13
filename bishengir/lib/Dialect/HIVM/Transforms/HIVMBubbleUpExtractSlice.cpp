@@ -38,6 +38,8 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 namespace mlir {
 #define GEN_PASS_DEF_HIVMBUBBLEUPEXTRACTSLICE
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -53,8 +55,14 @@ namespace {
 using namespace mlir::hivm::detail;
 class HIVMBubbleUpExtractSlicePass
     : public impl::HIVMBubbleUpExtractSliceBase<HIVMBubbleUpExtractSlicePass> {
+  llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIds = nullptr;
+
 public:
-  using Base::Base;
+  HIVMBubbleUpExtractSlicePass(
+      const HIVMBubbleUpExtractSliceOptions &options,
+      llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIdsIn = nullptr)
+      : Base(options), aivUbTightlyCoupledBufferIds(aivUbTightlyCoupledBufferIdsIn) {
+  }
 
   static bool traceAndCheckIsGMOrTightCoupledBuffer(Value value) {
     auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
@@ -161,8 +169,8 @@ private:
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<EmptyBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>(
+        aivUbTightlyCoupledBufferIds));
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
@@ -178,6 +186,8 @@ private:
 } // namespace
 
 std::unique_ptr<Pass> mlir::hivm::createHIVMBubbleUpExtractSlicePass(
-    const HIVMBubbleUpExtractSliceOptions &options) {
-  return std::make_unique<HIVMBubbleUpExtractSlicePass>(options);
+    const HIVMBubbleUpExtractSliceOptions &options,
+    llvm::DenseSet<int32_t> *aivUbTightlyCoupledBufferIds) {
+  return std::make_unique<HIVMBubbleUpExtractSlicePass>(
+      options, aivUbTightlyCoupledBufferIds);
 }
