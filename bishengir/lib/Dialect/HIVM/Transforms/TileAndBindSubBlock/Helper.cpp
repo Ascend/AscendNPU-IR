@@ -89,13 +89,36 @@ int64_t calculateBufferSizeInBytes(ShapedType tiledType,
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
-                                        OpFoldResult singleTileSize) {
+                                        Value input, int64_t tileDimension) {
+  if (!isa<ShapedType>(input.getType()))
+    llvm::report_fatal_error("expected shaped type in calculateOffsetAtTilingDim");
+  auto inputType = cast<ShapedType>(input.getType());
+  auto dimSize = inputType.getShape()[tileDimension];
+
+  OpFoldResult tileStride;
+  if (ShapedType::isDynamic(dimSize)) {
+    Value dimVal;
+    if (isa<TensorType>(inputType)) {
+      dimVal = rewriter.create<tensor::DimOp>(loc, input, tileDimension);
+    } else {
+      dimVal = rewriter.create<memref::DimOp>(loc, input, tileDimension);
+    }
+    AffineExpr d0;
+    bindDims(rewriter.getContext(), d0);
+    auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
+                                     d0.ceilDiv(kSubBlockDim));
+    tileStride = affine::makeComposedFoldedAffineApply(
+        rewriter, loc, ceilDivMap, {dimVal});
+  } else {
+    tileStride = getAsIndexOpFoldResult(
+        rewriter.getContext(), llvm::divideCeil(dimSize, kSubBlockDim));
+  }
+
   AffineExpr mulExpr =
       rewriter.getAffineSymbolExpr(0) * rewriter.getAffineSymbolExpr(1);
-  OpFoldResult offsetAtTileDim = affine::makeComposedFoldedAffineApply(
+  return affine::makeComposedFoldedAffineApply(
       rewriter, loc, mulExpr,
-      {containingLoop.getInductionVar(), singleTileSize});
-  return offsetAtTileDim;
+      {containingLoop.getInductionVar(), tileStride});
 }
 
 /// This function calculates the tile size by dividing the dimension size
@@ -167,9 +190,14 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
   bindDims(builder.getContext(), dim0);
   auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
                                    dim0.ceilDiv(kSubBlockDim));
-  auto dimSizeOp = builder.create<tensor::DimOp>(loc, input, tileDimension);
+  Value dimVal;
+  if (isa<TensorType>(inputType)) {
+    dimVal = builder.create<tensor::DimOp>(loc, input, tileDimension);
+  } else {
+    dimVal = builder.create<memref::DimOp>(loc, input, tileDimension);
+  }
   auto tileSizeOp = builder.create<affine::AffineApplyOp>(
-      loc, ceilDivMap, ValueRange{dimSizeOp});
+      loc, ceilDivMap, ValueRange{dimVal});
   return getAsOpFoldResult(tileSizeOp);
 }
 

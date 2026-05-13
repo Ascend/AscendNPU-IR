@@ -135,7 +135,8 @@ createNewParentOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
 
   rewriter.setInsertionPointToStart(maybeSubBlockLoop.value().getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(), size.value());
+      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(),
+      parentOp.getSource(), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -183,7 +184,8 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
       childOp->template getParentOfType<scf::ForOp>().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
       rewriter, childOp->getLoc(),
-      childOp->template getParentOfType<scf::ForOp>(), newSize.value());
+      childOp->template getParentOfType<scf::ForOp>(),
+      createdNewParent->getResult(0), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -523,7 +525,7 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
     auto offsetAtTileDim =
         calculateOffsetAtTilingDim(rewriter, expandOp.getLoc(), containingLoop,
-                                   maybeSingleTileSize.value());
+                                   expandOp.getSrc(), tilingDim);
 
     // Calculate inputOffsets
     for (int64_t i = 0; i < inputRankType.getRank(); i++) {
@@ -881,7 +883,7 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
       sliceOp->getParentOfType<scf::ForOp>().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
       rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-      size.value());
+      parentInsertOp.getSource(), tilingDim);
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
           newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))
