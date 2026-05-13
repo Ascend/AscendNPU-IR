@@ -116,18 +116,17 @@ bool isNonVectorizableOp(Operation *op) {
     return false;
   }
 
-  return isa<hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
-             hfusion::GatherOp, hfusion::MulExtOp, hfusion::CumsumOp,
-             hfusion::CumprodOp, hfusion::PrintOp, hfusion::SortOp,
-             hfusion::CastOp, hfusion::CompareOp, tensor::ExtractOp,
-             tensor::DimOp, tensor::ReshapeOp, tensor::InsertSliceOp,
-             tensor::ExtractSliceOp, tensor::CastOp, tensor::CollapseShapeOp,
-             tensor::ExpandShapeOp, tensor::ConcatOp, hivm::CopyOp,
-             hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
-             hivm::BitcastOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp, memref::CopyOp,
-             bufferization::MaterializeInDestinationOp>(
-      op);
+  return isa<
+      hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
+      hfusion::GatherOp, hfusion::MulExtOp, hfusion::CumsumOp,
+      hfusion::CumprodOp, hfusion::PrintOp, hfusion::SortOp, hfusion::CastOp,
+      hfusion::CompareOp, tensor::ExtractOp, tensor::DimOp, tensor::ReshapeOp,
+      tensor::InsertSliceOp, tensor::ExtractSliceOp, tensor::CastOp,
+      tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ConcatOp,
+      hivm::CopyOp, hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp,
+      hivm::StoreOp, hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockSetOp,
+      hivm::SyncBlockWaitOp, scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp,
+      memref::CopyOp, bufferization::MaterializeInDestinationOp>(op);
 }
 
 static bool isMemrefLinalgOp(Operation *op) {
