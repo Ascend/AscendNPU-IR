@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Pass/Pass.h"
@@ -99,6 +100,21 @@ LogicalResult VFFusionPass::tryToFuse(Operation *op, OpBuilder &builder) const {
   return success();
 }
 
+static bool isCVCases(ModuleOp moduleOp) {
+  auto result = moduleOp.walk([](Operation *op) {
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+      if (funcOp->hasAttr(hivm::TPartOfMixAttr::name))
+        return WalkResult::interrupt();
+    }
+    if (isa<scope::ScopeOp>(op)) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return result.wasInterrupted();
+}
+
 void VFFusionPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   RewritePatternSet patterns(&getContext());
@@ -107,6 +123,10 @@ void VFFusionPass::runOnOperation() {
 
   if (enableOutlineCF)
     llvm_unreachable("unsupported at the moment");
+
+  // for CV cases, temporarily bypass vffusion
+  if (isCVCases(moduleOp))
+    return;
 
   if (failed(preProcess())) {
     signalPassFailure();
