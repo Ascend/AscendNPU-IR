@@ -101,7 +101,7 @@ Value SchedulerBase::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
   if (auto *h = dyn_cast<FuncArgHandle>(handle)) {
     return h->get(getFuncValue(opBuilder), opBuilder);
   }
-  llvm_unreachable("Not implemented!");
+  llvm::report_fatal_error("Not implemented!");
 }
 
 SmallVector<Value> SchedulerBase::getValues(const ValueHandles &handle,
@@ -783,7 +783,7 @@ Value SchedulerBase::matchByIdentifier(Value target,
       auto *valHandle = std::get<ValueHandle *>(val);
       childValue = getValue(valHandle, opBuilder);
     } else {
-      llvm_unreachable("Not implemented!");
+      llvm::report_fatal_error("Not implemented!");
     }
     matchResult =
         opBuilder

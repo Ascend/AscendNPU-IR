@@ -69,7 +69,7 @@ FusionKind FusibleHelper::getSingleFusionKind(Operation *op) {
   case opfusion::OpPattern::kOtherBroadcast:
     return FusionKind::AnyPB;
   default:
-    llvm_unreachable("Invalid operation pattern for outlining");
+    llvm::report_fatal_error("Invalid operation pattern for outlining");
   }
 }
 
@@ -431,7 +431,7 @@ bool FusibleHelper::schedulable(Operation *op) const {
       return false;
     }
   case FusionKind::Unknown:
-    llvm_unreachable("Fusion kind unknown is not scheduling anything");
+    llvm::report_fatal_error("Fusion kind unknown is not scheduling anything");
   default:
     break;
   }
@@ -577,7 +577,7 @@ bool FusibleHelper::isFusible(const OpPattern &patternA,
     // single cube is not considered as fusible because there is only one op
     return false;
   default:
-    llvm_unreachable("Invalid fusion mode");
+    llvm::report_fatal_error("Invalid fusion mode");
   }
 } // namespace opfusion
 

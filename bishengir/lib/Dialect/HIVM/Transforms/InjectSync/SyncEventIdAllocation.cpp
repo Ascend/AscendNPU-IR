@@ -177,8 +177,8 @@ void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) {
   } else if (sync->syncCoreType == TCoreType::VECTOR) {
     sync->eventIds.push_back(kBlockSyncAllVectorEventId);
   } else {
-    llvm_unreachable("auto-inserted sync all operation must be all cube "
-                     "or all vector");
+    llvm::report_fatal_error("auto-inserted sync all operation must be all cube "
+                             "or all vector");
   }
 }
 
@@ -207,7 +207,7 @@ void SyncEventIdAllocation::AllocateEventId(InstanceElement *e) {
       // Set or Wait sync event id.
       SetEventId(sync);
     } else {
-      llvm_unreachable("InjectSync does not support sync types!");
+      llvm::report_fatal_error("InjectSync does not support sync types!");
     }
   }
 }
@@ -538,7 +538,7 @@ void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
     }
   }
   if (!isInsert)
-    llvm_unreachable("Can't insert this sync cycle!");
+    llvm::report_fatal_error("Can't insert this sync cycle!");
 }
 
 bool SyncEventIdAllocation::ExtendLifecycle(
@@ -819,7 +819,7 @@ bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
     }
     widenSetSyncIR->pipeAfter = newPipeAfter;
     if (!removeSync)
-      llvm_unreachable("in widen fun, remove sync failed");
+      llvm::report_fatal_error("in widen fun, remove sync failed");
   }
   return true;
 }

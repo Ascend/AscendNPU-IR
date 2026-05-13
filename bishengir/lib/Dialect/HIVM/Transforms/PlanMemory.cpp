@@ -267,7 +267,7 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     return WalkResult::advance();
   });
   if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PlanMemory Traverse IR Failed! ");
+    llvm::report_fatal_error("PlanMemory Traverse IR Failed! ");
   }
 }
 
@@ -715,7 +715,7 @@ void MemLivenessAnalysis::UpdateOperandGenInfo(OpInfo *opInfo, Value operand) {
     genKillMap[opInfo].gen.push_back(operand);
     buffer2status[iter_buffer->first] = BufferStatus::GENED;
   } else if (iter_buffer->second == BufferStatus::KILLED) {
-    llvm_unreachable("The buffer memory has been released and cannot be used "
+    llvm::report_fatal_error("The buffer memory has been released and cannot be used "
                      "again! ");
   }
 }
@@ -920,7 +920,7 @@ BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
                  operand.getDefiningOp())) {
     return GetBufferInfo(op, operand, hivm::AddressSpace::GM);
   }
-  llvm_unreachable("buffer must has BufferInfo !");
+  llvm::report_fatal_error("buffer must has BufferInfo !");
 }
 
 BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
@@ -935,7 +935,7 @@ BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
   std::optional<int64_t> totalStaticSize =
       utils::getStaticTotalSize(memRefType.getShape());
   if (!totalStaticSize.has_value()) {
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "Failed to obtain op buffer shape size which should be static.");
   }
   bufferInfo.constBits =
@@ -1797,7 +1797,7 @@ MemPlan::GetBufferSpaceInfo(hivm::AddressSpace &space) const {
   case hivm::AddressSpace::L0C:
     return std::make_pair(l0cAlignSize, l0cSpaceSize);
   default:
-    llvm_unreachable("Temporarily unsupported memory buffer space !");
+    llvm::report_fatal_error("Temporarily unsupported memory buffer space !");
   }
 }
 

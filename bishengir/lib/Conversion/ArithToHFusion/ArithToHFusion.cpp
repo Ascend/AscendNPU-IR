@@ -204,13 +204,13 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::TruncFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -225,7 +225,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       }
       return hfusion::RoundMode::TRUNC;
     }
-    llvm_unreachable("unsupported arith op to hfusion");
+    llvm::report_fatal_error("unsupported arith op to hfusion");
   }
 
   static hfusion::TypeFn selectCast(CastOp op) {
@@ -305,7 +305,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpFPredicate::UGT:
       return CompareFn::vgt;
     default:
-      llvm_unreachable("unsupported arith cmp predicate to hfusion");
+      llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
   }
 

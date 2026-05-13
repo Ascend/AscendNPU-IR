@@ -151,7 +151,7 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           break;
         case hivm::TCoreType::CUBE_OR_VECTOR:
         case hivm::TCoreType::CUBE_AND_VECTOR:
-          llvm_unreachable(
+          llvm::report_fatal_error(
               "standard library call shouldn't have mix core type!");
           break;
         }
@@ -884,7 +884,7 @@ private:
                       op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
                 })
                 .Default([](Type) {
-                  llvm_unreachable("Unsupported type of pad value!");
+                  llvm::report_fatal_error("Unsupported type of pad value!");
                   return Value{};
                 });
       }

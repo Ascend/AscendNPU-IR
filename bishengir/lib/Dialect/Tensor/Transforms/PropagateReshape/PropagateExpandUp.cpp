@@ -181,7 +181,7 @@ LogicalResult handleTransposeOp(tensor::ExpandShapeOp expandOp,
     newTransposeOp = rewriter.create<linalg::TransposeOp>(
         transposeOp->getLoc(), newSrcOp, newDstOp, newPermutation);
   } else {
-    llvm_unreachable("Transpose op unrecognized");
+    llvm::report_fatal_error("Transpose op unrecognized");
   }
 
   // Add new collapse operation (old transpose replaced by collapse)

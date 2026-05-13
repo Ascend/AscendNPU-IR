@@ -288,7 +288,7 @@ void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
              sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER_VECTOR) {
     CreateBlockSyncBarrierOp(rewriter, op, sync, beforeInsert);
   } else {
-    llvm_unreachable("Sync type not supported! ");
+    llvm::report_fatal_error("Sync type not supported! ");
   }
 }
 
@@ -336,7 +336,7 @@ void SyncCodegen::CreateSetWaitBlockOpForMultiBuffer(IRRewriter &rewriter,
                                                      SyncOperation *sync,
                                                      bool beforeInsert) {
   if (sync->eventIds.size() > MAX_MULTI_BUFFER_NUM) {
-    llvm_unreachable("Sync supports up to 16 buffers! ");
+    llvm::report_fatal_error("Sync supports up to 16 buffers! ");
   }
 
   Location loc = op->getLoc();
@@ -366,7 +366,7 @@ void SyncCodegen::CreateSetWaitBlockOpForMultiBuffer(IRRewriter &rewriter,
       id = rewriter.create<arith::ExtSIOp>(op->getLoc(),
                                            rewriter.getIntegerType(64), id);
     } else {
-      llvm_unreachable("unhandled casting type");
+      llvm::report_fatal_error("unhandled casting type");
     }
   }
 
@@ -529,7 +529,7 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
   if (sync->eventIds.size() == 1) {
-    llvm_unreachable("Sync supports up to multi buffers! ");
+    llvm::report_fatal_error("Sync supports up to multi buffers! ");
   }
   Value bufferSelected = GetBufferSelected(rewriter, op, sync);
   if (NeedLowerSyncToTemplate(rewriter, op, sync, bufferSelected)) {
@@ -565,7 +565,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
                    "initialized");
     auto *defineOp = sync->lowestCommonAncestorBuffer.getDefiningOp();
     if (!defineOp) {
-      llvm_unreachable("defineOp is not defined");
+      llvm::report_fatal_error("defineOp is not defined");
       return nullptr;
     }
     LoopLikeOpInterface parentLoop =
@@ -612,7 +612,7 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       }
       bufferSelected = selectedValue;
     } else {
-      llvm_unreachable("Should not reach here!!");
+      llvm::report_fatal_error("Should not reach here!!");
     }
     SyncIndex2SelectBuffer[sync->GetSyncIndex()] = bufferSelected;
   }

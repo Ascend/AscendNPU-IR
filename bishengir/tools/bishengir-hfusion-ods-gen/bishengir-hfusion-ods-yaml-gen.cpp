@@ -505,7 +505,7 @@ std::string convertOperandKindToEnumName(HFusionOperandDefKind kind) {
   default:
     break;
   }
-  llvm_unreachable("unsupported function attribute kind");
+  llvm::report_fatal_error("unsupported function attribute kind");
 }
 
 // Get the enum name for the given function kind.
@@ -526,7 +526,7 @@ std::string convertFunctionKindToEnumName(ScalarFnKind kind) {
   case ScalarFnKind::AtomicKind:
     return std::string("AtomicKind");
   }
-  llvm_unreachable("unsupported function kind");
+  llvm::report_fatal_error("unsupported function kind");
 }
 
 //===----------------------------------------------------------------------===//

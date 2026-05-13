@@ -110,7 +110,7 @@ void IRTranslator::RecursionIR(Region *region) {
     return WalkResult::advance();
   });
   if (result == WalkResult::interrupt()) {
-    llvm_unreachable("InjectSync Traverse IR Failed! ");
+    llvm::report_fatal_error("InjectSync Traverse IR Failed! ");
   }
 }
 

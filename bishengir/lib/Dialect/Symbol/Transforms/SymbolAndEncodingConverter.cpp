@@ -128,8 +128,8 @@ struct ConvertBindSymbolicShapeToTensorEncode
             symbols[symbolExpr.getPosition()].getDefiningOp());
         encoding.push_back(symbolicIntOp.getSymbolNameAttr());
       } else {
-        llvm_unreachable("Propagate symbol pass must be called first to make "
-                         "sure no binary expression appears");
+        llvm::report_fatal_error("Propagate symbol pass must be called first to make "
+                                 "sure no binary expression appears");
       }
     }
 
@@ -148,7 +148,7 @@ struct ConvertBindSymbolicShapeToTensorEncode
           funcOp.setFunctionType(
               rewriter.getFunctionType(newInputs, funcType.getResults()));
         } else {
-          llvm_unreachable(
+          llvm::report_fatal_error(
               "Unhandled block argument for symbol to encoding conversion.");
         }
       });

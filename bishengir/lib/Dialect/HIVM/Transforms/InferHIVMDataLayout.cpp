@@ -805,7 +805,7 @@ Operation *
 DataLayoutInferAndPropagateHelper::rewriteMemrefCastOp(memref::CastOp op) {
   auto srcType = op.getType();
   if (srcType.getRank() != 2 && srcType.getRank() != 3)
-    llvm_unreachable("Unsupported source shape in mad operand memref cast");
+    llvm::report_fatal_error("Unsupported source shape in mad operand memref cast");
   OpBuilder builder(op);
   Location loc = op.getLoc();
   Value src = op.getSource();
@@ -1056,7 +1056,7 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
   if (llvm::dyn_cast<ShapedType>(dst.getType()).getRank() -
           llvm::dyn_cast<ShapedType>(src.getType()).getRank() !=
       2)
-    llvm_unreachable("Unsupported operand shape when convert copy to ND2NZ");
+    llvm::report_fatal_error("Unsupported operand shape when convert copy to ND2NZ");
   bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
 
   auto srcLayout = getCurrentLayout(src);

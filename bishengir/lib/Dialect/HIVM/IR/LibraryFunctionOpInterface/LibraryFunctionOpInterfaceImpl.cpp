@@ -401,7 +401,7 @@ std::string getLibraryCallNameForGlobalMmadOps(GlobalMmadTy mmadOp) {
       ss << "_descalePerTensor";
       break;
     default:
-      llvm_unreachable("Unsupported descale mode");
+      llvm::report_fatal_error("Unsupported descale mode");
     }
     ss << "_TDESCALE"
        << getTypeName(mmadLoc, mmadOp.getDescale().getType().getElementType());
@@ -469,7 +469,7 @@ getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy mixMatmulOp) {
     ss << "_mix_aic";
     break;
   default:
-    llvm_unreachable("Unsupported CoreType");
+    llvm::report_fatal_error("Unsupported CoreType");
   }
   return ss.str();
 }
@@ -486,7 +486,7 @@ struct InferMaxRankExternalModel
           InferMaxRankExternalModel<ConcreteOp>, ConcreteOp> {
   std::string getOpLibraryCallName(Operation *op,
                                    std::optional<bool> isOpsAligned) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 
   std::optional<int> getOpLibraryMaxRank(Operation *op) const {
@@ -498,7 +498,7 @@ struct InferMaxRankExternalModel
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 };
 
@@ -624,11 +624,11 @@ struct NoMaxRankExternalModel
   }
 
   int getOpLibraryCallRank(Operation *op, int rank) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 };
 
@@ -642,19 +642,19 @@ struct NoLibCallExternalModel
           NoLibCallExternalModel<ConcreteOp>, ConcreteOp> {
   std::string getOpLibraryCallName(Operation *op,
                                    std::optional<bool> isOpsAligned) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   std::optional<int> getOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   int getOpLibraryCallRank(Operation *op, int rank) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 };
 
@@ -1072,7 +1072,7 @@ int InferMaxRankExternalModel<VReduceOp>::inferOpLibraryMaxRank(
   if (firstAxis || lastAxis) {
     return 2;
   }
-  llvm_unreachable("no support for middle axis reduction");
+  llvm::report_fatal_error("no support for middle axis reduction");
 }
 
 //===----------------------------------------------------------------------===//

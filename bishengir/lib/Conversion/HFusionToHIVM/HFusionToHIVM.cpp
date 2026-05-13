@@ -130,7 +130,7 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
   case hfusion::CompareFn::vgt:
     return hivm::CompareMode::GT;
   default:
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "mapCompareModeHFusionToHiVM: unsupported hfusion::CompareFn");
   }
 }
@@ -197,7 +197,7 @@ Operation *convertUnaryLinalgOp(ElemwiseOpConvertor &b, linalg::UnaryFn kind) {
   case linalg::UnaryFn::abs:
     return b.create<hivm::VAbsOp>();
   default:
-    llvm_unreachable("unsupported linalg unary operation kind");
+    llvm::report_fatal_error("unsupported linalg unary operation kind");
   }
 }
 
@@ -221,7 +221,7 @@ Operation *convertBinaryLinalgOp(ElemwiseOpConvertor &b,
   case linalg::BinaryFn::min_unsigned:
     return b.create<hivm::VMinOp>();
   default:
-    llvm_unreachable("unsupported linalg binary operation kind");
+    llvm::report_fatal_error("unsupported linalg binary operation kind");
   }
 }
 
@@ -249,7 +249,7 @@ Operation *convertUnaryHFusionOp(ElemwiseOpConvertor &b,
   case hfusion::UnaryFn::erf:
     return b.create<hivm::VErfOp>();
   default:
-    llvm_unreachable("unsupported hfusion unary operation kind");
+    llvm::report_fatal_error("unsupported hfusion unary operation kind");
   }
 }
 
@@ -274,7 +274,7 @@ Operation *convertBinaryHFusionOp(ElemwiseOpConvertor &b,
   case hfusion::BinaryFn::mod:
     return b.create<hivm::VModOp>();
   default:
-    llvm_unreachable("unsupported hfusion binary operation kind");
+    llvm::report_fatal_error("unsupported hfusion binary operation kind");
   }
 }
 
@@ -424,7 +424,7 @@ LogicalResult elementwiseMatchAndRewriteHelper(Operation *op,
     hfusion::TernaryFn kind = hfusion::TernaryFn::select;
     hivmOp = convertTernaryHFusionOp(builder, kind);
   } else {
-    llvm_unreachable("undhandled conversion");
+    llvm::report_fatal_error("undhandled conversion");
   }
   convertInvalidScalarOperands(hivmOp);
   rewriter.replaceOp(op, hivmOp->getResults());
@@ -734,7 +734,7 @@ hivm::AtomicKind mapAtomicKindHFusionToHiVM(hfusion::AtomicKind hsAtKind) {
     hvAtKind = hivm::AtomicKind::UMIN;
     break;
   default:
-    llvm_unreachable("Unsupported atomic kind");
+    llvm::report_fatal_error("Unsupported atomic kind");
   }
   return hvAtKind;
 }

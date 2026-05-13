@@ -266,7 +266,7 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                             sliceParams.sizes, sliceParams.strides);
                       })
                       .Default([](ShapedType) -> Operation * {
-                        llvm_unreachable("Unexpected shaped type");
+                        llvm::report_fatal_error("Unexpected shaped type");
                       });
   if (isa<tensor::ExtractSliceOp>(sliceOp)) {
     sliceOp->setAttr(toBeBubbleUpSlice, UnitAttr::get(builder.getContext()));

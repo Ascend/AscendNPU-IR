@@ -173,7 +173,7 @@ insertLoadStoreOp(PatternRewriter &rewriter, Location loc,
                                                &lastInsertOp, insertInit);
     }
     if (!lastInsertOp) {
-      llvm_unreachable("lastInsertOp not defined");
+      llvm::report_fatal_error("lastInsertOp not defined");
       return failure();
     }
     rewriter.modifyOpInPlace(consumerOperand->getOwner(),

@@ -53,7 +53,7 @@ PointerLikeInfo getPointerLikeInfo(hivm::PointerCastOp pointerCastOp) {
   pointerLikeInfo.allocateSize = GetBufferBitSize(pointerCastOp.getResult());
   if (!pointerLikeInfo.allocateSize.has_value()) {
     pointerCastOp.emitError("unknown buffer size");
-    llvm_unreachable("unknown buffer size");
+    llvm::report_fatal_error("unknown buffer size");
   }
   if (auto spaceAttr = GetBufferSpaceAttr(pointerCastOp.getResult())) {
     pointerLikeInfo.addressSpace = spaceAttr->getAddressSpace();
@@ -71,7 +71,7 @@ getPointerLikeInfo(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp) {
   pointerLikeInfo.allocateSize = GetBufferBitSize(allocWorkspaceOp.getResult());
   if (!pointerLikeInfo.allocateSize.has_value()) {
     allocWorkspaceOp.emitError("unknown buffer size");
-    llvm_unreachable("unknown buffer size");
+    llvm::report_fatal_error("unknown buffer size");
   }
   pointerLikeInfo.addressSpace = hivm::AddressSpace::GM;
   if (auto parentLoop =

@@ -72,7 +72,7 @@ namespace {
 FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
   auto *bbOwner = bbArg.getOwner();
   if (!bbOwner) {
-    llvm_unreachable("parentOp doesn't exist");
+    llvm::report_fatal_error("parentOp doesn't exist");
     return failure();
   }
   auto *bbParentOp = bbOwner->getParentOp();
@@ -350,7 +350,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
 }
 
 SmallVector<Value> getOpTouchBuffer(Operation *op) {

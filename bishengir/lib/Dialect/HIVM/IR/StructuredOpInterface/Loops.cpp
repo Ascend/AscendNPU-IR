@@ -54,7 +54,7 @@ SmallVector<hivm::IteratorType> getIteratorTypesArrayForGlobalMatmulOps() {
 
 #define ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(OP_NAME)                    \
   SmallVector<hivm::IteratorType> OP_NAME::getIteratorTypesArray() {           \
-    llvm_unreachable("get iterator not implemented");                          \
+    llvm::report_fatal_error("get iterator not implemented");                          \
   }
 
 ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(NZ2NDOp)
@@ -341,7 +341,7 @@ ArrayAttr FixpipeOp::getIndexingMaps() {
   int64_t dstRank = getRankFromShapedTypeValue(getDst());
   // TODO: Handle ND2NZ indexing map.
   if (dstRank != 2 || srcRank != dstRank)
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 
   SmallVector<AffineMap> affineMaps(
       getNumDpsInputs(),
@@ -411,7 +411,7 @@ ArrayAttr MmadL1Op::getIndexingMaps() {
   auto cLayoutAttr = getOperandCLayout();
   if (failed(cLayoutAttr) ||
       cLayoutAttr.value().getDataLayout() != DataLayout::DOTC_ND) {
-    llvm_unreachable("Unknown/unsupported layout");
+    llvm::report_fatal_error("Unknown/unsupported layout");
     return ArrayAttr();
   }
 

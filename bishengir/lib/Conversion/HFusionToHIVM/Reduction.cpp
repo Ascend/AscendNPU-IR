@@ -42,7 +42,7 @@ getReduceWithIndexOpAttr(hfusion::ReduceWithIndexOp reduceOp) {
                         : hivm::ReduceOperation::min_with_index_right;
   }
   reduceOp.emitOpError("unsupported reduce with index operation: ");
-  llvm_unreachable("Not implemented");
+  llvm::report_fatal_error("Not implemented");
 }
 
 static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
@@ -82,11 +82,11 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
       kind = hivm::ReduceOperation::min;
     } else {
       reduceOp.emitOpError("unsupported reduce operation: ");
-      llvm_unreachable("Not implemented");
+      llvm::report_fatal_error("Not implemented");
     }
   } else {
     op->emitOpError("unsupported reduce operation: ");
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 
   return hivm::ReduceOpAttr::get(ctx, kind);
@@ -113,7 +113,7 @@ struct LinalgToHIVMReduceLikeOp : public OpRewritePattern<ReduceOpTy> {
       inputLimit++;
     }
     if (reduceOpInputs.size() > inputLimit)
-      llvm_unreachable("unsupport variadic reduce");
+      llvm::report_fatal_error("unsupport variadic reduce");
 #endif
 
     const bool hasPureTensor = reduceOp.hasPureTensorSemantics();

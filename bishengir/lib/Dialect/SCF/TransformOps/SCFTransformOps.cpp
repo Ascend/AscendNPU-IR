@@ -261,7 +261,7 @@ LoopTileOp::apply(TransformRewriter &rewriter,
   } else {
     // npart mode
     if (isReorderMode) {
-      llvm_unreachable("unsupport npart reorder mode now");
+      llvm::report_fatal_error("unsupport npart reorder mode now");
     }
 
     Value outerUpperBound = tileSize;

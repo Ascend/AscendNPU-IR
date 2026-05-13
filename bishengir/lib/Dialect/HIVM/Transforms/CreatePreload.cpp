@@ -259,7 +259,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
               auto newRes = b.clone(*pointerCastOp)->getResult(0);
               newYields.push_back(newRes);
             } else {
-              llvm_unreachable("Unhandled scope result case");
+              llvm::report_fatal_error("Unhandled scope result case");
             }
           }
         }

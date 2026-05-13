@@ -113,7 +113,7 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
 
 RankedTensorType extractNonBatchType(RankedTensorType originType) {
   if (originType.getRank() != 3)
-    llvm_unreachable("current RankedTensorType must be 3D");
+    llvm::report_fatal_error("current RankedTensorType must be 3D");
 
   // Drop batch dimension
   return RankedTensorType::get(originType.getShape().drop_front(),
@@ -217,7 +217,7 @@ Value rewriteMatrixCShapeChange(ArrayRef<Operation *> useChain, Value matrixC,
 
       curVal = newOp.getResult();
     } else {
-      llvm_unreachable("unsupported operation which uses matmul's output");
+      llvm::report_fatal_error("unsupported operation which uses matmul's output");
     }
   }
 
@@ -439,7 +439,7 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
     return insert;
   }
 
-  llvm_unreachable("unsupported fixpipe dst type");
+  llvm::report_fatal_error("unsupported fixpipe dst type");
 }
 
 /// This pattern wanna convert all hivm::BatchMmadL1Op and releated fixpipe to

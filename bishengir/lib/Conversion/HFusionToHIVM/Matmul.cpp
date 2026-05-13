@@ -149,7 +149,7 @@ public:
     auto perm = l1TransposeOp.getPermutation();
     const auto rank = static_cast<int>(perm.size());
     if (rank < 2)
-      llvm_unreachable("rank for matmul need not less than 2");
+      llvm::report_fatal_error("rank for matmul need not less than 2");
     if ((perm[rank - 1] == rank - 2) && (perm[rank - 2] == rank - 1))
       return l1TransposeOp.getInput();
 

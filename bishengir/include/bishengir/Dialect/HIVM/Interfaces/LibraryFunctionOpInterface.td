@@ -45,7 +45,7 @@ def LibraryFunctionOpInterface : OpInterface<"OpWithLibraryFunction"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm_unreachable("getOpLibraryMaxRank not implemented");
+        llvm::report_fatal_error("getOpLibraryMaxRank not implemented");
       }]
     >,
     InterfaceMethod<
@@ -72,7 +72,7 @@ def LibraryFunctionOpInterface : OpInterface<"OpWithLibraryFunction"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm_unreachable("inferOpLibraryMaxRank not implemented");
+        llvm::report_fatal_error("inferOpLibraryMaxRank not implemented");
       }]
     >,
   ];

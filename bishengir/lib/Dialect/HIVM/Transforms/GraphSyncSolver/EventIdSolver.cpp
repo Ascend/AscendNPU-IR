@@ -376,7 +376,7 @@ void EventIdSolver::undoActions() {
           assignNeedRecalc(action->oldValue, /*pushAction=*/false);
         })
         .Default([](Action *action) {
-          llvm_unreachable("EventIdSolver: unhandled action_type.");
+          llvm::report_fatal_error("EventIdSolver: unhandled action_type.");
         });
   }
   if (!actionsStack.empty()) {

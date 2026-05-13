@@ -100,7 +100,7 @@ void CodeGenerator::setProperInsertionPoint(IRRewriter &rewriter,
         rewriter.setInsertionPoint(linkedOpBase->op);
       }
     } else {
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "setProperInsertionPoint: unhandled place-holder op case.");
     }
   } else {
@@ -129,7 +129,7 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
       assert(placeHolderOp->afterOp->op != nullptr);
       return placeHolderOp->afterOp->op->getLoc();
     } else {
-      llvm_unreachable("getProperLoc: unhandled place-holder op case.");
+      llvm::report_fatal_error("getProperLoc: unhandled place-holder op case.");
     }
   }
   if (opBase->op == nullptr && opBase->parentOp != nullptr) {
@@ -143,8 +143,8 @@ void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
                                   BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (barrierOp->pipe != PIPE::PIPE_ALL) {
-    llvm_unreachable("barriers in cross-core sync are expected to be of type "
-                     "barrier-all only.");
+    llvm::report_fatal_error("barriers in cross-core sync are expected to be of type "
+                             "barrier-all only.");
   }
 
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -543,7 +543,7 @@ Value CodeGenerator::getMultiBufferBlockSelectOp(IRRewriter &rewriter,
   if (auto selectOp = getCVMultiBufferSelectOp(rewriter, syncOp)) {
     return selectOp;
   }
-  llvm_unreachable("unhandled cross-core sync case with multibuffer enabled.");
+  llvm::report_fatal_error("unhandled cross-core sync case with multibuffer enabled.");
 }
 
 // Get an event id Value for a given SetWaitOp (creates constant or uses

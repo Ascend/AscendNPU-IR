@@ -193,7 +193,7 @@ Value createEmptyOpWithTargetElemType(
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     // TODO: it should be defined in Dialect/Tensor/IR
     return tensor::createTensorEmptyOpWithTargetElemType(builder, loc, source,
@@ -208,7 +208,7 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     return tensor::createTensorEmptyOp(builder, loc, source);
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -259,7 +259,7 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(whileOp.getAfter().front().getArgument(resNum));
       })
       .Default([&](Operation *otherOp) {
-        llvm_unreachable("unsupported loop like op!");
+        llvm::report_fatal_error("unsupported loop like op!");
       });
 
   return values;
@@ -544,7 +544,7 @@ Value getDimValue(OpBuilder &builder, Location loc, Value v, int64_t dim) {
 OpFoldResult getDimOFR(OpBuilder &builder, Location loc, Value v, int64_t dim) {
   auto type = cast<ShapedType>(v.getType());
   if (!type.hasRank()) {
-    llvm_unreachable("Cannot get dim for type with no rank");
+    llvm::report_fatal_error("Cannot get dim for type with no rank");
     return {};
   }
 

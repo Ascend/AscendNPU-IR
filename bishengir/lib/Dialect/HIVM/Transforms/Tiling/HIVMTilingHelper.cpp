@@ -230,7 +230,7 @@ utils::IteratorType convertToLinalgIteratorType(hivm::IteratorType itType) {
   case (hivm::IteratorType::kConcat):
     return utils::IteratorType::concat;
   default:
-    llvm_unreachable("Unhandled iterator types");
+    llvm::report_fatal_error("Unhandled iterator types");
   };
 }
 
