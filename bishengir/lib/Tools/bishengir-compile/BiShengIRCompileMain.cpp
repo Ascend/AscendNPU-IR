@@ -247,8 +247,30 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   });
 
   bool hirCompileSuccess = false;
-  int tryTimes = config.getEnableTuningMode() ? 1 : 5;
+  int tryTimes = config.getEnableTuningMode() || config.getEnableTritonKernelCompile() ? 1 : 5;
+  auto &opts = cl::getRegisteredOptions();
+  bool originalPrintIrAfterFailure = false;
+  if (opts.count("mlir-print-ir-after-failure") != 0) {
+    originalPrintIrAfterFailure = 
+      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+        ->getValue();
+
+    static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+        ->setValue(false);
+  }
+
   for (int i = 0; i < tryTimes; i++) {
+    // The diagnostics information is cleared in each loop to ensure that 
+    // only the error information about the last success or failure is printed.
+    collectedDiagnostics.clear();
+
+    bool isLastAttempt = (i == tryTimes - 1);
+    if (isLastAttempt && originalPrintIrAfterFailure) {
+      // Only print failured IR after the last attempt.
+      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+        ->setValue(true);
+    }
+
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
 
