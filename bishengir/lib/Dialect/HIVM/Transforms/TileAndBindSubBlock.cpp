@@ -63,7 +63,6 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
@@ -106,10 +105,6 @@ public:
 
 private:
   DenseMap<int32_t, int64_t> tightlyCoupledBufferToTilingDim;
-  /// UB buffers whose half-tile was applied successfully in
-  /// BufferizationBubbleUpStrategy (pattern 1/2/3); gates AIC fixpipe
-  /// DualDstMode.
-  DenseSet<int32_t> aivUbTightlyCoupledBufferIds;
 };
 } // namespace
 
@@ -747,14 +742,12 @@ static void failAndRevert(func::FuncOp func) {
   func->erase();
 }
 
-static void populateBindSubBlockBubbleUpPassManager(
-    PassManager &pm, bool strictMode,
-    DenseSet<int32_t> *aivUbTightlyCoupledBufferIds) {
+static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
+                                                    bool strictMode) {
   HIVMBubbleUpExtractSliceOptions bubbleUpOptions;
   bubbleUpOptions.strictMode = strictMode;
   pm.addPass(createCanonicalizerPass());
-  pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions,
-                                               aivUbTightlyCoupledBufferIds));
+  pm.addPass(createHIVMBubbleUpExtractSlicePass(bubbleUpOptions));
   pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
 }
@@ -992,8 +985,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   LDBG("After tileAndSliceStore: " << newFunc);
 
   PassManager pm2(newFunc->getContext());
-  populateBindSubBlockBubbleUpPassManager(pm2, strictMode,
-                                          &aivUbTightlyCoupledBufferIds);
+  populateBindSubBlockBubbleUpPassManager(pm2, strictMode);
 
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
@@ -1001,6 +993,9 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     failAndRevert(newFunc);
     return failure();
   }
+
+  pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+      newFunc, tightlyCoupledBufferToTilingDim);
 
   SmallVector<Operation *> toBeRemovedLeaf;
   newFunc->walk([&](annotation::MarkOp op) {
@@ -1098,8 +1093,6 @@ void TileAndBindSubBlockPass::runOnOperation() {
     destroyFuncBackups(aicRollbackBackups);
   };
 
-  aivUbTightlyCoupledBufferIds.clear();
-
   // Step 1: Tile AIV functions
   bool aivSuccessFlag = false;
   auto tileAivFuncs = [this, &aivFunctions, &aivSuccessFlag
@@ -1150,9 +1143,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return;
   }
 
-  if (failed(tileAicFixpipeFuncsIfNeeded(
-          aicFunctions, tightlyCoupledBufferToTilingDim,
-          aivUbTightlyCoupledBufferIds))) {
+  if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
+                                        tightlyCoupledBufferToTilingDim))) {
     if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
                                            /*limitSubBlockToStore=*/false)) ||
         failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,

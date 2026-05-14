@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -71,47 +72,17 @@ static bool isDynamicSlice(OffsetSizeAndStrideOpInterface op) {
   return ShapedType::isDynamicShape(op.getStaticSizes());
 }
 
-/// Follow memref.cast / subview / reinterpret_cast to a value whose memref
-/// type carries `#hivm.address_space<ub>`.
-static Value traceToUbTypedMemref(Value v) {
-  for (unsigned i = 0; i < 16; ++i) {
-    auto memTy = dyn_cast<MemRefType>(v.getType());
-    if (!memTy)
-      return Value();
-    auto maybeAlloc = dyn_cast<memref::AllocOp>(v.getDefiningOp());
-    if (maybeAlloc){
-      return v;
-    }
-
-    // Loop recurrently to find the alloc Op
-    Operation *def = v.getDefiningOp();
-    if (!def)
-      return Value();
-    if (auto castOp = dyn_cast<memref::MemorySpaceCastOp>(def))
-      v = castOp.getSource();
-    else if (auto sv = dyn_cast<memref::SubViewOp>(def)){
-      LLVM_DEBUG(DBGS()<<"the value is:\n");
-      v.dump();
-      v = sv.getSource();}
-    else if (auto rc = dyn_cast<memref::ReinterpretCastOp>(def))
-      v = rc.getSource();
-    else
-      return Value();
-  }
-  return Value(); // If no ub address was found, return empty value.
-}
-
-/// When UB half-tiling succeeds in BufferizationBubbleUpStrategy, record the
-/// `hivm.tightly_coupled_buffer` id for downstream AIC fixpipe DualDst gating.
-static void recordUbTightlyCoupledBufferIdFromMemref(
-    Value memrefValue, llvm::DenseSet<int32_t> *outIds) {
-  if (!outIds)
+/// When UB half-tiling succeeds in BufferizationBubbleUpStrategy, set
+/// `tiledTightlyCoupledAlloc` on the corresponding annotation.mark (see
+/// TileUtils.h).
+static void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
+                                                Value memrefValue) {
+  auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
+  if (!maybeAlloc)
     return;
-  Value ubVal = traceToUbTypedMemref(memrefValue);
-  if (!ubVal)
-    return;
+  Value allocResult = maybeAlloc->getResult();
   auto maybeMark = mlir::utils::getAnnotateOpWithAttr(
-      ubVal, hivm::HIVMTightlyCoupledBufferAttr::name);
+      allocResult, hivm::HIVMTightlyCoupledBufferAttr::name);
   if (!maybeMark.has_value())
     return;
   auto markOp = dyn_cast<annotation::MarkOp>(maybeMark.value());
@@ -121,7 +92,10 @@ static void recordUbTightlyCoupledBufferIdFromMemref(
       hivm::HIVMTightlyCoupledBufferAttr::name);
   if (!attr || !attr.getId().has_value())
     return;
-  outIds->insert(attr.getId().value());  // Insert the tightly coupled id that is tiled.
+  rewriter.modifyOpInPlace(markOp, [&]() {
+    markOp->setAttr(kTiledTightlyCoupledAlloc,
+                    UnitAttr::get(rewriter.getContext()));
+  });
 }
 
 // This function create new parentOp after bubble up
@@ -1722,8 +1696,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.replaceOp(sliceOp, newToTensorOp);
         if (toTensorOp->use_empty())
           rewriter.eraseOp(toTensorOp);
-        recordUbTightlyCoupledBufferIdFromMemref(newAllocOp.getResult(),
-                                                 aivUbTightlyCoupledBufferIds);
+        markTiledTightlyCoupledAllocIfNeeded(rewriter,
+                                              newAllocOp.getResult());
       }
       return success();
     }
@@ -1820,8 +1794,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
            << newSubViewOp << "\n"
            << loadOp);
       LDBG(newSubViewOp->getParentOfType<func::FuncOp>());
-      recordUbTightlyCoupledBufferIdFromMemref(subViewOp.getSource(),
-                                               aivUbTightlyCoupledBufferIds);
+      markTiledTightlyCoupledAllocIfNeeded(rewriter, subViewOp.getSource());
       return success();
     }
   }
@@ -1895,8 +1868,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         if (UbAllocOp->use_empty())
           rewriter.eraseOp(UbAllocOp);
 
-        recordUbTightlyCoupledBufferIdFromMemref(newUbAllocOp.getResult(),
-                                                 aivUbTightlyCoupledBufferIds);
+        markTiledTightlyCoupledAllocIfNeeded(rewriter,
+                                              newUbAllocOp.getResult());
         return success();
       }
 

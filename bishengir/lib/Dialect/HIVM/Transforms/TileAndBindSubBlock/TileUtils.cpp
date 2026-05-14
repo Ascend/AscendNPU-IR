@@ -64,13 +64,13 @@ public:
 };
 
 struct splitFixpipe : public OpRewritePattern<FixpipeOp> {
-  const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds;
+  const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim;
 
 public:
   splitFixpipe(MLIRContext *context,
-                 const DenseSet<int32_t> &aivUbTightlyCoupledBufferIdsIn)
+               const DenseMap<int32_t, int64_t> &tightlyCoupledMapIn)
       : OpRewritePattern<FixpipeOp>(context),
-        aivUbTightlyCoupledBufferIds(aivUbTightlyCoupledBufferIdsIn) {}
+        tightlyCoupledBufferToTilingDim(tightlyCoupledMapIn) {}
 
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -89,8 +89,7 @@ public:
     auto dstMemorySpace = dstMemrefType.getMemorySpace();
     if (!dstMemorySpace)
       return failure();
-    auto toAddrSpace =
-        cast<AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
+    auto toAddrSpace = cast<AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
     if ((!dstMemorySpace) || (toAddrSpace != AddressSpace::UB)) {
       return success();
     }
@@ -115,10 +114,10 @@ public:
         tilghlyCoupledBufferAttr);
     if (!attr || !attr.getId().has_value())
       return failure();
-    /// FIXME: If the fixpipe dual dst mode is not specified, will defautly fixpipe
-    /// the whole data into two aiv cores. So if ub is not tiled, just keep fixpipe
-    /// as default.
-    if (!aivUbTightlyCoupledBufferIds.contains(attr.getId().value()))
+    /// FIXME: If the fixpipe dual dst mode is not specified, will defautly
+    /// fixpipe the whole data into two aiv cores. So if ub is not tiled, just
+    /// keep fixpipe as default.
+    if (!tightlyCoupledBufferToTilingDim.contains(attr.getId().value()))
       return failure();
 
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
@@ -126,15 +125,17 @@ public:
       return failure();
     int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
     auto rank = allocOp.getType().getRank();
-    if (tilingDim == -1){
-      op->emitWarning("The tilingDim in AIC does not exist!");
+    if (tilingDim == -1) {
+      op->emitWarning("The tilingDim in AIC does not exist! Maybe because AIV "
+                      "tightly coupled alloc is not tiled!");
       return failure();
     }
-    if (tilingDim != rank - 2 && tilingDim != rank - 1){
-      op->emitWarning("The tilingDim in AIC does not match row_split or column split!");
+    if (tilingDim != rank - 2 && tilingDim != rank - 1) {
+      op->emitWarning(
+          "The tilingDim in AIC does not match row_split or column split!");
       return failure();
     }
-      
+
     auto splitMode = tilingDim == rank - 2 ? FixpipeDualDstMode::ROW_SPLIT
                                            : FixpipeDualDstMode::COLUMN_SPLIT;
     auto oldTy = cast<MemRefType>(allocVal.getType());
@@ -186,8 +187,8 @@ public:
       SmallVector<Value> oprs({op.getSrc(), newAlloc});
       if (auto quantScale = op.getQuantScale())
         oprs.push_back(quantScale);
-      auto newFixpipeOp = rewriter.create<FixpipeOp>(
-          op.getLoc(), TypeRange{}, oprs, op->getAttrs());
+      auto newFixpipeOp = rewriter.create<FixpipeOp>(op.getLoc(), TypeRange{},
+                                                     oprs, op->getAttrs());
       newFixpipeOp.setDualDstModeAttr(dualAttr);
 
       rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
@@ -272,11 +273,12 @@ public:
   }
 };
 
-static LogicalResult
-runSplitFixpipe(func::FuncOp funcOp,
-                const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
+static LogicalResult runSplitFixpipe(
+    func::FuncOp funcOp,
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   RewritePatternSet patterns(funcOp.getContext());
-  patterns.add<splitFixpipe>(funcOp.getContext(), aivUbTightlyCoupledBufferIds);
+  patterns.add<splitFixpipe>(funcOp.getContext(),
+                             tightlyCoupledBufferToTilingDim);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return failure();
   }
@@ -292,10 +294,10 @@ runSplitFixpipe(func::FuncOp funcOp,
   return success();
 }
 
-static LogicalResult
-tileAndSliceOpAIC(func::FuncOp func,
-                  const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
-  return runSplitFixpipe(func, aivUbTightlyCoupledBufferIds);
+static LogicalResult tileAndSliceOpAIC(
+    func::FuncOp func,
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+  return runSplitFixpipe(func, tightlyCoupledBufferToTilingDim);
 }
 
 } // namespace
@@ -307,15 +309,14 @@ void runTileAndBindSubBlockEarlyPatterns(ModuleOp moduleOp) {
 }
 
 void createFuncBackups(ArrayRef<func::FuncOp> funcs,
-                                   SmallVectorImpl<FuncRollbackBackup> &backups) {
+                       SmallVectorImpl<FuncRollbackBackup> &backups) {
   backups.reserve(backups.size() + funcs.size());
   for (func::FuncOp func : funcs) {
     backups.push_back({func.getSymNameAttr().str(), func->clone()});
   }
 }
 
-void destroyFuncBackups(
-    SmallVectorImpl<FuncRollbackBackup> &backups) {
+void destroyFuncBackups(SmallVectorImpl<FuncRollbackBackup> &backups) {
   for (auto &entry : backups) {
     if (entry.backupOp) {
       entry.backupOp->destroy();
@@ -325,9 +326,10 @@ void destroyFuncBackups(
   backups.clear();
 }
 
-LogicalResult restoreFunctionsFromBackups(
-    ModuleOp moduleOp, SmallVectorImpl<FuncRollbackBackup> &backups,
-    bool limitSubBlockToStore) {
+LogicalResult
+restoreFunctionsFromBackups(ModuleOp moduleOp,
+                            SmallVectorImpl<FuncRollbackBackup> &backups,
+                            bool limitSubBlockToStore) {
   for (auto &entry : backups) {
     if (!entry.backupOp) {
       continue;
@@ -356,9 +358,9 @@ void removeTilingDimMappingMarksFromModule(ModuleOp moduleOp) {
   });
 }
 
-void collectMixAicAndAivFuncs(
-    ModuleOp moduleOp, SmallVectorImpl<func::FuncOp> &aicFunctions,
-    SmallVectorImpl<func::FuncOp> &aivFunctions) {
+void collectMixAicAndAivFuncs(ModuleOp moduleOp,
+                              SmallVectorImpl<func::FuncOp> &aicFunctions,
+                              SmallVectorImpl<func::FuncOp> &aivFunctions) {
   moduleOp.walk([&aicFunctions, &aivFunctions](func::FuncOp func) {
     auto funcCoreType = queryFuncCoreType(func);
     if (!funcCoreType.has_value() ||
@@ -373,8 +375,7 @@ void collectMixAicAndAivFuncs(
   });
 }
 
-bool hasBatchMatmulLoopInAicFuncs(
-    ArrayRef<func::FuncOp> aicFunctions) {
+bool hasBatchMatmulLoopInAicFuncs(ArrayRef<func::FuncOp> aicFunctions) {
   return llvm::any_of(aicFunctions, [](func::FuncOp aicFunc) {
     return aicFunc
         .walk([](MmadL1Op mmad) {
@@ -399,16 +400,28 @@ bool hasImplicitTransposeWithLastAxisInAiv(
   });
 }
 
+void pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+    func::FuncOp newFunc,
+    llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+  newFunc.walk([&](annotation::MarkOp markOp) {
+    auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
+        HIVMTightlyCoupledBufferAttr::name);
+    if (!attr || !attr.getId().has_value())
+      return;
+    int32_t id = attr.getId().value();
+    if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc))
+      tightlyCoupledBufferToTilingDim.erase(id);
+  });
+}
+
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
-    const DenseSet<int32_t> &aivUbTightlyCoupledBufferIds) {
+    const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
 
   for (func::FuncOp originalFunc : aicFunctions) {
     originalFunc->walk([&](annotation::MarkOp markOp) {
-      if (auto attr =
-              markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
-                  HIVMTightlyCoupledBufferAttr::name)) {
+      if (auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
+              HIVMTightlyCoupledBufferAttr::name)) {
         auto maybeId = attr.getId();
         if (!maybeId) {
           markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
@@ -425,7 +438,7 @@ LogicalResult tileAicFixpipeFuncsIfNeeded(
       }
     });
     if (failed(
-            tileAndSliceOpAIC(originalFunc, aivUbTightlyCoupledBufferIds))) {
+            tileAndSliceOpAIC(originalFunc, tightlyCoupledBufferToTilingDim))) {
       return failure();
     }
   }
