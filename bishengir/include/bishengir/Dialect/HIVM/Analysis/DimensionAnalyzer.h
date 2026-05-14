@@ -137,17 +137,25 @@ protected:
   //===--------------------------------------------------------------------===//
 
   /// mark each index of dimension as its type, and store it inside
-  /// tilingDimKindMap, the key of this map is the dimension index based on
-  /// solverCollapserElem_. If map doesn't exist, it means its a parallel
-  void markDimensionKind();
+  /// tilingDimKindMap or transposedDimMap, the key of this map is the dimension
+  /// index based on solverCollapserElem_. If map doesn't exist, it means its a parallel
+  void markDimensions();
 
-  /// Marks transposed dimensions in the operation graph and records the mapping
-  /// of transposed dimensions to their original indices.
-  void markTransposedDims();
+  void markTransposedDim(hivm::VTransposeOp op);
 
-  void markTransposedDimImpl(hivm::VTransposeOp op);
-  void markTransposedDimImpl(annotation::MarkOp op);
-  void markTransposedDimImpl(tensor::ExpandShapeOp op);
+  /// transfer marked information through the dimensions merged by solverCollapserElem_
+  void transferDimMark();
+  
+  template <typename IntegerRange>
+  void transferDimMarkImpl(Value input, Value output, const IntegerRange &mutated);
+
+  void transferDimMarkImpl(annotation::MarkOp op);
+  void transferDimMarkImpl(tensor::ExpandShapeOp op);
+  void transferDimMarkImpl(tensor::CollapseShapeOp op);
+  void transferDimMarkImpl(tensor::ExtractSliceOp op);
+  void transferDimMarkImpl(tensor::InsertSliceOp op);
+  void transferDimMarkImpl(hivm::VBrcOp op);
+  void transferDimMarkImpl(hivm::VTransposeOp op);
 
   template <typename StoreOpTy>
   void computeTilingDimImpl(
@@ -160,8 +168,9 @@ protected:
   DenseMap<Value, int64_t> tilingDim_;
 
   /// How each solver dimension behaves for tiling (\c Parallel, \c RankReduced,
-  /// \c Reduce). Keys follow \c markDimensionKind (via \c solverCollapserElem_).
-  DenseMap<int64_t, TilingDimensionKind> tilingDimKindMap;
+  /// \c Reduce). Keys follow \c markDimensionKind
+  DenseMap<int64_t, TilingDimensionKind> tilingDimKindMapForCollapser;
+  DenseMap<int64_t, TilingDimensionKind> tilingDimKindMapForShape;
 
   /// Collapsed \c parentIndex values (\c solverCollapserElem_) picked as tiling
   /// parents after the store-walk heuristics in \c computeTilingDim.
