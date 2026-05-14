@@ -334,6 +334,71 @@ index 2b0da17f0..223e45cab 100644
                    CastOpAxisInfoVisitor<triton::BitcastOp>>();
    visitors.append<MakeRangeOpAxisInfoVisitor>();
    visitors.append<PoisonOpAxisInfoVisitor>();
+@@ -1040,11 +1040,10 @@ AxisInfoAnalysis::AxisInfoAnalysis(DataFlowSolver &solver,
+ LogicalResult AxisInfoAnalysis::visitOperation(
+     Operation *op, ArrayRef<const dataflow::Lattice<AxisInfo> *> operands,
+     ArrayRef<dataflow::Lattice<AxisInfo> *> results) {
+-  // TODO: For sure not the right way to do this
+-  // but why is scf.if not initialized otherwise?
++  // If any operands are not yet ready, skip this operation for now
+   for (auto op : operands)
+     if (op->getValue().getRank() == 0)
+-      setToEntryState((dataflow::Lattice<AxisInfo> *)op);
++      return success();
+   AxisInfo curr = visitors.apply(op, operands);
+   if (curr.getRank() == 0) {
+     setAllToEntryStates(results);
+@@ -1081,6 +1080,10 @@ void AxisInfoAnalysis::visitForOpInductionVar(
+       getLatticeElementFor(programPoint, op.getLowerBound())->getValue();
+   const auto &step =
+       getLatticeElementFor(programPoint, op.getStep())->getValue();
++  // If lb or step is not yet ready, skip this operation for now. 
++  if (lb.getRank() == 0 || step.getRank() == 0)
++      return;
++
+ 
+   AxisInfo::DimVectorT knownContiguity(1, 1);
+   AxisInfo::DimVectorT knownDivisibility(1, 1);
+@@ -1149,24 +1152,15 @@ void AxisInfo::initPessimisticStateFromFunc(int argNumber, T funcOp,
+       initPessimisticStateFromFunc(blockArg.getArgNumber(), fun,
+                                    &knownContiguity, &knownDivisibility,
+                                    &knownConstancy);
+-    } else if (isa<RegionBranchOpInterface, gpu::WarpSpecializePartitionsOp>(
+-                   op)) {
+-      // scf::ForOp, scf::IfOp, scf::WhileOp, gpu::WarpSpecializePartitionsOp
+-      // Control flow operations are initialized with "unknown" state:
+-      // the maximum possible divisibility, contiguity, and constancy.
++    } else if (isa<gpu::WarpSpecializePartitionsOp>(op)) {
++      // Initialize the arguments to gpu::WarpSpecializePartitionsOp with
++      // "unknown" state: the maximum possible divisibility, contiguity, and
++      // constancy.
+       knownDivisibility = DimVectorT(rank, kMaxDivisor);
+       knownConstancy = DimVectorT(rank, kMaxDivisor);
+       knownContiguity = DimVectorT(rank, kMaxDivisor);
+     }
+   } else if (Operation *op = value.getDefiningOp()) {
+-    if (isa<RegionBranchOpInterface>(op)) {
+-      // scf::ForOp, scf::IfOp, scf::WhileOp
+-      // Control flow operations are initialized with "unknown" state:
+-      // the maximum possible divisibility, contiguity, and constancy.
+-      knownDivisibility = DimVectorT(rank, kMaxDivisor);
+-      knownConstancy = DimVectorT(rank, kMaxDivisor);
+-      knownContiguity = DimVectorT(rank, kMaxDivisor);
+-    }
+     // Other operations are conservatively initialized with the lowest possible
+     // divisibility, contiguity, and constancy unless they have specified.
+     if (Attribute attr = op->getDiscardableAttr("tt.divisibility")) {
+@@ -1324,6 +1318,10 @@ void ModuleAxisInfoAnalysis::initialize(FunctionOpInterface funcOp,
+   auto *axisInfoMap = getFuncData(funcOp);
+   auto updateAxisInfoMap = [&](Value value) {
+     auto axisInfo = analysis->getLatticeElement(value)->getValue();
++    // If we could not determine the AxisInfo for this value, assume the
++    // pessimistic state.
++    if (axisInfo.getRank() == 0)
++      axisInfo = AxisInfo::getPessimisticValueState(value);
+     AxisInfo curAxisInfo;
+     if (axisInfoMap->count(value)) {
+       curAxisInfo = AxisInfo::join(axisInfo, axisInfoMap->lookup(value));
 @@ -1362,7 +1382,10 @@ void ModuleAxisInfoAnalysis::update(CallOpInterface callOp,
        callee.setArgAttr(index, attrName, attr);
      };
@@ -705,7 +770,7 @@ diff --git a/test/Analysis/test-alignment.mlir b/test/Analysis/test-alignment.ml
 index 5d13104e3..910e4c367 100644
 --- a/test/Analysis/test-alignment.mlir
 +++ b/test/Analysis/test-alignment.mlir
-@@ -915,3 +915,40 @@ tt.func @test_warp_specialize_propagation(%arg0: !tt.ptr<f16> {tt.divisibility =
+@@ -915,3 +915,51 @@ tt.func @test_warp_specialize_propagation(%arg0: !tt.ptr<f16> {tt.divisibility =
    } : (!tt.ptr<f16>, i32) -> ()
    tt.return
  }
@@ -744,6 +809,21 @@ index 5d13104e3..910e4c367 100644
 +  // expected-remark @below {{contiguity = [128, 1], divisibility = [1073741824, 1], constancy = [1, 1], constant_value = <none>}}
 +  %1 = tt.expand_dims %0 {axis = 1: i32} : tensor<128xi32> -> tensor<128x1xi32>
 +  tt.call @callee(%1) : (tensor<128x1xi32>) -> ()
++  tt.return
++}
++
++// -----
++
++// Verify that if an operation is statically determined to be dead, we fall back
++// to assigning it a pessimistic value, rather than skipping it entirely.
++tt.func @dead_op_pessimistic() {
++  %c5 = arith.constant dense<5> : tensor<4xi32>
++  %c7 = arith.constant dense<7> : tensor<4xi32>
++  %false = arith.constant false
++  scf.if %false {
++    // expected-remark @below {{contiguity = [1], divisibility = [1], constancy = [1], constant_value = <none>}}
++    %add = arith.addi %c5, %c7 : tensor<4xi32>
++  }
 +  tt.return
 +}
 diff --git a/test/lib/Instrumentation/GPUHello.cpp b/test/lib/Instrumentation/GPUHello.cpp
