@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -34,7 +35,27 @@ using hivm::detail::queryCoreTypeHelper;
 
 static constexpr llvm::StringLiteral CubeOnlyAttrName = "pipeline.cubeonly";
 static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
+
+// Per-tensor compile hint. Attached to a bufferization::ToTensorOp result via
+// `annotation.mark %t {cv_pipeline_lazy_load = true}` (or `false`).
+//   * `true`  : opts this tensor into the lazy-load path even when the
+//               kernel-level enable-lazy-loading switch is off.
+//   * `false` : opts this tensor out of the lazy-load path even when the
+//               kernel-level switch is on; a warning is emitted to flag the
+//               override.
+static constexpr llvm::StringLiteral CVPipelineLazyLoadAttrName =
+    "cv_pipeline_lazy_load";
 namespace {
+
+// Tristate result of reading a `cv_pipeline_lazy_load` hint off of a value.
+enum class LazyLoadHint {
+  // No `annotation.mark` op carrying `cv_pipeline_lazy_load` on this value.
+  None,
+  // `cv_pipeline_lazy_load = true` -> opt-in.
+  Enable,
+  // `cv_pipeline_lazy_load = false` -> opt-out.
+  Disable,
+};
 
 struct AtomicEffect {
   AtomicKind kind;
@@ -110,6 +131,52 @@ private:
 
   LogicalResult traceOperands(Value operand, WorkItem *item,
                               SmallVector<Operation *> &workingStack);
+
+  // Returns the tristate cv_pipeline_lazy_load hint carried on `v`'s direct
+  // users (looking for an `annotation.mark` op with attr key
+  // `cv_pipeline_lazy_load`):
+  //   * Enable  -> attribute present and set to `true`
+  //   * Disable -> attribute present and set to `false`
+  //   * None    -> no such mark / attribute on `v`
+  static LazyLoadHint getLazyLoadHint(Value v);
+
+  // Returns true if the input op should be treated as lazy-loaded.  Two
+  // shapes of input are accepted (dispatched via `dyn_cast`):
+  //   * `bufferization::ToTensorOp`: the to_tensor must be registered in
+  //     `outputMemrefMap` and its backing writer must be a LoadOp.  When
+  //     not registered (or backed by a non-LoadOp), the answer is `false`.
+  //   * `LoadOp`: the matching to_tensor is found by reverse-looking up the
+  //     LoadOp in `outputMemrefMap`.  When no match is found, the answer
+  //     falls back to the kernel-level `enableLazyLoading`.
+  // Once a candidate to_tensor is identified, the per-tensor hint takes
+  // precedence over the kernel-level switch:
+  //   * hint = Enable  -> true
+  //   * hint = Disable -> false (and warns once if `enableLazyLoading` is
+  //                              also on, since the hint is overriding it)
+  //   * hint = None    -> `enableLazyLoading`
+  bool shouldLazyLoadFor(Operation *op);
+
+  // Emit a one-time warning explaining that the per-tensor
+  // `cv_pipeline_lazy_load = false` hint on `v` overrides the kernel-level
+  // enable-lazy-loading switch.  The warning is emitted on the underlying
+  // `hivm.hir.load` op (looked up via outputMemrefMap) for source-location
+  // clarity, with a note attached to the originating `annotation.mark`.
+  // Falls back to emitting on the mark itself if no load is found.  Does
+  // nothing if the same mark op has already been warned for.
+  void warnHintOverride(Value v);
+
+  // Walk all `annotation.mark` ops inside pipelineLoop carrying
+  // `cv_pipeline_lazy_load` and diagnose three classes of misuse:
+  //   * Duplicate marks: a value carries >=2 such marks; warns on the first
+  //     and attaches notes on the rest (current "first-wins" policy
+  //     preserved in `getLazyLoadHint`).
+  //   * Non-to_tensor target: mark.src is not produced by
+  //     `bufferization::ToTensorOp`; the hint can never be honored.
+  //   * Non-load-backed target: src is a to_tensor whose backing writer is
+  //     not a `LoadOp`; the hint will be silently ignored otherwise.
+  // Requires `outputMemrefMap` to be populated (call after
+  // `populateDependencies` runs for every separator).
+  void diagnoseLazyLoadHints();
 
   void collectAtomicEffects();
 
@@ -208,6 +275,10 @@ private:
   DenseMap<Value, Value> localOuputsToRedurnRes;
 
   DenseSet<Operation *> toErase;
+
+  // annotation.mark ops we've already emitted a "hint overrides kernel
+  // switch" warning on, to avoid duplicate diagnostics for the same tensor.
+  DenseSet<Operation *> warnedOverrideMarks;
 };
 
 struct CVPipeliningPass
@@ -623,6 +694,134 @@ CVPipelineImpl::traceMemrefSubnet(Operation *start,
   return success();
 }
 
+LazyLoadHint CVPipelineImpl::getLazyLoadHint(Value v) {
+  auto maybeMark =
+      utils::getAnnotateOpWithAttr(v, CVPipelineLazyLoadAttrName);
+  if (!maybeMark)
+    return LazyLoadHint::None;
+  auto mark = cast<annotation::MarkOp>(*maybeMark);
+  auto attr = mark->getAttrOfType<BoolAttr>(CVPipelineLazyLoadAttrName);
+  if (!attr)
+    return LazyLoadHint::None;
+  return attr.getValue() ? LazyLoadHint::Enable : LazyLoadHint::Disable;
+}
+
+void CVPipelineImpl::warnHintOverride(Value v) {
+  auto maybeMark =
+      utils::getAnnotateOpWithAttr(v, CVPipelineLazyLoadAttrName);
+  if (!maybeMark)
+    return;
+  auto mark = cast<annotation::MarkOp>(*maybeMark);
+  if (!warnedOverrideMarks.insert(mark).second)
+    return;
+
+  // Prefer printing on the LoadOp for source-location clarity: it's the op
+  // that would have been cloned across stages had the hint not vetoed it.
+  Operation *warnTarget = mark;
+  if (auto tt = dyn_cast_or_null<bufferization::ToTensorOp>(v.getDefiningOp()))
+    if (auto it = outputMemrefMap.find(tt); it != outputMemrefMap.end())
+      if (auto load = dyn_cast<LoadOp>(it->second.getOperation()))
+        warnTarget = load;
+
+  auto diag = warnTarget->emitWarning()
+              << "[cv-pipelining] " << CVPipelineLazyLoadAttrName
+              << "=false overrides kernel-level enable-lazy-loading=true; "
+                 "lazy loading is disabled for this tensor";
+  if (warnTarget != mark)
+    diag.attachNote(mark->getLoc())
+        << "see `" << CVPipelineLazyLoadAttrName << " = false` hint here";
+}
+
+void CVPipelineImpl::diagnoseLazyLoadHints() {
+  // Walk pipelineLoop to collect, in IR order, the distinct values that carry
+  // at least one `cv_pipeline_lazy_load` mark.  We then query all marks per
+  // value via `utils::getAllAnnotateOpsWithAttr` to keep grouping bookkeeping
+  // out of this function.
+  llvm::SetVector<Value> markedSrcs;
+  pipelineLoop.getBody()->walk([&](annotation::MarkOp mark) {
+    if (mark.isAnnotatedBy(CVPipelineLazyLoadAttrName))
+      markedSrcs.insert(mark.getSrc());
+  });
+
+  for (Value src : markedSrcs) {
+    SmallVector<Operation *> marks =
+        utils::getAllAnnotateOpsWithAttr(src, CVPipelineLazyLoadAttrName);
+    if (marks.empty())
+      continue;
+    auto probe = cast<annotation::MarkOp>(marks.front());
+
+    // (1) Duplicate `cv_pipeline_lazy_load` marks on the same value.
+    if (marks.size() > 1) {
+      auto diag = probe->emitWarning()
+                  << "[cv-pipelining] tensor carries " << marks.size()
+                  << " `" << CVPipelineLazyLoadAttrName
+                  << "` annotation.mark ops; only the first one will be "
+                     "honored";
+      for (size_t i = 1; i < marks.size(); ++i)
+        diag.attachNote(marks[i]->getLoc())
+            << "duplicate `" << CVPipelineLazyLoadAttrName << "` mark here";
+    }
+
+    // (2) Target must be a bufferization::ToTensorOp result.
+    auto tt =
+        dyn_cast_or_null<bufferization::ToTensorOp>(src.getDefiningOp());
+    if (!tt) {
+      probe->emitWarning()
+          << "[cv-pipelining] `" << CVPipelineLazyLoadAttrName
+          << "` hint is ignored: marked value is not produced by "
+             "`bufferization.to_tensor`";
+      continue;
+    }
+
+    // (3) The to_tensor must be backed by a `hivm.hir.load`.
+    auto it = outputMemrefMap.find(tt);
+    if (it == outputMemrefMap.end() ||
+        !isa<LoadOp>(it->second.getOperation())) {
+      probe->emitWarning()
+          << "[cv-pipelining] `" << CVPipelineLazyLoadAttrName
+          << "` hint is ignored: tensor is not backed by `hivm.hir.load`";
+      continue;
+    }
+  }
+}
+
+bool CVPipelineImpl::shouldLazyLoadFor(Operation *op) {
+  // Find the candidate to_tensor whose hint we should consult, with
+  // shape-specific fallbacks when no candidate exists.
+  bufferization::ToTensorOp tt;
+  if (auto asTT = dyn_cast<bufferization::ToTensorOp>(op)) {
+    auto it = outputMemrefMap.find(asTT);
+    if (it == outputMemrefMap.end())
+      return false;
+    if (!isa<LoadOp>(it->second.getOperation()))
+      return false;
+    tt = asTT;
+  } else if (auto load = dyn_cast<LoadOp>(op)) {
+    for (auto &kv : outputMemrefMap) {
+      if (kv.second.getOperation() == load.getOperation()) {
+        tt = kv.first;
+        break;
+      }
+    }
+    if (!tt)
+      return enableLazyLoading;
+  } else {
+    llvm_unreachable("shouldLazyLoadFor: expected ToTensorOp or LoadOp");
+  }
+
+  switch (getLazyLoadHint(tt.getResult())) {
+  case LazyLoadHint::Enable:
+    return true;
+  case LazyLoadHint::Disable:
+    if (enableLazyLoading)
+      warnHintOverride(tt.getResult());
+    return false;
+  case LazyLoadHint::None:
+    return enableLazyLoading;
+  }
+  llvm_unreachable("invalid LazyLoadHint enumerator");
+}
+
 // Given memref value, populate users with all operations that uses any aliasing
 // memrefs as `memrefVal`
 static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
@@ -701,9 +900,11 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
         // If Core Op is already inserted into a different work item, then we
         // don't include it here
         if (!item->ops.contains(op)) {
-          // With lazy loading, allow Load ops to be cloned into multiple
-          // work items so each stage loads independently from GM.
-          if (!(enableLazyLoading && isa<LoadOp>(op)))
+          // With lazy loading (kernel-level switch or per-tensor compile
+          // hint), allow Load ops to be cloned into multiple work items so
+          // each stage loads independently from GM.
+          auto load = dyn_cast<LoadOp>(op);
+          if (!load || !shouldLazyLoadFor(load))
             continue;
         }
       } else if (!isa<LoadOp>(op))
@@ -721,15 +922,14 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     // been allocated to another work item.  The default guard fires for all
     // to_tensor ops, but with lazy loading we lift the restriction for
     // to_tensor ops whose backing writer is a LoadOp: those are cloned into
-    // every consuming work item independently.
+    // every consuming work item independently.  Lazy loading can be enabled
+    // either by the kernel-level switch or by a per-tensor compile hint
+    // (annotation.mark on the tensor result).
     bool skipToTensor =
         isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op);
-    if (enableLazyLoading && skipToTensor) {
-      auto tt = cast<bufferization::ToTensorOp>(op);
-      auto it = outputMemrefMap.find(tt);
-      if (it != outputMemrefMap.end() && isa<LoadOp>(it->second.getOperation()))
-        skipToTensor = false;
-    }
+    if (skipToTensor &&
+        shouldLazyLoadFor(cast<bufferization::ToTensorOp>(op)))
+      skipToTensor = false;
     if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
         skipToTensor)
       continue;
@@ -984,6 +1184,12 @@ LogicalResult CVPipelineImpl::createWorkItems() {
   }
   if (worklist.size() < 2)
     return failure();
+
+  // outputMemrefMap is fully populated now that traceMemrefSubnet has run for
+  // every separator -- emit non-fatal diagnostics about misplaced or
+  // duplicated `cv_pipeline_lazy_load` hints inside this loop.
+  diagnoseLazyLoadHints();
+
   return success();
 }
 
@@ -1026,15 +1232,13 @@ LogicalResult CVPipelineImpl::markOutputs() {
     for (Operation *op : item->ops) {
       if (isa<tensor::EmptyOp>(op))
         continue;
-      // With lazy loading, skip to_tensor results backed by a LoadOp since
-      // the load is cloned into each consuming work item directly.
-      if (enableLazyLoading) {
-        if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-          auto it = outputMemrefMap.find(toTensor);
-          if (it != outputMemrefMap.end() &&
-              isa<LoadOp>(it->second.getOperation()))
-            continue;
-        }
+      // With lazy loading (kernel-level switch or per-tensor compile hint),
+      // skip to_tensor results backed by a LoadOp since the load is cloned
+      // into each consuming work item directly and therefore does not need
+      // a multi-buffered cross-stage tensor.
+      if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+        if (shouldLazyLoadFor(toTensor))
+          continue;
       }
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
