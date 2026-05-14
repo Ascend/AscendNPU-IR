@@ -122,17 +122,34 @@ void InsertAnchorsAndBackupPass::eraseBackupFuncOps(ModuleOp mod) {
   }
 }
 
-func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp funcOp) {
-  OpBuilder builder(funcOp);
-  auto backupFuncOp = funcOp.clone();
-  backupFuncOp.setSymName(
-      (funcOp.getSymName() + hivm::kFuncBackupSuffix).str());
-  backupFuncOp->setAttr(hivm::BackupFunctionAttr::name,
-                        builder.getUnitAttr());
-  backupFuncOp.setPublic();
-  return backupFuncOp;
-}
+func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
+  OpBuilder builder(src);
+  auto *ctx = src->getContext();
 
+  auto backup = cast<func::FuncOp>(builder.clone(*src.getOperation()));
+  backup.setSymName((src.getSymName() + hivm::kFuncBackupSuffix).str());
+
+  // Set the gssbackup function attribute
+  backup->setAttr(hivm::BackupFunctionAttr::name, builder.getUnitAttr());
+
+  // Set the filter passes attribute
+  std::string insertAnchorsAndBackupPassName = this->getArgument().str();
+  auto delayedCrossCoreGSSPass = createDelayedCrossCoreGSSPass();
+  std::string delayedCrossCoreGSSPassName =
+      delayedCrossCoreGSSPass->getArgument().str();
+  std::string allPassesNames =
+      insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName;
+
+  auto attr = mlir::annotation::FilterPassesAttr::get(
+      ctx, StringAttr::get(ctx, allPassesNames));
+  backup->setAttr(mlir::annotation::FilterPassesAttr::name, attr);
+
+  // Keep backup public so the Inliner/DCE-of-private-funcs in later passes
+  // (e.g. inline-scope → upstream Inliner) does not reclaim it. It will be
+  // erased wholesale at the end of DelayedCrossCoreGSS.
+  backup.setPublic();
+  return backup;
+}
 
 func::FuncOp InsertAnchorsAndBackupPass::getOrCreateBackupFunc(
     func::FuncOp funcOp,
