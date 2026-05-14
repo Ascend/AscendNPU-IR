@@ -250,9 +250,6 @@ std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
 
 /// Create a pass to bubble up extract slice for hivm ops.
-/// Successful UB half-tiling in BufferizationBubbleUpStrategy sets
-/// `tiledTightlyCoupledAlloc` on the corresponding annotation.mark; the
-/// TileAndBindSubBlock pass uses that to prune `tightlyCoupledBufferToTilingDim`.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
 
