@@ -235,6 +235,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   if (config.getPureSimt() && config.getUseDPX()) {
     auto tritonGridDim = config.getSimtTritonGrid();
     bishengir::TritonRemapOptions options;
+    options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
     if (!tritonGridDim.empty()) {
       options.gridDimX = static_cast<int>(tritonGridDim[0]);
       options.useGridFlag = true;
