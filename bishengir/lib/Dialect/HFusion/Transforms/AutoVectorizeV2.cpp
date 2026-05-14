@@ -125,7 +125,8 @@ bool isNonVectorizableOp(Operation *op) {
              tensor::ExpandShapeOp, tensor::ConcatOp, hivm::CopyOp,
              hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp, hivm::StoreOp,
              hivm::BitcastOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-             scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp, memref::CopyOp>(
+             scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp, memref::CopyOp,
+             bufferization::MaterializeInDestinationOp>(
       op);
 }
 
@@ -403,6 +404,47 @@ findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
   });
 }
 
+static bool hasMemRefInOperands(Operation *op, Value memRef) {
+  for (auto operand : op->getOperands()) {
+    auto optMemRef = mlir::utils::tracebackMemRefToAllocOrBlockArgument(operand);
+    if (optMemRef.has_value() && (memRef == optMemRef.value())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void computeConflictListsForCopyOpOperand(
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
+    DenseSet<Operation *> &previousOps,
+    DenseSet<Operation *> &followingOps,
+    Value operand) {
+
+  auto optMemRef = mlir::utils::tracebackMemRefToAllocOrBlockArgument(operand);
+  if (!optMemRef.has_value()) {
+    return;
+  }
+  auto memRef = optMemRef.value();
+
+  for (auto previousOp : previousOps) {
+    if (hasMemRefInOperands(previousOp, memRef)) {
+      for (auto followingOp : followingOps) {
+        fusableOpInfoMap[previousOp].conflictList.insert(followingOp);
+        fusableOpInfoMap[followingOp].conflictList.insert(previousOp);
+      }
+    }
+  }
+
+  for (auto followingOp : followingOps) {
+    if (hasMemRefInOperands(followingOp, memRef)) {
+      for (auto previousOp : previousOps) {
+        fusableOpInfoMap[previousOp].conflictList.insert(followingOp);
+        fusableOpInfoMap[followingOp].conflictList.insert(previousOp);
+      }
+    }
+  }
+}
+
 /// If two fusable ops are conflict with each other, they cannot be fused into
 /// the same VF:
 /// 1. The producer(upstream op) and consumer(downstream op) of
@@ -438,41 +480,16 @@ static void computeConflictLists(
               fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
             }
           }
+
           if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
+            auto copyOp = cast<CopyOpInterface>(op);
             DenseSet<Operation *> previousOps;
             DenseSet<Operation *> followingOps;
-            findPreviousAndFollowingFusableOpOf(op, block, previousOps,
-                                                followingOps);
-            auto copyOpTarget = cast<CopyOpInterface>(op).getTarget();
-            auto optAllocCopyOpTarget = mlir::utils::tracebackMemRefToAlloc(copyOpTarget);
-            if (optAllocCopyOpTarget.has_value()) {
-              auto allocCopyOpTarget = optAllocCopyOpTarget.value();
-              for (auto previousOp : previousOps) {
-                for (auto followingOp : followingOps) {
-                  for (auto previousOperand : previousOp->getOperands()) {
-                    auto optAllocPrevious = mlir::utils::tracebackMemRefToAlloc(previousOperand);
-                    if (!optAllocPrevious.has_value()) {
-                      continue;
-                    }
-                    auto allocPrevious = optAllocPrevious.value();
-                    for (auto followingOperand : followingOp->getOperands()) {
-                      auto optAllocFollowing = mlir::utils::tracebackMemRefToAlloc(followingOperand);
-                      if (!optAllocFollowing.has_value()) {
-                        continue;
-                      }
-                      auto allocFollowing = optAllocFollowing.value();
-                      if (allocCopyOpTarget == allocPrevious && allocPrevious == allocFollowing) {
-                        for (auto innerFollowingOp : followingOps) {
-                          fusableOpInfoMap[previousOp].conflictList.insert(innerFollowingOp);
-                          fusableOpInfoMap[innerFollowingOp].conflictList.insert(previousOp);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+            findPreviousAndFollowingFusableOpOf(op, block, previousOps, followingOps);
+            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getTarget());
+            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getSource());
           }
+
           if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp,
                   scf::WhileOp, scf::IfOp>(op)) {
             DenseSet<Operation *> previousOps;

@@ -416,6 +416,12 @@ Value tracebackMemRef(Value memrefVal);
 /// originate from a alloc op.
 std::optional<memref::AllocOp> tracebackMemRefToAlloc(Value memrefVal);
 
+/// Try to trace back the current mermef-typed value to the source
+/// `mermef.alloc` or `memref` block argument.
+/// Return `std::nullopt` if max-iteration is reached, or that the value doesn't
+/// originate from a alloc op or block argument.
+std::optional<Value> tracebackMemRefToAllocOrBlockArgument(Value memrefVal);
+
 /// Try to trace back the current mermef-typed value to the source values.
 SmallVector<Value> tracebackMemRefVec(Value memrefVal);
 

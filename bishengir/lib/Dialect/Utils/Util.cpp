@@ -1349,6 +1349,13 @@ std::optional<memref::AllocOp> utils::tracebackMemRefToAlloc(Value memrefVal) {
              : std::optional<memref::AllocOp>();
 }
 
+std::optional<Value> utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
+  auto tracedValue = utils::tracebackMemRef(memrefVal);
+  return utils::isAllocLikeOp(tracedValue) || isa<BlockArgument>(tracedValue)
+             ? tracedValue
+             : std::optional<Value>();
+}
+
 void utils::dumpReassociationIndicesVector(
     const SmallVector<ReassociationIndices> &reassocVec) {
   for (size_t i = 0; i < reassocVec.size(); ++i) {
