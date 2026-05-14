@@ -19,16 +19,43 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Transforms/Normalize/Utils/CastingTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/TypeUtilities.h"
-
-#include <optional>
 
 using namespace mlir;
 namespace mlir::hfusion {
+
+bool mlir::hfusion::NormalizeTraitsBase::archIsRegbased() {
+  return hfusion::archIsRegbased;
+}
+
+Value mlir::hfusion::NormalizeTraitsBase::castValue(
+    PatternRewriter &rewriter, Location loc, CastOp op, Value input,
+    Type targetElemType, CastExecutionKind executionKind, CastSignKind signKind,
+    bool enableSaturate, CastUnsignedModeKind unsignedModeKind) {
+  hfusion::TypeFn typeFn = mapCastSignKind(signKind, op.getCast());
+  hfusion::UnsignedMode unsignedMode =
+      mapCastUnsignedModeKind(unsignedModeKind, hfusion::UnsignedMode::SI2SI);
+  hfusion::RoundMode defaultRoundMode =
+      utils::selectRoundMode<hfusion::RoundMode>(
+          getElementTypeOrSelf(input.getType()), targetElemType);
+  hfusion::RoundMode roundMode =
+      mapCastExecutionKind(executionKind, defaultRoundMode);
+
+  const bool enableOverflow = executionKind == CastExecutionKind::Default
+                                  ? op.getEnableOverflow()
+                                  : executionKind ==
+                                        CastExecutionKind::TruncEnableOverflow;
+  return hfusion::castTo(rewriter, input, targetElemType, roundMode,
+                         std::nullopt, enableOverflow, enableSaturate, typeFn,
+                         unsignedMode);
+}
 
 template <typename Kind, typename Fn>
 static std::optional<Fn>
@@ -82,6 +109,7 @@ mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
 static std::optional<hfusion::BinaryFn>
 mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
   static const llvm::DenseMap<BinaryKind, hfusion::BinaryFn> kindToFn = {
+      {BinaryKind::Mod, hfusion::BinaryFn::mod},
       {BinaryKind::Min, hfusion::BinaryFn::minf},
       {BinaryKind::Max, hfusion::BinaryFn::maxf},
       {BinaryKind::And, hfusion::BinaryFn::vand},
@@ -162,6 +190,43 @@ static hfusion::RoundMode mapCastRoundKindToRoundMode(CastRoundKind kind) {
   return it->second;
 }
 
+static std::optional<hfusion::RoundMode>
+mapCastExecutionKindToRoundMode(CastExecutionKind kind) {
+  static const llvm::DenseMap<CastExecutionKind, hfusion::RoundMode> kindToMode = {
+      {CastExecutionKind::RInt, hfusion::RoundMode::RINT},
+      {CastExecutionKind::Trunc, hfusion::RoundMode::TRUNC},
+      {CastExecutionKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
+      {CastExecutionKind::TruncWithOverflow,
+       hfusion::RoundMode::TRUNCWITHOVERFLOW},
+  };
+
+  return lookupMappedFn(kindToMode, kind);
+}
+
+static std::optional<hfusion::UnsignedMode>
+mapCastUnsignedModeKindToUnsignedMode(CastUnsignedModeKind kind) {
+  static const llvm::DenseMap<CastUnsignedModeKind, hfusion::UnsignedMode>
+      kindToMode = {
+          {CastUnsignedModeKind::SignedToSigned, hfusion::UnsignedMode::SI2SI},
+          {CastUnsignedModeKind::SignedToUnsigned, hfusion::UnsignedMode::SI2UI},
+          {CastUnsignedModeKind::UnsignedToSigned, hfusion::UnsignedMode::UI2SI},
+          {CastUnsignedModeKind::UnsignedToUnsigned,
+           hfusion::UnsignedMode::UI2UI},
+      };
+
+  return lookupMappedFn(kindToMode, kind);
+}
+
+static std::optional<hfusion::TypeFn> mapCastSignKindToTypeFn(
+    CastSignKind kind) {
+  static const llvm::DenseMap<CastSignKind, hfusion::TypeFn> kindToTypeFn = {
+      {CastSignKind::Signed, hfusion::TypeFn::cast_signed},
+      {CastSignKind::Unsigned, hfusion::TypeFn::cast_unsigned},
+  };
+
+  return lookupMappedFn(kindToTypeFn, kind);
+}
+
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCmpOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     CompareKind kind) {
@@ -231,5 +296,36 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
       .create<hfusion::BitcastOp>(loc, TypeRange{resultType},
                                   ValueRange{source}, ValueRange{init})
       .getResult(0);
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchCastRoundMode(
+    hfusion::CastOp op, CastExecutionKind kind) {
+  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+  return roundMode && op.getRoundMode() == *roundMode;
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchCastUnsignedMode(
+    hfusion::CastOp op, CastUnsignedModeKind kind) {
+  auto unsignedMode = mapCastUnsignedModeKindToUnsignedMode(kind);
+  return unsignedMode && op.getUnsignedMode() == *unsignedMode;
+}
+
+hfusion::TypeFn mlir::hfusion::NormalizeTraitsBase::mapCastSignKind(
+    CastSignKind kind, hfusion::TypeFn preserveTypeFn) {
+  auto typeFn = mapCastSignKindToTypeFn(kind);
+  return typeFn.value_or(preserveTypeFn);
+}
+
+hfusion::RoundMode mlir::hfusion::NormalizeTraitsBase::mapCastExecutionKind(
+    CastExecutionKind kind, hfusion::RoundMode defaultRoundMode) {
+  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+  return roundMode.value_or(defaultRoundMode);
+}
+
+hfusion::UnsignedMode
+mlir::hfusion::NormalizeTraitsBase::mapCastUnsignedModeKind(
+    CastUnsignedModeKind kind, hfusion::UnsignedMode preserveMode) {
+  auto unsignedMode = mapCastUnsignedModeKindToUnsignedMode(kind);
+  return unsignedMode.value_or(preserveMode);
 }
 } // namespace mlir::hfusion

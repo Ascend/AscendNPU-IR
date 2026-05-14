@@ -522,6 +522,10 @@ const std::set<std::string> HWSupportedCast{
     "int64_t_to_float_truncmode",     "int64_t_to_int32_t_rintmode",
     "int8_t_to_half_rintmode",        "int8_t_to_half_truncmode",
     "uint8_t_to_half_rintmode",       "half_to_int32_t_rintmode",
-    "half_to_float_truncmode",        "bfloat16_t_to_float_roundmode"};
+    "half_to_float_truncmode",        "bfloat16_t_to_float_roundmode",
+    "uint64_t_to_uint32_t_truncmode",
+    "uint64_t_to_uint32_t_truncwithoverflowmode",
+    "uint32_t_to_int16_t_truncmode",
+    "int16_t_to_uint8_t_truncmode"};
 
 #endif // MLIR_DIALECT_HIVM_UTILS_UTILS_H

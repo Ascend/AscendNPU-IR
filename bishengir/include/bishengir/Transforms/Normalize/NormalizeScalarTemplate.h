@@ -20,7 +20,7 @@
 
 #include <optional>
 
-#include "bishengir/Transforms/Normalize/ScalarUtils.h"
+#include "bishengir/Transforms/Normalize/Utils/ScalarTemplateHelpers.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"

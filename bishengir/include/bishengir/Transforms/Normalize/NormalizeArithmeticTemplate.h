@@ -21,7 +21,7 @@
 #include <optional>
 
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Transforms/Normalize/Utils.h"
+#include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"

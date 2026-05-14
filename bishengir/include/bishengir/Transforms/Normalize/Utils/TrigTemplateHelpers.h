@@ -20,7 +20,7 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "bishengir/Transforms/Normalize/Utils.h"
+#include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"

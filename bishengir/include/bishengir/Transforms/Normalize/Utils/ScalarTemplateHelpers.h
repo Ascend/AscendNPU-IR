@@ -1,4 +1,4 @@
-//===- ScalarUtils.cpp ------------------------------------------*- C++ -*-===//
+//===- ScalarTemplateHelpers.h ---------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,38 +15,43 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Transforms/Normalize/ScalarUtils.h"
+#ifndef BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_SCALARTEMPLATEHELPERS_H
+#define BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_SCALARTEMPLATEHELPERS_H
 
+#include <optional>
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 
 namespace mlir {
 
 /// Convert dense tensor/memref with only 1 element to scalar.
-std::optional<Value> getScalarFromConstantOp(PatternRewriter &rewriter,
-                                             Location loc,
-                                             arith::ConstantOp constant) {
+inline std::optional<Value> getScalarFromConstantOp(PatternRewriter &rewriter,
+                                                    Location loc,
+                                                    arith::ConstantOp constant) {
   auto denseAttr = dyn_cast<DenseIntOrFPElementsAttr>(constant.getValue());
-  if (!denseAttr) {
+  if (!denseAttr)
     return std::nullopt;
-  }
 
   auto elemType = denseAttr.getElementType();
-  if (!elemType.isIntOrIndexOrFloat()) {
+  if (!elemType.isIntOrIndexOrFloat())
     return std::nullopt;
-  }
 
   TypedAttr typedAttr =
       elemType.isIntOrIndex()
-          ? (TypedAttr)*denseAttr.getValues<IntegerAttr>().begin()
-          : (TypedAttr)*denseAttr.getValues<FloatAttr>().begin();
+          ? static_cast<TypedAttr>(*denseAttr.getValues<IntegerAttr>().begin())
+          : static_cast<TypedAttr>(*denseAttr.getValues<FloatAttr>().begin());
 
   return rewriter.create<arith::ConstantOp>(loc, elemType, typedAttr);
 }
 
 /// Convert dense tensor/memref with only 1 element to scalar.
-std::optional<Value> singleElemDenseTensorToScalar(Value operand,
-                                                   PatternRewriter &rewriter) {
+inline std::optional<Value>
+singleElemDenseTensorToScalar(Value operand, PatternRewriter &rewriter) {
   auto constantOp = operand.getDefiningOp<arith::ConstantOp>();
   if (!constantOp)
     return std::nullopt;
@@ -68,8 +73,8 @@ std::optional<Value> singleElemDenseTensorToScalar(Value operand,
 /// multi-rank unit tensors such as tensor<1x1xf32>. That shape appears on the
 /// HIVM path when a scalar-like broadcast source has already been rank-expanded
 /// during HFusion-to-HIVM conversion.
-std::optional<Value> unitDenseTensorToScalar(Value operand,
-                                             PatternRewriter &rewriter) {
+inline std::optional<Value> unitDenseTensorToScalar(Value operand,
+                                                    PatternRewriter &rewriter) {
   auto constantOp = operand.getDefiningOp<arith::ConstantOp>();
   if (!constantOp)
     return std::nullopt;
@@ -83,3 +88,5 @@ std::optional<Value> unitDenseTensorToScalar(Value operand,
 }
 
 } // namespace mlir
+
+#endif // BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_SCALARTEMPLATEHELPERS_H

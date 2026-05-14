@@ -18,7 +18,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
-#include "bishengir/Transforms/Normalize/ScalarUtils.h"
+#include "bishengir/Transforms/Normalize/Utils/ScalarTemplateHelpers.h"
 #include "bishengir/Transforms/Normalize/NormalizeMathTemplate.h"
 
 namespace mlir::hfusion {
