@@ -259,8 +259,6 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  // TODO: Currently, the optimized layout optimization pipeline is incompatible
-  // with the affinity programming cases.
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
     // Combine optimized folds:
