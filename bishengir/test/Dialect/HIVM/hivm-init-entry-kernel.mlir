@@ -18,3 +18,21 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
         return
     }
 }
+
+// -----
+// Ascend310B4-LABEL: func.func @entryKernelRegbaseMultiReturn
+module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
+    func.func @entryKernelRegbaseMultiReturn(%flag: i1) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+        // Ascend310B4: hivm.hir.set_ctrl false at ctrl[60]
+        // Ascend310B4-NEXT: hivm.hir.set_ctrl true at ctrl[48]
+        cf.cond_br %flag, ^bb1, ^bb2
+      ^bb1:
+        // Ascend310B4: hivm.hir.set_ctrl true at ctrl[60]
+        // Ascend310B4-NEXT: return
+        return
+      ^bb2:
+        // Ascend310B4: hivm.hir.set_ctrl true at ctrl[60]
+        // Ascend310B4-NEXT: return
+        return
+    }
+}

@@ -65,6 +65,20 @@ void configureEntryForMembaseArch(OpBuilder &b, Location loc) {
   b.create<hivm::SetMaskNormOp>(loc);
 }
 
+void restoreExitForRegbaseArch(OpBuilder &b, func::FuncOp funcOp) {
+  // Restore SPR.CTRL[60] to the hardware default before leaving the kernel.
+  for (Block &block : funcOp.getBlocks()) {
+    auto returnOp = dyn_cast<func::ReturnOp>(block.getTerminator());
+    if (!returnOp)
+      continue;
+
+    b.setInsertionPoint(returnOp);
+    b.create<hivm::SetCtrlOp>(returnOp.getLoc(),
+                              /**enable**/ true,
+                              /**idx**/ hivm::OverrideSaturationBit);
+  }
+}
+
 } // namespace
 
 void InitEntryKernelPass::runOnOperation() {
@@ -80,6 +94,7 @@ void InitEntryKernelPass::runOnOperation() {
   // TODO: distinguish between 310b4 and david if needed
   if (hacc::utils::isRegBasedArch(mod)) {
     configureEntryForRegbaseArch(builder, loc);
+    restoreExitForRegbaseArch(builder, funcOp);
   } else {
     configureEntryForMembaseArch(builder, loc);
   }
