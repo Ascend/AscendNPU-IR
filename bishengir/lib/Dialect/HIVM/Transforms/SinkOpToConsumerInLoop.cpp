@@ -7,6 +7,7 @@
 //===---------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -40,9 +41,16 @@ public:
       return rewriter.notifyMatchFailure(op, "has more than one user");
 
     Operation *singleUser = *users.begin();
-    auto scfParent = dyn_cast_if_present<scf::ForOp>(singleUser->getParentOp());
-    if (!scfParent)
+    auto loopParent = singleUser->getParentOfType<scf::ForOp>();
+    if (!loopParent)
       return rewriter.notifyMatchFailure(op, "the user is not in a loop");
+
+    // For manual VF case, wo will first outline scopeOp into VF, and we don't
+    // support vectorize ops(fillOp, vbrcOp) in VF function, so we can't sink
+    // them into scopeOp. See more details in issue !1199.
+    auto scopeParent = singleUser->getParentOfType<scope::ScopeOp>();
+    if (scopeParent)
+      return rewriter.notifyMatchFailure(op, "can't sink op into scope");
 
     if (op->getBlock() == singleUser->getBlock())
       return rewriter.notifyMatchFailure(op, "already in the same block");
