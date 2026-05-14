@@ -462,3 +462,15 @@ func.func @vcumprod(%arg0: tensor<64x16xf32>) -> tensor<64x16xf32> {
   %1 = hivm.hir.vcumprod ins(%arg0 : tensor<64x16xf32>) outs(%0 : tensor<64x16xf32>) cum_dims = [0] reverse = false -> tensor<64x16xf32>
   return %1 : tensor<64x16xf32>
 }
+
+// -----
+
+// COMMON-LABEL: @vshl_lowering
+func.func @vshl_lowering(%a: tensor<64xi32>, %c: i32, %d: tensor<64xi32>) -> tensor<64xi32> {
+    // CHECK-TRUE: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>}
+    // CHECK-TRUE-NOT: linalg.map
+    // CHECK-FALSE: linalg.generic
+    // CHECK-FALSE: arith.shli
+    %0 = hivm.hir.vshl ins(%a, %c : tensor<64xi32>, i32) outs(%d : tensor<64xi32>) -> tensor<64xi32>
+    return %0 : tensor<64xi32>
+}
