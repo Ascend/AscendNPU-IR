@@ -61,21 +61,19 @@ static bool isBTransposed(Operation *op) {
 }
 
 void DimensionAnalyzer::processBFS() {
-  SmallVector<Value> argumentListForBFS;
+  SetVector<Value> argumentListForBFS;
   LDBG("Argument List for BFS in HIVM:");
   op_->walk([&argumentListForBFS](Operation *op) {
     TypeSwitch<Operation *>(op)
         .Case([&](hivm::LoadOp loadOp) {
-          argumentListForBFS.push_back(loadOp.getDst());
+          argumentListForBFS.insert(loadOp.getDst());
         })
-        .Case([&](tensor::EmptyOp emptyOp) {
-          argumentListForBFS.push_back(emptyOp.getResult());
+        .Case<tensor::EmptyOp, memref::AllocOp>([&](auto op) {
+          argumentListForBFS.insert(op.getResult());
         })
         .Case([&](annotation::MarkOp markOp) {
-          if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
-            LDBG(markOp);
-            argumentListForBFS.push_back(markOp.getSrc());
-          }
+          if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name))
+            argumentListForBFS.insert(markOp.getSrc());
         });
   });
   std::queue<Value> bfsQueue;

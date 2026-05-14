@@ -1527,6 +1527,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK: hivm.hir.store
 // CHECK-NOT: limit_sub_block_id0
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  // expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
   func.func @brc_two_dim_with_reduction_dim(%arg0: tensor<16xf32>, %arg1: memref<?xf32>, %arg2: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
     %c1 = arith.constant 1 : index
     %c0 = arith.constant 0 : index
@@ -1538,6 +1539,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %4 = tensor.empty() : tensor<16x16xi32>
     %expanded = tensor.expand_shape %3 [[0, 1]] output_shape [16, 1] : tensor<16xi32> into tensor<16x1xi32>
     %5 = hivm.hir.vbrc ins(%expanded : tensor<16x1xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [1] -> tensor<16x16xi32>
+    // expected-warning @+1{{Extract slice is not fully bubbled up}}
     %expanded_0 = tensor.expand_shape %3 [[0, 1]] output_shape [1, 16] : tensor<16xi32> into tensor<1x16xi32>
     %6 = hivm.hir.vbrc ins(%expanded_0 : tensor<1x16xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [0] -> tensor<16x16xi32>
     %7 = tensor.empty() : tensor<16x16xi1>
@@ -1554,6 +1556,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %14 = hivm.hir.vadd ins(%9, %13 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %inserted_slice = tensor.insert_slice %extracted_slice into %14[0, 0] [%arg2, 16] [1, 1] : tensor<?x16xf32> into tensor<16x16xf32>
     %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
+    // expected-warning @+1{{Detected dimensions are in the same group in one storeOp.}}
     hivm.hir.store ins(%inserted_slice : tensor<16x16xf32>) outs(%reinterpret_cast : memref<16x16xf32>)
     return
   }

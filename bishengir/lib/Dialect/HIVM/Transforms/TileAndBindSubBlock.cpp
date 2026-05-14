@@ -960,7 +960,7 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   bool isBroadcastAxisCase = false;
 
   newFunc->walk([&builder](Operation *op) {
-    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp, hivm::VArangeOp>(op) ||
+    if (!isa<tensor::ExtractSliceOp, memref::SubViewOp>(op) ||
         op->hasOneUse())
       return;
     builder.setInsertionPoint(op);
