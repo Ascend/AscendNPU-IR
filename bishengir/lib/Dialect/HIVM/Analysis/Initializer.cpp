@@ -34,8 +34,10 @@ namespace mlir {
 namespace hivm {
 namespace detail {
 
-DimensionAnalyzer::DimensionAnalyzer(Operation *op)
-    : DimensionAnalyzerBase(op) {}
+DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
+    : DimensionAnalyzerBase(op), tilingSize(tilingSize) {
+  assert(tilingSize > 0 && "Tiling Size must be positive integer");
+}
 
 LogicalResult DimensionAnalyzer::initialize() {
   solverGroup_ = std::make_unique<mlir::detail::SimpleUnionFind>();

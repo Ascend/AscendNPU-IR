@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 namespace mlir {
 namespace hivm {
@@ -34,7 +35,7 @@ public:
     RankReduced,
     Reduce,
   };
-  explicit DimensionAnalyzer(Operation *op);
+  explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
 
   //===--------------------------------------------------------------------===//
@@ -122,6 +123,7 @@ protected:
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);
   void processConditionOp(scf::ConditionOp op);
+  void processExpandShapeOpLeftmostNonUnit(tensor::ExpandShapeOp op);
   template <typename T, typename = std::enable_if_t<
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
                             std::is_same_v<T, tensor::CollapseShapeOp>>>
@@ -145,6 +147,7 @@ protected:
 
   void markTransposedDimImpl(hivm::VTransposeOp op);
   void markTransposedDimImpl(annotation::MarkOp op);
+  void markTransposedDimImpl(tensor::ExpandShapeOp op);
 
   template <typename StoreOpTy>
   void computeTilingDimImpl(
@@ -175,6 +178,8 @@ protected:
   /// \c parentIndex values where one store had two parallel axes mapping to the
   /// same collapsed parent (possible broadcast / ambiguous tiling).
   llvm::SmallDenseSet<int64_t> broadcastAxisCaseCandidate;
+
+  int64_t tilingSize;
 };
 
 } // namespace detail
