@@ -22,7 +22,10 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/NormalizeCastingTemplate.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/TypeUtilities.h"
+#include <optional>
 
 namespace mlir {
 struct HIVMNormalizeCastLoweringTraits : public hivm::NormalizeTraitsBase {
@@ -67,12 +70,115 @@ struct HIVMNormalizeCastLoweringTraits : public hivm::NormalizeTraitsBase {
   }
 };
 
+struct HIVMNormalizeBrcCastTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeBrcCast(hivm::VCastOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+
+  static bool shouldSkipBrcCast(hivm::VCastOp, Operation *, Type, TensorType) {
+    return false;
+  }
+};
+
+struct HIVMNormalizeFillCastToTensorBrcTraits
+    : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeFillCastToTensorBrc(hivm::VCastOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+};
+
+using HIVMNormalizeTruncfExtfTraits = hivm::NormalizeTraitsBase;
+
+struct HIVMNormalizeTruncfBf16Traits : public hivm::NormalizeTraitsBase {
+  static bool isInsideDialectCast(Operation &op) {
+    return isa<hivm::VCastOp>(op.getParentOp());
+  }
+};
+
+struct HIVMNormalizeScalarExtensionTraits : public hivm::NormalizeTraitsBase {
+  template <typename OpTy> static bool shouldSkipScalarExtension(OpTy op) {
+    return isa<hivm::VCastOp>(op->getParentOp()) ||
+           isa<linalg::MatmulOp>(op->getParentOp()) ||
+           isa<linalg::BatchMatmulOp>(op->getParentOp());
+  }
+};
+
+struct HIVMNormalizeAnyToF32UnaryRecOpTraits
+    : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeAnyToF32UnaryRec(hivm::VRecOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+};
+
+struct HIVMNormalizeScalarCastTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeScalarCast(hivm::VCastOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+
+  static Value castScalarFromRankZeroTensor(PatternRewriter &rewriter,
+                                            Location loc, hivm::VCastOp op,
+                                            Value scalar, Type dstType) {
+    auto tensorType = RankedTensorType::get({1}, scalar.getType());
+    Value fromElementsOp =
+        rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
+    auto castOp = hivm::castTo(
+        rewriter, loc, fromElementsOp, op.getRoundModeAttr(), dstType);
+    castOp.setCastAttr(op.getCastAttr());
+    if (hasSaturateOverflowModeAnnotation(op)) {
+      castOp->setAttr(kOverflowModeAttr, rewriter.getStringAttr("saturate"));
+      if (getCastAnnotationBool(op, kSaturateSrcUnsignedAttr).value_or(false))
+        castOp->setAttr(kSaturateSrcUnsignedAttr, rewriter.getUnitAttr());
+      if (getCastAnnotationBool(op, kSaturateDstUnsignedAttr).value_or(false))
+        castOp->setAttr(kSaturateDstUnsignedAttr, rewriter.getUnitAttr());
+    }
+    if (op->getAttrOfType<BoolAttr>(kEnableOverflowAttr))
+      castOp->setAttr(kEnableOverflowAttr, rewriter.getBoolAttr(true));
+    Value castedTensor = castOp->getResults().empty() ? castOp.getSingleDst()
+                                                      : castOp->getResults()[0];
+    auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    return rewriter.create<tensor::ExtractOp>(loc, castedTensor, ValueRange{c0});
+  }
+};
+
+using NormalizeBrcCast =
+    NormalizeBrcCastTemplate<hivm::VCastOp, HIVMNormalizeBrcCastTraits>;
+using NormalizefillCastToTensorBrc =
+    NormalizeFillCastToTensorBrcTemplate<hivm::VCastOp,
+                                         HIVMNormalizeFillCastToTensorBrcTraits>;
+using NormalizetruncfExtf =
+    NormalizeTruncfExtfTemplate<arith::ExtFOp,
+                                HIVMNormalizeTruncfExtfTraits>;
+using NormalizetruncfBf16 =
+    NormalizeTruncfBf16Template<arith::TruncFOp,
+                                HIVMNormalizeTruncfBf16Traits>;
+template <typename CastOp>
+using NormalizeScalarExtension =
+    NormalizeScalarExtensionTemplate<CastOp,
+                                     HIVMNormalizeScalarExtensionTraits>;
+using NormalizeAnyToF32UnaryRecOp =
+    NormalizeAnyToF32UnaryRecOpTemplate<hivm::VRecOp,
+                                        HIVMNormalizeAnyToF32UnaryRecOpTraits>;
 using NormalizeCastLoweringOp =
     NormalizeCastLoweringOpTemplate<hivm::VCastOp,
                                     HIVMNormalizeCastLoweringTraits>;
+using NormalizeScalarCastOp =
+    NormalizeScalarCastOpTemplate<hivm::VCastOp,
+                                  HIVMNormalizeScalarCastTraits>;
 } // namespace mlir
 
 void mlir::hivm::populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
+  patterns.add<NormalizeBrcCast>(ctx);
+  patterns.add<NormalizefillCastToTensorBrc>(ctx);
+  patterns.add<NormalizeAnyToF32UnaryRecOp>(ctx);
   patterns.add<NormalizeCastLoweringOp>(ctx);
+  patterns.add<NormalizetruncfExtf>(ctx);
+  patterns.add<NormalizetruncfBf16>(ctx);
+  patterns.add<NormalizeScalarExtension<arith::ExtFOp>>(ctx);
+  if (archIsRegbased)
+    patterns.add<NormalizeScalarCastOp>(ctx);
 }
