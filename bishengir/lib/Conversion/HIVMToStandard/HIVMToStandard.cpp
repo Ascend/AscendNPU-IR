@@ -512,9 +512,13 @@ private:
 
     genPreQuant(op, rewriter, preQuant);
     additionalArgs.push_back(preQuant);
-    if (quantScale)
+    if (quantScale) {
+      if (quantScale.getType() != rewriter.getF32Type())
+        quantScale = rewriter.create<arith::ExtFOp>(op->getLoc(),
+                                                     rewriter.getF32Type(),
+                                                     quantScale);
       additionalArgs.push_back(quantScale);
-    else
+    } else
       additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
           op->getLoc(), rewriter.getF32FloatAttr(1.0)));
     additionalArgs.push_back(preRelu);

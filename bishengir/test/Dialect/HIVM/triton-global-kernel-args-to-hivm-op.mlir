@@ -5,28 +5,28 @@
 // CHECK-SAME: %[[ProgNumX:.*]]: i32, %[[ProgNumY:.*]]: i32, %[[ProgNumZ:.*]]: i32)
 // CHECK: %[[BLOCK_IDX:.+]] = hivm.hir.get_block_idx -> i64
 // CHECK: %[[CAST_OP_ID:.+]] = arith.trunci %[[BLOCK_IDX]] : i64 to i32
-// CHECK: %[[ACCSHAPE_Z:.+]] = arith.constant 1 : i32
-// CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
-// CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
-// CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_Z]], %[[ProgNumZ]]
-// CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
-// CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
-// CHECK: %[[ACCSHAPE_X:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+// CHECK: %[[ACCSHAPE_X:.+]] = arith.constant 1 : i32
 // CHECK: %[[TOTALINDEX_X:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_X]]
 // CHECK: %[[ProgX_ID:.+]] = arith.remsi %[[TOTALINDEX_X]], %[[ProgNumX]]
-// CHECK: arith.muli %[[ProgX_ID]]
-// CHECK: arith.muli %[[ProgY_ID]]
-// CHECK: arith.addi %[[ProgZ_ID]]
+// CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_X]], %[[ProgNumX]]
+// CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
+// CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
+// CHECK: %[[ACCSHAPE_Z:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+// CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
+// CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
+// CHECK: arith.muli %[[ProgY_ID]], %[[ProgNumX]]
+// CHECK: arith.muli %[[ProgZ_ID]]
+// CHECK: arith.addi %[[ProgX_ID]]
 module {
   func.func @test_args_to_hivm_op(%arg0: memref<*xf16>, %arg1: memref<*xf16>, %arg2: memref<*xf16>, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
-    // cur_idx = tl.program_id(0) * tl.num_programs(1) * tl.num_programs(2)
-    //           + tl.program_id(1) * tl.num_programs(2)
-    //           + tl.program_id(2)
-    %0 = arith.muli %arg6, %arg4 : i32
-    %1 = arith.muli %0, %arg5 : i32
-    %2 = arith.muli %arg7, %arg5 : i32
-    %3 = arith.addi %1, %2 : i32
-    %4 = arith.addi %arg8, %3 : i32
+    // cur_idx = tl.program_id(0)
+    //           + tl.program_id(1) * tl.num_programs(0)
+    //           + tl.program_id(2) * tl.num_programs(0) * tl.num_programs(1)
+    %0 = arith.muli %arg7, %arg3 : i32
+    %1 = arith.muli %arg3, %arg4 : i32
+    %2 = arith.muli %arg8, %1 : i32
+    %3 = arith.addi %arg6, %0 : i32
+    %4 = arith.addi %3, %2 : i32
 
     "some_op"(%4) : (i32) -> ()
     return
@@ -71,15 +71,15 @@ module {
   func.func @test_args_for_scf_if(%arg0: memref<?xf32>, %arg1: memref<?xf32> , %arg2: memref<?xf32>, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     // CHECK: %[[BLOCK_IDX:.+]] = hivm.hir.get_block_idx -> i64
     // CHECK: %[[CAST_OP_ID:.+]] = arith.trunci %[[BLOCK_IDX]] : i64 to i32
-    // CHECK: %[[ACCSHAPE_Z:.+]] = arith.constant 1 : i32
-    // CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
-    // CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
-    // CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_Z]], %[[ProgNumZ]]
-    // CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
-    // CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
-    // CHECK: %[[ACCSHAPE_X:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+    // CHECK: %[[ACCSHAPE_X:.+]] = arith.constant 1 : i32
     // CHECK: %[[TOTALINDEX_X:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_X]]
     // CHECK: %[[ProgX_ID:.+]] = arith.remsi %[[TOTALINDEX_X]], %[[ProgNumX]]
+    // CHECK: %[[ACCSHAPE_Y:.+]] = arith.muli %[[ACCSHAPE_X]], %[[ProgNumX]]
+    // CHECK: %[[TOTALINDEX_Y:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Y]]
+    // CHECK: %[[ProgY_ID:.+]] = arith.remsi %[[TOTALINDEX_Y]], %[[ProgNumY]]
+    // CHECK: %[[ACCSHAPE_Z:.+]] = arith.muli %[[ACCSHAPE_Y]], %[[ProgNumY]]
+    // CHECK: %[[TOTALINDEX_Z:.+]] = arith.divsi %[[CAST_OP_ID]], %[[ACCSHAPE_Z]]
+    // CHECK: %[[ProgZ_ID:.+]] = arith.remsi %[[TOTALINDEX_Z]], %[[ProgNumZ]]
     // CHECK: %[[CST0:.+]] = arith.constant 16 : i32
     // CHECK: %[[CST1:.+]] = arith.constant 51302 : i32
     // CHECK: %[[COND:.+]] = arith.cmpi slt, %[[ProgX_ID]], %[[CST0]] : i32

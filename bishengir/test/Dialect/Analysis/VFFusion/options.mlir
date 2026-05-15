@@ -74,17 +74,10 @@ module {
 
 // -----
 
-// CHECK-LABEL: func.func private @nested_regions_fused_0(
+// CHECK-LABEL: func.func @nested_regions(
 // CHECK: bufferization.to_tensor
 // CHECK: linalg.matmul
 // CHECK: hivm.hir.fixpipe
-// CHECK-LABEL: func.func @nested_regions(
-// CHECK: call @nested_regions_fused_0
-
-// OPTS-OFF-LABEL: func.func @nested_regions(
-// OPTS-OFF: bufferization.to_tensor
-// OPTS-OFF: linalg.matmul
-// OPTS-OFF: hivm.hir.fixpipe
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @nested_regions(%arg1: memref<128x128xf16, strided<[128, 1], offset: ?>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix", parallel_mode = "simd"} {

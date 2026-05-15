@@ -214,23 +214,17 @@ void storeFirstValueOfCumDim(RewriterBase &rewriter,
 
 template <typename HIVMOP>
 void storeLastValueOfCumDim(RewriterBase &rewriter,
-                             llvm::SmallVector<Value> dstIndexes, HIVMOP op,
-                             int64_t cumDim) {
+                            llvm::SmallVector<Value> dstIndexes, HIVMOP op,
+                            int64_t cumDim) {
   MemRefType dstType = cast<MemRefType>(op.getDst().getType());
   int64_t dimSize = dstType.getDimSize(cumDim);
   Location loc = op.getLoc();
   auto lastIdx = rewriter.create<arith::ConstantIndexOp>(loc, dimSize - 1);
 
-  llvm::SmallVector<Value> dstIndexesLoad(dstIndexes.begin(), dstIndexes.end());
-  //assert(cumDim >= 0 & cumDim <= dstIndexesLoad.size());
-  auto *itLoad = dstIndexesLoad.begin() + cumDim;
-  dstIndexesLoad.insert(itLoad, lastIdx);
+  auto *itLast = dstIndexes.begin() + cumDim;
+  dstIndexes.insert(itLast, lastIdx);
   auto loadOp = mlir::utils::createSinglePointLoad(
-      rewriter, loc, op.getDpsInputs()[0], dstIndexesLoad);
-
-  auto constZero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  auto *itStore = dstIndexes.begin() + cumDim;
-  dstIndexes.insert(itStore, constZero);
+      rewriter, loc, op.getDpsInputs()[0], dstIndexes);
   mlir::utils::createSinglePointStore(rewriter, loc, loadOp.getResult(),
                                       op.getDpsInits()[0], dstIndexes);
 }
@@ -238,17 +232,23 @@ void storeLastValueOfCumDim(RewriterBase &rewriter,
 template <typename HIVMOP>
 Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
                                      llvm::SmallVector<Value> indexes,
-                                     HIVMOP op, int64_t cumDim) {
+                                     HIVMOP op, int64_t cumDim, bool isReverse) {
   // Get previous index
   llvm::SmallVector<Value> indexInputs;
   // Push back the cumulative calculate dimension loop index.
   indexInputs.push_back(indexes[cumDim]);
   auto constOne = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
   indexInputs.push_back(constOne.getResult());
-  auto arithOp = rewriter.create<arith::SubIOp>(op.getLoc(), indexInputs);
+
+  Value arithOpResult;
+  if (isReverse) {
+    arithOpResult = rewriter.create<arith::AddIOp>(op.getLoc(), indexInputs).getResult();
+  } else {
+    arithOpResult = rewriter.create<arith::SubIOp>(op.getLoc(), indexInputs).getResult();
+  }
 
   llvm::SmallVector<Value> loopInputs{indexes};
-  loopInputs[cumDim] = arithOp.getResult();
+  loopInputs[cumDim] = arithOpResult;
   auto previousLoadOp = mlir::utils::createSinglePointLoad(
       rewriter, op.getLoc(), op.getDpsInits()[0], loopInputs);
   return previousLoadOp.getResult();
@@ -274,21 +274,23 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
                         &op, &isReverse](llvm::SmallVector<Value> indexes) -> void {
     llvm::SmallVector<Value> ReverseIndexes = indexes;
     auto buildLastLoopBody =
-        [&rewriter, &indexes, &cumDim,
-         &op, &isReverse, &ReverseIndexes](llvm::SmallVector<Value> innerIndexes) -> void {
+        [&rewriter, &indexes, &cumDim, &op, &isReverse,
+         &ReverseIndexes](llvm::SmallVector<Value> innerIndexes) -> void {
       // Get loop's index
-      std::function<Value(OpOperand*)> getScalarValueFunc;
+      std::function<Value(OpOperand *)> getScalarValueFunc;
       if (isReverse) {
         // Obtains the size of the accumulated dimension
         int64_t dimSize =
             cast<ShapedType>(op.getDst().getType()).getShape()[cumDim];
-        // Obtains the value of the maximum valid index of the accumulated dimension
+        // Obtains the value of the maximum valid index of the accumulated
+        // dimension
         Value dimSizeMinusOne =
             rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dimSize - 1);
-        // Because the loop is forward, and the reverse operation needs to read data in reverse order
-        // The reversedIdx needs to be calculated based on the forward index.
-        Value reversedIdx =
-            rewriter.create<arith::SubIOp>(op.getLoc(), dimSizeMinusOne, innerIndexes[0]);
+        // Because the loop is forward, and the reverse operation needs to read
+        // data in reverse order The reversedIdx needs to be calculated based on
+        // the forward index.
+        Value reversedIdx = rewriter.create<arith::SubIOp>(
+            op.getLoc(), dimSizeMinusOne, innerIndexes[0]);
         // ReverseIndexes used for reading data in reverse order
         auto *itReverse = ReverseIndexes.begin() + cumDim;
         ReverseIndexes.insert(itReverse, reversedIdx);
@@ -297,16 +299,16 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
         indexes.insert(it, innerIndexes[0]);
 
         getScalarValueFunc = [&](OpOperand *operand) -> Value {
-            return mlir::utils::getScalarValue(rewriter, op->getLoc(),
-                                               operand->get(), &ReverseIndexes);
+          return mlir::utils::getScalarValue(rewriter, op->getLoc(),
+                                             operand->get(), &ReverseIndexes);
         };
       } else {
         auto *it = indexes.begin() + cumDim;
         indexes.insert(it, innerIndexes[0]);
 
         getScalarValueFunc = [&](OpOperand *operand) -> Value {
-            return mlir::utils::getScalarValue(rewriter, op->getLoc(),
-                                               operand->get(), &indexes);
+          return mlir::utils::getScalarValue(rewriter, op->getLoc(),
+                                             operand->get(), &indexes);
         };
       }
 
@@ -316,8 +318,15 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
           hivmStructureOp.getHIVMInputOperands(false /*includeExtraBuffer*/),
           std::back_inserter(scalarInputs), getScalarValueFunc);
 
+      Value previousLoopValue;
+      if (isReverse) {
+        previousLoopValue = getPreviousLoopCumulativeValue(
+            rewriter, ReverseIndexes, op, cumDim, isReverse);
+      } else {
+        previousLoopValue = getPreviousLoopCumulativeValue(
+            rewriter, indexes, op, cumDim, isReverse);
+      }
       // Push the previous value as another scalar input operand
-      auto previousLoopValue = getPreviousLoopCumulativeValue(rewriter, indexes, op, cumDim);
       scalarInputs.push_back(previousLoopValue);
 
       llvm::SmallVector<Value> resTensors =
@@ -325,8 +334,9 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
 
       for (size_t i = 0; i < resTensors.size(); ++i) {
         mlir::utils::createSinglePointStore(
-            rewriter, op.getLoc(), resTensors[i], op.getDpsInits()[i], indexes);
-        }
+            rewriter, op.getLoc(), resTensors[i], op.getDpsInits()[i],
+            isReverse ? ReverseIndexes : indexes);
+      }
     };
 
     if (isReverse) {

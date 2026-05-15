@@ -16,7 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Transforms/Normalize/NormalizeCastingTemplate.h"
 
 namespace mlir::hfusion {
 
@@ -318,257 +320,42 @@ public:
   }
 };
 
-struct NormalizeCastLoweringOp : public OpRewritePattern<hfusion::CastOp> {
-public:
-  using OpRewritePattern<CastOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::CastOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+struct HFusionNormalizeCastLoweringTraits : public hfusion::NormalizeTraitsBase {
+  static constexpr bool supportsF16ToI8TruncOverflowPreprocess = true;
 
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    auto outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
-    int64_t srcBitWidth = inType.getIntOrFloatBitWidth();
-    int64_t dstBitWidth = outType.getIntOrFloatBitWidth();
-    auto castIntegerType = op.getCast();
+  static bool shouldNormalizeCast(hfusion::CastOp op) {
+    const bool hasSaturateOverflowMode = mlir::hasSaturateOverflowModeAnnotation(op);
+    return op.hasPureTensorSemantics() &&
+           (hasSaturateOverflowMode ||
+            !mlir::isTerminalNativeSaturateCast<HFusionNormalizeCastLoweringTraits>(op));
+  }
 
-    // Deal with trunc with overflow for wider-to-narrower-integer-of-non-i1.
-    if (srcBitWidth > dstBitWidth && outType.isInteger() &&
-        !outType.isInteger(1)) {
-      auto overflowMode = getAnnotateOverflowMode(op);
-      bool enableSaturate =
-          overflowMode.has_value() && overflowMode->ends_with("saturate");
-      if (!archIsRegbased) {
-        if (enableSaturate) {
-          auto overflowModeAttr =
-              utils::getAnnotateOpWithAttr(op->getResult(0), "overflow_mode");
-          if (!overflowModeAttr.has_value())
-            return failure();
-          annotation::MarkOp markOp =
-              dyn_cast<annotation::MarkOp>(overflowModeAttr.value());
-          rewriter.eraseOp(markOp);
-          return handleSaturateOverFlowMode(op, rewriter);
-        }
-        return handleTruncOverFlowMode(op, rewriter);
-      } else {
-        if (enableSaturate) {
-          auto overflowModeAttr =
-              utils::getAnnotateOpWithAttr(op->getResult(0), "overflow_mode");
-          if (!overflowModeAttr.has_value()) {
-            return failure();
-          }
-          annotation::MarkOp markOp =
-              dyn_cast<annotation::MarkOp>(overflowModeAttr.value());
-          rewriter.eraseOp(markOp);
-          return handleOverflowModeForSaturate(op, rewriter, enableSaturate);
-        }
-        return handleOverflowModeForTrunc(op, rewriter);
-      }
-    }
+  static bool hasOverflowEnabled(hfusion::CastOp op) {
+    return op.getEnableOverflow();
+  }
 
-    const bool isI64ToF16 = inType.isInteger(64) && outType.isF16();
-    const bool isIntegerToBF16 =
-        (inType.isInteger(64) || inType.isInteger(32) || inType.isInteger(16) ||
-         inType.isInteger(8)) &&
-        outType.isBF16();
-    const bool isU16ToF16 = inType.isInteger(16) && outType.isF16() &&
-                            hfusion::TypeFn::cast_unsigned == castIntegerType;
-    if (isI64ToF16 || isIntegerToBF16 || isU16ToF16) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "match compound cast pattern from " << inType << " to "
-                 << outType << ", and rewrite to cast (from " << inType
-                 << " to f16) " << "\n ");
-      Value castResult;
-      // I8ToBF16: I8ToF16 -> F16ToBF16 (regbase)
-      // I8ToBF16: I8ToF16 -> F16ToF32 -> F32ToBF16 (membase)
-      if (false && archIsRegbased && isIntegerToBF16 && inType.isInteger(8)) {
-        // fixme: arith dialect has no fp-to-bf16 conversion. Need to extend
-        // hfusion op first.
-        castResult =
-            castSrcToFp16ToTargetType(op, rewriter.getBF16Type(), rewriter);
-      } else {
-        castResult = castInToF32ToOut(op, rewriter);
-      }
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
+  static bool hasSaturateEnabled(hfusion::CastOp op) {
+    return op.getEnableSaturate();
+  }
 
-    const bool isU32ToF32 = inType.isInteger(32) && outType.isF32() &&
-                            hfusion::TypeFn::cast_unsigned == castIntegerType;
-    if (isU32ToF32) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "match compound cast pattern from " << inType << " to "
-                 << outType << ", and rewrite to cast (from " << inType
-                 << " to I64 to " << outType << ")\n");
-      Value castResult = castU32ToI64ToF32(op, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
+  static bool isUnsignedCast(hfusion::CastOp op) {
+    return op.getCast() == hfusion::TypeFn::cast_unsigned;
+  }
 
-    const bool isU32ToF16 = inType.isInteger(32) && outType.isF16() &&
-                            hfusion::TypeFn::cast_unsigned == castIntegerType;
-    const bool isU32ToBF16 = inType.isInteger(32) && outType.isBF16() &&
-                             hfusion::TypeFn::cast_unsigned == castIntegerType;
-    if (isU32ToF16 || isU32ToBF16) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "match compound cast pattern from " << inType << " to "
-                 << outType << ", and rewrite to cast (from " << inType
-                 << " to I64 to F32 to " << outType << ")\n");
-      Type targetType = getElementTypeOrSelf(outType);
-      Value castResult = castU32ToI64ToF32ToOut(op, targetType, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
 
-    const bool isI8ToI64 = inType.isInteger(8) && outType.isInteger(64);
-    if (isI8ToI64) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "match compound cast pattern from " << inType << " to "
-                 << outType << ", and rewrite to cast (from " << inType
-                 << " to f16 to f32 to " << outType << ")\n");
-      Value castResult = castI8ToI64(op, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
-
-    const bool isI8ToF32 = inType.isInteger(8) && outType.isF32();
-    const bool isI8ToI32 = inType.isInteger(8) && outType.isInteger(32);
-    const bool isI8ToI16 = inType.isInteger(8) && outType.isInteger(16);
-    const bool isI1ToI16 = inType.isInteger(1) && outType.isInteger(16);
-    const bool isI1ToF32 = inType.isInteger(1) && outType.isF32();
-
-    if (isI8ToF32 || isI1ToI16 ||
-        (!archIsRegbased && (isI8ToI32 || isI8ToI16 || isI1ToF32))) {
-      Type targetType = getElementTypeOrSelf(outType);
-      Value castResult = castSrcToFp16ToTargetType(op, targetType, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
-
-    const bool isI1ToI32 = inType.isInteger(1) && outType.isInteger(32);
-    if (!archIsRegbased && isI1ToI32) {
-      Value inValue = op.getInputs()[0];
-      Value castF16Value = hfusion::castTo(
-          rewriter, inValue, rewriter.getF16Type(), hfusion::RoundMode::RINT);
-      Value castI32Value =
-          hfusion::castTo(rewriter, castF16Value, rewriter.getI32Type(),
-                          hfusion::RoundMode::RINT);
-      rewriter.replaceOp(op, castI32Value);
-      return success();
-    }
-
-    const bool isI1ToI64 = inType.isInteger(1) && outType.isInteger(64);
-    if (isI1ToI64) {
-      Value inValue = op.getInputs()[0];
-      Value castF32Value = hfusion::castTo(
-          rewriter, inValue, rewriter.getF32Type(), hfusion::RoundMode::RINT);
-
-      Value castI64Value =
-          hfusion::castTo(rewriter, castF32Value, rewriter.getI64Type());
-      rewriter.replaceOp(op, castI64Value);
-      return success();
-    }
-
-    const bool isI32ToF16 = inType.isInteger(32) && outType.isF16();
-    if (isI32ToF16) {
-      Value inValue = op.getInputs()[0];
-      Value castF32Value =
-          hfusion::castTo(rewriter, inValue, rewriter.getF32Type());
-
-      Value castF16Value =
-          hfusion::castTo(rewriter, castF32Value, rewriter.getF16Type());
-      rewriter.replaceOp(op, castF16Value);
-      return success();
-    }
-
-    const bool isI64ToI1 = inType.isInteger(64) && outType.isInteger(1);
-    const bool isI32ToI1 = inType.isInteger(32) && outType.isInteger(1);
-    const bool isI16ToI1 = inType.isInteger(16) && outType.isInteger(1);
-    const bool isI8ToI1 = inType.isInteger(8) && outType.isInteger(1);
-    const bool isBf16ToI1 = inType.isBF16() && outType.isInteger(1);
-    const bool isF32ToI1 = inType.isF32() && outType.isInteger(1);
-    const bool isF16ToI1 = inType.isF16() && outType.isInteger(1);
-    if (isI64ToI1 || isI32ToI1 || isI16ToI1 || isI8ToI1 || isBf16ToI1 ||
-        isF32ToI1 || isF16ToI1) {
-      Value castResult = castSrcTypeToI1ByVCmp(op, inType, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
-
-    // I16ToI64: I16ToF32 -> F32ToI64 (membase)
-    // I16ToI64: I16ToI32 -> I32ToI64 (regbase)
-    const bool isI16ToI64 = inType.isInteger(16) && outType.isInteger(64);
-    if (isI16ToI64) {
-      Value inValue = op.getInputs()[0];
-      Value castValue;
-      if (archIsRegbased) {
-        castValue = hfusion::castTo(rewriter, inValue, rewriter.getI32Type(),
-                                    castIntegerType);
-      } else {
-        castValue = hfusion::castTo(rewriter, inValue, rewriter.getF32Type(),
-                                    hfusion::RoundMode::RINT);
-      }
-
-      Value castI64Value = hfusion::castTo(
-          rewriter, castValue, rewriter.getI64Type(), castIntegerType);
-      rewriter.replaceOp(op, castI64Value);
-      return success();
-    }
-
-    // I16ToI32: I16ToF32 -> F32ToI32 (membase)
-    // I16ToI32: OK (regbase)
-    const bool isI16ToI32 = inType.isInteger(16) && outType.isInteger(32);
-    if (!archIsRegbased && isI16ToI32) {
-      Value inValue = op.getInputs()[0];
-      Value castF32Value = hfusion::castTo(
-          rewriter, inValue, rewriter.getF32Type(), hfusion::RoundMode::RINT);
-
-      Value castI32Value =
-          hfusion::castTo(rewriter, castF32Value, rewriter.getI32Type());
-      rewriter.replaceOp(op, castI32Value);
-      return success();
-    }
-
-    // AnyToF8: AnyToF32 -> F32ToF8
-    const bool isAnyToF8 = (!inType.isF32()) &&
-                           (outType.isFloat8E4M3FN() || outType.isFloat8E5M2());
-    if (isAnyToF8) {
-      Value castResult = castInToF32ToOut(op, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
-
-    // F8ToAny: F8ToF32 -> F32ToAny
-    const bool isF8ToAny = (inType.isFloat8E4M3FN() || inType.isFloat8E5M2()) &&
-                           (!outType.isF32());
-    if (isF8ToAny) {
-      Value castResult = castInToF32ToOut(op, rewriter);
-      rewriter.replaceOp(op, castResult);
-      return success();
-    }
-
-    const bool isF32ToU32 = inType.isF32() && outType.isInteger(32) &&
-                            TypeFn::cast_unsigned == castIntegerType;
-    if (isF32ToU32) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "match compound cast pattern from " << inType << " to "
-                 << outType << ", and rewrite to cast (from " << inType
-                 << " to I64 to " << outType << ")\n");
-      // F32 -> I64
-      Value castF32ToI64 =
-          hfusion::castTo(rewriter, op.getDpsInputOperand(0)->get(),
-                          rewriter.getI64Type(), TypeFn::cast_signed);
-      // I64 -> U32
-      Value castI64ToU32 = hfusion::castTo(
-          rewriter, castF32ToI64, rewriter.getI32Type(), TypeFn::cast_signed);
-      rewriter.replaceOp(op, castI64ToU32);
-      return success();
-    }
-
-    return failure();
+  static Value buildZeroForCompare(PatternRewriter &rewriter, Location loc,
+                                   hfusion::CastOp, Value input) {
+    Type elementType = getElementTypeOrSelf(input.getType());
+    return rewriter
+        .create<arith::ConstantOp>(loc, elementType,
+                                   rewriter.getFloatAttr(elementType, 0.0))
+        .getResult();
   }
 };
+
+using NormalizeCastLoweringOp =
+    NormalizeCastLoweringOpTemplate<hfusion::CastOp,
+                                    HFusionNormalizeCastLoweringTraits>;
 
 struct NormalizeScalarCastOp : public OpRewritePattern<hfusion::CastOp> {
 public:

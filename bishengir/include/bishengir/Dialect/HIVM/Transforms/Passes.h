@@ -296,7 +296,8 @@ std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
 
 // Create a pass to insert convert layout operations for matmul ops
 std::unique_ptr<Pass> createInsertConvertLayoutPass();
-std::unique_ptr<Pass> createPropagateConvertLayoutPass();
+std::unique_ptr<Pass> createPropagateConvertLayoutPass(
+    const PropagateConvertLayoutOptions &options = {});
 std::unique_ptr<Pass> createConvertLayoutToTransposePass();
 std::unique_ptr<Pass> createInsertCVDataMovementPass();
 std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();

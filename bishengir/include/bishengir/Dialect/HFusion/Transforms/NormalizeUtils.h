@@ -75,28 +75,6 @@ enum class CalcMode { SIN, COS };
 // AnnotationHelpers.cpp
 template <typename OpType> std::optional<StringRef> getAnnotateOverflowMode(OpType op);
 
-// CastHelpers.cpp
-Value castInToF32ToOut(hfusion::CastOp &op, PatternRewriter &rewriter);
-Value castU32ToI64ToF32(hfusion::CastOp &op, PatternRewriter &rewriter);
-Value castU32ToI64ToF32ToOut(hfusion::CastOp &op, Type targetType,
-                             PatternRewriter &rewriter);
-Value castSrcToFp16ToTargetType(hfusion::CastOp &op, Type targetType,
-                                PatternRewriter &rewriter);
-Value castSrcTypeToI1ByVCmp(hfusion::CastOp &op, Type srcType,
-                            PatternRewriter &rewriter);
-Value castI8ToI64(hfusion::CastOp &op, PatternRewriter &rewriter);
-hfusion::CastMode getCastMode(hfusion::CastOp op);
-template <typename OpType> std::optional<bool> getAnnotateAttrBool(OpType op, StringRef attr);
-LogicalResult handleSaturateOverFlowMode(hfusion::CastOp op,
-                                         PatternRewriter &rewriter);
-LogicalResult handleTruncOverFlowMode(hfusion::CastOp op,
-                                      PatternRewriter &rewriter);
-LogicalResult handleOverflowModeForSaturate(hfusion::CastOp op,
-                                            PatternRewriter &rewriter,
-                                            bool enableSaturate);
-LogicalResult handleOverflowModeForTrunc(hfusion::CastOp op,
-                                         PatternRewriter &rewriter);
-
 // MathHelpers.cpp
 Value norm(PatternRewriter &rewriter, Location loc, Value x, Value xRound,
            const llvm::SmallVector<double> &piApproParams,

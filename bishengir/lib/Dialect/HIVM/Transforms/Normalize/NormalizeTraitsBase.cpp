@@ -17,14 +17,75 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Transforms/Normalize/Utils/CastingTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 using namespace mlir;
 namespace mlir::hivm {
+
+static Value getPrimaryCastValue(VCastOp op) {
+  return op->getResults().empty() ? op.getSingleDst() : op->getResults()[0];
+}
+
+static void annotateCast(PatternRewriter &rewriter, Location loc, VCastOp op,
+                         ArrayRef<NamedAttribute> attrs) {
+  auto markOp =
+      rewriter.create<annotation::MarkOp>(loc, getPrimaryCastValue(op));
+  markOp->setAttrs(DictionaryAttr::get(rewriter.getContext(), attrs));
+}
+
+bool mlir::hivm::NormalizeTraitsBase::archIsRegbased() {
+  return hivm::archIsRegbased;
+}
+
+Value mlir::hivm::NormalizeTraitsBase::castValue(
+    PatternRewriter &rewriter, Location loc, VCastOp op, Value input,
+    Type targetElemType, CastExecutionKind executionKind, CastSignKind signKind,
+    bool enableSaturate, CastUnsignedModeKind unsignedModeKind) {
+  hivm::RoundMode defaultRoundMode =
+      utils::selectRoundMode<hivm::RoundMode>(
+          getElementTypeOrSelf(input.getType()), targetElemType);
+  hivm::RoundMode roundMode =
+      mapCastExecutionKind(executionKind, defaultRoundMode);
+  hivm::TypeFn typeFn = mapCastSignKind(signKind, op.getCast());
+  hivm::UnsignedMode unsignedMode =
+      mapCastUnsignedModeKind(unsignedModeKind, hivm::UnsignedMode::SI2SI);
+
+  auto castOp = hivm::castTo(rewriter, loc, input,
+                             rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
+                             targetElemType);
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(typeFn));
+  if (executionKind == CastExecutionKind::Default)
+    return getPrimaryCastValue(castOp);
+
+  if (executionKind == CastExecutionKind::TruncEnableOverflow)
+    annotateCast(rewriter, loc, castOp,
+                 {rewriter.getNamedAttr(kOverflowModeAttr,
+                                        rewriter.getStringAttr("trunc"))});
+  if (enableSaturate) {
+    SmallVector<NamedAttribute> attrs{
+        rewriter.getNamedAttr(kOverflowModeAttr,
+                              rewriter.getStringAttr("saturate"))};
+    if (unsignedMode == hivm::UnsignedMode::UI2SI ||
+        unsignedMode == hivm::UnsignedMode::UI2UI)
+      attrs.push_back(rewriter.getNamedAttr(kSaturateSrcUnsignedAttr,
+                                            rewriter.getUnitAttr()));
+    if (unsignedMode == hivm::UnsignedMode::SI2UI ||
+        unsignedMode == hivm::UnsignedMode::UI2UI)
+      attrs.push_back(rewriter.getNamedAttr(kSaturateDstUnsignedAttr,
+                                            rewriter.getUnitAttr()));
+    annotateCast(rewriter, loc, castOp, attrs);
+  }
+  return getPrimaryCastValue(castOp);
+}
 
 template <typename UnaryOp>
 mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
@@ -72,6 +133,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Sub, createHIVMBinaryOp<hivm::VSubOp>},
     {BinaryKind::Mul, createHIVMBinaryOp<hivm::VMulOp>},
     {BinaryKind::Div, createHIVMBinaryOp<hivm::VDivOp>},
+    {BinaryKind::Mod, createHIVMBinaryOp<hivm::VModOp>},
     {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
     {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
@@ -92,6 +154,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Sub, matchHIVMOp<hivm::VSubOp>},
     {BinaryKind::Mul, matchHIVMOp<hivm::VMulOp>},
     {BinaryKind::Div, matchHIVMOp<hivm::VDivOp>},
+    {BinaryKind::Mod, matchHIVMOp<hivm::VModOp>},
     {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
     {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
@@ -139,6 +202,51 @@ static hivm::RoundMode mapCastRoundKindToRoundMode(CastRoundKind kind) {
   return it->second;
 }
 
+static std::optional<hivm::RoundMode>
+mapCastExecutionKindToRoundMode(CastExecutionKind kind) {
+  static const llvm::DenseMap<CastExecutionKind, hivm::RoundMode> kindToMode = {
+      {CastExecutionKind::RInt, hivm::RoundMode::RINT},
+      {CastExecutionKind::Trunc, hivm::RoundMode::TRUNC},
+      {CastExecutionKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
+      {CastExecutionKind::TruncWithOverflow,
+       hivm::RoundMode::TRUNCWITHOVERFLOW},
+  };
+
+  auto it = kindToMode.find(kind);
+  if (it == kindToMode.end())
+    return std::nullopt;
+  return it->second;
+}
+
+static std::optional<hivm::UnsignedMode>
+mapCastUnsignedModeKindToUnsignedMode(CastUnsignedModeKind kind) {
+  static const llvm::DenseMap<CastUnsignedModeKind, hivm::UnsignedMode>
+      kindToMode = {
+          {CastUnsignedModeKind::SignedToSigned, hivm::UnsignedMode::SI2SI},
+          {CastUnsignedModeKind::SignedToUnsigned, hivm::UnsignedMode::SI2UI},
+          {CastUnsignedModeKind::UnsignedToSigned, hivm::UnsignedMode::UI2SI},
+          {CastUnsignedModeKind::UnsignedToUnsigned,
+           hivm::UnsignedMode::UI2UI},
+      };
+
+  auto it = kindToMode.find(kind);
+  if (it == kindToMode.end())
+    return std::nullopt;
+  return it->second;
+}
+
+static std::optional<hivm::TypeFn> mapCastSignKindToTypeFn(CastSignKind kind) {
+  static const llvm::DenseMap<CastSignKind, hivm::TypeFn> kindToTypeFn = {
+      {CastSignKind::Signed, hivm::TypeFn::cast_signed},
+      {CastSignKind::Unsigned, hivm::TypeFn::cast_unsigned},
+  };
+
+  auto it = kindToTypeFn.find(kind);
+  if (it == kindToTypeFn.end())
+    return std::nullopt;
+  return it->second;
+}
+
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     CompareKind kind) {
@@ -179,11 +287,12 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
     roundMode = hivm::RoundMode::RINT;
   }
-  auto castOp = hivm::castTo(
-      rewriter, loc, input, rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
-      targetElemType);
-  return castOp->getResults().empty() ? castOp.getSingleDst()
-                                      : castOp->getResults()[0];
+  auto castOp = hivm::castTo(rewriter, loc, input,
+                             rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
+                             targetElemType);
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(
+      hivm::TypeFn::cast_signed));
+  return getPrimaryCastValue(castOp);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
@@ -198,5 +307,34 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
     PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
   return rewriter.create<BitcastOp>(loc, resultType, source).getResult();
+}
+
+bool mlir::hivm::NormalizeTraitsBase::matchCastRoundMode(
+    hivm::VCastOp op, CastExecutionKind kind) {
+  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+  return roundMode && op.getRoundMode() == *roundMode;
+}
+
+bool mlir::hivm::NormalizeTraitsBase::matchCastUnsignedMode(
+    hivm::VCastOp op, CastUnsignedModeKind kind) {
+  return getSaturateUnsignedMode(op) == kind;
+}
+
+hivm::TypeFn mlir::hivm::NormalizeTraitsBase::mapCastSignKind(
+    CastSignKind kind, hivm::TypeFn preserveTypeFn) {
+  auto typeFn = mapCastSignKindToTypeFn(kind);
+  return typeFn.value_or(preserveTypeFn);
+}
+
+hivm::RoundMode mlir::hivm::NormalizeTraitsBase::mapCastExecutionKind(
+    CastExecutionKind kind, hivm::RoundMode defaultRoundMode) {
+  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+  return roundMode.value_or(defaultRoundMode);
+}
+
+hivm::UnsignedMode mlir::hivm::NormalizeTraitsBase::mapCastUnsignedModeKind(
+    CastUnsignedModeKind kind, hivm::UnsignedMode preserveMode) {
+  auto unsignedMode = mapCastUnsignedModeKindToUnsignedMode(kind);
+  return unsignedMode.value_or(preserveMode);
 }
 } // namespace mlir::hivm

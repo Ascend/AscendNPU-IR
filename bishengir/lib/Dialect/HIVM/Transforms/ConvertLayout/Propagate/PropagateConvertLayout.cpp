@@ -35,13 +35,15 @@ namespace {
 
 struct PropagateConvertLayoutPass
     : public impl::PropagateConvertLayoutBase<PropagateConvertLayoutPass> {
+  using Base::Base;
   void runOnOperation() override {
     auto module = getOperation();
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-    // PropagateConvertLayoutInternalOptions class is defined in `ConvertLayoutUtils.h`
-    // and is different with PropagateConvertLayoutOptions from the `HIVM/Transforms/Passes.td`
+    // PropagateConvertLayoutInternalOptions class is defined in
+    // `ConvertLayoutUtils.h` and is different with
+    // PropagateConvertLayoutOptions from the `HIVM/Transforms/Passes.td`
     PropagateConvertLayoutInternalOptions options;
     options.allowAgnosticOps = allowAgnosticOps;
     populateConvertLayoutExtractSlice(patterns, context);
@@ -62,6 +64,7 @@ struct PropagateConvertLayoutPass
 
 } // namespace
 
-std::unique_ptr<Pass> mlir::hivm::createPropagateConvertLayoutPass() {
-  return std::make_unique<PropagateConvertLayoutPass>();
+std::unique_ptr<Pass> mlir::hivm::createPropagateConvertLayoutPass(
+    const PropagateConvertLayoutOptions &options) {
+  return std::make_unique<PropagateConvertLayoutPass>(options);
 }

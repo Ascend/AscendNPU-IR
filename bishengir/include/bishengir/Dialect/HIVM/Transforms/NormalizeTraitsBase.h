@@ -18,7 +18,8 @@
 #ifndef BISHENGIR_LIB_DIALECT_HIVM_TRANSFORMS_NORMALIZETRAITSBASE_H
 #define BISHENGIR_LIB_DIALECT_HIVM_TRANSFORMS_NORMALIZETRAITSBASE_H
 
-#include "bishengir/Transforms/Normalize/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
@@ -51,6 +52,27 @@ public:
 
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
+
+  static bool matchCastRoundMode(VCastOp op, CastExecutionKind kind);
+
+  static bool matchCastUnsignedMode(VCastOp op, CastUnsignedModeKind kind);
+
+  static TypeFn mapCastSignKind(CastSignKind kind, TypeFn preserveTypeFn);
+
+  static RoundMode mapCastExecutionKind(CastExecutionKind kind,
+                                        RoundMode defaultRoundMode);
+
+  static UnsignedMode mapCastUnsignedModeKind(CastUnsignedModeKind kind,
+                                              UnsignedMode preserveMode);
+
+  static bool archIsRegbased();
+
+  static Value castValue(PatternRewriter &rewriter, Location loc, VCastOp op,
+                         Value input, Type targetElemType,
+                         CastExecutionKind executionKind = CastExecutionKind::Default,
+                         CastSignKind signKind = CastSignKind::Preserve,
+                         bool enableSaturate = false,
+                         CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);
 };
 
 } // namespace mlir::hivm

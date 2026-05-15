@@ -179,17 +179,32 @@ struct AdaptGPUKernelPass
 
     Value newIdx = builder.create<hivm::GetBlockIdxInstrOp>(loc, int64Ty);
     auto [gridX, gridY, gridZ] = getGridDims(wrapperFuncOp, builder, loc);
-    // get grid x,y,z from linear grid id using x
-    // px = pid % Gx
-    // tmp = pid / Gx
-    // py = tmp % Gy
-    // pz = tmp / Gy
-    Value tmp0 = newIdx;
-    Value px = builder.create<LLVM::URemOp>(loc, int64Ty, tmp0, gridX);
-    Value tmp1 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp0, gridX);
-    Value py = builder.create<LLVM::URemOp>(loc, int64Ty, tmp1, gridY);
-    Value tmp2 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp1, gridY);
-    Value pz = tmp2;
+    Value px;
+    Value py;
+    Value pz;
+    if (options.isSimdSimtMixCompile) {
+      // In the SIMD-SIMT mixed path, HIVMToTriton lowers the one-dimensional
+      // HIVM block id to tt.get_program_id x and the VF body performs the
+      // logical 1D -> 3D decomposition itself.  Pass the raw linear NPU block id
+      // as program_id x so the decomposition only happens once.
+      px = newIdx;
+      py = builder.create<LLVM::ConstantOp>(
+          loc, int64Ty, builder.getI64IntegerAttr(0));
+      pz = builder.create<LLVM::ConstantOp>(
+          loc, int64Ty, builder.getI64IntegerAttr(0));
+    } else {
+      // get grid x,y,z from linear grid id using x
+      // px = pid % Gx
+      // tmp = pid / Gx
+      // py = tmp % Gy
+      // pz = tmp / Gy
+      Value tmp0 = newIdx;
+      px = builder.create<LLVM::URemOp>(loc, int64Ty, tmp0, gridX);
+      Value tmp1 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp0, gridX);
+      py = builder.create<LLVM::URemOp>(loc, int64Ty, tmp1, gridY);
+      Value tmp2 = builder.create<LLVM::UDivOp>(loc, int64Ty, tmp1, gridY);
+      pz = tmp2;
+    }
     auto ub = triton::util::allocateSharedMemory(wrapperFuncOp, builder, loc);
 
     args.push_back(gridX);

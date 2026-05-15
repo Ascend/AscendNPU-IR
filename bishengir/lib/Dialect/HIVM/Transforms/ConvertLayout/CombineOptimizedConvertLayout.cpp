@@ -128,39 +128,47 @@ struct FoldToTensorConvertLayoutPattern
       return rewriter.notifyMatchFailure(
           op, "source layout is not ND");
 
-    // Verify single use of to_tensor result
-    if (!toTensorOp.getResult().hasOneUse())
-      return rewriter.notifyMatchFailure(
-          op, "to_tensor result has multiple uses");
+    // If to_tensor has multiple uses, do a split rewrite:
+    // - fold only this convert_layout
+    // - keep original ND producer chain for other users.
+    bool canEraseOriginalProducerChain = toTensorOp.getResult().hasOneUse();
 
     rewriter.setInsertionPointAfter(loadOp);
     // Get the result tensor type (fractal shape)
     auto resultTensorType = cast<RankedTensorType>(op.getType());
     auto memrefDestType = MemRefType::get(resultTensorType.getShape(),
                                           resultTensorType.getElementType());
-    auto allocOp = rewriter.create<memref::AllocOp>(
-        op.getLoc(), memrefDestType);
+    auto allocOp =
+        rewriter.create<memref::AllocOp>(op.getLoc(), memrefDestType);
 
     // Create ND2NZ op: fuses load + layout conversion
     // ins: source memref (reinterpret_cast, ND layout)
     // outs: destination memref (fractal layout)
-    rewriter.create<ND2NZOp>(
-        op.getLoc(),
-        TypeRange(),
-        loadOp.getSource(), // src (ins)
-        allocOp.getResult(), // dst (outs)
-        /*dst_continuous=*/rewriter.getUnitAttr()
-        );
+    bool hasInitOutBuffer = loadOp.getInitOutBuffer();
+    auto padValue = hasInitOutBuffer ? loadOp.getPadValue() : nullptr;
+    auto initCondition = loadOp.getInitCondition();
+    rewriter.create<ND2NZOp>(op.getLoc(), TypeRange(),
+                             loadOp.getSource(),  // src (ins)
+                             allocOp.getResult(), // dst (outs)
+                             /*dst_continuous=*/rewriter.getUnitAttr(),
+                             hasInitOutBuffer, padValue, initCondition);
 
-    auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
-        op.getLoc(), allocOp);
+    auto newToTensorOp =
+        rewriter.create<bufferization::ToTensorOp>(op.getLoc(), allocOp);
     newToTensorOp->setAttrs(toTensorOp->getAttrs());
 
-    // Replace the convert_layout with ND2NZ result
-    rewriter.replaceAllUsesWith(op, newToTensorOp);
-    rewriter.eraseOp(loadOp);
-    rewriter.eraseOp(op);
-    rewriter.eraseOp(toTensorOp);
+    // Replace only this convert_layout.
+    rewriter.replaceOp(op, newToTensorOp.getResult());
+
+    // Single-use case: old ND chain is now dead, erase it.
+    // Multi-use case: keep load/to_tensor/memref alloc for other users.
+    if (canEraseOriginalProducerChain) {
+      auto oldAllocOp = toTensorMemref.getDefiningOp<memref::AllocOp>();
+      rewriter.eraseOp(loadOp);
+      rewriter.eraseOp(toTensorOp);
+      if (oldAllocOp && oldAllocOp->use_empty())
+        rewriter.eraseOp(oldAllocOp);
+    }
     return success();
   }
 };
@@ -246,9 +254,9 @@ struct FoldToTensorConvertLayoutSubviewPattern
       return rewriter.notifyMatchFailure(
           op, "source is not from a to_tensor operation");
 
-    if (!toTensorOp.getResult().hasOneUse())
-      return rewriter.notifyMatchFailure(
-          op, "to_tensor result has multiple uses");
+    // Multi-use to_tensor is allowed: fold only this convert_layout and keep
+    // original ND path for other users.
+    bool canEraseOriginalProducerChain = toTensorOp.getResult().hasOneUse();
 
     Value allocMemref = toTensorOp.getMemref();
     auto origAllocOp = allocMemref.getDefiningOp<memref::AllocOp>();
@@ -331,33 +339,38 @@ struct FoldToTensorConvertLayoutSubviewPattern
     auto newAllocOp = rewriter.create<memref::AllocOp>(
         origAllocOp.getLoc(), fractalAllocType);
     auto newSubviewOut = rewriter.create<memref::SubViewOp>(
-        subviewOut.getLoc(),
-        newAllocOp.getResult(),
-        *fractalOffsetsOrFailure,
-        *fractalSizesOrFailure,
-        fractalStrides);
+        subviewOut.getLoc(), newAllocOp.getResult(), *fractalOffsetsOrFailure,
+        *fractalSizesOrFailure, fractalStrides);
 
     //     Source (ins) is subview_in — unchanged, still in ND layout.
     //     Dest (outs) is the new fractal subview of the fractal alloc.
     Value loadSrc = loadOp.getSource(); // subview_in (ND layout, unchanged)
+    bool hasInitOutBuffer = loadOp.getInitOutBuffer();
+    auto padValue = hasInitOutBuffer ? loadOp.getPadValue() : nullptr;
+    auto initCondition = loadOp.getInitCondition();
     rewriter.create<ND2NZOp>(
-        op.getLoc(),
-        TypeRange(),
-        loadSrc,                // src (ins) — subview of reinterpret_cast
-        newSubviewOut.getResult(),  // dst (outs) — fractal subview of alloc
-        /*dst_continuous=*/rewriter.getUnitAttr());
+        op.getLoc(), TypeRange(),
+        loadSrc,                   // src (ins) — subview of reinterpret_cast
+        newSubviewOut.getResult(), // dst (outs) — fractal subview of alloc
+        /*dst_continuous=*/rewriter.getUnitAttr(), hasInitOutBuffer, padValue,
+        initCondition);
 
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
         toTensorOp.getLoc(), newAllocOp);
     newToTensorOp->setAttrs(toTensorOp->getAttrs());
 
-    rewriter.replaceAllUsesWith(op.getResult(), newToTensorOp.getResult());
+    // Replace only this convert_layout.
+    rewriter.replaceOp(op, newToTensorOp.getResult());
 
-    rewriter.eraseOp(op);          // convert_layout (no users after replace)
-    rewriter.eraseOp(toTensorOp);  // to_tensor (user was convert_layout)
-    rewriter.eraseOp(loadOp);      // load (no SSA result / users erased)
-    rewriter.eraseOp(subviewOut);  // subview_out (user was loadOp)
-    rewriter.eraseOp(origAllocOp); // original ND alloc (all users erased)
+    // Single-use case: old ND chain is dead and can be erased.
+    // Multi-use case: preserve old chain for remaining users.
+    if (canEraseOriginalProducerChain) {
+      rewriter.eraseOp(loadOp);     // user of subview_out
+      rewriter.eraseOp(subviewOut); // user of origAllocOp
+      rewriter.eraseOp(toTensorOp); // user of origAllocOp
+      if (origAllocOp->use_empty())
+        rewriter.eraseOp(origAllocOp);
+    }
 
     return success();
   }

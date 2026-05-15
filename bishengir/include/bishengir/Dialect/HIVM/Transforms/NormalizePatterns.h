@@ -26,9 +26,15 @@
 
 namespace mlir::hivm {
 
+extern thread_local bool archIsRegbased;
+extern thread_local bool archisAscend950;
+extern thread_local bool archisAscend310B;
+extern thread_local bool archisMembased;
+
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
 void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);

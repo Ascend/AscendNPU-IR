@@ -1402,6 +1402,12 @@ struct ConvertHIVMToUpstream
       functions.push_back(funcOp);
     });
     RewritePatternSet patterns(&ctx);
+    if (convertToNamedOp) {
+      patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
+                                     hfusion::BinaryFn::shli>>(&ctx);
+    } else {
+      patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
+    }
     patterns
         .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
              RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
@@ -1425,7 +1431,6 @@ struct ConvertHIVMToUpstream
     patterns.add<RewriteVBitwiseOp<hivm::VAndOp, arith::AndIOp>,
                  RewriteVBitwiseOp<hivm::VOrOp, arith::OrIOp>,
                  RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>,
-                 RewriteVBitwiseOp<hivm::VShLOp, arith::ShLIOp>,
                  RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
     if (convertToNamedOp) {
       patterns

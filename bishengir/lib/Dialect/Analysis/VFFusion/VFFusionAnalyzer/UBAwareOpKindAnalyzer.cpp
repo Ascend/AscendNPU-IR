@@ -74,6 +74,9 @@ static bool canReuseInputForOutput(
   auto opResult = dyn_cast<OpResult>(output);
   if (!opResult)
     return false;
+  if (opResult.getResultNumber() >=
+      static_cast<unsigned>(dpsOp.getNumDpsInits()))
+    return false;
   auto *tiedInit = dpsOp.getTiedOpOperand(opResult);
   if (!tiedInit)
     return false;

@@ -135,12 +135,7 @@ private:
                                       ArrayRef<hivm::DataLayout>
                                       layoutsToNormalize) {
     if (llvm::is_contained(layoutsToNormalize, layout.getDataLayout())) {
-      LDBG("Normalizing " << layout);
-      auto transposeVal = layout.getTransposeValue();
-      auto newDataLayout = DataLayoutAttr::get(ctx,
-                                               hivm::DataLayout::ND,
-                                               transposeVal);
-
+      auto newDataLayout = DataLayoutAttr::get(ctx, hivm::DataLayout::ND);
       LDBG("new data layout " << newDataLayout);
       return newDataLayout;
     }

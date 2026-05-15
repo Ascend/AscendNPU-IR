@@ -1,4 +1,4 @@
-//===-------- Utils.h ------------------------------------------------------===//
+//===- Kinds.h --------------------------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_H
-#define BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_H
+#ifndef BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_KINDS_H
+#define BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_KINDS_H
 
 namespace mlir {
 
@@ -26,6 +26,7 @@ enum class BinaryKind {
   Sub,
   Mul,
   Div,
+  Mod,
   And,
   Min,
   Max,
@@ -34,7 +35,34 @@ enum class BinaryKind {
 };
 enum class CompareKind { EQ, NE, LT, GT, GE, LE };
 enum class CastRoundKind { Round, Floor };
+enum class CastExecutionKind {
+  Default,
+  RInt,
+  Trunc,
+  TruncEnableOverflow,
+  TruncWithOverflow
+};
+enum class CastSignKind { Preserve, Signed, Unsigned };
+enum class CastUnsignedModeKind {
+  Preserve,
+  SignedToSigned,
+  SignedToUnsigned,
+  UnsignedToSigned,
+  UnsignedToUnsigned,
+};
+enum class OverflowCastKind {
+  Unsupported,
+  F32ToI16,
+  F32ToI8,
+  F16ToI8,
+  I64ToI32,
+  I64ToI16,
+  I64ToI8,
+  I32ToI16,
+  I32ToI8,
+  I16ToI8,
+};
 
 } // namespace mlir
 
-#endif // BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_H
+#endif // BISHENGIR_TRANSFORMS_NORMALIZE_UTILS_KINDS_H

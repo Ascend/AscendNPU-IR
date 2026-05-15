@@ -290,3 +290,20 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: tt.func @restore_get_block_idx
+// CHECK-NEXT: %[[PID:.*]] = tt.get_program_id x : i32
+// CHECK-NEXT: %[[C1:.*]] = arith.constant 1 : i32
+// CHECK-NEXT: %[[ADD:.*]] = arith.addi %[[PID]], %[[C1]] : i32
+// CHECK-NEXT: tt.return
+
+module {
+  func.func @restore_get_block_idx() {
+    %0 = hivm.hir.get_block_idx -> i64
+    %1 = arith.trunci %0 : i64 to i32
+    %c1_i32 = arith.constant 1 : i32
+    %2 = arith.addi %1, %c1_i32 : i32
+    return
+  }
+}

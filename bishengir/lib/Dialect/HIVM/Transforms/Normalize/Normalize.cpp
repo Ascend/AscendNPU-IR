@@ -29,17 +29,26 @@ namespace mlir {
 
 namespace mlir::hivm {
 
+thread_local bool archIsRegbased{false};
+thread_local bool archisAscend950{false};
+thread_local bool archisAscend310B{false};
+thread_local bool archisMembased{false};
+
 struct NormalizeHIVMPass
     : public impl::NormalizeBase<NormalizeHIVMPass> {
   using impl::NormalizeBase<NormalizeHIVMPass>::NormalizeBase;
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
-    bool isRegbased = hacc::utils::isRegBasedArch(moduleOp);
+    archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
+    archisAscend950 = hacc::utils::isAscend950(moduleOp);
+    archisAscend310B = hacc::utils::isAscend310B(moduleOp);
+    archisMembased = hacc::utils::isMemBasedArch(moduleOp);
     auto *context = &getContext();
     RewritePatternSet patterns(context);
     populateNormalizeTrigPatterns(patterns);
     populateNormalizeArithmeticPatterns(patterns);
     populateNormalizePrimaryMathPatterns(patterns);
+    populateNormalizeCastingPatterns(patterns);
     populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,
@@ -47,8 +56,8 @@ struct NormalizeHIVMPass
     // populateNormalizeScalarLikeHIVMPatterns above; this late regbased-only
     // pass extracts the single runtime value and rebuilds the broadcast.
     populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns,
-                                                         isRegbased);
-    if (!isRegbased)
+                                                         archIsRegbased);
+    if (!archIsRegbased)
       populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
