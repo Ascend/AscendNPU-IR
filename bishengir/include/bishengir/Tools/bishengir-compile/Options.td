@@ -812,7 +812,7 @@ def EnableAutoVectorizeV2 : FeatureControlOptions<
 def EnableVFFusion : FeatureControlOptions<
   "Enable vf fusion",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
