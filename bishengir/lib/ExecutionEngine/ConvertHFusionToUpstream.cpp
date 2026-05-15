@@ -157,6 +157,55 @@ struct RewriteHistogramOp : public OpRewritePattern<hfusion::HistogramOp> {
 };
 
 // =======================================================================
+// IsNanOp Lowering
+// =======================================================================
+struct RewriteHFusionIsNanOp : public OpRewritePattern<hfusion::IsNanOp> {
+  using OpRewritePattern<hfusion::IsNanOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::IsNanOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType)
+      return failure();
+
+    auto elemType = dyn_cast<FloatType>(inputType.getElementType());
+    if (!elemType)
+      return failure();
+
+    const Location loc = op.getLoc();
+    const int64_t rank = inputType.getRank();
+
+    SmallVector<Value> dynamicSizes;
+    dynamicSizes.reserve(rank);
+    for (int64_t i = 0; i < rank; ++i)
+      if (inputType.isDynamicDim(i))
+        dynamicSizes.push_back(
+            rewriter.create<tensor::DimOp>(loc, op.getInput(), i));
+
+    Value initTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultType.getShape(), resultType.getElementType(), dynamicSizes);
+
+    SmallVector<AffineMap> indexingMaps(
+        2, rewriter.getMultiDimIdentityMap(rank));
+    SmallVector<utils::IteratorType> iteratorTypes(
+        rank, utils::IteratorType::parallel);
+
+    auto genericOp = rewriter.create<linalg::GenericOp>(
+        loc, resultType, ValueRange{op.getInput()}, ValueRange{initTensor},
+        indexingMaps, iteratorTypes,
+        [&](OpBuilder &b, Location nestedLoc, ValueRange args) {
+          Value isNan = b.create<arith::CmpFOp>(
+              nestedLoc, arith::CmpFPredicate::UNO, args[0], args[0]);
+          b.create<linalg::YieldOp>(nestedLoc, isNan);
+        });
+
+    rewriter.replaceOp(op, genericOp.getResult(0));
+    return success();
+  }
+};
+
+// =======================================================================
 // Pass Definition
 // =======================================================================
 struct ConvertHFusionToUpstream
@@ -171,6 +220,7 @@ struct ConvertHFusionToUpstream
 
     // Register all HFusion-to-CPU lowering patterns here.
     patterns.add<RewriteHistogramOp>(&ctx);
+    patterns.add<RewriteHFusionIsNanOp>(&ctx);
 
     // Future operations like CumprodOp, AtomicXchgOp, etc., should be added below.
     //
