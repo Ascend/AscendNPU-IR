@@ -44,8 +44,8 @@ LogicalResult DimensionAnalyzer::initialize() {
   auto result = DimensionAnalyzerBase::initialize();
   propagateConnection();
   spreadConnection();
-  markDimensionKind();
-  markTransposedDims();
+  markDimensions();
+  transferDimMark();
   return result;
 }
 
