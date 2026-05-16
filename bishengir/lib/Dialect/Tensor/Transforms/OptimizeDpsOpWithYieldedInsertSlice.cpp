@@ -83,11 +83,9 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
     // we cannot create the extract slice.
     DominanceInfo domInfo(enclosingFunc);
     for (auto operand : insertSliceOp->getOperands()) {
-      if (isa<BlockArgument>(operand))
+      if (operand == insertSrc)
         continue;
-
-      auto *operandDef = operand.getDefiningOp();
-      if (!domInfo.dominates(operandDef, srcDefiningOp))
+      if (!domInfo.properlyDominates(operand, srcDefiningOp))
         return rewriter.notifyMatchFailure(
             insertSliceOp, "insert slice operand doesn't dominate dps, cannot "
                            "create extract slice");

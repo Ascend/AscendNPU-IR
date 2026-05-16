@@ -1113,3 +1113,27 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
 
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @normalize_mmad_with_tensor_producer(
+// CHECK-DAG: %[[INIT:.*]] = arith.constant true
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
+// CHECK: %[[A:.*]] = "test.tensor_producer"() : () -> tensor<16x16xf16>
+// CHECK: %[[B:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<16x16xf16>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[A]], %[[B]], %[[INIT]], %[[C16]], %[[C16]], %[[C16]]
+module {
+  func.func @normalize_mmad_with_tensor_producer()
+      -> tensor<16x16xf32> {
+    %a = "test.tensor_producer"() : () -> tensor<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+    %false = arith.constant false
+    %c0 = arith.constant 0 : index
+    %out = tensor.empty() : tensor<16x16xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0
+        : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %0 : tensor<16x16xf32>
+  }
+}
