@@ -1,5 +1,5 @@
- // RUN: bishengir-opt -append-vector-layout -annotate-dist-op-layout \
- // RUN: -eliminate-vector-layout -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
+  // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
+  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 
 // CHECK-LABEL: @sort_kernel_2d_outlined_vf_0
 #map = affine_map<()[s0] -> (s0 * 12)>
