@@ -37,6 +37,23 @@ check_inputs_of_load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
 }
 
 #if defined(__DAV_C310__)
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+hasUnalignedUbufStrideFor3dDma(int64_t size1, int64_t size2, int64_t stride0_ub,
+                               int64_t stride1_ub, int64_t stride0_gm,
+                               int64_t stride1_gm) {
+  if (stride1_ub == size2 && stride1_gm == size2) {
+    return !isStrideAligned<T>(stride0_ub);
+  }
+  if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
+    return !isStrideAligned<T>(stride1_ub);
+  }
+  if (!isStrideAligned<T>(stride0_ub)) {
+    return true;
+  }
+  return !isStrideAligned<T>(stride1_ub);
+}
+
 /// Core func of loading GM -> UB, 3D
 /// UB starting address must be 32B aligned; otherwise, it degrades to looped
 /// scalar transfer.
@@ -99,8 +116,16 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   const int64_t stride2_gm = src->strides[2];
   const int64_t stride2_ub = dst->strides[2];
+  bool has_padding = left_padding_num != 0;
   if (stride2_gm == 1 && stride2_ub == 1) [[likely]] {
     // last dimension is contiguous
+    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
+                            dst->sizes[1], dst->sizes[2], dst->strides[0],
+                            dst->strides[1], src->strides[0],
+                            src->strides[1])) {
+      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      return;
+    }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
     return;
@@ -123,6 +148,10 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   if (stride1_ub == stride2_ub * size2 && stride1_gm == stride2_gm * size2) {
     // axis 0 is contiguous
     if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
+      if (!has_padding && !isStrideAligned<T>(stride2_ub)) {
+        load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+        return;
+      }
       memref_t<__gm__ T, 2> gm_2d{src->allocated,
                                   src->aligned,
                                   src->offset,
@@ -148,6 +177,13 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0, size1 * size2, 1},
                                   {stride0_ub, stride2_ub, 1}};
+    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
+                            ub_3d.sizes[1], ub_3d.sizes[2], ub_3d.strides[0],
+                            ub_3d.strides[1], gm_3d.strides[0],
+                            gm_3d.strides[1])) {
+      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      return;
+    }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
@@ -165,6 +201,13 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
                                   dst->offset,
                                   {size0 * size1, size2, 1},
                                   {stride1_ub, stride2_ub, 1}};
+    if (!has_padding && hasUnalignedUbufStrideFor3dDma<T>(
+                            ub_3d.sizes[1], ub_3d.sizes[2], ub_3d.strides[0],
+                            ub_3d.strides[1], gm_3d.strides[0],
+                            gm_3d.strides[1])) {
+      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+      return;
+    }
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim<T>(
         &gm_3d, &ub_3d, left_padding_num, l2_cache_ctl);
     return;
@@ -375,6 +418,13 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   const int64_t stride2_gm = dst->strides[2];
   if (stride2_ub == 1 && stride2_gm == 1) [[likely]] {
     // last dimension is contiguous
+    if (hasUnalignedUbufStrideFor3dDma<T>(src->sizes[1], src->sizes[2],
+                                          src->strides[0], src->strides[1],
+                                          dst->strides[0], dst->strides[1])) {
+      store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
+      set_store_atomic_none(atomic_kind);
+      return;
+    }
     store_ubuf_to_gm_3d_core_with_contiguous_last_dim<T>(src, dst);
     set_store_atomic_none(atomic_kind);
     return;
@@ -397,6 +447,11 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   if (stride1_ub == stride2_ub * size2 && stride1_gm == stride2_gm * size2) {
     // axis 0 is contiguous
     if (stride0_ub == stride1_ub * size1 && stride0_gm == stride1_gm * size1) {
+      if (!isStrideAligned<T>(stride2_ub)) {
+        store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
+        set_store_atomic_none(atomic_kind);
+        return;
+      }
       memref_t<__gm__ T, 2> gm_2d{dst->allocated,
                                   dst->aligned,
                                   dst->offset,
@@ -422,6 +477,13 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
                                   src->offset,
                                   {size0, size1 * size2, 1},
                                   {stride0_ub, stride2_ub, 1}};
+    if (hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
+                                          ub_3d.strides[0], ub_3d.strides[1],
+                                          gm_3d.strides[0], gm_3d.strides[1])) {
+      store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
+      set_store_atomic_none(atomic_kind);
+      return;
+    }
     store_ubuf_to_gm_3d_core_with_contiguous_last_dim<T>(&ub_3d, &gm_3d);
     set_store_atomic_none(atomic_kind);
     return;
@@ -439,6 +501,13 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
                                   src->offset,
                                   {size0 * size1, size2, 1},
                                   {stride1_ub, stride2_ub, 1}};
+    if (hasUnalignedUbufStrideFor3dDma<T>(ub_3d.sizes[1], ub_3d.sizes[2],
+                                          ub_3d.strides[0], ub_3d.strides[1],
+                                          gm_3d.strides[0], gm_3d.strides[1])) {
+      store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
+      set_store_atomic_none(atomic_kind);
+      return;
+    }
     store_ubuf_to_gm_3d_core_with_contiguous_last_dim<T>(&ub_3d, &gm_3d);
     set_store_atomic_none(atomic_kind);
     return;
