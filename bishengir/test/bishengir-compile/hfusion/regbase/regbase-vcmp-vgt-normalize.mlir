@@ -1,10 +1,10 @@
 // REQUIRES: enable-lir-compile
 
-// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=1 -target=Ascend310B4  \
+// RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true -block-dim=1 -target=Ascend910_9579  \
 // RUN: -enable-triton-kernel-compile=true %s | FileCheck %s
 
 // ----- Case From #2476
-// CHECK-LABEL: @triton_gt_outlined_vf_0
+// CHECK-LABEL: @triton_gt_fused_0_outlined_vf_0
 module {
   func.func @triton_gt(%arg0: memref<?xi8>, %arg1: memref<?xi32> {tt.divisibility = 16 : i32}, %arg2: memref<?xi32> {tt.divisibility = 16 : i32}, %arg3: memref<?xi32> {tt.divisibility = 16 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "aiv"} {
     %c1024_i32 = arith.constant 1024 : i32

@@ -76,34 +76,53 @@ vector_cumsum_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, boo
     return;
   }
  
+  // If not reverse
   // dst[0] = src[0]
   // for i = 1 to src->sizes[0]
   //     dst[i] = dst[i - 1] + src[i]
+  //
+  // If reverse
+  // dst[n-1] = src[n-1]
+  // traverse using 'for' loop but in reverse order
+  
   // step1: vcopy(dst, src, src->sizes[1])
-  memref_t<__ubuf__ T, 1> src_1d{src->allocated,
+  memref_t<__ubuf__ T, 1> src_first_row{src->allocated,
                                  src->aligned,
                                  src->offset,
                                  {src->sizes[1]},
                                  {src->strides[1]}};
-  memref_t<__ubuf__ T, 1> dst_1d{dst->allocated,
+  memref_t<__ubuf__ T, 1> dst_first_row{dst->allocated,
                                  dst->aligned,
                                  dst->offset,
                                  {dst->sizes[1]},
                                  {dst->strides[1]}};
+  memref_t<__ubuf__ T, 1> src_last_row{src->allocated,
+                                     src->aligned,
+                                     src->offset + (src->sizes[0] - 1) * src->strides[0],
+                                     {src->sizes[1]},
+                                     {src->strides[1]}};
+  memref_t<__ubuf__ T, 1> dst_last_row{dst->allocated,
+                                     dst->aligned,
+                                     dst->offset + (dst->sizes[0] - 1) * dst->strides[0],
+                                     {dst->sizes[1]},
+                                     {dst->strides[1]}};
   if(!reverse) {
-    copy_ubuf_to_ubuf_1d_core(&src_1d, &dst_1d);
+    copy_ubuf_to_ubuf_1d_core(&src_first_row, &dst_first_row);
   } else {
-    memref_t<__ubuf__ T, 1> src_1d_tmp = src_1d;
-    src_1d_tmp.offset += (src->sizes[0] - 1) * src->strides[0];
-    copy_ubuf_to_ubuf_1d_core(&src_1d_tmp, &dst_1d);
+    copy_ubuf_to_ubuf_1d_core(&src_last_row, &dst_last_row);
   }
   
   // step2: for i = 1 to src->sizes[0]
   //            vadd(dst + i * dst->strides[0], src + i * src->strides[0], dst +
   //            (i - 1) * dst->strides[0], src->sizes[1])
-  memref_t<__ubuf__ T, 1> last_dst_1d = dst_1d;
+  memref_t<__ubuf__ T, 1> cur_row;
+  if (!reverse) {
+    cur_row = dst_first_row;
+  } else {
+    cur_row = dst_last_row;
+  }
   cumsum_2d<T, T>(
-    cumulative_args<T, T>{&dst_1d, {&src_1d, &last_dst_1d}, 
+    cumulative_args<T, T>{&dst_first_row, {&src_first_row, &cur_row}, 
                           dst->strides[0], {src->strides[0], dst->strides[0]},
                           src->sizes[0], reverse}
   );
@@ -112,16 +131,12 @@ vector_cumsum_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst, boo
 template <typename SRC_TYPE, typename DST_TYPE>
 __aiv__ __attribute__((always_inline)) void
 cumsum_2d(cumulative_args<SRC_TYPE, DST_TYPE> args) {
-  auto dst_offset = args.dst->offset;
-  auto src0_offset = args.src[0]->offset;
-  auto src1_offset = args.src[1]->offset;
-  auto dst_aligned = args.dst->aligned;
-  auto src0_aligned = args.src[0]->aligned;
-  auto src1_aligned = args.src[1]->aligned;
+  auto dst_addr = args.dst->aligned + args.dst->offset;
+  auto src0_addr = args.src[0]->aligned + args.src[0]->offset;
+  auto src1_addr = args.src[1]->aligned + args.src[1]->offset;
   uint32_t size0 = args.src[0]->sizes[0];
   auto dst_stride = args.dst_stride;
   auto src0_stride = args.src_stride[0];
-  auto src1_stride = args.src_stride[1];
   uint16_t src_size = (uint16_t)args.src_size;
   constexpr int num_per_reg = REG_REGISTER_SIZE / sizeof(SRC_TYPE);
   uint16_t repeat_times = CEIL_DIV(size0, num_per_reg);
@@ -131,14 +146,17 @@ cumsum_2d(cumulative_args<SRC_TYPE, DST_TYPE> args) {
       VectorReg<DST_TYPE> dst_reg;
       vector_bool full_mask;
       CREATE_MASK_BY_SIZE(full_mask, SRC_TYPE, size0);
-      vlds(src1_reg, src1_aligned + src1_offset, i * num_per_reg, NORM);
+      // load 'accumulator'
+      vlds(src1_reg, src1_addr, i * num_per_reg, NORM);
       for (uint16_t j = 1; j < src_size; j++) {
-        auto dst_offset_tmp = dst_offset + j * dst_stride;
-        int src1_steps = args.reverse ? (src_size -1 - j) : j;
-        auto src0_offset_tmp = src0_offset + src1_steps * src0_stride;
-        vlds(src0_reg, src0_aligned + src0_offset_tmp, i * num_per_reg, NORM);
+	int row = args.reverse ? (src_size - 1 - j) : j;
+	// load current row
+        vlds(src0_reg, src0_addr + row * src0_stride, i * num_per_reg, NORM);
+	// do addition of current row with accumulator
         vadd(dst_reg, src0_reg, src1_reg, full_mask, MODE_ZEROING);
-        vsts(dst_reg, dst_aligned + dst_offset_tmp, i * num_per_reg, NORM_B32, full_mask);
+	// store current row
+        vsts(dst_reg, dst_addr + row * dst_stride, i * num_per_reg, NORM_B32, full_mask);
+	// update accumulator
         src1_reg = dst_reg;
       }
     }

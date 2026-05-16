@@ -23,7 +23,8 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
-
+#include "llvm/ADT/ArrayRef.h"
+#include <optional>
 namespace mlir::hivm {
 
 /// Base traits class for HIVM Normalize operations.
@@ -44,11 +45,35 @@ public:
                               Value lhs, Value rhs, Value dst,
                               BinaryKind kind);
 
+  /// Create a dialect cast from a normalize-template abstract round kind.
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
                             Value input, Type targetElemType,
                             CastRoundKind kind);
+
+  /// Create a dialect cast preserving the source dialect round mode when one is
+  /// already available. If no round mode is provided, the dialect default is
+  /// selected first, then adjusted when HIVM requires a more restrictive cast
+  /// encoding for the requested element types.
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Type targetElemType,
+                            std::optional<RoundMode> roundMode = std::nullopt);
+
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);
+
+  static bool matchFillOp(Operation *op);
+
+  static Value getFillInput(Operation *op);
+
+  static bool matchBroadcastOp(Operation *op);
+
+  static Value getBroadcastInput(Operation *op);
+
+  static SmallVector<int64_t> getBroadcastDims(Operation *op);
+
+  static Value createBroadcastOp(PatternRewriter &rewriter, Location loc,
+                                 Value input, Value dst,
+                                 ArrayRef<int64_t> dims);
 
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
@@ -73,6 +98,9 @@ public:
                          CastSignKind signKind = CastSignKind::Preserve,
                          bool enableSaturate = false,
                          CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);
+
+  static Value castScalarThroughTensor(PatternRewriter &rewriter, Location loc,
+                                       Value scalar, Type dstType);
 };
 
 } // namespace mlir::hivm

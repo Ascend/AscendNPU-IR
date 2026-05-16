@@ -4,8 +4,8 @@
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<5x1xf32>)
-// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<5x1xf32>)
-// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<5x1xf32>)
+// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<5x1xf32>) outs(%{{.*}} : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<5x1xf32>) outs(%{{.*}} : tensor<5x1xf32>) -> tensor<5x1xf32>
 // CHECK: return %[[VREC]]
 func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt(%arg0: tensor<5x1xf32>) -> tensor<5x1xf32> {
     %0 = tensor.empty() : tensor<5x1xf32>
@@ -17,9 +17,11 @@ func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt(%arg0: tensor<5x1xf32>) -
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>)
-// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf16>)
-// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<16xf16>)
-// CHECK: return %[[VREC]]
+// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[VSQRT]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[CAST0]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: return %[[CAST1]]
 func.func @test_NormalizeRSqrt_hivm_rsqrt_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
     %0 = tensor.empty() : tensor<16xf16>
     %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%arg0 : tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
@@ -30,8 +32,10 @@ func.func @test_NormalizeRSqrt_hivm_rsqrt_f16(%arg0: tensor<16xf16>) -> tensor<1
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt_dynshape
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<5x?xf32>, %[[ARG1:.*]]: index)
-// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<5x?xf32>)
-// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<5x?xf32>)
+// CHECK: %[[C1:.*]] = arith.constant 1 : index
+// CHECK: %[[DIM:.*]] = tensor.dim %[[ARG0]], %[[C1]] : tensor<5x?xf32>
+// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<5x?xf32>) outs(%{{.*}} : tensor<5x?xf32>) -> tensor<5x?xf32>
+// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<5x?xf32>) outs(%{{.*}} : tensor<5x?xf32>) -> tensor<5x?xf32>
 // CHECK: return %[[VREC]]
 func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt_dynshape(%s: tensor<5x?xf32>, %d : index) -> tensor<5x?xf32> {
     %0 = tensor.empty(%d) : tensor<5x?xf32>

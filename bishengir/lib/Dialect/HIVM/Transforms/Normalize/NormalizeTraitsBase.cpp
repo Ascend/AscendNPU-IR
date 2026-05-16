@@ -87,6 +87,21 @@ Value mlir::hivm::NormalizeTraitsBase::castValue(
   return getPrimaryCastValue(castOp);
 }
 
+Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
+    PatternRewriter &rewriter, Location loc, Value scalar, Type dstType) {
+  auto tensorType = RankedTensorType::get({1}, scalar.getType());
+  Value fromElementsOp =
+      rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
+  hivm::RoundMode roundMode =
+      utils::selectRoundMode<hivm::RoundMode>(scalar.getType(), dstType);
+  auto castOp = hivm::castTo(
+      rewriter, loc, fromElementsOp,
+      rewriter.getAttr<hivm::RoundModeAttr>(roundMode), dstType);
+  Value castValue = getPrimaryCastValue(castOp);
+  auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  return rewriter.create<tensor::ExtractOp>(loc, castValue, ValueRange{c0});
+}
+
 template <typename UnaryOp>
 mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
                               mlir::Location loc, mlir::Value input,
@@ -280,6 +295,34 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
+    std::optional<RoundMode> roundMode) {
+  if (!roundMode) {
+    hivm::RoundMode defaultRoundMode =
+        utils::selectRoundMode<hivm::RoundMode>(
+            getElementTypeOrSelf(input.getType()), targetElemType);
+    auto castOp = hivm::castTo(
+        rewriter, loc, input,
+        rewriter.getAttr<hivm::RoundModeAttr>(defaultRoundMode),
+        targetElemType);
+    return getPrimaryCastValue(castOp);
+  }
+
+  Type srcElemType = getElementTypeOrSelf(input.getType());
+  hivm::RoundMode actualRoundMode = *roundMode;
+  if ((srcElemType.isF16() || srcElemType.isBF16()) && targetElemType.isF32()) {
+    // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
+    actualRoundMode = hivm::RoundMode::RINT;
+  }
+  auto castOp = hivm::castTo(rewriter, loc, input,
+                             rewriter.getAttr<hivm::RoundModeAttr>(actualRoundMode),
+                             targetElemType);
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(
+      hivm::TypeFn::cast_signed));
+  return getPrimaryCastValue(castOp);
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
+    PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind) {
   Type srcElemType = getElementTypeOrSelf(input.getType());
   hivm::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
@@ -303,6 +346,46 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
   return rewriter
       .create<hivm::VBrcOp>(loc, TypeRange(dst.getType()), input, dst)
       .getResult()[0];
+}
+
+bool mlir::hivm::NormalizeTraitsBase::matchFillOp(Operation *op) {
+  return isa<hivm::VBrcOp>(op) &&
+         !isa<ShapedType>(cast<hivm::VBrcOp>(op).getSrc().getType());
+}
+
+Value mlir::hivm::NormalizeTraitsBase::getFillInput(Operation *op) {
+  return cast<hivm::VBrcOp>(op).getSrc();
+}
+
+bool mlir::hivm::NormalizeTraitsBase::matchBroadcastOp(Operation *op) {
+  return isa<hivm::VBrcOp>(op) &&
+         isa<ShapedType>(cast<hivm::VBrcOp>(op).getSrc().getType());
+}
+
+Value mlir::hivm::NormalizeTraitsBase::getBroadcastInput(Operation *op) {
+  return cast<hivm::VBrcOp>(op).getSrc();
+}
+
+SmallVector<int64_t>
+mlir::hivm::NormalizeTraitsBase::getBroadcastDims(Operation *op) {
+  return llvm::to_vector(cast<hivm::VBrcOp>(op).getBroadcastDims());
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createBroadcastOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst,
+    ArrayRef<int64_t> dims) {
+  // HIVM vbrc requires empty broadcast_dims for scalar sources. Treat a
+  // rank-0 tensor source as scalar by extracting it before materializing vbrc.
+  if (auto inputType = dyn_cast<RankedTensorType>(input.getType());
+      inputType && inputType.getRank() == 0) {
+    Value scalar = rewriter.create<tensor::ExtractOp>(loc, input, ValueRange{});
+    return createFillOp(rewriter, loc, scalar, dst);
+  }
+
+  auto brcOp = rewriter.create<hivm::VBrcOp>(
+      loc, TypeRange(dst.getType()), input, dst,
+      /*tempBuffer=*/Value{}, rewriter.getDenseI64ArrayAttr(dims));
+  return brcOp->getResult(0);
 }
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
     PatternRewriter &rewriter, Location loc, Type resultType, Value source) {

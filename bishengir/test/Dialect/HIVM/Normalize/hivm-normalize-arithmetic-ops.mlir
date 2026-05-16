@@ -17,11 +17,11 @@ func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt(%arg0: tensor<5x1xf32>) -
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>)
-// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf16>
-// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf16>
-// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY1]] : tensor<16xf16>) -> tensor<16xf16>
-// CHECK: %[[VREC:.*]] = hivm.hir.vrec ins(%[[VSQRT]] : tensor<16xf16>) outs(%[[EMPTY0]] : tensor<16xf16>) -> tensor<16xf16>
-// CHECK: return %[[VREC]]
+// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[VSQRT]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[CAST0]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: return %[[CAST1]]
 func.func @test_NormalizeRSqrt_hivm_rsqrt_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
   %0 = tensor.empty() : tensor<16xf16>
   %1 = hivm.hir.vrsqrt ins(%arg0 : tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
@@ -119,8 +119,13 @@ func.func @test_NormalizeMulRec_mul_div_by_one_rec_right(%arg0: tensor<5x1xf16>,
 
 // CHECK-LABEL: func.func @test_NormalizeDivVSToRec_hivm_div_to_hivm_rec
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<5x1xf16>, %[[ARG1:.*]]: tensor<5x1xf16>)
-// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[ARG0]] : tensor<5x1xf16>) outs(%[[ARG1]] : tensor<5x1xf16>) -> tensor<5x1xf16>
-// CHECK: return %[[REC]]
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<5x1xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<5x1xf16>) outs(%[[EMPTY0]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<5x1xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[CAST0]] : tensor<5x1xf32>) outs(%[[EMPTY1]] : tensor<5x1xf32>) -> tensor<5x1xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<5x1xf16>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<5x1xf32>) outs(%[[EMPTY2]] : tensor<5x1xf16>) -> tensor<5x1xf16>
+// CHECK: return %[[CAST1]]
 func.func @test_NormalizeDivVSToRec_hivm_div_to_hivm_rec(
   %src : tensor<5x1xf16>, %dst : tensor<5x1xf16>) -> tensor<5x1xf16> {
   %cst = arith.constant 1.000000e+00 : f16
@@ -164,8 +169,17 @@ func.func @test_NormalizeDivVSToRec_hivm_div_brc_f16_no_rec(
 
 // CHECK-LABEL: func.func @test_NormalizeDivVSToRec_hivm_div_dynshape_to_hivm_rec
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<?x14336xf16>, %[[ARG1:.*]]: tensor<?x14336xf16>)
-// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[ARG0]] : tensor<?x14336xf16>) outs(%[[ARG1]] : tensor<?x14336xf16>) -> tensor<?x14336xf16>
-// CHECK: return %[[REC]]
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[DIM0:.*]] = tensor.dim %[[ARG0]], %[[C0]] : tensor<?x14336xf16>
+// CHECK: %[[EMPTY0:.*]] = tensor.empty(%[[DIM0]]) : tensor<?x14336xf32>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<?x14336xf16>) outs(%[[EMPTY0]] : tensor<?x14336xf32>) -> tensor<?x14336xf32>
+// CHECK: %[[DIM1:.*]] = tensor.dim %[[CAST0]], %[[C0]] : tensor<?x14336xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty(%[[DIM1]]) : tensor<?x14336xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[CAST0]] : tensor<?x14336xf32>) outs(%[[EMPTY1]] : tensor<?x14336xf32>) -> tensor<?x14336xf32>
+// CHECK: %[[DIM2:.*]] = tensor.dim %[[REC]], %[[C0]] : tensor<?x14336xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty(%[[DIM2]]) : tensor<?x14336xf16>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<?x14336xf32>) outs(%[[EMPTY2]] : tensor<?x14336xf16>) -> tensor<?x14336xf16>
+// CHECK: return %[[CAST1]]
 func.func @test_NormalizeDivVSToRec_hivm_div_dynshape_to_hivm_rec(
   %src : tensor<?x14336xf16>, %dst : tensor<?x14336xf16>) -> tensor<?x14336xf16> {
   %cst = arith.constant 1.000000e+00 : f16

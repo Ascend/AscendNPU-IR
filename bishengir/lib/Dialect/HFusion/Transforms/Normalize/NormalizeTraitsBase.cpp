@@ -57,6 +57,16 @@ Value mlir::hfusion::NormalizeTraitsBase::castValue(
                          unsignedMode);
 }
 
+Value mlir::hfusion::NormalizeTraitsBase::castScalarThroughTensor(
+    PatternRewriter &rewriter, Location loc, Value scalar, Type dstType) {
+  auto tensorType = RankedTensorType::get({1}, scalar.getType());
+  Value fromElementsOp =
+      rewriter.create<tensor::FromElementsOp>(loc, tensorType, scalar);
+  Value castValue = hfusion::castTo(rewriter, fromElementsOp, dstType);
+  auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  return rewriter.create<tensor::ExtractOp>(loc, castValue, ValueRange{c0});
+}
+
 template <typename Kind, typename Fn>
 static std::optional<Fn>
 lookupMappedFn(const llvm::DenseMap<Kind, Fn> &kindToFn, Kind kind) {
@@ -277,6 +287,14 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
+    std::optional<RoundMode> roundMode) {
+  if (roundMode)
+    return hfusion::castTo(rewriter, input, targetElemType, *roundMode);
+  return hfusion::castTo(rewriter, input, targetElemType);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
+    PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind) {
   hfusion::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
   return hfusion::castTo(rewriter, input, targetElemType, roundMode);
@@ -286,6 +304,34 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createFillOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst) {
   auto fillOp = rewriter.create<linalg::FillOp>(loc, ValueRange{input}, dst);
   return fillOp->getResult(0);
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchFillOp(Operation *op) {
+  return isa<linalg::FillOp>(op);
+}
+
+Value mlir::hfusion::NormalizeTraitsBase::getFillInput(Operation *op) {
+  return cast<linalg::FillOp>(op).getInputs()[0];
+}
+
+bool mlir::hfusion::NormalizeTraitsBase::matchBroadcastOp(Operation *op) {
+  return isa<linalg::BroadcastOp>(op);
+}
+
+Value mlir::hfusion::NormalizeTraitsBase::getBroadcastInput(Operation *op) {
+  return cast<linalg::BroadcastOp>(op).getInput();
+}
+
+SmallVector<int64_t>
+mlir::hfusion::NormalizeTraitsBase::getBroadcastDims(Operation *op) {
+  return llvm::to_vector(cast<linalg::BroadcastOp>(op).getDimensions());
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createBroadcastOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst,
+    ArrayRef<int64_t> dims) {
+  return rewriter.create<linalg::BroadcastOp>(loc, input, dst, dims)
+      ->getResult(0);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
