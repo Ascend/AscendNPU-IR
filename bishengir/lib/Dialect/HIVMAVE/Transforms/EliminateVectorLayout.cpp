@@ -18,11 +18,11 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
  
 namespace mlir {
-#define GEN_PASS_DEF_REMOVEVECTORLAYOUTATTR
+#define GEN_PASS_DEF_ELIMINATEVECTORLAYOUT
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h.inc"
 } // namespace mlir
-
-#define DEBUG_TYPE "remove-vector-layout-attr"
+ 
+#define DEBUG_TYPE "eliminate-vector-layout"
  
 using namespace mlir;
  
@@ -83,16 +83,16 @@ void eliminateVectorLayoutCastOp (hivmave::VectorLayoutCastOp op, IRRewriter &re
   rewriter.replaceOp(op, op->getOperand(0));
 }
  
-struct RemoveVectorLayoutAttrPass
-    : public impl::RemoveVectorLayoutAttrBase<RemoveVectorLayoutAttrPass> {
-  using RemoveVectorLayoutAttrBase<
-      RemoveVectorLayoutAttrPass>::RemoveVectorLayoutAttrBase;
+struct EliminateVectorLayoutPass
+    : public impl::EliminateVectorLayoutBase<EliminateVectorLayoutPass> {
+  using EliminateVectorLayoutBase<
+      EliminateVectorLayoutPass>::EliminateVectorLayoutBase;
  
 public:
   void runOnOperation() override;
 };
  
-void RemoveVectorLayoutAttrPass::runOnOperation() {
+void EliminateVectorLayoutPass::runOnOperation() {
   auto funcOp = getOperation();
   IRRewriter rewriter(funcOp.getContext());
   SmallVector<Operation *> ops;
@@ -111,6 +111,6 @@ void RemoveVectorLayoutAttrPass::runOnOperation() {
 }
  
 } // namespace
-std::unique_ptr<Pass> hivmave::createRemoveVectorLayoutAttrPass() {
-  return std::make_unique<RemoveVectorLayoutAttrPass>();
+std::unique_ptr<Pass> hivmave::createEliminateVectorLayoutPass() {
+  return std::make_unique<EliminateVectorLayoutPass>();
 }

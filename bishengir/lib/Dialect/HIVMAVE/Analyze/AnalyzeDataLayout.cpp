@@ -63,7 +63,7 @@ static bool isSparseUnfriendlyOp(const Operation &op) {
     }
   }
   return isa<hivmave::VFInterleaveOp, hivmave::VFDeInterleaveOp,
-             hivmave::VFStoreWithStrideOp, hivmave::VFSlideOp, hivmave::VFVCIOp>(op);
+             hivmave::VFStoreWithStrideOp, hivmave::VFSlideOp>(op);
 }
 
 /// If there is a SparseUnfriendlyOp, we should set element alignment of its

@@ -1,8 +1,5 @@
 add_bishengir_conversion_library(MLIRAnalyzeArithVectorMask
-  AnalyzeAlignmentBitwidth.cpp
   AnalyzeDataLayout.cpp
-  AnalyzeVectorLayout.cpp
-  RemoveVectorLayoutAttr.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/AVE

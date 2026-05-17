@@ -639,6 +639,7 @@ def AVE_ReductionOp :
      PredOpTrait<"source operand vector and result have same element type",
                  TCresVTEtIsSameAsOpBase<0, 0>>,
      AllShapesMatch<["vector", "result"]>,
+     HasMatchingMaskTypeConstraint<"result", "mask">,
      DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>
      ]>,
      Arguments<(ins AVE_CombiningKindAttr:$kind,
