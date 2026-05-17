@@ -113,27 +113,27 @@ def HoistVstas : Pass<"hoist-vstas",  "func::FuncOp"> {
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
+def AppendVectorLayout : Pass<"append-vector-layout", "func::FuncOp"> {
+  let summary = "Append vector layout attribute";
+  let constructor = "::mlir::hivmave::createAppendVectorLayoutPass()";
+  let dependentDialects = ["hivmave::AVEDialect"];
+}
+
+def AnnotateDistOpLayout : Pass<"annotate-dist-op-layout", "func::FuncOp"> {
+  let summary = "Annotate op related to dist pattern.";
+  let constructor = "::mlir::hivmave::createAnnotateDistOpLayoutPass()";
+  let dependentDialects = ["hivmave::AVEDialect"];
+}
+
+def EliminateVectorLayout : Pass<"eliminate-vector-layout", "func::FuncOp"> {
+  let summary = "Eliminate vector layout attribute";
+  let constructor = "::mlir::hivmave::createEliminateVectorLayoutPass()";
+  let dependentDialects = ["hivmave::AVEDialect"];
+}
+
 def AnalyzeDataLayout : Pass<"data-layout-analyze", "func::FuncOp"> {
   let summary = "Analyze hivmave ops inside VF to get element alignment bit width";
   let constructor = "mlir::hivmave::createDataLayoutAnalysisPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
-def AnalyzeVectorLayout : Pass<"analyze-vector-layout", "func::FuncOp"> {
-  let summary = "Analyze vector layout";
-  let constructor = "::mlir::hivmave::createAnalyzeVectorLayoutPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
-def AnalyzeAlignmentBitwidth : Pass<"analyze-alignment-bitwidth", "func::FuncOp"> {
-  let summary = "Analyze alignment bitwidth";
-  let constructor = "::mlir::hivmave::createAnalyzeAlignmentBitwidthPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
-def RemoveVectorLayoutAttr : Pass<"remove-vector-layout-attr", "func::FuncOp"> {
-  let summary = "Remove vector layout attribute before lowering to ave-intrin";
-  let constructor = "::mlir::hivmave::createRemoveVectorLayoutAttrPass()";
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
