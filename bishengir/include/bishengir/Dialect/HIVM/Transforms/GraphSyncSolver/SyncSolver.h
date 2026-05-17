@@ -200,7 +200,8 @@ protected:
                                bool isUseless);
 
   std::optional<LoopLikeOpInterface>
-  getMultiBufferLoop(const llvm::SmallVector<MemInfo> &memInfoList1,
+  getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
+                     const llvm::SmallVector<MemInfo> &memInfoList1,
                      const llvm::SmallVector<MemInfo> &memInfoList2);
   std::optional<LoopLikeOpInterface> getMultiBufferLoop(RWOperation *rwOp1,
                                                         RWOperation *rwOp2);
@@ -230,11 +231,28 @@ protected:
       const llvm::SmallVector<ConflictPair *> &extraConflictPairs = {},
       const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs = {});
 
+  bool ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                            const MemInfo &memInfo1, const MemInfo &memInfo2);
+
+  bool checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                            const MemInfo &memInfo1, const MemInfo &memInfo2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
+
+  bool checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                            const llvm::SmallVector<MemInfo> &memInfoList1,
+                            const llvm::SmallVector<MemInfo> &memInfoList2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
+
   llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
   checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
-  bool checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
-                                              Occurrence *occ2);
+  bool checkMemoryConflictBetweenOccExclusive(
+      Occurrence *occ1, Occurrence *occ2,
+      std::function<bool(RWOperation *)> filter = [](RWOperation *) {
+        return true;
+      });
 
   // Feasibility checks and bookkeeping accessors used by the solver loop.
   bool checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2);
