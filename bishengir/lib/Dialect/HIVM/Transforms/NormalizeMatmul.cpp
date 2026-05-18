@@ -252,7 +252,8 @@ FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
   return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
 }
 
-template <typename T> struct SetRealMKNPattern : public OpRewritePattern<T> {
+template <typename T>
+struct SetRealMKNPattern : public OpRewritePattern<T> {
 public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T mmadLikeOp,
@@ -413,7 +414,8 @@ inline Value getBiasInputForPerChannelAdd(Value v) {
 /// %3 = hivm.hir.mmadL1 ins(*, bias = %1) outs(%2 : tensor<16x32xf32>) ->
 ///        tensor<16x32xf32>
 /// ```
-template <typename T>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
                                                T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
@@ -459,7 +461,8 @@ LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
 /// }
 /// some_use(%1)
 /// ```
-template <typename T>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult
 decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
   auto matmulOutput = op.getC();
@@ -518,7 +521,8 @@ decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T o
 /// }
 /// some_use(%1)
 /// ```
-template <typename T>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult
 decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter, T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
@@ -578,17 +582,19 @@ public:
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
     }
-    if (biasMode == MatmulBiasMode::PerChannelAdd) {
-      LDBG("decompose matmul with per channel add");
-      return decomposeMatmulWithPerChannelAdd<T>(rewriter, op);
-    }
-    if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
-      LDBG("decompose matmul with post per channel add with split k add");
-      return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter, op);
-    }
-    if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
-      LDBG("decompose matmul with mm init per channel add with split k add");
-      return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
+    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
+      if (biasMode == MatmulBiasMode::PerChannelAdd) {
+        LDBG("decompose matmul with per channel add");
+        return decomposeMatmulWithPerChannelAdd<T>(rewriter, op);
+      }
+      if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+        LDBG("decompose matmul with post per channel add with split k add");
+        return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter, op);
+      }
+      if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
+        LDBG("decompose matmul with mm init per channel add with split k add");
+        return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
+      }
     }
 
     Value mmadResult = op.getResults()[0];
@@ -613,7 +619,8 @@ void populateSetRealMKNPattern(RewritePatternSet &patterns) {
 
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
   patterns.add<DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
-               DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>>(
+               DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>,
+               DecomposeMatmulWithBiasPattern<hivm::MmadMxL1Op>>(
       patterns.getContext());
 }
 

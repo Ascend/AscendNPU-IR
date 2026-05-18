@@ -38,6 +38,8 @@ private:
 /// \note MmadL1Op should be bufferized beforehand.
 LogicalResult inferAndPropagateMemScopeForMmadL1(MmadL1Op op);
 
+/// Infer, propagate, and set memory scope information to MmadMxL1Op.
+/// \note MmadMxL1Op should be bufferized beforehand.
 LogicalResult inferAndPropagateMemScopeForMmadMxL1(MmadMxL1Op op);
 
 /// Infer, propagate, and set memory scope information to FuncOp.

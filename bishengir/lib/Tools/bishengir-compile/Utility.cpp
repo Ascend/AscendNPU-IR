@@ -216,6 +216,18 @@ bool hasSplitModules(ModuleOp topMod) {
   return !topMod.getOps<ModuleOp>().empty();
 }
 
+bool shouldUseSoftDotScale(ModuleOp module) {
+  bool useSoftDotScale = false;
+  module.walk<WalkOrder::PreOrder>([&](hfusion::MatMulMxOp matmulMxOp) -> WalkResult {
+    auto aType = matmulMxOp->getOperand(0).getType().cast<ShapedType>();
+    auto K = aType.getShape()[1];
+    if (K == 32) 
+      useSoftDotScale = true;
+    return WalkResult::interrupt();
+  });
+  return useSoftDotScale;
+}
+
 llvm::LogicalResult
 inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
   // check scope
@@ -233,21 +245,7 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     return success();
   }
 
-  bool foundDotScaled = false;
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
-    if (isa<hfusion::MatMulMxOp>(op)) {
-      foundDotScaled = true;
-      return WalkResult::interrupt();
-    } else if (isa<func::FuncOp>(op)) {
-      const auto func = cast<func::FuncOp>(op);
-      if (func->hasAttr("IsDotScaleKernel")) {
-        foundDotScaled = true;
-        return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  });
-  if (foundDotScaled) {
+  if (shouldUseSoftDotScale(module)) {
     config.setEnableMixedCV(false);
     return success();
   }
@@ -265,10 +263,8 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
 
 llvm::LogicalResult
 inferDotScale(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
-  module.walk([&](hfusion::MatMulMxOp op) {
+  if (shouldUseSoftDotScale(module)) 
     config.setEnableDotScaledCompile(true);
-    return WalkResult::interrupt();
-  });
   return success();
 }
 

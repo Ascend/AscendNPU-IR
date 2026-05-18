@@ -362,3 +362,25 @@ func.func @test_convert_layout_tensor(%arg : tensor<128x128xf16>) -> tensor<8x8x
                       : (tensor<128x128xf16>) -> tensor<8x8x16x16xf16>
   return %alloc_new_layout : tensor<8x8x16x16xf16>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_mmadmxl1
+func.func @test_mmadmxl1(%arg0: memref<4x8xf8E4M3FN>,
+                         %arg1: memref<8x16xf8E4M3FN>,
+                         %arg2: memref<1xui8>,
+                         %arg3: memref<1xui8>,
+                         %init_condition : i1,
+                         %real_m: index,
+                         %real_k: index,
+                         %real_n: index,
+                         %arg8: memref<4x16xf8E5M2>) {
+  // Convert memrefs to tensors
+  %a = bufferization.to_tensor %arg0 : memref<4x8xf8E4M3FN>
+  %b = bufferization.to_tensor %arg1 : memref<8x16xf8E4M3FN>
+  %scaleA = bufferization.to_tensor %arg2 : memref<1xui8>
+  %scaleB = bufferization.to_tensor %arg3 : memref<1xui8>
+  %c = bufferization.to_tensor %arg8 : memref<4x16xf8E5M2>
+// CHECK: hivm.hir.mmadmxL1
+  %result = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %init_condition, %real_m, %real_k, %real_n : tensor<4x8xf8E4M3FN>, tensor<8x16xf8E4M3FN>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%c : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
+  return
+}

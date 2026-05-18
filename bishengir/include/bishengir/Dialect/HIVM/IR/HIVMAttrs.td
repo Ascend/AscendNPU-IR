@@ -941,7 +941,6 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_ElementwiseAdd,
   HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
 ]>;
-
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
                    [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,

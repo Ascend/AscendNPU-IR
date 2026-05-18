@@ -990,6 +990,44 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
     indirect_store_no_mask<dim, dtype, itype>(dst, idx, src);                    \
   }
 
+#define REGISTE_INDIRECT_ATOMIC_CAS(dtype, itype)                              \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_indirect_atomic_cas_##dtype##_##itype(                      \
+          memref_t<__gm__ dtype, 1> *src,                                      \
+          memref_t<__ubuf__ itype, 1> *offsets,                                \
+          memref_t<__ubuf__ dtype, 1> *comp,                                   \
+          memref_t<__ubuf__ dtype, 1> *value,                                  \
+          memref_t<__ubuf__ dtype, 1> *out) {                                  \
+    indirect_atomic_cas<dtype, itype>(src, offsets, comp, value, out);         \
+  }
+
+#define DECLARE_INDIRECT_ATOMIC(op, dtype, itype)                              \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_indirect_atomic_##op##_##dtype##_##itype(                   \
+          memref_t<__gm__ dtype, 1> *src,                                      \
+          memref_t<__ubuf__ itype, 1> *offsets,                                \
+          memref_t<__ubuf__ dtype, 1> *value,                                  \
+          memref_t<__ubuf__ int8_t, 1> *mask,                                  \
+          memref_t<__ubuf__ dtype, 1> *out)
+
+#define REGISTE_INDIRECT_ATOMIC(op, dtype, itype)                              \
+  DECLARE_INDIRECT_ATOMIC(op, dtype, itype) {                                  \
+    indirect_atomic_##op<dtype, itype>(src, offsets, value, mask, out);        \
+  }
+
+#define DECLARE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype)                      \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_indirect_atomic_no_mask_##op##_##dtype##_##itype(           \
+          memref_t<__gm__ dtype, 1> *src,                                      \
+          memref_t<__ubuf__ itype, 1> *offsets,                                \
+          memref_t<__ubuf__ dtype, 1> *value,                                  \
+          memref_t<__ubuf__ dtype, 1> *out)
+
+#define REGISTE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype)                      \
+  DECLARE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype) {                          \
+    indirect_atomic_no_mask_##op<dtype, itype>(src, offsets, value, out);      \
+  }
+
 #define DECLARE_SCATTER_UB_TO_OUT(DIM, dataty, idxty, ...)                     \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_scatter_ub_to_out_##DIM##d_##dataty##_##idxty(              \

@@ -516,8 +516,7 @@ static bool LowerSyncToTemplate(SyncOperation *sync, Value eventId, T op,
   return false;
 }
 
-template <>
-bool LowerSyncToTemplate<hivm::MmadMxL1Op>(
+static bool LowerSyncToTemplateMmadMxL1(
     SyncOperation *sync, Value eventId, hivm::MmadMxL1Op op,
     DenseMap<hivm::MmadMxL1Op, SyncTemplateInter<hivm::MmadMxL1Op>> &t) {
   auto iter = t.find(op);
@@ -567,8 +566,8 @@ bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
       return true;
  
   if (auto mmadMxL1Op = dyn_cast_or_null<hivm::MmadMxL1Op>(op))
-    if (LowerSyncToTemplate(sync, eventId, mmadMxL1Op,
-                            mmadMxL12SyncTemplateInter))
+    if (LowerSyncToTemplateMmadMxL1(sync, eventId, mmadMxL1Op,
+                                    mmadMxL12SyncTemplateInter))
       return true;
  
   return false;

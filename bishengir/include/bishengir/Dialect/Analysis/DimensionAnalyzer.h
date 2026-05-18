@@ -234,6 +234,9 @@ protected:
   /// Processes batch_matmul op.
   void processBatchMatmulOp(linalg::BatchMatmulOp batchMatmulOp);
 
+  /// Processes matmulMx operations.
+  void processMatmulMxOp(Operation *op);
+
   /// Processes concat and pad op.
   void processConcatOp(tensor::ConcatOp concatOp);
 

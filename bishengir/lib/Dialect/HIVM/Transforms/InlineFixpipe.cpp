@@ -269,9 +269,8 @@ public:
   }
 };
 
-/// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
-struct InsertFixpipeOpPatternMmadMxL1
-    : public OpRewritePattern<hivm::MmadMxL1Op> {
+template <>
+struct InsertFixpipeOpPattern<hivm::MmadMxL1Op> : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
   using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
   LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
@@ -716,7 +715,7 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
-  patterns.add<InsertFixpipeOpPatternMmadMxL1>(ctx);
+  patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 

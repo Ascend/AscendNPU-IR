@@ -1570,7 +1570,7 @@ bool hfusion::isFP8(Type type, Builder builder) {
          type == builder.getFloat8E4M3B11FNUZType();
 }
 
-/// Tile_reduction_using_for will fail or cause bugs in some context,
+/// Tile_reduction_using_for will fail or cause bugs in some context, 
 /// see issue: AscendNPU-IR/issues/307
 /// So we still use tile_using_for instead for these context.
 bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {

@@ -1735,7 +1735,7 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
   Operation *funcOp = getOperation();
   bool foundMatmul = false;
   funcOp->walk([&](Operation *op) {
-    if (llvm::isa<linalg::MatmulOp, linalg::BatchMatmulOp>(op)) {
+    if (llvm::isa<linalg::MatmulOp, linalg::BatchMatmulOp, hfusion::MatMulMxOp>(op)) {
       foundMatmul = true;
       return WalkResult::interrupt();
     }

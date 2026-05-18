@@ -80,3 +80,80 @@ module {
     return
   }
 }
+
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_acc
+  // CHECK: hfusion.matmul_mx
+  func.func @test_matmulscale_acc(%arg0: memref<4x32xf8E4M3FN>, %arg1: memref<32x16xf8E4M3FN>, %arg2: memref<4x1xui8>, %arg3: memref<16x1xui8>, %arg4: memref<4x16xf8E4M3FN>, %arg5: memref<4x16xf8E5M2>) {
+    %0 = bufferization.to_tensor %arg0 : memref<4x32xf8E4M3FN>
+    %1 = bufferization.to_tensor %arg1 : memref<32x16xf8E4M3FN>
+    %2 = bufferization.to_tensor %arg2 : memref<4x1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<16x1xui8>
+    %4 = bufferization.to_tensor %arg4 : memref<4x16xf8E4M3FN>
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%0, %1, %2, %3 : tensor<4x32xf8E4M3FN>, tensor<32x16xf8E4M3FN>, tensor<4x1xui8>, tensor<16x1xui8>) outs(%4 : tensor<4x16xf8E4M3FN>) -> tensor<4x16xf8E4M3FN>
+    return
+  }
+}
+ 
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_noacc
+  // CHECK: hfusion.matmul_mx
+  func.func @test_matmulscale_noacc(%arg0: memref<4x32xf8E4M3FN>, %arg1: memref<32x16xf8E4M3FN>, %arg2: memref<4x1xui8>, %arg3: memref<1x16xui8>, %arg4: memref<4x16xf8E4M3FN>, %arg5: memref<4x16xf8E5M2>) {
+    %0 = bufferization.to_tensor %arg0 : memref<4x32xf8E4M3FN>
+    %1 = bufferization.to_tensor %arg1 : memref<32x16xf8E4M3FN>
+    %2 = bufferization.to_tensor %arg2 : memref<4x1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<1x16xui8>
+    %4 = bufferization.to_tensor %arg4 : memref<4x16xf8E4M3FN>
+    %empty = tensor.empty() : tensor<4x16xf8E4M3FN>
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%0, %1, %2, %3 : tensor<4x32xf8E4M3FN>, tensor<32x16xf8E4M3FN>, tensor<4x1xui8>, tensor<1x16xui8>) outs(%empty : tensor<4x16xf8E4M3FN>) -> tensor<4x16xf8E4M3FN>
+    return
+  }
+}
+ 
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_e5m2
+  // CHECK: hfusion.matmul_mx
+  func.func @test_matmulscale_e5m2(%arg0: memref<4x32xf8E5M2>, %arg1: memref<32x16xf8E5M2>, %arg2: memref<4x1xui8>, %arg3: memref<16x1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>) {
+    %0 = bufferization.to_tensor %arg0 : memref<4x32xf8E5M2>
+    %1 = bufferization.to_tensor %arg1 : memref<32x16xf8E5M2>
+    %2 = bufferization.to_tensor %arg2 : memref<4x1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<16x1xui8>
+    %4 = bufferization.to_tensor %arg4 : memref<4x16xf8E5M2>
+    %empty = tensor.empty() : tensor<4x16xf8E5M2>
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%0, %1, %2, %3 : tensor<4x32xf8E5M2>, tensor<32x16xf8E5M2>, tensor<4x1xui8>, tensor<16x1xui8>) outs(%empty : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
+    return
+  }
+}
+ 
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_e5m2_memref
+  // CHECK: hfusion.matmul_mx
+  func.func @test_matmulscale_e5m2_memref(%arg0: memref<4x32xf8E5M2>, %arg1: memref<32x16xf8E5M2>, %arg2: memref<4x1xui8>, %arg3: memref<16x1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>, %arg6: memref<4x16xf8E5M2>) {
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%arg0,  %arg1, %arg2, %arg3 : memref<4x32xf8E5M2>, memref<32x16xf8E5M2>,  memref<4x1xui8>, memref<16x1xui8>) outs(%arg6: memref<4x16xf8E5M2>) -> memref<4x16xf8E5M2>
+    return
+  }
+}
+ 
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_error1
+  func.func @test_matmulscale_error1(%arg0: memref<4x32xf8E5M2>, %arg1: memref<7x16xf8E5M2>, %arg2: memref<4x1xui8>, %arg3: memref<16x1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>, %arg6: memref<4x16xf8E5M2>) {
+    // expected-error@+1 {{'hfusion.matmul_mx' op requires inner dimension of matmul matrix to match}}
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%arg0,  %arg1, %arg2, %arg3 : memref<4x32xf8E5M2>, memref<7x16xf8E5M2>,  memref<4x1xui8>, memref<16x1xui8>) outs(%arg6: memref<4x16xf8E5M2>) -> memref<4x16xf8E5M2>
+    return
+  }
+}
+ 
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_error2
+  func.func @test_matmulscale_error1(%arg0: memref<4x32xf8E5M2>, %arg1: memref<32x16xf8E5M2>, %arg2: memref<4x1xui8>, %arg3: memref<16x1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>, %arg6: memref<4x17xf8E5M2>) {
+    // expected-error@+1 {{'hfusion.matmul_mx' op requires output shape to match with input shapes}}
+    %5 = hfusion.matmul_mx {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins(%arg0,  %arg1, %arg2, %arg3 : memref<4x32xf8E5M2>, memref<32x16xf8E5M2>,  memref<4x1xui8>, memref<16x1xui8>) outs(%arg6: memref<4x17xf8E5M2>) -> memref<4x17xf8E5M2>
+    return
+  }
+}

@@ -1121,31 +1121,31 @@ MmadMxL1Op::getOperandsTargetLayout() {
   bool isATranspose = false;
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), isATranspose ? DataLayout::zN : DataLayout::nZ,
-      nullptr,
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
+      BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
  
   auto operB = getB();
   bool isBTranspose = false;
-  auto bBlockSizes = getBlockSizes(operB);
+  auto bBlockSizes = getBlockSizesB(operB, false, true);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
-      nullptr,
+      BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
  
   auto operScaleA = getScaleA();
   auto scaleABlockSizes = getScaleBlockSizes(operScaleA);
   auto scaleALayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::SCALEA_zZ, nullptr,
+      getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleABlockSizes)));
   valLayoutMap[operScaleA] = scaleALayoutAttr;
  
   auto operScaleB = getScaleB();
   auto scaleBBlockSizes = getScaleBlockSizes(operScaleB);
   auto scaleBLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::SCALEB_nN, nullptr,
+      getContext(), DataLayout::SCALEB_nN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
   valLayoutMap[operScaleB] = scaleBLayoutAttr;
  
@@ -1153,7 +1153,7 @@ MmadMxL1Op::getOperandsTargetLayout() {
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   auto mCLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::zN, nullptr,
+      getContext(), DataLayout::zN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
   valLayoutMap[getC()] = mCLayoutAttr;
   return valLayoutMap;
@@ -1172,7 +1172,7 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, nullptr,
+        getContext(), DataLayout::zN, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1194,7 +1194,7 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, nullptr,
+        getContext(), DataLayout::zN, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1217,7 +1217,7 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleALayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::SCALEA_zZ, nullptr,
+        getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1240,7 +1240,7 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleBLayout() {
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::SCALEB_nN, nullptr,
+        getContext(), DataLayout::SCALEB_nN, BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1362,7 +1362,7 @@ bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
     return false;
   return true;
 }
- 
+
 MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
   return getMatmulLikeBiasMode<MmadMxL1Op>(*this);
 }

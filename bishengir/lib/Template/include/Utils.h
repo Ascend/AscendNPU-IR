@@ -192,5 +192,18 @@ GetUintDivMagicAndShiftImpl(T &magic, T &shift, T divisor) {
     magic = GetUintDivMagic(dividend, divisor);
   }
 }
+
+template <typename DTYPE>
+__simt_callee__ __aiv__ __attribute__((always_inline)) 
+constexpr DTYPE MakeSentinelNegOne() {
+  if constexpr (std::is_same<DTYPE, half2>::value) {
+    return half2{static_cast<half>(-1), static_cast<half>(-1)};
+  } else if constexpr (std::is_same<DTYPE, bfloat16x2_t>::value) {
+    return bfloat16x2_t{static_cast<bfloat16_t>(-1),
+                        static_cast<bfloat16_t>(-1)};
+  } else {
+    return static_cast<DTYPE>(-1);
+  }
+}
 #endif
 #endif // HIVM_MLIR_TEMPLATE_UTILS_H

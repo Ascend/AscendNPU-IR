@@ -1546,7 +1546,7 @@ void NormalizeVectorPass::runOnOperation() {
                  BinaryScalarOpToVectorPattern<arith::SubFOp>,
                  BinaryScalarOpToVectorPattern<arith::CmpFOp>>(
         patterns.getContext());
-  if (!enableDotScaledCompile) 
+  if (!enableDotScaledCompile)
     patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());
   vector::ExtractOp::getCanonicalizationPatterns(patterns, ctx);
   vector::ShapeCastOp::getCanonicalizationPatterns(patterns, ctx);
