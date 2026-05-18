@@ -426,6 +426,70 @@ struct HIVMMemBarOpLowering
   }
 };
 
+struct HIVMVpackOpLowering : public ConvertOpToLLVMPattern<hivmave::VFVpackOp> {
+  explicit HIVMVpackOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VFVpackOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VFVpackOp op, hivmave::VFVpackOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value src = adaptor.getSrc();
+    Value part = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
+    VectorType vecType = cast<VectorType>(op.getRes().getType());
+    Type elemType = vecType.getElementType();
+    Type llvmVecType = getTypeConverter()->convertType(vecType);
+    if (!llvmVecType)
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert vector type to LLVM type");
+    auto llvmVecVLType = createVLVectorType(elemType);
+    UnrealizedConversionCastOp srcCasted =
+        rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src);
+    Operation *vpackOp = buildVpackOp(loc, part, srcCasted->getResult(0),
+                                      llvmVecVLType, rewriter);
+    if (!vpackOp)
+      return rewriter.notifyMatchFailure(op, "failed to create VpackInstrOp");
+    UnrealizedConversionCastOp resCasted =
+        rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType,
+                                                    vpackOp->getResult(0));
+    rewriter.replaceOp(op, resCasted->getResult(0));
+    return success();
+  }
+};
+
+struct HIVMVunpackOpLowering
+    : public ConvertOpToLLVMPattern<hivmave::VFVunpackOp> {
+  explicit HIVMVunpackOpLowering(LLVMTypeConverter &converter)
+      : ConvertOpToLLVMPattern<hivmave::VFVunpackOp>(converter) {}
+
+  LogicalResult
+  matchAndRewrite(hivmave::VFVunpackOp op,
+                  hivmave::VFVunpackOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value src = adaptor.getSrc();
+    Value part = rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(adaptor.getPart()));
+    VectorType vecType = cast<VectorType>(op.getRes().getType());
+    Type elemType = vecType.getElementType();
+    Type llvmVecType = getTypeConverter()->convertType(vecType);
+    if (!llvmVecType)
+      return rewriter.notifyMatchFailure(
+          op, "failed to convert vector type to LLVM type");
+    auto llvmVecVLType = createVLVectorType(elemType);
+    UnrealizedConversionCastOp srcCasted =
+        rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src);
+    Operation *vunpackOp = buildVunpackOp(loc, part, srcCasted->getResult(0),
+                                          llvmVecVLType, rewriter);
+    if (!vunpackOp)
+      return rewriter.notifyMatchFailure(op, "failed to create Vzunpack");
+    UnrealizedConversionCastOp resCasted =
+        rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType,
+                                                    vunpackOp->getResult(0));
+    rewriter.replaceOp(op, resCasted->getResult(0));
+    return success();
+  }
+};
+
 /// An entry associating the "main" BinaryOp with its instantiations for
 /// vectors.
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
@@ -1785,8 +1849,8 @@ struct HIVMGatherOpLowering : public ConvertOpToLLVMPattern<VFGatherOp> {
         result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
     } else if (elementType.isBF16()) {
-      Value result = rewriter.create<VGatherV128BF16InstrOp>(loc, vtype, dataPtr,
-                                                            indexVec, mask);
+      Value result = rewriter.create<VGatherV128BF16InstrOp>(
+          loc, vtype, dataPtr, indexVec, mask);
       if (!isAlignByElementAlignment(gather))
         result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
@@ -4133,7 +4197,8 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMPredicateBinaryLogicOpLowering<PregXorOp>,
                HIVMInterleaveOpLowering,HIVMDeInterleaveOpLowering,
                HIVMExpdifOpLowering, HIVMMemBarOpLowering,
-               HIVMVmullOpLowering
+               HIVMVmullOpLowering,
+               HIVMVpackOpLowering, HIVMVunpackOpLowering
   >(converter);
   BinaryRegistry::registerPatterns(converter, patterns);
   UnaryRegistry::registerPatterns(converter, patterns);

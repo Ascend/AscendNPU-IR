@@ -555,6 +555,52 @@ Operation *hivm_regbaseintrins::buildMovvpOp(Location loc, Type type,
   return result;
 }
 
+Operation *hivm_regbaseintrins::buildPpackOp(Location loc, Value part,
+                                             Value src,
+                                             PatternRewriter &rewriter) {
+  auto pregType = VectorType::get(256, rewriter.getI1Type());
+  Operation *result = rewriter.create<PpackInstrOp>(loc, pregType, src, part);
+  return result;
+}
+
+Operation *hivm_regbaseintrins::buildPunpackOp(Location loc, Value part,
+                                               Value src,
+                                               PatternRewriter &rewriter) {
+  auto pregType = VectorType::get(256, rewriter.getI1Type());
+  Operation *result = rewriter.create<PunpackInstrOp>(loc, pregType, src, part);
+  return result;
+}
+
+Operation *hivm_regbaseintrins::buildVpackOp(Location loc, Value part,
+                                             Value src, Type vectorType,
+                                             PatternRewriter &rewriter) {
+  // Check if src has a valid vector type with b16 or b32 element type
+  if (auto vecType = dyn_cast<VectorType>(src.getType())) {
+    Type elemType = vecType.getElementType();
+    unsigned bitWidth = elemType.getIntOrFloatBitWidth();
+    if (bitWidth != 16 && bitWidth != 32) {
+      llvm_unreachable("Invalid element type for VpackInstrOp, only b16 and b32 are supported");
+    }
+  }
+  Operation *result = rewriter.create<VpackInstrOp>(loc, vectorType, src, part);
+  return result;
+}
+
+Operation *hivm_regbaseintrins::buildVunpackOp(Location loc, Value part,
+                                                Value src, Type vectorType,
+                                                PatternRewriter &rewriter) {
+  // Check if src has a valid vector type with b8, b16, or b6 element type
+  if (auto vecType = dyn_cast<VectorType>(src.getType())) {
+    Type elemType = vecType.getElementType();
+    unsigned bitWidth = elemType.getIntOrFloatBitWidth();
+    if (bitWidth != 8 && bitWidth != 16 && bitWidth != 6) {
+      llvm_unreachable("Invalid element type for Vzunpack, only b8, b16, and b6 are supported");
+    }
+  }
+  Operation *result = rewriter.create<Vzunpack>(loc, vectorType, src, part);
+  return result;
+}
+
 Operation *hivm_regbaseintrins::buildPltOp(Value count,
                                            unsigned elementBitWidth,
                                            PatternRewriter &rewriter) {
