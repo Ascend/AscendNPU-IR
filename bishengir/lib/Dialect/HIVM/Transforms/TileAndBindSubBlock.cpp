@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -590,21 +591,21 @@ public:
   }
 };
 
-/// add if (sublock_id == 0) guard for each store/copy op.
+/// add if (sublock_id == 0) guard for each store/copy/custom op.
 /// e.g.
 /// case 1: store/copy op without results
 ///   store/copy op
 /// is changed to
 ///   if (subblock_id == 0)
 ///     store/copy op
-/// case 2: store/copy op with results
-///   %res = store/copy op
+/// case 2: op with results
+///   %res = store/copy/custom op outs(...)
 /// is changed to
-///   if (subblock_id == 0)
-///     %res = store/copy op
-///     yield %res
+///   %res = if (subblock_id == 0)
+///     %new_res = store/copy/custom op outs(...)
+///     yield %new_res
 ///   else
-///     yield store/copy's outs
+///     yield corresponding dps init operands
 template <typename OpType>
 struct LimitUniqueSubBlockIdToStoreCopy : public OpRewritePattern<OpType> {
 public:
@@ -651,28 +652,44 @@ public:
       return success();
     }
 
-    // case 2: store op with results
-    Type dstType = op.getDst().getType();
-    auto ifOp = rewriter.create<scf::IfOp>(loc, dstType, cond, true);
+    // case 2: op with results.
+    auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp)
+      return rewriter.notifyMatchFailure(op, "expected destination style op");
+
+    SmallVector<Value> elseYields;
+    elseYields.reserve(op->getNumResults());
+    for (OpResult result : op->getResults()) {
+      OpOperand *initOperand =
+          dpsOp.getDpsInitOperand(result.getResultNumber());
+      Value init = initOperand->get();
+      if (result.getType() != init.getType())
+        return rewriter.notifyMatchFailure(
+            op, "op result type does not match tied init operand type");
+      elseYields.push_back(init);
+    }
+
+    auto ifOp =
+        rewriter.create<scf::IfOp>(loc, op->getResultTypes(), cond, true);
     // then block
     {
       PatternRewriter::InsertionGuard insertionGuard(rewriter);
       auto thenBodyBuilder = ifOp.getThenBodyBuilder(rewriter.getListener());
-      auto cloneStoreOp = thenBodyBuilder.clone(*op.getOperation());
-      Value thenYield = cloneStoreOp->getResults()[0];
-      ifOp.getThenBodyBuilder().template create<scf::YieldOp>(loc, thenYield);
+      Operation *cloneOp = thenBodyBuilder.clone(*op.getOperation());
+      thenBodyBuilder.template create<scf::YieldOp>(loc,
+                                                    cloneOp->getResults());
     }
 
     // else block
     {
       rewriter.setInsertionPointToEnd(&ifOp.getElseRegion().front());
-      rewriter.create<scf::YieldOp>(loc, op.getDst());
+      rewriter.create<scf::YieldOp>(loc, elseYields);
     }
     rewriter.modifyOpInPlace(ifOp, [&]() {
       ifOp->setAttr(kLimitedSubBlockOpAttrName,
                     UnitAttr::get(ifOp->getContext()));
     });
-    rewriter.replaceOp(op, ifOp);
+    rewriter.replaceOp(op, ifOp.getResults());
     return success();
   }
 };
@@ -686,6 +703,9 @@ LogicalResult mlir::hivm::limitUniqueSubBlockToStore(func::FuncOp funcOp) {
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CopyOp>>(
       funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::IndirectStoreOp>>(
+      funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CustomOp>,
+               LimitUniqueSubBlockIdToStoreCopy<hivm::CustomMacroOp>>(
       funcOp.getContext());
   GreedyRewriteConfig config;
   config.maxIterations = kMaxIterations;
@@ -994,6 +1014,28 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   return newFunc;
 }
 
+static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
+                                         ArrayRef<func::FuncOp> aicFunctions) {
+  // Custom ops may have side effects and variadic outs/results, and must never
+  // be cloned into the 1:2 sub-block loop.
+  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+        return hfusion::util::hasCustomOp(aivFunc);
+      }))
+    return true;
+
+  // limitUniqueSubBlockToStore vector function and skip this pass if
+  // BatchMatmul is found.
+  if (hasBatchMatmulLoopInAicFuncs(aicFunctions))
+    return true;
+
+  // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
+  // loaded and extracted to use. In some cases, the extract slice is not fused
+  // into the vector function, which will lead to precision error because of the
+  // function boundary setting of one-shot-bufferize. So we don't tile cases with
+  // implicit transpose at all to avoid the problem for now.
+  return hasImplicitTransposeWithLastAxisInAiv(aivFunctions);
+}
+
 /// Walks through all functions in the module and attempts to tile and bind
 /// sub-blocks for vector functions.
 ///
@@ -1033,24 +1075,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return success();
   };
 
-  if (!this->enableTile) {
-    (void)limitAllAivToSubBlock0();
-    return;
-  }
-
-  // limitUniqueSubBlockToStore vector function and skip this pass if
-  // BatchMatmul is found
-  if (hasBatchMatmulLoopInAicFuncs(aicFunctions)) {
-    (void)limitAllAivToSubBlock0();
-    return;
-  }
-
-  // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
-  // loaded and extracted to use. In some cases, the extract slice is not fused
-  // into the vector function, which will lead to precision error because of the
-  // function boundary setting of one-shot-bufferize. So we don't tile cases
-  // with implicit transpose at all to avoid the problem for now.
-  if (hasImplicitTransposeWithLastAxisInAiv(aivFunctions)) {
+  if (!this->enableTile ||
+      shouldLimitAllAivToSubBlock0(aivFunctions, aicFunctions)) {
     (void)limitAllAivToSubBlock0();
     return;
   }

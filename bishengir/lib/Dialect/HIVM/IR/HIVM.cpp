@@ -1424,6 +1424,33 @@ std::string getIndexSelectLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
+static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
+  std::string opName = "unknown";
+  if (auto extraAttr = op->template getAttrOfType<StringAttr>("extra_attr")) {
+    StringRef key;
+    StringRef value;
+    std::tie(key, value) = extraAttr.getValue().split('=');
+    value = value.trim();
+    if (key.trim() == "operate" && !value.empty())
+      opName = value.str();
+  }
+
+  ValueRange inputs = op.getInputs();
+  const bool hasMask = inputs.size() > 3;
+
+  Type valueType = inputs[2].getType();
+  const std::string valueTypeStr =
+      hivm::detail::getTypeName(op->getLoc(), getElementTypeOrSelf(valueType));
+
+  Type offsetsType = inputs[1].getType();
+  const std::string offsetsTypeStr =
+      hivm::detail::getTypeName(op->getLoc(), getElementTypeOrSelf(offsetsType));
+
+  return "indirect_atomic_" + opName + (hasMask ? "" : "_no_mask") + "_" +
+         valueTypeStr + "_" + offsetsTypeStr;
+}
+
+template <typename CustomOpT>
 static std::string getCustomOpsLibraryCallName(CustomOpT op) {
   if (op.isBuiltin())
     return CustomOpT::kBuiltins.at(op.getName()).getOpLibraryCallName(op);
@@ -1449,6 +1476,10 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
     {kBuiltinIndexSelectName,
      BuiltinInfo(TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT,
                  getIndexSelectLibraryCallName<CustomOp>,
+                 /* GM Addr Args Indices */ {0})},
+    {kBuiltinIndirectAtomicName,
+     BuiltinInfo(TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT,
+                 getIndirectAtomicLibraryCallName<CustomOp>,
                  /* GM Addr Args Indices */ {0})}};
 
 const DenseMap<StringRef, CustomMacroOp::BuiltinInfo> CustomMacroOp::kBuiltins{

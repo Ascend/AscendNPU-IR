@@ -502,3 +502,35 @@ module {
     return %0 : tensor<8x8xf16>
   }
 }
+
+// -----
+
+// CHECK-LABEL: custom_indirect_atomic_and_matmul_mix_aic(
+// CHECK: hivm.hir.matmul
+// CHECK-NOT: __builtin_indirect_atomic
+// CHECK-LABEL: custom_indirect_atomic_and_matmul_mix_aiv(
+// CHECK: "__builtin_indirect_atomic"
+// CHECK-NOT: hivm.hir.matmul
+module {
+  func.func @custom_indirect_atomic_and_matmul(%dst : memref<?xf32>,
+                                               %offsets : memref<8xi32>,
+                                               %value : memref<8xf32>,
+                                               %mask : memref<8xi8>,
+                                               %out : memref<8xf32>,
+                                               %lhs : tensor<8x8xf16>,
+                                               %rhs : tensor<8x8xf16>,
+                                               %matmul_dst : tensor<8x8xf16>)
+      -> tensor<8x8xf16>
+      attributes {hivm.func_core_type = #hivm.func_core_type<MIX>} {
+    hivm.hir.custom
+        {extra_attr = "operate=add", hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+        "__builtin_indirect_atomic"
+        ins(%dst, %offsets, %value, %mask
+            : memref<?xf32>, memref<8xi32>, memref<8xf32>, memref<8xi8>)
+        outs(%out : memref<8xf32>)
+    %0 = hivm.hir.matmul
+         ins(%lhs, %rhs : tensor<8x8xf16>, tensor<8x8xf16>)
+         outs(%matmul_dst : tensor<8x8xf16>) -> tensor<8x8xf16>
+    return %0 : tensor<8x8xf16>
+  }
+}

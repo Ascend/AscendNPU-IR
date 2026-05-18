@@ -106,3 +106,59 @@ func.func @indexselect_test(%arg0: memref<?xf32>,
          outs(%0 : tensor<1x4x32xf32>) -> tensor<1x4x32xf32>
   return
 }
+
+// Check indirect_atomic builtin lowers to operation-selected template library.
+// CHECK-LABEL: indirect_atomic_test
+func.func @indirect_atomic_test(%dst: memref<?xf32, #hivm.address_space<gm>>,
+                                %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                %value: memref<16xf32, #hivm.address_space<ub>>,
+                                %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_add_float_int32_t
+  hivm.hir.custom
+      {extra_attr = "operate=add"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xf32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xf32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_max_i64_offsets_test
+func.func @indirect_atomic_max_i64_offsets_test(%dst: memref<?xf32, #hivm.address_space<gm>>,
+                                                %offsets: memref<16xi64, #hivm.address_space<ub>>,
+                                                %value: memref<16xf32, #hivm.address_space<ub>>,
+                                                %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                                %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_max_float_int64_t
+  hivm.hir.custom
+      {extra_attr = "operate=max"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xf32, #hivm.address_space<gm>>,
+            memref<16xi64, #hivm.address_space<ub>>,
+            memref<16xf32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_no_mask_test
+func.func @indirect_atomic_no_mask_test(%dst: memref<?xf32, #hivm.address_space<gm>>,
+                                        %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                        %value: memref<16xf32, #hivm.address_space<ub>>,
+                                        %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_add_no_mask_float_int32_t
+  hivm.hir.custom
+      {extra_attr = "operate=add"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value
+          : memref<?xf32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xf32, #hivm.address_space<ub>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}

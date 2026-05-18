@@ -1748,3 +1748,40 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL:   func.func @custom_variadic_outs_mix_aiv(
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK:           %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK:           %[[SUB_BLOCK:.*]] = hivm.hir.get_sub_block_idx
+// CHECK:           %[[SUB_BLOCK_IDX:.*]] = arith.index_cast %[[SUB_BLOCK]] : i64 to index
+// CHECK:           %[[IS_SUB_BLOCK_0:.*]] = arith.cmpi eq, %[[SUB_BLOCK_IDX]], %[[C0]] : index
+// CHECK:           %[[CUSTOM_RES:.*]]:2 = scf.if %[[IS_SUB_BLOCK_0]] -> (tensor<16xf32>, tensor<16xf32>) {
+// CHECK:             %[[CUSTOM_THEN:.*]]:2 = hivm.hir.custom
+// CHECK:             scf.yield %[[CUSTOM_THEN]]#0, %[[CUSTOM_THEN]]#1 : tensor<16xf32>, tensor<16xf32>
+// CHECK:           } else {
+// CHECK:             scf.yield %[[EMPTY0]], %[[EMPTY1]] : tensor<16xf32>, tensor<16xf32>
+// CHECK:           } {limit_sub_block_id0}
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store ins(%[[CUSTOM_RES]]#0
+// CHECK:           } {limit_sub_block_id0}
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store ins(%[[CUSTOM_RES]]#1
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @custom_variadic_outs_mix_aiv(%arg0: memref<16xf32>, %arg1: memref<16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %empty0 = tensor.empty() : tensor<16xf32>
+    %empty1 = tensor.empty() : tensor<16xf32>
+    %0:2 = hivm.hir.custom
+        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        "my_custom_op" outs(%empty0, %empty1 : tensor<16xf32>, tensor<16xf32>)
+        -> (tensor<16xf32>, tensor<16xf32>)
+    hivm.hir.store ins(%0#0 : tensor<16xf32>) outs(%arg0 : memref<16xf32>)
+    hivm.hir.store ins(%0#1 : tensor<16xf32>) outs(%arg1 : memref<16xf32>)
+    return
+  }
+}
+

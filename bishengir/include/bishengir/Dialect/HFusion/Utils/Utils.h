@@ -363,6 +363,8 @@ hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 
 bool hasDynamicShapeOperand(Operation *op);
 
+bool hasCustomOp(Operation *op);
+
 enum ArchType : int64_t {
   IsMemBased = 0,
   IsRegBased = 1,

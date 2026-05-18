@@ -604,6 +604,8 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   registerOne<func::CallOp>(patterns);
   registerOne<mlir::scf::ForOp>(patterns);
   registerOne<hivm::IndirectLoadOp>(patterns);
+  registerOne<hivm::CustomOp>(patterns);
+  registerOne<hivm::CustomMacroOp>(patterns);
 
   // Treat UB alloc as CV connection point for MoveToL1
   patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
