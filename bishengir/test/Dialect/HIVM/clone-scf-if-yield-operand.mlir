@@ -17,12 +17,15 @@ func.func @test_clone_same_yield_operands(%arg0: i32,
     %7 = hivm.hir.copy ins(%arg3 : tensor<256xf16>) outs(%4 : tensor<256xf16>) -> tensor<256xf16>
     scf.yield %5, %6, %7 : tensor<256xf16>, tensor<256xf16>, tensor<256xf16>
   } else {
-    %2 = tensor.empty() : tensor<256xf16>
     // CHECK: } else {
-    // CHECK: %[[ARG_1:.*]] = hivm.hir.copy ins(%arg1 : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST_1:.*]] = tensor.empty() : tensor<256xf16>
+    // CHECK: %[[ARG_1:.*]] = hivm.hir.copy ins(%arg1 : tensor<256xf16>) outs(%[[DST_1]] : tensor<256xf16>) -> tensor<256xf16>
+    %2 = tensor.empty() : tensor<256xf16>
     %3 = hivm.hir.copy ins(%arg1 : tensor<256xf16>) outs(%2 : tensor<256xf16>) -> tensor<256xf16>
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
-    // CHECK: %[[ARG_3:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST_2:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST_2]] : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST_3:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_3:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST_3]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_1]], %[[ARG_2]], %[[ARG_3]] : tensor<256xf16>, tensor<256xf16>, tensor<256xf16>
     scf.yield %3, %3, %3 : tensor<256xf16>, tensor<256xf16>, tensor<256xf16>
   }
@@ -44,7 +47,8 @@ func.func @test_clone_use_after_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
     %5 = hivm.hir.vadd ins(%arg1, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%4 : tensor<256xf16>) -> tensor<256xf16>
     scf.yield %5 : tensor<256xf16>
   } else {
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
     scf.yield %1 : tensor<256xf16>
   }
@@ -68,7 +72,8 @@ func.func @test_clone_use_after_write_in_SCFIf(%arg0: i32, %arg1 : tensor<256xf1
     hfusion.print " %1 " {hex = false} %1 : tensor<256xf16>
     scf.yield %5 : tensor<256xf16>
   } else {
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
     scf.yield %1 : tensor<256xf16>
   }
@@ -122,7 +127,7 @@ func.func @test_not_clone_before_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
 // -----
 
 func.func @test_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
-                                      %arg2 : tensor<256xf16>) -> tensor<256xf16> {
+                                       %arg2 : tensor<256xf16>) -> tensor<256xf16> {
   %c1_i32 = arith.constant 1 : i32
   %cst_0 = arith.constant 0.000000e+00 : f16
   %0 = tensor.empty() : tensor<256xf16>
@@ -145,7 +150,8 @@ func.func @test_clone_double_SCFIf(%arg0: i32, %arg1 : tensor<256xf16>,
     %5 = hivm.hir.vadd ins(%arg1, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%4 : tensor<256xf16>) -> tensor<256xf16>
     scf.yield %3 : tensor<256xf16>
   } else {
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
     scf.yield %1 : tensor<256xf16>
   }
@@ -170,12 +176,14 @@ func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : t
       %12 = hivm.hir.vadd ins(%arg4, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%11 : tensor<256xf16>) -> tensor<256xf16>
       scf.yield %12 : tensor<256xf16>
     } else {
-      // CHECK: %[[ARG_1:.*]] = hivm.hir.copy ins(%arg4 : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+      // CHECK: %[[DST_1:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+      // CHECK: %[[ARG_1:.*]] = hivm.hir.copy ins(%arg4 : tensor<256xf16>) outs(%[[DST_1]] : tensor<256xf16>) -> tensor<256xf16>
       // CHECK: scf.yield %[[ARG_1]] : tensor<256xf16>
       scf.yield %arg4 : tensor<256xf16>
     }
     hfusion.print " %arg4 " {hex = false} %arg4 : tensor<256xf16>
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_0]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST_2:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_0]] : tensor<256xf16>) outs(%[[DST_2]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
     scf.yield %8 : tensor<256xf16>
   }
@@ -201,7 +209,8 @@ func.func @test_clone_if_yield_operands_defined_out_of_forOp(%arg0: i32, %arg1: 
     %6 = arith.cmpi sge, %3, %c4 : index
     %7 = arith.ori %5, %6 : i1
     %8 = scf.if %7 -> (tensor<256xf16>) {
-      // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+      // CHECK: %[[DST:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+      // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST]] : tensor<256xf16>) -> tensor<256xf16>
       // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
       scf.yield %1 : tensor<256xf16>
     } else {
@@ -235,7 +244,8 @@ func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : te
     hfusion.print " %1 " {hex = false} %1 : tensor<256xf16>
     scf.yield %5 : tensor<256xf16>
   } else {
-    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+    // CHECK: %[[DST:.*]] = bufferization.alloc_tensor() : tensor<256xf16>
+    // CHECK: %[[ARG_2:.*]] = hivm.hir.copy ins(%[[ARG_1]] : tensor<256xf16>) outs(%[[DST]] : tensor<256xf16>) -> tensor<256xf16>
     // CHECK: scf.yield %[[ARG_2]] : tensor<256xf16>
     scf.yield %1 : tensor<256xf16>
   }

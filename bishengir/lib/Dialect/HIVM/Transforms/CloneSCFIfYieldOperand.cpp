@@ -125,7 +125,7 @@ void cloneYieldValue(PatternRewriter &rewriter, scf::YieldOp yieldOp, int idx) {
   auto yieldValue = yieldOp->getOperand(idx);
   rewriter.setInsertionPoint(yieldOp);
   Value dstValue =
-      utils::createEmptyOp(rewriter, yieldOp->getLoc(), yieldValue);
+      utils::createAllocTensorOp(rewriter, yieldOp->getLoc(), yieldValue);
   auto copyOp =
       rewriter.create<hivm::CopyOp>(yieldOp->getLoc(), yieldValue.getType(),
                                     /*src*/ yieldValue, /*dst*/ dstValue);
