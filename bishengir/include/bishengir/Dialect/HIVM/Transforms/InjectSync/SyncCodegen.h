@@ -24,7 +24,8 @@ struct SyncPipeBuild {
 };
 
 /// Sync and Template Interaction.
-template <typename T = hivm::MmadL1Op> struct SyncTemplateInter {
+template <typename T = hivm::MmadL1Op>
+struct SyncTemplateInter {
   SyncTemplateInter() = default;
 
   explicit SyncTemplateInter(Value MmadL1WaitL1AEvent, Value MmadL1WaitL1BEvent,
@@ -54,9 +55,10 @@ template <typename T = hivm::MmadL1Op> struct SyncTemplateInter {
   Value BackPipeMPipeMTE1DBEvent1;
 };
 
-template <> struct SyncTemplateInter<hivm::MmadMxL1Op> {
+template <>
+struct SyncTemplateInter<hivm::MmadMxL1Op> {
   SyncTemplateInter() = default;
-
+ 
   explicit SyncTemplateInter(Value MmadMxL1WaitL1AEvent,
                              Value MmadMxL1WaitL1BEvent,
                              Value L1AWaitMmadMxL1Event,
@@ -65,12 +67,12 @@ template <> struct SyncTemplateInter<hivm::MmadMxL1Op> {
         MmadMxL1WaitL1BEvent(MmadMxL1WaitL1BEvent),
         L1AWaitMmadMxL1Event(L1AWaitMmadMxL1Event),
         L1B2WaitMmadMxL1Event(L1B2WaitMmadMxL1Event) {}
-
+ 
   explicit SyncTemplateInter(Value defaultValue)
       : MmadMxL1WaitL1AEvent(defaultValue), MmadMxL1WaitL1BEvent(defaultValue),
         L1AWaitMmadMxL1Event(defaultValue),
         L1B2WaitMmadMxL1Event(defaultValue) {}
-
+ 
   Value MmadMxL1WaitL1AEvent;
   Value MmadMxL1WaitL1BEvent;
   Value L1AWaitMmadMxL1Event;
@@ -173,7 +175,7 @@ private:
   /// Update the SyncTemplateInter information for the interaction between
   /// MmadMxL1 and the library.
   void UpdateMmadMxL1SyncTemplateInter();
-
+  
   void HandleUnitFlagEnabledOp(IRRewriter &rewriter,
                                UnitFlagEnabledInterface unitFlagEnabledOp,
                                UnitFlagInfo unitFlagInfo) const;
@@ -206,10 +208,10 @@ private:
   /// Collect sync index and corresponding event id expressions.
   DenseMap<unsigned, Value> SyncIndex2EventID;
 
-  /// Collect MmadL1Op SyncTemplateInter info
+  /// Collect MmadL1Op SyncTemplateInter info.
   DenseMap<hivm::MmadL1Op, SyncTemplateInter<hivm::MmadL1Op>>
       mmadL12SyncTemplateInter;
-
+ 
   /// Collect MmadMxL1Op SyncTemplateInter info.
   DenseMap<hivm::MmadMxL1Op, SyncTemplateInter<hivm::MmadMxL1Op>>
       mmadMxL12SyncTemplateInter;

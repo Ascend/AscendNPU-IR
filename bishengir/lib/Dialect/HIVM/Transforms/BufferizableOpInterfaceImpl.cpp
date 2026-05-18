@@ -302,13 +302,13 @@ struct HIVMMatmulMxOpInterface
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
-
+ 
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInit(&opOperand);
   }
-
+ 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     // The `tilingParams` operand might be already bufferized.

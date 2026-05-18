@@ -401,6 +401,7 @@ def L12UBOp : HIVM_DmaOp<"l12ub",
   }];
   let extraClassDeclaration = DmaOpBaseDecl;
 }
+
 def LoadMXScaleOp
     : HIVM_DmaOp<
           "load_scale", [SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,

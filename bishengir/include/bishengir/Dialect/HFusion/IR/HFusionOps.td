@@ -1001,9 +1001,9 @@ def HistogramOp : HFusion_Op<"histogram", [
 // MatMulMxOp
 //===----------------------------------------------------------------------===//
 def MatMulMxOp : HFusion_Op<"matmul_mx", [
-    Pure, 
-    DestinationStyleOpInterface, 
-    DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface, 
+    Pure,
+    DestinationStyleOpInterface,
+    DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
                               ["decomposeOperation"]>
   ]> {
   let summary = "Performs a block-scaled matrix multiplication";
@@ -1013,8 +1013,8 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [
   }];
 
   let arguments = (ins
-    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputA,
-    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>:$inputA,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>:$inputB,
     ShapedTypeOf<[UI8, I8]>:$scaleA,
     ShapedTypeOf<[UI8, I8]>:$scaleB,
     ShapedTypeOf<[AnyFloat]>:$acc,

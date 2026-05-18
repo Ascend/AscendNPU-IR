@@ -424,6 +424,20 @@ void DimensionAnalyzerBase::processBatchMatmulOp(
   disconnect(arg1[0], arg1[1]);
 }
 
+void DimensionAnalyzerBase::processMatmulMxOp(Operation *op) {
+  processMatmulOp(op, false, false);
+ 
+  auto matmulOp = dyn_cast<DestinationStyleOpInterface>(op);
+  auto inputs = matmulOp.getDpsInputs();
+  assert(inputs.size() == 4);
+ 
+  auto arg2 = getArgumentRefOrCreateDummy(inputs[2]);
+  auto arg3 = getArgumentRefOrCreateDummy(inputs[3]);
+ 
+  disconnect(arg2[0], arg2[1]);
+  disconnect(arg3[0], arg3[1]);
+}
+
 void DimensionAnalyzerBase::processConcatOp(tensor::ConcatOp concatOp) {
   LDBG("Processing concat " << concatOp);
   auto dim = concatOp.getDim();

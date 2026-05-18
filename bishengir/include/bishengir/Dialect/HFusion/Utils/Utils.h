@@ -304,6 +304,10 @@ Value castTo(OpBuilder &builder, Value src, Type targetElemType,
 /// Cast `src` value to the specified element type.
 /// Select rounding mode inside.
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+             hfusion::TypeFn castIntegerType,
+             hfusion::UnsignedMode unsignedMode);
+             
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
              hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
 // Checks if a linalg op has only one element
@@ -325,6 +329,10 @@ bool isZeroOrEmptyTensor(Value op);
 bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
                             ArrayRef<int64_t> newShape);
 
+// Check if operations is in cube scope
+bool isInCubeScope(Operation *op);
+
+// Check if type is FP8
 bool isFP8(Type type, Builder builder);
 
 bool shouldUseTileReductionUsingForV2(Operation *Op);

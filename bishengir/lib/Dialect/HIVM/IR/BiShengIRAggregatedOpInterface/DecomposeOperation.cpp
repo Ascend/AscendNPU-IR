@@ -364,10 +364,6 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   return SmallVector<Value>{};
 }
 
-//===----------------------------------------------------------------------===//
-// VPadOp
-//===----------------------------------------------------------------------===//
-
 /// hivm.hir.vpad ins(%src) outs(%dst) low[%low] high[%high] pad_value %cst
 /// The result tensor dimensions are low[i] + dim[i] + high[i] for each
 /// dimension

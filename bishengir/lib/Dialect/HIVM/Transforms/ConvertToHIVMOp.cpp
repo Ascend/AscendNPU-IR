@@ -44,15 +44,41 @@ namespace {
 // Patterns that convert ops from other dialects to HIVM ops.
 //===---------------------------------------------------------------------===//
 
+std::optional<hivm::VBrcOp> findBroadcast(Operation *op) {
+  if (llvm::isa_and_nonnull<hivm::VBrcOp>(op))
+    return cast<hivm::VBrcOp>(op);
+  for (auto *user : op->getUsers()) {
+    LLVM_DEBUG(llvm::dbgs() << "[DCM] user = " << *user << '\n';);
+    if (isa<memref::CollapseShapeOp, memref::ExpandShapeOp>(user)) {
+      for (auto result : user->getResults()) {
+        for (auto *resultUser : result.getUsers()) {
+          auto maybeBroadcast = findBroadcast(resultUser);
+          if (maybeBroadcast.has_value())
+            return maybeBroadcast.value();
+        }
+      }
+    } else {
+      auto maybeBroadcast = findBroadcast(user);
+      if (maybeBroadcast.has_value())
+        return maybeBroadcast.value();
+    }
+  }
+  return std::nullopt;
+}
+
 std::optional<Value> getPadValue(PatternRewriter &rewriter,
                                  std::optional<memref::AllocOp> maybeAlloc) {
   if (!maybeAlloc.has_value())
     return std::nullopt;
+  LLVM_DEBUG(llvm::dbgs() << "[DCM][getPadValue] allocOp = " << maybeAlloc.value() << '\n';);
   // Compatible with older versions
   for (auto *user : maybeAlloc.value()->getUsers()) {
-    if (llvm::isa_and_nonnull<hivm::VBrcOp>(user) &&
-        user->getOperand(0).getType().isIntOrFloat()) {
-      return user->getOperand(0);
+    auto maybeVbrcOp = findBroadcast(user);
+    if (!maybeVbrcOp.has_value())
+      continue;
+    auto vbrcOp = maybeVbrcOp.value();
+    if (vbrcOp->getOperand(0).getType().isIntOrFloat()) {
+      return vbrcOp->getOperand(0);
     }
   }
 
@@ -142,20 +168,23 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
 getInitInfo(Operation *op, hivm::LoadOp loadOp) {
-  if (!llvm::isa<hivm::VBrcOp>(op))
+  auto maybeVbrcOp = findBroadcast(op);
+  if (!maybeVbrcOp.has_value())
     return {std::nullopt, std::nullopt};
-  if (!op->getOperand(0).getType().isIntOrFloat())
+  auto vbrcOp = maybeVbrcOp.value();
+  LLVM_DEBUG(llvm::dbgs() << "[DCM] vbrcOp = " << *vbrcOp << '\n';);
+  if (!vbrcOp->getOperand(0).getType().isIntOrFloat())
     return {std::nullopt, std::nullopt};
 
-  if (op->getBlock() == loadOp->getBlock())
-    return {op, std::nullopt};
-  auto *opParentOp = op->getParentOp();
+  if (vbrcOp->getBlock() == loadOp->getBlock())
+    return {vbrcOp, std::nullopt};
+  auto *opParentOp = vbrcOp->getParentOp();
   if (opParentOp == nullptr)
     llvm::report_fatal_error("unhandled case for null opParentOp");
   if (opParentOp->getBlock() == loadOp->getBlock() &&
       isa<scf::IfOp>(opParentOp)) {
     auto ifOp = cast<scf::IfOp>(opParentOp);
-    return {op, ifOp.getCondition()};
+    return {vbrcOp, ifOp.getCondition()};
   }
 
   return {std::nullopt, std::nullopt};

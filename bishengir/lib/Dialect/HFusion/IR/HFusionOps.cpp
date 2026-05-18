@@ -3294,74 +3294,65 @@ LogicalResult MatMulMxOp::verify() {
   return success();
 }
 
-void markAsDotScaleKernel(func::FuncOp funcOp) {
-  MLIRContext *context = funcOp.getContext();
-  funcOp->setAttr("IsDotScaleKernel", UnitAttr::get(context));
-}
-
 /// Input:
-/// %6 = hfusion.matmul_mx ins(%a, %b, %scaleA, %scaleB : 
+/// %6 = hfusion.matmul_mx ins(%a, %b, %scaleA, %scaleB :
 ///   tensor<64x64xf8E5M2>, tensor<64x64xf8E5M2>, tensor<64x2xi8>, tensor<64x2xi8>) outs(%1 : tensor<64x64xf32>
 /// ) -> tensor<64x64xf32>
 ///
 /// Output:
 /// %c7_i16 = arith.constant 7 : i16
 /// %6 = tensor.empty() : tensor<64x2xi16>
-/// %7 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} 
+/// %7 = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
 ///   ins(%scaleA : tensor<64x2xi8>) outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
 /// %8 = tensor.empty() : tensor<64x2xi16>
-/// %9 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%scaleB: tensor<64x2xi8>) 
+/// %9 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%scaleB: tensor<64x2xi8>)
 ///   outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
 /// %10 = linalg.fill ins(%c7_i16 : i16) outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
-/// %11 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%7, %10 : tensor<64x2xi16>, tensor<64x2xi16>) 
+/// %11 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%7, %10 : tensor<64x2xi16>, tensor<64x2xi16>)
 /// outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
 /// %12 = linalg.fill ins(%c7_i16 : i16) outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
-/// %13 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%9, %12 : tensor<64x2xi16>, tensor<64x2xi16>) 
+/// %13 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%9, %12 : tensor<64x2xi16>, tensor<64x2xi16>)
 ///   outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
 /// %14 = tensor.empty() : tensor<64x2xbf16>
 /// %15 = hfusion.bitcast ins(%11 : tensor<64x2xi16>) outs(%14 : tensor<64x2xbf16>) -> tensor<64x2xbf16>
 /// %16 = tensor.empty() : tensor<64x2xbf16>
 /// %17 = hfusion.bitcast ins(%13 : tensor<64x2xi16>) outs(%16 : tensor<64x2xbf16>) -> tensor<64x2xbf16>
 /// %18 = tensor.empty() : tensor<64x2xf32>
-/// %19 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%15 : tensor<64x2xbf16>) 
+/// %19 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%15 : tensor<64x2xbf16>)
 ///   outs(%18 : tensor<64x2xf32>) -> tensor<64x2xf32>
 /// %20 = tensor.empty() : tensor<64x2xf32>
-/// %21 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%17 : tensor<64x2xbf16>) 
+/// %21 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%17 : tensor<64x2xbf16>)
 ///   outs(%20 : tensor<64x2xf32>) -> tensor<64x2xf32>
 /// %22 = tensor.empty() : tensor<64x64xf16>
-/// %23 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%2 : tensor<64x64xf8E5M2>) 
+/// %23 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%2 : tensor<64x64xf8E5M2>)
 ///   outs(%22 : tensor<64x64xf16>) -> tensor<64x64xf16>
 /// %24 = tensor.empty() : tensor<64x64xf16>
-/// %25 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%4 : tensor<64x64xf8E5M2>) 
+/// %25 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%4 : tensor<64x64xf8E5M2>)
 ///   outs(%24 : tensor<64x64xf16>) -> tensor<64x64xf16>
 /// %26 = tensor.empty() : tensor<64x2xf16>
-/// %27 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%19 : tensor<64x2xf32>) 
+/// %27 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%19 : tensor<64x2xf32>)
 ///   outs(%26 : tensor<64x2xf16>) -> tensor<64x2xf16>
 /// %28 = tensor.empty() : tensor<64x2xf16>
-/// %29 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%21 : tensor<64x2xf32>) 
+/// %29 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%21 : tensor<64x2xf32>)
 ///   outs(%28 : tensor<64x2xf16>) -> tensor<64x2xf16>
 /// %30 = tensor.empty() : tensor<64x2x32xf16>
-/// %broadcasted = linalg.broadcast ins(%27 : tensor<64x2xf16>) outs(%30 : tensor<64x2x32xf16>) dimensions = [2] 
+/// %broadcasted = linalg.broadcast ins(%27 : tensor<64x2xf16>) outs(%30 : tensor<64x2x32xf16>) dimensions = [2]
 /// %collapsed = tensor.collapse_shape %broadcasted [[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
 /// %31 = tensor.empty() : tensor<64x2x32xf16>
-/// %broadcasted_6 = linalg.broadcast ins(%29 : tensor<64x2xf16>) outs(%31 : tensor<64x2x32xf16>) dimensions = [2] 
+/// %broadcasted_6 = linalg.broadcast ins(%29 : tensor<64x2xf16>) outs(%31 : tensor<64x2x32xf16>) dimensions = [2]
 /// %collapsed_7 = tensor.collapse_shape %broadcasted_6 [[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
 /// %32 = tensor.empty() : tensor<64x64xf16>
-/// %transposed = linalg.transpose ins(%collapsed_7 : tensor<64x64xf16>) outs(%32 : tensor<64x64xf16>) 
-///   permutation = [1, 0] 
+/// %transposed = linalg.transpose ins(%collapsed_7 : tensor<64x64xf16>) outs(%32 : tensor<64x64xf16>)
+///   permutation = [1, 0]
 /// %33 = tensor.empty() : tensor<64x64xf16>
-/// %34 = tensor.empty() : tensor<64x64xf16>
-/// %35 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
+/// %34 = tensor.empty() : tensor<64x64xf16> 
+/// %35 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 ///   ins(%a, %collapsed : tensor<64x64xf16>, tensor<64x64xf16>) outs(%33 : tensor<64x64xf16>) -> tensor<64x64xf16>
-/// %36 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} 
+/// %36 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 ///   ins(%b, %transposed : tensor<64x64xf16>, tensor<64x64xf16>) outs(%34 : tensor<64x64xf16>) -> tensor<64x64xf16>
-/// %37 = linalg.matmul ins(%35, %36 : tensor<64x64xf16>, tensor<64x64xf16>) 
+/// %37 = linalg.matmul ins(%35, %36 : tensor<64x64xf16>, tensor<64x64xf16>)
 ///   outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
 FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder) {
-  // Mark func as dot scale
-  auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
-  markAsDotScaleKernel(funcOp);
-
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(getOperation());
   Location location = getLoc();
@@ -3372,17 +3363,27 @@ FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder)
   Value scaleA = getScaleA();
   Value scaleB = getScaleB();
 
+  auto aType = cast<RankedTensorType>(a.getType());
+  auto bType = cast<RankedTensorType>(b.getType());
+
+  // Software emulation only used to support K = 32
+  auto K = aType.getShape()[1];
+  if (K != 32)
+    return failure();
+
   auto scaleAType = cast<RankedTensorType>(scaleA.getType());
   auto scaleBType = cast<RankedTensorType>(scaleB.getType());
   auto shapeScaleA = scaleAType.getShape();
   auto shapeScaleB = scaleBType.getShape();
 
-  // Cast scale to i16
-  auto modeAttr = builder.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(), 
+  // Cast scale to u16 (unsigned)
+  auto modeAttr = builder.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                        builder.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT));
   const Type i16Ty = builder.getI16Type();
-  Value scaleAI16 = castTo(builder, scaleA, i16Ty);
-  Value scaleBI16 = castTo(builder, scaleB, i16Ty);
+  Value scaleAI16 = castTo(builder, scaleA, i16Ty, 
+      hfusion::TypeFn::cast_unsigned, hfusion::UnsignedMode::UI2UI);
+  Value scaleBI16 = castTo(builder, scaleB, i16Ty, 
+      hfusion::TypeFn::cast_unsigned, hfusion::UnsignedMode::UI2UI);
 
   // scale <<= 7
   auto shlFnAttr = builder.getNamedAttr("fun", builder.getAttr<hfusion::BinaryFnAttr>(hfusion::BinaryFn::shli));
@@ -3397,7 +3398,7 @@ FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder)
                             location, ValueRange{scaleAI16, sevenA},
                             ValueRange{emptyScaleAI16}, shlFnAttr)
                         ->getResult(0);
- 
+  
   Value emptyScaleBI16 = builder.create<tensor::EmptyOp>(
       location, RankedTensorType::get(shapeScaleB, i16Ty), ValueRange{});
   Value sevenB =
@@ -3425,8 +3426,6 @@ FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder)
   Value scaleBF32 = castTo(builder, scaleBBF16, f32Ty);
 
   // If input is fp8, cast to fp16
-  auto aType = cast<RankedTensorType>(a.getType());
-  auto bType = cast<RankedTensorType>(b.getType());
   const Type f16Ty = builder.getF16Type();
   if (isFP8(aType.getElementType(), builder)) {
     Value emptyAF16 = builder.create<tensor::EmptyOp>(
@@ -3450,8 +3449,8 @@ FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder)
   // Broadcast scale
   static constexpr int TILE_SIZE = 32;
   Value emptyScaleABroadcasted = builder.create<tensor::EmptyOp>(
-      location, 
-      RankedTensorType::get({shapeScaleA[0], shapeScaleA[1], TILE_SIZE}, aType.getElementType()), 
+      location,
+      RankedTensorType::get({shapeScaleA[0], shapeScaleA[1], TILE_SIZE}, aType.getElementType()),
       ValueRange{});
   Value scaleABroadcasted = builder.create<linalg::BroadcastOp>(
       location, scaleAFinal, emptyScaleABroadcasted, ArrayRef<int64_t>{2}).getResult()[0];
@@ -3459,8 +3458,8 @@ FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder)
   Value scaleACollapsed = builder.create<tensor::CollapseShapeOp>(
       location, scaleABroadcasted, reassocIdxScaleA);
   Value emptyScaleBBroadcasted = builder.create<tensor::EmptyOp>(
-      location, 
-      RankedTensorType::get({shapeScaleB[0], shapeScaleB[1], TILE_SIZE}, bType.getElementType()), 
+      location,
+      RankedTensorType::get({shapeScaleB[0], shapeScaleB[1], TILE_SIZE}, bType.getElementType()),
       ValueRange{});
   Value scaleBBroadcasted = builder.create<linalg::BroadcastOp>(
       location, scaleBFinal, emptyScaleBBroadcasted, ArrayRef<int64_t>{2}).getResult()[0];

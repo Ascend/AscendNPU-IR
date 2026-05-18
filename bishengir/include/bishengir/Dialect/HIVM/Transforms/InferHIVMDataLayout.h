@@ -24,7 +24,11 @@ enum class LayoutConversionKind : uint32_t {
   ND_TO_nZ,
   ND_TO_zN,
   nZ_TO_ND,
-  zN_TO_ND
+  zN_TO_ND,
+  DOT_SCALE_ND_TO_zZ,     // scaleA no-trans
+  DOT_SCALE_ND_TO_nN,     // scaleB transed
+  DOT_SCALE_DN_TO_zZ,     // scaleA transed
+  DOT_SCALE_DN_TO_nN,     // scaleB no-trans
 };
 
 class DataLayoutInferAndPropagateHelper {
@@ -108,6 +112,12 @@ private:
                                 OpBuilder &builder, Location loc,
                                 SmallVector<int64_t> kBlockSizes) const;
 
+  /// Offset conversion pattern from DOT_SCALE_{A} to {zZ}.
+  FailureOr<SmallVector<Value>>
+  computeScaleNDToFractalzZOffset(SmallVector<Value> currentOffset,
+                               OpBuilder &builder, Location loc,
+                               SmallVector<int64_t> kBlockSizes) const;
+
   /// Shape conversion pattern from DOT_{A/B/C} to {zN}.
   FailureOr<SmallVector<Value>>
   computeDOTNDToFractalzNShape(SmallVector<Value> currentShape,
@@ -116,6 +126,12 @@ private:
   /// Shape conversion pattern from DOT_{A/B/C} to {nZ}.
   FailureOr<SmallVector<Value>>
   computeDOTNDToFractalnZShape(SmallVector<Value> currentShape,
+                               OpBuilder &builder, Location loc,
+                               SmallVector<int64_t> kBlockSizes) const;
+
+  /// Shape conversion pattern from DOT_SCALE_{A} to {zZ}.
+  FailureOr<SmallVector<Value>>
+  computeScaleNDToFractalzZShape(SmallVector<Value> currentShape,
                                OpBuilder &builder, Location loc,
                                SmallVector<int64_t> kBlockSizes) const;
 
@@ -140,7 +156,7 @@ private:
   /// Try to fold ConvertLayoutOp + CopyOp to HIVM Data Copy Ops with
   /// on-the-fly data layout conversion.
   LogicalResult tryFoldLayoutConversionIntoCopy(Value src, Value dst,
-                                                Operation *originalOp,
+                                                Operation &originalOp,
                                                 OpBuilder &builder);
 
 private:

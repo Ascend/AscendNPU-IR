@@ -744,9 +744,8 @@ std::string L12UBOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
 //===----------------------------------------------------------------------===//
 // LoadMXScaleOp
 //===----------------------------------------------------------------------===//
- 
-std::string
-LoadMXScaleOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+
+std::string LoadMXScaleOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   MemRefType srcMemref = cast<MemRefType>(this->getSrcOperandType());
   assert(srcMemref.getMemorySpace() &&
          "Source should have memory space by now.");

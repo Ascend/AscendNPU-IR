@@ -187,26 +187,26 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
 // HIVM Local MMADMx op definitions.
 //===----------------------------------------------------------------------===//
  
-class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []>
-    : HIVM_MacroOp<
-          mnemonic,
-          !listconcat([CubeCoreTypeTrait,
-                       MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
-],
-                      traits)> {
-  let arguments =
-      (ins Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
-          Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
-          Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
-          Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB, Arg<I1, [{
+class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
+  HIVM_MacroOp<mnemonic, !listconcat(
+    [CubeCoreTypeTrait,
+     MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+    ], traits)> {
+  let arguments = (ins Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
+                       Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
+                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
+                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB,
+                       Arg<I1, [{
                         The condition under which
                         data in L0C is cleared before use
                        }]>:$init_condition,
-          Index:$real_m, Index:$real_k, Index:$real_n,
-          Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
-          OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
-          OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
-          Arg<Variadic<I64>, [{
+                       Index:$real_m,
+                       Index:$real_k,
+                       Index:$real_n,
+                       Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
+                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
+                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
+                       Arg<Variadic<I64>, [{
                         Arguments required by mma_tile to insert 
                         synchronization instructions, they are 
                         managed by inject-sync passes.

@@ -651,3 +651,76 @@ func.func @test_select_op_data_layout(%arg0: memref<?xf16, #hivm.address_space<g
 
   return
 }
+
+// -----
+// CHECK: #[[MAP:.*]] = affine_map<()[s0, s1] -> ((s0 + 15) floordiv 16)>
+// CHECK: #[[MAP1:.*]] = affine_map<()[s0, s1] -> ((s1 + 15) floordiv 16)>
+// CHECK: #[[MAP2:.*]] = affine_map<()[s0, s1] -> ((s1 + 31) floordiv 32)>
+// CHECK: #[[MAP3:.*]] = affine_map<()[s0, s1] -> ((s0 + 31) floordiv 32)>
+// CHECK: #[[MAP4:.*]] = affine_map<()[s0, s1] -> ((s1 + 1) floordiv 2)>
+// CHECK: module {
+// CHECK:   func.func @test_infer_data_layout_basic_mmadmx(%[[ARG_0:.*]]: i32, %[[ARG_1:.*]]: i32, %[[ARG_2:.*]]: i32) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+// CHECK:     %[[VAL_0:.*]] = arith.constant 128 : index
+// CHECK:     %[[VAL_1:.*]] = arith.constant 256 : index
+// CHECK:     %[[VAL_2:.*]] = arith.constant 128 : index
+// CHECK:     %[[VAL_3:.*]] = affine.apply #[[MAP]]()[%[[VAL_1]], %[[VAL_2]]]
+// CHECK:     %[[VAL_4:.*]] = affine.apply #[[MAP1]]()[%[[VAL_1]], %[[VAL_2]]]
+// CHECK:     %[[VAL_5:.*]] = arith.constant 16 : index
+// CHECK:     %[[VAL_6:.*]] = arith.constant 16 : index
+// CHECK:     %[[VAL_7:.*]] = memref.alloc(%[[VAL_4]], %[[VAL_3]], %[[VAL_5]], %[[VAL_6]]) {alignment = 64 : i64} : memref<?x?x?x?xf8E5M2>
+// CHECK:     %[[VAL_8:.*]] = scf.for %[[ARG_3:.*]] = %[[ARG_0]] to %[[ARG_1]] step %[[ARG_2]] iter_args(%[[ARG_4:.*]] = %[[VAL_7]]) -> (memref<?x?x?x?xf8E5M2>)  : i32 {
+// CHECK:       %[[VAL_9:.*]] = arith.constant 256 : index
+// CHECK:       %[[VAL_10:.*]] = arith.constant 128 : index
+// CHECK:       %[[VAL_11:.*]] = affine.apply #[[MAP]]()[%[[VAL_9]], %[[VAL_10]]]
+// CHECK:       %[[VAL_12:.*]] = affine.apply #[[MAP2]]()[%[[VAL_9]], %[[VAL_10]]]
+// CHECK:       %[[VAL_13:.*]] = arith.constant 16 : index
+// CHECK:       %[[VAL_14:.*]] = arith.constant 32 : index
+// CHECK:       %[[VAL_15:.*]] = memref.alloc(%[[VAL_12]], %[[VAL_11]], %[[VAL_13]], %[[VAL_14]]) : memref<?x?x?x?xf8E5M2>
+// CHECK:       %[[VAL_16:.*]] = arith.constant 128 : index
+// CHECK:       %[[VAL_17:.*]] = arith.constant 128 : index
+// CHECK:       %[[VAL_18:.*]] = affine.apply #[[MAP3]]()[%[[VAL_16]], %[[VAL_17]]]
+// CHECK:       %[[VAL_19:.*]] = affine.apply #[[MAP2]]()[%[[VAL_16]], %[[VAL_17]]]
+// CHECK:       %[[VAL_20:.*]] = arith.constant 32 : index
+// CHECK:       %[[VAL_21:.*]] = arith.constant 32 : index
+// CHECK:       %[[VAL_22:.*]] = memref.alloc(%[[VAL_19]], %[[VAL_18]], %[[VAL_20]], %[[VAL_21]]) : memref<?x?x?x?xf8E5M2>
+// CHECK:       %[[VAL_23:.*]] = arith.constant 256 : index
+// CHECK:       %[[VAL_24:.*]] = arith.constant 4 : index
+// CHECK:       %[[VAL_25:.*]] = affine.apply #[[MAP]]()[%[[VAL_23]], %[[VAL_24]]]
+// CHECK:       %[[VAL_26:.*]] = affine.apply #[[MAP4]]()[%[[VAL_23]], %[[VAL_24]]]
+// CHECK:       %[[VAL_27:.*]] = arith.constant 16 : index
+// CHECK:       %[[vAL_28:.*]] = arith.constant 2 : index
+// CHECK:       %[[VAL_29:.*]] = memref.alloc(%[[VAL_25]], %[[VAL_26]], %[[VAL_27]], %[[vAL_28]]) : memref<?x?x?x?xui8>
+// CHECK:       %[[VAL_30:.*]] = arith.constant 256 : index
+// CHECK:       %[[VAL_31:.*]] = arith.constant 4 : index
+// CHECK:       %[[VAL_32:.*]] = affine.apply #map()[%[[VAL_30]], %[[VAL_31]]]
+// CHECK:       %[[VAL_33:.*]] = affine.apply #[[MAP4]]()[%[[VAL_30]], %[[VAL_31]]]
+// CHECK:       %[[VAL_34:.*]] = arith.constant 16 : index
+// CHECK:       %[[VAL_35:.*]] = arith.constant 2 : index
+// CHECK:       %[[vAL_36:.*]] = memref.alloc(%[[VAL_32]], %[[VAL_33]], %[[VAL_34]], %[[VAL_35]]) : memref<?x?x?x?xui8>
+// CHECK:       %[[VAL_37:.*]] = arith.cmpi eq, %[[ARG_3]], %[[ARG_1]] : i32
+// CHECK:       %[[VAL_38:.*]] = hivm.hir.mmadmxL1 ins(%[[VAL_15]], %[[VAL_22]], %[[VAL_29]], %[[vAL_36]], %[[VAL_37]], %[[VAL_0]], %[[VAL_0]], %[[VAL_0]] : memref<?x?x?x?xf8E5M2>, memref<?x?x?x?xf8E5M2>, memref<?x?x?x?xui8>, memref<?x?x?x?xui8>, i1, index, index, index) outs(%[[ARG_4]] : memref<?x?x?x?xf8E5M2>) -> memref<256x128xf8E5M2>
+// CHECK:       scf.yield %[[ARG_4]] : memref<?x?x?x?xf8E5M2>
+// CHECK:     }
+// CHECK:     return
+// CHECK:   }
+// CHECK: }
+module {
+  func.func @test_infer_data_layout_basic_mmadmx(%arg0 : i32,
+                                          %arg1 : i32,
+                                          %arg2 : i32) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %c128 = arith.constant 128 : index
+    %alloc = memref.alloc() {alignment = 64 : i64} : memref<256x128xf8E5M2>
+    %ret = scf.for %iv = %arg0 to %arg1 step %arg2 iter_args(%l0c = %alloc) -> (memref<256x128xf8E5M2>) : i32 {
+      %l1A = memref.alloc() : memref<256x128xf8E5M2>
+      %l1B = memref.alloc() : memref<128x128xf8E5M2>
+      %scaleA = memref.alloc() : memref<256x4xui8>
+      %scaleB = memref.alloc() : memref<256x4xui8>
+      %init_cond = arith.cmpi eq, %iv, %arg1 : i32
+      %idk = hivm.hir.mmadmxL1 ins(%l1A, %l1B, %scaleA, %scaleB, %init_cond, %c128, %c128, %c128 :
+                             memref<256x128xf8E5M2>, memref<128x128xf8E5M2>, memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index)
+                      outs(%l0c : memref<256x128xf8E5M2>) -> memref<256x128xf8E5M2>
+      scf.yield %l0c : memref<256x128xf8E5M2>
+    }
+    return
+  }
+}

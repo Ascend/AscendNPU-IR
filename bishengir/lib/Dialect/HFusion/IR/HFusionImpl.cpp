@@ -90,13 +90,22 @@ Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
 }
 
 Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
-                      hfusion::TypeFn castIntegerType) {
+                      hfusion::TypeFn castIntegerType,
+                      hfusion::UnsignedMode unsignedMode) {
   Type srcElemType = getElementTypeOrSelf(src.getType());
   hfusion::RoundMode rounding =
       mlir::utils::selectRoundMode<hfusion::RoundMode>(srcElemType,
                                                        targetElemType);
+  return hfusion::castTo(builder, src, targetElemType, rounding, 
+                         /*dst=*/std::nullopt, 
+                         /*enableOverflow=*/true, 
+                         /*enableSaturate=*/false, 
+                         castIntegerType, unsignedMode);
+}
+
+Value hfusion::castTo(OpBuilder &builder, Value src, Type targetElemType,
+                      hfusion::TypeFn castIntegerType) {
   hfusion::UnsignedMode unsignedMode = hfusion::UnsignedMode::SI2SI;
-  return hfusion::castTo(builder, src, targetElemType, rounding, std::nullopt,
-                         /*enableOverflow=*/true, false, castIntegerType,
-                        unsignedMode);
+  return hfusion::castTo(builder, src, targetElemType,
+                         castIntegerType, unsignedMode);
 }

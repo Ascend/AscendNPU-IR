@@ -1225,7 +1225,6 @@ func.func @test_loop_mmadL1_for_next_loop_vector() -> tensor<16x16xf32> {
 // -----
 // CHECK-LABEL: func.func @test_mmadL1_fixpipe_no_quant
 func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xf32>){
-
   %mc = tensor.empty() : tensor<256x256xi32>
   %true = arith.constant true
   %M = arith.constant 256 : index
@@ -1350,5 +1349,22 @@ module {
     %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
     hivm.hir.store ins(%4 : tensor<16x16xf32>) outs(%reinterpret_cast_0 : memref<16x16xf32, strided<[16, 1]>>)
     return
+  }
+}
+
+// ----
+module {
+  // CHECK-LABEL: func.func @test_matmulscale_e5m2
+  func.func @test_matmulscale_e5m2(%arg0: memref<4x8xf8E5M2>, %arg1: memref<8x16xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>) -> tensor<4x16xf8E5M2> {
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %0 = bufferization.to_tensor %arg0 : memref<4x8xf8E5M2>
+    %1 = bufferization.to_tensor %arg1 : memref<8x16xf8E5M2>
+    %2 = bufferization.to_tensor %arg2 : memref<1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<1xui8>
+    %4 = tensor.empty() : tensor<4x16xf8E5M2>
+    %5 = hivm.hir.mmadmxL1 ins(%0, %1, %2, %3, %true, %c0, %c0, %c0 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%4 : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
+    // CHECK: hivm.hir.fixpipe
+    return %5 : tensor<4x16xf8E5M2>
   }
 }

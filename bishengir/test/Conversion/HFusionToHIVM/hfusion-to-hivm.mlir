@@ -1063,3 +1063,19 @@ module {
     return %res : tensor<1xi1>
   }
 }
+
+// -----
+module {
+  // CHECK-LABEL func.func @test_matmulscale_e5m2
+  // CHECK: hivm.hir.mmadmxL1
+  func.func @test_matmulscale_e5m2(%arg0: memref<4x8xf8E5M2>, %arg1: memref<8x16xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>) -> tensor<4x16xf8E5M2> {
+    %0 = bufferization.to_tensor %arg0 : memref<4x8xf8E5M2>
+    %1 = bufferization.to_tensor %arg1 : memref<8x16xf8E5M2>
+    %2 = bufferization.to_tensor %arg2 : memref<1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<1xui8>
+    %4 = bufferization.to_tensor %arg4 : memref<4x16xf8E5M2>
+    %empty = tensor.empty() : tensor<4x16xf8E5M2>
+    %5 = hfusion.matmul_mx ins(%0, %1, %2, %3 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>) outs(%empty : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
+    return %5 : tensor<4x16xf8E5M2>
+  }
+}

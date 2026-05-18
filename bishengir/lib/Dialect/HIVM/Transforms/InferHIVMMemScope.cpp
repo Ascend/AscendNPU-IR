@@ -345,35 +345,35 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadMxL1(hivm::MmadMxL1Op op) {
  
   MemScopeInferAndPropagateHelper helper;
  
-  // For MmadL1Op, operand mA should be in L1.
+  // For MmadMxL1Op, operand mA should be in L1.
   if (failed(helper.Run(*allocA, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for mA");
   }
   LDBG("IR after setting mem scope for mA:\n"
        << *(op->getParentOfType<ModuleOp>()));
  
-  // For MmadL1Op, operand mB should be in L1.
+  // For MmadMxL1Op, operand mB should be in L1.
   if (failed(helper.Run(*allocB, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for mB");
   }
   LDBG("IR after setting mem scope for mB:\n"
        << *(op->getParentOfType<ModuleOp>()));
  
-  // For MmadL1Op, operand ScaleA should be in L1.
+  // For MmadMxL1Op, operand ScaleA should be in L1.
   if (failed(helper.Run(*allocScaleA, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for mB");
   }
   LDBG("IR after setting mem scope for scale A:\n"
        << *(op->getParentOfType<ModuleOp>()));
  
-  // For MmadL1Op, operand ScaleB should be in L1.
+  // For MmadMxL1Op, operand ScaleB should be in L1.
   if (failed(helper.Run(*allocScaleB, l1SpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for mB");
   }
   LDBG("IR after setting mem scope for scale B:\n"
        << *(op->getParentOfType<ModuleOp>()));
  
-  // For MmadL1Op, operand mC should be in L0C.
+  // For MmadMxL1Op, operand mC should be in L0C.
   if (failed(helper.Run(*allocC, l0cSpaceAttr))) {
     return op->emitOpError("Failed to infer/propagate memory scope for mC");
   }

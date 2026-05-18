@@ -54,6 +54,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       })
       .Case<linalg::BatchMatmulOp>(
           [&](auto batchMatmulOp) { processBatchMatmulOp(batchMatmulOp); })
+      .Case<hfusion::MatMulMxOp>(
+          [&](hfusion::MatMulMxOp matMulMxOp){processMatmulMxOp(matMulMxOp); })
       .Case<hfusion::ReduceWithIndexOp>([&](auto reduceWithIndexOp) {
         processReduceLikeOp(reduceWithIndexOp);
       })
