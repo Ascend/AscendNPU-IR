@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -204,9 +205,19 @@ Value mlir::hivm::createNestedIndexModular(OpBuilder &builder, Operation *op,
   assert(parentLoop &&
          " ptrCastOp has no proper parent loop to do multi buffer");
 
+  // scf.while path: route through the alloca-based MultiBufferLoopAdapter
+  // (counter alloca lives at funcOp top, body-head load + body-tail
+  // increment are inserted idempotently).
+  if (isa<scf::WhileOp>(parentLoop.getOperation())) {
+    auto adapterOr = MultiBufferLoopAdapter::create(parentLoop);
+    assert(succeeded(adapterOr));
+    return modular == -1 ? adapterOr->getIterationCounter(builder)
+                         : adapterOr->getModuloIndex(builder, modular);
+  }
+
   auto loopInfoVec = getLoopsInfo(parentLoop);
 
-  // Insert at the beginning of the For loop.
+  // scf.for path: insert at the beginning of the For loop body.
   auto forOp = cast<scf::ForOp>(parentLoop.getOperation());
   builder.setInsertionPointToStart(forOp.getBody());
   return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
@@ -236,10 +247,19 @@ Value mlir::hivm::createNestedIndexForOp(OpBuilder &builder,
 Value mlir::hivm::createNestedIndexModular(OpBuilder &builder,
                                            LoopLikeOpInterface loopOp,
                                            int modular) {
+  // scf.while path: route through the alloca-based MultiBufferLoopAdapter.
+  if (isa<scf::WhileOp>(loopOp.getOperation())) {
+    auto adapterOr = MultiBufferLoopAdapter::create(loopOp);
+    assert(succeeded(adapterOr));
+    return modular == -1 ? adapterOr->getIterationCounter(builder)
+                         : adapterOr->getModuloIndex(builder, modular);
+  }
+
   auto loopInfoVec = getLoopsInfo(loopOp);
-  // Insert at the beginning of the For loop.
+  // scf.for path: insert at the beginning of the For loop body.
   auto forOp = dyn_cast<scf::ForOp>(loopOp.getOperation());
-  assert(forOp != nullptr);
+  assert(forOp != nullptr &&
+         "createNestedIndexModular: unsupported loop type");
   builder.setInsertionPointToStart(forOp.getBody());
   return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
                                                loopInfoVec, modular);
@@ -427,7 +447,9 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
 
     LoopLikeOpInterface loopOp = getParentLoop(op.getResult());
     while (loopOp) {
-      if (!isa<scf::ForOp>(loopOp))
+      // scf.for and scf.while are both supported (while via alloca-based
+      // counter in MultiBufferLoopAdapter); other LoopLike ops bail out.
+      if (!isa<scf::ForOp, scf::WhileOp>(loopOp))
         return failure();
       loopOp = loopOp->getParentOfType<LoopLikeOpInterface>();
     }
