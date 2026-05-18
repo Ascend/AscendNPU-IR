@@ -104,7 +104,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     ConversionTarget stage2Target(ctx);
     stage2Target.addLegalDialect<
         triton::TritonDialect, triton::gpu::TritonGPUDialect,
-        arith::ArithDialect, mlir::BuiltinDialect>();
+        arith::ArithDialect, math::MathDialect, mlir::BuiltinDialect>();
     stage2Target.addLegalOp<tensor::EmptyOp>();
     stage2Target.addIllegalOp<func::FuncOp>();
     stage2Target.addLegalOp<UnrealizedConversionCastOp>();

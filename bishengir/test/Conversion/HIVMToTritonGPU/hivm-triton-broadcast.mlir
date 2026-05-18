@@ -11,7 +11,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK: [[VARANGE:%.*]] = arith.addi [[MUL]], [[OFFSET_TENSOR]] : tensor<4xi32>
   // CHECK: [[SCALE:%.*]] = tt.splat %{{.*}} : i32 -> tensor<4xi32>
   // CHECK: [[SCALED:%.*]] = arith.muli [[VARANGE]], [[SCALE]] : tensor<4xi32>
-  // CHECK: [[CAST:%.*]] = arith.extsi [[SCALED]] : tensor<4xi32> to tensor<4xi64>
+  // CHECK: [[CAST:%.*]] = arith.extsi [[SCALED]] {round_mode = #hivm.round_mode<rint>} : tensor<4xi32> to tensor<4xi64>
   // CHECK: %{{.*}} = tt.reshape [[CAST]] : tensor<4xi64> -> tensor<4x1xi64>
   // CHECK: [[BRC:%.*]] = tt.broadcast %{{.*}} : tensor<4x1xi64> -> tensor<4x8xi64>
   // CHECK: arith.addi [[BRC]], %{{.*}} : tensor<4x8xi64>

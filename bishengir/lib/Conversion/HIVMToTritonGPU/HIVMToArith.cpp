@@ -14,6 +14,8 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -23,6 +25,8 @@
 
 using namespace mlir;
 using namespace mlir::hivm;
+using namespace mlir::triton;
+
 
 static bool operateOnShaped(Operation *op) {
   auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
@@ -115,33 +119,82 @@ static bool operateOnSigned(Operation *op) {
     return false;
 }
 
-static bool broadcast_check(Operation *op) {
-    auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
-    if (!structuredOp.isInlineBroadcastable()) {
-        return true;
+template <typename From, unsigned start = 0>
+static constexpr void computeNonBroadcastableScalarOnlyOperands(SmallVector<bool, 3> &isScalar) {
+    if constexpr (From::template hasTrait<OpTrait::BroadcastableOTF>()) {
+        isScalar.push_back(From::template hasTrait<OpTrait::ScalarOnlyTrait<start>::template Impl>());
+
+        if constexpr (!From::template hasTrait<OpTrait::ElementwiseNaryOpTrait<start + 1>::template Impl>())
+            computeNonBroadcastableScalarOnlyOperands<From, start + 1>(isScalar);
     }
+}
+
+template <typename From>
+static bool broadcast_split(PatternRewriter &rewriter, Operation *op) {
+    auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
+    if (!structuredOp) {
+        return false;
+    }
+
     SmallVector<int64_t> brcDims;
     structuredOp.getBroadcastLoopDims(brcDims);
     if (brcDims.empty()) {
         return true;
     }
-    return false;
+
+    if (!structuredOp.isInlineBroadcastable()) {
+        return false;
+    }
+    Value result = structuredOp.getDpsInitOperand(0)->get();
+    RankedTensorType resType = cast<RankedTensorType>(result.getType());
+    SmallVector<bool, 3> isScalarOnly;
+    computeNonBroadcastableScalarOnlyOperands<From>(isScalarOnly);
+    for (OpOperand *operand : structuredOp.getHIVMInputOperands(false)) {
+        if (isScalarOnly[operand->getOperandNumber()]) {
+            continue;
+        }
+        Value input = operand->get();
+        RankedTensorType inputShapedType = cast<RankedTensorType>(input.getType());
+        if (!inputShapedType) {
+            continue;
+        }
+
+        SmallVector<int64_t> input_shape = llvm::to_vector(inputShapedType.getShape());
+        SmallVector<int64_t> operandBrcDims;
+        Value input_brc = input;
+        for (auto dim : brcDims) {
+            if (inputShapedType.getShape()[dim] != 1) {
+                continue;
+            }
+            if (inputShapedType.getShape()[dim] == resType.getShape()[dim]) {
+                continue;
+            }
+            input_shape[dim] = resType.getShape()[dim];
+            input_brc =
+                rewriter.create<triton::BroadcastOp>(op->getLoc(), inputShapedType.clone(input_shape), input_brc);
+            operandBrcDims.push_back(dim);
+        }
+        if (operandBrcDims.empty()) {
+            continue;
+        }
+
+        rewriter.modifyOpInPlace(operand->getOwner(), [&]() { operand->set(input_brc); });
+    }
+
+    return true;
 }
 
 static bool transpose_check(Operation *op) {
-    auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op);
-    if (!structuredOp) {
-        return false;
-    }
-    if (!structuredOp.isInlineTransposable()) {
-      return true;
-    }
+    if (auto structuredOp = dyn_cast_if_present<HIVMStructuredOp>(op)) {
+        if (!structuredOp.isInlineTransposable()) {
+            return true;
+        }
 
-    auto trnDims = structuredOp.getPermutationArray();
-    if (trnDims.empty()) {
-        return true;
+        auto trnDims = structuredOp.getPermutationArray();
+        if (trnDims.empty()) {
+            return true;
+        }
     }
-
     return false;
 }
 
@@ -150,16 +203,6 @@ static bool entryCondition(Operation *op) {
     // conversion would be executed only as operands are tensors/vectors or
     // scalars, and at least one operand is shaped.
     if (!operateOnTensorOrScalar(op)) {
-        return false;
-    }
-
-    // conversion would be executed only as transpose is empty.
-    if (!transpose_check(op)) {
-        return false;
-    }
-
-    // conversion would be executed only as broadcast is empty.
-    if (!broadcast_check(op)) {
         return false;
     }
 
@@ -185,8 +228,17 @@ struct VectorOpToArithBinary : public OpRewritePattern<HIVMVectorOp> {
 
   LogicalResult matchAndRewrite(HIVMVectorOp op,
                                 PatternRewriter &rewriter) const final {
-    auto  condition_entry = entryCondition<legal_or_not, sign_check, signed_require, types...>;
+    auto condition_entry = entryCondition<legal_or_not, sign_check, signed_require, types...>;
     if (!condition_entry(op)) {
+        return failure();
+    }
+
+    if(!transpose_check(op)) {
+        return failure();
+    }
+
+    // split broadcast attribute into vbrc op.
+    if (!broadcast_split<HIVMVectorOp>(rewriter, op)) {
         return failure();
     }
 
@@ -228,7 +280,7 @@ static bool extsi_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm:
     if (!is_signed) {
         return false;
     }
-    
+
     auto src_width = src.getIntOrFloatBitWidth();
     auto dst_width = dst.getIntOrFloatBitWidth();
     if (src_width >= dst_width) {
@@ -277,7 +329,7 @@ static bool extui_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm:
     if (is_unsigned && (isInTypeI8 || isInTypeI16 ||isInTypeI32)) {
         return true;
     }
-    
+
     const bool isInType1 = src.isInteger(1) && (dst.isInteger(8) || dst.isInteger(16) || dst.isInteger(32));
     if (!is_unsigned) {
         return isInType1;
@@ -405,7 +457,7 @@ static bool sitofp_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm
         return false;
     }
 
-    return roundMode == hivm::RoundMode::RINT;
+    return roundMode == hivm::RoundMode::RINT || roundMode == hivm::RoundMode::TRUNC;
 }
 
 /*
@@ -426,7 +478,7 @@ static bool uitofp_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm
     if (!is_src_integer || !is_dst_float) {
         return false;
     }
-    return roundMode == hivm::RoundMode::RINT;
+    return roundMode == hivm::RoundMode::RINT || roundMode == hivm::RoundMode::TRUNC;
 }
 
 /*
@@ -438,7 +490,7 @@ static bool trunci_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm
     if (!src.isInteger() || !dst.isInteger()) {
         return false;
     }
-    
+
     auto src_width = src.getIntOrFloatBitWidth();
     auto dst_width = dst.getIntOrFloatBitWidth();
     if (src_width <= dst_width) {
@@ -478,6 +530,24 @@ static bool truncf_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm
     return roundMode == hivm::RoundMode::RINT;
 }
 
+/*
+* vcast(trunc)-> math.trunc
+* The round_mode attribute value of the hivm.hir.vcast Op must be trunc.
+* The bit width of the src operand must be equal with the dst operand.
+*/
+static bool math_trunc_cast_condition(Type src, Type dst, hivm::TypeFn casting, hivm::RoundMode roundMode) {
+    if (!llvm::isa<FloatType>(src) || !llvm::isa<FloatType>(dst)) {
+        return false;
+    }
+    auto src_width = src.getIntOrFloatBitWidth();
+    auto dst_width = dst.getIntOrFloatBitWidth();
+    if (src_width != dst_width) {
+        return false;
+    }
+
+    return roundMode == hivm::RoundMode::TRUNC;
+}
+
 struct HIVMToArithCastOp: public OpRewritePattern<hivm::VCastOp> {
     using OpRewritePattern<hivm::VCastOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VCastOp op,
@@ -485,14 +555,14 @@ struct HIVMToArithCastOp: public OpRewritePattern<hivm::VCastOp> {
         if (!operateOnShaped(op)) {
             return failure();
         }
-        
-        // conversion would be executed only as transpose is empty.
-        if (!transpose_check(op)) {
+
+        // convert broadcast attribute into tt.brodcast op.
+        if (!broadcast_split<VCastOp>(rewriter, op)) {
             return failure();
         }
 
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        // convert transpose attribute into tt.trans op.
+        if (!transpose_check(op)) {
             return failure();
         }
 
@@ -502,53 +572,40 @@ struct HIVMToArithCastOp: public OpRewritePattern<hivm::VCastOp> {
         Type dst_type = getElementTypeOrSelf(types[1]);
         hivm::TypeFn casting = op.getCast();
         hivm::RoundMode roundMode = op.getRoundMode();
-       
+
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
         if (hivmOperands.size() < 2) {
             return failure();
         }
         Value src = hivmOperands[0];
-        Value dst_val = hivmOperands[1];
         auto resType = op.getResult().getType();
-        if (truncf_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::TruncFOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+        Operation *result = nullptr;
+        if (math_trunc_cast_condition(src_type, dst_type, casting, roundMode)) {
+            result = rewriter.create<math::FloorOp>(op.getLoc(), resType, src);
+        } else if (truncf_cast_condition(src_type, dst_type, casting, roundMode)) {
+            result = rewriter.create<arith::TruncFOp>(op.getLoc(), resType, src);
         } else if (trunci_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::TruncIOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::TruncIOp>(op.getLoc(), resType, src);
         } else if (extf_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::ExtFOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::ExtFOp>(op.getLoc(), resType, src);
         } else if (extsi_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::ExtSIOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::ExtSIOp>(op.getLoc(), resType, src);
         } else if (extui_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::ExtUIOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::ExtUIOp>(op.getLoc(), resType, src);
         } else if (fptosi_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::FPToSIOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::FPToSIOp>(op.getLoc(), resType, src);
         } else if (fptoui_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::FPToUIOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::FPToUIOp>(op.getLoc(), resType, src);
         } else if (sitofp_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::SIToFPOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::SIToFPOp>(op.getLoc(), resType, src);
         } else if (uitofp_cast_condition(src_type, dst_type, casting, roundMode)) {
-            auto result = rewriter.create<arith::UIToFPOp>(op.getLoc(), resType, src);
-            dst_val.replaceAllUsesWith(result.getResult());
-            rewriter.replaceOp(op, result);
+            result = rewriter.create<arith::UIToFPOp>(op.getLoc(), resType, src);
         } else {
             return failure();
         }
+        auto roundAttr = op.getRoundModeAttr();
+        result->setAttr("round_mode", roundAttr);
+        rewriter.replaceOp(op, result);
         return success();
     }
 };
@@ -567,7 +624,7 @@ struct HIVMToArithBitcastOp: public OpRewritePattern<hivm::BitcastOp> {
             return failure();
         }
         auto resType = op.getResult().getType();
-        auto result = rewriter.create<arith::BitcastOp>(op.getLoc(), resType, src);
+        auto result = rewriter.create<triton::BitcastOp>(op.getLoc(), resType, src);
         rewriter.replaceOp(op, result);
         return success();
     }
@@ -653,23 +710,27 @@ static arith::CmpIPredicate selectPredicate(hivm::VCmpOp op) {
 struct HIVMToArithCmpOp: public OpRewritePattern<hivm::VCmpOp> {
     using OpRewritePattern<hivm::VCmpOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VCmpOp op, PatternRewriter &rewriter) const final {
-        // conversion would be executed only as transpose is empty.
-        if (!transpose_check(op)) {
+        if (!operateOnTensorOrScalar(op)) {
             return failure();
         }
 
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        if(!transpose_check(op)) {
             return failure();
         }
-        if (!operateOnShaped(op)) {
+        // split broadcast attribute into vbrc op.
+        if (!broadcast_split<hivm::VCmpOp>(rewriter, op)) {
             return failure();
         }
 
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
         Value lhs = hivmOperands[0];
         Value rhs = hivmOperands[1];
-        Value dst_val = hivmOperands[2];
+        Type resultType = op->getResult(0).getType();
+        Type oper_elemtype = getElementTypeOrSelf(lhs.getType());
+        auto tensor_type =  cast<RankedTensorType>(resultType);
+        Type oper_type = RankedTensorType::get(tensor_type.getShape(), oper_elemtype);
+        lhs = splatScalarOperand(rewriter, op.getLoc(), lhs, oper_type);
+        rhs = splatScalarOperand(rewriter, op.getLoc(), rhs, oper_type);
         auto resType = op.getResult().getType();
         Type elem_type = getElementTypeOrSelf(resType[0]);
         if (!elem_type.isSignlessInteger(1)) {
@@ -678,12 +739,10 @@ struct HIVMToArithCmpOp: public OpRewritePattern<hivm::VCmpOp> {
         if (isa<FloatType>(getElementTypeOrSelf(lhs.getType()))) {
             arith::CmpFPredicate pred = selectFPredicate(op);
             auto result = rewriter.create<arith::CmpFOp>(op.getLoc(), resType, pred, lhs, rhs);
-            dst_val.replaceAllUsesWith(result.getResult());
             rewriter.replaceOp(op, result);
         } else {
             arith::CmpIPredicate pred = selectPredicate(op);
             auto result = rewriter.create<arith::CmpIOp>(op.getLoc(), resType, pred, lhs, rhs);
-            dst_val.replaceAllUsesWith(result.getResult());
             rewriter.replaceOp(op, result);
             // todo: support for unsigned integer comparisons in hivm.cmp.
         }
@@ -702,15 +761,15 @@ struct HIVMToArithSelOp: public OpRewritePattern<hivm::VSelOp> {
     using OpRewritePattern<hivm::VSelOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VSelOp op,
                                 PatternRewriter &rewriter) const final {
-        if (!transpose_check(op)) {
+        if (!operateOnTensorOrScalar(op)) {
             return failure();
         }
-
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        
+        if(!transpose_check(op)) {
             return failure();
         }
-        if (!operateOnShaped(op)) {
+        // split broadcast attribute into vbrc op.
+        if (!broadcast_split<hivm::VSelOp>(rewriter, op)) {
             return failure();
         }
 
@@ -718,9 +777,14 @@ struct HIVMToArithSelOp: public OpRewritePattern<hivm::VSelOp> {
         Value condition = hivmOperands[0];
         Value trueValue = hivmOperands[1];
         Value falseValue = hivmOperands[2];
-        Value dst_val = hivmOperands[3];
+        Type resultType = op->getResult(0).getType();
+        auto tensor_type =  cast<RankedTensorType>(resultType);
+        Type conditon_elem_type = getElementTypeOrSelf(condition.getType());
+        Type condition_final_type = RankedTensorType::get(tensor_type.getShape(), conditon_elem_type);
+        condition = splatScalarOperand(rewriter, op.getLoc(), condition, condition_final_type);
+        trueValue = splatScalarOperand(rewriter, op.getLoc(), trueValue, resultType);
+        falseValue = splatScalarOperand(rewriter, op.getLoc(), falseValue, resultType);
         auto result = rewriter.create<arith::SelectOp>(op.getLoc(), condition, trueValue, falseValue);
-        dst_val.replaceAllUsesWith(result.getResult());
         rewriter.replaceOp(op, result);
         return success();
     }
@@ -742,21 +806,20 @@ struct HIVMToArithReluOp: public OpRewritePattern<hivm::VReluOp> {
     using OpRewritePattern<hivm::VReluOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VReluOp op,
                                 PatternRewriter &rewriter) const final {
-        if (!transpose_check(op)) {
+        if (!operateOnShaped(op)) {
             return failure();
         }
 
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        if(!transpose_check(op)) {
             return failure();
         }
-        if (!operateOnShaped(op)) {
+        // split broadcast attribute into vbrc op.
+        if (!broadcast_split<hivm::VReluOp>(rewriter, op)) {
             return failure();
         }
 
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
         Value src = hivmOperands[0];
-        Value dst_val = hivmOperands[1];
         auto tensorType = cast<RankedTensorType>(src.getType());
         Type elem_type = getElementTypeOrSelf(src.getType());
         auto const_type = RankedTensorType::get(tensorType.getShape(), elem_type);
@@ -774,7 +837,6 @@ struct HIVMToArithReluOp: public OpRewritePattern<hivm::VReluOp> {
             ).getResult();
             auto resType = op.getResult().getType();
             auto result = rewriter.create<arith::MaximumFOp>(op.getLoc(), resType, newConst, src);
-            dst_val.replaceAllUsesWith(result.getResult());
             rewriter.replaceOp(op, result);
         } else if (elem_type.isInteger(32)) {
             unsigned width = elem_type.getIntOrFloatBitWidth();
@@ -789,11 +851,9 @@ struct HIVMToArithReluOp: public OpRewritePattern<hivm::VReluOp> {
             // to do: The vrelu operand in the hivm dialect does not currently support unsigned integer types.
             if (elem_type.isUnsignedInteger()) {
                 auto result = rewriter.create<arith::MaxUIOp>(op.getLoc(), resType, newConst, src);
-                dst_val.replaceAllUsesWith(result.getResult());
                 rewriter.replaceOp(op, result);
             } else {
                 auto result = rewriter.create<arith::MaxSIOp>(op.getLoc(), resType, newConst, src);
-                dst_val.replaceAllUsesWith(result.getResult());
                 rewriter.replaceOp(op, result);
             }
         }
@@ -812,20 +872,20 @@ struct HIVMToArithRecOp: public OpRewritePattern<hivm::VRecOp> {
     using OpRewritePattern<hivm::VRecOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VRecOp op,
                                 PatternRewriter &rewriter) const final {
-        if (!transpose_check(op)) {
+        if (!operateOnShaped(op)) {
             return failure();
         }
 
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        // split transpose attribute into vtrans op.
+        if(!transpose_check(op)) {
             return failure();
         }
-        if (!operateOnShaped(op)) {
+        // split broadcast attribute into vbrc op.
+        if (!broadcast_split<hivm::VRecOp>(rewriter, op)) {
             return failure();
         }
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
         Value src = hivmOperands[0];
-        Value dst_val = hivmOperands[1];
         auto tensorType = cast<RankedTensorType>(src.getType());
         Type elem_type = getElementTypeOrSelf(src.getType());
         auto const_type = RankedTensorType::get(tensorType.getShape(), elem_type);
@@ -842,7 +902,6 @@ struct HIVMToArithRecOp: public OpRewritePattern<hivm::VRecOp> {
         ).getResult();
         auto resType = op.getResult().getType();
         auto result = rewriter.create<arith::DivFOp>(op.getLoc(), resType, newConst, src);
-        dst_val.replaceAllUsesWith(result.getResult());
         rewriter.replaceOp(op, result);
         return success();
     }
@@ -864,22 +923,23 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
     using OpRewritePattern<hivm::VMulExtOp>::OpRewritePattern;
     LogicalResult matchAndRewrite(hivm::VMulExtOp op,
                                 PatternRewriter &rewriter) const final {
-        if (!transpose_check(op)) {
+        if (!operateOnTensorOrScalar(op)) {
             return failure();
         }
 
-        // conversion would be executed only as broadcast is empty.
-        if (!broadcast_check(op)) {
+        if(!transpose_check(op)) {
             return failure();
         }
-        if (!operateOnShaped(op)) {
+        // split broadcast attribute into vbrc op.
+        if (!broadcast_split<hivm::VMulExtOp>(rewriter, op)) {
             return failure();
         }
         SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
         Value lhs = hivmOperands[0];
         Value rhs = hivmOperands[1];
-        Value low_res = hivmOperands[2];
-        Value high_res = hivmOperands[3];
+        Type resultType = op->getResult(0).getType();
+        lhs = splatScalarOperand(rewriter, op.getLoc(), lhs, resultType);
+        rhs = splatScalarOperand(rewriter, op.getLoc(), rhs, resultType);
         auto result = rewriter.create<arith::MulSIExtendedOp>(
             op.getLoc(),
             op.getResult().getType()[0],
@@ -887,8 +947,6 @@ struct HIVMToArithMulExtOp: public OpRewritePattern<hivm::VMulExtOp> {
             lhs,
             rhs
         );
-        low_res.replaceAllUsesWith(result.getLow());
-        high_res.replaceAllUsesWith(result.getHigh());
         rewriter.replaceOp(op, result);
         return success();
     }
@@ -912,6 +970,8 @@ void mlir::hivm::populateHIVMToArithConversionPatterns(RewritePatternSet &patter
         VectorOpToArithBinary<arith::MinimumFOp, hivm::VMinOp, true, false, IntegerType::Signless, FloatType>,
         VectorOpToArithBinary<arith::MinSIOp, hivm::VMinOp, true, true, IntegerType::Signless, IntegerType>,
         VectorOpToArithBinary<arith::RemUIOp, hivm::VModUIOp, true, false, IntegerType::Signless, IntegerType>,
+        VectorOpToArithBinary<arith::RemSIOp, hivm::VModOp, true, false, IntegerType::Signless, IntegerType>,
+        VectorOpToArithBinary<arith::RemFOp, hivm::VModOp, true, false, IntegerType::Signless, FloatType>,
         HIVMToArithCastOp,
         HIVMToArithCmpOp,
         HIVMToArithBitcastOp,
