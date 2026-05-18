@@ -1,4 +1,4 @@
-//===-------------  Conversion from ReinterpretCastOp to UnrealizedConversionCastOp dialect -------===//
+//===-------------  Conversion from ReinterpretCastOp to Triton dialect ---===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,36 +7,36 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/IR/Builders.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Transforms/DialectConversion.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 using namespace mlir;
-using namespace mlir::triton;
-using namespace mlir::hivm;
 
 namespace {
-// Process all of the ReinterpretCastOp before dialect conversion
+// Reinterpret-cast view semantics are consumed by the memory-access lowering
+// patterns.  Keep the cast legal during dialect conversion by preserving its
+// base pointer and dynamic layout operands in an unrealized cast.
 class ReinterpretCastOpReplacementPattern
     : public OpConversionPattern<memref::ReinterpretCastOp> {
 
 public:
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(memref::ReinterpretCastOp op, OpAdaptor adaptor,
+  matchAndRewrite(memref::ReinterpretCastOp op, OpAdaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Value adaptedInput = op.getSource();
-    Type outputType = op.getResult().getType();
-    if (!outputType) {
-      return failure();
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
     }
+
+    SmallVector<Value> inputs{op.getSource()};
+    llvm::append_range(inputs, op.getOffsets());
+    llvm::append_range(inputs, op.getStrides());
     auto unrealizedCast = rewriter.create<UnrealizedConversionCastOp>(
-        op.getLoc(), TypeRange(outputType), ValueRange(adaptedInput));
-    rewriter.replaceOp(op, unrealizedCast.getResults());
+        op.getLoc(), op.getResult().getType(), inputs);
+    rewriter.replaceOp(op, unrealizedCast.getResult(0));
     return success();
   }
 };

@@ -15,8 +15,11 @@
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/PatternMatch.h"
@@ -468,6 +471,199 @@ static Value calcStridedOffsets(ConversionPatternRewriter &rewriter,
   return offsets;
 }
 
+FailureOr<Value> materializeI32Scalar(ConversionPatternRewriter &rewriter,
+                                      Location loc, OpFoldResult ofr) {
+  if (std::optional<int64_t> constant = getConstantIntValue(ofr)) {
+    if (*constant < std::numeric_limits<int32_t>::min() ||
+        *constant > std::numeric_limits<int32_t>::max())
+      return failure();
+    return rewriter
+        .create<arith::ConstantOp>(loc,
+                                   rewriter.getI32IntegerAttr(*constant))
+        .getResult();
+  }
+
+  if (auto value = dyn_cast<Value>(ofr))
+    return castIndexToI32(rewriter, loc, value);
+
+  return failure();
+}
+
+FailureOr<Value> materializeI32Tensor(ConversionPatternRewriter &rewriter,
+                                      Location loc, OpFoldResult ofr,
+                                      RankedTensorType tensorTy) {
+  if (std::optional<int64_t> constant = getConstantIntValue(ofr)) {
+    if (*constant < std::numeric_limits<int32_t>::min() ||
+        *constant > std::numeric_limits<int32_t>::max())
+      return failure();
+
+    auto attr =
+        DenseElementsAttr::get(tensorTy, rewriter.getI32IntegerAttr(*constant));
+    return rewriter.create<arith::ConstantOp>(loc, tensorTy, attr).getResult();
+  }
+
+  FailureOr<Value> scalarValue = materializeI32Scalar(rewriter, loc, ofr);
+  if (failed(scalarValue))
+    return failure();
+  return rewriter.create<triton::SplatOp>(loc, tensorTy, *scalarValue)
+      .getResult();
+}
+
+SmallVector<int64_t> getDimTermShape(ArrayRef<int64_t> shape, unsigned dim) {
+  SmallVector<int64_t> termShape(shape.size(), 1);
+  termShape[dim] = shape[dim];
+  return termShape;
+}
+
+FailureOr<SmallVector<int64_t>> getBroadcastShape(ArrayRef<int64_t> lhs,
+                                                  ArrayRef<int64_t> rhs) {
+  if (lhs.size() != rhs.size())
+    return failure();
+
+  SmallVector<int64_t> result;
+  result.reserve(lhs.size());
+  for (auto [lhsDim, rhsDim] : llvm::zip_equal(lhs, rhs)) {
+    if (lhsDim == rhsDim) {
+      result.push_back(lhsDim);
+      continue;
+    }
+    if (lhsDim == 1) {
+      result.push_back(rhsDim);
+      continue;
+    }
+    if (rhsDim == 1) {
+      result.push_back(lhsDim);
+      continue;
+    }
+    return failure();
+  }
+  return result;
+}
+
+Value broadcastTensor(ConversionPatternRewriter &rewriter, Location loc,
+                      Value value, ArrayRef<int64_t> targetShape) {
+  auto tensorTy = cast<RankedTensorType>(value.getType());
+  if (llvm::equal(tensorTy.getShape(), targetShape))
+    return value;
+
+  auto targetTy =
+      RankedTensorType::get(targetShape, tensorTy.getElementType());
+  return rewriter.create<triton::BroadcastOp>(loc, targetTy, value);
+}
+
+FailureOr<Value>
+buildDimOffsetTerm(ConversionPatternRewriter &rewriter, Location loc,
+                   ArrayRef<int64_t> shape, unsigned dim, OpFoldResult stride,
+                   std::optional<OpFoldResult> baseOffset = std::nullopt) {
+  auto i32Ty = rewriter.getI32Type();
+  int64_t dimLen = shape[dim];
+  if (dimLen <= 0 || dimLen > std::numeric_limits<int32_t>::max())
+    return failure();
+
+  SmallVector<int64_t> termShape = getDimTermShape(shape, dim);
+  auto termTy = RankedTensorType::get(termShape, i32Ty);
+  auto dimRangeTy = RankedTensorType::get({dimLen}, i32Ty);
+  Value term =
+      rewriter.create<triton::MakeRangeOp>(loc, dimRangeTy, 0, dimLen);
+
+  if (shape.size() > 1)
+    term = rewriter.create<triton::ReshapeOp>(loc, termTy, term, false);
+
+  if (!isConstantIntValue(stride, 1)) {
+    FailureOr<Value> strideTensor =
+        materializeI32Tensor(rewriter, loc, stride, termTy);
+    if (failed(strideTensor))
+      return failure();
+    term = rewriter.create<arith::MulIOp>(loc, term, *strideTensor);
+  }
+
+  if (baseOffset && !isConstantIntValue(*baseOffset, 0)) {
+    FailureOr<Value> offsetTensor =
+        materializeI32Tensor(rewriter, loc, *baseOffset, termTy);
+    if (failed(offsetTensor))
+      return failure();
+    term = rewriter.create<arith::AddIOp>(loc, term, *offsetTensor);
+  }
+
+  return term;
+}
+
+FailureOr<Value> buildReinterpretCastTensorPointers(
+    ConversionPatternRewriter &rewriter, Location loc, Value base,
+    MemRefType baseMemrefTy, ArrayRef<OpFoldResult> mixedOffsets,
+    ArrayRef<OpFoldResult> mixedStrides, ArrayRef<int64_t> shape) {
+  // Lower a reinterpret_cast view by expanding its strided descriptor into
+  // per-dimension pointer arithmetic. For a 2-D view:
+  //
+  //   offset: [base_offset], sizes: [M, N], strides: [stride0, stride1]
+  //
+  // this creates the equivalent of:
+  //
+  //   row = make_range(0, M) -> tensor<Mx1xi32>
+  //   row_offset = row * stride0 + base_offset
+  //   row_ptr = addptr(splat(base) : tensor<Mx1xptr>, row_offset)
+  //   col = make_range(0, N) -> tensor<1xNxi32>
+  //   ptrs = addptr(broadcast(row_ptr) : tensor<MxNxptr>,
+  //                 broadcast(col * stride1) : tensor<MxNxi32>)
+  //
+  // The final result is still a full tensor<...x!tt.ptr<T>> pointer tile for
+  // tt.load/tt.store. Only the construction is staged so Triton can see the
+  // sliced row-pointer form instead of a single fully-materialized offset tile.
+  if (shape.empty() || mixedOffsets.size() != 1 ||
+      mixedStrides.size() != shape.size())
+    return failure();
+
+  Type ptrTy = HIVMToTritonTypeConvert(baseMemrefTy);
+  auto ttBase = rewriter.create<UnrealizedConversionCastOp>(loc, ptrTy, base);
+
+  Value ptrs;
+  SmallVector<int64_t> currentShape;
+  for (auto [dim, stride] : llvm::enumerate(mixedStrides)) {
+    std::optional<OpFoldResult> baseOffset;
+    if (dim == 0)
+      baseOffset = mixedOffsets.front();
+
+    FailureOr<Value> maybeTerm =
+        buildDimOffsetTerm(rewriter, loc, shape, dim, stride, baseOffset);
+    if (failed(maybeTerm))
+      return failure();
+
+    Value term = *maybeTerm;
+    auto termTy = cast<RankedTensorType>(term.getType());
+    SmallVector<int64_t> termShape(termTy.getShape().begin(),
+                                   termTy.getShape().end());
+
+    if (!ptrs) {
+      auto ptrTensorTy = RankedTensorType::get(termShape, ptrTy);
+      Value splat = rewriter.create<triton::SplatOp>(
+          loc, ptrTensorTy, ttBase.getResult(0));
+      ptrs = rewriter
+                 .create<triton::AddPtrOp>(loc, ptrTensorTy, splat, term)
+                 .getResult();
+      currentShape = std::move(termShape);
+      continue;
+    }
+
+    FailureOr<SmallVector<int64_t>> commonShape =
+        getBroadcastShape(currentShape, termShape);
+    if (failed(commonShape))
+      return failure();
+
+    ptrs = broadcastTensor(rewriter, loc, ptrs, *commonShape);
+    term = broadcastTensor(rewriter, loc, term, *commonShape);
+
+    auto ptrTensorTy = RankedTensorType::get(*commonShape, ptrTy);
+    ptrs = rewriter.create<triton::AddPtrOp>(loc, ptrTensorTy, ptrs, term)
+               .getResult();
+    currentShape = std::move(*commonShape);
+  }
+
+  if (!llvm::equal(currentShape, shape))
+    ptrs = broadcastTensor(rewriter, loc, ptrs, shape);
+
+  return ptrs;
+}
+
 // Resolves a static transfer shape from two candidate MemRefs.
 // It prefers the primary MemRef when its shape is static, and falls back
 // to the secondary MemRef otherwise.
@@ -523,6 +719,30 @@ static Value buildTensorPointers(ConversionPatternRewriter &rewriter,
   return rewriter
       .create<triton::AddPtrOp>(loc, ptrTensorTy, splat, offsets)
       .getResult();
+}
+
+FailureOr<Value>
+buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
+                          Value originalValue, Value convertedValue,
+                          MemRefType memrefTy, ArrayRef<int64_t> shape,
+                          llvm::function_ref<Value()> getLinearOffsets) {
+  if (auto castOp =
+          originalValue.getDefiningOp<memref::ReinterpretCastOp>()) {
+    Value base = castOp.getSource();
+    auto baseMemrefTy = dyn_cast<MemRefType>(base.getType());
+    if (!baseMemrefTy)
+      return failure();
+
+    SmallVector<OpFoldResult> mixedOffsets = castOp.getMixedOffsets();
+    SmallVector<OpFoldResult> mixedStrides = castOp.getMixedStrides();
+    return buildReinterpretCastTensorPointers(
+        rewriter, loc, base, baseMemrefTy, mixedOffsets, mixedStrides, shape);
+  }
+
+  Value offsets =
+      calcStridedOffsets(rewriter, loc, memrefTy, shape, getLinearOffsets());
+  return buildTensorPointers(rewriter, loc, convertedValue, memrefTy, shape,
+                             offsets);
 }
 
 // Maps HIVM atomic kinds to the corresponding Triton RMW operations.
@@ -588,9 +808,7 @@ public:
     if (op.getPadMode())
       return rewriter.notifyMatchFailure(op, "padded load not converted");
 
-    // // === Branch : Tensor form === delete
-
-    // === Branch 1: Memref form ===
+    // === Only support Memref form ===
     auto srcMemrefTy = dyn_cast<MemRefType>(src.getType());
     auto dstMemrefTy = dyn_cast<MemRefType>(dst.getType());
     if (!srcMemrefTy || !dstMemrefTy)
@@ -601,13 +819,19 @@ public:
       return rewriter.notifyMatchFailure(op, "cannot resolve shape");
     SmallVector<int64_t> shape = *shapeOr;
 
-    Value linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+    Value linearOffsets;
+    auto getLinearOffsets = [&]() -> Value {
+      if (!linearOffsets)
+        linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+      return linearOffsets;
+    };
 
-    Value srcOffsets =
-        calcStridedOffsets(rewriter, loc, srcMemrefTy, shape, linearOffsets);
-
-    Value srcPtrs =
-        buildTensorPointers(rewriter, loc, src, srcMemrefTy, shape, srcOffsets);
+    FailureOr<Value> maybeSrcPtrs = buildMemRefTensorPointers(
+        rewriter, loc, op.getSrc(), src, srcMemrefTy, shape, getLinearOffsets);
+    if (failed(maybeSrcPtrs))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to materialize source pointers");
+    Value srcPtrs = *maybeSrcPtrs;
 
     // tt.load from GM
     auto loaded = rewriter.create<triton::LoadOp>(
@@ -645,11 +869,13 @@ public:
 
     // Store to dst if needed
     if (toTensorUsers.empty()) {
-      Value dstOffsets =
-          calcStridedOffsets(rewriter, loc, dstMemrefTy, shape, linearOffsets);
-
-      Value dstPtrs = buildTensorPointers(rewriter, loc, dst, dstMemrefTy,
-                        shape, dstOffsets);
+      FailureOr<Value> maybeDstPtrs =
+          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
+                                    dstMemrefTy, shape, getLinearOffsets);
+      if (failed(maybeDstPtrs))
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize destination pointers");
+      Value dstPtrs = *maybeDstPtrs;
 
       rewriter.create<triton::StoreOp>(
           loc, dstPtrs, loadedTensor, Value(), llvm::ArrayRef<int32_t>{},
@@ -761,13 +987,20 @@ public:
         return failure();
 
       auto shape = srcTensorTy.getShape();
-      Value linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+      Value linearOffsets;
+      auto getLinearOffsets = [&]() -> Value {
+        if (!linearOffsets)
+          linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+        return linearOffsets;
+      };
 
-      Value dstOffsets =
-          calcStridedOffsets(rewriter, loc, dstMemrefTy, shape, linearOffsets);
-
-      Value dstPtrs = buildTensorPointers(rewriter, loc, dst, dstMemrefTy,
-                                          shape, dstOffsets);
+      FailureOr<Value> maybeDstPtrs =
+          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
+                                    dstMemrefTy, shape, getLinearOffsets);
+      if (failed(maybeDstPtrs))
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize destination pointers");
+      Value dstPtrs = *maybeDstPtrs;
 
       rewriter.create<triton::StoreOp>(
           loc, dstPtrs, src, Value(), llvm::ArrayRef<int32_t>{},
