@@ -12,11 +12,14 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/AsmParser/AsmParser.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "hivm-impl"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -30,6 +33,150 @@ using namespace mlir::utils::debugger;
 namespace mlir {
 using namespace utils;
 namespace hivm {
+
+static Value getOperandToPropagateFrom(Operation *operation) {
+  return TypeSwitch<Operation *, Value>(operation)
+      .Case([](tensor::CollapseShapeOp tensorCollapseShapeOp) {
+        return tensorCollapseShapeOp.getSrc();
+      })
+      .Case([](tensor::ExpandShapeOp tensorExpandShapeOp) {
+        return tensorExpandShapeOp.getSrc();
+      })
+      .Case([](tensor::ExtractSliceOp extractSliceOp) {
+        return extractSliceOp.getSource();
+      })
+      .Case([](tensor::InsertSliceOp insertSliceOp) {
+        return insertSliceOp.getSource();
+      })
+      .Case([](bufferization::ToMemrefOp toMemrefOp) {
+        return toMemrefOp.getOperand();
+      })
+      .Case([](bufferization::ToTensorOp toTensorOp) {
+        return toTensorOp.getOperand();
+      })
+      .Case([](ViewLikeOpInterface viewOp) { return viewOp.getViewSource(); })
+      .Default({});
+}
+
+struct PossibleDefinesValue {
+  using DefinesT = DenseSet<Operation *>;
+  DefinesT possibleDefines = {};
+
+  PossibleDefinesValue() = default;
+  explicit PossibleDefinesValue(DefinesT defs)
+      : possibleDefines(std::move(defs)) {}
+  explicit PossibleDefinesValue(Operation *def) : possibleDefines({def}) {}
+
+  const DefinesT &getDefines() const { return possibleDefines; }
+
+  bool isUnknown() const { return possibleDefines.empty(); }
+
+  static PossibleDefinesValue join(const PossibleDefinesValue &l,
+                                   const PossibleDefinesValue &r) {
+    if (l.isUnknown()) {
+      return r;
+    }
+    if (r.isUnknown()) {
+      return l;
+    }
+
+    auto a = l.getDefines();
+    auto b = r.getDefines();
+
+    DefinesT results;
+    results.insert(a.begin(), a.end());
+    results.insert(b.begin(), b.end());
+
+    return PossibleDefinesValue(std::move(results));
+  }
+
+  bool operator==(const PossibleDefinesValue &other) const {
+    return getDefines() == other.getDefines();
+  }
+
+  void print(llvm::raw_ostream &os) const {
+    os << "{\n";
+    for (auto *def : getDefines()) {
+      os << def << ", ";
+    }
+    os << "}\n";
+  }
+};
+
+using PossibleDefinesLattice = dataflow::Lattice<PossibleDefinesValue>;
+using PossibleDefinesAnalysisBase =
+    dataflow::SparseForwardDataFlowAnalysis<PossibleDefinesLattice>;
+
+struct PossibleDefinesAnalysis : public PossibleDefinesAnalysisBase {
+  explicit PossibleDefinesAnalysis(DataFlowSolver &solver)
+      : PossibleDefinesAnalysisBase(solver) {}
+
+  void setToEntryState(PossibleDefinesLattice *lattice) override {
+    this->propagateIfChanged(lattice, lattice->join(PossibleDefinesValue()));
+  }
+
+  LogicalResult
+  visitOperation(Operation *op,
+                 ArrayRef<const PossibleDefinesLattice *> operands,
+                 ArrayRef<PossibleDefinesLattice *> results) override {
+    if (results.empty()) {
+      return success();
+    }
+
+    PossibleDefinesValue newInfo(op);
+    if (Value propagateOperand = getOperandToPropagateFrom(op)) {
+      newInfo = PossibleDefinesValue::join(
+          newInfo, getLatticeElement(propagateOperand)->getValue());
+    }
+
+    for (auto *res : results) {
+      this->propagateIfChanged(res, res->join(newInfo));
+    }
+
+    return success();
+  }
+};
+
+mlir::func::FuncOp getParentFuncOp(mlir::Value value) {
+  mlir::Operation *definingOp = nullptr;
+
+  if (auto blockArg = mlir::dyn_cast<mlir::BlockArgument>(value)) {
+    mlir::Block *block = blockArg.getOwner();
+    if (!block)
+      return nullptr;
+    definingOp = block->getParentOp();
+  } else {
+    definingOp = value.getDefiningOp();
+  }
+
+  if (!definingOp)
+    return nullptr;
+
+  return definingOp->getParentOfType<mlir::func::FuncOp>();
+}
+
+DenseSet<Operation *> getPotentialDefiners(Value v) {
+  auto funcOp = getParentFuncOp(v);
+  if (!funcOp)
+    return {};
+
+  DataFlowSolver solver;
+  solver.load<dataflow::DeadCodeAnalysis>();
+  solver.load<dataflow::SparseConstantPropagation>();
+  solver.load<PossibleDefinesAnalysis>();
+
+  if (failed(solver.initializeAndRun(funcOp))) {
+    return {};
+  }
+
+  auto *state = solver.lookupState<PossibleDefinesLattice>(v);
+  if (!state || state->getValue().isUnknown()) {
+    return {};
+  }
+
+  return state->getValue().possibleDefines;
+}
+
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v) {
   auto it = std::find(valueVec.begin(), valueVec.end(), v);
   if (it != valueVec.end()) {
