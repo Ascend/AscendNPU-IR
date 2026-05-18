@@ -114,11 +114,11 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
   using OpRewritePattern<OpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
-    if (!isa<hivm::HIVMStructuredOp>(op.getOperation())) {
+    if (!isa<hivm::HIVMStructuredOp, hivm::BitcastOp>(op.getOperation())) {
       return failure();
     }
 
-    auto hivmOp = cast<HIVMStructuredOp>(op.getOperation());
+    auto hivmOp = op.getOperation();
     llvm::SmallVector<OpOperand *> consumerOperands;
     for (OpOperand &operand : hivmOp->getOpOperands()) {
       if (traceDefOp<hivm::FixpipeOp>(operand.get()).has_value() ||
@@ -126,7 +126,7 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
         consumerOperands.push_back(&operand);
       }
     }
-    return InsertOpHelper(rewriter, hivmOp.getLoc(), consumerOperands,
+    return InsertOpHelper(rewriter, hivmOp->getLoc(), consumerOperands,
                           InsertMode::LoadOnly);
   }
 };
@@ -309,6 +309,7 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       >(patterns);
   registerOne<func::CallOp>(patterns);
   registerOne<hivm::IndirectLoadOp>(patterns);
+  registerOne<hivm::BitcastOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(

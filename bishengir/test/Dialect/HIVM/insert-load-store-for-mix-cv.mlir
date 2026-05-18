@@ -309,3 +309,25 @@ func.func @insert_load_between_fixpipe_and_indirect_store(%src: tensor<16x16xf32
   hivm.hir.indirect_store ins(%1 : tensor<16x16xf16>, %idx : tensor<16x16xi64>) outs(%base : memref<?xf16>)
   return
 }
+
+// -----
+// CHECK-LABEL: @insert_load_between_fixpipe_and_hivm_bitcast
+func.func @insert_load_between_fixpipe_and_hivm_bitcast(
+    %src: tensor<16x16xf32>,
+    %dst: tensor<16x16xf16>) -> tensor<16x16xi16> {
+  %0 = hivm.hir.fixpipe {enable_nz2nd}
+        ins(%src : tensor<16x16xf32>)
+        outs(%dst : tensor<16x16xf16>)
+        -> tensor<16x16xf16>
+
+  %1 = hivm.hir.bitcast %0 : tensor<16x16xf16> -> tensor<16x16xi16>
+
+  return %1 : tensor<16x16xi16>
+}
+
+// CHECK: %[[FIX:.*]] = hivm.hir.fixpipe
+// CHECK: %[[LOAD_DST:.*]] = tensor.empty() : tensor<16x16xf16>
+// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIX]] : tensor<16x16xf16>) outs(%[[LOAD_DST]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[BITCAST:.*]] = hivm.hir.bitcast %[[LOAD]] : tensor<16x16xf16> -> tensor<16x16xi16>
+// CHECK: return %[[BITCAST]] : tensor<16x16xi16>
+
