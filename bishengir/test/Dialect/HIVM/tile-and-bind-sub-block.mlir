@@ -1785,3 +1785,42 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   }
 }
 
+// -----
+
+// CHECK-LABEL:   func.func @brc_two_dim_with_reduction_dim
+// CHECK-NOT: scf.if
+// CHECK: hivm.hir.vreduce <sum> ins(%[[VAL_24:.*]] : tensor<16x8xf32>) outs(%[[VAL_26:.*]] : tensor<1x8xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1x8xf32>
+// CHECK: hivm.hir.store
+// CHECK-NOT: limit_sub_block_id0
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @brc_two_dim_with_reduction_dim(%arg0: tensor<16xf32>, %arg1: memref<?xf32>, %arg2: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<16x16xf32>
+    %1 = tensor.empty() : tensor<16xf32>
+    %2 = tensor.empty() : tensor<16xi32>
+    %3 = hivm.hir.varange offset[%c0] strides[%c1] outs(%2 : tensor<16xi32>) -> tensor<16xi32>
+    %4 = tensor.empty() : tensor<16x16xi32>
+    %expanded = tensor.expand_shape %3 [[0, 1]] output_shape [16, 1] : tensor<16xi32> into tensor<16x1xi32>
+    %5 = hivm.hir.vbrc ins(%expanded : tensor<16x1xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [1] -> tensor<16x16xi32>
+    %expanded_0 = tensor.expand_shape %3 [[0, 1]] output_shape [1, 16] : tensor<16xi32> into tensor<1x16xi32>
+    %6 = hivm.hir.vbrc ins(%expanded_0 : tensor<1x16xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [0] -> tensor<16x16xi32>
+    %7 = tensor.empty() : tensor<16x16xi1>
+    %8 = hivm.hir.vcmp ins(%5, %6 : tensor<16x16xi32>, tensor<16x16xi32>) outs(%7 : tensor<16x16xi1>) -> tensor<16x16xi1>
+    %9 = hivm.hir.vcast ins(%8 : tensor<16x16xi1>) outs(%0 : tensor<16x16xf32>) cast = <cast_unsigned> -> tensor<16x16xf32>
+    %expanded_1 = tensor.expand_shape %arg0 [[0, 1]] output_shape [1, 16] : tensor<16xf32> into tensor<1x16xf32>
+    %10 = hivm.hir.vreduce <sum> ins(%9 : tensor<16x16xf32>) outs(%expanded_1 : tensor<1x16xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1x16xf32>
+    %collapsed = tensor.collapse_shape %10 [[0, 1]] : tensor<1x16xf32> into tensor<16xf32>
+    %11 = hivm.hir.vadd ins(%collapsed, %cst : tensor<16xf32>, f32) outs(%1 : tensor<16xf32>) -> tensor<16xf32>
+    %expanded_2 = tensor.expand_shape %11 [[0, 1]] output_shape [1, 16] : tensor<16xf32> into tensor<1x16xf32>
+    %12 = hivm.hir.vbrc ins(%expanded_2 : tensor<1x16xf32>) outs(%0 : tensor<16x16xf32>) broadcast_dims = [0] -> tensor<16x16xf32>
+    %extracted_slice = tensor.extract_slice %12[0, 0] [%arg2, 16] [1, 1] : tensor<16x16xf32> to tensor<?x16xf32>
+    %13 = hivm.hir.vbrc ins(%cst : f32) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %14 = hivm.hir.vadd ins(%9, %13 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %inserted_slice = tensor.insert_slice %extracted_slice into %14[0, 0] [%arg2, 16] [1, 1] : tensor<?x16xf32> into tensor<16x16xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
+    hivm.hir.store ins(%inserted_slice : tensor<16x16xf32>) outs(%reinterpret_cast : memref<16x16xf32>)
+    return
+  }
+}
