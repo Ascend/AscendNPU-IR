@@ -46,27 +46,26 @@ bool mlir::hivm::NormalizeTraitsBase::archIsRegbased() {
   return hivm::archIsRegbased;
 }
 
-Value mlir::hivm::NormalizeTraitsBase::castValue(
+Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
     PatternRewriter &rewriter, Location loc, VCastOp op, Value input,
-    Type targetElemType, CastExecutionKind executionKind, CastSignKind signKind,
+    Type targetElemType, CastRoundKind executionKind, CastSignKind signKind,
     bool enableSaturate, CastUnsignedModeKind unsignedModeKind) {
   hivm::RoundMode defaultRoundMode =
       utils::selectRoundMode<hivm::RoundMode>(
           getElementTypeOrSelf(input.getType()), targetElemType);
   hivm::RoundMode roundMode =
-      mapCastExecutionKind(executionKind, defaultRoundMode);
+      mapCastRoundKind(executionKind, defaultRoundMode);
   hivm::TypeFn typeFn = mapCastSignKind(signKind, op.getCast());
   hivm::UnsignedMode unsignedMode =
       mapCastUnsignedModeKind(unsignedModeKind, hivm::UnsignedMode::SI2SI);
-
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
                              targetElemType);
   castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(typeFn));
-  if (executionKind == CastExecutionKind::Default)
+  if (executionKind == CastRoundKind::Default)
     return getPrimaryCastValue(castOp);
 
-  if (executionKind == CastExecutionKind::TruncEnableOverflow)
+  if (executionKind == CastRoundKind::TruncEnableOverflow)
     annotateCast(rewriter, loc, castOp,
                  {rewriter.getNamedAttr(kOverflowModeAttr,
                                         rewriter.getStringAttr("trunc"))});
@@ -152,6 +151,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
     {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
+    {BinaryKind::Or, createHIVMBinaryOp<hivm::VOrOp>},
     {BinaryKind::MinSigned, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, createHIVMBinaryOp<hivm::VMaxOp>},
 };
@@ -205,28 +205,17 @@ CompareMode mapCompareKindToCompareMode(CompareKind kind) {
   return it->second;
 }
 
-static hivm::RoundMode mapCastRoundKindToRoundMode(CastRoundKind kind) {
-  static const llvm::DenseMap<CastRoundKind, hivm::RoundMode> castRoundKindMap = {
+static std::optional<hivm::RoundMode>
+mapCastRoundKindToRoundMode(CastRoundKind kind) {
+  static const llvm::DenseMap<CastRoundKind, hivm::RoundMode> kindToMode = {
       {CastRoundKind::Round, hivm::RoundMode::ROUND},
       {CastRoundKind::Floor, hivm::RoundMode::FLOOR},
-  };
-
-  auto it = castRoundKindMap.find(kind);
-  if (it == castRoundKindMap.end())
-    llvm_unreachable("Unknown CastRoundKind");
-  return it->second;
-}
-
-static std::optional<hivm::RoundMode>
-mapCastExecutionKindToRoundMode(CastExecutionKind kind) {
-  static const llvm::DenseMap<CastExecutionKind, hivm::RoundMode> kindToMode = {
-      {CastExecutionKind::RInt, hivm::RoundMode::RINT},
-      {CastExecutionKind::Trunc, hivm::RoundMode::TRUNC},
-      {CastExecutionKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
-      {CastExecutionKind::TruncWithOverflow,
+      {CastRoundKind::RInt, hivm::RoundMode::RINT},
+      {CastRoundKind::Trunc, hivm::RoundMode::TRUNC},
+      {CastRoundKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
+      {CastRoundKind::TruncWithOverflow,
        hivm::RoundMode::TRUNCWITHOVERFLOW},
   };
-
   auto it = kindToMode.find(kind);
   if (it == kindToMode.end())
     return std::nullopt;
@@ -275,6 +264,18 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
   return cmpOp.getResult()[0];
 }
 
+mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
+    PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+    VCmpOp sourceOp) {
+  Type boolType = rewriter.getIntegerType(1);
+  auto emptyOp =
+      utils::createEmptyOpWithTargetElemType(rewriter, loc, lhs, boolType);
+  auto cmpOp =
+      rewriter.create<VCmpOp>(loc, TypeRange(emptyOp), ValueRange{lhs, rhs},
+                              ValueRange(emptyOp), sourceOp.getCompareMode());
+  return cmpOp.getResult()[0];
+}
+
 mlir::Value mlir::hivm::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     UnaryKind kind) {
@@ -291,6 +292,15 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
   if (it == binaryOpMap.end())
     llvm_unreachable("unsupported binary kind");
   return it->second(rewriter, loc, lhs, rhs, dst);
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
+    PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
+    VShROp sourceOp) {
+  return rewriter
+      .create<VShROp>(loc, TypeRange{dst.getType()}, ValueRange{lhs, rhs},
+                      ValueRange{dst}, sourceOp.getRoundAttr())
+      .getResult()[0];
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
@@ -323,18 +333,25 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
-    CastRoundKind kind) {
+    CastRoundKind kind, Value output, CastSignKind signKind) {
+  if (signKind == CastSignKind::Preserve)
+    llvm_unreachable("createCastOp does not support CastSignKind::Preserve");
   Type srcElemType = getElementTypeOrSelf(input.getType());
-  hivm::RoundMode roundMode = mapCastRoundKindToRoundMode(kind);
-  if ((srcElemType.isF16() || srcElemType.isBF16()) && targetElemType.isF32()) {
+  auto roundMode =
+      kind == CastRoundKind::Default
+          ? mlir::utils::selectRoundMode<hivm::RoundMode>(srcElemType,
+                                                          targetElemType)
+          : mapCastRoundKindToRoundMode(kind).value();
+  if ((srcElemType.isF16() || srcElemType.isBF16()) &&
+      targetElemType.isF32()) {
     // HIVM VCastOp only supports f16/bf16 -> f32 in rint mode.
     roundMode = hivm::RoundMode::RINT;
   }
+  auto typeFn = mapCastSignKind(signKind, hivm::TypeFn::cast_signed);
   auto castOp = hivm::castTo(rewriter, loc, input,
                              rewriter.getAttr<hivm::RoundModeAttr>(roundMode),
                              targetElemType);
-  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(
-      hivm::TypeFn::cast_signed));
+  castOp.setCastAttr(rewriter.getAttr<hivm::TypeFnAttr>(typeFn));
   return getPrimaryCastValue(castOp);
 }
 
@@ -393,8 +410,8 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
 }
 
 bool mlir::hivm::NormalizeTraitsBase::matchCastRoundMode(
-    hivm::VCastOp op, CastExecutionKind kind) {
-  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+    hivm::VCastOp op, CastRoundKind kind) {
+  auto roundMode = mapCastRoundKindToRoundMode(kind);
   return roundMode && op.getRoundMode() == *roundMode;
 }
 
@@ -409,9 +426,9 @@ hivm::TypeFn mlir::hivm::NormalizeTraitsBase::mapCastSignKind(
   return typeFn.value_or(preserveTypeFn);
 }
 
-hivm::RoundMode mlir::hivm::NormalizeTraitsBase::mapCastExecutionKind(
-    CastExecutionKind kind, hivm::RoundMode defaultRoundMode) {
-  auto roundMode = mapCastExecutionKindToRoundMode(kind);
+hivm::RoundMode mlir::hivm::NormalizeTraitsBase::mapCastRoundKind(
+    CastRoundKind kind, hivm::RoundMode defaultRoundMode) {
+  auto roundMode = mapCastRoundKindToRoundMode(kind);
   return roundMode.value_or(defaultRoundMode);
 }
 

@@ -1015,7 +1015,7 @@ def VShLOp : HIVM_ElementwiseBinaryOp<"vshl",
 
 def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-     OperElemTypeConstraints<[0, 1], [I16, I32, I64]>,
+     OperElemTypeConstraints<[0, 1], [I8, I16, I32, I64]>,
      VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,

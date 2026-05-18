@@ -25,12 +25,20 @@
 
 namespace mlir::hivm {
 
-//===----------------------------------------------------------------------===//
-// HIVMCmpVneTraits - Traits for NormalizeCmpVne pattern
-//===----------------------------------------------------------------------===//
-struct HIVMCmpVneTraits : public NormalizeTraitsBase {
+struct HIVMComparisonNormalizeTraitsBase : public NormalizeTraitsBase {
+  template <typename OpTy>
+  static bool hasPureTensorNoTransformAttrs(OpTy op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+};
+
+/// Normalizes `hivm.hir.vcmp(..., compare_mode = ne)` to:
+///   tmp = vcmp(lhs, rhs, eq)
+///   result = vnot(tmp)
+struct HIVMCmpVneTraits : public HIVMComparisonNormalizeTraitsBase {
   static bool shouldNormalize(VCmpOp op) {
-    if (!op.getTranspose().empty() || !op.getBroadcast().empty()) {
+    if (!hasPureTensorNoTransformAttrs(op)) {
       op->emitWarning("NormalizeCmpVneOp: skipping op with non-empty broadcast/transpose attributes");
       return false;
     }
@@ -40,7 +48,54 @@ struct HIVMCmpVneTraits : public NormalizeTraitsBase {
 
 using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<VCmpOp, HIVMCmpVneTraits>;
 
-struct HIVMIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
+/// Normalizes `hivm.hir.vcmp` on `i8` / `i32` inputs to a wider compare type:
+///   i8  -> f16
+///   i32 -> i64, except `eq` / `ne`
+struct HIVMI8I32CmpTraits : public HIVMComparisonNormalizeTraitsBase {
+  static bool shouldNormalize(VCmpOp op) {
+    return hasPureTensorNoTransformAttrs(op);
+  }
+
+  static bool isEqOrNeCompare(VCmpOp op) {
+    return op.getCompareMode() == CompareMode::EQ ||
+           op.getCompareMode() == CompareMode::NE;
+  }
+};
+
+using NormalizeI8I32CmpOp =
+    mlir::NormalizeI8I32CmpOpTemplate<VCmpOp, HIVMI8I32CmpTraits>;
+
+/// Normalizes `hivm.hir.vxor(x, y)` to:
+///   tmp_or = vor(x, y)
+///   tmp_and = vand(x, y)
+///   tmp_not = vnot(tmp_and)
+///   result = vand(tmp_not, tmp_or)
+struct HIVMXorTraits : public HIVMComparisonNormalizeTraitsBase {
+  static bool shouldNormalizeXor(VXorOp op) {
+    return hasPureTensorNoTransformAttrs(op);
+  }
+};
+
+using NormalizeXorOp = mlir::NormalizeXorOpTemplate<VXorOp, HIVMXorTraits>;
+
+/// Normalizes `hivm.hir.vshr` on `tensor<...xi8>` to:
+///   vcast(i8 -> i16) -> vshr(i16) -> vcast(i16 -> i8)
+struct HIVMShiftRightI8ToI16Traits
+    : public HIVMComparisonNormalizeTraitsBase {
+  static bool shouldNormalizeShift(VShROp op) {
+    return hasPureTensorNoTransformAttrs(op);
+  }
+
+  static CastSignKind getShiftCastSignKind(VShROp) {
+    return CastSignKind::Signed;
+  }
+};
+
+using NormalizeShiftRightI8ToI16 =
+    mlir::NormalizeShiftI8ToI16OpTemplate<VShROp,
+                                          HIVMShiftRightI8ToI16Traits>;
+
+struct HIVMIsInfNanNormalizeTraitsBase : public HIVMComparisonNormalizeTraitsBase {
   /// HIVM `visinf`/`visnan` normalize rewrites through `vabs`, and `vabs`
   /// only supports F16/F32 here. BF16 therefore cannot be normalized by this
   /// pattern and stays outside the supported op contract.
@@ -66,11 +121,8 @@ struct HIVMIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
     Type elemType = intElemType.getIntOrFloatBitWidth() == 32
                         ? static_cast<Type>(rewriter.getF32Type())
                         : static_cast<Type>(rewriter.getF16Type());
-    Value castValue = hivm::castTo(
-                          rewriter, loc, input,
-                          rewriter.getAttr<hivm::RoundModeAttr>(hivm::RoundMode::RINT),
-                          elemType)
-                          .getResult()[0];
+    Value castValue = NormalizeTraitsBase::createCastOp(
+        rewriter, loc, input, elemType, CastRoundKind::RInt);
     Value zeroValue = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getFloatAttr(elemType, 0.0));
     Value cmpValue = NormalizeTraitsBase::createCmpOp(rewriter, loc, castValue,
@@ -81,8 +133,7 @@ struct HIVMIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
 
   template <typename OpTy>
   static bool shouldNormalize(OpTy op) {
-    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
-           op.getTranspose().empty();
+    return hasPureTensorNoTransformAttrs(op);
   }
 };
 
@@ -109,15 +160,33 @@ using NormalizeIsInfOp = mlir::NormalizeIsInfOpTemplate<VIsInfOp, HIVMIsInfTrait
 ///   -> vcast -> vcmp(eq, 0) -> vnot
 using NormalizeIsNanOp = mlir::NormalizeIsNanOpTemplate<VIsNanOp, HIVMIsNanTraits>;
 
+void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns) {
+  if (!NormalizeTraitsBase::archIsRegbased())
+    patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());
+}
+
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeIsInfOp>(ctx);
   patterns.add<NormalizeIsNanOp>(ctx);
 }
 
-void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns) {
+void populateNormalizeBitwiseComparisonPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
-  patterns.add<NormalizeCmpVneOp>(ctx);
+  if (!NormalizeTraitsBase::archIsRegbased()) {
+    patterns.add<NormalizeXorOp>(ctx);
+    patterns.add<NormalizeShiftRightI8ToI16>(ctx);
+  }
+}
+
+void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns) {
+  if (NormalizeTraitsBase::archIsRegbased())
+    patterns.add<NormalizeShiftRightI8ToI16>(patterns.getContext());
+}
+
+void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns) {
+  if (!NormalizeTraitsBase::archIsRegbased())
+    patterns.add<NormalizeCmpVneOp>(patterns.getContext());
 }
 
 } // namespace mlir::hivm
