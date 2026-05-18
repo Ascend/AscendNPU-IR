@@ -117,6 +117,34 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
  
     func.return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @atomic_cas_bf16_to_upstream
+// CHECK: hfusion.atomic_cas
+func.func @atomic_cas_bf16_to_upstream(%src0: tensor<1xbf16>, %src1: tensor<1xbf16>, %dst: tensor<1xbf16>) -> tensor<1xbf16> {
+  %0 = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<1xbf16>, tensor<1xbf16>) outs(%dst : tensor<1xbf16>) -> tensor<1xbf16>
+  return %0 : tensor<1xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @atomic_cas_fp8_e4m3_to_upstream
+// CHECK: hfusion.atomic_cas
+func.func @atomic_cas_fp8_e4m3_to_upstream(%src0: tensor<1xf8E4M3FN>, %src1: tensor<1xf8E4M3FN>, %dst: tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN> {
+  %0 = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<1xf8E4M3FN>, tensor<1xf8E4M3FN>) outs(%dst : tensor<1xf8E4M3FN>) -> tensor<1xf8E4M3FN>
+  return %0 : tensor<1xf8E4M3FN>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @atomic_cas_fp8_e5m2_to_upstream
+// CHECK: hfusion.atomic_cas
+func.func @atomic_cas_fp8_e5m2_to_upstream(%src0: tensor<1xf8E5M2>, %src1: tensor<1xf8E5M2>, %dst: tensor<1xf8E5M2>) -> tensor<1xf8E5M2> {
+  %0 = hivm.hir.atomic_cas ins(%src0, %src1 : tensor<1xf8E5M2>, tensor<1xf8E5M2>) outs(%dst : tensor<1xf8E5M2>) -> tensor<1xf8E5M2>
+  return %0 : tensor<1xf8E5M2>
+}
+
  
 // -----
  

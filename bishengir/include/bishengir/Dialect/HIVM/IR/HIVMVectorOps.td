@@ -785,7 +785,9 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
 
 def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-     OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
+     OperElemTypeConstraints<[0, 1], [I8, UI8, I16, F16, UI16, I32,
+                                      F8E4M3FN, F8E5M2, F32,
+                                      UI32, BF16, I64, UI64, I1]>,
      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
@@ -819,7 +821,9 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
 
 def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-     OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
+     OperElemTypeConstraints<[0, 1], [I8, UI8, I16, F16, UI16, I32,
+                                      F8E4M3FN, F8E5M2, F32,
+                                      UI32, BF16, I64, UI64, I1]>,
      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
@@ -1053,7 +1057,9 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
 
 def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     [StaticMaxRankTrait<1>,
-     OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
+     OperElemTypeConstraints<[0, 1],
+       [F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32, 
+       I64, UI64, F8E4M3FN, F8E5M2]>,
      OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
      VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
@@ -1071,7 +1077,7 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
 
         |    compare mode   |       element type      |
         |-------------------|-------------------------|
-        | GE/GT/LE/LT/NE/EQ | f16, f32, i16, i32, i64 |
+        | GE/GT/LE/LT/NE/EQ | f16, bf16, f32, i8/ui8, i16/ui16, i32/ui32, i64/ui64, f8 |
   }];
   let arguments = (ins Variadic<AnyType>:$src,
                        Variadic<AnyShaped>:$dst,
@@ -1130,7 +1136,9 @@ class HIVM_ElementwiseTernaryOp<string mnemonic, list<Trait> traits = []> :
 def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
     [StaticMaxRankTrait<1>,
      OperElemTypeConstraints<[/*condition=*/0], [I1,I8]>,
-     OperElemTypeConstraints<[/*src0=*/1, /*src0=*/2], [I1, AnyI8, AnyI16, F16, BF16, AnyI32, F32, I64]>,
+     OperElemTypeConstraints<[/*src0=*/1, /*src1=*/2],
+                             [I1, AnyI8, AnyI16, F16, BF16, F8E4M3FN,
+                              F8E5M2, AnyI32, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>,
      BroadcastableOTF]> {
     // add traits for type constraint
@@ -1447,7 +1455,7 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
     [SameOperandsElementType, AttrSizedOperandSegments,
      HIVMOpSameOperandsAndResultRank, StaticMaxRankTrait<1>,
      OperElemTypeConstraints<[0],
-       [I16, F16, UI16, I32, F32, UI32, BF16, I64, UI64, F8E4M3FN, F8E5M2]>,
+       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
@@ -1493,7 +1501,7 @@ def VInterleaveOp : HIVM_VectorOp<"vinterleave",
 def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
     [SameOperandsElementType, HIVMOpSameOperandsAndResultRank,
      OperElemTypeConstraints<[0],
-       [I8, I16, F16, UI16, I32, F32, UI32, BF16, I64, UI64]>,
+       [I8, UI8, I16, F16, UI16, I32, F8E4M3FN, F8E5M2, F32, UI32, BF16, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
      InferMaxRankTrait, DeclareOpInterfaceMethods<LibraryFunctionOpInterface,

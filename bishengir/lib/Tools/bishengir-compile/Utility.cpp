@@ -257,7 +257,7 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
       }))
     return failure();
 
-  config.setEnableMixedCV(first != StringRef{"aiv"});
+  config.setEnableMixedCV(first != StringRef{"aiv"} || config.shouldEnableMixedCV());
   return success();
 }
 

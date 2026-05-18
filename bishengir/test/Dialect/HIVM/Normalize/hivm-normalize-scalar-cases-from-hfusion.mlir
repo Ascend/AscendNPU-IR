@@ -180,7 +180,7 @@ func.func @test_NormalizeScalarLikeTensor_scalar_like_tensor_conversion_hfusion_
   // CHECK: %[[OUT:.+]] = tensor.empty() : tensor<f16>
   // CHECK: %[[TMP:.+]] = tensor.empty() : tensor<f32>
   // CHECK: %[[BRC:.+]] = hivm.hir.vbrc ins(%[[CST]] : f32) outs(%[[TMP]] : tensor<f32>) -> tensor<f32>
-  // CHECK: %[[CAST:.+]] = hivm.hir.vcast ins(%[[BRC]] : tensor<f32>) outs(%[[OUT]] : tensor<f16>) round_mode = <trunc> -> tensor<f16>
+  // CHECK: %[[CAST:.+]] = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%[[BRC]] : tensor<f32>) outs(%[[OUT]] : tensor<f16>) round_mode = <trunc> -> tensor<f16>
   // CHECK: return %[[CAST]] : tensor<f16>
   %src = arith.constant dense<0.86956521739130432> : tensor<f32>
   %dst = tensor.empty() : tensor<f16>
@@ -198,7 +198,7 @@ func.func @test_NormalizeScalarLikeTensor_scalar_like_tensor_conversion_hfusion_
   // CHECK-LABEL: func.func @test_NormalizeScalarLikeTensor_scalar_like_tensor_conversion_hfusion_cast_rank1()
   // CHECK: %[[CST:.+]] = arith.constant dense<1.250000e+00> : tensor<1xf32>
   // CHECK: %[[OUT:.+]] = tensor.empty() : tensor<1xf16>
-  // CHECK: %[[CAST:.+]] = hivm.hir.vcast ins(%[[CST]] : tensor<1xf32>) outs(%[[OUT]] : tensor<1xf16>) round_mode = <trunc> -> tensor<1xf16>
+  // CHECK: %[[CAST:.+]] = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%[[CST]] : tensor<1xf32>) outs(%[[OUT]] : tensor<1xf16>) round_mode = <trunc> -> tensor<1xf16>
   // CHECK: return %[[CAST]] : tensor<1xf16>
   %src = arith.constant dense<1.25> : tensor<1xf32>
   %dst = tensor.empty() : tensor<1xf16>
@@ -218,7 +218,7 @@ func.func @test_NormalizeScalarLikeTensor_scalar_like_tensor_conversion_hfusion_
   // CHECK: %[[TMP:.+]] = tensor.empty() : tensor<f32>
   // CHECK: %[[EXTRACT:.+]] = tensor.extract %arg0[] : tensor<f32>
   // CHECK: %[[BRC:.+]] = hivm.hir.vbrc ins(%[[EXTRACT]] : f32) outs(%[[TMP]] : tensor<f32>) -> tensor<f32>
-  // CHECK: %[[CAST:.+]] = hivm.hir.vcast ins(%[[BRC]] : tensor<f32>) outs(%[[OUT]] : tensor<f16>) round_mode = <trunc> -> tensor<f16>
+  // CHECK: %[[CAST:.+]] = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%[[BRC]] : tensor<f32>) outs(%[[OUT]] : tensor<f16>) round_mode = <trunc> -> tensor<f16>
   // CHECK: return %[[CAST]] : tensor<f16>
   %dst = tensor.empty() : tensor<f16>
   %res = hfusion.cast {enable_overflow = true,

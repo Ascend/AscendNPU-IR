@@ -1854,6 +1854,79 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
   return
 }
 
+
+// -----
+// CHECK-LABEL: func.func @atomic_cas_bf16
+// CHECK: %[[SRC1:.*]] = memref.alloc() : memref<256xbf16>
+// CHECK: %[[SRC0:.*]] = memref.alloc() : memref<256xbf16>
+// CHECK: %[[DST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xbf16> to memref<256xbf16, strided<[1]>>
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[OLD:.*]] = memref.alloc() : memref<256xbf16>
+// CHECK: hivm.hir.load ins(%[[DST]] : memref<256xbf16, strided<[1]>>) outs(%[[OLD]] : memref<256xbf16>)
+// CHECK: %[[COND:.*]] = memref.alloc() : memref<256xi1>
+// CHECK: hivm.hir.vcmp ins(%[[OLD]], %[[SRC0]] : memref<256xbf16>, memref<256xbf16>) outs(%[[COND]] : memref<256xi1>)
+// CHECK: %[[RES:.*]] = memref.alloc() : memref<256xbf16>
+// CHECK: hivm.hir.vsel ins(%[[COND]], %[[SRC1]], %[[OLD]] : memref<256xi1>, memref<256xbf16>, memref<256xbf16>) outs(%[[RES]] : memref<256xbf16>)
+// CHECK: hivm.hir.store ins(%[[RES]] : memref<256xbf16>) outs(%[[DST]] : memref<256xbf16, strided<[1]>>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: return
+func.func @atomic_cas_bf16(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xbf16>) {
+  %alloc = memref.alloc() : memref<256xbf16>
+  %alloc_1 = memref.alloc() : memref<256xbf16>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xbf16> to memref<256xbf16, strided<[1]>>
+  hivm.hir.atomic_cas ins(%alloc_1, %alloc : memref<256xbf16>, memref<256xbf16>) outs(%reinterpret_cast_1 : memref<256xbf16, strided<[1]>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @atomic_cas_fp8_e4m3
+// CHECK: %[[SRC1:.*]] = memref.alloc() : memref<256xf8E4M3FN>
+// CHECK: %[[SRC0:.*]] = memref.alloc() : memref<256xf8E4M3FN>
+// CHECK: %[[DST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E4M3FN> to memref<256xf8E4M3FN, strided<[1]>>
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[OLD:.*]] = memref.alloc() : memref<256xf8E4M3FN>
+// CHECK: hivm.hir.load ins(%[[DST]] : memref<256xf8E4M3FN, strided<[1]>>) outs(%[[OLD]] : memref<256xf8E4M3FN>)
+// CHECK: %[[COND:.*]] = memref.alloc() : memref<256xi1>
+// CHECK: hivm.hir.vcmp ins(%[[OLD]], %[[SRC0]] : memref<256xf8E4M3FN>, memref<256xf8E4M3FN>) outs(%[[COND]] : memref<256xi1>)
+// CHECK: %[[RES:.*]] = memref.alloc() : memref<256xf8E4M3FN>
+// CHECK: hivm.hir.vsel ins(%[[COND]], %[[SRC1]], %[[OLD]] : memref<256xi1>, memref<256xf8E4M3FN>, memref<256xf8E4M3FN>) outs(%[[RES]] : memref<256xf8E4M3FN>)
+// CHECK: hivm.hir.store ins(%[[RES]] : memref<256xf8E4M3FN>) outs(%[[DST]] : memref<256xf8E4M3FN, strided<[1]>>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: return
+func.func @atomic_cas_fp8_e4m3(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xf8E4M3FN>) {
+  %alloc = memref.alloc() : memref<256xf8E4M3FN>
+  %alloc_1 = memref.alloc() : memref<256xf8E4M3FN>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E4M3FN> to memref<256xf8E4M3FN, strided<[1]>>
+  hivm.hir.atomic_cas ins(%alloc_1, %alloc : memref<256xf8E4M3FN>, memref<256xf8E4M3FN>) outs(%reinterpret_cast_1 : memref<256xf8E4M3FN, strided<[1]>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @atomic_cas_fp8_e5m2
+// CHECK: %[[SRC1:.*]] = memref.alloc() : memref<256xf8E5M2>
+// CHECK: %[[SRC0:.*]] = memref.alloc() : memref<256xf8E5M2>
+// CHECK: %[[DST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E5M2> to memref<256xf8E5M2, strided<[1]>>
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: %[[OLD:.*]] = memref.alloc() : memref<256xf8E5M2>
+// CHECK: hivm.hir.load ins(%[[DST]] : memref<256xf8E5M2, strided<[1]>>) outs(%[[OLD]] : memref<256xf8E5M2>)
+// CHECK: %[[COND:.*]] = memref.alloc() : memref<256xi1>
+// CHECK: hivm.hir.vcmp ins(%[[OLD]], %[[SRC0]] : memref<256xf8E5M2>, memref<256xf8E5M2>) outs(%[[COND]] : memref<256xi1>)
+// CHECK: %[[RES:.*]] = memref.alloc() : memref<256xf8E5M2>
+// CHECK: hivm.hir.vsel ins(%[[COND]], %[[SRC1]], %[[OLD]] : memref<256xi1>, memref<256xf8E5M2>, memref<256xf8E5M2>) outs(%[[RES]] : memref<256xf8E5M2>)
+// CHECK: hivm.hir.store ins(%[[RES]] : memref<256xf8E5M2>) outs(%[[DST]] : memref<256xf8E5M2, strided<[1]>>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: return
+func.func @atomic_cas_fp8_e5m2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xf8E5M2>) {
+  %alloc = memref.alloc() : memref<256xf8E5M2>
+  %alloc_1 = memref.alloc() : memref<256xf8E5M2>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E5M2> to memref<256xf8E5M2, strided<[1]>>
+  hivm.hir.atomic_cas ins(%alloc_1, %alloc : memref<256xf8E5M2>, memref<256xf8E5M2>) outs(%reinterpret_cast_1 : memref<256xf8E5M2, strided<[1]>>)
+  return
+}
+
 // -----
 // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: %[[REINTERPRET_CAST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
