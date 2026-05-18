@@ -48,11 +48,6 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
       bool allTrue = denseAttr.getValues<bool>()[0];
       scalarValue =
           mlir::utils::createPRegFromConstantOp(vecTy, allTrue, rewriter);
-    } else if (elemType.isInteger(8)) {
-      scalarValue = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getIntegerType(16),
-          rewriter.getIntegerAttr(rewriter.getIntegerType(16),
-                                  initVal.sext(16)));
     } else
       scalarValue = rewriter.create<arith::ConstantOp>(
           loc, elemType, rewriter.getIntegerAttr(elemType, initVal));
@@ -72,8 +67,8 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
     if (denseAttr.getSplatValue<APFloat>().isZero()) {
       // Keep the same process logic for scalar value as i8 did above
       scalarValue = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getIntegerType(16),
-          rewriter.getIntegerAttr(rewriter.getIntegerType(16), 0));
+          loc, rewriter.getIntegerType(8),
+          rewriter.getIntegerAttr(rewriter.getIntegerType(8), 0));
     }
     // Broadcast the scalar value to i8 vector type and cast back
     brcOp = mlir::utils::getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);

@@ -5,7 +5,6 @@
 func.func @test_extf_f8E5M2(%arg0: vector<64xf8E5M2>) -> vector<64xf32> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<64xf8E5M2> to vector<256xf8E5M2>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC_I8:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[BRC:.*]] = llvm.bitcast %[[BRC_I8]] : vector<256xi8> to vector<256xf8E5M2>
@@ -25,7 +24,6 @@ func.func @test_extf_f8E5M2(%arg0: vector<64xf8E5M2>) -> vector<64xf32> attribut
 func.func @test_truncf_f8E5M2(%arg0: vector<64xf32>) -> vector<64xf8E5M2> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtff.f322f8e5m2.x"({{.*}}) : (vector<64xf32>, vector<256xi1>, i32, i32, i32) -> vector<256xf8E5M2>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC_I8:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[BRC:.*]] = llvm.bitcast %[[BRC_I8]] : vector<256xi8> to vector<256xf8E5M2>
@@ -43,7 +41,6 @@ func.func @test_truncf_f8E5M2(%arg0: vector<64xf32>) -> vector<64xf8E5M2> attrib
 func.func @test_extf_f8E4M3(%arg0: vector<64xf8E4M3FN>) -> vector<64xf32> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<64xf8E4M3FN> to vector<256xf8E4M3FN>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC_I8:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[BRC:.*]] = llvm.bitcast %[[BRC_I8]] : vector<256xi8> to vector<256xf8E4M3FN>
@@ -63,7 +60,6 @@ func.func @test_extf_f8E4M3(%arg0: vector<64xf8E4M3FN>) -> vector<64xf32> attrib
 func.func @test_truncf_f8E4M3(%arg0: vector<64xf32>) -> vector<64xf8E4M3FN> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtff.f322f8e4m3.x"({{.*}}) : (vector<64xf32>, vector<256xi1>, i32, i32, i32) -> vector<256xf8E4M3FN>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC_I8:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[BRC:.*]] = llvm.bitcast %[[BRC_I8]] : vector<256xi8> to vector<256xf8E4M3FN>
@@ -175,7 +171,6 @@ func.func @test_extui_i162i32(%arg0: vector<64xi16>) -> vector<64xi32> attribute
 func.func @test_extui_i82i16(%arg0: vector<128xi8>) -> vector<128xi16> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<128xi8> to vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[INTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[SRC]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -192,7 +187,6 @@ func.func @test_extui_i82i16(%arg0: vector<128xi8>) -> vector<128xi16> attribute
 func.func @test_extsi_i82i32(%arg0: vector<64xi8>) -> vector<64xi32> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<64xi8> to vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[INTLV1:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[SRC]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -227,7 +221,6 @@ func.func @test_extsi_i162i32(%arg0: vector<64xi16>) -> vector<64xi32> attribute
 func.func @test_extsi_i82i16(%arg0: vector<128xi8>) -> vector<128xi16> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<128xi8> to vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[INTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[SRC]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -286,7 +279,6 @@ func.func @test_trunci_i32i16(%arg0: vector<64xi32>) -> vector<64xi16> attribute
 func.func @test_trunci_i162i8(%arg0: vector<128xi16>) -> vector<128xi8> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s162u8.x"({{.*}}) : (vector<128xi16>, vector<256xi1>, i32, i32) -> vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[DINTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[CVT]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -301,7 +293,6 @@ func.func @test_trunci_i162i8(%arg0: vector<128xi16>) -> vector<128xi8> attribut
 func.func @test_trunci_i322i8(%arg0: vector<64xi32>) -> vector<64xi8> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s322u8.x"({{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[DINTLV1:.*]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[CVT]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -392,7 +383,6 @@ func.func @test_fp2si_f162i16(%arg0: vector<128xf16>) -> vector<128xi16> attribu
 func.func @test_fp2si_f162i8(%arg0: vector<128xf16>) -> vector<128xi8> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtfi.f162s8.x"({{.*}}) : (vector<128xf16>, vector<256xi1>, i32, i32, i32) -> vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[DINTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[CVT]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -422,7 +412,6 @@ func.func @test_fp2si_bf162i32(%arg0: vector<64xbf16>) -> vector<64xi32> attribu
 func.func @test_fp2ui_f162i8(%arg0: vector<128xf16>) -> vector<128xi8> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[CVT:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtfi.f162u8.x"({{.*}}) : (vector<128xf16>, vector<256xi1>, i32, i32, i32) -> vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK-NEXT: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[DINTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vdintlv"(%[[CVT]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
@@ -437,7 +426,6 @@ func.func @test_fp2ui_f162i8(%arg0: vector<128xf16>) -> vector<128xi8> attribute
 func.func @test_si2fp_i82f16(%arg0: vector<128xi8>) -> vector<128xf16> attributes {hivm.vector_function, element_alignment_bit_width = -1 : i32} {
   %0 = ave.hir.pge <ALL> : vector<128xi1>
   // CHECK: %[[SRC:.*]] = builtin.unrealized_conversion_cast %arg0 : vector<128xi8> to vector<256xi8>
-  // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i16) : i16
   // CHECK: %[[BRC0:.*]] = llvm.mlir.constant(0 : i8) : i8
   // CHECK-NEXT: %[[BRC:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%[[BRC0]]) : (i8) -> vector<256xi8>
   // CHECK-NEXT: %[[INTLV:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[SRC]], %[[BRC]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>

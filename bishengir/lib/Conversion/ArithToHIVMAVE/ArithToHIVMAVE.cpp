@@ -594,11 +594,6 @@ struct ConstantOpToHivmBroadcastLowering
         scalarValue = mlir::utils::createPRegFromConstantOp(tileType, allTrue, rewriter);
         rewriter.replaceOp(constantOp, scalarValue);
         return success();
-      } else if (tileElementType.isInteger(8)) {
-        scalarValue = rewriter.create<arith::ConstantOp>(
-            loc, rewriter.getIntegerType(16),
-            rewriter.getIntegerAttr(rewriter.getIntegerType(16),
-                                    initVal.sext(16)));
       } else
         scalarValue = rewriter.create<arith::ConstantOp>(
             loc, tileElementType,
@@ -682,16 +677,10 @@ struct ConstantOpToHivmPLTLowering
       return APInt(elementType.getIntOrFloatBitWidth(), 0);
     }
 
-    static Value createScalar(ConversionPatternRewriter &rewriter, const Location &loc, VectorType tileType,
-                                                  Type elementType, const APInt& value, Value mask) {
-      // To avoid known issues: https://codehub-y.huawei.com/CompilerKernel/BiShengCompiler/AscendNPU-IR/issues/81
-      if (elementType.isInteger(8)) {
-        auto constValue = rewriter.create<arith::ConstantOp>(
-            loc, rewriter.getIntegerType(16), rewriter.getIntegerAttr(rewriter.getIntegerType(16), value.zext(16)));
-        return rewriter.create<hivmave::VFBroadcastScalarMaskOp>(
-            loc, tileType, constValue, mask);
-      }
-        
+    static Value createScalar(ConversionPatternRewriter &rewriter,
+                              const Location &loc, VectorType tileType,
+                              Type elementType, const APInt &value,
+                              Value mask) {
       auto constValue = rewriter.create<arith::ConstantOp>(
             loc, elementType, rewriter.getIntegerAttr(elementType, value));
       return rewriter.create<hivmave::VFBroadcastScalarMaskOp>(

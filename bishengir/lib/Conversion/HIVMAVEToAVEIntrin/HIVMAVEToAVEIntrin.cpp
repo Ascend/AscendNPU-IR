@@ -737,22 +737,6 @@ using UnaryRegistry = UnaryRegistryImpl<
     UnaryRegEntry<VFReluOp, VunsupportedUnaryInstrOp, VunsupportedUnaryInstrOp,
                   VReluXInstrOp, VReluXInstrOp, VReluXInstrOp>>;
 
-// llvm.hivm.vdups.v256s8.z (i16, <256 x i1>, i32)
-// llvm.hivm.vdups.z (i8, <256 x i1>, i32)
-static Value I16ToI8(Value scalar, ConversionPatternRewriter &rewriter) {
-  Type currentType = scalar.getType();
-  Value i8Value = scalar;
-  if (auto intType = mlir::dyn_cast<IntegerType>(currentType)) {
-    auto i8Type = IntegerType::get(scalar.getContext(), 8);
-    if (intType.getWidth() == 16) {
-      i8Value =
-          rewriter.create<arith::TruncIOp>(scalar.getLoc(), i8Type, scalar);
-      return i8Value;
-    }
-  }
-  return i8Value;
-}
-
 template <typename OpTy, typename IntrOpTy>
 struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
   explicit HIVMBroadCastScalarOpLowering(LLVMTypeConverter &converter)
@@ -776,20 +760,8 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
     if (vecSize != vlLength) {
       vecTy = VectorType::get(SmallVector<int64_t>{vlLength}, elementType);
     }
-    mlir::Value result;
-    if (elementType.isBF16() || elementType.isF16() ||
-        elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
-        elementType.isUnsignedInteger(16) || elementType.isF32() ||
-        elementType.isSignedInteger(32) || elementType.isSignlessInteger(32) ||
-        elementType.isUnsignedInteger(32) || elementType.isFloat8E4M3FN() ||
-        elementType.isFloat8E5M2()) {
-      result = rewriter.create<IntrOpTy>(loc, vecTy, scalar, mask, mode);
-    } else if (elementType.isSignedInteger(8) ||
-               elementType.isSignlessInteger(8) ||
-               elementType.isUnsignedInteger(8)) {
-      Value i8Value = I16ToI8(scalar, rewriter);
-      result = rewriter.create<IntrOpTy>(loc, vecTy, i8Value, mask, mode);
-    }
+    mlir::Value result =
+        rewriter.create<IntrOpTy>(loc, vecTy, scalar, mask, mode);
     if (oriVecTy != vecTy) {
       Operation *ucc =
           rewriter.create<UnrealizedConversionCastOp>(loc, oriVecTy, result);
@@ -827,14 +799,13 @@ static Value interleaveDataLayoutForExtCast(ConversionPatternRewriter &rewriter,
 
   unsigned bitWidth = srcElemType.getIntOrFloatBitWidth();
   bool shouldUnpack = (bitWidth == 8 && unpackCoefficient == 4);
-  bool isB8 = bitWidth == 8;
 
   auto intlvType = LLVM::LLVMStructType::getLiteral(
       rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
 
   auto createIntlv = [&rewriter, loc, srcVLVectorTy, intlvType, src,
-                      srcElemType, shouldUnpack,
-                      isB8](auto vbrOpType, auto vintlvOpType) -> Value {
+                      srcElemType, shouldUnpack](auto vbrOpType,
+                                                 auto vintlvOpType) -> Value {
     using VbrOp = typename decltype(vbrOpType)::type;
     using VintlvOp = typename decltype(vintlvOpType)::type;
     Value vbr;
@@ -842,20 +813,15 @@ static Value interleaveDataLayoutForExtCast(ConversionPatternRewriter &rewriter,
       // Workaround: CCEC VbrOp does not support FP8 scalar literal.
       // Broadcast an i8 zero and bitcast the result to FP8 vector.
 
-      // TODO: I16 to avoid the problem in #ISSUE#81, fix when cce adapted.
-      Value cstZeroI16 = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(rewriter.getI16Type()));
+      Value cstZeroI8 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getZeroAttr(rewriter.getI8Type()));
       auto i8VLVectorTy =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
-      cstZeroI16 = isB8 ? I16ToI8(cstZeroI16, rewriter) : cstZeroI16;
-      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI16);
+      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI8);
       vbr = rewriter.create<LLVM::BitcastOp>(loc, srcVLVectorTy, vbrI8);
     } else {
-      // TODO: I16 to avoid the problem in #ISSUE#81, fix when cce adapted.
-      Type zeroType = isB8 ? rewriter.getI16Type() : srcElemType;
       Value cstZero = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(zeroType));
-      cstZero = isB8 ? I16ToI8(cstZero, rewriter) : cstZero;
+          loc, rewriter.getZeroAttr(srcElemType));
       vbr = rewriter.create<VbrOp>(loc, srcVLVectorTy, cstZero);
     }
 
@@ -894,11 +860,10 @@ deinterleaveDataLayoutForTruncCast(ConversionPatternRewriter &rewriter,
 
   unsigned bitWidth = srcElemType.getIntOrFloatBitWidth();
   bool shouldPack = (bitWidth == 8 && packCoefficient == 4);
-  bool isB8 = bitWidth == 8;
 
   auto createDintlv = [&rewriter, loc, srcVLVectorTy, dintlvType, src,
-                       srcElemType, shouldPack,
-                       isB8](auto vbrOpType, auto vdintlvOpType) -> Value {
+                       srcElemType, shouldPack](auto vbrOpType,
+                                                auto vdintlvOpType) -> Value {
     using VbrOp = typename decltype(vbrOpType)::type;
     using VDintlvOp = typename decltype(vdintlvOpType)::type;
 
@@ -908,19 +873,15 @@ deinterleaveDataLayoutForTruncCast(ConversionPatternRewriter &rewriter,
       // Broadcast an i8 zero and bitcast the result to FP8 vector.
 
       // TODO: I16 to avoid the problem in #ISSUE#81, fix when cce adapted.
-      Value cstZeroI16 = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(rewriter.getI16Type()));
+      Value cstZeroI8 = rewriter.create<LLVM::ConstantOp>(
+          loc, rewriter.getZeroAttr(rewriter.getI8Type()));
       auto i8VLVectorTy =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
-      cstZeroI16 = isB8 ? I16ToI8(cstZeroI16, rewriter) : cstZeroI16;
-      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI16);
+      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI8);
       vbr = rewriter.create<LLVM::BitcastOp>(loc, srcVLVectorTy, vbrI8);
     } else {
-      // TODO: I16 to avoid the problem in #ISSUE#81, fix when cce adapted.
-      Type zeroType = isB8 ? rewriter.getI16Type() : srcElemType;
       Value cstZero = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(zeroType));
-      cstZero = isB8 ? I16ToI8(cstZero, rewriter) : cstZero;
+          loc, rewriter.getZeroAttr(srcElemType));
       vbr = rewriter.create<VbrOp>(loc, srcVLVectorTy, cstZero);
     }
 
@@ -2531,15 +2492,12 @@ struct HIVMBroadcastScalarOpLowering
       // III. Create a zero vector<256*I8>
       // IV. The compare result of the two vector above is the broadcast result
       //     of src I1. The result type is vector<256*I1>, and saved in PReg.
-      // TODO: Avoid the problem in #ISSUE#81, fix util cce adapted.
-      Value srcI16 =
-          rewriter.create<LLVM::ZExtOp>(loc, rewriter.getI16Type(), src);
+      Value i8Value =
+          rewriter.create<LLVM::ZExtOp>(loc, rewriter.getI8Type(), src);
       auto v256Ty = VectorType::get({util::VL}, rewriter.getI8Type());
-      Value i8Value = I16ToI8(srcI16, rewriter);
       auto vbrI8 = rewriter.create<VbrInstrOp>(loc, v256Ty, i8Value);
-      Value zeroI16 =
-          rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI16IntegerAttr(0));
-      Value zeroI8 = I16ToI8(zeroI16, rewriter);
+      Value zeroI8 =
+          rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI8IntegerAttr(0));
       auto vbrI8Zero = rewriter.create<VbrInstrOp>(loc, v256Ty, zeroI8);
       auto zeroI32 =
           rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
@@ -2553,14 +2511,9 @@ struct HIVMBroadcastScalarOpLowering
                 .create<UnrealizedConversionCastOp>(loc, vType, vcmpOp.getRes())
                 .getResult(0);
     } else if (srcType.isUnsignedInteger(8)) {
-      Value i8Value = I16ToI8(src, rewriter);
-      vbr = rewriter.create<VbrInstrOp>(loc, vlType, i8Value);
+      vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isSignedInteger(8) || srcType.isSignlessInteger(8)) {
-      // TODO: Avoid the problem in #ISSUE#81, fix util cce adapted.
-      Type i16Type = rewriter.getI16Type();
-      Value srcForI8 = rewriter.create<LLVM::ZExtOp>(loc, i16Type, src);
-      Value i8Value = I16ToI8(srcForI8, rewriter);
-      vbr = rewriter.create<VbrInstrOp>(loc, vlType, i8Value);
+      vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isUnsignedInteger(16)) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isSignedInteger(16) || srcType.isSignlessInteger(16)) {
@@ -3972,14 +3925,12 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
     auto index = op.getIndex();
     Value src1;
     Operation *indexOp = index.getDefiningOp();
-    // TODO: Avoid the problem in #ISSUE#81, fix util cce adapted.
     if (auto constIndex = dyn_cast_or_null<arith::ConstantOp>(indexOp)) {
       if (dyn_cast_if_present<IntegerAttr>(constIndex.getValue())) {
         auto constIndexAttr =
             dyn_cast_if_present<IntegerAttr>(constIndex.getValue());
-        src1 = rewriter.create<LLVM::ConstantOp>(
-            loc, elemType.isInteger(8) ? rewriter.getI16Type() : elemType,
-            constIndexAttr.getInt());
+        src1 = rewriter.create<LLVM::ConstantOp>(loc, elemType,
+                                                 constIndexAttr.getInt());
       } else {
         auto constIndexAttr =
             dyn_cast_if_present<FloatAttr>(constIndex.getValue());
@@ -3987,12 +3938,8 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
                                                  constIndexAttr.getValue());
       }
     } else {
-      src1 =
-          rewriter
-              .create<UnrealizedConversionCastOp>(
-                  loc, elemType.isInteger(8) ? rewriter.getI16Type() : elemType,
-                  index)
-              .getResult(0);
+      src1 = rewriter.create<UnrealizedConversionCastOp>(loc, elemType, index)
+                 .getResult(0);
     }
     // convert increase_p to i32 (0: increase; 1: decrease)
     auto increaseDirection = op.getIncreaseP();
@@ -4014,8 +3961,7 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
     } else if (elemType.isInteger(8) && resType.getNumElements() <= 256) {
       // FIXME: Adapt for VciInstrOp but <= is WARNING
       auto targetType = VectorType::get(256, rewriter.getI8Type());
-      Value i8Value = I16ToI8(src1, rewriter);
-      result = rewriter.create<VciInstrOp>(loc, targetType, i8Value, src2);
+      result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else if (elemType.isF32() && resType.getNumElements() <= 64) {
       result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
     } else if (elemType.isF16() && resType.getNumElements() <= 128) {

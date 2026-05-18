@@ -80,10 +80,10 @@ func.func @triton_indirect_store_1D_contiguous_kernel_outlined_vf_0(%arg0: memre
   // CHECK: %[[CONSTANT5:.*]] = arith.constant 5 : index
   // CHECK: %[[RES:.*]], %[[NEWSHAPE:.*]] = ave.hir.plt %[[CONSTANT5]] : vector<64xi1>, index
   // CHECK: %[[PGE:.*]] = ave.hir.pge <ALL> : vector<64xi1>
-  // CHECK: %[[CONSTANT1:.*]] = arith.constant 1 : i16
-  // CHECK: %[[BRC1:.*]] = ave.hir.broadcast %[[CONSTANT1]], %[[PGE]] : i16, vector<64xi1> -> vector<64xi8>
-  // CHECK: %[[CONSTANT0:.*]] = arith.constant 0 : i16
-  // CHECK: %[[BRC2:.*]] = ave.hir.broadcast %[[CONSTANT0]], %[[PGE]] : i16, vector<64xi1> -> vector<64xi8>
+  // CHECK: %[[CONSTANT1:.*]] = arith.constant 1 : i8
+  // CHECK: %[[BRC1:.*]] = ave.hir.broadcast %[[CONSTANT1]], %[[PGE]] : i8, vector<64xi1> -> vector<64xi8>
+  // CHECK: %[[CONSTANT0:.*]] = arith.constant 0 : i8
+  // CHECK: %[[BRC2:.*]] = ave.hir.broadcast %[[CONSTANT0]], %[[PGE]] : i8, vector<64xi1> -> vector<64xi8>
   // CHECK: %[[VSEL:.*]] = ave.hir.vsel %[[RES]], %[[BRC1]], %[[BRC2]] : vector<64xi1>, vector<64xi8>
   %cst = arith.constant dense<[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]> : vector<64xi8>
   %c0 = arith.constant 0 : index
