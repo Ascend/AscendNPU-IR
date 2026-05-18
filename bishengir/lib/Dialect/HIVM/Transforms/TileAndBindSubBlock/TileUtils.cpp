@@ -400,18 +400,21 @@ bool hasImplicitTransposeWithLastAxisInAiv(
   });
 }
 
-void pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,
     llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+  bool erasedAny = false;
   newFunc.walk([&](annotation::MarkOp markOp) {
     auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
         HIVMTightlyCoupledBufferAttr::name);
     if (!attr || !attr.getId().has_value())
       return;
     int32_t id = attr.getId().value();
-    if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc))
-      tightlyCoupledBufferToTilingDim.erase(id);
+    if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
+        tightlyCoupledBufferToTilingDim.erase(id))
+      erasedAny = true;
   });
+  return erasedAny ? failure() : success();
 }
 
 LogicalResult tileAicFixpipeFuncsIfNeeded(

@@ -71,7 +71,7 @@ bool hasBatchMatmulLoopInAicFuncs(ArrayRef<func::FuncOp> aicFunctions);
 bool hasImplicitTransposeWithLastAxisInAiv(
     ArrayRef<func::FuncOp> aivFunctions);
 
-void pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,
     llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
 

@@ -979,9 +979,9 @@ module {
 // CHECK: tensor.empty() : tensor<16x16xi32>
 // CHECK: hivm.hir.fixpipe
 // CHECK-LABEL: func.func @check_column_split_aiv(
-// CHECK: scf.for
+// CHECK: scf.if
 // CHECK: hivm.hir.store
-// CHECK: map_for_to_forall
+// CHECK: limit_sub_block_id0
 module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} { 
   func.func @check_column_split_aic(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8>, %arg2: memref<?xi32>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %0 = tensor.empty() : tensor<16x16xi32>
@@ -1757,15 +1757,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // chunk_dqkwg AIC: UB fixpipe for tightly_coupled_buffer<1>/<2> follows each mark.
 // chunk_dqkwg AIV: same buffer ids; UB uses memory_space_cast (no fixpipe on AIV).
 // CHECK-LABEL: func.func @chunk_bwd_kernel_dqkwg_mix_aic(
-// CHECK-LABEL: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
-// CHECK-LABEL: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>)
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
 // CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>)
 // CHECK-LABEL: func.func @chunk_bwd_kernel_dqkwg_mix_aiv(
-// CHECK-LABEL: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: %{{.*}} = memref.memory_space_cast %{{.*}} : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
-// CHECK-LABEL: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: %{{.*}} = memref.memory_space_cast %{{.*}} : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 16)>
 #map1 = affine_map<()[s0, s1] -> (s0 - s1)>
 #map2 = affine_map<()[s0] -> (-s0 + 16)>
