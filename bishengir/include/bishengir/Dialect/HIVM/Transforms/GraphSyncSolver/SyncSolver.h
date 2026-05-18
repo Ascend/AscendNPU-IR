@@ -212,12 +212,12 @@ protected:
                                RWOperation *rwOp1, RWOperation *rwOp2,
                                bool isUseless);
 
-  std::optional<LoopLikeOpInterface>
+  std::optional<Loop *>
   getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
                      const llvm::SmallVector<MemInfo> &memInfoList1,
                      const llvm::SmallVector<MemInfo> &memInfoList2);
-  std::optional<LoopLikeOpInterface> getMultiBufferLoop(RWOperation *rwOp1,
-                                                        RWOperation *rwOp2);
+  std::optional<Loop *> getMultiBufferLoop(RWOperation *rwOp1,
+                                           RWOperation *rwOp2);
   std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
                                                        Occurrence *occ2,
                                                        RWOperation *rwOp1,

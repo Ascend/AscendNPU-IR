@@ -1259,6 +1259,11 @@ def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
 }
 
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
 def HIVM_TightlyCoupledBufferAttr
     : HIVM_Attr<"HIVMTightlyCoupledBuffer", "tightly_coupled_buffer"> {
   let parameters = (ins OptionalParameter<"std::optional<int32_t>">:$id);

@@ -629,6 +629,7 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   OpBuilder builder(func);
   builder.setInsertionPointAfter(func.getOperation());
   auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
+
   func.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAicSuffix));
   vecFunc.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAivSuffix));
 

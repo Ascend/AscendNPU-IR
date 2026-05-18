@@ -1079,3 +1079,18 @@ void EmbeddingGatherOp::getEffects(
   effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
                        SideEffects::DefaultResource::get());
 }
+
+//===----------------------------------------------------------------------===//
+// AnchorOp
+//===----------------------------------------------------------------------===//
+
+struct AnchorResource
+    : public mlir::SideEffects::Resource::Base<AnchorResource> {
+  mlir::StringRef getName() final { return "<Anchor>"; }
+};
+
+void mlir::hivm::AnchorOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), AnchorResource::get());
+}

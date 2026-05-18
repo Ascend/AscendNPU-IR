@@ -229,19 +229,22 @@ bool Solver::ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
                                   const MemInfo &memInfo1,
                                   const MemInfo &memInfo2) {
   if (options.isIntraCoreMode()) {
-    if (memInfo1.isWorkSpace && memInfo2.isWorkSpace) {
-      if (isa_and_present<hivm::FixpipeOp>(rwOp1->op) &&
-          isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
-              rwOp2->op)) {
-        return false;
-      }
-      if (isa_and_present<hivm::FixpipeOp>(rwOp2->op) &&
-          isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
-              rwOp1->op)) {
-        return false;
-      }
-      if (options.intraCoreIgnoreWorkSpaceFunctionArguments) {
-        return true;
+    if (memInfo1.funcArgInfo.has_value() && memInfo2.funcArgInfo.has_value()) {
+      if (memInfo1.funcArgInfo->isWorkSpace &&
+          memInfo2.funcArgInfo->isWorkSpace) {
+        if (isa_and_present<hivm::FixpipeOp>(rwOp1->op) &&
+            isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+                rwOp2->op)) {
+          return false;
+        }
+        if (isa_and_present<hivm::FixpipeOp>(rwOp2->op) &&
+            isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+                rwOp1->op)) {
+          return false;
+        }
+        if (options.intraCoreIgnoreWorkSpaceFunctionArguments) {
+          return true;
+        }
       }
     }
   }
@@ -340,11 +343,11 @@ bool Solver::checkMemoryConflictBetweenOccExclusive(
   return false;
 }
 
-std::optional<LoopLikeOpInterface>
+std::optional<Loop *>
 Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
                            const llvm::SmallVector<MemInfo> &memInfoList1,
                            const llvm::SmallVector<MemInfo> &memInfoList2) {
-  std::optional<LoopLikeOpInterface> multibufferLoop;
+  std::optional<Loop *> multibufferLoop;
   for (auto &memInfo1 : memInfoList1) {
     for (auto &memInfo2 : memInfoList2) {
       if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
@@ -358,20 +361,30 @@ Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
             multibufferLoop1 != multibufferLoop2) {
           return {};
         }
-        if (multibufferLoop.has_value() &&
-            multibufferLoop.value() != multibufferLoop1) {
+        auto *parentOp1 =
+            rwOp1->getParentWithOp(multibufferLoop1, /*assertExists=*/false);
+        auto *parentOp2 =
+            rwOp2->getParentWithOp(multibufferLoop2, /*assertExists=*/false);
+        if (!parentOp1 || !parentOp2) {
           return {};
         }
-        multibufferLoop = multibufferLoop1;
+        assert(parentOp1 == parentOp2);
+        auto *parentLoop = dyn_cast<Loop>(parentOp1);
+        assert(parentLoop != nullptr);
+        if (multibufferLoop.has_value() &&
+            multibufferLoop.value() != parentLoop) {
+          return {};
+        }
+        multibufferLoop = parentLoop;
       }
     }
   }
   return multibufferLoop;
 }
 
-std::optional<LoopLikeOpInterface>
-Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2) {
-  std::optional<LoopLikeOpInterface> multibufferLoop;
+std::optional<Loop *> Solver::getMultiBufferLoop(RWOperation *rwOp1,
+                                                 RWOperation *rwOp2) {
+  std::optional<Loop *> multibufferLoop;
   if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
                            rwOp2->writeMemInfo)) {
     auto curMultibufferLoop = getMultiBufferLoop(
@@ -412,7 +425,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 
   int64_t lcm = 1;
   int64_t minWriteSize = LONG_MAX;
-  LoopLikeOpInterface multibufferLoop{nullptr};
+  Loop *multibufferLoop{nullptr};
 
   if (options.isTestMode()) {
     auto *parLoop1 = occ1->getParentOfType<Loop>();
@@ -555,6 +568,59 @@ Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
       cast<LoopLikeOpInterface>(parentLoop1->op);
   eventIdInfo.multibufferUnrollLoop2 =
       cast<LoopLikeOpInterface>(parentLoop2->op);
+  return eventIdInfo;
+}
+
+std::optional<EventIdInfo>
+Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
+                                             RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!options.isCrossCoreMode()) {
+    return {};
+  }
+  auto *parentScope1 = rwOp1->getParentOfType<Scope>();
+  auto *parentScope2 = rwOp2->getParentOfType<Scope>();
+  while (parentScope1 != nullptr && !parentScope1->maxPreloadNum.has_value()) {
+    parentScope1 = parentScope1->getParentOfType<Scope>();
+  }
+  while (parentScope2 != nullptr && !parentScope2->maxPreloadNum.has_value()) {
+    parentScope2 = parentScope2->getParentOfType<Scope>();
+  }
+  if (!parentScope1 || !parentScope2) {
+    return {};
+  }
+  if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
+    if (!parCond1->isProperAncestor(rwOp2)) {
+      return {};
+    }
+  }
+  if (auto *parCond2 = rwOp2->getParentOfType<Condition>()) {
+    if (!parCond2->isProperAncestor(rwOp1)) {
+      return {};
+    }
+  }
+
+  auto *parentLoop1 = parentScope1->getParentOfType<Loop>();
+  auto *parentLoop2 = parentScope2->getParentOfType<Loop>();
+  if (parentLoop1 == nullptr || parentLoop1 != parentLoop2) {
+    return {};
+  }
+
+  assert(parentScope1->preloadNum.has_value());
+  assert(parentScope2->preloadNum.has_value());
+  assert(parentScope1->maxPreloadNum.value() ==
+         parentScope2->maxPreloadNum.value());
+
+  auto parentForLoop = llvm::dyn_cast_if_present<scf::ForOp>(parentLoop1->op);
+  assert(parentForLoop != nullptr);
+
+  EventIdInfo eventIdInfo;
+  eventIdInfo.eventIdNum = parentScope1->maxPreloadNum.value();
+  eventIdInfo.preloadOffset1 = parentScope1->maxPreloadNum.value() -
+                               parentScope1->preloadNum.value() - 1;
+  eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
+                               parentScope2->preloadNum.value() - 1;
+  eventIdInfo.multibufferLoop = parentForLoop;
   return eventIdInfo;
 }
 
@@ -1434,7 +1500,7 @@ void Solver::pickAndInsertABarrierAll() {
     if (vec.empty()) {
       continue;
     }
-    if (chosenOp == nullptr || chosenOp->id > op->id) {
+    if (chosenOp == nullptr || chosenOp->preOrderIndex > op->preOrderIndex) {
       chosenOp = op;
     }
   }
@@ -1444,7 +1510,7 @@ void Solver::pickAndInsertABarrierAll() {
 }
 
 bool Solver::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
-  if (occ1->op->id >= occ2->op->id) {
+  if (occ1->op->preOrderIndex >= occ2->op->preOrderIndex) {
     return true;
   }
   assert(occ1 != nullptr && occ2 != nullptr);
@@ -1466,10 +1532,12 @@ bool Solver::reuseCmp(ConflictPair *conflictPair1,
     return conflictPair1->endIndex > conflictPair2->endIndex;
   }
   if (conflictPair1->op1 != conflictPair2->op1) {
-    return conflictPair1->op1->id > conflictPair2->op1->id;
+    return conflictPair1->op1->preOrderIndex >
+           conflictPair2->op1->preOrderIndex;
   }
   if (conflictPair1->op2 != conflictPair2->op2) {
-    return conflictPair1->op2->id > conflictPair2->op2->id;
+    return conflictPair1->op2->preOrderIndex >
+           conflictPair2->op2->preOrderIndex;
   }
   return false;
 }
@@ -2270,7 +2338,8 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
     coreTypes = {hivm::TCoreType::CUBE_OR_VECTOR};
   }
   size_t pipeNumMax = static_cast<size_t>(hivm::PIPE::PIPE_NUM);
-  const int64_t eventIdMax = getHWAvailableEventIdNum(options.syncMode);
+  size_t eventIdMax =
+      static_cast<size_t>(getHWAvailableEventIdNum(options.syncMode));
 
   for (int64_t eventId = 0; eventId < eventIdMax; ++eventId) {
     for (auto coreSrc : coreTypes) {
