@@ -127,6 +127,14 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
   ];
 }
 
+def AutoVectorizeVerifier
+    : Pass<"hfusion-auto-vectorize-verifier", "ModuleOp"> {
+  let summary = "Verify vector operations after auto vectorization";
+  let constructor = "mlir::hfusion::createAutoVectorizeVerifierPass()";
+  let dependentDialects = ["func::FuncDialect", "vector::VectorDialect",
+                           "hivm::HIVMDialect"];
+}
+
 def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
  	   let summary = "tree-reduce-v2";
  	   let constructor = "mlir::hfusion::createTreeReduceV2Pass()";
