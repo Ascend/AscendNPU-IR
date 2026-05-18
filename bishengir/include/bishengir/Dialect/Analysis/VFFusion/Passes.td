@@ -75,7 +75,10 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
       Option<"enableOutlineArith", "enable-outline-arith", "bool", /*default=*/"false",
               "Enable outlining arith operations">,
       Option<"enableOutlineCube", "enable-outline-cube", "bool", /*default=*/"false",
-              "Enable outlining cube operations">
+              "Enable outlining cube operations">,
+      Option<"maxVFParams", "max-vf-params", "int64_t", /*default=*/"58",
+              "Maximum 16-bit function-parameter register budget for an outlined fused function; "
+              "32-bit parameters consume 2 units, and -1 disables the limit">
       ];
 }
 

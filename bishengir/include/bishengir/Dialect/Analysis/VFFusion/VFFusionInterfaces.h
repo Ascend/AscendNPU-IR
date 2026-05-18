@@ -14,7 +14,9 @@
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionBlock.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionOutliner.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
+#include <cstdint>
 
 namespace mlir::analysis {
 
@@ -46,23 +48,36 @@ public:
   /// @return success() if all fusion blocks were successfully processed,
   ///         failure() if analysis failed or any outlining/invocation creation
   ///         failed
-  LogicalResult fuse(Block &block, OpBuilder &builder) {
+  LogicalResult fuse(Block &block, OpBuilder &builder,
+                     int64_t maxVFParams = -1) {
     FailureOr<VFFusionBlockList> maybeFusionBlocks = analyzeBlockImpl(block);
     if (failed(maybeFusionBlocks))
       return failure();
     VFFusionBlockList &fusionBlocks = maybeFusionBlocks.value();
     for (auto &fusionBlock : fusionBlocks) {
-      if (fusionBlock.getOps().size() <= 1 ||
-          fusionBlock.getOps().size() == block.getOperations().size())
-        continue;
-      func::FuncOp funcOp = block.getParent()->getParentOfType<func::FuncOp>();
-      auto maybeFusedFunction = outliner.outline(funcOp, fusionBlock, builder);
-      if (failed(maybeFusedFunction))
-        return failure();
-      auto maybeCallOp = outliner.createInvoke(maybeFusedFunction.value(),
-                                               fusionBlock, builder);
-      if (failed(maybeCallOp))
-        return failure();
+      SmallVector<VFFusionBlock> candidateFusionBlocks;
+      if (maxVFParams < 0) {
+        candidateFusionBlocks.push_back(fusionBlock);
+      } else {
+        candidateFusionBlocks = splitByMaxFuncParams(fusionBlock, maxVFParams);
+      }
+
+      for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
+        if (candidateBlock.getOps().size() <= 1 ||
+            candidateBlock.getOps().size() == block.getOperations().size())
+          continue;
+
+        func::FuncOp funcOp =
+            block.getParent()->getParentOfType<func::FuncOp>();
+        auto maybeFusedFunction =
+            outliner.outline(funcOp, candidateBlock, builder);
+        if (failed(maybeFusedFunction))
+          return failure();
+        auto maybeCallOp = outliner.createInvoke(maybeFusedFunction.value(),
+                                                 candidateBlock, builder);
+        if (failed(maybeCallOp))
+          return failure();
+      }
     }
     return success();
   }
@@ -72,6 +87,71 @@ public:
   virtual ~FusionKindBase() = default;
 
 protected:
+  static int64_t getTotalParamRegisterCost(const SetVector<Value> &inputs) {
+    // Rule in bisheng: max 58 16-bit registers are allowed for the func params
+    // if the func param is a pointer to 32-bit dtype, the registore slot
+    // accounts for 2 16-bit registers.
+    int64_t totalCost = 0;
+    for (Value input : inputs)
+      totalCost += getParamRegisterCost(input);
+    return totalCost;
+  }
+
+  static SmallVector<VFFusionBlock>
+  splitByMaxFuncParams(VFFusionBlock &fusionBlock, int64_t maxVFParams) {
+    SmallVector<VFFusionBlock> splitBlocks;
+    VFFusionBlock currentBlock;
+    bool hasCurrentBlock = false;
+
+    for (Operation *op : fusionBlock.getOps()) {
+      VFFusionBlock tentativeBlock = currentBlock;
+      tentativeBlock.fuseOp(op);
+
+      if (getTotalParamRegisterCost(tentativeBlock.recomputeInputs()) <=
+          maxVFParams) {
+        currentBlock = std::move(tentativeBlock);
+        hasCurrentBlock = true;
+        continue;
+      }
+
+      if (hasCurrentBlock)
+        splitBlocks.push_back(currentBlock);
+
+      VFFusionBlock singletonBlock;
+      singletonBlock.fuseOp(op);
+      if (getTotalParamRegisterCost(singletonBlock.recomputeInputs()) <=
+          maxVFParams) {
+        currentBlock = std::move(singletonBlock);
+        hasCurrentBlock = true;
+      } else {
+        currentBlock = VFFusionBlock();
+        hasCurrentBlock = false;
+      }
+    }
+
+    if (hasCurrentBlock)
+      splitBlocks.push_back(currentBlock);
+
+    return splitBlocks;
+  }
+
+  static int64_t getParamRegisterCost(Value value) {
+    Type type = value.getType();
+    if (auto shapedType = dyn_cast<ShapedType>(type))
+      type = shapedType.getElementType();
+
+    unsigned bitWidth = 16;
+    if (auto intType = dyn_cast<IntegerType>(type)) {
+      bitWidth = intType.getWidth();
+    } else if (auto floatType = dyn_cast<FloatType>(type)) {
+      bitWidth = floatType.getWidth();
+    } else if (isa<IndexType>(type)) {
+      bitWidth = 64;
+    }
+
+    return (static_cast<int64_t>(bitWidth) + 15) / 16;
+  }
+
   VFFusionOutliner outliner;
   VFFusionBlockList analyzedBlocks; // Renamed from fusedBlock
   const VFFusionKindOption option;
@@ -82,7 +162,7 @@ public:
   FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
 
   explicit AllOpKind(const VFFusionKindOption &option)
-      : FusionKindBase(option), analyzer(option){};
+      : FusionKindBase(option), analyzer(option) {};
 
 private:
   AllOpKindAnalyzer analyzer;
@@ -93,7 +173,7 @@ public:
   FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
 
   explicit NMostOpKind(const VFFusionKindOption &option)
-      : FusionKindBase(option), analyzer(option, N){};
+      : FusionKindBase(option), analyzer(option, N) {};
 
 private:
   const size_t N = 8;
@@ -117,7 +197,7 @@ public:
 
   explicit UBAwareOpKind(const VFFusionKindOption &option)
       : FusionKindBase(option),
-        analyzer(option, option.ubBudgetBytes, option.ubAlignBytes){};
+        analyzer(option, option.ubBudgetBytes, option.ubAlignBytes) {};
 
 private:
   UBAwareOpKindAnalyzer analyzer;
