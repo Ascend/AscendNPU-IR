@@ -75,6 +75,8 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   } else {
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForMixCVPass());
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForScalarPass());
   }
 }
 
