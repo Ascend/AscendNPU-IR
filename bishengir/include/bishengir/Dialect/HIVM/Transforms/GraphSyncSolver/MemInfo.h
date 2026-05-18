@@ -19,6 +19,8 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
 #include <climits>
@@ -26,17 +28,49 @@
 
 namespace mlir::hivm::syncsolver {
 
+struct FuncArgInfo {
+  func::FuncOp funcOp{nullptr};
+  BlockArgument funcArg{nullptr};
+  int64_t argNum{-1};
+  bool isWorkSpace{false};
+
+  FuncArgInfo() = default;
+  explicit FuncArgInfo(func::FuncOp funcOp, BlockArgument funcArg,
+                       bool isWorkSpace = false)
+      : funcOp(funcOp), funcArg(funcArg), isWorkSpace(isWorkSpace) {
+    assert(funcOp != nullptr && "funcOp is nullptr");
+    assert(funcArg != nullptr && "blockArg is nullptr");
+    argNum = funcArg.getArgNumber();
+  }
+
+  std::string str();
+
+  static std::optional<FuncArgInfo> tryGet(Value value);
+
+  static bool checkConflict(const FuncArgInfo &funcArgInfo1,
+                            const FuncArgInfo &funcArgInfo2);
+};
+
 struct PointerLikeInfo {
   Operation *op{nullptr};
   llvm::SmallVector<int64_t> addresses;
   std::optional<int64_t> allocateSize;
   std::optional<hivm::AddressSpace> addressSpace;
   LoopLikeOpInterface parentLoop{nullptr};
+  bool isWorkSpace{false};
 
   PointerLikeInfo() = default;
   explicit PointerLikeInfo(Operation *op) : op(op) {}
 
-  std::string str() const;
+  std::string str();
+
+  static std::optional<PointerLikeInfo>
+  tryGet(hivm::PointerCastOp pointerCastOp);
+
+  static std::optional<PointerLikeInfo>
+  tryGet(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp);
+
+  static std::optional<PointerLikeInfo> tryGet(Value value);
 
   static bool checkConflict(const PointerLikeInfo &pointerLikeInfo1,
                             const PointerLikeInfo &pointerLikeInfo2,
@@ -46,17 +80,18 @@ struct PointerLikeInfo {
 
 struct MemInfo {
   Value value{nullptr};
+  std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
-  bool isWorkSpace{false};
 
   MemInfo() = default;
-  explicit MemInfo(Value value, bool isWorkSpace = false)
-      : value(value), isWorkSpace(isWorkSpace) {}
 
-  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo,
-                   bool isWorkSpace = false)
-      : value(value), pointerLikeInfo(pointerLikeInfo),
-        isWorkSpace(isWorkSpace) {}
+  explicit MemInfo(Value value) : value(value) {}
+
+  explicit MemInfo(Value value, FuncArgInfo funcArgInfo)
+      : value(value), funcArgInfo(funcArgInfo) {}
+
+  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo)
+      : value(value), pointerLikeInfo(pointerLikeInfo) {}
 
   int64_t getSz() const {
     if (pointerLikeInfo.has_value()) {
@@ -68,7 +103,7 @@ struct MemInfo {
     return 0;
   }
 
-  std::string str() const;
+  std::string str();
 
   static bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
                             std::optional<int64_t> lcmLen = {},
@@ -86,7 +121,7 @@ MemInfo getMemInfo(Value val);
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
 
-bool isWorkSpaceFuncArgument(Value value);
+bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);
 
 } // namespace mlir::hivm::syncsolver
 

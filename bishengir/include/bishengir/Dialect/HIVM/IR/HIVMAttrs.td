@@ -1084,6 +1084,11 @@ def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
 }
 
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
   let description = [{HIVM has alias scopes attribute}];
 }

@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -29,6 +30,31 @@ using namespace mlir;
 using namespace hivm::syncsolver;
 
 namespace mlir::hivm::syncsolver {
+
+std::optional<FuncArgInfo> FuncArgInfo::tryGet(Value value) {
+  auto blockArg = dyn_cast_if_present<BlockArgument>(value);
+  if (!blockArg) {
+    return {};
+  }
+  auto *block = blockArg.getOwner();
+  if (!block) {
+    return {};
+  }
+  auto *region = block->getParent();
+  if (!region) {
+    return {};
+  }
+  auto *parentOp = region->getParentOp();
+  if (!parentOp) {
+    return {};
+  }
+  auto parentFuncOp = dyn_cast<func::FuncOp>(parentOp);
+  if (!parentFuncOp) {
+    return {};
+  }
+  return FuncArgInfo(parentFuncOp, blockArg,
+                     isWorkSpaceFuncArgument(parentFuncOp, blockArg));
+}
 
 llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
   llvm::SmallVector<int64_t> offsets;
@@ -47,7 +73,8 @@ llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
   return offsets;
 }
 
-PointerLikeInfo getPointerLikeInfo(hivm::PointerCastOp pointerCastOp) {
+std::optional<PointerLikeInfo>
+PointerLikeInfo::tryGet(hivm::PointerCastOp pointerCastOp) {
   PointerLikeInfo pointerLikeInfo(pointerCastOp);
   pointerLikeInfo.addresses = getAddresses(pointerCastOp.getAddrs());
   pointerLikeInfo.allocateSize = GetBufferBitSize(pointerCastOp.getResult());
@@ -58,14 +85,15 @@ PointerLikeInfo getPointerLikeInfo(hivm::PointerCastOp pointerCastOp) {
   if (auto spaceAttr = GetBufferSpaceAttr(pointerCastOp.getResult())) {
     pointerLikeInfo.addressSpace = spaceAttr->getAddressSpace();
   }
-  if (auto parentLoop = pointerCastOp->getParentOfType<LoopLikeOpInterface>()) {
-    pointerLikeInfo.parentLoop = parentLoop;
+  if (auto loopLikeParentOp =
+          pointerCastOp->getParentOfType<LoopLikeOpInterface>()) {
+    pointerLikeInfo.parentLoop = loopLikeParentOp;
   }
   return pointerLikeInfo;
 }
 
-PointerLikeInfo
-getPointerLikeInfo(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp) {
+std::optional<PointerLikeInfo> PointerLikeInfo::tryGet(
+    bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp) {
   PointerLikeInfo pointerLikeInfo(allocWorkspaceOp);
   pointerLikeInfo.addresses = getAddresses(allocWorkspaceOp.getOffset());
   pointerLikeInfo.allocateSize = GetBufferBitSize(allocWorkspaceOp.getResult());
@@ -74,25 +102,35 @@ getPointerLikeInfo(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp) {
     llvm_unreachable("unknown buffer size");
   }
   pointerLikeInfo.addressSpace = hivm::AddressSpace::GM;
-  if (auto parentLoop =
+  if (auto loopLikeParentOp =
           allocWorkspaceOp->getParentOfType<LoopLikeOpInterface>()) {
-    pointerLikeInfo.parentLoop = parentLoop;
+    pointerLikeInfo.parentLoop = loopLikeParentOp;
   }
+  pointerLikeInfo.isWorkSpace = true;
   return pointerLikeInfo;
 }
 
-MemInfo getMemInfo(Value val) {
-  if (auto *defOp = val.getDefiningOp()) {
+std::optional<PointerLikeInfo> PointerLikeInfo::tryGet(Value value) {
+  if (auto *defOp = value.getDefiningOp()) {
     if (auto allocWorkSpaceOp =
             llvm::dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(defOp)) {
-      return MemInfo(val, getPointerLikeInfo(allocWorkSpaceOp),
-                     /*isWorkSpace=*/true);
+      return PointerLikeInfo::tryGet(allocWorkSpaceOp);
     }
     if (auto pointerCastOp = llvm::dyn_cast<hivm::PointerCastOp>(defOp)) {
-      return MemInfo(val, getPointerLikeInfo(pointerCastOp));
+      return PointerLikeInfo::tryGet(pointerCastOp);
     }
   }
-  return MemInfo(val, isWorkSpaceFuncArgument(val));
+  return {};
+}
+
+MemInfo getMemInfo(Value value) {
+  if (auto funcArgInfo = FuncArgInfo::tryGet(value)) {
+    return MemInfo(value, funcArgInfo.value());
+  }
+  if (auto pointerLikeInfo = PointerLikeInfo::tryGet(value)) {
+    return MemInfo(value, pointerLikeInfo.value());
+  }
+  return MemInfo(value);
 }
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
@@ -102,6 +140,21 @@ MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {
   memInfo.pointerLikeInfo->allocateSize = 1;
   memInfo.pointerLikeInfo->addressSpace = hivm::AddressSpace::Zero;
   return memInfo;
+}
+
+bool FuncArgInfo::checkConflict(const FuncArgInfo &funcArgInfo1,
+                                const FuncArgInfo &funcArgInfo2) {
+  if (funcArgInfo1.funcOp == funcArgInfo2.funcOp) {
+    return funcArgInfo1.funcArg == funcArgInfo2.funcArg;
+  }
+  if (funcArgInfo1.argNum == funcArgInfo2.argNum) {
+    // handling the case of function arguments in delayed cross-core gss
+    assert(funcArgInfo1.funcArg.getType() == funcArgInfo2.funcArg.getType());
+    assert(funcArgInfo1.funcOp->getParentOp() ==
+           funcArgInfo2.funcOp->getParentOp());
+    return true;
+  }
+  return false;
 }
 
 bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
@@ -165,6 +218,10 @@ bool PointerLikeInfo::checkConflict(const PointerLikeInfo &pointerLikeInfo1,
 bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
                             std::optional<int64_t> lcmLen,
                             std::optional<int64_t> eventIdNum) {
+  if (memInfo1.funcArgInfo.has_value() && memInfo2.funcArgInfo.has_value()) {
+    return FuncArgInfo::checkConflict(memInfo1.funcArgInfo.value(),
+                                      memInfo2.funcArgInfo.value());
+  }
   if (memInfo1.pointerLikeInfo.has_value() &&
       memInfo2.pointerLikeInfo.has_value()) {
     return PointerLikeInfo::checkConflict(memInfo1.pointerLikeInfo.value(),
@@ -174,28 +231,8 @@ bool MemInfo::checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
   return memInfo1.value == memInfo2.value;
 }
 
-bool isWorkSpaceFuncArgument(Value value) {
-  auto blockArg = dyn_cast_if_present<BlockArgument>(value);
-  if (!blockArg) {
-    return false;
-  }
-  auto *block = blockArg.getOwner();
-  if (!block) {
-    return false;
-  }
-  auto *region = block->getParent();
-  if (!region) {
-    return false;
-  }
-  auto *parentOp = region->getParentOp();
-  if (!parentOp) {
-    return false;
-  }
-  auto funcOp = dyn_cast<func::FuncOp>(parentOp);
-  if (!funcOp) {
-    return false;
-  }
-  return hacc::utils::isKernelArg(funcOp, blockArg.getArgNumber(),
+bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg) {
+  return hacc::utils::isKernelArg(funcOp, funcArg.getArgNumber(),
                                   hacc::KernelArgType::kWorkspace);
 }
 

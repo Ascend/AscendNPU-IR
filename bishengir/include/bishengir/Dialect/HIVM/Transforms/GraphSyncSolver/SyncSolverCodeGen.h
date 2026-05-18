@@ -25,7 +25,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/Region.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -51,6 +50,9 @@ public:
   // handling.
   llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
 
+  // Map sync ops to before/after operations.
+  SyncMap syncMapBefore, syncMapAfter;
+
 private:
   bool resultFuncIrWasGenerated{false};
 
@@ -71,10 +73,8 @@ private:
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
-  SyncMap syncMapBefore, syncMapAfter;
-
 public:
-  CodeGenerator() = delete;
+  CodeGenerator(const SyncSolverOptions &options) : options(options) {}
 
   CodeGenerator(std::unique_ptr<Solver> solver) : options(solver->options) {
     init(std::move(solver));
@@ -102,8 +102,8 @@ private:
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
 
-  void insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
-                     BarrierOp *barrierOp, bool insertAfterOp);
+  void insertBlockAllOp(IRRewriter &rewriter, OperationBase *opBase,
+                        BarrierOp *barrierOp, bool insertAfterOp);
 
   void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                        BarrierOp *barrierOp, bool insertAfterOp);
@@ -127,7 +127,9 @@ private:
                                           OperationBase *opBase,
                                           SyncOp *syncOp);
 
-  Value getNestedIndexModular(IRRewriter &rewriter, SetWaitOp *syncOp);
+  Value getNestedIndexModular(IRRewriter &rewriter,
+                              LoopLikeOpInterface multibufferLoop,
+                              int64_t modulo);
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
   Value getCVMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);

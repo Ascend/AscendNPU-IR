@@ -1496,3 +1496,18 @@ const DenseMap<StringRef, CustomMacroOp::BuiltinInfo> CustomMacroOp::kBuiltins{
      BuiltinInfo(TCoreType::VECTOR, PIPE::PIPE_MTE2, PIPE::PIPE_V, VFMode::SIMT,
                  getIndexSelectLibraryCallName<CustomMacroOp>,
                  /* GM Addr Args Indices */ {0})}};
+
+//===----------------------------------------------------------------------===//
+// AnchorOp
+//===----------------------------------------------------------------------===//
+
+struct AnchorResource
+    : public mlir::SideEffects::Resource::Base<AnchorResource> {
+  mlir::StringRef getName() final { return "<Anchor>"; }
+};
+
+void mlir::hivm::AnchorOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), AnchorResource::get());
+}

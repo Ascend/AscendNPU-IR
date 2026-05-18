@@ -34,6 +34,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ConstantizeBufferSize.cpp
   ConvertToHIVMOp.cpp
+  InsertAnchorsAndBackup.cpp
   ConvertLayout/CombineOptimizedConvertLayout.cpp
   ConvertLayout/ConvertLayoutToTranspose.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
