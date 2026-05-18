@@ -1812,12 +1812,12 @@ class BroadCastZmodeInstrOp<string mnemonic>
           /*list<int> overloadedOperands=*/[],
           /*list<Trait> traits=*/[],
           /*int numResults=*/1> {
-  let arguments = (ins VectorOfLengthAndType<[128, 128, 128, 128, 256, 256, 64, 64, 64],
-                                             [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32]>:$src,
+  let arguments = (ins VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+                                             [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$src,
                        VectorOfLengthAndType<[256], [I1]>:$mask,
                        I32:$predicateMode);
-  let results = (outs VectorOfLengthAndType<[128, 128, 128, 128, 256, 256, 64, 64, 64],
-                                            [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32]>:$res);
+  let results = (outs VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+                                            [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$res);
 }
 
 class BroadCastMmodeInstrOp<string mnemonic>

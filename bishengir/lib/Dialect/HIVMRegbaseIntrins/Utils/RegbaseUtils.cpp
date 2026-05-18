@@ -663,7 +663,8 @@ Operation *hivm_regbaseintrins::buildVdupOp(Value srcRegister,
       elementType.isSignlessInteger(16) || elementType.isUnsignedInteger(16) ||
       elementType.isSignedInteger(8) || elementType.isSignlessInteger(8) ||
       elementType.isUnsignedInteger(8) || elementType.isF32() ||
-      elementType.isF16() || elementType.isBF16())
+      elementType.isF16() || elementType.isBF16() ||
+      elementType.isFloat8E5M2() || elementType.isFloat8E4M3FN())
     return rewriter.create<hivm_regbaseintrins::VdupZInstrOp>(
         srcRegister.getLoc(), resVecType, srcRegister, predicateVector, cstOne);
   llvm_unreachable("Invalid vsts element type.");

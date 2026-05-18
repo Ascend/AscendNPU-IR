@@ -2549,6 +2549,11 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
                                ConversionPatternRewriter &rewriter) {
   Value vdup = nullptr;
   auto resType = vecBrcOp.getRes().getType();
+
+  VectorType vecType = cast<VectorType>(resType);
+  Type elemType = vecType.getElementType();
+  VectorType newType = VectorType::get({getVectorSizeByElementType(elemType)}, elemType);
+
   auto src = vecBrcOp.getSrc();
   auto loc = vecBrcOp->getLoc();
   // TODO: predication mode merging
@@ -2565,8 +2570,9 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
       elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
       elementType.isF16() || elementType.isUnsignedInteger(32) ||
       elementType.isSignedInteger(32) || elementType.isSignlessInteger(32) ||
-      elementType.isF32() || elementType.isBF16()) {
-    vdup = rewriter.create<IntrOpTy>(loc, resType, src, mask, pModeCst);
+      elementType.isF32() || elementType.isBF16() ||
+      elementType.isFloat8E5M2() || elementType.isFloat8E4M3FN()) {
+    vdup = rewriter.create<IntrOpTy>(loc, newType, src, mask, pModeCst);
   }
   return vdup;
 }
