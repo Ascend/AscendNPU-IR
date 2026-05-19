@@ -207,6 +207,7 @@ runExternalHIVMC(ModuleOp &module,
                                      "enable-hivm-cross-core-gss",
                                      "enable-tree-reduce-v2",
                                      "vf-fusion-mode",
+                                     "disable-vf-reachable-check",
                                      "disable-sink-dpx-load"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
@@ -301,13 +302,16 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
           hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
-      if (!success && hasUboverflow && config.getEnableVFFusion()) {
+      if (!success && hasUboverflow) {
         diagEngine.eraseHandler(handlerID);
         for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-            diagEngine.emit(std::move(diag));
+          diagEngine.emit(std::move(diag));
         }
-        LDBG("ub overflow, fallback with disabled vffusion");
-        config.setEnableVFFusion(false);
+        if (config.getEnableVFFusion()) {
+          LDBG("ub overflow detected, fallback with disabled vffusion");
+          config.setEnableVFFusion(false);
+        }
+        config.setDisableVFReachableCheck(true);
       }
     }
 

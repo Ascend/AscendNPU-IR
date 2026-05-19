@@ -724,6 +724,14 @@ def DisableTightlyCoupledBufferReuse : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def DisableVFReachableCheck : FeatureControlOptions<
+  "disable VF reachable check",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 def EnableDotScaledCompile : FeatureControlOptions<
   "Enable dot scaled compile",

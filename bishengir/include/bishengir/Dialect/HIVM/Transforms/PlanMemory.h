@@ -462,13 +462,15 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 
 class MemPlan {
 public:
-  MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
-          bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-          int simtVFDynamicSize)
+MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
+           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
+           int simtVFDynamicSize, bool disableVFReachableCheck)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
-        simtVFDynamicSize(simtVFDynamicSize), vfInplaceReuseInfo(nullptr) {}
+        simtVFDynamicSize(simtVFDynamicSize),
+        disableVFReachableCheck(disableVFReachableCheck),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan();
 
@@ -528,6 +530,9 @@ private:
 
   // Dynamic ub size(KB) for simt VF. Default is 216
   int simtVFDynamicSize;
+
+  /// Disable VF reachable check. Default is false
+  bool disableVFReachableCheck;
 
   /// StorageEntry generate.
   void GenerateStorageEntry();
