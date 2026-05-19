@@ -613,8 +613,8 @@ struct ConstantOpToHivmBroadcastLowering
       if (denseAttr.getSplatValue<APFloat>().isZero()) {
         // Keep the same process logic for scalar value as i8 did above
         scalarValue = rewriter.create<arith::ConstantOp>(
-            loc, rewriter.getIntegerType(16),
-            rewriter.getIntegerAttr(rewriter.getIntegerType(16), 0));
+            loc, rewriter.getIntegerType(8),
+            rewriter.getIntegerAttr(rewriter.getIntegerType(8), 0));
       }
       // Broadcast the scalar value to i8 vector type and cast back
       brcOp = mlir::utils::getBroadcastOp(scalarValue, i8VecTy, rewriter, loc);

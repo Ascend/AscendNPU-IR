@@ -240,9 +240,9 @@ func.func @divui_uint64(%arg0: memref<64xi64, #hivm.address_space<ub>>, %arg1: m
 // CHECK-LABEL:   func.func @triton_load_mask_outlined_vf_0(
 func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
 // CHECK:           %[[VAL_3:.*]] = arith.constant 0.000000e+00 : f8E5M2
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : i16
+// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : i8
 // CHECK:           %[[VAL_5:.*]] = ave.hir.pge <ALL> : vector<64xi1>
-// CHECK:           %[[VAL_6:.*]] = ave.hir.broadcast %[[VAL_4:.*]], %[[VAL_5:.*]] : i16, vector<64xi1> -> vector<64xi8>
+// CHECK:           %[[VAL_6:.*]] = ave.hir.broadcast %[[VAL_4:.*]], %[[VAL_5:.*]] : i8, vector<64xi1> -> vector<64xi8>
 // CHECK:           %[[VAL_7:.*]] = vector.bitcast %[[VAL_6:.*]] : vector<64xi8> to vector<64xf8E5M2>
 // CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i32
 // CHECK:           %[[VAL_9:.*]] = ave.hir.pge <ALL> : vector<64xi1>
