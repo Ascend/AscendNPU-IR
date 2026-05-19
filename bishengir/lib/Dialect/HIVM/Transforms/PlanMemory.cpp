@@ -1050,6 +1050,8 @@ static bool defaultReachableOpCheck(Operation *op) {
   return op->getParentOfType<LoopLikeOpInterface>();
 }
 
+static bool noneReachableOpCheck(Operation *op) { return false; }
+
 template <typename DstOpType>
 bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
                                 DenseSet<Value> &visited,
@@ -1118,8 +1120,9 @@ bool MemPlan::IsInplaceReuseReachable(Value src) const {
   LDBG("-- start visiting inplace-reuse path from: "
        << src << ", to: " << DstOpType::getOperationName() << "\n");
   DenseSet<Value> visited;
-  return VisitInplaceReuseReachable<DstOpType>(src, vfInplaceReuseInfo,
-                                               visited);
+  return VisitInplaceReuseReachable<DstOpType>(
+      src, vfInplaceReuseInfo, visited,
+      disableVFReachableCheck ? noneReachableOpCheck : defaultReachableOpCheck);
 }
 
 bool MemPlan::IsReuseVFCall(Value gen, Value kill) const {
@@ -2675,7 +2678,8 @@ PlanMemoryPass::PlanMemoryForFuncOp(
 
   MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                   this->enablePrintMemoryAllocatedSize,
-                  this->restrictInplaceAsISA, this->simtVFDynamicSize);
+                  this->restrictInplaceAsISA, this->simtVFDynamicSize,
+                  this->disableVFReachableCheck);
   if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
     return std::nullopt;
   }

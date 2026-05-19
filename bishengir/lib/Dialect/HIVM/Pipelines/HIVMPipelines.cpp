@@ -274,6 +274,8 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes (Inject-Block-Sync, Cross-Core-GSS)
@@ -421,6 +423,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Lower hivm ops to loops
