@@ -668,7 +668,7 @@ func.func @arange_2d() -> tensor<16x16xi32> {
 func.func @test_cast_int8_t_to_bool_rintmode() {
   // CHECK: %[[SRC:.*]] = memref.alloc() : memref<1024xi8>
   // CHECK: %[[DST:.*]] = memref.alloc() : memref<1024xi1>
-  // CHECK: hivm.hir.vcast ins(%[[SRC]] : memref<1024xi8>) outs(%[[DST]] : memref<1024xi1>)
+  // CHECK: hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%[[SRC]] : memref<1024xi8>) outs(%[[DST]] : memref<1024xi1>)
   // CHECK: return
   %arg0 = memref.alloc() : memref<1024xi8>
   %arg1 = memref.alloc() : memref<1024xi1>
@@ -818,6 +818,45 @@ module {
     // CHECK: hivm.hir.atomic_cas
     %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
     hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xi16>, memref<256xi16>) outs(%reinterpret_cast_0 : memref<256xi16, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_cas_bf16
+module {
+  func.func @test_atomic_cas_bf16(%arg0: memref<?xbf16>) {
+    %alloc = memref.alloc() : memref<256xbf16>
+    %alloc_2 = memref.alloc() : memref<256xbf16>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xbf16> to memref<256xbf16, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xbf16>, memref<256xbf16>) outs(%reinterpret_cast_0 : memref<256xbf16, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_cas_fp8_e4m3
+module {
+  func.func @test_atomic_cas_fp8_e4m3(%arg0: memref<?xf8E4M3FN>) {
+    %alloc = memref.alloc() : memref<256xf8E4M3FN>
+    %alloc_2 = memref.alloc() : memref<256xf8E4M3FN>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E4M3FN> to memref<256xf8E4M3FN, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xf8E4M3FN>, memref<256xf8E4M3FN>) outs(%reinterpret_cast_0 : memref<256xf8E4M3FN, strided<[1]>>)
+    return
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_atomic_cas_fp8_e5m2
+module {
+  func.func @test_atomic_cas_fp8_e5m2(%arg0: memref<?xf8E5M2>) {
+    %alloc = memref.alloc() : memref<256xf8E5M2>
+    %alloc_2 = memref.alloc() : memref<256xf8E5M2>
+    // CHECK: hivm.hir.atomic_cas
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [256], strides: [1] : memref<?xf8E5M2> to memref<256xf8E5M2, strided<[1]>>
+    hfusion.atomic_cas ins(%alloc_2, %alloc : memref<256xf8E5M2>, memref<256xf8E5M2>) outs(%reinterpret_cast_0 : memref<256xf8E5M2, strided<[1]>>)
     return
   }
 }

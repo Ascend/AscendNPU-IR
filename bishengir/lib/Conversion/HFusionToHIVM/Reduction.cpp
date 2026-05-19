@@ -80,10 +80,10 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
     } else if (isa<arith::MulFOp>(bodyOp) || isa<arith::MulIOp>(bodyOp)) {
       kind = hivm::ReduceOperation::prod;
     } else if (isa<arith::MaximumFOp>(bodyOp) || isa<arith::MaxSIOp>(bodyOp) ||
-               isa<arith::MaxNumFOp>(bodyOp)) {
+               isa<arith::MaxNumFOp>(bodyOp) || isa<arith::MaxUIOp>(bodyOp)) {
       kind = hivm::ReduceOperation::max;
     } else if (isa<arith::MinimumFOp>(bodyOp) || isa<arith::MinSIOp>(bodyOp) ||
-               isa<arith::MinNumFOp>(bodyOp)) {
+               isa<arith::MinNumFOp>(bodyOp) || isa<arith::MinUIOp>(bodyOp)) {
       kind = hivm::ReduceOperation::min;
     } else {
       reduceOp.emitOpError("unsupported reduce operation: ");

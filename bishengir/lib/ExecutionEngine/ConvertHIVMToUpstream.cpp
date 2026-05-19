@@ -1231,6 +1231,17 @@ private:
   }
 };
 
+struct RewriteAtomicCasOp : public OpRewritePattern<hivm::AtomicCasOp> {
+  using OpRewritePattern<hivm::AtomicCasOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::AtomicCasOp op,
+                                PatternRewriter &rewriter) const final {
+    rewriter.replaceOpWithNewOp<hfusion::AtomicCasOp>(
+        op, op->getResultTypes(), op.getSrc(), op.getDst());
+    return success();
+  }
+};
+
 struct RewriteCastOp : public OpRewritePattern<hivm::VCastOp> {
 
   using OpRewritePattern<hivm::VCastOp>::OpRewritePattern;
@@ -1473,7 +1484,8 @@ struct ConvertHIVMToUpstream
                  RewriteVConcatOp, RewriteVReduceOp, RewriteCastOp,
                  RewriteVCmpOp, RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
                  RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
-                 RewriteDeinterleave, HIVMToHfusionBitcastOp>(&ctx);
+                 RewriteDeinterleave, HIVMToHfusionBitcastOp,
+                 RewriteAtomicCasOp>(&ctx);
 
     for (func::FuncOp func : functions) {
       if (func.getBody().empty())
