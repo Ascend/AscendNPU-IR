@@ -22,7 +22,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Transforms/Passes.h"
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -86,7 +85,8 @@ public:
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
-          if (!traceAndCheckIsGMOrTightCoupledBuffer(bufferizeToTensor->getOperand(0)) &&
+          if (!traceAndCheckIsGMOrTightCoupledBuffer(
+                  bufferizeToTensor->getOperand(0)) &&
               strictMode) {
             return WalkResult::interrupt();
           } else {
@@ -116,11 +116,16 @@ public:
     func::FuncOp funcOp = getOperation();
     GreedyRewriteConfig config;
     config.maxIterations = 50;
-    // Apply bubble up patterns
+    // Apply bubble up patterns.
+    // MarkEmptySliceBufferSize runs after BubbleUpPattern (which
+    // may reject due to areOperandsUpperLevel) but before
+    // FoldTensorEmptyPatterns. This ensures the mark is on the extract_slice
+    // result before the fold moves it to tensor.empty.
     RewritePatternSet patterns(funcOp.getContext());
     populateHoistAffinePattern(patterns);
     populateBubbleUpExtractSliceOpPatterns(patterns);
     populateCSEPattern(patterns);
+    patterns.add<MarkEmptySliceBufferSize>(funcOp.getContext());
     tensor::populateFoldTensorEmptyPatterns(patterns, true);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       return signalPassFailure();
@@ -137,15 +142,18 @@ public:
     populateHoistAffinePattern(patterns2);
     populateBubbleUpExtractSliceOpPatterns(patterns2);
     populateCSEPattern(patterns2);
+    patterns2.add<MarkEmptySliceBufferSize>(funcOp.getContext());
     tensor::populateFoldTensorEmptyPatterns(patterns2, true);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns2), config))) {
       return signalPassFailure();
     }
+
     if (failed(verifyMarkedExtractSlicesAreBubbledUp(funcOp))) {
       return signalPassFailure();
     }
   }
 
+  /// Pattern to add buffer_size_in_byte + buffer_static_shape marks on
 private:
   void
   populateBubbleUpExtractSliceOpPatterns(RewritePatternSet &patterns) const {
@@ -161,7 +169,6 @@ private:
     strategies.push_back(std::make_shared<LoopBubbleUpStrategy>());
     strategies.push_back(std::make_shared<LoopArgsBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<EmptyBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());

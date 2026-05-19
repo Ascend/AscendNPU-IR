@@ -89,19 +89,19 @@ int64_t calculateBufferSizeInBytes(ShapedType tiledType,
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
-                                        Value input, int64_t tileDimension) {
-  if (!isa<ShapedType>(input.getType()))
+                                        Value toBeTiledVal, int64_t tileDimension) {
+  if (!isa<ShapedType>(toBeTiledVal.getType()))
     llvm::report_fatal_error("expected shaped type in calculateOffsetAtTilingDim");
-  auto inputType = cast<ShapedType>(input.getType());
+  auto inputType = cast<ShapedType>(toBeTiledVal.getType());
   auto dimSize = inputType.getShape()[tileDimension];
 
   OpFoldResult tileStride;
   if (ShapedType::isDynamic(dimSize)) {
     Value dimVal;
     if (isa<TensorType>(inputType)) {
-      dimVal = rewriter.create<tensor::DimOp>(loc, input, tileDimension);
+      dimVal = rewriter.create<tensor::DimOp>(loc, toBeTiledVal, tileDimension);
     } else {
-      dimVal = rewriter.create<memref::DimOp>(loc, input, tileDimension);
+      dimVal = rewriter.create<memref::DimOp>(loc, toBeTiledVal, tileDimension);
     }
     AffineExpr d0;
     bindDims(rewriter.getContext(), d0);

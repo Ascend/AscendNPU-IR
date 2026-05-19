@@ -123,12 +123,6 @@ public:
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,
                         PatternRewriter &rewriter) const override;
 };
-class EmptyBubbleUpStrategy : public BubbleUpStrategy {
-public:
-  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
-  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
-                        PatternRewriter &rewriter) const override;
-};
 
 class VTransposeBubbleUpStrategy : public BubbleUpStrategy {
 public:
@@ -229,6 +223,18 @@ public:
 
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,
                         PatternRewriter &rewriter) const override;
+};
+
+/// Pattern to add buffer_size_in_byte mark on ExtractSliceOp whose
+/// tensor::ExtractSliceOp whose source is tensor::EmptyOp. This  handles cases
+/// that were rejected by BubbleUpPattern::areOperandsUpperLevel (e.g. operands
+/// in a deeper inner loop than the extract_slice).
+class MarkEmptySliceBufferSize
+    : public OpRewritePattern<tensor::ExtractSliceOp> {
+public:
+  using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(tensor::ExtractSliceOp sliceOp,
+                                PatternRewriter &rewriter) const override;
 };
 
 } // namespace mlir::hivm::detail
