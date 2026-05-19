@@ -1234,10 +1234,68 @@ struct ElementwiseInlineAsmOpConversion
     return ret;
   }
 
+  enum class AsmOperation {
+    SIN, COS, TANH, ATAN, UNKNOWN
+  };
+
+  //Check the name of the asm string up to the first . to determine the type of asm operation
+  AsmOperation stringToAsmOp(const std::string& str) const {
+    std::string op = "";
+    for (char c : str) {
+      if (c == '.') {
+        break;
+      }
+      op += c;
+    }
+
+    static std::unordered_map<std::string, AsmOperation> asmMap = {
+      {"sin", AsmOperation::SIN}, {"cos", AsmOperation::COS}, {"tanh", AsmOperation::TANH}, {"atan", AsmOperation::ATAN}
+    };
+
+    if (asmMap.find(op) != asmMap.end()) {
+      return asmMap[op];
+    }
+    return AsmOperation::UNKNOWN;
+  }
+
   LogicalResult
   matchAndRewrite(ElementwiseInlineAsmOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
+
+    // We check if its a elementwise trig operation 
+    // which we replace with the equivalent from the math dialect
+
+    AsmOperation asmCode = stringToAsmOp(op.getAsmString().str());
+    if (asmCode != AsmOperation::UNKNOWN) {
+      Operation* newOp = nullptr;
+
+      auto resultTypes = op->getResultTypes();
+      auto args = op.getArgs();
+
+      switch (asmCode) {
+        case AsmOperation::SIN:
+          newOp = rewriter.create<math::SinOp>(loc, resultTypes, args);
+          break;
+        case AsmOperation::COS:
+          newOp = rewriter.create<math::CosOp>(loc, resultTypes, args);
+          break;
+        case AsmOperation::TANH:
+          newOp = rewriter.create<math::TanhOp>(loc, resultTypes, args);
+          break;
+        case AsmOperation::ATAN:
+          newOp = rewriter.create<math::AtanOp>(loc, resultTypes, args);
+          break;
+        default:
+          break;
+      }
+
+      if(newOp) {
+        rewriter.replaceOp(op, newOp->getResults());
+        return success();
+      }
+    }
+
     auto b = TritonLLVMOpBuilder(loc, rewriter);
 
     // Layout is unpackedOperands[operand][elem].
@@ -1641,6 +1699,7 @@ void mlir::triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
   POPULATE_UNARY_OP(arith::FPToUIOp, LLVM::FPToUIOp)
   POPULATE_UNARY_OP(arith::FPToSIOp, LLVM::FPToSIOp)
   POPULATE_UNARY_OP(arith::UIToFPOp, LLVM::UIToFPOp)
+  POPULATE_UNARY_OP(math::AtanOp, ascend_dpx::AtanOp)
   POPULATE_UNARY_OP(math::TanhOp, ascend_dpx::TanhOp)
   POPULATE_UNARY_OP(math::FloorOp, ascend_dpx::FloorOp)
   POPULATE_UNARY_OP(math::CeilOp, ascend_dpx::CeilOp)
