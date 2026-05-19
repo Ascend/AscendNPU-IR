@@ -46,10 +46,13 @@ struct NormalizeHIVMPass
     auto *context = &getContext();
     RewritePatternSet patterns(context);
     populateNormalizeTrigPatterns(patterns);
+    populateNormalizeI8I32CmpPatterns(patterns);
     populateNormalizeArithmeticPatterns(patterns);
     populateNormalizePrimaryMathPatterns(patterns);
     populateNormalizeCastingPatterns(patterns);
     populateNormalizeComparisonCleanupPatterns(patterns);
+    populateNormalizeBitwiseComparisonPatterns(patterns);
+    populateNormalizeShiftI8ToI16(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,
     // but not an arith.constant dense tensor. Dense constants are handled by
@@ -57,8 +60,7 @@ struct NormalizeHIVMPass
     // pass extracts the single runtime value and rebuilds the broadcast.
     populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns,
                                                          archIsRegbased);
-    if (!archIsRegbased)
-      populateNormalizeCmpVnePatterns(patterns);
+    populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

@@ -51,6 +51,18 @@ Operation *buildVstusPostOp(Value srcRegister, Value basePtr, Value eleSize,
 Operation *buildPsetOp(Value pattern, unsigned elementBitWidth,
                        PatternRewriter &rewriter);
 
+Operation *buildPpackOp(Location loc, Value part, Value src,
+                        PatternRewriter &rewriter);
+
+Operation *buildPunpackOp(Location loc, Value part, Value src,
+                          PatternRewriter &rewriter);
+
+Operation *buildVpackOp(Location loc, Value part, Value src, Type vectorType,
+                        PatternRewriter &rewriter);
+
+Operation *buildVunpackOp(Location loc, Value part, Value src, Type vectorType,
+                           PatternRewriter &rewriter);
+                                                  
 Operation *buildPltOp(Value count, unsigned elementBitWidth,
                       PatternRewriter &rewriter);
 

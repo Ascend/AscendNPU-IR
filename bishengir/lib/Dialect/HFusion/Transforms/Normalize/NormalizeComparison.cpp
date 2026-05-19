@@ -70,6 +70,9 @@ public:
   }
 };
 
+/// Normalizes `hfusion.compare(..., compare_fn = vne)` to:
+///   tmp = compare(lhs, rhs, veq)
+///   result = vnot(tmp)
 struct HFusionCmpVneTraits : public NormalizeTraitsBase {
   static bool shouldNormalize(CompareOp op) {
     return op.hasPureTensorSemantics() && op.getCompareFn() == CompareFn::vne;
@@ -128,13 +131,9 @@ struct HFusionIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
   /// `hfusion.cast(... -> i1)`.
   static Value lowerIntMaskToBoolResult(PatternRewriter &rewriter, Location loc,
                                         Value input, Value output) {
-    auto roundingAttr =
-        rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT);
-    auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
-                                          roundingAttr);
-    return rewriter
-        .create<hfusion::CastOp>(loc, TypeRange(output), input, output, modeAttr)
-        .getResult(0);
+    return NormalizeTraitsBase::createCastOp(
+        rewriter, loc, input, getElementTypeOrSelf(output.getType()),
+        CastRoundKind::RInt, output);
   }
 };
 
@@ -166,98 +165,34 @@ using NormalizeIsNanOp =
 ///   %cast1 = hfusion.cast %src1 : tensor<6x6xi32> to tensor<6x6xi64>
 ///   %cast2 = hfusion.cast %src2 : tensor<6x6xi32> to tensor<6x6xi64>
 ///   hfusion.compare ins(%cast1, %cast2 : tensor<6x6xi64>, tensor<6x6xi64>)
-struct NormalizeI8I32CmpOp : public OpRewritePattern<CompareOp> {
-public:
-  using OpRewritePattern<CompareOp>::OpRewritePattern;
+struct HFusionI8I32CmpTraits : public NormalizeTraitsBase {
+  static bool shouldNormalize(CompareOp op) {
+    return op.hasPureTensorSemantics();
+  }
 
-  LogicalResult matchAndRewrite(CompareOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    Value lhs = op.getInputs()[0];
-    Value rhs = op.getInputs()[1];
-    Type lhsElemType = getElementTypeOrSelf(lhs.getType());
-#ifndef NDEBUG
-    Type rhsElemType = getElementTypeOrSelf(rhs.getType());
-    assert(lhsElemType == rhsElemType && "lhs and rhs elemType mismatch");
-#endif
-
-    Type targetType = rewriter.getI64Type();
-    hfusion::CompareFn cmpFn = op.getCompareFn();
-    if (lhsElemType.isInteger(8)) {
-      targetType = rewriter.getF16Type();
-    } else if (lhsElemType.isInteger(32) && cmpFn != hfusion::CompareFn::vne &&
-               cmpFn != hfusion::CompareFn::veq) {
-      targetType = rewriter.getI64Type();
-    } else {
-      return failure();
-    }
-
-    hfusion::RoundMode rounding =
-        utils::selectRoundMode<hfusion::RoundMode>(lhsElemType, targetType);
-    Value castLhs = hfusion::castTo(rewriter, lhs, targetType, rounding);
-    Value castRhs = hfusion::castTo(rewriter, rhs, targetType, rounding);
-    auto newCmpOp =
-        createCmpOp(rewriter, op->getLoc(), castLhs, castRhs, cmpFn);
-    rewriter.replaceOp(op, newCmpOp);
-    return success();
+  static bool isEqOrNeCompare(CompareOp op) {
+    return op.getCompareFn() == CompareFn::veq ||
+           op.getCompareFn() == CompareFn::vne;
   }
 };
 
-/// normalize x xor y into (!(x&y)) & (x|y)
-struct NormalizeXorOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+using NormalizeI8I32CmpOp =
+    mlir::NormalizeI8I32CmpOpTemplate<CompareOp, HFusionI8I32CmpTraits>;
 
-    if (op.getFun() != hfusion::BinaryFn::vxor) {
-      return failure();
-    }
-
-    auto inputs = op.getDpsInputs();
-    auto outs = op.getDpsInits();
-    assert(!outs.empty() && isa<ShapedType>(outs[0].getType()));
-
-    // x|y
-    auto emptyVorOp = utils::createEmptyOp(rewriter, op->getLoc(), outs[0]);
-    auto orOp =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::BinaryFn::vor, inputs,
-            ValueRange(emptyVorOp));
-    // x&y
-    auto emptyVandOp = utils::createEmptyOp(rewriter, op->getLoc(), outs[0]);
-    auto vandOp =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::BinaryFn::vand, inputs,
-            ValueRange(emptyVandOp));
-
-    // !(x&y)
-    auto vnotOp =
-        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                               hfusion::UnaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::UnaryFn::vnot,
-            ValueRange{vandOp->getResults()}, ValueRange(vandOp->getResults()));
-
-    // xorop
-    auto emptyVxorOp = utils::createEmptyOp(rewriter, op->getLoc(), outs[0]);
-    auto vxorOp =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, op->getLoc(), hfusion::BinaryFn::vand,
-            ValueRange{vnotOp->getResults()[0], orOp->getResults()[0]},
-            ValueRange(emptyVxorOp));
-    rewriter.replaceOp(op, vxorOp);
-    return success();
+/// Normalizes `vxor(x, y)` to:
+///   tmp_or = vor(x, y)
+///   tmp_and = vand(x, y)
+///   tmp_not = vnot(tmp_and)
+///   result = vand(tmp_not, tmp_or)
+struct HFusionXorTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeXor(hfusion::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::BinaryFn::vxor;
   }
 };
+
+using NormalizeXorOp =
+    mlir::NormalizeXorOpTemplate<hfusion::ElemwiseBinaryOp, HFusionXorTraits>;
 
 /// normalize shift i8 as bellow
 /// eg.
@@ -266,62 +201,26 @@ public:
 ///   %tmp0 = cast %src i8 to i16
 ///   %tmp1 = shift %tmp0 : i16
 ///   %res = cast %tmp1 i16 to i8
-struct NormalizeShiftI8ToI16
-    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
+struct HFusionShiftI8ToI16Traits : public NormalizeTraitsBase {
+  static bool shouldNormalizeShift(hfusion::ElemwiseBinaryOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
     auto fun = op.getFun();
-    if (!(fun == hfusion::BinaryFn::shli || fun == hfusion::BinaryFn::shrsi ||
-          fun == hfusion::BinaryFn::shrui)) {
-      return failure();
-    }
+    return fun == hfusion::BinaryFn::shli || fun == hfusion::BinaryFn::shrsi ||
+           fun == hfusion::BinaryFn::shrui;
+  }
 
-    Value input = op.getDpsInputs()[0];
-    Type inputElemType = getElementTypeOrSelf(input.getType());
-    if (!inputElemType.isInteger(8)) {
-      return failure();
-    }
-
-    auto loc = op->getLoc();
-    auto targetElemType = rewriter.getI16Type();
-    auto shift = op.getDpsInputs()[1];
-    hfusion::TypeFn cast_integer_type =
-        (fun == hfusion::BinaryFn::shrui || fun == hfusion::BinaryFn::shli)
-            ? hfusion::TypeFn::cast_unsigned
-            : hfusion::TypeFn::cast_signed;
-    Value inputOfI16 =
-        hfusion::castTo(rewriter, input, targetElemType, cast_integer_type);
-    Value shiftOfI16 =
-        hfusion::castTo(rewriter, shift, targetElemType, cast_integer_type);
-
-    auto shiftInit = utils::createEmptyOp(rewriter, loc, inputOfI16);
-    Value resOfI16 =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, fun, ValueRange{inputOfI16, shiftOfI16},
-            ValueRange(shiftInit))
-            ->getResults()[0];
-
-    auto srcElemType = rewriter.getI8Type();
-    auto selectMode =
-        utils::selectRoundMode<hfusion::RoundMode>(targetElemType, srcElemType);
-    auto roundMode = (fun == hfusion::BinaryFn::shli)
-                         ? hfusion::RoundMode::TRUNCWITHOVERFLOW
-                         : selectMode;
-    auto resOfI8 =
-        hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
-                        std::nullopt, true, false, cast_integer_type);
-
-    rewriter.replaceOp(op, resOfI8);
-    return success();
+  static CastSignKind getShiftCastSignKind(hfusion::ElemwiseBinaryOp op) {
+    auto fun = op.getFun();
+    return (fun == hfusion::BinaryFn::shrui || fun == hfusion::BinaryFn::shli)
+               ? CastSignKind::Unsigned
+               : CastSignKind::Signed;
   }
 };
+
+using NormalizeShiftI8ToI16 =
+    mlir::NormalizeShiftI8ToI16OpTemplate<hfusion::ElemwiseBinaryOp,
+                                          HFusionShiftI8ToI16Traits>;
 
 void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns) {
   if (!archIsRegbased)

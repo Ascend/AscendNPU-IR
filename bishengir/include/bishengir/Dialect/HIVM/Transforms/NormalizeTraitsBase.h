@@ -27,6 +27,9 @@
 #include <optional>
 namespace mlir::hivm {
 
+class VCmpOp;
+class VShROp;
+
 /// Base traits class for HIVM Normalize operations.
 /// Provides common utility methods that can be reused by specific traits.
 struct NormalizeTraitsBase {
@@ -38,17 +41,15 @@ public:
   static Value createCmpOp(PatternRewriter &rewriter, Location loc,
                            Value input, Value dst, CompareKind kind);
 
+  static Value createCmpOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                           Value rhs, VCmpOp sourceOp);
+
   static Value createUnaryOp(PatternRewriter &rewriter, Location loc,
                              Value input, Value dst, UnaryKind kind);
 
   static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
                               Value lhs, Value rhs, Value dst,
                               BinaryKind kind);
-
-  /// Create a dialect cast from a normalize-template abstract round kind.
-  static Value createCastOp(PatternRewriter &rewriter, Location loc,
-                            Value input, Type targetElemType,
-                            CastRoundKind kind);
 
   /// Create a dialect cast preserving the source dialect round mode when one is
   /// already available. If no round mode is provided, the dialect default is
@@ -57,6 +58,17 @@ public:
   static Value createCastOp(PatternRewriter &rewriter, Location loc,
                             Value input, Type targetElemType,
                             std::optional<RoundMode> roundMode = std::nullopt);
+
+  /// Create a dialect cast from a normalize-template abstract round kind.
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Type targetElemType,
+                            CastRoundKind kind = CastRoundKind::Default,
+                            Value output = Value(),
+                            CastSignKind signKind = CastSignKind::Signed);
+
+  static Value createShiftOp(PatternRewriter &rewriter, Location loc,
+                             Value lhs, Value rhs, Value dst,
+                             VShROp sourceOp);
 
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);
@@ -78,13 +90,13 @@ public:
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
 
-  static bool matchCastRoundMode(VCastOp op, CastExecutionKind kind);
+  static bool matchCastRoundMode(VCastOp op, CastRoundKind kind);
 
   static bool matchCastUnsignedMode(VCastOp op, CastUnsignedModeKind kind);
 
   static TypeFn mapCastSignKind(CastSignKind kind, TypeFn preserveTypeFn);
 
-  static RoundMode mapCastExecutionKind(CastExecutionKind kind,
+  static RoundMode mapCastRoundKind(CastRoundKind kind,
                                         RoundMode defaultRoundMode);
 
   static UnsignedMode mapCastUnsignedModeKind(CastUnsignedModeKind kind,
@@ -92,9 +104,9 @@ public:
 
   static bool archIsRegbased();
 
-  static Value castValue(PatternRewriter &rewriter, Location loc, VCastOp op,
+  static Value createCastValueFromSourceOp(PatternRewriter &rewriter, Location loc, VCastOp op,
                          Value input, Type targetElemType,
-                         CastExecutionKind executionKind = CastExecutionKind::Default,
+                         CastRoundKind executionKind = CastRoundKind::Default,
                          CastSignKind signKind = CastSignKind::Preserve,
                          bool enableSaturate = false,
                          CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);

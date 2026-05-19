@@ -6,6 +6,7 @@ add_bishengir_conversion_library(BiShengIRHIVMToTritonGPU
   IS_OPEN_SOURCE
 
   BufferizationToTriton.cpp
+  AffineToTriton.cpp
   ReinterpretCastOpReplacementPattern.cpp
   FuncToTriton.cpp
   HIVMToTritonGPU.cpp
@@ -25,6 +26,8 @@ add_bishengir_conversion_library(BiShengIRHIVMToTritonGPU
 
   LINK_LIBS PUBLIC
   ${BISHENGIR_PRIVATE_LIBS}
+  MLIRAffineDialect
+  MLIRAffineUtils
   MLIRArithDialect
   MLIRMathDialect
   MLIRFuncDialect

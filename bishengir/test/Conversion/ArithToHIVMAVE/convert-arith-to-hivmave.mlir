@@ -80,10 +80,10 @@ func.func @triton_indirect_store_1D_contiguous_kernel_outlined_vf_0(%arg0: memre
   // CHECK: %[[CONSTANT5:.*]] = arith.constant 5 : index
   // CHECK: %[[RES:.*]], %[[NEWSHAPE:.*]] = ave.hir.plt %[[CONSTANT5]] : vector<64xi1>, index
   // CHECK: %[[PGE:.*]] = ave.hir.pge <ALL> : vector<64xi1>
-  // CHECK: %[[CONSTANT1:.*]] = arith.constant 1 : i16
-  // CHECK: %[[BRC1:.*]] = ave.hir.broadcast %[[CONSTANT1]], %[[PGE]] : i16, vector<64xi1> -> vector<64xi8>
-  // CHECK: %[[CONSTANT0:.*]] = arith.constant 0 : i16
-  // CHECK: %[[BRC2:.*]] = ave.hir.broadcast %[[CONSTANT0]], %[[PGE]] : i16, vector<64xi1> -> vector<64xi8>
+  // CHECK: %[[CONSTANT1:.*]] = arith.constant 1 : i8
+  // CHECK: %[[BRC1:.*]] = ave.hir.broadcast %[[CONSTANT1]], %[[PGE]] : i8, vector<64xi1> -> vector<64xi8>
+  // CHECK: %[[CONSTANT0:.*]] = arith.constant 0 : i8
+  // CHECK: %[[BRC2:.*]] = ave.hir.broadcast %[[CONSTANT0]], %[[PGE]] : i8, vector<64xi1> -> vector<64xi8>
   // CHECK: %[[VSEL:.*]] = ave.hir.vsel %[[RES]], %[[BRC1]], %[[BRC2]] : vector<64xi1>, vector<64xi8>
   %cst = arith.constant dense<[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]> : vector<64xi8>
   %c0 = arith.constant 0 : index
@@ -240,9 +240,9 @@ func.func @divui_uint64(%arg0: memref<64xi64, #hivm.address_space<ub>>, %arg1: m
 // CHECK-LABEL:   func.func @triton_load_mask_outlined_vf_0(
 func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
 // CHECK:           %[[VAL_3:.*]] = arith.constant 0.000000e+00 : f8E5M2
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : i16
+// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : i8
 // CHECK:           %[[VAL_5:.*]] = ave.hir.pge <ALL> : vector<64xi1>
-// CHECK:           %[[VAL_6:.*]] = ave.hir.broadcast %[[VAL_4:.*]], %[[VAL_5:.*]] : i16, vector<64xi1> -> vector<64xi8>
+// CHECK:           %[[VAL_6:.*]] = ave.hir.broadcast %[[VAL_4:.*]], %[[VAL_5:.*]] : i8, vector<64xi1> -> vector<64xi8>
 // CHECK:           %[[VAL_7:.*]] = vector.bitcast %[[VAL_6:.*]] : vector<64xi8> to vector<64xf8E5M2>
 // CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i32
 // CHECK:           %[[VAL_9:.*]] = ave.hir.pge <ALL> : vector<64xi1>

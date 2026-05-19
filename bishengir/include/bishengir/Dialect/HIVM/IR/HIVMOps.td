@@ -972,6 +972,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
 
                Available builtin names:
                  "__builtin_gather_load"
+                 "__builtin_index_select"
+                 "__builtin_indirect_atomic"
 
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
@@ -1008,6 +1010,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   code customOpBaseDecl = [{
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
+      static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
 
       // TODO: Enable user provided customization
       static int getOpLibraryMaxRankImpl() { return 5; }

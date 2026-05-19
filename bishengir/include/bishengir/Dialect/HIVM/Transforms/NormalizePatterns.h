@@ -35,7 +35,10 @@ void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
+void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns);
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
+void populateNormalizeBitwiseComparisonPatterns(RewritePatternSet &patterns);
+void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);
 void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(

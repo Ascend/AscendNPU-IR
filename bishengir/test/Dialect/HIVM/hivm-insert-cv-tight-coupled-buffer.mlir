@@ -676,3 +676,88 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @test_fixpipe_custom_mmad(
+  // CHECK: %[[ALLOC_UB:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+  // CHECK: %[[CAST_UB:.*]] = memref.memory_space_cast %[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+  // CHECK: hivm.hir.fixpipe {{.*}} ins(%{{.*}} : tensor<16x16xf32>) outs(%[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>>)
+  // CHECK: %[[FIX_TENSOR:.*]] = bufferization.to_tensor %[[CAST_UB]] restrict writable : memref<16x16xf16>
+  // CHECK: %[[CUSTOM_RES:.*]] = hivm.hir.custom
+  // CHECK: ins(%[[FIX_TENSOR]] : tensor<16x16xf16>)
+  // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[CUSTOM_RES]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+  // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<1x16x16xf16>
+  // CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_TENSOR]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
+  // CHECK: %[[EXPAND0:.*]] = tensor.expand_shape %[[TRANSPOSE]] {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
+  // CHECK: %[[ALLOC_L1:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: %[[CAST_L1:.*]] = memref.memory_space_cast %[[ALLOC_L1]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
+  // CHECK: %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST_L1]] restrict writable : memref<1x1x16x16xf16>
+  // CHECK: hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST_L1]] : memref<1x1x16x16xf16>)
+  // CHECK: hivm.hir.mmadL1 ins(%{{.*}}, %[[BUF_TENSOR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index)
+  func.func @test_fixpipe_custom_mmad(%src : tensor<16x16xf32>,
+                                      %lhs : tensor<16x16xf16>)
+             -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %fix_dst = tensor.empty() : tensor<16x16xf16>
+    %custom_dst = tensor.empty() : tensor<16x16xf16>
+    %mm_dst = tensor.empty() : tensor<16x16xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+             ins(%src : tensor<16x16xf32>)
+             outs(%fix_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %custom = hivm.hir.custom
+        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        "my_custom_op"
+        ins(%fix : tensor<16x16xf16>)
+        outs(%custom_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %mm = hivm.hir.mmadL1
+            ins(%lhs, %custom, %true, %c16, %c16, %c16
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%mm_dst : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mm : tensor<16x16xf32>
+  }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func.func @test_fixpipe_custom_macro_mmad(
+  // CHECK: %[[ALLOC_UB:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+  // CHECK: %[[CAST_UB:.*]] = memref.memory_space_cast %[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+  // CHECK: hivm.hir.fixpipe {{.*}} ins(%{{.*}} : tensor<16x16xf32>) outs(%[[ALLOC_UB]] : memref<16x16xf16, #hivm.address_space<ub>>)
+  // CHECK: %[[FIX_TENSOR:.*]] = bufferization.to_tensor %[[CAST_UB]] restrict writable : memref<16x16xf16>
+  // CHECK: %[[CUSTOM_RES:.*]] = hivm.hir.custom_macro
+  // CHECK: ins(%[[FIX_TENSOR]] : tensor<16x16xf16>)
+  // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[CUSTOM_RES]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
+  // CHECK: %[[EMPTY_TENSOR:.*]] = tensor.empty() : tensor<1x16x16xf16>
+  // CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_TENSOR]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
+  // CHECK: %[[EXPAND0:.*]] = tensor.expand_shape %[[TRANSPOSE]] {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
+  // CHECK: %[[ALLOC_L1:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: %[[CAST_L1:.*]] = memref.memory_space_cast %[[ALLOC_L1]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
+  // CHECK: %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST_L1]] restrict writable : memref<1x1x16x16xf16>
+  // CHECK: hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST_L1]] : memref<1x1x16x16xf16>)
+  // CHECK: hivm.hir.mmadL1 ins(%{{.*}}, %[[BUF_TENSOR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index)
+  func.func @test_fixpipe_custom_macro_mmad(%src : tensor<16x16xf32>,
+                                            %lhs : tensor<16x16xf16>)
+             -> tensor<16x16xf32> {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %fix_dst = tensor.empty() : tensor<16x16xf16>
+    %custom_dst = tensor.empty() : tensor<16x16xf16>
+    %mm_dst = tensor.empty() : tensor<16x16xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+             ins(%src : tensor<16x16xf32>)
+             outs(%fix_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %custom = hivm.hir.custom_macro
+        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
+         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>}
+        "my_custom_op"
+        ins(%fix : tensor<16x16xf16>)
+        outs(%custom_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %mm = hivm.hir.mmadL1
+            ins(%lhs, %custom, %true, %c16, %c16, %c16
+                : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+            outs(%mm_dst : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mm : tensor<16x16xf32>
+  }
+}

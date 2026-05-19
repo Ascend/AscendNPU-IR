@@ -26,6 +26,9 @@ namespace hivm {
 
 static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
 
+mlir::func::FuncOp getParentFuncOp(mlir::Value value);
+DenseSet<Operation *> getPotentialDefiners(Value v);
+
 /// Enum to control trace result matching behavior for multi-source cases
 enum class TraceResultMode {
   // Default behaviour, insert every matched op to final result for all traced

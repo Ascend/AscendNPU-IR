@@ -15,6 +15,8 @@
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -76,6 +78,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   stage1Target.addLegalOp<tensor::EmptyOp>();
   stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp>();
   stage1Target.addIllegalOp<bufferization::ToTensorOp>();
+  stage1Target.addIllegalOp<affine::AffineApplyOp>();
   stage1Target.addLegalOp<mlir::UnrealizedConversionCastOp>();
 
   RewritePatternSet stage1Patterns(&ctx);
@@ -86,6 +89,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   populateReinterpretCastToUnrealizedCastPatterns(stage1Patterns);
   populateHIVMToTritonPatterns(stage1Patterns);
   populateBufferizationToTritonPatterns(stage1Patterns);
+  populateAffineToTritonPatterns(stage1Patterns);
 
   if (failed(applyPartialConversion(module, stage1Target,
                                     std::move(stage1Patterns)))) {
@@ -100,7 +104,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     ConversionTarget stage2Target(ctx);
     stage2Target.addLegalDialect<
         triton::TritonDialect, triton::gpu::TritonGPUDialect,
-        arith::ArithDialect, mlir::BuiltinDialect>();
+        arith::ArithDialect, math::MathDialect, mlir::BuiltinDialect>();
     stage2Target.addLegalOp<tensor::EmptyOp>();
     stage2Target.addIllegalOp<func::FuncOp>();
     stage2Target.addLegalOp<UnrealizedConversionCastOp>();

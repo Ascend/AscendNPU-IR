@@ -182,6 +182,38 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // -----
 
+// When oldSize == newSize for every group there is nothing to shrink, so the
+// pass must bail out early. Verify the IR is left untouched: no group_id
+// attribute should be attached to any op.
+
+// CHECK-LABEL: tt.func public @test_skip_when_old_eq_new
+// CHECK-NOT:   group_id
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9589">, "ttg.enable-bishengir-simt-optimization" = 900000 : i32} {
+  tt.func public @test_skip_when_old_eq_new(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: i32 {tt.divisibility = 16 : i32}, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %cst_mask = arith.constant dense<64> : tensor<1x64xi32>
+    %0 = tt.make_range {end = 64 : i32, start = 0 : i32} : tensor<64xi32>
+    %1 = tt.expand_dims %0 {axis = 0 : i32} : tensor<64xi32> -> tensor<1x64xi32>
+    %2 = tt.broadcast %1 : tensor<1x64xi32> -> tensor<16x64xi32>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<16x64x!tt.ptr<f32>>
+    %4 = tt.addptr %3, %2 : tensor<16x64x!tt.ptr<f32>>, tensor<16x64xi32>
+    %5 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<16x64x!tt.ptr<f32>>
+    %6 = tt.addptr %5, %2 : tensor<16x64x!tt.ptr<f32>>, tensor<16x64xi32>
+    scf.for %arg6 = %c0_i32 to %c1_i32 step %c1_i32  : i32 {
+      %7 = arith.cmpi slt, %1, %cst_mask : tensor<1x64xi32>
+      %8 = tt.broadcast %7 : tensor<1x64xi1> -> tensor<16x64xi1>
+      %9 = tt.load %4, %8 : tensor<16x64x!tt.ptr<f32>>
+      tt.store %6, %9, %8 : tensor<16x64x!tt.ptr<f32>>
+    }
+    tt.return
+  }
+}
+
+
+// -----
+
 // CHECK-LABEL: test_get_right_size
 
 // check that the size of the embedding did not shrink

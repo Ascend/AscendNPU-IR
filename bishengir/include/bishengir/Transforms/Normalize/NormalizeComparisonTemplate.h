@@ -83,6 +83,182 @@ public:
   }
 };
 
+/// Normalizes the compare op by casting inputs to a wider compare type first.
+///
+/// Branch 1: normalize `i8` compare to `f16` compare.
+/// Example:
+///   x0 = [1, -3, 7, 0] : tensor<4xi8>
+///   x1 = [1,  2, 7, 9] : tensor<4xi8>
+///   y = cmp x0, x1 {veq}
+/// is normalized to:
+///   x0_cast = cast x0 -> tensor<...xf16>
+///   x1_cast = cast x1 -> tensor<...xf16>
+///   y = cmp x0_cast, x1_cast {veq}
+///
+/// Branch 2: normalize ordered `i32` compare to `i64` compare.
+/// Example:
+///   x0 = [10, -5,  3, 8] : tensor<4xi32>
+///   x1 = [12, -5, -1, 9] : tensor<4xi32>
+///   y = cmp x0, x1 {vlt}
+/// is normalized to:
+///   x0_cast = cast x0 -> tensor<...xi64>
+///   x1_cast = cast x1 -> tensor<...xi64>
+///   y = cmp x0_cast, x1_cast {vlt}
+template <typename SourceOp, typename Traits>
+struct NormalizeI8I32CmpOpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalize(op))
+      return failure();
+
+    auto dpsOp = llvm::dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp) {
+      op->emitError("NormalizeI8I32CmpOpTemplate: operation does not "
+                    "implement DestinationStyleOpInterface");
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+    Type lhsElemType = getElementTypeOrSelf(lhs.getType());
+    Type rhsElemType = getElementTypeOrSelf(rhs.getType());
+    if (lhsElemType != rhsElemType) {
+      op->emitError("NormalizeI8I32CmpOpTemplate: lhs and rhs elemType mismatch");
+      return failure();
+    }
+
+    Type targetType;
+    if (lhsElemType.isInteger(8)) {
+      targetType = rewriter.getF16Type();
+    } else if (lhsElemType.isInteger(32) && !Traits::isEqOrNeCompare(op)) {
+      targetType = rewriter.getI64Type();
+    } else {
+      return failure();
+    }
+
+    Value lhsInit =
+        utils::createEmptyOpWithTargetElemType(rewriter, op->getLoc(), lhs,
+                                               targetType);
+    Value castLhs = Traits::createCastOp(rewriter, op->getLoc(), lhs,
+                                         targetType, CastRoundKind::Default,
+                                         lhsInit);
+    Value rhsInit =
+        utils::createEmptyOpWithTargetElemType(rewriter, op->getLoc(), rhs,
+                                               targetType);
+    Value castRhs = Traits::createCastOp(rewriter, op->getLoc(), rhs,
+                                         targetType, CastRoundKind::Default,
+                                         rhsInit);
+    Value cmp =
+        Traits::createCmpOp(rewriter, op->getLoc(), castLhs, castRhs, op);
+    rewriter.replaceOp(op, cmp);
+    return success();
+  }
+};
+
+/// Normalizes xor to the equivalent and/or/not form.
+///
+/// Example:
+///   y = xor(x0, x1)
+/// is normalized to:
+///   t0 = and(x0, x1)
+///   t1 = not(t0)
+///   t2 = or(x0, x1)
+///   y = and(t1, t2)
+template <typename SourceOp, typename Traits>
+struct NormalizeXorOpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeXor(op))
+      return failure();
+
+    auto dpsOp = llvm::dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp) {
+      op->emitError("NormalizeXorOpTemplate: operation does not implement "
+                    "DestinationStyleOpInterface");
+      return failure();
+    }
+
+    Value lhs = dpsOp.getDpsInputs()[0];
+    Value rhs = dpsOp.getDpsInputs()[1];
+    Value output = dpsOp.getDpsInits()[0];
+    Location loc = op->getLoc();
+    Value orInit = utils::createEmptyOp(rewriter, loc, output);
+    Value orValue =
+        Traits::createBinaryOp(rewriter, loc, lhs, rhs, orInit, BinaryKind::Or);
+    Value andInit = utils::createEmptyOp(rewriter, loc, output);
+    Value andValue = Traits::createBinaryOp(rewriter, loc, lhs, rhs, andInit,
+                                            BinaryKind::And);
+    Value notValue = Traits::createUnaryOp(rewriter, loc, andValue, andValue,
+                                           UnaryKind::Not);
+    Value resultInit = utils::createEmptyOp(rewriter, loc, output);
+    Value result = Traits::createBinaryOp(rewriter, loc, notValue, orValue,
+                                          resultInit, BinaryKind::And);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Normalizes i8 shift to i16 shift + cast-back.
+///
+/// Example:
+///   y = shift(x0, x1) with tensor<...xi8>
+/// is normalized to:
+///   x0_cast = cast x0 -> tensor<...xi16>
+///   x1_cast = cast x1 -> tensor<...xi16>
+///   t0 = shift(x0_cast, x1_cast) -> tensor<...xi16>
+///   y = cast t0 -> tensor<...xi8>
+template <typename SourceOp, typename Traits>
+struct NormalizeShiftI8ToI16OpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeShift(op))
+      return failure();
+
+    auto dpsOp = llvm::dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp) {
+      op->emitError("NormalizeShiftI8ToI16OpTemplate: operation does not "
+                    "implement DestinationStyleOpInterface");
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    Value input = inputs[0];
+    Type inputElemType = getElementTypeOrSelf(input.getType());
+    if (!inputElemType.isInteger(8))
+      return failure();
+
+    Location loc = op->getLoc();
+    Type targetElemType = rewriter.getI16Type();
+    CastSignKind castSignKind = Traits::getShiftCastSignKind(op);
+    Value castInput = Traits::createCastOp(rewriter, loc, input, targetElemType,
+                                           CastRoundKind::Default, Value(),
+                                           castSignKind);
+    Value castShift = Traits::createCastOp(rewriter, loc, inputs[1],
+                                           targetElemType,
+                                           CastRoundKind::Default, Value(),
+                                           castSignKind);
+    Value shiftedInit =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                               targetElemType);
+    Value shifted = Traits::createShiftOp(rewriter, loc, castInput, castShift,
+                                          shiftedInit, op);
+    Value result = Traits::createCastOp(
+        rewriter, loc, shifted, rewriter.getI8Type(),
+        CastRoundKind::TruncWithOverflow, Value(), castSignKind);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 template <typename Traits>
 /// Returns the integer mask used to clear the sign bit of a floating-point
 /// bit pattern. For example, the 16-bit mask is `0b0111111111111111`.

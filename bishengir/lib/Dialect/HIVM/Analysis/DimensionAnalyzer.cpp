@@ -24,13 +24,27 @@ namespace detail {
 
 bool DimensionAnalyzer::isParallelDim(Dimension dim) {
   auto args = getArgumentRefOrCreateDummy(dim.first);
-  auto solverIndex = solverCollapserElem_->find(args[dim.second]);
-  LDBG("Checking parallelDim of " << solverIndex << "("
-                                  << solverShapeElem_->find(args[dim.second])
-                                  << ")");
-  auto tilingDimKindVal = tilingDimKindMap.find(solverIndex);
-  if (tilingDimKindVal != tilingDimKindMap.end())
+  auto solverCollapserIndex = solverCollapserElem_->find(args[dim.second]);
+  auto solverShapeIndex = solverShapeElem_->find(args[dim.second]);
+  LDBG("Checking parallelDim of " << solverCollapserIndex << "("
+                                  << solverShapeIndex << ")");
+  auto tilingDimKindVal =
+      tilingDimKindMapForCollapser.find(solverCollapserIndex);
+  if (tilingDimKindVal != tilingDimKindMapForCollapser.end()) {
+    if (tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel &&
+        broadcastAxisCaseCandidate.find(solverCollapserIndex) !=
+            broadcastAxisCaseCandidate.end()) {
+
+      if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
+          it != tilingDimKindMapForShape.end()) {
+        LDBG("Checking parallelDim for broadcast two dims case: " << static_cast<int>(it->getSecond()));
+        return it->getSecond() == TilingDimensionKind::Parallel;
+      }
+      return true;
+    }
     return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
+  }
+
   // By default, assume it's parallel
   return true;
 }
@@ -116,9 +130,10 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   auto args = getArgumentRef(v);
   for (size_t i = 0; i < rank; i++) {
     auto parentIndex = solverCollapserElem_->find(args[i]);
-    if (selectedTilingParIdx.contains(parentIndex)) {
+    if (selectedTilingParIdx.contains(parentIndex) &&
+        isParallelDim(Dimension(v, i))) {
       auto solverIndex = solverShapeElem_->find(args[i]);
-      int candOrder = (int)i;
+      int candOrder = static_cast<int>(i);
       if (auto it = transposedDimMap.find(solverIndex);
           it != transposedDimMap.end()) {
         candOrder = it->second;
@@ -148,7 +163,8 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
 ///     to memref<?x16xf16, strided<[16, 1]>, #hivm.address_space<gm>>
 /// hivm.store
 ///     ins(%subSrc : memref<?x16xf16, strided<[16, 1]>,
-///     #hivm.address_space<ub>>) outs(%subDst : memref<?x16xf16, strided<[16, 1]>, #hivm.address_space<gm>>)
+///     #hivm.address_space<ub>>) outs(%subDst : memref<?x16xf16, strided<[16,
+///     1]>, #hivm.address_space<gm>>)
 /// \endcode
 template <typename StoreOpTy>
 static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
@@ -156,12 +172,14 @@ static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
   auto dst = storeOp.getDst();
   int64_t srcOrigDim = ShapedType::kDynamic;
   int64_t dstOrigDim = ShapedType::kDynamic;
-  if (auto extractSliceOp = src.template getDefiningOp<tensor::ExtractSliceOp>()) {
+  if (auto extractSliceOp =
+          src.template getDefiningOp<tensor::ExtractSliceOp>()) {
     srcOrigDim = extractSliceOp.getSourceType().getDimSize(i);
   } else if (auto subviewOp = src.template getDefiningOp<memref::SubViewOp>()) {
     srcOrigDim = subviewOp.getSourceType().getDimSize(i);
   }
-  if (auto extractSliceOp = dst.template getDefiningOp<tensor::ExtractSliceOp>()) {
+  if (auto extractSliceOp =
+          dst.template getDefiningOp<tensor::ExtractSliceOp>()) {
     dstOrigDim = extractSliceOp.getSourceType().getDimSize(i);
   } else if (auto subviewOp = dst.template getDefiningOp<memref::SubViewOp>()) {
     dstOrigDim = subviewOp.getSourceType().getDimSize(i);
@@ -210,6 +228,16 @@ void DimensionAnalyzer::computeTilingDimImpl(
     auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
+      auto parentIndex = solverCollapserElem_->find(args[i]);
+      if (!usedParentIdx.insert(parentIndex).second) {
+        op->emitWarning() << "Detected dimensions are in the same group in one "
+                             "storeOp. It is recommended to try with "
+                             "strict-mode=false if TileAndBindSubBlock fails";
+        broadcastAxisCaseCandidate.insert(parentIndex);
+      }
+    }
+    usedParentIdx.clear();
+    for (size_t i = 0; i < rank; i++) {
       Dimension dim(src, i);
       if (isParallelDim(dim)) {
         if (ShapedType::isDynamic(shape[i]) || shape[i] == 1) {
@@ -220,12 +248,6 @@ void DimensionAnalyzer::computeTilingDimImpl(
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
           parallelDimMap[groupIndex][parentIndex].push_back(dim);
-        } else {
-          op->emitWarning()
-              << "Detected dimensions are in the same group in one "
-                 "storeOp. It is recommended to try with "
-                 "strict-mode=false if TileAndBindSubBlock fails";
-          broadcastAxisCaseCandidate.insert(parentIndex);
         }
       }
     }

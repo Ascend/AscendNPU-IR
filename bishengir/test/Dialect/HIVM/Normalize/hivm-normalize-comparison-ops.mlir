@@ -76,6 +76,121 @@ func.func @test_NormalizeCmpVneOp_neq_2d(
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeI8Cmp_ne_to_f16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi8>, %[[arg1:.*]]: tensor<16xi8>, %[[arg2:.*]]: tensor<16xi1>)
+// CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[lhs_cast:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi8>) outs(%[[lhs_empty]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[rhs_empty:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[rhs_cast:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16xi8>) outs(%[[rhs_empty]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[not_empty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp_empty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<16xf16>, tensor<16xf16>) outs(%[[cmp_empty]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[not_empty]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeI8Cmp_ne_to_f16(
+  %src1 : tensor<16xi8>, %src2 : tensor<16xi8>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<16xi8>, tensor<16xi8>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<ne> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeI8Cmp_eq_to_f16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi8>, %[[arg1:.*]]: tensor<16xi8>, %[[arg2:.*]]: tensor<16xi1>)
+// CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[lhs_cast:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi8>) outs(%[[lhs_empty]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[rhs_empty:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[rhs_cast:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16xi8>) outs(%[[rhs_empty]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[cmp_empty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<16xf16>, tensor<16xf16>) outs(%[[cmp_empty]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[cmp]]
+func.func @test_NormalizeI8Cmp_eq_to_f16(
+  %src1 : tensor<16xi8>, %src2 : tensor<16xi8>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<16xi8>, tensor<16xi8>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<eq> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeI32Cmp_lt_to_i64
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi32>, %[[arg1:.*]]: tensor<16xi32>, %[[arg2:.*]]: tensor<16xi1>)
+// CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<16xi64>
+// CHECK: %[[lhs_cast:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi32>) outs(%[[lhs_empty]] : tensor<16xi64>) -> tensor<16xi64>
+// CHECK: %[[rhs_empty:.*]] = tensor.empty() : tensor<16xi64>
+// CHECK: %[[rhs_cast:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16xi32>) outs(%[[rhs_empty]] : tensor<16xi64>) -> tensor<16xi64>
+// CHECK: %[[cmp_empty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<16xi64>, tensor<16xi64>) outs(%[[cmp_empty]] : tensor<16xi1>) compare_mode = <lt> -> tensor<16xi1>
+// CHECK: return %[[cmp]]
+func.func @test_NormalizeI32Cmp_lt_to_i64(
+  %src1 : tensor<16xi32>, %src2 : tensor<16xi32>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<16xi32>, tensor<16xi32>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<lt> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeI32Cmp_eq_unchanged_no_i64_cast
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi32>, %[[arg1:.*]]: tensor<16xi32>, %[[arg2:.*]]: tensor<16xi1>)
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[ret:.*]] = hivm.hir.vcmp ins(%[[arg0]], %[[arg1]] : tensor<16xi32>, tensor<16xi32>) outs(%[[arg2]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[ret]]
+func.func @test_NormalizeI32Cmp_eq_unchanged_no_i64_cast(
+  %src1 : tensor<16xi32>, %src2 : tensor<16xi32>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<16xi32>, tensor<16xi32>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<eq> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeI32Cmp_ne_no_i64_cast
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi32>, %[[arg1:.*]]: tensor<16xi32>, %[[arg2:.*]]: tensor<16xi1>)
+// CHECK-NOT: hivm.hir.vcast
+// CHECK: %[[cmp_empty:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[arg0]], %[[arg1]] : tensor<16xi32>, tensor<16xi32>) outs(%[[cmp_empty]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[arg2]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeI32Cmp_ne_no_i64_cast(
+  %src1 : tensor<16xi32>, %src2 : tensor<16xi32>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<16xi32>, tensor<16xi32>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<ne> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeShiftRightI8_to_i16
+// CHECK-SAME: (%[[arg0:.*]]: tensor<32xi8>, %[[arg1:.*]]: tensor<32xi8>, %[[arg2:.*]]: tensor<32xi8>)
+// CHECK: %[[lhs_f16_empty:.*]] = tensor.empty() : tensor<32xf16>
+// CHECK: %[[lhs_f16:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<32xi8>) outs(%[[lhs_f16_empty]] : tensor<32xf16>) -> tensor<32xf16>
+// CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[lhs_cast:.*]] = hivm.hir.vcast ins(%[[lhs_f16]] : tensor<32xf16>) outs(%[[lhs_empty]] : tensor<32xi16>) round_mode = <trunc> -> tensor<32xi16>
+// CHECK: %[[rhs_f16_empty:.*]] = tensor.empty() : tensor<32xf16>
+// CHECK: %[[rhs_f16:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<32xi8>) outs(%[[rhs_f16_empty]] : tensor<32xf16>) -> tensor<32xf16>
+// CHECK: %[[rhs_empty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[rhs_cast:.*]] = hivm.hir.vcast ins(%[[rhs_f16]] : tensor<32xf16>) outs(%[[rhs_empty]] : tensor<32xi16>) round_mode = <trunc> -> tensor<32xi16>
+// CHECK: %[[shift_empty:.*]] = tensor.empty() : tensor<32xi16>
+// CHECK: %[[shift:.*]] = hivm.hir.vshr ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<32xi16>, tensor<32xi16>) outs(%[[shift_empty]] : tensor<32xi16>) -> tensor<32xi16>
+// CHECK: %[[res_empty:.*]] = tensor.empty() : tensor<32xi8>
+// CHECK: %[[res:.*]] = hivm.hir.vcast ins(%[[shift]] : tensor<32xi16>) outs(%[[res_empty]] : tensor<32xi8>) round_mode = <truncwithoverflow> -> tensor<32xi8>
+// CHECK: return %[[res]]
+func.func @test_NormalizeShiftRightI8_to_i16(
+  %src : tensor<32xi8>, %shift : tensor<32xi8>, %dst : tensor<32xi8>) -> tensor<32xi8> {
+  %ret = hivm.hir.vshr ins(%src, %shift : tensor<32xi8>, tensor<32xi8>)
+    outs(%dst : tensor<32xi8>) round : true -> tensor<32xi8>
+  return %ret : tensor<32xi8>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeIsInf_f32
 // CHECK-SAME: (%[[arg0:.*]]: tensor<16xf32>, %[[arg1:.*]]: tensor<16xi1>)
 // CHECK-DAG: %[[c0:.*]] = arith.constant 0.000000e+00 : f32
@@ -208,4 +323,80 @@ func.func @test_NormalizeIsNan_f16(
   %ret = hivm.hir.visnan ins(%src : tensor<32xf16>)
     outs(%dst : tensor<32xi1>) -> tensor<32xi1>
   return %ret : tensor<32xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeXor_vxor
+// CHECK-SAME: (%[[arg0:.*]]: tensor<512xi16>, %[[arg1:.*]]: tensor<512xi16>)
+// CHECK: %[[or_init:.*]] = tensor.empty() : tensor<512xi16>
+// CHECK: %[[vor:.*]] = hivm.hir.vor ins(%[[arg0]], %[[arg1]] : tensor<512xi16>, tensor<512xi16>) outs(%[[or_init]] : tensor<512xi16>) -> tensor<512xi16>
+// CHECK: %[[and_init:.*]] = tensor.empty() : tensor<512xi16>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[arg0]], %[[arg1]] : tensor<512xi16>, tensor<512xi16>) outs(%[[and_init]] : tensor<512xi16>) -> tensor<512xi16>
+// CHECK: %[[vnot:.*]] = hivm.hir.vnot ins(%[[vand]] : tensor<512xi16>) outs(%[[vand]] : tensor<512xi16>) -> tensor<512xi16>
+// CHECK: %[[res_init:.*]] = tensor.empty() : tensor<512xi16>
+// CHECK: %[[res:.*]] = hivm.hir.vand ins(%[[vnot]], %[[vor]] : tensor<512xi16>, tensor<512xi16>) outs(%[[res_init]] : tensor<512xi16>) -> tensor<512xi16>
+// CHECK: return %[[res]]
+func.func @test_NormalizeXor_vxor(%arg0: tensor<512xi16>, %arg1: tensor<512xi16>) -> tensor<512xi16> {
+  %0 = tensor.empty() : tensor<512xi16>
+  %1 = hivm.hir.vxor ins(%arg0, %arg1 : tensor<512xi16>, tensor<512xi16>)
+    outs(%0 : tensor<512xi16>) -> tensor<512xi16>
+  return %1 : tensor<512xi16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeXor_vxor_i1
+// CHECK-SAME: (%[[arg0:.*]]: tensor<512xi1>, %[[arg1:.*]]: tensor<512xi1>)
+// CHECK: %[[or_init:.*]] = tensor.empty() : tensor<512xi1>
+// CHECK: %[[vor:.*]] = hivm.hir.vor ins(%[[arg0]], %[[arg1]] : tensor<512xi1>, tensor<512xi1>) outs(%[[or_init]] : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: %[[and_init:.*]] = tensor.empty() : tensor<512xi1>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[arg0]], %[[arg1]] : tensor<512xi1>, tensor<512xi1>) outs(%[[and_init]] : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: %[[vnot:.*]] = hivm.hir.vnot ins(%[[vand]] : tensor<512xi1>) outs(%[[vand]] : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: %[[res_init:.*]] = tensor.empty() : tensor<512xi1>
+// CHECK: %[[res:.*]] = hivm.hir.vand ins(%[[vnot]], %[[vor]] : tensor<512xi1>, tensor<512xi1>) outs(%[[res_init]] : tensor<512xi1>) -> tensor<512xi1>
+// CHECK: return %[[res]]
+func.func @test_NormalizeXor_vxor_i1(%arg0: tensor<512xi1>, %arg1: tensor<512xi1>) -> tensor<512xi1> {
+  %0 = tensor.empty() : tensor<512xi1>
+  %1 = hivm.hir.vxor ins(%arg0, %arg1 : tensor<512xi1>, tensor<512xi1>)
+    outs(%0 : tensor<512xi1>) -> tensor<512xi1>
+  return %1 : tensor<512xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeXor_vxor_ui8
+// CHECK-SAME: (%[[arg0:.*]]: tensor<512xui8>, %[[arg1:.*]]: tensor<512xui8>)
+// CHECK: %[[or_init:.*]] = tensor.empty() : tensor<512xui8>
+// CHECK: %[[vor:.*]] = hivm.hir.vor ins(%[[arg0]], %[[arg1]] : tensor<512xui8>, tensor<512xui8>) outs(%[[or_init]] : tensor<512xui8>) -> tensor<512xui8>
+// CHECK: %[[and_init:.*]] = tensor.empty() : tensor<512xui8>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[arg0]], %[[arg1]] : tensor<512xui8>, tensor<512xui8>) outs(%[[and_init]] : tensor<512xui8>) -> tensor<512xui8>
+// CHECK: %[[vnot:.*]] = hivm.hir.vnot ins(%[[vand]] : tensor<512xui8>) outs(%[[vand]] : tensor<512xui8>) -> tensor<512xui8>
+// CHECK: %[[res_init:.*]] = tensor.empty() : tensor<512xui8>
+// CHECK: %[[res:.*]] = hivm.hir.vand ins(%[[vnot]], %[[vor]] : tensor<512xui8>, tensor<512xui8>) outs(%[[res_init]] : tensor<512xui8>) -> tensor<512xui8>
+// CHECK: return %[[res]]
+func.func @test_NormalizeXor_vxor_ui8(%arg0: tensor<512xui8>, %arg1: tensor<512xui8>) -> tensor<512xui8> {
+  %0 = tensor.empty() : tensor<512xui8>
+  %1 = hivm.hir.vxor ins(%arg0, %arg1 : tensor<512xui8>, tensor<512xui8>)
+    outs(%0 : tensor<512xui8>) -> tensor<512xui8>
+  return %1 : tensor<512xui8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeXor_vxor_ui64
+// CHECK-SAME: (%[[arg0:.*]]: tensor<512xui64>, %[[arg1:.*]]: tensor<512xui64>)
+// CHECK: %[[or_init:.*]] = tensor.empty() : tensor<512xui64>
+// CHECK: %[[vor:.*]] = hivm.hir.vor ins(%[[arg0]], %[[arg1]] : tensor<512xui64>, tensor<512xui64>) outs(%[[or_init]] : tensor<512xui64>) -> tensor<512xui64>
+// CHECK: %[[and_init:.*]] = tensor.empty() : tensor<512xui64>
+// CHECK: %[[vand:.*]] = hivm.hir.vand ins(%[[arg0]], %[[arg1]] : tensor<512xui64>, tensor<512xui64>) outs(%[[and_init]] : tensor<512xui64>) -> tensor<512xui64>
+// CHECK: %[[vnot:.*]] = hivm.hir.vnot ins(%[[vand]] : tensor<512xui64>) outs(%[[vand]] : tensor<512xui64>) -> tensor<512xui64>
+// CHECK: %[[res_init:.*]] = tensor.empty() : tensor<512xui64>
+// CHECK: %[[res:.*]] = hivm.hir.vand ins(%[[vnot]], %[[vor]] : tensor<512xui64>, tensor<512xui64>) outs(%[[res_init]] : tensor<512xui64>) -> tensor<512xui64>
+// CHECK: return %[[res]]
+func.func @test_NormalizeXor_vxor_ui64(%arg0: tensor<512xui64>, %arg1: tensor<512xui64>) -> tensor<512xui64> {
+  %0 = tensor.empty() : tensor<512xui64>
+  %1 = hivm.hir.vxor ins(%arg0, %arg1 : tensor<512xui64>, tensor<512xui64>)
+    outs(%0 : tensor<512xui64>) -> tensor<512xui64>
+  return %1 : tensor<512xui64>
 }

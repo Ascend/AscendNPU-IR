@@ -1812,12 +1812,12 @@ class BroadCastZmodeInstrOp<string mnemonic>
           /*list<int> overloadedOperands=*/[],
           /*list<Trait> traits=*/[],
           /*int numResults=*/1> {
-  let arguments = (ins VectorOfLengthAndType<[128, 128, 128, 128, 256, 256, 64, 64, 64],
-                                             [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32]>:$src,
+  let arguments = (ins VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+                                             [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$src,
                        VectorOfLengthAndType<[256], [I1]>:$mask,
                        I32:$predicateMode);
-  let results = (outs VectorOfLengthAndType<[128, 128, 128, 128, 256, 256, 64, 64, 64],
-                                            [BF16, F16, I16, UI16, I8, UI8, F32, I32, UI32]>:$res);
+  let results = (outs VectorOfLengthAndType<[128,  128, 128, 128,  256, 256, 256,    256,      64,  64,  64],
+                                            [BF16, F16, I16, UI16, I8,  UI8, F8E5M2, F8E4M3FN, F32, I32, UI32]>:$res);
 }
 
 class BroadCastMmodeInstrOp<string mnemonic>
@@ -2428,6 +2428,46 @@ class PintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
 def PintlvB32InstrOp: PintlvInstrOp<"hivm.pintlv.b32">;
 def PintlvB16InstrOp: PintlvInstrOp<"hivm.pintlv.b16">;
 def PintlvB8InstrOp: PintlvInstrOp<"hivm.pintlv.b8">;
+
+class VpackInstrOp<string mnemonic> :
+  HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
+                /*list<int> overloadedResults=*/[0],
+                /*list<int> overloadedOperands=*/[0],
+                /*list<Trait> traits=*/[],
+                /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src,
+                       I32:$part);
+  let results = (outs ValidVector:$res);
+}
+
+def VpackInstrOp: VpackInstrOp<"hivm.vpack.x">;
+
+class UnpackInstrOp<string mnemonic> :
+  HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
+                /*list<int> overloadedResults=*/[0],
+                /*list<int> overloadedOperands=*/[0],
+                /*list<Trait> traits=*/[],
+                /*int numResults=*/1> {
+  let arguments = (ins ValidVector:$src,
+                       I32:$part);
+  let results = (outs ValidVector:$res);
+}
+
+def Vzunpack: UnpackInstrOp<"hivm.vzunpack">;
+def Vsunpack: UnpackInstrOp<"hivm.vsunpack">;
+
+class PackUnpackInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/1> {
+  let arguments = (ins predicateVector:$src,
+                       I32:$part);
+}
+
+def PpackInstrOp: PackUnpackInstrOp<"hivm.ppack.z">;
+def PunpackInstrOp: PackUnpackInstrOp<"hivm.punpack">;
 
 class VmullInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
                                          /*string opName=*/mnemonic,

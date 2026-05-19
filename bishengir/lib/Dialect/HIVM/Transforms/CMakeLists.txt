@@ -133,6 +133,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MLIRDialectUtils
   MLIRHACCUtils
   MLIRHACCDialect
+  MLIRHFusionUtils
   MLIRHIVMAnalysis
   MLIRHIVMDialect
   MLIRHIVMUtils

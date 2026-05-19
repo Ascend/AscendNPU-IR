@@ -24,6 +24,7 @@
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -677,11 +678,16 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
       }
     }
   }
-  auto emptyOps = traceDefOps<tensor::EmptyOp>(matmulOutput.get(),
-                                               /*isSingleChain=*/false,
-                                               /*traceMode=*/TraceResultMode::StrictSame);
+
+  DenseSet<Operation *> defOps = getPotentialDefiners(matmulOutput.get());
+  bool haveEmpty = llvm::any_of(
+      defOps, [](Operation *op) { return isa<tensor::EmptyOp>(op); });
+  bool allEmptyOrMmad = llvm::all_of(defOps, [](Operation *op) {
+    return isa<tensor::EmptyOp>(op) || isa<LocalMmadTy>(op);
+  });
+
   return ((isSameSpace && addrSpace == hivm::AddressSpace::L0C) ||
-          !emptyOps.empty())
+          (haveEmpty && allEmptyOrMmad))
              ? MatmulBiasMode::NoBias
              : MatmulBiasMode::ElementwiseAdd;
 }

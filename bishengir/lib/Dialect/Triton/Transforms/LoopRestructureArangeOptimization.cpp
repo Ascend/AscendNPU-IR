@@ -1003,6 +1003,26 @@ private:
     groupAndBalancePatterns(patterns, groups, digit);
     LLVM_DEBUG(llvm::dbgs() << "Grouped into " << groups.size() << " groups\n");
 
+    // If every group's oldSize equals its newSize, there is nothing to rewrite.
+    bool allSizesMatch = !groups.empty();
+    for (const auto &group : groups) {
+      if (group.empty())
+        continue;
+      int64_t newSize = 0;
+      for (auto *p : group)
+        newSize = std::max(newSize, p->embeddingSize);
+      int64_t oldSize = computeGroupOldSize(group, func);
+      if (oldSize != newSize) {
+        allSizesMatch = false;
+        break;
+      }
+    }
+    if (allSizesMatch) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "SKIP PASS: oldSize == newSize for all groups\n");
+      return success();
+    }
+
     // Find a representative scf.for (if any)
     scf::ForOp foundFor = nullptr;
     int loopCount = 0;

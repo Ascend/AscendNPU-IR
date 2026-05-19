@@ -86,18 +86,18 @@ bool isTerminalNativeSaturateCast(CastOpType op) {
   // These patterns already match the backend's final native saturating narrow.
   OverflowCastKind kind = getOverflowCastKind(op);
   if (kind == OverflowCastKind::F16ToI8)
-    return Traits::matchCastRoundMode(op, CastExecutionKind::Trunc);
+    return Traits::matchCastRoundMode(op, CastRoundKind::Trunc);
 
   if (kind == OverflowCastKind::I64ToI32 || kind == OverflowCastKind::I32ToI16)
-    return Traits::matchCastRoundMode(op, CastExecutionKind::Trunc) ||
-           Traits::matchCastRoundMode(op, CastExecutionKind::TruncWithOverflow);
+    return Traits::matchCastRoundMode(op, CastRoundKind::Trunc) ||
+           Traits::matchCastRoundMode(op, CastRoundKind::TruncWithOverflow);
 
   if (kind == OverflowCastKind::I64ToI16 || kind == OverflowCastKind::I64ToI8)
-    return Traits::matchCastRoundMode(op, CastExecutionKind::Trunc) &&
+    return Traits::matchCastRoundMode(op, CastRoundKind::Trunc) &&
            !Traits::matchCastUnsignedMode(op, CastUnsignedModeKind::SignedToSigned);
 
   if (kind == OverflowCastKind::I32ToI8 || kind == OverflowCastKind::I16ToI8)
-    return Traits::matchCastRoundMode(op, CastExecutionKind::Trunc) &&
+    return Traits::matchCastRoundMode(op, CastRoundKind::Trunc) &&
            (Traits::matchCastUnsignedMode(op, CastUnsignedModeKind::SignedToUnsigned) ||
             Traits::matchCastUnsignedMode(op, CastUnsignedModeKind::UnsignedToUnsigned));
 
@@ -151,7 +151,7 @@ bool skipDirectTruncWithOverflowRewrite(CastOpType op, OverflowCastKind kind) {
   if (!Traits::archIsRegbased() &&
       (kind == OverflowCastKind::I32ToI8 || kind == OverflowCastKind::I16ToI8))
     return Traits::matchCastRoundMode(op,
-                                      CastExecutionKind::TruncWithOverflow);
+                                      CastRoundKind::TruncWithOverflow);
   return false;
 }
 
@@ -305,17 +305,17 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
   case OverflowCastKind::F32ToI8: {
     // Preserve overflow on the stage where the backend can legally express it.
     if (useLegacyFloatTruncOverflowSequence<Traits>(kind)) {
-      Value castI32 = Traits::castValue(
+      Value castI32 = Traits::createCastValueFromSourceOp(
           rewriter, loc, op, input, rewriter.getI32Type(),
-          CastExecutionKind::TruncWithOverflow);
-      return replaceWith(Traits::castValue(rewriter, loc, op, castI32, outType,
-                                           CastExecutionKind::TruncEnableOverflow));
+          CastRoundKind::TruncWithOverflow);
+      return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
+                                           CastRoundKind::TruncEnableOverflow));
     }
-    Value castI32 = Traits::castValue(rewriter, loc, op, input,
+    Value castI32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getI32Type(),
-                                      CastExecutionKind::TruncEnableOverflow);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castI32, outType,
-                                         CastExecutionKind::TruncWithOverflow));
+                                      CastRoundKind::TruncEnableOverflow);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
+                                         CastRoundKind::TruncWithOverflow));
   }
   case OverflowCastKind::F16ToI8: {
     if constexpr (Traits::supportsF16ToI8TruncOverflowPreprocess) {
@@ -323,18 +323,18 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
         // Pre-wrap in FP, then finish with a plain trunc cast.
         Value overflowInput =
             preprocessTruncOverflowInput<Traits>(rewriter, loc, op, input);
-        return replaceWith(Traits::castValue(
+        return replaceWith(Traits::createCastValueFromSourceOp(
             rewriter, loc, op, overflowInput, outType,
-            CastExecutionKind::Trunc));
+            CastRoundKind::Trunc));
       }
     }
     if (!supportsTwoStepTruncOverflow<Traits>(kind))
       return failure();
-    Value castI32 = Traits::castValue(rewriter, loc, op, input,
+    Value castI32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getI32Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castI32, outType,
-                                         CastExecutionKind::TruncWithOverflow));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
+                                         CastRoundKind::TruncWithOverflow));
   }
   case OverflowCastKind::I64ToI32:
   case OverflowCastKind::I32ToI16:
@@ -343,16 +343,16 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
     if (!supportsDirectTruncWithOverflow<Traits>(kind) ||
         skipDirectTruncWithOverflowRewrite<Traits>(op, kind))
       return failure();
-    return replaceWith(Traits::castValue(rewriter, loc, op, input, outType,
-                                         CastExecutionKind::TruncWithOverflow));
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, input, outType,
+                                         CastRoundKind::TruncWithOverflow));
   case OverflowCastKind::I64ToI16:
   case OverflowCastKind::I64ToI8: {
     // Split wide integer narrowing through I32 to keep overflow semantics.
-    Value castI32 = Traits::castValue(rewriter, loc, op, input,
+    Value castI32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getI32Type(),
-                                      CastExecutionKind::TruncWithOverflow);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castI32, outType,
-                                         CastExecutionKind::TruncWithOverflow));
+                                      CastRoundKind::TruncWithOverflow);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castI32, outType,
+                                         CastRoundKind::TruncWithOverflow));
   }
   case OverflowCastKind::Unsupported:
     return failure();
@@ -377,57 +377,57 @@ LogicalResult lowerMembaseSaturateOverflowMode(CastOpType op,
   // Membase saturation is synthesized via legal intermediate float/int casts.
   switch (kind) {
   case OverflowCastKind::F32ToI16:
-    return replaceWith(Traits::castValue(rewriter, loc, op, input, outType,
-                                         CastExecutionKind::Trunc));
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, input, outType,
+                                         CastRoundKind::Trunc));
   case OverflowCastKind::F32ToI8: {
-    Value castF16 = Traits::castValue(rewriter, loc, op, input,
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castF16, outType,
-                                         CastExecutionKind::Trunc));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16, outType,
+                                         CastRoundKind::Trunc));
   }
   case OverflowCastKind::F16ToI8:
-    return replaceWith(Traits::castValue(rewriter, loc, op, input, outType,
-                                         CastExecutionKind::Trunc));
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, input, outType,
+                                         CastRoundKind::Trunc));
   case OverflowCastKind::I64ToI32:
-    return replaceWith(Traits::castValue(rewriter, loc, op, input, outType,
-                                         CastExecutionKind::RInt));
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, input, outType,
+                                         CastRoundKind::RInt));
   case OverflowCastKind::I64ToI16: {
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castF32, outType,
-                                         CastExecutionKind::Trunc));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32, outType,
+                                         CastRoundKind::Trunc));
   }
   case OverflowCastKind::I64ToI8: {
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    Value castF16 = Traits::castValue(rewriter, loc, op, castF32,
+                                      CastRoundKind::Trunc);
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castF16, outType,
-                                         CastExecutionKind::Trunc));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16, outType,
+                                         CastRoundKind::Trunc));
   }
   case OverflowCastKind::I32ToI16:
-    return replaceWith(Traits::castValue(rewriter, loc, op, input, outType,
-                                         CastExecutionKind::RInt));
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, input, outType,
+                                         CastRoundKind::RInt));
   case OverflowCastKind::I32ToI8: {
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    Value castF16 = Traits::castValue(rewriter, loc, op, castF32,
+                                      CastRoundKind::Trunc);
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castF16, outType,
-                                         CastExecutionKind::Trunc));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16, outType,
+                                         CastRoundKind::Trunc));
   }
   case OverflowCastKind::I16ToI8: {
-    Value castF16 = Traits::castValue(rewriter, loc, op, input,
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(rewriter, loc, op, castF16, outType,
-                                         CastExecutionKind::Trunc));
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16, outType,
+                                         CastRoundKind::Trunc));
   }
   case OverflowCastKind::Unsupported:
     return failure();
@@ -455,120 +455,120 @@ LogicalResult lowerRegbaseSaturateOverflowMode(
   // Reg-based backends prefer native saturating narrows when unsigned modes fit.
   switch (kind) {
   case OverflowCastKind::F32ToI16: {
-    Value castI32 = Traits::castValue(
+    Value castI32 = Traits::createCastValueFromSourceOp(
         rewriter, loc, op, input, rewriter.getI32Type(),
-        CastExecutionKind::TruncWithOverflow);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castI32, outType, CastExecutionKind::Trunc,
+        CastRoundKind::TruncWithOverflow);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castI32, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   }
   case OverflowCastKind::F32ToI8: {
-    Value castF16 = Traits::castValue(rewriter, loc, op, input,
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   }
   case OverflowCastKind::F16ToI8:
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, input, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   case OverflowCastKind::I64ToI32:
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, input, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
   case OverflowCastKind::I64ToI16: {
     if (!isSignedToSigned) {
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, input, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
     }
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    Value castF16 = Traits::castValue(rewriter, loc, op, castF32,
+                                      CastRoundKind::Trunc);
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   }
   case OverflowCastKind::I64ToI8: {
     if (!isSignedToSigned) {
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, input, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
     }
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    Value castF16 = Traits::castValue(rewriter, loc, op, castF32,
+                                      CastRoundKind::Trunc);
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   }
   case OverflowCastKind::I32ToI16:
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, input, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
   case OverflowCastKind::I32ToI8: {
     if (unsignedModeKind == CastUnsignedModeKind::UnsignedToSigned) {
       // Route through an unsigned-preserving narrow before reinterpreting sign.
-      Value castI16 = Traits::castValue(
+      Value castI16 = Traits::createCastValueFromSourceOp(
           rewriter, loc, op, input, rewriter.getI16Type(),
-          CastExecutionKind::Trunc, CastSignKind::Preserve,
+          CastRoundKind::Trunc, CastSignKind::Preserve,
           /*enableSaturate=*/true,
           CastUnsignedModeKind::UnsignedToSigned);
-      Value castF16 = Traits::castValue(rewriter, loc, op, castI16,
+      Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castI16,
                                         rewriter.getF16Type(),
-                                        CastExecutionKind::Trunc);
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                        CastRoundKind::Trunc);
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true));
     }
     if (!isSignedToSigned) {
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, input, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
     }
-    Value castF32 = Traits::castValue(rewriter, loc, op, input,
+    Value castF32 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF32Type(),
-                                      CastExecutionKind::Trunc);
-    Value castF16 = Traits::castValue(rewriter, loc, op, castF32,
+                                      CastRoundKind::Trunc);
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true));
   }
   case OverflowCastKind::I16ToI8: {
     if (unsignedModeKind == CastUnsignedModeKind::UnsignedToSigned) {
       // Avoid signed saturation too early; keep the narrow unsigned first.
-      Value castI8 = Traits::castValue(
+      Value castI8 = Traits::createCastValueFromSourceOp(
           rewriter, loc, op, input, rewriter.getI8Type(),
-          CastExecutionKind::Trunc, CastSignKind::Unsigned,
+          CastRoundKind::Trunc, CastSignKind::Unsigned,
           /*enableSaturate=*/true,
           CastUnsignedModeKind::UnsignedToUnsigned);
       Value castF16 =
-          Traits::castValue(rewriter, loc, op, castI8, rewriter.getF16Type(),
-                            CastExecutionKind::Trunc, CastSignKind::Unsigned);
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+          Traits::createCastValueFromSourceOp(rewriter, loc, op, castI8, rewriter.getF16Type(),
+                            CastRoundKind::Trunc, CastSignKind::Unsigned);
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true));
     }
     if (!isSignedToSigned) {
-      return replaceWith(Traits::castValue(
-          rewriter, loc, op, input, outType, CastExecutionKind::Trunc,
+      return replaceWith(Traits::createCastValueFromSourceOp(
+          rewriter, loc, op, input, outType, CastRoundKind::Trunc,
           CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
     }
-    Value castF16 = Traits::castValue(rewriter, loc, op, input,
+    Value castF16 = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                       rewriter.getF16Type(),
-                                      CastExecutionKind::Trunc);
-    return replaceWith(Traits::castValue(
-        rewriter, loc, op, castF16, outType, CastExecutionKind::Trunc,
+                                      CastRoundKind::Trunc);
+    return replaceWith(Traits::createCastValueFromSourceOp(
+        rewriter, loc, op, castF16, outType, CastRoundKind::Trunc,
         CastSignKind::Preserve, /*enableSaturate=*/true, unsignedModeKind));
   }
   case OverflowCastKind::Unsupported:
@@ -606,14 +606,14 @@ template <typename Traits, typename CastOpType>
 Value castInToF32ToOut(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
   Type dstType = getElementTypeOrSelf(op.getDpsInits()[0].getType());
-  Value castSrcToF32 = Traits::castValue(
+  Value castSrcToF32 = Traits::createCastValueFromSourceOp(
       rewriter, loc, op, op.getDpsInputs()[0], rewriter.getF32Type(),
-      CastExecutionKind::Default, CastSignKind::Preserve);
+      CastRoundKind::Default, CastSignKind::Preserve);
   if (dstType.isF32())
     return castSrcToF32;
 
-  return Traits::castValue(rewriter, loc, op, castSrcToF32, dstType,
-                           CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF32, dstType,
+                           CastRoundKind::Default,
                            dstType.isInteger() ? CastSignKind::Signed
                                                : CastSignKind::Preserve);
 }
@@ -621,11 +621,11 @@ Value castInToF32ToOut(CastOpType op, PatternRewriter &rewriter) {
 template <typename Traits, typename CastOpType>
 Value castU32ToI64ToF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castU32ToI64 = Traits::castValue(
+  Value castU32ToI64 = Traits::createCastValueFromSourceOp(
       rewriter, loc, op, op.getDpsInputs()[0], rewriter.getI64Type(),
-      CastExecutionKind::Default, CastSignKind::Preserve);
-  return Traits::castValue(rewriter, loc, op, castU32ToI64,
-                           rewriter.getF32Type(), CastExecutionKind::Default,
+      CastRoundKind::Default, CastSignKind::Preserve);
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castU32ToI64,
+                           rewriter.getF32Type(), CastRoundKind::Default,
                            CastSignKind::Signed);
 }
 
@@ -633,8 +633,8 @@ template <typename Traits, typename CastOpType>
 Value castU32ToI64ToF32ToOut(CastOpType op, Type targetType,
                              PatternRewriter &rewriter) {
   Value u32ToF32Result = castU32ToI64ToF32<Traits>(op, rewriter);
-  return Traits::castValue(rewriter, op.getLoc(), op, u32ToF32Result,
-                           targetType, CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, op.getLoc(), op, u32ToF32Result,
+                           targetType, CastRoundKind::Default,
                            CastSignKind::Signed);
 }
 
@@ -642,24 +642,24 @@ template <typename Traits, typename CastOpType>
 Value castSrcToFp16ToTargetType(CastOpType op, Type targetType,
                                 PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castSrcToF16 = Traits::castValue(
+  Value castSrcToF16 = Traits::createCastValueFromSourceOp(
       rewriter, loc, op, op.getDpsInputs()[0], rewriter.getF16Type(),
-      CastExecutionKind::Default, CastSignKind::Preserve);
+      CastRoundKind::Default, CastSignKind::Preserve);
   if (targetType.isF16())
     return castSrcToF16;
 
   if (targetType.isBF16()) {
     Value castF16ToF32 =
-        Traits::castValue(rewriter, loc, op, castSrcToF16, rewriter.getF32Type(),
-                          CastExecutionKind::Default,
+        Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, rewriter.getF32Type(),
+                          CastRoundKind::Default,
                           CastSignKind::Preserve);
-    return Traits::castValue(rewriter, loc, op, castF16ToF32, targetType,
-                             CastExecutionKind::Default,
+    return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16ToF32, targetType,
+                             CastRoundKind::Default,
                              CastSignKind::Preserve);
   }
 
-  return Traits::castValue(rewriter, loc, op, castSrcToF16, targetType,
-                           CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castSrcToF16, targetType,
+                           CastRoundKind::Default,
                            CastSignKind::Signed);
 }
 
@@ -670,17 +670,17 @@ Value castSrcTypeToI1ByCmp(CastOpType op, Type srcType,
   Value input = op.getDpsInputs()[0];
   Value castedValue;
   if (srcType.isInteger(8)) {
-    castedValue = Traits::castValue(rewriter, loc, op, input,
+    castedValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                     rewriter.getF16Type());
   } else if (srcType.isInteger(16)) {
-    castedValue = Traits::castValue(rewriter, loc, op, input,
+    castedValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                     rewriter.getF16Type(),
-                                    CastExecutionKind::RInt);
+                                    CastRoundKind::RInt);
   } else if (srcType.isInteger(32) || srcType.isInteger(64) ||
              srcType.isBF16()) {
-    castedValue = Traits::castValue(rewriter, loc, op, input,
+    castedValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, input,
                                     rewriter.getF32Type(),
-                                    CastExecutionKind::RInt);
+                                    CastRoundKind::RInt);
   } else if (srcType.isF16() || srcType.isF32()) {
     castedValue = input;
   } else {
@@ -697,49 +697,49 @@ Value castI8ToI64(CastOpType op, PatternRewriter &rewriter) {
   if (!Traits::archIsRegbased()) {
     Value i8ToF32Result =
         castSrcToFp16ToTargetType<Traits>(op, rewriter.getF32Type(), rewriter);
-    return Traits::castValue(rewriter, loc, op, i8ToF32Result,
+    return Traits::createCastValueFromSourceOp(rewriter, loc, op, i8ToF32Result,
                              rewriter.getI64Type(),
-                             CastExecutionKind::Default,
+                             CastRoundKind::Default,
                              CastSignKind::Signed);
   }
 
-  Value castValue = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                       rewriter.getI32Type(),
-                                      CastExecutionKind::Default,
+                                      CastRoundKind::Default,
                                       CastSignKind::Preserve);
-  return Traits::castValue(rewriter, loc, op, castValue, rewriter.getI64Type(),
-                           CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
+                           CastRoundKind::Default,
                            CastSignKind::Preserve);
 }
 
 template <typename Traits, typename CastOpType>
 Value castI1ToI32ViaF16(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castF16Value = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castF16Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF16Type(),
-                                         CastExecutionKind::RInt);
-  return Traits::castValue(rewriter, loc, op, castF16Value,
-                           rewriter.getI32Type(), CastExecutionKind::RInt);
+                                         CastRoundKind::RInt);
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF16Value,
+                           rewriter.getI32Type(), CastRoundKind::RInt);
 }
 
 template <typename Traits, typename CastOpType>
 Value castI1ToI64ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castF32Value = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
-                                         CastExecutionKind::RInt);
-  return Traits::castValue(rewriter, loc, op, castF32Value,
+                                         CastRoundKind::RInt);
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
                            rewriter.getI64Type(),
-                           CastExecutionKind::Default,
+                           CastRoundKind::Default,
                            CastSignKind::Signed);
 }
 
 template <typename Traits, typename CastOpType>
 Value castI32ToF16ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castF32Value = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type());
-  return Traits::castValue(rewriter, loc, op, castF32Value,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
                            rewriter.getF16Type());
 }
 
@@ -748,40 +748,40 @@ Value castI16ToI64(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
   Value castValue;
   if (Traits::archIsRegbased()) {
-    castValue = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+    castValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                   rewriter.getI32Type(),
-                                  CastExecutionKind::Default,
+                                  CastRoundKind::Default,
                                   CastSignKind::Preserve);
   } else {
-    castValue = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+    castValue = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                   rewriter.getF32Type(),
-                                  CastExecutionKind::RInt);
+                                  CastRoundKind::RInt);
   }
 
-  return Traits::castValue(rewriter, loc, op, castValue, rewriter.getI64Type(),
-                           CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castValue, rewriter.getI64Type(),
+                           CastRoundKind::Default,
                            CastSignKind::Preserve);
 }
 
 template <typename Traits, typename CastOpType>
 Value castI16ToI32ViaF32(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castF32Value = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castF32Value = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getF32Type(),
-                                         CastExecutionKind::RInt);
-  return Traits::castValue(rewriter, loc, op, castF32Value,
+                                         CastRoundKind::RInt);
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32Value,
                            rewriter.getI32Type());
 }
 
 template <typename Traits, typename CastOpType>
 Value castF32ToU32ViaI64(CastOpType op, PatternRewriter &rewriter) {
   Location loc = op.getLoc();
-  Value castF32ToI64 = Traits::castValue(rewriter, loc, op, op.getDpsInputs()[0],
+  Value castF32ToI64 = Traits::createCastValueFromSourceOp(rewriter, loc, op, op.getDpsInputs()[0],
                                          rewriter.getI64Type(),
-                                         CastExecutionKind::Default,
+                                         CastRoundKind::Default,
                                          CastSignKind::Signed);
-  return Traits::castValue(rewriter, loc, op, castF32ToI64,
-                           rewriter.getI32Type(), CastExecutionKind::Default,
+  return Traits::createCastValueFromSourceOp(rewriter, loc, op, castF32ToI64,
+                           rewriter.getI32Type(), CastRoundKind::Default,
                            CastSignKind::Signed);
 }
 

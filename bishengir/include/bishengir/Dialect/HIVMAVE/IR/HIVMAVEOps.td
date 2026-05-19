@@ -846,6 +846,26 @@ def AVE_VFVMULLOp : AVE_VmullBinaryOp<"mull", [DeclareOpInterfaceMethods<AVELibr
   let extraClassDeclaration = opNameDeclaration;
 }
 
+def AVE_VFVpackOp : AVE_LibFnOp<"vpack", [
+    Pure, AllTypesMatch<["src", "res"]>, DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
+  let summary = "Pack operation for AVE.";
+  let arguments = (ins AveExtValidVector:$src,
+                       DefaultValuedAttr<I32Attr, "0">:$part);
+  let results = (outs AveExtValidVector:$res);
+  let assemblyFormat = "$src `,` $part attr-dict `:` type($src) `->` type($res)";
+  let extraClassDeclaration = opNameDeclaration;
+}
+
+def AVE_VFVunpackOp : AVE_LibFnOp<"vunpack", [
+    Pure, AllTypesMatch<["src", "res"]>, DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]> {
+  let summary = "Zero unpack operation for AVE.";
+  let arguments = (ins AveExtValidVector:$src,
+                       DefaultValuedAttr<I32Attr, "0">:$part);
+  let results = (outs AveExtValidVector:$res);
+  let assemblyFormat = "$src `,` $part attr-dict `:` type($src) `->` type($res)";
+  let extraClassDeclaration = opNameDeclaration;
+}
+
 //
 //// Tenary Ops
 //

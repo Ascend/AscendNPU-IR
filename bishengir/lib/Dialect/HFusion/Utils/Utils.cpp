@@ -742,7 +742,7 @@ bool hasComplexControlFlow(Operation *op) {
   return isComplex;
 }
 
-static bool hasCustomOp(Operation *op) {
+bool hasCustomOp(Operation *op) {
   bool found = false;
 
   op->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
