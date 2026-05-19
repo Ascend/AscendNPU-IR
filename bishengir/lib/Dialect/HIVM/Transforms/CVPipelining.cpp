@@ -63,6 +63,19 @@ struct CVPipelineImpl {
 private:
   void collectAtomicEffects();
 
+  /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
+  /// sit between a work-item op's output and a `scf.yield` operand into the
+  /// producing work item. Without this, those ops are never cloned into any
+  /// work-item forOp nor into newLoop, so the trailing terminator clone in
+  /// migrateOps copies the operand reference verbatim and ends up pointing
+  /// at an op inside the soon-to-be-erased pipelineLoop.
+  ///
+  /// Returns failure when a merger chain cannot be cleanly attributed to a
+  /// single work item (chain spans multiple work items, or has no work-item
+  /// producer at all). In that case `run()` reverts and the pass becomes a
+  /// no-op for this loop.
+  LogicalResult absorbMergerOpsIntoWorkItems();
+
   LogicalResult markOutputs();
 
   LogicalResult expandOutputInits(WorkItem *item);
@@ -356,6 +369,79 @@ void CVPipelineImpl::collectAtomicEffects() {
       op->dump();
     }
   });
+}
+
+/// Walk backward from every loop-yield operand through non-core ops that
+/// are not yet claimed by any WorkItem. Every such "merger" op must end up
+/// owned by a WorkItem so that:
+///   - it is cloned into that work-item's forOp during `migrateOps`
+///     (using the per-WorkItem `irMap`, which correctly remaps both the
+///     reconstructed induction variable and work-item-produced values), and
+///   - its result, when it equals a `yieldedVals` entry, can be picked up
+///     by the existing `yieldedOutputs` mechanism in `markOutputs` /
+///     `createNewLoops`.
+///
+/// A chain rooted at a yield operand is absorbed into work item `W` iff
+/// every chain operand that is defined inside `pipelineLoop`'s body either
+///   - belongs to `W` already (work-item op result), or
+///   - belongs to another op in the same merger chain, or
+///   - is a block argument of `pipelineLoop` (iter_arg or the IV).
+///
+/// If a chain references results from two or more distinct work items, or
+/// has no work-item producer at all (purely iter_arg/IV-driven), we cannot
+/// safely absorb it and return failure so `run()` reverts cleanly.
+LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
+  Block *body = pipelineLoop.getBody();
+  Operation *terminator = body->getTerminator();
+
+  for (Value yieldOperand : terminator->getOperands()) {
+    Operation *root = yieldOperand.getDefiningOp();
+    if (!root || root->getBlock() != body)
+      continue; // block arg or defined outside body — nothing to absorb
+    if (opToWorkItemMap.contains(root))
+      continue; // already a direct work-item output
+
+    // Collect the chain of unclaimed non-core ops feeding `yieldOperand`
+    // and the set of work items that ultimately produce its data.
+    SetVector<Operation *> chain;
+    SmallPtrSet<WorkItem *, 4> producers;
+    SmallVector<Operation *> stack{root};
+    while (!stack.empty()) {
+      Operation *cur = stack.pop_back_val();
+      if (!chain.insert(cur))
+        continue;
+      for (Value operand : cur->getOperands()) {
+        Operation *def = operand.getDefiningOp();
+        if (!def)
+          continue; // block arg (iter_arg / IV) — fine
+        if (def->getBlock() != body)
+          continue; // outside pipelineLoop body — fine
+        auto it = opToWorkItemMap.find(def);
+        if (it != opToWorkItemMap.end()) {
+          for (WorkItem *wi : it->getSecond())
+            producers.insert(wi);
+          continue; // don't walk through work-item ops
+        }
+        stack.push_back(def);
+      }
+    }
+
+    if (producers.size() != 1)
+      return pipelineLoop->emitWarning(
+          "[cv-pipelining] cannot absorb merger chain into a single work "
+          "item: the yielded value depends on ")
+             << producers.size()
+             << " work-item producer(s); refusing to pipeline this loop";
+
+    WorkItem *target = *producers.begin();
+    for (Operation *m : chain) {
+      target->ops.insert(m);
+      opToWorkItemMap[m].push_back(target);
+      LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed into work item: ";
+                 m->print(dbgs()); dbgs() << '\n');
+    }
+  }
+  return success();
 }
 
 /// Split loop based on separator ops into individual work items
@@ -1220,6 +1306,10 @@ LogicalResult CVPipelineImpl::run() {
   opToWorkItemMap = buildResult->opToWorkItemMap;
   outputMemrefMap = buildResult->outputMemrefMap;
   numMultibuffer = buildResult->resolvedMultibuffer;
+  if (failed(absorbMergerOpsIntoWorkItems())) {
+    revert();
+    return failure();
+  }
   if (failed(markOutputs()))
     return failure();
   LLVM_DEBUG({

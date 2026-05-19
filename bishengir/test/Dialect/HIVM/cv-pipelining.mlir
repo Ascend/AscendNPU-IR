@@ -788,3 +788,86 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// Test: non-core "merger" ops (arith.cmpi + arith.select) sitting between a
+// VECTOR work-item op (scf.if) and the loop's scf.yield must be absorbed into
+// the producing VECTOR work item, so they are cloned into the vector stage
+// loop and the outer loop's yield references the vector forOp's result
+// instead of a dangling op inside the soon-to-be-erased original loop.
+//
+// Regression test for: "operation destroyed but still has uses" crash in
+// cv-pipelining when a yielded value is produced by arith.select(cond,
+// init, scf.if_result) rather than directly by a core op.
+
+// CHECK-LABEL: func.func @test_merger_absorption
+// Outer unrolled loop preserves the original iter_arg.
+// CHECK: scf.for {{.*}} iter_args
+// Cube stage loop.
+// CHECK:   scf.for
+// CHECK:     hivm.hir.mmadL1
+// CHECK:     hivm.hir.fixpipe
+// CHECK:     hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// Vector stage loop must (a) carry an iter_arg for the absorbed yield,
+// (b) contain the cloned scf.if AND the absorbed cmpi/select, (c) yield
+// the select result.
+// CHECK:   scf.for {{.*}} iter_args
+// CHECK:     scf.if
+// CHECK:       hivm.hir.vexp
+// CHECK:     arith.cmpi
+// CHECK:     arith.select
+// CHECK:     scf.yield {{.*}} : tensor<16x16xf16>
+// CHECK:     hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_merger_absorption(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %input1 = "some_op"() : () -> memref<16x16xf16>
+    %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+    %input2 = "some_op"() : () -> memref<?xf16>
+    %initin = memref.reinterpret_cast %input2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    %vinit = "some_op"() : () -> tensor<16x16xf16>
+    %cond = "some_op"() : () -> i1
+    %gm_dst = "some_op"() : () -> memref<16x16xf16>
+    scf.for %i = %c0 to %bound step %step iter_args(%acc = %vinit) -> (tensor<16x16xf16>) : i32 {
+      // CUBE: load -> mmad -> fixpipe -> to_tensor
+      %alloc = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%initin : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
+      %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
+
+      // VECTOR scf.if
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %if = scf.if %cond -> tensor<16x16xf16> {
+        %new = hivm.hir.vexp ins(%wst : tensor<16x16xf16>) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+        scf.yield %new : tensor<16x16xf16>
+      } else {
+        scf.yield %wst : tensor<16x16xf16>
+      }
+
+      // Cross-core separator -- write vector result somewhere so the
+      // pipeline has a complete cycle.
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%if : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
+
+      // MERGER: cmpi + select between init and vec result, yielded out.
+      // Both ops are non-core and unclassified by the worklist builder,
+      // and must be absorbed into the VECTOR work item.
+      %is_first = arith.cmpi eq, %i, %c0 : i32
+      %sel = arith.select %is_first, %vinit, %if : tensor<16x16xf16>
+      scf.yield %sel : tensor<16x16xf16>
+    }
+    return
+  }
+}
+
