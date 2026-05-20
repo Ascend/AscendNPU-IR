@@ -752,6 +752,12 @@ static void populateBindSubBlockBubbleUpPassManager(PassManager &pm,
   pm.addPass(createCSEPass());
 }
 
+/// Returns true when the mark's source memref uses #hivm.address_space<cbuf>.
+static bool isTightlyCoupledMarkInCbufAddressSpace(annotation::MarkOp markOp) {
+  auto maybeSpace = getOptionalHIVMAddressSpace(markOp.getSrc().getType());
+  return maybeSpace && *maybeSpace == AddressSpace::L1;
+}
+
 static LogicalResult
 tileAndSliceOp(func::FuncOp func,
                DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim,
@@ -777,6 +783,8 @@ tileAndSliceOp(func::FuncOp func,
         markOp.emitError() << "Missing id in HIVMTightlyCoupledBufferAttr";
         return;
       }
+      if (isTightlyCoupledMarkInCbufAddressSpace(markOp))
+        return;
       tightlyCoupledBufferToTilingDim[maybeId.value()] = tilingDim;
     }
   });
@@ -994,6 +1002,14 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     return failure();
   }
 
+  /// FIXME: Now it reverts to CV1:1 if ub is not tiled. Please fix it after 
+  /// fixpipe op is ready to fixpipe full data into two aivs defautly.
+  if (failed(pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+          newFunc, tightlyCoupledBufferToTilingDim))) {
+    failAndRevert(newFunc);
+    return failure();
+  }
+
   SmallVector<Operation *> toBeRemovedLeaf;
   newFunc->walk([&](annotation::MarkOp op) {
     if (op->hasAttr(tileAndBindLeaf))
@@ -1138,20 +1154,22 @@ void TileAndBindSubBlockPass::runOnOperation() {
   if (!(aivSuccessFlag && archIs950)) {
     destroyAllBackups();
     return;
-  } else {
-    if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
-                                           tightlyCoupledBufferToTilingDim))) {
-      if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
-                                             /*limitSubBlockToStore=*/false)) ||
-          failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
-                                             /*limitSubBlockToStore=*/true))) {
-        LLVM_DEBUG(DBGS() << "Failed to restore from backups.\n ");
-        signalPassFailure();
-      }
-      destroyAllBackups();
-      return;
-    }
   }
+
+  if (failed(tileAicFixpipeFuncsIfNeeded(aicFunctions,
+                                        tightlyCoupledBufferToTilingDim))) {
+    if (failed(restoreFunctionsFromBackups(moduleOp, aicRollbackBackups,
+                                           /*limitSubBlockToStore=*/false)) ||
+        failed(restoreFunctionsFromBackups(moduleOp, aivRollbackBackups,
+                                           /*limitSubBlockToStore=*/true))) {
+      LLVM_DEBUG(DBGS() << "Failed to restore from backups.\n");
+      signalPassFailure();
+    }
+    destroyAllBackups();
+    return;
+  }
+
+  destroyAllBackups();
 
 #ifndef NDEBUG
   LLVM_DEBUG(DBGS() << "TileAndBindSubBlock pass completed. "

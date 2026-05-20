@@ -54,7 +54,9 @@ using namespace mlir::hivm::detail;
 class HIVMBubbleUpExtractSlicePass
     : public impl::HIVMBubbleUpExtractSliceBase<HIVMBubbleUpExtractSlicePass> {
 public:
-  using Base::Base;
+  explicit HIVMBubbleUpExtractSlicePass(
+      const HIVMBubbleUpExtractSliceOptions &options)
+      : Base(options) {}
 
   static bool traceAndCheckIsGMOrTightCoupledBuffer(Value value) {
     auto maybeAlloc = traceDefOp<memref::AllocOp>(value);
@@ -159,10 +161,10 @@ private:
     strategies.push_back(std::make_shared<LoopBubbleUpStrategy>());
     strategies.push_back(std::make_shared<LoopArgsBubbleUpStrategy>());
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<EmptyBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<EmptyBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());

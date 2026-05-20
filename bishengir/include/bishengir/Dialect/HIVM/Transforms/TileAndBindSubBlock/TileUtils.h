@@ -37,6 +37,10 @@ constexpr llvm::StringLiteral AICAttrTilingDim =
     "hivm.tiling_dim";
 constexpr llvm::StringLiteral tilghlyCoupledBufferAttr = 
     "hivm.tightly_coupled_buffer";
+/// Set on annotation.mark after AIV UB half-tile in BufferizationBubbleUpStrategy;
+/// used to prune `tightlyCoupledBufferToTilingDim` before AIC fixpipe split.
+constexpr llvm::StringLiteral kTiledTightlyCoupledAlloc =
+    "tiledAlloc";
 
 LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp);
 
@@ -67,9 +71,13 @@ bool hasBatchMatmulLoopInAicFuncs(ArrayRef<func::FuncOp> aicFunctions);
 bool hasImplicitTransposeWithLastAxisInAiv(
     ArrayRef<func::FuncOp> aivFunctions);
 
+LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
+    func::FuncOp newFunc,
+    llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
+
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
+    const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
 
 } // namespace hivm
 } // namespace mlir
