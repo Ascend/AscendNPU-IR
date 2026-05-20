@@ -1173,6 +1173,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
             return !leafNodeInfo.conflictList.contains(otherLeafNode);
           })) {
         leafNodeGroup.push_back(leafNode);
+        updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
         isInserted = true;
         break;
       };
@@ -1193,7 +1194,6 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       fusableOpInfoMap[leafNode].fusedNode = fusedNode;
     }
     moveLeafNodesAndTheirUsers(leafNodeGroup, block);
-    updateConflictLists(leafNodeGroup, block, fusableOpInfoMap);
   }
 }
 
