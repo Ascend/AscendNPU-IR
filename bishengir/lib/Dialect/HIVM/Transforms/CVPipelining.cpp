@@ -147,14 +147,50 @@ private:
   //     not registered (or backed by a non-LoadOp), the answer is `false`.
   //   * `LoadOp`: the matching to_tensor is found by reverse-looking up the
   //     LoadOp in `outputMemrefMap`.  When no match is found, the answer
-  //     falls back to the kernel-level `enableLazyLoading`.
-  // Once a candidate to_tensor is identified, the per-tensor hint takes
-  // precedence over the kernel-level switch:
+  //     falls back to the kernel-level `enableLazyLoading` (or auto
+  //     cross-core if the load has a tensor result).
+  //
+  // The auto cross-core check is a LEGALITY signal: when the load's
+  // tensor result is consumed by both CUBE and VECTOR cores, lazy
+  // loading is required for correctness (otherwise the consumer core
+  // has no local copy of the data).  This signal cannot be vetoed by
+  // the per-tensor hint.
+  //
+  // Precedence (in order):
+  //   * isCrossCoreLoad signals failure (CUBE_OR_VECTOR consumer
+  //     encountered): propagate failure -- the caller should bail out
+  //     of pipelining since we cannot prove safety.
+  //   * isCrossCore = true: always true; if the hint is Disable, a
+  //     "hint is ignored" warning is emitted.  Users who really need
+  //     to opt out can disable cv-pipelining entirely.
   //   * hint = Enable  -> true
-  //   * hint = Disable -> false (and warns once if `enableLazyLoading` is
-  //                              also on, since the hint is overriding it)
+  //   * hint = Disable -> false; if `enableLazyLoading` is on, a
+  //     "hint overrides kernel switch" warning is emitted.
   //   * hint = None    -> `enableLazyLoading`
-  bool shouldLazyLoadFor(Operation *op);
+  FailureOr<bool> shouldLazyLoadFor(Operation *op);
+
+  // Returns true if `loaded` (the tensor value produced by a load, either
+  // a bufferization.to_tensor over the load's output memref or the load's
+  // own tensor result) has consumers on both the CUBE and the VECTOR
+  // cores.  Walks transitive users, descending through view-like
+  // passthrough ops (tensor.extract_slice / cast / expand_shape /
+  // collapse_shape / reshape) and skipping annotation/debug ops.  For
+  // each remaining user, the core type is read from `pipeline.cubeonly`
+  // / `pipeline.veconly` attrs (set by `illegalRegionedOp` on regioned
+  // ops) or, failing that, from `queryCoreTypeHelper`.  CUBE_AND_VECTOR
+  // runs on both cores and sets both flags on its own.  CUBE_OR_VECTOR
+  // is ambiguous (either core could execute the op); we cannot safely
+  // classify the load and return `failure()` so the caller can bail
+  // out of pipelining for this loop.
+  FailureOr<bool> isCrossCoreLoad(const Value loaded) const;
+
+  // Emit a one-time warning explaining that a per-tensor
+  // `cv_pipeline_lazy_load = false` hint on `v` has been IGNORED because
+  // the load's tensor result is consumed by both CUBE and VECTOR cores;
+  // lazy loading is required for correctness and cannot be vetoed by the
+  // hint.  Uses the same warning bookkeeping as `warnHintOverride` so
+  // each mark is reported at most once.
+  void warnHintIgnoredForCrossCore(Value v);
 
   // Emit a one-time warning explaining that the per-tensor
   // `cv_pipeline_lazy_load = false` hint on `v` overrides the kernel-level
@@ -770,6 +806,32 @@ void CVPipelineImpl::warnHintOverride(Value v) {
         << "see `" << CVPipelineLazyLoadAttrName << " = false` hint here";
 }
 
+void CVPipelineImpl::warnHintIgnoredForCrossCore(Value v) {
+  auto maybeMark =
+      utils::getAnnotateOpWithAttr(v, CVPipelineLazyLoadAttrName);
+  if (!maybeMark)
+    return;
+  auto mark = cast<annotation::MarkOp>(*maybeMark);
+  if (!warnedOverrideMarks.insert(mark).second)
+    return;
+
+  Operation *warnTarget = mark;
+  if (auto tt = dyn_cast_or_null<bufferization::ToTensorOp>(v.getDefiningOp()))
+    if (auto it = outputMemrefMap.find(tt); it != outputMemrefMap.end())
+      if (auto load = dyn_cast<LoadOp>(it->second.getOperation()))
+        warnTarget = load;
+
+  auto diag =
+      warnTarget->emitWarning()
+      << "[cv-pipelining] " << CVPipelineLazyLoadAttrName
+      << "=false is ignored: load result is consumed by both CUBE and "
+         "VECTOR cores, lazy loading is required for correctness; "
+         "disable cv-pipelining entirely to opt out";
+  if (warnTarget != mark)
+    diag.attachNote(mark->getLoc())
+        << "see `" << CVPipelineLazyLoadAttrName << " = false` hint here";
+}
+
 void CVPipelineImpl::diagnoseLazyLoadHints() {
   // Walk pipelineLoop to collect, in IR order, the distinct values that carry
   // at least one `cv_pipeline_lazy_load` mark.  We then query all marks per
@@ -823,7 +885,69 @@ void CVPipelineImpl::diagnoseLazyLoadHints() {
   }
 }
 
-bool CVPipelineImpl::shouldLazyLoadFor(Operation *op) {
+FailureOr<bool> CVPipelineImpl::isCrossCoreLoad(const Value loaded) const {
+  if (!loaded)
+    return false;
+  bool hasCube = false;
+  bool hasVec = false;
+  SmallVector<Value> stack;
+  DenseSet<Operation *> visited;
+  stack.push_back(loaded);
+  while (!stack.empty()) {
+    Value v = stack.pop_back_val();
+    for (Operation *user : v.getUsers()) {
+      if (!visited.insert(user).second)
+        continue;
+      // Descend through view-like / passthrough ops that just rename the
+      // loaded tensor; the real consumer (and thus the real core type)
+      // is downstream.
+      if (isa<tensor::ExtractSliceOp, tensor::CastOp, tensor::ExpandShapeOp,
+              tensor::CollapseShapeOp, tensor::ReshapeOp>(user)) {
+        for (Value r : user->getResults())
+          stack.push_back(r);
+        continue;
+      }
+      if (isa<annotation::MarkOp, DebugOp>(user))
+        continue;
+      // Per-op core hints set by `illegalRegionedOp` take precedence over
+      // the trait-based query.
+      std::optional<TCoreType> core;
+      if (user->hasAttr(CubeOnlyAttrName))
+        core = TCoreType::CUBE;
+      else if (user->hasAttr(VecOnlyAttrName))
+        core = TCoreType::VECTOR;
+      else
+        core = queryCoreTypeHelper(user);
+      if (!core)
+        continue;
+      switch (*core) {
+      case TCoreType::CUBE:
+        hasCube = true;
+        break;
+      case TCoreType::VECTOR:
+        hasVec = true;
+        break;
+      case TCoreType::CUBE_AND_VECTOR:
+        // Op runs on both cores; that alone makes the load cross-core.
+        hasCube = true;
+        hasVec = true;
+        break;
+      case TCoreType::CUBE_OR_VECTOR:
+        // Ambiguous — either core could end up running this op.  We
+        // cannot safely classify the load; signal failure so the caller
+        // bails out of pipelining for this loop (lazy load is a
+        // legality requirement when cross-core, and we can't prove the
+        // load isn't cross-core here).
+        return failure();
+      }
+      if (hasCube && hasVec)
+        return true;
+    }
+  }
+  return hasCube && hasVec;
+}
+
+FailureOr<bool> CVPipelineImpl::shouldLazyLoadFor(Operation *op) {
   // Find the candidate to_tensor whose hint we should consult, with
   // shape-specific fallbacks when no candidate exists.
   bufferization::ToTensorOp tt;
@@ -841,21 +965,43 @@ bool CVPipelineImpl::shouldLazyLoadFor(Operation *op) {
         break;
       }
     }
-    if (!tt)
+    if (!tt) {
+      // No backing to_tensor; the load is tensor-form or otherwise opaque
+      // to outputMemrefMap.  Still auto-enable lazy load when the load's
+      // own tensor result has consumers on both cores.
+      if (load->getNumResults() > 0 &&
+          isa<TensorType>(load->getResult(0).getType())) {
+        FailureOr<bool> crossCore = isCrossCoreLoad(load->getResult(0));
+        if (failed(crossCore))
+          return failure();
+        if (*crossCore)
+          return true;
+      }
       return enableLazyLoading;
+    }
   } else {
     return false;
   }
+
+  FailureOr<bool> isCrossCore = isCrossCoreLoad(tt.getResult());
+  if (failed(isCrossCore))
+    return failure();
 
   switch (getLazyLoadHint(tt.getResult())) {
   case LazyLoadHint::Enable:
     return true;
   case LazyLoadHint::Disable:
+    if (*isCrossCore) {
+      // Legality: cross-core consumption forces lazy load; the explicit
+      // `false` hint cannot veto it without producing incorrect results.
+      warnHintIgnoredForCrossCore(tt.getResult());
+      return true;
+    }
     if (enableLazyLoading)
       warnHintOverride(tt.getResult());
     return false;
   case LazyLoadHint::None:
-    return enableLazyLoading;
+    return enableLazyLoading || *isCrossCore;
   }
   llvm_unreachable("invalid LazyLoadHint enumerator");
 }
@@ -966,9 +1112,16 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
         // If Core Op is already inserted into a different work item, then we
         // don't include it here
         if (!item->ops.contains(op)) {
-          // With lazy loading, allow load-like ops (Load, ND2NZ) to be cloned
-          // into multiple work items so each stage loads independently from GM.
-          if (!(shouldLazyLoadFor(op) && isLoadLikeOp(op)))
+          // With lazy loading (kernel-level switch, per-tensor compile
+          // hint, or auto cross-core legality), allow Load ops to be
+          // cloned into multiple work items so each stage loads
+          // independently from GM.
+          if (!isLoadLikeOp(op))
+            continue;
+          FailureOr<bool> shouldLazy = shouldLazyLoadFor(op);
+          if (failed(shouldLazy))
+            return failure();
+          if (!*shouldLazy)
             continue;
         }
       } else if (!isLoadLikeOp(op)) {
@@ -998,8 +1151,14 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     // (annotation.mark on the tensor result).
     bool skipToTensor =
         isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op);
-    if (skipToTensor && shouldLazyLoadFor(op))
-      skipToTensor = false;
+    if (skipToTensor) {
+      FailureOr<bool> shouldLazy =
+          shouldLazyLoadFor(cast<bufferization::ToTensorOp>(op));
+      if (failed(shouldLazy))
+        return failure();
+      if (*shouldLazy)
+        skipToTensor = false;
+    }
     if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
         skipToTensor)
       continue;
@@ -1393,12 +1552,18 @@ LogicalResult CVPipelineImpl::markOutputs() {
     for (Operation *op : item->ops) {
       if (isa<tensor::EmptyOp>(op))
         continue;
-      // With lazy loading (kernel-level switch or per-tensor compile hint),
-      // skip to_tensor results backed by a LoadOp since the load is cloned
-      // into each consuming work item directly and therefore does not need
-      // a multi-buffered cross-stage tensor.
-      if (shouldLazyLoadFor(op))
+      // With lazy loading (kernel-level switch, per-tensor compile hint,
+      // or auto cross-core legality), skip to_tensor results backed by a
+      // LoadOp since the load is cloned into each consuming work item
+      // directly and therefore does not need a multi-buffered cross-stage
+      // tensor.
+      if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+        FailureOr<bool> shouldLazy = shouldLazyLoadFor(toTensor);
+        if (failed(shouldLazy))
+          return failure();
+        if (*shouldLazy)
           continue;
+      }
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
           unsigned opNumber = static_cast<unsigned>(std::distance(
