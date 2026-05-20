@@ -308,6 +308,10 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
     }
+    if (auto coreTypeAttr = forOp->getAttrOfType<hivm::TCoreTypeAttr>(
+            hivm::kPipelinedLoopCoreTypeAttrName)) {
+      return coreTypeAttr.getTcoretype();
+    }
   }
   return TCoreType::CUBE_OR_VECTOR;
 }
