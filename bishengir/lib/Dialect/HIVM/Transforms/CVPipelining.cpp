@@ -177,6 +177,8 @@ private:
   // Requires `outputMemrefMap` to be populated (call after
   // `populateDependencies` runs for every separator).
   void diagnoseLazyLoadHints();
+  LogicalResult traceNonInitOperands(Operation *op, WorkItem *item,
+                                     SmallVector<Operation *> &workingStack);
 
   void collectAtomicEffects();
 
@@ -353,12 +355,48 @@ static bool isCrossCoreCopy(Operation *copy) {
   return memSpaceAttr.getAddressSpace() == AddressSpace::L1;
 }
 
+/// True if `op` is a CV-pipelining "separator" — a store-like op that forms a
+/// boundary between vector and cube workitems. Splitting the pipeline loop on
+/// these ops yields the per-core workitems that CVPipelining schedules.
+/// Covers `hivm.hir.fixpipe`, `hivm.hir.store`, and the cross-core variant of
+/// `hivm.hir.copy`.
+static bool isSeparator(Operation *op) {
+  return isa<FixpipeOp, StoreOp>(op) || isCrossCoreCopy(op);
+}
+
 /// Check to see if op is what we consider a "core op" that is only available on
 /// either a cube or vector core
 static bool isCoreOp(Operation *op) {
   return op->hasAttr(CubeOnlyAttrName) || op->hasAttr(VecOnlyAttrName) ||
          (isa_and_nonnull<HIVMDialect>(op->getDialect()) &&
           isa<DestinationStyleOpInterface>(op));
+}
+
+/// True if `op` is a HIVM DMA op whose alloc-backed memref destination may have
+/// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
+/// boundaries — i.e. we need `traceMemrefSubnet` to register it in
+/// `outputMemrefMap` so `migrateOps` can find the writer for any
+/// cross-workitem `localOutput`.
+///
+/// Includes plain `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core variant
+/// of `hivm.hir.copy`, and `hivm.hir.nd2nz` (the fused GM->L1 load with NZ
+/// layout conversion that `CombineOptimizedConvertLayout` emits in place of a
+/// LoadOp under `--enable-layout-optimization=true`).
+static bool isMemrefSubnetWriter(Operation *op) {
+  return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
+}
+
+/// True if `op` is a HIVM "load-like" DMA op that pulls data from GM into
+/// UB/L1. Such ops are not workitem seeds (extractAvailableOps skips them);
+/// instead they are pulled into each consumer workitem during dependency
+/// tracing. Under `enableLazyLoading`, they may be cloned into multiple
+/// consumer workitems so each stage loads independently from GM.
+///
+/// Currently covers `hivm.hir.load` and `hivm.hir.nd2nz` — both read GM and
+/// write to a UB/L1 alloc that the consumer mmadL1/vector op will read via
+/// `bufferization.to_tensor`.
+static bool isLoadLikeOp(Operation *op) {
+  return isa<LoadOp, ND2NZOp>(op);
 }
 
 /// Validate if we can pipeline ops with respect to its regions.
@@ -806,7 +844,7 @@ bool CVPipelineImpl::shouldLazyLoadFor(Operation *op) {
     if (!tt)
       return enableLazyLoading;
   } else {
-    llvm_unreachable("shouldLazyLoadFor: expected ToTensorOp or LoadOp");
+    return false;
   }
 
   switch (getLazyLoadHint(tt.getResult())) {
@@ -888,6 +926,25 @@ CVPipelineImpl::traceOperands(Value operand, WorkItem *item,
   return success();
 }
 
+/// Trace producers of every operand of `op` *except* its DPS-init (writeback
+/// destination) operands. Used by `traceDependentOps` for memref-subnet
+/// writers (Load / Fixpipe / cross-core Copy / ND2NZ): the init is the `dst`
+/// memref reached separately via `traceMemrefSubnet`, while every other
+/// operand — ins, plus scalar params like LoadOp's init-condition and
+/// padding values — is a real data dependency that must be queued onto
+/// `workingStack`.
+LogicalResult CVPipelineImpl::traceNonInitOperands(
+    Operation *op, WorkItem *item, SmallVector<Operation *> &workingStack) {
+  auto dps = dyn_cast<DestinationStyleOpInterface>(op);
+  for (Value operand : op->getOperands()) {
+    if (dps && llvm::is_contained(dps.getDpsInits(), operand))
+      continue;
+    if (failed(traceOperands(operand, item, workingStack)))
+      return failure();
+  }
+  return success();
+}
+
 /// Trace each op in the initial set of ops in each WorkItem, get non-HIVM ops
 /// that are operands for each op
 LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
@@ -895,24 +952,38 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
 
   while (!workingStack.empty()) {
     Operation *op = workingStack.pop_back_val();
+    // If op is nested inside a top-level op already part of this workitem
+    // (e.g. a Fixpipe inside an scf.if separator), skip it — it will be
+    // cloned along with its enclosing region by migrateOps. Its outputs are
+    // tracked via outputMemrefMap populated elsewhere.
+    {
+      Operation *top = getContainedParent(pipelineLoop, op);
+      if (top != op && item->ops.contains(top))
+        continue;
+    }
     if (isCoreOp(op)) {
       if (opToWorkItemMap.contains(op)) {
         // If Core Op is already inserted into a different work item, then we
         // don't include it here
         if (!item->ops.contains(op)) {
-          // With lazy loading (kernel-level switch or per-tensor compile
-          // hint), allow Load ops to be cloned into multiple work items so
-          // each stage loads independently from GM.
-          auto load = dyn_cast<LoadOp>(op);
-          if (!load || !shouldLazyLoadFor(load))
+          // With lazy loading, allow load-like ops (Load, ND2NZ) to be cloned
+          // into multiple work items so each stage loads independently from GM.
+          if (!(shouldLazyLoadFor(op) && isLoadLikeOp(op)))
             continue;
         }
-      } else if (!isa<LoadOp>(op))
-        // Load ops are pulled into their consuming work items, apart from that,
-        // if we get here that means we depend on an op that have not satisfied
-        // their dependency
+      } else if (!isLoadLikeOp(op)) {
+        // Separators (Store/Fixpipe/cross-core Copy) that reach here via a
+        // shared memref alias chain have not been assigned to any workitem
+        // yet — they will be picked up in a subsequent extractAvailableOps
+        // round for the other core. Skip rather than fail.
+        if (isSeparator(op))
+          continue;
+        // Load-like ops are pulled into their consuming work items; apart from
+        // that, if we get here we depend on an op that has not satisfied its
+        // dependency.
         return op->emitWarning(
             "[cv-pipelining] cannot pipeline op due to dependency");
+      }
     }
     // Other than core ops, we can skip them if we already inserted them into
     // this work item
@@ -927,8 +998,7 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     // (annotation.mark on the tensor result).
     bool skipToTensor =
         isa<bufferization::ToTensorOp>(op) && opToWorkItemMap.contains(op);
-    if (skipToTensor &&
-        shouldLazyLoadFor(cast<bufferization::ToTensorOp>(op)))
+    if (skipToTensor && shouldLazyLoadFor(op))
       skipToTensor = false;
     if (op->getParentOp() != pipelineLoop || isa<scf::YieldOp>(op) ||
         skipToTensor)
@@ -941,27 +1011,27 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
         mapOpToItem(usr, item);
 
     // Handle load/fixpipe/copy dealing with memref memref
-    if (isa<LoadOp, FixpipeOp>(op) || isCrossCoreCopy(op)) {
+    if (isMemrefSubnetWriter(op)) {
       if (failed(traceMemrefSubnet(op, workingStack)))
         return failure();
-      // Deal with the ins operand
-      if (failed(traceOperands(op->getOperand(0), item, workingStack)))
+      if (failed(traceNonInitOperands(op, item, workingStack)))
         return failure();
-      if (auto load = dyn_cast<LoadOp>(op)) {
-        if (failed(
-                traceOperands(load.getInitCondition(), item, workingStack)) ||
-            failed(
-                traceOperands(load.getLeftPaddingNum(), item, workingStack)) ||
-            failed(
-                traceOperands(load.getRightPaddingNum(), item, workingStack)) ||
-            failed(traceOperands(load.getPadValue(), item, workingStack)))
-          return failure();
-      }
       continue;
     }
 
     // Handle nested ops as well
     WalkResult walkResult = op->walk([&](Operation *nestedOp) {
+      // For nested Load/Fixpipe/CrossCoreCopy (e.g. inside a lifted scf.if
+      // separator), populate outputMemrefMap via traceMemrefSubnet and trace
+      // their ins operand so migrateOps/expandOutputInits can resolve outputs
+      // back to their nested writer.
+      if (nestedOp != op && isMemrefSubnetWriter(nestedOp)) {
+        if (failed(traceMemrefSubnet(nestedOp, workingStack)))
+          return WalkResult::interrupt();
+        if (failed(traceNonInitOperands(nestedOp, item, workingStack)))
+          return WalkResult::interrupt();
+        return WalkResult::advance();
+      }
       for (Value operand : nestedOp->getOperands())
         if (failed(traceOperands(operand, item, workingStack)))
           return WalkResult::interrupt();
@@ -1020,7 +1090,7 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
                               ? TCoreType::VECTOR
                               : TCoreType::CUBE_OR_VECTOR;
     if (maybeCore == hivm::TCoreType::CUBE_OR_VECTOR) {
-      if (!isCoreOp(&op) || isa<LoadOp>(&op))
+      if (!isCoreOp(&op) || isLoadLikeOp(&op))
         continue;
       maybeCore = queryCoreTypeHelper(&op).value_or(TCoreType::CUBE_OR_VECTOR);
       if (maybeCore != TCoreType::VECTOR && isCrossCoreCopy(&op))
@@ -1064,6 +1134,83 @@ CVPipelineImpl::extractAvailableOps(SmallVector<Operation *> &extractedOps,
       dfsStack.push_back(usr);
     }
   }
+
+  // Coalesce same-core DPS-init chains: when an op's sole result feeds the
+  // init operand of another same-core DPS core-op `usr` that is still
+  // unavailable this round, defer the producer so it lands in the same
+  // WorkItem as `usr`. Without this, the producer's result becomes a cross-
+  // WorkItem localOutput, and expandOutputInits cannot expand the backing
+  // buffer when the init is not a tensor.empty / to_tensor (e.g. an
+  // accumulator chained from another mmad's result).
+  DenseSet<Operation *> chainDeferred;
+  auto findBlockedCoChainConsumer = [&](Operation *op) -> Operation * {
+    if (op->getNumResults() != 1)
+      return nullptr;
+    Value res = op->getResult(0);
+    if (!res.hasOneUse())
+      return nullptr;
+    OpOperand &use = *res.getUses().begin();
+    Operation *usr = use.getOwner();
+    if (usr->getParentOp() != pipelineLoop)
+      return nullptr;
+    if (!isCoreOp(usr))
+      return nullptr;
+    auto userDps = dyn_cast<DestinationStyleOpInterface>(usr);
+    if (!userDps || userDps.getNumDpsInits() != 1)
+      return nullptr;
+    if (userDps.getDpsInitOperand(0) != &use)
+      return nullptr;
+    TCoreType usrCore = usr->hasAttr(CubeOnlyAttrName)
+                            ? TCoreType::CUBE
+                            : usr->hasAttr(VecOnlyAttrName)
+                                ? TCoreType::VECTOR
+                                : queryCoreTypeHelper(usr).value_or(
+                                      TCoreType::CUBE_OR_VECTOR);
+    if (usrCore != core)
+      return nullptr;
+    if (opToWorkItemMap.contains(usr))
+      return nullptr;
+    // `usr` must be unavailable this round: blocked by deps (not in
+    // potentiallyAvailable) or already deferred earlier in this pass.
+    if (potentiallyAvailable.contains(usr) && !chainDeferred.contains(usr) &&
+        !deferredOps.contains(usr))
+      return nullptr;
+    return usr;
+  };
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (Operation *op : potentiallyAvailable) {
+      if (deferredOps.contains(op) || chainDeferred.contains(op))
+        continue;
+      if (Operation *usr = findBlockedCoChainConsumer(op)) {
+        LLVM_DEBUG({
+          dbgs() << "[extractAvailableOps] deferring acc-chain producer:\n  ";
+          op->dump();
+          dbgs() << "  for blocked consumer:\n  ";
+          usr->dump();
+        });
+        chainDeferred.insert(op);
+        changed = true;
+      }
+    }
+  }
+
+  // Commit chain deferrals only if doing so leaves at least one op for this
+  // round; otherwise we would starve the round and createWorkItems would
+  // terminate prematurely with `cannot pipeline loop`.
+  size_t remaining = 0;
+  for (Operation *op : potentiallyAvailable)
+    if (!deferredOps.contains(op) && !chainDeferred.contains(op))
+      ++remaining;
+  if (remaining > 0) {
+    deferredOps.insert(chainDeferred.begin(), chainDeferred.end());
+  } else if (!chainDeferred.empty()) {
+    LLVM_DEBUG(dbgs() << "[extractAvailableOps] skipping acc-chain deferrals "
+                         "to avoid empty round\n");
+  }
+
   potentiallyAvailable.set_subtract(deferredOps);
   extractedOps.append(potentiallyAvailable.takeVector());
 
@@ -1105,7 +1252,7 @@ LogicalResult CVPipelineImpl::createWorkItems() {
   for (Operation &op : blk->getOperations()) {
     if (isCoreOp(&op))
       toBePipelined.insert(&op);
-    if (isa<FixpipeOp, StoreOp>(&op) || isCrossCoreCopy(&op))
+    if (isSeparator(&op))
       separators.push_back(&op);
     else if (auto mark = dyn_cast<annotation::MarkOp>(&op)) {
       // Compile option override
@@ -1125,6 +1272,20 @@ LogicalResult CVPipelineImpl::createWorkItems() {
       return failure();
     }
   } // end for op
+
+  // Lift nested separators (e.g. a Fixpipe inside an scf.if) to their
+  // top-level ancestor within pipelineLoop so downstream partitioning still
+  // sees a workitem boundary across the enclosing region.
+  pipelineLoop.walk([&](Operation *nested) {
+    if (nested->getBlock() == blk)
+      return; // already scanned above
+    if (!isSeparator(nested))
+      return;
+    Operation *top = getContainedParent(pipelineLoop, nested);
+    if (llvm::find(separators, top) == separators.end())
+      separators.push_back(top);
+  });
+
   LLVM_DEBUG({
     dbgs() << "[createWorkItems] Separators:\n";
     for (Operation *op : separators) {
@@ -1236,10 +1397,8 @@ LogicalResult CVPipelineImpl::markOutputs() {
       // skip to_tensor results backed by a LoadOp since the load is cloned
       // into each consuming work item directly and therefore does not need
       // a multi-buffered cross-stage tensor.
-      if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-        if (shouldLazyLoadFor(toTensor))
+      if (shouldLazyLoadFor(op))
           continue;
-      }
       for (Value result : op->getResults()) {
         if (yieldedVals.contains(result)) {
           unsigned opNumber = static_cast<unsigned>(std::distance(
@@ -1253,7 +1412,16 @@ LogicalResult CVPipelineImpl::markOutputs() {
           continue;
 
         for (Operation *usr : result.getUsers()) {
-          if (opToWorkItemMap.contains(usr) && !item->ops.contains(usr)) {
+          // Only top-level ops in pipelineLoop's body are inserted into
+          // opToWorkItemMap; a use nested inside an scf.for / scf.if (e.g.
+          // a `tensor.extract` inside a parallel-loop scf.for) is invisible
+          // if we check `usr` directly. Map it up to its top-level ancestor
+          // within pipelineLoop, matching populateDependencies' convention.
+          if (!pipelineLoop->isAncestor(usr))
+            continue;
+          Operation *usrTop = getContainedParent(pipelineLoop, usr);
+          if (opToWorkItemMap.contains(usrTop) &&
+              !item->ops.contains(usrTop)) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           } // End loop over result.users
@@ -1264,35 +1432,53 @@ LogicalResult CVPipelineImpl::markOutputs() {
 
   // Detect cross-workitem aliasing on function arguments: if a Fixpipe/Store
   // writes to a func arg that another workitem loads from, pipelining would
-  // reorder the store past the load and break correctness.
+  // reorder the store past the load and break correctness. Walk into nested
+  // regions since item->ops may contain whole region ops (scf.if / inner
+  // scf.for) whose nested Fixpipe/Store/Load would otherwise be missed.
   DenseMap<BlockArgument, WorkItem *> storedFuncArgs;
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      Value dst;
-      if (auto fixpipe = dyn_cast<FixpipeOp>(op))
-        dst = fixpipe.getDst();
-      else if (auto store = dyn_cast<StoreOp>(op))
-        dst = store.getDst();
-      else
-        continue;
-      BlockArgument funcArg = traceToFuncArg(dst);
-      if (!funcArg)
-        continue;
-      storedFuncArgs[funcArg] = item.get();
+      op->walk([&](Operation *nested) {
+        Value dst;
+        // TODO: Use StoreLikeOpInterface when available
+        if (auto fixpipe = dyn_cast<FixpipeOp>(nested))
+          dst = fixpipe.getDst();
+        else if (auto store = dyn_cast<StoreOp>(nested))
+          dst = store.getDst();
+        else
+          return;
+        BlockArgument funcArg = traceToFuncArg(dst);
+        if (!funcArg)
+          return;
+        storedFuncArgs[funcArg] = item.get();
+      });
     }
   }
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      auto load = dyn_cast<LoadOp>(op);
-      if (!load)
-        continue;
-      BlockArgument funcArg = traceToFuncArg(load.getSrc());
-      if (!funcArg)
-        continue;
-      auto it = storedFuncArgs.find(funcArg);
-      if (it != storedFuncArgs.end() && it->second != item.get())
-        return op->emitWarning(
-            "[cv-pipelining] using GM as intermediate buffer is unsupported");
+      WalkResult result = op->walk([&](Operation *nested) {
+        // TODO: replace this with a LoadLikeOpInterface
+        if (!isa<LoadOp, ND2NZOp>(nested))
+          return WalkResult::advance();
+        BlockArgument funcArg;
+        if (auto load = dyn_cast<LoadOp>(nested))
+          funcArg = traceToFuncArg(load.getSrc());
+        else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
+          funcArg = traceToFuncArg(nd2nz.getSrc());
+        else
+          llvm_unreachable("Replace with LoadLikeOpInterface.getSrc()");
+        if (!funcArg)
+          return WalkResult::advance();
+        auto it = storedFuncArgs.find(funcArg);
+        if (it != storedFuncArgs.end() && it->second != item.get()) {
+          nested->emitWarning(
+              "[cv-pipelining] using GM as intermediate buffer is unsupported");
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+      if (result.wasInterrupted())
+        return failure();
     }
   }
   return success();
@@ -1621,7 +1807,14 @@ LogicalResult CVPipelineImpl::migrateOps() {
               dyn_cast_if_present<bufferization::ToTensorOp>(defining)) {
         // Set `defining` to the op that writes to the tensor i.e. the actual
         // defining op for the tensor
-        defining = this->outputMemrefMap[toTensor];
+        auto it = this->outputMemrefMap.find(toTensor);
+        if (it == this->outputMemrefMap.end()) {
+          LLVM_DEBUG(dbgs() << "[cv-pipelining] localOutput to_tensor has no "
+                               "tracked writer (outputMemrefMap miss): ";
+                     toTensor->dump());
+          return failure();
+        }
+        defining = it->second;
       }
       defining = item->irMap.lookup(defining);
       auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(defining);
@@ -1636,7 +1829,16 @@ LogicalResult CVPipelineImpl::migrateOps() {
             "[cv-pipelining] expected dps op with exactly one init");
       OpOperand *initOperand = dps.getDpsInitOperand(0);
       Value newResult = *resIt;
-      if (isa<TensorType>(initOperand->get().getType())) {
+      // Dispatch on `expanded`'s type, not on the DPS init's static type.
+      // `expandOutputInits` chose `tensor.empty` vs `memref.alloc` based on
+      // whether the init was a real `tensor.empty` or a `to_tensor` of an
+      // alloc — so a tensor-typed init backed by a `to_tensor` (e.g. the
+      // cross-core `hivm.hir.copy` writing into a pre-allocated L1 buffer)
+      // gets a `memref.alloc` for `expanded` and must take the memref path
+      // here. Driving off `initOperand->get().getType()` would mis-route those
+      // to the tensor path and crash in `createExtractSlice` on a memref
+      // iter_arg.
+      if (isa<TensorType>(expanded.getType())) {
         Value extracted =
             createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
         initOperand->set(extracted);
@@ -1649,9 +1851,22 @@ LogicalResult CVPipelineImpl::migrateOps() {
         resIt++;
         argIt++;
         yieldVals.push_back(yieldVal);
-      } else if (auto targetTy =
-                     dyn_cast<MemRefType>(initOperand->get().getType())) {
-        Value internalDef = item->irMap.lookup(orig);
+      } else if (auto targetTy = dyn_cast<MemRefType>(expanded.getType())) {
+        // Find the inner `bufferization.to_tensor` that wraps the alloc-backed
+        // buffer. Two shapes:
+        //   - fixpipe-output flow: `orig` itself is the to_tensor (the DPS
+        //     init is a plain memref alloc), so look up `orig` in irMap.
+        //   - cross-core copy flow: `orig` is the DPS op's tensor result and
+        //     the to_tensor is the DPS init operand itself.
+        // The cloned init's defining op IS the cloned to_tensor in the
+        // copy case, so try that first, then fall back.
+        auto innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
+            initOperand->get().getDefiningOp());
+        if (!innerToTensor) {
+          Value internalDef = item->irMap.lookup(orig);
+          innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
+              internalDef.getDefiningOp());
+        }
         // If there are masking subviews, update those first
         FailureOr<Value> updatedSubviewOr =
             updateMaskingSubview(builder, loc, expanded, initOperand, iv);
@@ -1659,26 +1874,40 @@ LogicalResult CVPipelineImpl::migrateOps() {
           return failure();
         Value updatedSubview = *updatedSubviewOr;
         // Then replace the toTensor operand if it is not updated
-        auto innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
-            internalDef.getDefiningOp());
         if (!innerToTensor)
           return dps->emitWarning("[cv-pipelining] expected memref outputs to "
                                   "be passed as tensors");
         OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
         if (memrefOperand->get() != updatedSubview) {
-          Value toTensorSubview = nullptr;
+          // Always build the subview against a memref type — `initOperand`
+          // may itself be a tensor when the writer's DPS init is a
+          // `to_tensor` of an alloc (e.g. cross-core `hivm.hir.copy`, whose
+          // L1 destination is presented as a tensor). Driving createSubview
+          // off `initOperand`'s type would crash there.
           builder.setInsertionPointToStart(item->forOp.getBody());
-          if (!updatedSubview) {
-            toTensorSubview = createSubview(builder, loc, expanded,
-                                            initOperand->get().getType(), iv);
-            if (!toTensorSubview)
-              return failure();
-            initOperand->set(toTensorSubview);
-          } else {
-            toTensorSubview = createSubview(builder, loc, expanded,
-                                            memrefOperand->get().getType(), iv);
-            if (!toTensorSubview)
-              return failure();
+          Value toTensorSubview = createSubview(
+              builder, loc, expanded, memrefOperand->get().getType(), iv);
+          if (!toTensorSubview)
+            return failure();
+          // If the DPS init is itself a memref (e.g. fixpipe writing
+          // directly to an alloc), redirect it onto the multibuffered slot.
+          // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
+          // copy case), leave it alone — rewriting the inner toTensor's
+          // memref operand below is enough to redirect the writer.
+          //
+          // The fixpipe writes to a UB-typed memref but `toTensorSubview`
+          // has been address-space-stripped to match the to_tensor's memref
+          // operand. Recover the pre-cast UB-typed subview for the writer
+          // so the fixpipe verifier and downstream codegen see the correct
+          // address space; otherwise the writer is treated as an
+          // unspecified-aspace store and the staged result is corrupted.
+          if (!updatedSubview &&
+              isa<MemRefType>(initOperand->get().getType())) {
+            Value writerSubview = toTensorSubview;
+            if (auto cast = toTensorSubview
+                                .getDefiningOp<memref::MemorySpaceCastOp>())
+              writerSubview = cast.getSource();
+            initOperand->set(writerSubview);
           }
           memrefOperand->set(toTensorSubview);
         }
