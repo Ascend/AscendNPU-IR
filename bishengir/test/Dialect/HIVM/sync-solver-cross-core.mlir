@@ -604,7 +604,7 @@ module {
         scf.yield %53 : tensor<128x64xf32>
       } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, multibuffer_unroll_factor = 4 : i32}
       scf.yield %44#1, %48, %44#0, %46, %41 : tensor<128xf32>, tensor<128x64xf32>, tensor<128xf32>, i32, i32
-    }
+    } {cv_unrolled_loop}
     // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = {{.*}}
     // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = {{.*}}
     // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_MTE2>, <PIPE_S>] flag = {{.*}}

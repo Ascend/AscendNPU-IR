@@ -230,6 +230,7 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  bool isCVUnrolledLoop{false};
   std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}

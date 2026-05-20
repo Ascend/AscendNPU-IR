@@ -167,6 +167,8 @@ template <typename GlobalMixMatmulTy>
 std::optional<TCoreType>
 inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
 
+constexpr llvm::StringLiteral kCVUnrolledLoopName =
+    "cv_unrolled_loop";
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
     "multibuffer_unroll_factor";
 constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =

@@ -485,7 +485,6 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 
   int64_t eventIdNum = minWriteSize;
   for (; eventIdNum >= 1; eventIdNum--) {
-    // llvm::dbgs() << "checking event-id-num: " << eventIdNum << '\n';
     int64_t curLcm = std::lcm(lcm, eventIdNum);
     bool okRW = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
                                       rwOp2->writeMemInfo, curLcm, eventIdNum);
@@ -547,6 +546,15 @@ Solver::checkCVMultiBufferEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
     if (!parCond2->isProperAncestor(rwOp1)) {
       return {};
     }
+  }
+  auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
+  auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
+  if (parentCVUnrolledLoop1 == nullptr ||
+      parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
+    return {};
+  }
+  if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
+    return {};
   }
   assert(parentLoop1->multibufferUnrollNum.value() ==
          parentLoop2->multibufferUnrollNum.value());
