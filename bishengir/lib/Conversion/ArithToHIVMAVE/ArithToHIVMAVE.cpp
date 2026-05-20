@@ -1766,6 +1766,35 @@ struct LogicOpLowering : public OpConversionPattern<SourceOp> {
   }
 };
 
+struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
+  using OpConversionPattern<math::FmaOp>::OpConversionPattern;
+
+  using FmaOpAdaptor =
+      typename OpConversionPattern<math::FmaOp>::OpAdaptor;
+
+  LogicalResult
+  matchAndRewrite(math::FmaOp op, FmaOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto a = adaptor.getA();
+    auto b = adaptor.getB();
+    auto c = adaptor.getC();
+
+    auto resType = op.getResult().getType();
+
+    VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
+    if (!resVecType || resVecType.getShape().size() != 1) {
+      return failure();
+    }
+
+    Value mask = hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
+
+    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, a, b, c, mask, nullptr);
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
 void mlir::hivmave::populateArithToHIVMAVEConversionPatterns(
     RewritePatternSet &patterns) {
   patterns
@@ -1811,7 +1840,7 @@ void mlir::hivmave::populateArithToHIVMAVEConversionPatterns(
            VFTypeConvertionPattern<arith::FPToSIOp>,
            VFTypeConvertionPattern<arith::FPToUIOp>,
            ConstantOpToHivmPLTLowering, ConstantOpToHivmBroadcastLowering,
-           ConstantOpToHivmVCIVCPLowering, SelectOpPattern, BitcastOpPattern>(
+           ConstantOpToHivmVCIVCPLowering, SelectOpPattern, BitcastOpPattern, FmaOpLowering>(
           patterns.getContext());
 }
 

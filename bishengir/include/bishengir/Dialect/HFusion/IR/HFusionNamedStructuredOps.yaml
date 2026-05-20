@@ -190,6 +190,90 @@ structured_op: !HFusionStructuredOpConfig
               scalar_arg: rhs
 --- !HFusionOpConfig
 metadata: !HFusionOpMetadata
+  name: elemwise_ternary
+  cpp_class_name: ElemwiseTernaryOp
+  doc: |-
+    Applies the binary function fun elementwise.
+
+    Numeric casting is performed on the input operand, promoting it to the same
+    data type as the accumulator/output.
+structured_op: !HFusionStructuredOpConfig
+  args:
+  - !HFusionOperandDefConfig
+    name: x
+    kind: input_tensor
+    type_var: T1
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: y
+    kind: input_tensor
+    type_var: T2
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: z
+    kind: input_tensor
+    type_var: T3
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: O
+    kind: output_tensor
+    type_var: U
+    shape_map: affine_map<() -> ()>
+  - !HFusionOperandDefConfig
+    name: fun
+    kind: ternary_fn_attr
+    default_fn: fma
+  - !HFusionOperandDefConfig
+    name: cast
+    kind: type_fn_attr
+    default_fn: cast_signed
+  indexing_maps: !HFusionIndexingMapsConfig
+    static_indexing_maps:
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+    - affine_map<() -> ()>
+  iterator_types: []
+  assignments:
+  - !ScalarAssign
+    arg: O
+    value: !ScalarExpression
+      scalar_fn:
+        kind: ternary
+        attr_names:
+          - fun
+        operands:
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: x
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: y
+        - !ScalarExpression
+          scalar_fn:
+            kind: type
+            attr_names:
+              - cast
+            type_var: U
+            operands:
+            - !ScalarExpression
+              scalar_arg: z
+
+--- !HFusionOpConfig
+
+--- !HFusionOpConfig
+metadata: !HFusionOpMetadata
   name: compare
   cpp_class_name: CompareOp
   doc: |-

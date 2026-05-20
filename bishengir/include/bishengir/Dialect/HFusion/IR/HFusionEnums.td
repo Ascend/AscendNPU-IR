@@ -83,7 +83,8 @@ def CompareFn : I32EnumAttr<"CompareFn", "", [
 }
 
 def TernaryFn : I32EnumAttr<"TernaryFn", "", [
-  I32EnumAttrCase<"select", 0>
+  I32EnumAttrCase<"select", 0>,
+  I32EnumAttrCase<"fma", 1>
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

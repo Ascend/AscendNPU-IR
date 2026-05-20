@@ -314,3 +314,14 @@ func.func @test_mului_extended(%arg0: vector<64xi64>, %arg1: vector<64xi64>) -> 
 }
 
 // -----
+
+// CHECK-LABEL: @lower_fma
+// CHECK: ave.hir.vmula
+// CHECK-SAME: vector<8xf32>
+func.func @lower_fma(%a: vector<8xf32>, %b: vector<8xf32>, %c: vector<8xf32>) -> vector<8xf32> {
+  %result = math.fma %a, %b, %c : vector<8xf32>
+  return %result: vector<8xf32>
+}
+
+// -----
+

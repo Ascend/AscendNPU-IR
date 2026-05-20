@@ -541,7 +541,6 @@ public:
                       rewriter, loc, linalg::UnaryFn::abs, ValueRange(exponent),
                       ValueRange(absExpInit))
                       ->getResult(0);
-
     ///   2. mask1 = cmp_eq(absy, inf)
     arith::ConstantOp constInf = nullptr;
     if (elementType.isF16()) {
@@ -661,21 +660,32 @@ public:
             ValueRange({absBase, positiveTwo}), ValueRange(modEmptyOp))
             ->getResult(0);
 
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange({mod, negativeTwo}), ValueRange(mulEmptyOp))
-                   ->getResult(0);
+    Value res;
+    if (archisAscend950 && elementType.isF32()) { 
+      auto fmaEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      res  = hfusion::createTernaryOp<hfusion::ElemwiseTernaryOp, hfusion::TernaryFn,
+                                           hfusion::TernaryFnAttr>(
+              rewriter, loc, hfusion::TernaryFn::fma,
+              ValueRange({mod, negativeTwo, positiveOne}), ValueRange(fmaEmptyOp))
+              ->getResult(0);
+    } else {
 
-    auto addEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto add = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::add,
-                   ValueRange({mul, positiveOne}), ValueRange(addEmptyOp))
-                   ->getResult(0);
+      auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
+                     rewriter, loc, linalg::BinaryFn::mul,
+                     ValueRange({mod, negativeTwo}), ValueRange(mulEmptyOp))
+                     ->getResult(0);
 
-    return add;
+      auto addEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
+                     rewriter, loc, linalg::BinaryFn::add,
+                     ValueRange({mul, positiveOne}), ValueRange(addEmptyOp))
+                     ->getResult(0);
+    }
+
+    return res;
   }
 
   /// calculate ((-1) ^ y) * exp(y * ln|x|), where x is baseNum and y is
