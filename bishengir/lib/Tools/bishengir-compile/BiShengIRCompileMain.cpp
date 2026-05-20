@@ -269,7 +269,11 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
   if (config.getEnableVFFusion()) {
-    tryTimes = 2;
+    // With VFFusion enabled, the ub-overflow fallback runs in tiers:
+    // first try disabling auto-multi-buffer, then disable VFFusion plus
+    // the VF reachable check. Reserve one extra attempt when
+    // auto-multi-buffer is also enabled so both tiers have room to run.
+    tryTimes = config.getEnableAutoMultiBuffer() ? 3 : 2;
   } else if (config.getEnableTuningMode() || config.getEnableTritonKernelCompile()) {
     tryTimes = 1;
   }
@@ -303,15 +307,31 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
       if (!success && hasUboverflow) {
-        diagEngine.eraseHandler(handlerID);
-        for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-          diagEngine.emit(std::move(diag));
+        if (config.getEnableAutoMultiBuffer()) {
+          // First-tier fallback on ub overflow: turn off
+          // auto-multi-buffer and retry. Keep the diagnostic handler
+          // registered so a subsequent ub overflow on the retry can
+          // still be detected; clear the captured diagnostics so they
+          // are not surfaced if the retry succeeds (or are replaced by
+          // fresher ones before the next-tier fallback re-emits them).
+          LDBG("ub overflow detected, fallback with disabled auto multi "
+               "buffer");
+          collectedDiagnostics.clear();
+          config.setEnableAutoMultiBuffer(false);
+        } else {
+          // Next-tier fallback (or first tier when auto-multi-buffer
+          // was already off): disable VFFusion and the VF reachable
+          // check.
+          diagEngine.eraseHandler(handlerID);
+          for (auto &diag : llvm::reverse(collectedDiagnostics)) {
+            diagEngine.emit(std::move(diag));
+          }
+          if (config.getEnableVFFusion()) {
+            LDBG("ub overflow detected, fallback with disabled vffusion");
+            config.setEnableVFFusion(false);
+          }
+          config.setDisableVFReachableCheck(true);
         }
-        if (config.getEnableVFFusion()) {
-          LDBG("ub overflow detected, fallback with disabled vffusion");
-          config.setEnableVFFusion(false);
-        }
-        config.setDisableVFReachableCheck(true);
       }
     }
 
