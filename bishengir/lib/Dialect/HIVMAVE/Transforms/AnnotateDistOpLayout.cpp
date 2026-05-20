@@ -125,7 +125,8 @@ int contextFreeBitwidthCollect(Operation *op) {
 }
 
 bool isPredicateArithOp(Operation *op) {
-  return isa<hivmave::PregAndOp, hivmave::PregOrOp, hivmave::PregXorOp>(op);
+  return isa<hivmave::PregAndOp, hivmave::PregOrOp, hivmave::PregXorOp,
+             hivmave::PregNotOp>(op);
 }
 
 int pregDefinerAnalysis(Operation *op) {

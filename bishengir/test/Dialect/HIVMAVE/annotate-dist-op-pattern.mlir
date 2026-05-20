@@ -34,3 +34,21 @@ func.func @test_gather_using_pge_mask(%arg0: memref<2xi64, #hivm.address_space<u
   ave.hir.masked_store <NORM_B16> %arg2[%c0], %0, %2 : memref<2xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
   return
 }
+
+// -----
+// CHECK-LABEL: @test_preg_not_and_alignment
+func.func @test_preg_not_and_alignment(%arg0: memref<64xi1, #hivm.address_space<ub>>, %arg1: memref<64xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = -1 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %mask0 = ave.hir.pge <ALL> : vector<64xi1>
+  %pred = ave.hir.vload <NORM> %arg0[%c0] : memref<64xi1, #hivm.address_space<ub>> into vector<64xi1>
+  // CHECK: preg.not <b8> {{.*}} {element_alignment_bit_width = 32 : i32}
+  %not_result = ave.hir.preg.not <b8> %pred, %mask0 : vector<64xi1>
+  %mask1 = ave.hir.pge <ALL> : vector<64xi1>
+  // CHECK: preg.and <b8> {{.*}} {element_alignment_bit_width = 32 : i32}
+  %and_result = ave.hir.preg.and <b8> %not_result, %pred, %mask1 : vector<64xi1>
+  %mask2 = ave.hir.pge <ALL> : vector<64xi1>
+  %data = ave.hir.vload <NORM> %arg1[%c0] : memref<64xi8, #hivm.address_space<ub>> into vector<64xi8>
+  %sel = ave.hir.vsel %and_result, %data, %data : vector<64xi1>, vector<64xi8>
+  ave.hir.masked_store <NORM_B8> %arg1[%c0], %mask2, %sel : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
+  return
+}
