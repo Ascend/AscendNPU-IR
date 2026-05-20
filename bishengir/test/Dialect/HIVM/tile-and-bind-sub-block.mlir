@@ -2316,19 +2316,22 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK-LABEL: func.func @fwd_kernel_mix_aiv
 
 // CHECK: %{{.*}} = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<3>, hivm.tiling_dim = 0 : index} : memref<32x128xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32x128xf32, #hivm.address_space<ub>>
+
+// CHECK: %{{.*}} = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<3>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32x128xf32, #hivm.address_space<ub>>
 // CHECK: %[[MEMSPACECAST:.*]] = memref.memory_space_cast %{{.*}} : memref<32x128xf32, #hivm.address_space<ub>> to memref<32x128xf32>
 
 // CHECK: %{{.*}} = memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>, hivm.tiling_dim = 0 : index} : memref<32x128xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32x128xf32, #hivm.address_space<ub>>
 // CHECK: %[[MEMSPACECAST_9:.*]] = memref.memory_space_cast %{{.*}} : memref<32x128xf32, #hivm.address_space<ub>> to memref<32x128xf32>
 
 // CHECK: %{{.*}} = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<5>, hivm.tiling_dim = 0 : index} : memref<32xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<5>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32xf32, #hivm.address_space<ub>>
 // CHECK: %[[MEMSPACECAST_11:.*]] = memref.memory_space_cast %{{.*}} : memref<32xf32, #hivm.address_space<ub>> to memref<32xf32>
 
 // CHECK: %{{.*}} = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<6>, hivm.tiling_dim = 0 : index} : memref<32xf32, #hivm.address_space<ub>>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<6>, hivm.tiling_dim = 0 : index, tiledAlloc} : memref<32xf32, #hivm.address_space<ub>>
 // CHECK: %[[MEMSPACECAST_13:.*]] = memref.memory_space_cast %{{.*}} : memref<32xf32, #hivm.address_space<ub>> to memref<32xf32>
 
 // CHECK: scf.if %{{.*}} {
