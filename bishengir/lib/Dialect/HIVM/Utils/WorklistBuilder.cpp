@@ -236,6 +236,16 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
     if (visited.contains(op))
       continue;
     visited.insert(op);
+
+    // Since the same gm memref could be loaded multiple times, avoid pulling
+    // the load into current work item if its loaded value is not being used
+    if (isLoadLikeOp(op)) {
+      auto dpsOp = cast<DestinationStyleOpInterface>(op);
+      Value dst = dpsOp.getDpsInitOperand(0)->get();
+      if (traceValueDef(dst) != rootVal)
+        continue;
+    }
+
     users.push_back(op);
 
     // If not memref result, dont need to trace any more
