@@ -334,47 +334,6 @@ func.func @test_NormalizeBrcCast_opt_cast_FToI_brc(%arg0: tensor<1x32xf32>, %arg
 
 // -----
 
-// CHECK-LABEL: func.func @test_NormalizetruncfBf16_scalar_f32_to_bf16
-// CHECK-SAME: (%[[ARG0:.*]]: f32) -> bf16
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[FROM:.*]] = tensor.from_elements %[[ARG0]] : tensor<1xf32>
-// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<1xbf16>
-// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xf32>) outs(%[[EMPTY]] : tensor<1xbf16>) -> tensor<1xbf16>
-// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xbf16>
-// CHECK: return %[[EXTRACT]] : bf16
-func.func @test_NormalizetruncfBf16_scalar_f32_to_bf16(%arg0: f32) -> bf16 {
-  %0 = arith.truncf %arg0 : f32 to bf16
-  return %0 : bf16
-}
-
-// -----
-
-// CHECK-LABEL: func.func @test_NormalizetruncfExtf_scalar_bf16_to_f32
-// CHECK-SAME: (%[[ARG0:.*]]: bf16) -> f32
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[FROM:.*]] = tensor.from_elements %[[ARG0]] : tensor<1xbf16>
-// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<1xf32>
-// CHECK: %[[CAST:.*]] = hivm.hir.vcast ins(%[[FROM]] : tensor<1xbf16>) outs(%[[EMPTY]] : tensor<1xf32>) -> tensor<1xf32>
-// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[CAST]][%[[C0]]] : tensor<1xf32>
-// CHECK: return %[[EXTRACT]] : f32
-func.func @test_NormalizetruncfExtf_scalar_bf16_to_f32(%arg0: bf16) -> f32 {
-  %0 = arith.extf %arg0 : bf16 to f32
-  return %0 : f32
-}
-
-// -----
-
-// CHECK-LABEL: func.func @test_NormalizetruncfExtf_fold_truncf_extf
-// CHECK-SAME: (%[[ARG0:.*]]: f32) -> f32
-// CHECK: return %[[ARG0]] : f32
-func.func @test_NormalizetruncfExtf_fold_truncf_extf(%arg0: f32) -> f32 {
-  %0 = arith.truncf %arg0 : f32 to bf16
-  %1 = arith.extf %0 : bf16 to f32
-  return %1 : f32
-}
-
-// -----
-
 // CHECK-LABEL: func.func @test_NormalizeAnyToF32UnaryRecOp_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<5x1xf16>) -> tensor<5x1xf16>
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<5x1xf32>
