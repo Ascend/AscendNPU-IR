@@ -212,6 +212,16 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   if (hivmPipelineOptions.enableLayoutOptimization) {
+    // Re-run Insert/Propagate to handle the new MmadL1Op ops materialized by
+    // TileBatchMMIntoLoop, which the first round skipped.
+    pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+    PropagateConvertLayoutOptions postTileOptions;
+    postTileOptions.allowAgnosticOps = false;
+    pm.nest<func::FuncOp>().addPass(
+        createPropagateConvertLayoutPass(postTileOptions));
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
+
     pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
