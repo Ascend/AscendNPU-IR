@@ -314,18 +314,17 @@ public:
     if (!inputType) {
       return failure();
     }
-    /// We differentiate storeOp and copyOp
-    if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
-      if (!Op.getResults().empty()) { // If copy Op with results
-        // TODO: Check if there is case of copyOp with result, if no, delete
-        // here.
+    if (!Op.getResults().empty()) { // If Op with results
         if (!llvm::any_of(Op->getUsers(), [](Operation *user) {
               return isa<annotation::MarkOp>(user);
             })) {
-          return failure(); // If the user of CopyOp is not MarkOp, it cannot be
+          return failure(); // If the user of StoreCopyOp is not MarkOp, it cannot be
                             // a tiling start point.
         }
-      }
+    }
+
+    /// We differentiate storeOp and copyOp
+    if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
       // If the copy input is memref, we cannot tile it.
       if (isa<mlir::MemRefType>(inputType)) {
         Op->emitWarning(
