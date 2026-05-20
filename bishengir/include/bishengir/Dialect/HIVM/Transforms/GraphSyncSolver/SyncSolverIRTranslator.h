@@ -176,6 +176,8 @@ protected:
 
   bool isParallelLoop(Loop *loopOp);
 
+  bool isCVUnrolledLoop(Loop *loopOp);
+
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
 
   std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);

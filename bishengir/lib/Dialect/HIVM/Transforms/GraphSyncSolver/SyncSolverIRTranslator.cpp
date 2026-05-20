@@ -603,6 +603,14 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+bool IRTranslator::isCVUnrolledLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(hivm::kCVUnrolledLoopName);
+  }
+  return false;
+}
+
 std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   assert(loopOp != nullptr);
   auto forOp = dyn_cast<scf::ForOp>(loopOp->op);
@@ -702,6 +710,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (isa<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());
         for (auto &region : op.getRegions()) {
