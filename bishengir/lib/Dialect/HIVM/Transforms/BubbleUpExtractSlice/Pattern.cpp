@@ -1863,6 +1863,22 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.replaceOp(sliceOp, newToTensorOp);
         if (toTensorOp->use_empty())
           rewriter.eraseOp(toTensorOp);
+
+        // If original memorySpaceCastOp has a subview user, replace all uses
+        // of that subview with newMemorySpaceCastOp only if the subview has
+        // to_be_bubbled_slice mark
+        for (Operation *userOp : llvm::make_early_inc_range(
+                 memorySpaceCastOp.getResult().getUsers())) {
+          if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
+            if (!isMarkedExtractSliceOp(subViewOp))
+              continue;
+            rewriter.replaceAllUsesWith(subViewOp.getResult(),
+                                        newMemorySpaceCastOp.getResult());
+            if (subViewOp->use_empty())
+              rewriter.eraseOp(subViewOp);
+          }
+        }
+
         if (memorySpaceCastOp->use_empty())
           rewriter.eraseOp(memorySpaceCastOp);
         if (UbAllocOp->use_empty())
