@@ -11,21 +11,23 @@
 // (MarkMultiBuffer, PlanMemory, GraphSyncSolver, EnableMultiBuffer) to drive
 // per-iteration slot rotation.
 //
-// The two backing strategies are:
-//   - scf.for : reuse the legacy (iv - lb) / step path implemented in
-//               EnableMultiBuffer.cpp's createNestedIndexModular helper.
-//               The scf.for body is guaranteed to dominate every use, so no
-//               new state is materialized.
+// Counter strategy (unified for scf.for / scf.while per 设计方案.md
+// supplement #1+#3):
+//   An i64 counter is materialized as a memref.alloca<1xi64>() at the top
+//   of the parent FunctionOpInterface. The alloca carries
+//   kMultiBufferCounterAttr whose value matches a kMultiBufferLoopIdAttr
+//   placed on the owning loop op itself. Counter discovery is purely
+//   IR-driven: a second pass that constructs a fresh adapter for the same
+//   loop will find and reuse the existing alloca/load/store instead of
+//   creating duplicates. The loop signature (iter_args / yields / result
+//   types) is *not* modified.
 //
-//   - scf.while: an i64 counter is materialized as a memref.alloca() at the
-//                top of the parent FunctionOpInterface. The alloca carries the
-//                kMultiBufferCounterAttr whose value matches a
-//                kMultiBufferLoopIdAttr placed on the scf.while op itself.
-//                This makes counter discovery purely IR-driven: a second pass
-//                that constructs a fresh adapter for the same loop will find
-//                and reuse the existing alloca instead of creating a duplicate.
-//                The scf.while signature (init / condition / yield /
-//                iter_args / result types) is *not* modified.
+//   For scf.for the body block is `forOp.getBody()`; for scf.while it is
+//   `whileOp.getAfter().front()`. Body-head load + body-tail
+//   increment-store are inserted into this body block, and the alloca
+//   sits at funcOp entry so the counter persists across any outer-loop
+//   re-entries (equivalent to the legacy affine-flattening (iv-lb)/step
+//   semantics but expressed as stateful IR instead of a pure expression).
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,21 +49,20 @@ public:
   /// Returns failure if `loop` is neither scf.for nor scf.while.
   static FailureOr<MultiBufferLoopAdapter> create(LoopLikeOpInterface loop);
 
-  /// Returns the slot-select index value, computed as `counter mod modular`.
-  /// For scf.for this defers to createNestedIndexModular which flattens
-  /// nested for loops. For scf.while this performs `arith.remui (load,
-  /// modular)` at the builder's current insertion point. Counter materialization
-  /// for scf.while (alloca + init + body-head load + body-tail increment) is
-  /// done idempotently on first call.
+  /// Returns the slot-select index value, computed as `counter mod modular`,
+  /// where counter is the body-head load of the i64 alloca counter for both
+  /// scf.for and scf.while. Counter materialization (alloca + init +
+  /// body-head load + body-tail increment-store) is done idempotently on
+  /// the first call.
   Value getModuloIndex(OpBuilder &builder, int64_t modular);
 
-  /// Returns the raw counter SSA value (no modulo). For scf.for this is
-  /// `(iv - lb) / step` flattened across nests. For scf.while this is the
-  /// cached body-head load value.
+  /// Returns the raw counter SSA value (no modulo), index-typed, as the
+  /// body-head load of the i64 alloca counter for both for and while.
   Value getIterationCounter(OpBuilder &builder);
 
-  /// Idempotent. For scf.while ensures the body-tail "+1; store back to
-  /// alloca" pair exists. No-op for scf.for. Safe to call from any pass.
+  /// Idempotent. Ensures the body-tail "+1; store back to alloca" pair
+  /// exists. Safe to call from any pass; primarily a backstop in case
+  /// some client bypassed getModuloIndex / getIterationCounter.
   void finalizeIncrement(OpBuilder &builder);
 
   LoopLikeOpInterface loop() const { return loop_; }
@@ -86,8 +87,10 @@ private:
 
   /// Find existing counter alloca via attribute lookup, or create one at the
   /// top of the parent FunctionOpInterface (alloca + init store + body-head
-  /// load are all materialized at once and tagged so subsequent calls can
-  /// reuse them).
+  /// load + body-tail increment-store are all materialized at once and
+  /// tagged so subsequent calls can reuse them). Works uniformly for both
+  /// scf.for (body = forOp.getBody()) and scf.while (body =
+  /// whileOp.getAfter().front()).
   void ensureCounterMaterialized(OpBuilder &builder);
 
   LoopLikeOpInterface loop_;
