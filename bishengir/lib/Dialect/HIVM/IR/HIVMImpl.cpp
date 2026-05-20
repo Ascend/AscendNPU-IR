@@ -504,7 +504,8 @@ Type getAnnotationMarkByteAlignment(Value value) {
 }
 
 VCastOp castTo(OpBuilder &builder, Location loc, Value src,
-               hivm::RoundModeAttr roundMode, Type targetElemType) {
+               hivm::RoundModeAttr roundMode, Type targetElemType,
+               hivm::TypeFn casting) {
   // Create targetTensor
   Value targetTensor =
       createTmpBufferOrTensorWithTargetType(builder, loc, src, targetElemType);
@@ -523,7 +524,8 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
-      loc, resultTypeRange, src, targetTensor, roundMode, hivm::TypeFnAttr{});
+      loc, resultTypeRange, src, targetTensor,
+      roundMode, builder.getAttr<hivm::TypeFnAttr>(casting));
   return VCastOp;
 }
 

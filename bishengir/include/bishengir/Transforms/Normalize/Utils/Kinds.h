@@ -27,6 +27,7 @@ enum class BinaryKind {
   Mul,
   Div,
   Mod,
+  ModUnsigned,
   And,
   Min,
   Max,
@@ -43,7 +44,7 @@ enum class CastRoundKind {
   RInt,
   Trunc,
   TruncEnableOverflow,
-  TruncWithOverflow
+  TruncWithOverflow,
 };
 enum class CastSignKind { Preserve, Signed, Unsigned };
 enum class CastUnsignedModeKind {

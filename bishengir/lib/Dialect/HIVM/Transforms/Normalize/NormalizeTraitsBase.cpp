@@ -25,7 +25,6 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/CastingTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 using namespace mlir;
@@ -102,9 +101,9 @@ Value mlir::hivm::NormalizeTraitsBase::castScalarThroughTensor(
 }
 
 template <typename UnaryOp>
-mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
-                              mlir::Location loc, mlir::Value input,
-                              mlir::Value dst) {
+static mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
+                                     mlir::Location loc, mlir::Value input,
+                                     mlir::Value dst) {
   return rewriter
       .create<UnaryOp>(loc, mlir::TypeRange{dst.getType()},
                        mlir::ValueRange{input}, mlir::ValueRange{dst})
@@ -112,9 +111,9 @@ mlir::Value createHIVMUnaryOp(mlir::PatternRewriter &rewriter,
 }
 
 template <typename BinaryOp>
-mlir::Value createHIVMBinaryOp(mlir::PatternRewriter &rewriter,
-                               mlir::Location loc, mlir::Value lhs,
-                               mlir::Value rhs, mlir::Value dst) {
+static mlir::Value createHIVMBinaryOp(mlir::PatternRewriter &rewriter,
+                                      mlir::Location loc, mlir::Value lhs,
+                                      mlir::Value rhs, mlir::Value dst) {
   return rewriter
       .create<BinaryOp>(loc, mlir::TypeRange{dst.getType()},
                         mlir::ValueRange{lhs, rhs}, mlir::ValueRange{dst})
@@ -148,6 +147,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Mul, createHIVMBinaryOp<hivm::VMulOp>},
     {BinaryKind::Div, createHIVMBinaryOp<hivm::VDivOp>},
     {BinaryKind::Mod, createHIVMBinaryOp<hivm::VModOp>},
+    {BinaryKind::ModUnsigned, createHIVMBinaryOp<hivm::VModUIOp>},
     {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
     {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
@@ -170,6 +170,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Mul, matchHIVMOp<hivm::VMulOp>},
     {BinaryKind::Div, matchHIVMOp<hivm::VDivOp>},
     {BinaryKind::Mod, matchHIVMOp<hivm::VModOp>},
+    {BinaryKind::ModUnsigned, matchHIVMOp<hivm::VModUIOp>},
     {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
     {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
@@ -191,7 +192,7 @@ bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, BinaryKind kind) {
   return it->second(op);
 }
 
-CompareMode mapCompareKindToCompareMode(CompareKind kind) {
+static CompareMode mapCompareKindToCompareMode(CompareKind kind) {
   static const llvm::DenseMap<CompareKind, CompareMode> compareKindMap = {
       {CompareKind::EQ, CompareMode::EQ},
       {CompareKind::NE, CompareMode::NE},
@@ -437,4 +438,29 @@ hivm::UnsignedMode mlir::hivm::NormalizeTraitsBase::mapCastUnsignedModeKind(
   auto unsignedMode = mapCastUnsignedModeKindToUnsignedMode(kind);
   return unsignedMode.value_or(preserveMode);
 }
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createSelectOp(
+    PatternRewriter &rewriter, Location loc, Value cond, Value a, Value b,
+    Value dst) {
+  return rewriter
+      .create<hivm::VSelOp>(loc, mlir::TypeRange{dst.getType()},
+                            mlir::ValueRange{cond, a, b}, mlir::ValueRange{dst},
+                            mlir::Value{}, rewriter.getDenseI64ArrayAttr({}),
+                            rewriter.getDenseI64ArrayAttr({}))
+      .getResults()[0];
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createIsInfOp(
+    PatternRewriter &rewriter, Location loc, Value y) {
+  auto shapedType = cast<ShapedType>(y.getType());
+  Type boolShapedType = shapedType.clone(rewriter.getI1Type());
+  auto tensorType = cast<TensorType>(boolShapedType);
+  auto emptyDst = rewriter.create<tensor::EmptyOp>(loc, tensorType.getShape(),
+                                                   tensorType.getElementType());
+  return rewriter
+      .create<hivm::VIsInfOp>(loc, mlir::TypeRange{emptyDst.getType()},
+                              mlir::ValueRange{y}, mlir::ValueRange{emptyDst})
+      .getResults()[0];
+}
+
 } // namespace mlir::hivm

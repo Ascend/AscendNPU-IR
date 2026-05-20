@@ -46,6 +46,7 @@ struct NormalizeHIVMPass
     auto *context = &getContext();
     RewritePatternSet patterns(context);
     populateNormalizeTrigPatterns(patterns);
+    populateNormalizeModPatterns(patterns);
     populateNormalizeI8I32CmpPatterns(patterns);
     populateNormalizeArithmeticPatterns(patterns);
     populateNormalizePrimaryMathPatterns(patterns);
@@ -53,6 +54,7 @@ struct NormalizeHIVMPass
     populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeBitwiseComparisonPatterns(patterns);
     populateNormalizeShiftI8ToI16(patterns);
+    populateNormalizeLateMathPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,
     // but not an arith.constant dense tensor. Dense constants are handled by

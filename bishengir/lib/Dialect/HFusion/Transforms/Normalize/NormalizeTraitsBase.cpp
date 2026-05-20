@@ -121,6 +121,7 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
       {BinaryKind::Mod, hfusion::BinaryFn::mod},
       {BinaryKind::Min, hfusion::BinaryFn::minf},
       {BinaryKind::Max, hfusion::BinaryFn::maxf},
+      {BinaryKind::ModUnsigned, hfusion::BinaryFn::modui},
       {BinaryKind::And, hfusion::BinaryFn::vand},
       {BinaryKind::Or, hfusion::BinaryFn::vor},
   };
@@ -349,6 +350,25 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
       .create<hfusion::BitcastOp>(loc, TypeRange{resultType},
                                   ValueRange{source}, ValueRange{init})
       .getResult(0);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createSelectOp(
+    PatternRewriter &rewriter, Location loc, Value cond, Value a, Value b,
+    Value dst) {
+  return rewriter
+      .create<hfusion::SelectOp>(loc, mlir::TypeRange{dst.getType()},
+                                 mlir::ValueRange{cond, a, b},
+                                 mlir::ValueRange{dst})
+      .getResults()[0];
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createIsInfOp(
+    PatternRewriter &rewriter, Location loc, Value y) {
+  Type yType = y.getType();
+  Type boolType = rewriter.getI1Type();
+  if (auto shapedType = dyn_cast<ShapedType>(yType))
+    boolType = shapedType.clone(rewriter.getI1Type());
+  return rewriter.create<hfusion::IsInfOp>(loc, boolType, y)->getResults()[0];
 }
 
 bool mlir::hfusion::NormalizeTraitsBase::matchCastRoundMode(

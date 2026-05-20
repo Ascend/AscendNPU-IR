@@ -522,6 +522,10 @@ LogicalResult VCastOp::verify() {
   /// modes.
   /// considering cast i4 to i16 only supports rint, so cast i4 to i8 only
   /// supports rint mode.
+  /// Keep verifier-only cast whitelists aligned with real lowering support.
+  /// These two unsigned i8 <-> i16 entries (uint8_t_to_uint16_t_rintmode and
+  /// uint16_t_to_uint8_t_truncwithoverflowmode) rely on NormalizeCastLowering 
+  /// to rewrite the path after VCastOp verification succeeds.
 
   const std::set<std::string> softSupportedCast{
       "float_to_bool_truncmode",
@@ -572,6 +576,8 @@ LogicalResult VCastOp::verify() {
       "uint32_t_to_float_rintmode",
       "uint32_t_to_bfloat16_t_rintmode",
       "float_to_float8_e4m3_t_rintmode",
+      "uint8_t_to_uint16_t_rintmode",
+      "uint16_t_to_uint8_t_truncwithoverflowmode",
       "uint8_t_to_uint32_t_rintmode",
       "uint32_t_to_uint64_t_rintmode",
       "float8_e4m3_t_to_float_rintmode",
