@@ -165,6 +165,9 @@ def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
     Option<"disableTightlyCoupledBufferReuse", "disable-tightly-coupled-buffer-reuse", "bool",
            /*default=*/"false",
            "Disable tightly coupled buffer reuse, default : false">,
+    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+           /*default=*/"false",
+           "Disable VF reachable check, default : false">,
   ];
 }
 

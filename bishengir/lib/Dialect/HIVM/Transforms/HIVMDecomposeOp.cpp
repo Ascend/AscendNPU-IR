@@ -1364,6 +1364,7 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
         rewriter, loc, src0, rewriter.getI1Type());
     auto compareAttr =
         rewriter.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::EQ);
+        
     rewriter.create<hivm::VCmpOp>(op.getLoc(), TypeRange(),
                                   ValueRange({tmpUB, src0}), Value(condUB),
                                   compareAttr);

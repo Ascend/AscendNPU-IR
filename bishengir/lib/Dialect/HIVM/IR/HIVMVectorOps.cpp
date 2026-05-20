@@ -575,7 +575,19 @@ LogicalResult VCastOp::verify() {
       "uint8_t_to_uint32_t_rintmode",
       "uint32_t_to_uint64_t_rintmode",
       "float8_e4m3_t_to_float_rintmode",
-      "float8_e5m2_t_to_float_rintmode"};
+      "float8_e5m2_t_to_float_rintmode",
+      "uint32_t_to_uint8_t_truncmode",
+      "int16_t_to_int8_t_truncmode",
+      "int32_t_to_int16_t_truncmode",
+      "uint8_t_to_uint16_t_rintmode",
+      "uint64_t_to_float_rintmode",
+      "uint16_t_to_float_rintmode",
+      "uint32_t_to_uint16_t_truncmode",
+      "float_to_uint64_t_truncmode",
+      "uint8_t_to_uint16_t_rintmode",
+      "uint16_t_to_uint8_t_truncwithoverflowmode",
+      "uint16_t_to_uint32_t_rintmode"
+    };
 
   std::string castNameWithMode = getCastName(true);
   // check whether supports the cast operation.

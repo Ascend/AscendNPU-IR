@@ -55,6 +55,14 @@ using namespace mlir::hivm;
 
 namespace {
 
+static void copyAttrIfPresent(Operation* const &srcOp, Operation* const &dstOp,
+                              StringRef attrName) {
+  if (auto attr = srcOp->getAttr(attrName)) {
+    if (!dstOp->getAttr(attrName))
+      dstOp->setAttr(attrName, attr);
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMElemwiseOp
 //===----------------------------------------------------------------------===//
@@ -185,12 +193,26 @@ template <>
 Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
   auto castOp = cast<hfusion::CastOp>(op);
-  hivm::RoundMode roundMode = mapRoundModeHFusionToHiVM(castOp.getRoundMode());
-  hivm::TypeFn casting = mapCastHFusionToHiVM(castOp.getCast());
 
-  return b.create<hivm::VCastOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
-                                 dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                 roundMode, casting);
+  hivm::RoundMode roundMode =
+      mapRoundModeHFusionToHiVM(castOp.getRoundMode());
+  hivm::TypeFn casting = mapCastHFusionToHiVM(castOp.getCast());
+  hivm::UnsignedMode unsignedMode =
+      mlir::hfusion_conversion_utils::mapUnsignedModeHFusionToHiVM(castOp.getUnsignedMode());
+
+  auto hivmOp = b.create<hivm::VCastOp>(
+      dpsOp->getLoc(), dpsOp->getResultTypes(), dpsOp.getDpsInputs(),
+      dpsOp.getDpsInits(), roundMode, casting);
+
+  hivmOp->setAttr(castOp.getEnableOverflowAttrName(),
+                  b.getBoolAttr(castOp.getEnableOverflow()));
+  hivmOp->setAttr(castOp.getEnableSaturateAttrName(),
+                  b.getBoolAttr(castOp.getEnableSaturate()));
+  hivmOp->setAttr(
+      hivm::UnsignedModeAttr::name,
+      hivm::UnsignedModeAttr::get(b.getContext(), unsignedMode));
+
+  return hivmOp;
 }
 
 Operation *convertNegfToMulOp(ElemwiseOpConvertor &b) {
@@ -253,62 +275,91 @@ Operation *convertBinaryLinalgOp(ElemwiseOpConvertor &b,
 
 Operation *convertUnaryHFusionOp(ElemwiseOpConvertor &b,
                                  hfusion::UnaryFn kind) {
+  Operation *hivmOp = nullptr;
+
   switch (kind) {
   case hfusion::UnaryFn::relu:
-    return b.create<hivm::VReluOp>();
+    hivmOp = b.create<hivm::VReluOp>();
+    break;
   case hfusion::UnaryFn::sqrt:
-    return b.create<hivm::VSqrtOp>();
+    hivmOp = b.create<hivm::VSqrtOp>();
+    break;
   case hfusion::UnaryFn::rsqrt:
-    return b.create<hivm::VRsqrtOp>();
+    hivmOp = b.create<hivm::VRsqrtOp>();
+    break;
   case hfusion::UnaryFn::rec:
-    return b.create<hivm::VRecOp>();
+    hivmOp = b.create<hivm::VRecOp>();
+    break;
   case hfusion::UnaryFn::vnot:
-    return b.create<hivm::VNotOp>();
+    hivmOp = b.create<hivm::VNotOp>();
+    break;
   case hfusion::UnaryFn::tanh:
-    return b.create<hivm::VTanhOp>();
+    hivmOp = b.create<hivm::VTanhOp>();
+    break;
   case hfusion::UnaryFn::sin:
-    return b.create<hivm::VSinOp>();
+    hivmOp = b.create<hivm::VSinOp>();
+    break;
   case hfusion::UnaryFn::cos:
-    return b.create<hivm::VCosOp>();
+    hivmOp = b.create<hivm::VCosOp>();
+    break;
   case hfusion::UnaryFn::absi:
-    return b.create<hivm::VAbsOp>();
+    hivmOp = b.create<hivm::VAbsOp>();
+    break;
   case hfusion::UnaryFn::erf:
-    return b.create<hivm::VErfOp>();
+    hivmOp = b.create<hivm::VErfOp>();
+    break;
   default:
     llvm_unreachable("unsupported hfusion unary operation kind");
   }
+  copyAttrIfPresent(b.getOp(), hivmOp, "cast");
+  return hivmOp;
 }
 
 Operation *convertBinaryHFusionOp(ElemwiseOpConvertor &b,
                                   hfusion::BinaryFn kind) {
+  Operation *hivmOp = nullptr;
+
   switch (kind) {
   case hfusion::BinaryFn::vor:
-    return b.create<hivm::VOrOp>();
+    hivmOp = b.create<hivm::VOrOp>();
+    break;
   case hfusion::BinaryFn::vand:
-    return b.create<hivm::VAndOp>();
+    hivmOp = b.create<hivm::VAndOp>();
+    break;
   case hfusion::BinaryFn::minf:
-    return b.create<hivm::VMinOp>();
+    hivmOp = b.create<hivm::VMinOp>();
+    break;
   case hfusion::BinaryFn::maxf:
-    return b.create<hivm::VMaxOp>();
+    hivmOp = b.create<hivm::VMaxOp>();
+    break;
   case hfusion::BinaryFn::powi:
-    return b.create<hivm::VPowOp>();
+    hivmOp = b.create<hivm::VPowOp>();
+    break;
   case hfusion::BinaryFn::shli:
-    return b.create<hivm::VShLOp>();
+    hivmOp = b.create<hivm::VShLOp>();
+    break;
   case hfusion::BinaryFn::shrsi:
   case hfusion::BinaryFn::shrui:
-    return b.create<hivm::VShROp>();
+    hivmOp = b.create<hivm::VShROp>();
+    break;
   // This is here just so it pass tests. This operation never gets gneerated
   case hfusion::BinaryFn::divfhp:
-    return b.create<hivm::VDivOp>();
+    hivmOp = b.create<hivm::VDivOp>();
+    break;
   case hfusion::BinaryFn::modui:
-    return b.create<hivm::VModUIOp>();
+    hivmOp = b.create<hivm::VModUIOp>();
+    break;
   case hfusion::BinaryFn::mod:
-    return b.create<hivm::VModOp>();
+    hivmOp = b.create<hivm::VModOp>();
+    break;
   case hfusion::BinaryFn::vxor:
-    return b.create<hivm::VXorOp>();
+    hivmOp = b.create<hivm::VXorOp>();
+    break;
   default:
     llvm_unreachable("unsupported hfusion binary operation kind");
   }
+  copyAttrIfPresent(b.getOp(), hivmOp, "cast");
+  return hivmOp;
 }
 
 Operation *convertCastHFusionOp(ElemwiseOpConvertor &b) {

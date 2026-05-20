@@ -152,7 +152,7 @@ func.func @test_enable_hf32(%arg1:memref<16x16xf32>) -> tensor<16x16xf32> {
 // CHECK-DAG: %[[INIT:.*]] = arith.constant false
 // CHECK-DAG: %[[FILL:.*]] = hivm.hir.vbrc
 // CHECK: scf.for {{.*}} iter_args(%[[ARG:.*]] = %[[FILL]])
-// CHECK:   hivm.hir.vcast ins(%[[ARG]]
+// CHECK:   hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%[[ARG]]
 // CHECK-NOT: arith.cmpi eq
 // CHECK:   hivm.hir.mmadL1 ins({{.*}}, {{.*}}, %[[INIT]],
 // CHECK-SAME:                outs(%[[ARG]] : tensor<128x128xf32>)

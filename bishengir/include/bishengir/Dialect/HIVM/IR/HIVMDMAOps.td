@@ -428,7 +428,8 @@ def LoadMXScaleOp
 
 def AtomicCasOp : HIVM_Op<"atomic_cas",
     [NoLibraryFunctionTrait,
-     OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64]>
+     OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,
+                                   F8E5M2, I64]>
     ]> {
   let summary = "Atomic Compare-And-Swap (CAS) Op";
   let description = [{
