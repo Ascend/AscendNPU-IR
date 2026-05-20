@@ -45,4 +45,28 @@ module attributes {
            tensor<256xi64, #blocked>) -> tensor<256xi64, #blocked>
     tt.return
   }
+
+  // Scalar-address atomic_cas: the result type is a plain scalar, not a
+  // RankedTensorType. AtomicCASOpConversion must handle this without
+  // dyn_cast-ing the result to RankedTensorType unconditionally (which
+  // previously segfaulted on the scalar form).
+  // CHECK-LABEL: @scalar_atomic_cas_i32
+  // CHECK: ascend_dpx.atomic_cas
+  tt.func @scalar_atomic_cas_i32(
+      %ptr: !tt.ptr<i32>, %cmp: i32, %val: i32, %out: !tt.ptr<i32>) {
+    %0 = tt.atomic_cas acq_rel, gpu, %ptr, %cmp, %val
+        : (!tt.ptr<i32>, i32, i32) -> i32
+    tt.store %out, %0 : !tt.ptr<i32>
+    tt.return
+  }
+
+  // CHECK-LABEL: @scalar_atomic_cas_i64
+  // CHECK: ascend_dpx.atomic_cas
+  tt.func @scalar_atomic_cas_i64(
+      %ptr: !tt.ptr<i64>, %cmp: i64, %val: i64, %out: !tt.ptr<i64>) {
+    %0 = tt.atomic_cas acq_rel, gpu, %ptr, %cmp, %val
+        : (!tt.ptr<i64>, i64, i64) -> i64
+    tt.store %out, %0 : !tt.ptr<i64>
+    tt.return
+  }
 }

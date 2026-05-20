@@ -429,10 +429,18 @@ struct AtomicCASOpConversion
 
     auto valueTy = op.getResult().getType();
     auto tensorTy = dyn_cast<RankedTensorType>(valueTy);
-    Type valueElemTy =
-        getTypeConverter()->convertType(tensorTy.getElementType());
+    // A scalar-address atomic_cas has a non-tensor result type; dyn_cast above
+    // yields null. Mirror AtomicRMWOpConversion's tensor/scalar split instead
+    // of assuming a RankedTensorType (which segfaulted on the scalar form).
+    Type valueElemTy;
+    if (tensorTy) {
+      valueElemTy = getTypeConverter()->convertType(tensorTy.getElementType());
+    } else {
+      valueElemTy = getTypeConverter()->convertType(valueTy);
+    }
 
-    unsigned elemsPerThread = getTotalElemsPerThread(op.getVal().getType());
+    unsigned elemsPerThread =
+        tensorTy ? getTotalElemsPerThread(op.getVal().getType()) : 1;
 
     SmallVector<Value> resultVals(elemsPerThread);
 
@@ -447,9 +455,13 @@ struct AtomicCASOpConversion
       resultVals[i] = casOp.getRes();
     }
 
-    Value result =
-        packLLElements(loc, getTypeConverter(), resultVals, rewriter, tensorTy);
-    rewriter.replaceOp(op, result);
+    if (tensorTy) {
+      Value result = packLLElements(loc, getTypeConverter(), resultVals,
+                                    rewriter, tensorTy);
+      rewriter.replaceOp(op, result);
+    } else {
+      rewriter.replaceOp(op, resultVals[0]);
+    }
 
     return success();
   }
