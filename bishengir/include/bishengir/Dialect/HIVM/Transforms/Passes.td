@@ -666,13 +666,6 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   ];
 }
 
-def NormalizeLoopIterator : Pass<"hivm-normalize-loop-iterator",
-                                 "func::FuncOp"> {
-  let summary = "Normalize special state of loop iterator before plan-memory";
-  let constructor = "mlir::hivm::createNormalizeLoopIteratorPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
-}
-
 def HIVMInlineOTFLoadStore : Pass<"hivm-inline-otf-load-store", "func::FuncOp"> {
   let summary = "On the fly Inline Load and Store operations";
   let constructor = "mlir::hivm::createHIVMInlineOTFLoadStorePass()";

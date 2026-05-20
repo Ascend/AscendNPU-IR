@@ -404,7 +404,7 @@ func.func @test_unique_memory_with_multi_buffer(%arg0: memref<16x32x64xf16, #hiv
 
 // -----
 
-// expected-error@below {{ub overflow, requires 1966080 bits while 1769472 bits available!}}
+// expected-error@below {{ub overflow, requires 3932160 bits while 1769472 bits available!}}
 func.func @invalid_alloc_for_mix(%arg0: memref<61440xf32, #hivm.address_space<gm>>, %arg1: memref<61440xf32, #hivm.address_space<gm>>) attributes {hivm.vf_mode = #hivm.vf_mode<MIX>} {
   %c0 = arith.constant 0 : index
   %alloc = memref.alloc() : memref<61440xf32, #hivm.address_space<ub>>
@@ -419,7 +419,7 @@ func.func @invalid_alloc_for_mix(%arg0: memref<61440xf32, #hivm.address_space<gm
 
 // -----
 
-// CHECK-NOT: memref.alloc()
+// expected-error@below {{ub overflow, requires 3932160 bits while 2031616 bits available!}}
 func.func @valid_alloc_for_simd(%arg0: memref<61440xf32, #hivm.address_space<gm>>, %arg1: memref<61440xf32, #hivm.address_space<gm>>) attributes {hivm.vf_mode = #hivm.vf_mode<SIMD>} {
   %c0 = arith.constant 0 : index
   %alloc = memref.alloc() : memref<61440xf32, #hivm.address_space<ub>>

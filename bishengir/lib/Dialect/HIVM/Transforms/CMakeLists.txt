@@ -88,7 +88,6 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MarkDisableLoad.cpp
   MarkMultiBuffer.cpp
   MarkRealCoreType.cpp
-  NormalizeLoopIterator.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp
