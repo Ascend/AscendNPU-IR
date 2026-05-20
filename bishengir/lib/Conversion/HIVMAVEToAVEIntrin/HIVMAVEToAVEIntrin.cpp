@@ -1107,31 +1107,41 @@ static Operation *createLoadOpFori1Type(Value dataPtr,
   Value cstZero =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
   if (elementAlignment == 8) {
-    // Use vldu + movvp to support typei32 i1 unalign
+    // Use vldu + movvp + pdintlv to support typei32 i1 unalign
     if (vecSize == 64) {
       Operation *usResult = buildVldusPostOp(dataPtr, USTD, cstZero,
                                              rewriter.getI32Type(), rewriter);
       Value extractOp =
           rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
       Operation *result = buildMovvpOp(loc, dstType, extractOp, rewriter, 32);
-      return result;
-    } else if (vecSize == 128) {
-      // Use vldu + movvp(fp16) + pdintlv to support typei16 i1 unalign
-      Type elementType = rewriter.getI8Type();
-      Operation *usResult =
-          buildVldusPostOp(dataPtr, USTD, cstZero, elementType, rewriter);
-      Value extractOp =
-          rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
-      Operation *result = buildMovvpOp(loc, dstType, extractOp, rewriter, 16);
-      Value pge = createMaskByPGE(rewriter, loc);
       auto srcVLVectorTy =
           hivm_regbaseintrins::createVLVectorType(rewriter.getI1Type());
       auto intlvType = LLVM::LLVMStructType::getLiteral(
           rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-      Operation *pintlv = rewriter.create<PintlvB8InstrOp>(
-          loc, intlvType, result->getResult(0), pge);
+      Operation *pdintlv = rewriter.create<PDintlvB8InstrOp>(
+          loc, intlvType, result->getResult(0), result->getResult(0));
+      Value res =
+          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
+      pdintlv = rewriter.create<PDintlvB8InstrOp>(loc, intlvType, res,
+                                                  result->getResult(0));
+      Operation *finalRes =
+          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
+      return finalRes;
+    } else if (vecSize == 128) {
+      // Use vldu + movvp(fp16) + pdintlv to support typei16 i1 unalign
+      Operation *usResult =
+          buildVldusPostOp(dataPtr, USTD, cstZero, rewriter.getI16Type(), rewriter);
+      Value extractOp =
+          rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
+      Operation *result = buildMovvpOp(loc, dstType, extractOp, rewriter, 16);
+      auto srcVLVectorTy =
+          hivm_regbaseintrins::createVLVectorType(rewriter.getI1Type());
+      auto intlvType = LLVM::LLVMStructType::getLiteral(
+          rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
+      Operation *pdintlv = rewriter.create<PDintlvB8InstrOp>(
+          loc, intlvType, result->getResult(0), result->getResult(0));
       Operation *res =
-          rewriter.create<LLVM::ExtractValueOp>(loc, pintlv->getResult(0), 0);
+          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
       return res;
     }
 
@@ -1187,11 +1197,7 @@ struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
 unsigned getMaxDataTypeWidths(Operation *op, int elementAlignment) {
   unsigned elementWidth = 0;
   assert(op != nullptr);
-  int opElementWidth = getOpElementAlignmentBitWidth(op);
-  if (opElementWidth != -1 && opElementWidth != 1) {
-    return static_cast<unsigned>(opElementWidth);
-  }
-  opElementWidth = getParentOpElementAlignmentBitWidth(op);
+  int opElementWidth = getParentOpElementAlignmentBitWidth(op);
   if (opElementWidth != -1 && opElementWidth != 1) {
     return static_cast<unsigned>(opElementWidth);
   }
@@ -1286,6 +1292,13 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       if (elementType.isInteger(1)) {
         unsigned elementWidth = 0;
         for (auto *userOp : load->getUsers()) {
+          // Skip UnrealizedConversionCastOp and look for its users instead
+          while (isa<UnrealizedConversionCastOp>(userOp)) {
+            if (userOp->getUsers().empty()) {
+              break;
+            }
+            userOp = *userOp->getUsers().begin();
+          }
           elementWidth = getMaxDataTypeWidths(userOp, elementAlignment);
           break;
         }
