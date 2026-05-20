@@ -108,6 +108,16 @@ static void convertAllToHFusion(OpPassManager &pm,
 
 static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
+  // Uplift structurally-for scf.while loops to scf.for *before* anything
+  // else in preProcess. This is the multibuffer-support-while-op design
+  // supplement #2: while downstream HIVM multi-buffer can now handle
+  // scf.while through MultiBufferLoopAdapter's alloca-based counter, the
+  // simpler scf.for path is strictly cheaper when the input is already
+  // for-shaped. Loops that don't match upstream's pattern (data-driven
+  // exits, etc.) are left untouched and will still go through the
+  // alloca-based code path further down.
+  pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
+
   LegalizeBoolPassOptions clampOptions;
   clampOptions.enableClamp = true;
   pm.addPass(createLegalizeBoolPass(clampOptions));
