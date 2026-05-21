@@ -1135,6 +1135,24 @@ def HIVM_SimtMemScopeHintAttr
   }];
 }
 
+def HIVM_AnchorIdAttr : HIVM_Attr<"AnchorId", "anchor_id"> {
+  let description = [{
+    HIVM anchor id attribute.
+  }];
+}
+
+def HIVM_AnchorIdBeforeAttr : HIVM_Attr<"AnchorIdBefore", "anchor_id_before"> {
+  let description = [{
+    HIVM anchor id before attribute.
+  }];
+}
+
+def HIVM_AnchorIdAfterAttr : HIVM_Attr<"AnchorIdAfter", "anchor_id_after"> {
+  let description = [{
+    HIVM anchor id after attribute.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Memory Effect
 //===----------------------------------------------------------------------===//

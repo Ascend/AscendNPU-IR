@@ -484,7 +484,8 @@ public:
         forOp.getResult(i).replaceAllUsesWith(newResults[newIdx++]);
       }
     }
-
+    // Copy attributes from oldFor to newFor.
+    newFor->setAttrs(forOp->getAttrs());
     rewriter.eraseOp(forOp);
     return success();
   }

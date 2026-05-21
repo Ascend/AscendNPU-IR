@@ -77,13 +77,13 @@ enum struct OpType {
 std::string getOpTypeStr(OpType opType);
 
 struct AnchorInfo {
-  Anchor *anchorBefore{nullptr};
-  Anchor *anchorAfter{nullptr};
-  Loop *loopOp{nullptr};
+  OperationBase *anchorBefore{nullptr};
+  OperationBase *anchorAfter{nullptr};
 
   AnchorInfo() = default;
-  AnchorInfo(Anchor *anchor) : anchorBefore(anchor), anchorAfter(anchor) {}
-  AnchorInfo(Anchor *anchorBefore, Anchor *anchorAfter)
+  AnchorInfo(OperationBase *anchor)
+      : anchorBefore(anchor), anchorAfter(anchor) {}
+  AnchorInfo(OperationBase *anchorBefore, OperationBase *anchorAfter)
       : anchorBefore(anchorBefore), anchorAfter(anchorAfter) {}
 };
 
