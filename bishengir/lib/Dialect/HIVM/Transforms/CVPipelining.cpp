@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -327,7 +328,9 @@ struct CVPipeliningPass
 } // namespace
 
 static int getMultibufferCount(annotation::MarkOp marker) {
-  auto multibufferAttr = llvm::cast_if_present<IntegerAttr>(
+  auto attrDict = marker->getAttrDictionary();
+  hivm::util::validateMultiBufferAttr(attrDict);
+  auto multibufferAttr = llvm::dyn_cast_if_present<IntegerAttr>(
       marker->getAttr(MultiBufferAttr::name));
   if (!multibufferAttr)
     return -1;

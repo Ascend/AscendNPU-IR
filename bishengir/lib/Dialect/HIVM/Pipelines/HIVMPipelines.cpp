@@ -55,6 +55,22 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
 }
 
+static void hivmAutoInsertLdStForMixCVPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
+  InsertLoadStoreForMixCVOptions options;
+  options.enableLegacy = hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  options.target = hivmPipelineOptions.target;
+  options.enableDotScaledCompile =
+      hivmPipelineOptions.enableDotScaledCompile;
+  options.enableLayoutOptimization =
+      hivmPipelineOptions.enableLayoutOptimization;
+  options.disableTightCoupledBuffer =
+      hivmPipelineOptions.disableTightCoupledBuffer;
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createInsertLoadStoreForMixCVPass(
+          options));
+}
+
 static void
 hivmCVCommunicationPipeline(OpPassManager &pm,
                             const HIVMPipelineOptions &hivmPipelineOptions) {
@@ -62,18 +78,20 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   // space-specific memref into a pure to_tensor + memory_space_cast. It is
   // recommended to do this in canonicalization pass
 
-  if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
+  if (hivmPipelineOptions.enableTritonKernelCompile) {
+    hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
+  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
       !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
-    pm.nest<func::FuncOp>().addPass(
-        mlir::hivm::createInsertLoadStoreForMixCVPass());
+    hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   }
+
 }
 
 static void
@@ -201,8 +219,8 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Add canonicalization passes
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
-    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   } else {
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
@@ -213,8 +231,8 @@ static void hivmPreBufferizationOptimizationPipeline(
   // with the affinity programming cases.
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
-    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
   } else {
     if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {

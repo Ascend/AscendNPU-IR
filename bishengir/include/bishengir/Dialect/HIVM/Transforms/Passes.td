@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===- Passes.td - HIVM pass definition file ---------------*- tablegen -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -550,13 +558,6 @@ def LiftZeroRank : Pass<"hivm-lift-zero-rank", "func::FuncOp"> {
   let dependentDialects = ["arith::ArithDialect", "memref::MemRefDialect"];
 }
 
-def InsertLoadStoreForScalar
-    : Pass<"hivm-insert-load-store-for-scalar", "func::FuncOp"> {
-  let summary = "insert load store op for scalar";
-  let constructor = "mlir::hivm::createInsertLoadStoreForScalarPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
-}
-
 def SplitMixedIfConditionals
     : Pass<"hivm-split-mixed-if-conditionals", "func::FuncOp"> {
   let summary = "split if conditionals for mix cv";
@@ -569,7 +570,30 @@ def InsertLoadStoreForMixCV
     : Pass<"hivm-insert-load-store-for-mix-cv", "func::FuncOp"> {
   let summary = "insert load store op for mix cv";
   let constructor = "mlir::hivm::createInsertLoadStoreForMixCVPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let dependentDialects = ["hivm::HIVMDialect",
+                          "bishengir::memref_ext::MemRefExtDialect",
+                          "bufferization::BufferizationDialect",
+                          "annotation::AnnotationDialect"];
+  let options = [Option<
+    "enableLegacy", "enable-legacy", "bool",
+    /*default=*/"false",
+    "Run legacy logic for insert load store op for mix cv">,
+    Option<
+      "target", "target", "std::string",
+      /*default=*/"\"Ascend910B1\"",
+      "Target device name">,
+    Option<
+      "enableDotScaledCompile", "enable-dot-scaled-compile", "bool",
+      /*default=*/"false",
+      "Enable dot scaled compile">,
+    Option<
+      "enableLayoutOptimization", "enable-layout-optimization", "bool",
+      /*default=*/"false",
+      "Enable Layout Optimization">,
+    Option<
+      "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
+      /*default=*/"false",
+      "Disable Tight Coupled Buffer Allocation">];
 }
 
 def InsertCVTightCoupledBuffer
@@ -579,6 +603,16 @@ def InsertCVTightCoupledBuffer
   let dependentDialects = ["hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
+}
+
+def InsertLoadStoreForScalar
+    : Pass<"hivm-insert-load-store-for-scalar", "func::FuncOp"> {
+  let summary = "Insert explicit load/store boundaries for scalar values crossing vector and cube cores";
+  let constructor = "mlir::hivm::createInsertLoadStoreForScalarPass()";
+  let dependentDialects = ["hivm::HIVMDialect",
+                          "bishengir::memref_ext::MemRefExtDialect",
+                          "bufferization::BufferizationDialect",
+                          "annotation::AnnotationDialect"];
 }
 
 def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",

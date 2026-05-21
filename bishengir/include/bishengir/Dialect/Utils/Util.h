@@ -21,6 +21,9 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
+
+#include "llvm/Support/raw_ostream.h"
+
 #include <numeric>
 #define CEIL_FACTOR(x, y) (((x) + ((y) - 1)) / (y) * (y))
 #define CEIL_DIV(x, y) (((x) + ((y) - 1)) / (y))
@@ -90,6 +93,12 @@ template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
     : public std::true_type {};
 
+template <typename T, typename = void> struct IsPrintable : public std::false_type {};
+
+template <typename T>
+struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>() << std::declval<T>())>>
+    : public std::true_type {};
+
 template <typename T>
 std::string to_string(const T &container, int indent = 0, bool useEndl = false);
 
@@ -99,6 +108,12 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
     return to_string(value, indent + 2, useEndl);
   } else if constexpr (detail::is_pair<T>::value) {
     return "(" + to_string(value.first) + ", " + to_string(value.second) + ")";
+  } else if constexpr (IsPrintable<T>::value) {
+    std::string buffer;
+    llvm::raw_string_ostream os(buffer);
+    os << value;
+    os.flush();
+    return buffer;
   } else {
     return std::to_string(value);
   }
@@ -347,8 +362,9 @@ Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source);
 
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
-Value createEmptyOpWithTargetElemType(OpBuilder &builder, Location loc,
-                                      Value source, Type targetElemType);
+Value createEmptyOpWithTargetElemType(
+    OpBuilder &builder, Location loc, Value source, Type targetElemType,
+    std::optional<MemRefLayoutAttrInterface> layout = std::nullopt);
 
 /// Create a static shape `tensor.empty` op with the `targetTensorType`.
 ///
@@ -605,6 +621,8 @@ bool isValidTwoDimVectorType(VectorType vType);
 
 Value createPRegFromConstantOp(VectorType vecTy, bool condition,
                                PatternRewriter &rewriter);
+
+bool isUnstructuredMemAccLoop(Operation *op);
 
 } // namespace utils
 

@@ -230,6 +230,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
+  "Use legacy InsertLoadStoreForMixCV.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 //===----------------------------------------------------------------------===//
 // DFX Control Options
 //===----------------------------------------------------------------------===//
@@ -696,6 +704,14 @@ def EnableTritonIRCompile : FeatureControlOptions<
 
 def EnableLayoutOptimization : FeatureControlOptions<
   "Enable Layout Optimization",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
+def DisableTightCoupledBuffer : FeatureControlOptions<
+  "Disable Tight Coupled Buffer Allocation",
   "bool",
   "false"
 > {

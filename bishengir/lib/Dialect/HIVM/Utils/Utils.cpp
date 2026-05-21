@@ -773,6 +773,27 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
   return failure();
 }
 
+SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
+                                          Value src) {
+  SmallVector<Value> dynamicSizes;
+  if (auto reifiableOp = llvm::dyn_cast_or_null<tensor::EmptyOp>(src.getDefiningOp())) {
+    ReifiedRankedShapedTypeDims outputShapes;
+    if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
+      dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+    } else {
+      for (auto dimValue : outputShapes[0]) {
+        if (!getConstantIntValue(dimValue).has_value()) {
+          dynamicSizes.push_back(
+              getValueOrCreateConstantIndexOp(builder, loc, dimValue));
+        }
+      }
+    }
+  } else {
+    dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+  }
+  return dynamicSizes;
+}
+
 Value createAllocWithMark(PatternRewriter &rewriter,
                           Location loc,
                           MemRefType memrefType,
@@ -834,6 +855,61 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
+  return toTensor;
+}
+
+Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
+                                SmallVector<int64_t> targetShape,
+                                SmallVector<Value> dynamicSizes,
+                                Type elementType) {
+  Type allocWorkspaceType = MemRefType::get(targetShape, elementType);
+
+  auto allocWorkspaceOp =
+      builder.create<bishengir::memref_ext::AllocWorkspaceOp>(
+          loc, allocWorkspaceType,
+          /*workspaceArg*/ Value(), ValueRange{dynamicSizes},
+          /*offset*/ ValueRange{});
+  return allocWorkspaceOp.getMemref();
+}
+
+Value getLocalWorkSpaceTensor(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
+    ArrayRef<Value> dynamicShape, Type elementType,
+    std::optional<ArrayRef<int64_t>> staticAllocShape) {
+  // 1. Get AllocWorkspaceOp of current block
+  Value localWorkSpace = createAllocLocalWorkSpace(
+      rewriter, loc, SmallVector<int64_t>(targetShape),
+      SmallVector<Value>(dynamicShape), elementType);
+
+  // 2. When staticAllocShape is provided, mark static alloc size for dynamic
+  // tensor case
+  if (staticAllocShape.has_value()) {
+    auto localWorkSpaceOp =
+        localWorkSpace.getDefiningOp<bishengir::memref_ext::AllocWorkspaceOp>();
+    auto maybeStaticTotalSize =
+        utils::getStaticTotalSizeInBits(*staticAllocShape, elementType);
+    if (!maybeStaticTotalSize.has_value()) {
+      emitError(localWorkSpaceOp->getLoc(), "shape has dynamic dimension");
+      llvm::report_fatal_error("shape has dynamic dimension");
+      return nullptr;
+    }
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
+        localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
+    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+                       rewriter.getI64IntegerAttr(allocSizeInByte));
+  }
+
+  // 3. Use bufferization::ToTensorOp to convert current workspace to tensor
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, localWorkSpace, true, true);
+#else
+  // return tensor type
+  auto tensorType = RankedTensorType::get(targetShape, elementType);
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, localWorkSpace, true, true);
+#endif
   return toTensor;
 }
 
@@ -1439,6 +1515,19 @@ bool isSIMTVF(Operation *op) {
   return vfMode == hivm::VFMode::SIMT;
 }
 
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {
+  auto attr = attrDict.get(hivm::MultiBufferAttr::name);
+  if (!attr)
+    return;
+  mlir::IntegerAttr intAttr = mlir::dyn_cast<mlir::IntegerAttr>(attr);
+  if (!intAttr) {
+    llvm::report_fatal_error("MultiBufferAttr illegal!!!");
+  }
+  int64_t attrValue = intAttr.getValue().getSExtValue();
+  if (attrValue < 1) {
+    llvm::report_fatal_error("MultiBufferAttr should be >= 1!!");
+  }
+}
 } // namespace util
 } // namespace hivm
 } // namespace mlir
