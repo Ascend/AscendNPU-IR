@@ -268,6 +268,16 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   int tryTimes = 5;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
+  //
+  // TODO: refactor this ad-hoc retry loop into a dedicated retryPassManager
+  // so each fallback policy is composable and explicit. Planned policies:
+  //   - OpFusion retry policy: bump tiling-max-counter each attempt, up to 5
+  //     retries (the current default branch).
+  //   - AutoBlockify retry policy: progressively disable hoisting and then
+  //     multi-buffer.
+  //   - MultiBuffer retry policy: disable auto-multi-buffer.
+  // Once the retryPassManager exists, the tryTimes / nested-if logic below
+  // should be replaced by composing those policies.
   if (config.getEnableVFFusion()) {
     // With VFFusion enabled, the ub-overflow fallback runs in tiers:
     // first try disabling auto-multi-buffer, then disable VFFusion plus
