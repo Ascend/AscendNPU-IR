@@ -511,6 +511,38 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
         continue;
       }
     }
+    // scf.for yielding a tensor accumulated from a `tensor.empty` iter_init.
+    // This is the cross-stage output shape for the scalar-gather loop
+    // recognized by `isExtractedScalarGather` in WorklistBuilder.cpp.
+    // Without this case, expandOutputInits would fall through to the
+    // toTensor+alloc branch (since the defining op is neither a DPS op nor
+    // a `bufferization.to_tensor`) and bail with "expected to_tensor for
+    // non-tensor-empty output", taking the whole pipelining round down with
+    // it. Treat the iter_init like a DPS init and expand the underlying
+    // tensor.empty to multibuffer shape.
+    if (auto forOp = dyn_cast<scf::ForOp>(defining)) {
+      auto outRes = dyn_cast<OpResult>(output);
+      if (!outRes)
+        return forOp->emitWarning(
+            "[cv-pipelining] expected scf.for output to be an OpResult");
+      unsigned resultIdx = outRes.getResultNumber();
+      if (resultIdx >= forOp.getNumRegionIterArgs())
+        return forOp->emitWarning(
+            "[cv-pipelining] scf.for output index out of range");
+      Value init = forOp.getInits()[resultIdx];
+      Operation *initOp = init.getDefiningOp();
+      if (initOp && isa<tensor::EmptyOp>(initOp)) {
+        auto origTy = dyn_cast<TensorType>(init.getType());
+        if (!origTy)
+          return initOp->emitWarning(
+              "[cv-pipelining] expected scf.for init to be tensor type");
+        auto shapeArr = origTy.getShape();
+        newShape.append(shapeArr.begin(), shapeArr.end());
+        auto newType = RankedTensorType::get(newShape, origTy.getElementType());
+        expanded = builder.create<tensor::EmptyOp>(loc, newType, ValueRange());
+        continue;
+      }
+    }
     toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
     if (!toTensor)
       return defining->emitWarning(
@@ -802,6 +834,65 @@ LogicalResult CVPipelineImpl::migrateOps() {
         defining = it->second;
       }
       defining = item->irMap.lookup(defining);
+
+      // Migration counterpart of the scf.for case in expandOutputInits:
+      // when the workitem's cross-stage output is a tensor yielded by an
+      // scf.for over a `tensor.empty` iter_init, the loop has no DPS
+      // interface to bind to and the existing `dyn_cast<DPS>` would fail.
+      // Treat the iter_init operand like a DPS init: rewire it to an
+      // extract_slice of the pipelined loop's iter_arg, then insert_slice
+      // the cloned loop's result back at yield. Outside-loop users get
+      // per-stage extract_slices, mirroring the post-dispatch logic below.
+      if (auto clonedFor = dyn_cast<scf::ForOp>(defining)) {
+        auto origRes = dyn_cast<OpResult>(orig);
+        if (!origRes)
+          return clonedFor->emitWarning(
+              "[cv-pipelining] expected scf.for output to be an OpResult");
+        unsigned resultIdx = origRes.getResultNumber();
+        if (resultIdx >= clonedFor.getNumRegionIterArgs())
+          return clonedFor->emitWarning(
+              "[cv-pipelining] scf.for output index out of range");
+        builder.setInsertionPoint(clonedFor);
+        Location loc = clonedFor->getLoc();
+        Value newResult = *resIt;
+        Value extracted =
+            createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
+        OpOperand &initOperand =
+            clonedFor.getInitsMutable()[resultIdx];
+        initOperand.set(extracted);
+        // Also retype the matching iter_arg so the body uses the slice type.
+        clonedFor.getRegionIterArg(resultIdx).setType(extracted.getType());
+        Value newOutput = clonedFor->getResult(resultIdx);
+        newOutput.setType(extracted.getType());
+        builder.setInsertionPointAfterValue(newOutput);
+        Value yieldVal = createInsertSlice(builder, loc, newOutput, *argIt, iv);
+        orig.replaceUsesWithIf(newOutput, [&](OpOperand &use) {
+          return item->forOp->isAncestor(use.getOwner());
+        });
+        resIt++;
+        argIt++;
+        yieldVals.push_back(yieldVal);
+        // Update outside users (mirrors the post-dispatch logic below).
+        SmallVector<OpOperand *> toReplaceFor;
+        for (OpOperand &use : orig.getUses()) {
+          Operation *owner = use.getOwner();
+          if (pipelineLoop->isAncestor(owner) ||
+              item->forOp->isAncestor(owner))
+            continue;
+          toReplaceFor.push_back(&use);
+        }
+        for (OpOperand *use : toReplaceFor) {
+          Operation *owner = use->getOwner();
+          Operation *ownerLoop = getContainedParent(newLoop, owner);
+          Value userIV = cast<scf::ForOp>(ownerLoop).getInductionVar();
+          builder.setInsertionPoint(owner);
+          Value perStage =
+              createExtractSlice(builder, loc, newResult, orig.getType(), userIV);
+          use->set(perStage);
+        }
+        continue;
+      }
+
       auto dps = dyn_cast_if_present<DestinationStyleOpInterface>(defining);
       if (!dps)
         return pipelineLoop->emitWarning(

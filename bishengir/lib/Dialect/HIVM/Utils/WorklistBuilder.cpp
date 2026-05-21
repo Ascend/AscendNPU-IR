@@ -157,6 +157,60 @@ static bool isMemrefSubnetWriter(Operation *op) {
 /// `bufferization.to_tensor`.
 static bool isLoadLikeOp(Operation *op) { return isa<LoadOp, ND2NZOp>(op); }
 
+/// Recognize an indirect-gather loop expressed entirely in non-HIVM ops:
+///
+///   scf.for ... iter_args(%t = %init) -> (tensor<...>) {
+///     ...
+///     %addr = memref.reinterpret_cast %gm_ptr ...
+///     %v    = memref.load %addr[...]
+///     %new  = tensor.insert %v into %t[...]
+///     scf.yield %new
+///   } {ExtractedLoadOrStore}
+///
+/// Why a fallback is needed: `illegalRegionedOp` classifies a region op by
+/// walking its body for HIVM ops. The loop above has none — only memref
+/// load/cast/tensor.insert/arith — so the walk leaves it unannotated.
+/// `extractAvailableOps` then skips unannotated non-`isCoreOp` ops as
+/// workitem seeds, and the loop only enters a workitem reactively through
+/// consumer tracing — i.e. wherever the loop's tensor result is eventually
+/// used. For a gather whose output feeds a post-matmul vector chain, that
+/// puts the gather in a Vector workitem *after* the cube even though its
+/// data dependencies allow it to run alongside the other pre-cube gathers,
+/// breaking the intended schedule.
+///
+/// What this predicate looks for: the `ExtractedLoadOrStore` attribute that
+/// the producer set on these gather loops, plus a body that has both
+///   * a `memref.load` (the scalar gather read), and
+///   * a writeback into the iter_arg
+///     (`tensor.insert` / `tensor.insert_slice`, with `memref.store` and
+///     `memref.copy` also accepted for the post-bufferization form used by
+///     the unit test).
+/// The caller has already established that the body contains no HIVM op.
+///
+/// Note on context: CVPipelining runs in the pre-bufferization HIVM
+/// pipeline, so we cannot rely on the kernel-argument memref's
+/// `#hivm.address_space<gm>` attribute (added later by
+/// `createInferHIVMMemScopePass`) being present; we also see the
+/// `tensor.insert` form of the writeback rather than the post-bufferization
+/// `memref.store`. The 32x128 rectangular gathers go through `memref.copy`
+/// which earlier CV-communication passes rewrite to `hivm.hir.load` — those
+/// scf.fors get tagged via the regular HIVMDialect/queryCoreTypeHelper
+/// path, so only the scalar (single-element) form needs this fallback.
+static bool isExtractedScalarGather(scf::ForOp forOp) {
+  if (!forOp->hasAttr("ExtractedLoadOrStore"))
+    return false;
+  bool hasMemRefLoad = false;
+  bool hasTensorWrite = false;
+  forOp.getBody()->walk([&](Operation *inner) {
+    if (isa<memref::LoadOp>(inner))
+      hasMemRefLoad = true;
+    else if (isa<tensor::InsertOp, tensor::InsertSliceOp, memref::StoreOp,
+                 memref::CopyOp>(inner))
+      hasTensorWrite = true;
+  });
+  return hasMemRefLoad && hasTensorWrite;
+}
+
 /// Inspect a region op's body for core-type content. Sets pipeline.cubeonly /
 /// pipeline.veconly if the region is uniformly one core type. For mixed-core
 /// regions:
@@ -194,6 +248,15 @@ static bool illegalRegionedOp(Operation &op, bool isLoopMode) {
     }
     // Block mode: leave the op opaque; don't annotate, don't fail.
     return false;
+  }
+
+  // Body had no HIVM op so neither flag fired. Catch the non-HIVM
+  // scalar-gather shape (see isExtractedScalarGather) and classify it as
+  // Vector so `extractAvailableOps` treats it as a seed.
+  if (!hasCube && !hasVector) {
+    if (auto forOp = dyn_cast<scf::ForOp>(&op);
+        forOp && isExtractedScalarGather(forOp))
+      hasVector = true;
   }
 
   auto unit = UnitAttr::get(op.getContext());

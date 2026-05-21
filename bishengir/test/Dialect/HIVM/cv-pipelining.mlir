@@ -686,3 +686,105 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// Regression: a scalar indirect-gather lowered to
+//   scf.for {ExtractedLoadOrStore} {
+//     %v = memref.load <GM memref>
+//     memref.store %v, <UB memref>
+//   }
+// has no HIVM op in its body. illegalRegionedOp's HIVM-walk finds nothing,
+// so the loop ends up untagged; extractAvailableOps then refuses it as a
+// workitem seed (`!isCoreOp` skip). The loop only enters a workitem
+// reactively via consumer tracing -- which pulls it into the *second*
+// Vector workitem (after the cube), even though its data dependencies
+// allow it to run before the cube alongside the other gathers. That
+// mis-placement breaks the intended schedule and produces wrong results
+// downstream.
+//
+// Fix: illegalRegionedOp recognizes the {ExtractedLoadOrStore} +
+// memref-load + tensor-write shape and tags the loop with
+// `pipeline.veconly`, so it becomes a Vector seed in extractAvailableOps
+// round #1 and lands in the first Vector workitem (before the cube).
+
+// CHECK-LABEL: func.func @test_extracted_load_or_store_vec_seed
+// Outer unrolled loop.
+// CHECK: scf.for
+// First stage: VECTOR -- contains the ExtractedLoadOrStore scalar gather.
+// CHECK:   scf.for
+// CHECK:     scf.for
+// CHECK:       memref.load{{.*}}#hivm.address_space<gm>
+// CHECK:       memref.store{{.*}}#hivm.address_space<ub>
+// CHECK:     {{.*}}ExtractedLoadOrStore, pipeline.veconly
+// CHECK:   {{.*}}hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+// Second stage: CUBE -- mmadL1 + fixpipe.
+// CHECK:   scf.for
+// CHECK:     hivm.hir.mmadL1
+// CHECK:   {{.*}}hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// Third stage: VECTOR -- the consumer that uses the cube output.
+// CHECK:   scf.for
+// CHECK:     hivm.hir.vadd
+// CHECK:   {{.*}}hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_extracted_load_or_store_vec_seed(
+      %arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+      %gm_scalar: memref<?xf32, #hivm.address_space<gm>>,
+      %gm_k: memref<16x16xf16>)
+      attributes {WorkspaceArgIdx = 0 : i16,
+                  func_dyn_memref_args = dense<[true, true, true]> : vector<3xi1>,
+                  global_kernel = "local", hacc.entry,
+                  hacc.function_kind = #hacc.function_kind<DEVICE>,
+                  hivm.func_core_type = #hivm.func_core_type<MIX>,
+                  mix_mode = "mix"} {
+    %A = "some_op"() : () -> tensor<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %c0_idx = arith.constant 0 : index
+    %c1_idx = arith.constant 1 : index
+    %c16_idx = arith.constant 16 : index
+    %c2_i32 = arith.constant 2 : i32
+    %true = arith.constant true
+    %bound = "some_op"() : () -> i32
+    %ub_scalar_buf = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+    scf.for %i = %c0 to %bound step %c2_i32 : i32 {
+      // (A) Vector-side scalar gather: scf.for {ExtractedLoadOrStore}
+      // reading from GM and writing to UB.
+      scf.for %j = %c0_idx to %c16_idx step %c1_idx {
+        %off = "some_op"() : () -> index
+        %addr = memref.reinterpret_cast %gm_scalar to offset: [%off], sizes: [1], strides: [1]
+            : memref<?xf32, #hivm.address_space<gm>>
+              to memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
+        %v = memref.load %addr[%c0_idx]
+            : memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
+        memref.store %v, %ub_scalar_buf[%j] : memref<16xf32, #hivm.address_space<ub>>
+      } {ExtractedLoadOrStore}
+
+      // (B) Cube-feeder: a regular hivm.hir.load on the K side.
+      %allocK = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%gm_k : memref<16x16xf16>) outs(%allocK : memref<16x16xf16>)
+      %K = bufferization.to_tensor %allocK : memref<16x16xf16>
+
+      // (C) Cube: mmadL1 + fixpipe (separator) to UB.
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%A, %K, %true, %c16_idx, %c16_idx, %c16_idx
+          : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+          outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>)
+          outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub0_cast = memref.memory_space_cast %ub0
+          : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %dot_t = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
+
+      // (D) Second Vector stage: combines the cube output with the scalar
+      // gather result.
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %sum = hivm.hir.vadd ins(%dot_t, %dot_t : tensor<16x16xf16>, tensor<16x16xf16>)
+          outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%sum : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
+    }
+    return
+  }
+}
