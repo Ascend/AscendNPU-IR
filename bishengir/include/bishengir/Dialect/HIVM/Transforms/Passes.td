@@ -132,7 +132,8 @@ def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::Func
     are same or it is used after this scf.if, avoid inplace by PlanMemory}];
   let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
   let dependentDialects =
-    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect"];
+    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
+     "bufferization::BufferizationDialect"];
 }
 
 def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
