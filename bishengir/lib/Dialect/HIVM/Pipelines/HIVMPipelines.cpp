@@ -289,6 +289,15 @@ static void hivmPreBufferizationOptimizationPipeline(
   // with the affinity programming cases.
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
+    // Re-run Insert/Propagate to handle the new MmadL1Op ops materialized by
+    // TileBatchMMIntoLoop, which the first round skipped.
+    pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+    PropagateConvertLayoutOptions postTileOptions;
+    postTileOptions.allowAgnosticOps = false;
+    pm.nest<func::FuncOp>().addPass(
+        createPropagateConvertLayoutPass(postTileOptions));
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
     pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
