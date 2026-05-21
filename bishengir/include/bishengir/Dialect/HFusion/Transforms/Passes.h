@@ -153,10 +153,13 @@ std::unique_ptr<Pass> createSimplifyOpsPass();
 
 /// Create a pass to uplift `scf.while` loops to `scf.for` whenever the
 /// while shape matches upstream
-/// `scf::populateUpliftWhileToForPatterns`. Wired into HFusion preProcess
-/// (see 设计方案.md supplement #2) so downstream HIVM passes - notably
-/// multi-buffer - can fall back to the simpler scf.for path when the
-/// input while-loop is structurally for-shaped.
+/// `scf::populateUpliftWhileToForPatterns`. Wired into the head of
+/// HFusion preProcess so downstream HIVM passes - notably multi-buffer -
+/// can fall back to the simpler scf.for path when the input while-loop
+/// is structurally for-shaped (single arith.cmpi-driven scf.condition in
+/// the `before` block, linear arith.addi on the IV in the `after`
+/// block). While-loops that don't match are left untouched and continue
+/// to flow through the alloca-based MultiBufferLoopAdapter counter.
 std::unique_ptr<Pass> createUpliftWhileToForPass();
 
 /// Register Tree Reduce v2 pass

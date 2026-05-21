@@ -8,8 +8,8 @@
 //
 // Thin downstream wrapper around upstream
 // `mlir::scf::populateUpliftWhileToForPatterns`, exposed as the
-// `hfusion-uplift-while-to-for` pass and wired into HFusion preProcess
-// (see multibuffer-support-while-op/设计方案.md supplement #2).
+// `hfusion-uplift-while-to-for` pass and wired into the head of HFusion
+// preProcess (HFusionPipelines.cpp).
 //
 // The upstream pattern only fires when the `scf.while` matches a
 // canonical for-shape:

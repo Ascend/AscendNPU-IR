@@ -242,9 +242,10 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
     in particular) can take the simpler scf.for path whenever the input
     while-loop is already structurally for-shaped. While-loops that do
     not match the pattern (e.g. data-driven loops where the comparison
-    is not against a monotonically-incremented IV) are left untouched.
-
-    See multibuffer-support-while-op/设计方案.md supplement #2.
+    is not against a monotonically-incremented IV) are left untouched
+    and continue to flow through the alloca-based MultiBufferLoopAdapter
+    counter (see
+    bishengir/include/bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h).
   }];
   let constructor = "mlir::hfusion::createUpliftWhileToForPass()";
   let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];

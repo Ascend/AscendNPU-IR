@@ -1,7 +1,7 @@
 // RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck  %s
 
 // EnableMultiBuffer now drives slot rotation through MultiBufferLoopAdapter
-// for both scf.for and scf.while (设计方案.md supplement #1+#3). For
+// for both scf.for and scf.while. For
 // scf.for parents the previous affine.apply((iv - lb)/step) % modular
 // codegen has been replaced by a function-scoped memref.alloca<1xi64>
 // counter plus body-head memref.load / arith.remui / arith.select cascade

@@ -232,11 +232,11 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
 }
 
 Value MultiBufferLoopAdapter::getIterationCounter(OpBuilder &builder) {
-  // Unified alloca-based path for both scf.for and scf.while (design
-  // supplement #1/#3 in 设计方案.md: for/while share one strategy). The
-  // i64 counter alloca lives at funcOp entry; body-head load + body-tail
-  // increment-store are inserted idempotently the first time any pass
-  // calls into the adapter for this loop.
+  // Unified alloca-based path for both scf.for and scf.while; the i64
+  // counter alloca lives at funcOp entry, and body-head load +
+  // body-tail increment-store are inserted idempotently the first time
+  // any pass calls into the adapter for this loop. (See class-level
+  // header docs in MultiBufferLoopAdapter.h for the full strategy.)
   ensureCounterMaterialized(builder);
   Location loc = loop_->getLoc();
   // cachedLoad_ is i64; convert to index so the surface API stays parity

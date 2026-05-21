@@ -11,8 +11,8 @@
 // (MarkMultiBuffer, PlanMemory, GraphSyncSolver, EnableMultiBuffer) to drive
 // per-iteration slot rotation.
 //
-// Counter strategy (unified for scf.for / scf.while per 设计方案.md
-// supplement #1+#3):
+// Counter strategy (unified for both scf.for and scf.while; legacy
+// affine.apply((iv - lb)/step) % N codegen for scf.for is retired):
 //   An i64 counter is materialized as a memref.alloca<1xi64>() at the top
 //   of the parent FunctionOpInterface. The alloca carries
 //   kMultiBufferCounterAttr whose value matches a kMultiBufferLoopIdAttr

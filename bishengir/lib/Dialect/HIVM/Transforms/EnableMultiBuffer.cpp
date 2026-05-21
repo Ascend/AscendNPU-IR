@@ -100,10 +100,11 @@ LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
 Value mlir::hivm::createNestedIndexModular(OpBuilder &builder, Operation *op,
                                            int modular) {
   // Resolve the parent loop via the value-following helper (which threads
-  // through scf.if yields) and delegate to the LoopLikeOpInterface overload
-  // for the actual codegen. Keeping a single source of truth there matches
-  // 设计方案.md supplement #1+#2+#3: scf.for and scf.while share the same
-  // alloca-based counter materialized by MultiBufferLoopAdapter.
+  // through scf.if yields) and delegate to the LoopLikeOpInterface
+  // overload for the actual codegen. Keeping a single source of truth
+  // there reflects the unified strategy: scf.for and scf.while share the
+  // same alloca-based counter materialized by MultiBufferLoopAdapter
+  // (see bishengir/include/bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h).
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
   assert(parentLoop && " op has no proper parent loop to do multi buffer");
   return createNestedIndexModular(builder, parentLoop, modular);
