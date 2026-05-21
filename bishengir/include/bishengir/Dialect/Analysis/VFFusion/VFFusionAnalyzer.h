@@ -303,21 +303,29 @@ public:
   MaxParallelAnalyzer() = delete;
 
   bool isFusibleImpl(int xIndex, int yIndex);
+  void initializeImpl(Block &block);
   LogicalResult fuseImpl(Block &block);
 
   explicit MaxParallelAnalyzer(const VFFusionKindOption &option)
-      : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option) {};
+      : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option){};
   ~MaxParallelAnalyzer() override = default;
 
 private:
   std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
-  bool fuseProducerConsumerImpl(Block &block);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
-  bool fuseIntoGroup(const int producerIndex, const int consumerIndex);
-  bool areFusibleOps(const int producerIndex, const int consumerIndex,
-                     OpOperand *fusedOperand);
+  bool areFusibleOps(const int producerIndex, const int consumerIndex);
+  bool fuseProducerConsumerImpl(Block &block);
+  bool parallelismSubModel(DenseSet<Operation *> &producerGroup,
+                                  DenseSet<Operation *> &consumerGroup) const;
+  bool execUnitUtilizationSubModel(DenseSet<Operation *> &producerGroup,
+                                          DenseSet<Operation *> &consumerGroup) const;
+  bool canFuseGroups(int producerGroupId, int consumerGroupId, int producerIndex);
+  bool mergeGroups(const int producerGroupId, const int consumerGroupId);
+  bool tryFuseGroups(int producerIndex, int consumerIndex,
+                      int producerGroupId, int consumerGroupId);
+  void printValidGroupCount();
   DenseMap<Operation *, size_t> opToGroupIndex;
-  SmallVector<DenseSet<Operation *>> AllFusedBlocks;
+  DenseMap<int64_t, DenseSet<Operation *>> AllFusedGroupBlocks;
 };
 
 //===----------------------------------------------------------------------===//
