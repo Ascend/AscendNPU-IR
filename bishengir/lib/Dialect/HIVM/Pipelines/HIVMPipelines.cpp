@@ -65,11 +65,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
       !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
-    if (hivmPipelineOptions.enableLayoutOptimization) {
-      pm.nest<func::FuncOp>().addPass(createInsertCVDataMovementPass());
-    } else {
-      pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
-    }
+    pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
@@ -185,8 +181,10 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-
-  if (hivmPipelineOptions.enableLayoutOptimization) {
+  // TODO: Currently, the optimized layout optimization pipeline is incompatible
+  // with the affinity programming cases.
+  if (hivmPipelineOptions.enableLayoutOptimization &&
+      hivmPipelineOptions.enableMixedCV) {
     // Combine optimized folds:
     // - load + convert layout
     // - convert layout + fixpipe
@@ -211,7 +209,10 @@ static void hivmPreBufferizationOptimizationPipeline(
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  if (hivmPipelineOptions.enableLayoutOptimization) {
+  // TODO: Currently, the optimized layout optimization pipeline is incompatible
+  // with the affinity programming cases.
+  if (hivmPipelineOptions.enableLayoutOptimization &&
+      hivmPipelineOptions.enableMixedCV) {
     pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());

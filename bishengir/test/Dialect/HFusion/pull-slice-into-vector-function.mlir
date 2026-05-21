@@ -248,3 +248,38 @@ module {
     return
   }
 }
+
+
+// -----
+// Test: Swap rank-preserving extract_slice + rank-reducing collapse_shape
+// into collapse_shape + extract_slice, then pull the slice into VF.
+// 1x16x4x16 -> 1x1x4x16 -> 1x64  becomes  1x16x4x16 -> 16x64 -> 1x64
+module {
+  // CHECK-LABEL: func @vf_collapse_rank_reduce(
+  // CHECK-SAME: tensor<16x64xf16>
+  func.func @vf_collapse_rank_reduce(%arg0: tensor<1x64xf16>) -> tensor<1x64xf16>
+      attributes {hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f16
+    %c0 = arith.constant 0 : index
+    %0 = vector.transfer_read %arg0[%c0, %c0], %cst
+        {in_bounds = [true, true]} : tensor<1x64xf16>, vector<1x64xf16>
+    %1 = vector.transfer_write %0, %arg0[%c0, %c0]
+        {in_bounds = [true, true]} : vector<1x64xf16>, tensor<1x64xf16>
+    return %1 : tensor<1x64xf16>
+  }
+  // CHECK-LABEL: func @test_swap_collapse_rank_reduce(
+  // CHECK-NOT: tensor.extract_slice{{.*}}tensor<1x16x4x16xf16> to tensor<1x1x4x16xf16>
+  // CHECK: tensor.collapse_shape{{.*}}tensor<1x16x4x16xf16> into tensor<16x64xf16>
+  // CHECK: call @vf_collapse_rank_reduce(
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: tensor<16x64xf16>
+  func.func @test_swap_collapse_rank_reduce(%arg0: tensor<1x16x4x16xf16>) {
+    %slice = tensor.extract_slice %arg0[0, 3, 0, 0] [1, 1, 4, 16] [1, 1, 1, 1]
+        : tensor<1x16x4x16xf16> to tensor<1x1x4x16xf16>
+    %collapsed = tensor.collapse_shape %slice [[0, 1], [2, 3]]
+        : tensor<1x1x4x16xf16> into tensor<1x64xf16>
+    %x = func.call @vf_collapse_rank_reduce(%collapsed) {hivm.vector_function}
+        : (tensor<1x64xf16>) -> tensor<1x64xf16>
+    return
+  }
+}

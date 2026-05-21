@@ -761,3 +761,42 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %mm : tensor<16x16xf32>
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @test_mmad_l1_sequence_extra_transpose(
+// CHECK: %[[CONV:.*]] = hivm.hir.convert_layout
+// CHECK: %[[VCAST:.*]] = hivm.hir.vcast
+// CHECK: %[[EMPTY:.*]] = tensor.empty()
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2x2x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
+// CHECK: %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable
+// CHECK: hivm.hir.copy ins(%[[VCAST]] : tensor<2x2x16x16xf16>) outs(%[[CAST]] : memref<2x2x16x16xf16>)
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%[[BUF_TENSOR]], %[[CONV]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x16x16xf16>, tensor<4x2x16x16xf16>, i1, index, index, index)
+func.func @test_mmad_l1_sequence_extra_transpose(
+    %input : tensor<32x64xf16>,
+    %vcast_in : tensor<2x2x16x16xf32>,
+    %vcast_out_init : tensor<2x2x16x16xf16>
+) -> tensor<4x2x16x16xf32> {
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %true = arith.constant true
+    %fractal = hivm.hir.convert_layout %input
+        output_shape [4, 2, 16, 16]
+        {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+        srcLayout = #hivm.data_layout<ND>}
+        : (tensor<32x64xf16>) -> tensor<4x2x16x16xf16>
+    %vcast = hivm.hir.vcast
+        ins(%vcast_in : tensor<2x2x16x16xf32>)
+        outs(%vcast_out_init : tensor<2x2x16x16xf16>)
+        -> tensor<2x2x16x16xf16>
+    %empty = tensor.empty() : tensor<4x2x16x16xf32>
+    %result = hivm.hir.mmadL1
+        {already_set_real_mkn, fixpipe_already_inserted = true}
+        ins(%vcast, %fractal, %true, %c32, %c32, %c64
+            : tensor<2x2x16x16xf16>, tensor<4x2x16x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<4x2x16x16xf32>)
+        -> tensor<4x2x16x16xf32>
+    return %result : tensor<4x2x16x16xf32>
+}
+}
