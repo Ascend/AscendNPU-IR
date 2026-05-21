@@ -66,3 +66,21 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %collapse_shape_1 = memref.collapse_shape %expand_shape_1 [[0, 1, 2]] : memref<1x?x?xf32, strided<[?, ?, 1], offset: ?>> into memref<?xf32, strided<[?], offset: ?>>
     return %collapse_shape_0, %collapse_shape_1 : memref<?xf32, strided<[?], offset: ?>>, memref<?xf32, strided<[?], offset: ?>>
 }
+
+// -----
+
+// CHECK-LABEL: func @fold_constant_dim_recomputes_strided_layout
+// CHECK-SAME:    (%[[SRC:.*]]: memref<?x?xf16, strided<[128, 1], offset: ?>>)
+// CHECK:         %[[CAST_SRC:.*]] = memref.cast %[[SRC]] : memref<?x?xf16, strided<[128, 1], offset: ?>> to memref<?x100xf16, strided<[128, 1], offset: ?>>
+// CHECK:         %[[EXPANDED:.*]] = memref.expand_shape %[[CAST_SRC]] {{\[\[}}0], [1, 2]] output_shape [%{{.*}}, 1, 100] : memref<?x100xf16, strided<[128, 1], offset: ?>> into memref<?x1x100xf16, strided<[128, 100, 1], offset: ?>>
+// CHECK:         %[[CAST_DST:.*]] = memref.cast %[[EXPANDED]] : memref<?x1x100xf16, strided<[128, 100, 1], offset: ?>> to memref<?x1x?xf16, strided<[128, ?, 1], offset: ?>>
+// CHECK:         return %[[CAST_DST]]
+func.func @fold_constant_dim_recomputes_strided_layout(%src: memref<?x?xf16, strided<[128, 1], offset: ?>>) -> memref<?x1x?xf16, strided<[128, ?, 1], offset: ?>> {
+    %c1 = arith.constant 1 : index
+    %dim0 = memref.dim %src, %c1 : memref<?x?xf16, strided<[128, 1], offset: ?>>
+    %c100 = arith.constant 100 : index
+    %expand_shape = memref.expand_shape %src [[0], [1, 2]] output_shape [%dim0, 1, %c100]
+        : memref<?x?xf16, strided<[128, 1], offset: ?>>
+        into memref<?x1x?xf16, strided<[128, ?, 1], offset: ?>>
+    return %expand_shape : memref<?x1x?xf16, strided<[128, ?, 1], offset: ?>>
+}
