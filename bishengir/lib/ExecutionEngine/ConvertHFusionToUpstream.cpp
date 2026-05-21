@@ -206,6 +206,79 @@ struct RewriteHFusionIsNanOp : public OpRewritePattern<hfusion::IsNanOp> {
 };
 
 // =======================================================================
+// Deinterleaveop Lowering
+// =======================================================================
+struct RewriteHFusionDeinterleaveOp
+    : public OpRewritePattern<hfusion::DeinterleaveOp> {
+  using OpRewritePattern<hfusion::DeinterleaveOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::DeinterleaveOp op,
+                                PatternRewriter &rewriter) const override {
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    if (!inputType)
+      return failure();
+
+    if (op.getOutput().empty())
+      return failure();
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult(0).getType());
+    if (!resultType)
+      return failure();
+
+    const int64_t rank    = inputType.getRank();
+    const int64_t chanIdx = op.getDeInterLeaveChannelIdx(); // -1, 0, 1
+    // -1(all) equals to even，offset=0；0=even；1=odd
+    const int64_t offset  = (chanIdx == 1) ? 1 : 0;
+    const Location loc    = op.getLoc();
+    MLIRContext *ctx      = rewriter.getContext();
+
+    // 1. prepare empty tensor
+    SmallVector<Value> dynamicSizes;
+    for (int64_t i = 0; i < rank - 1; ++i) {
+      if (resultType.isDynamicDim(i))
+        dynamicSizes.push_back(
+            rewriter.create<tensor::DimOp>(loc, op.getInput(), i));
+    }
+    if (resultType.isDynamicDim(rank - 1)) {
+      Value lastDim =
+          rewriter.create<tensor::DimOp>(loc, op.getInput(), rank - 1);
+      Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
+      dynamicSizes.push_back(
+          rewriter.create<arith::DivUIOp>(loc, lastDim, two));
+    }
+
+    Value initTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultType.getShape(), resultType.getElementType(), dynamicSizes);
+
+    // 2. indexing maps
+    //    input:  (d0,...,d_{r-1}) -> (d0,...,d_{r-2}, d_{r-1}*2 + offset)
+    //    output: identity
+    SmallVector<AffineExpr> inputExprs;
+    for (int64_t i = 0; i < rank - 1; ++i)
+      inputExprs.push_back(getAffineDimExpr(i, ctx));
+    inputExprs.push_back(getAffineDimExpr(rank - 1, ctx) * 2 + offset);
+
+    SmallVector<AffineMap> indexingMaps = {
+        AffineMap::get(rank, 0, inputExprs, ctx),
+        rewriter.getMultiDimIdentityMap(rank)};
+
+    SmallVector<utils::IteratorType> iterTypes(rank,
+                                               utils::IteratorType::parallel);
+
+    // 3. linalg.generic：body yield 
+    auto genericOp = rewriter.create<linalg::GenericOp>(
+        loc, resultType,
+        ValueRange{op.getInput()}, ValueRange{initTensor},
+        indexingMaps, iterTypes,
+        [](OpBuilder &b, Location nestedLoc, ValueRange args) {
+          b.create<linalg::YieldOp>(nestedLoc, args[0]);
+        });
+
+    rewriter.replaceOp(op, genericOp.getResult(0));
+    return success();
+  }
+};
+
+// =======================================================================
 // Pass Definition
 // =======================================================================
 struct ConvertHFusionToUpstream
@@ -221,6 +294,7 @@ struct ConvertHFusionToUpstream
     // Register all HFusion-to-CPU lowering patterns here.
     patterns.add<RewriteHistogramOp>(&ctx);
     patterns.add<RewriteHFusionIsNanOp>(&ctx);
+    patterns.add<RewriteHFusionDeinterleaveOp>(&ctx);
 
     // Future operations like CumprodOp, AtomicXchgOp, etc., should be added below.
     //
