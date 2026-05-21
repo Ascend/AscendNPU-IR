@@ -899,9 +899,14 @@ Value createPRegFromConstantOp(VectorType vecTy, bool condition,
   auto pgePattern =
       condition ? hivmave::PgePattern::ALL : hivmave::PgePattern::ALLF;
   auto pgeAttr = hivmave::PgePatternAttr::get(vecTy.getContext(), pgePattern);
+  // Create a 1D i1 vector type with the same number of elements as vecTy
+  auto maskType = VectorType::get({vecTy.getNumElements()}, rewriter.getI1Type());
   auto maskOp = rewriter.create<hivmave::VFPgeOp>(rewriter.getUnknownLoc(),
-                                                  vecTy, pgeAttr);
-  return maskOp;
+                                                  maskType, pgeAttr);
+  // Convert the 1D mask back to the original vector shape
+  auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+      rewriter.getUnknownLoc(), vecTy, maskOp.getResult());
+  return castOp.getResult(0);
 }
 
 } // namespace utils

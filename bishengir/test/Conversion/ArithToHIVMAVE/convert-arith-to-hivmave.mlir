@@ -325,3 +325,26 @@ func.func @lower_fma(%a: vector<8xf32>, %b: vector<8xf32>, %c: vector<8xf32>) ->
 
 // -----
 
+// CHECK-LABEL: @test_create_preg_from_constant_op
+// Test for createPRegFromConstantOp function with multi-dimensional vector
+func.func @test_create_preg_from_constant_op(%arg0: memref<16x2x1xi1, strided<[65536, 256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  // This constant will trigger createPRegFromConstantOp
+  %cst = arith.constant dense<true> : vector<1x1x64xi1>
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c16 = arith.constant 16 : index
+  scf.for %i = %c0 to %c16 step %c1 {
+    scf.for %j = %c0 to %c2 step %c1 {
+      %subview = memref.subview %arg0[%i, %j, 0] [1, 1, 1] [1, 1, 1] : memref<16x2x1xi1, strided<[65536, 256, 1]>, #hivm.address_space<ub>> to memref<1x1x1xi1, strided<[65536, 256, 1], offset: ?>, #hivm.address_space<ub>>
+      %mask = ave.hir.pge <VL1> : vector<64xi1> 
+      // CHECK: %[[PG:.*]] = ave.hir.pge <ALL> : vector<64xi1>
+      // CHECK: %[[CAST:.*]] = builtin.unrealized_conversion_cast %[[PG]] : vector<64xi1> to vector<1x1x64xi1>
+      // CHECK: %[[CAST2:.*]] = builtin.unrealized_conversion_cast %[[CAST]] : vector<1x1x64xi1> to vector<64xi1> 
+      %0 = builtin.unrealized_conversion_cast %cst : vector<1x1x64xi1> to vector<64xi1>
+      ave.hir.masked_store <NORM_B8> %subview[%c0, %c0, %c0], %mask, %0 : memref<1x1x1xi1, strided<[65536, 256, 1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+    }
+  }
+  return
+}
+// -----
