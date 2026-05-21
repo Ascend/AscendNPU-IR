@@ -13,6 +13,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -25,6 +26,7 @@
 #include "llvm/Support/Casting.h"
 
 namespace mlir {
+#define GEN_PASS_DEF_INSERTFIXPIPE
 #define GEN_PASS_DEF_INLINEFIXPIPE
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
@@ -43,6 +45,11 @@ static constexpr llvm::StringLiteral fixpipeAlreadyInserted =
 } // namespace
 
 namespace {
+struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
+  using Base::Base;
+  void runOnOperation() override;
+};
+
 struct InlineFixpipe : public impl::InlineFixpipeBase<InlineFixpipe> {
   using Base::Base;
   void runOnOperation() override;
@@ -711,11 +718,15 @@ private:
   }
 };
 
-void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
+void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx);
+}
+
+void mlir::hivm::populateInlineFixpipePatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 
@@ -758,9 +769,9 @@ void populateDevicePrintPatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
 
-void InlineFixpipe::runOnOperation() {
+void InsertFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  populateInlineFixpipePatterns(patterns);
+  mlir::hivm::populateInsertFixpipePatterns(patterns);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
@@ -774,6 +785,19 @@ void InlineFixpipe::runOnOperation() {
                                           std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }
+}
+
+void InlineFixpipe::runOnOperation() {
+  RewritePatternSet patterns(&getContext());
+  mlir::hivm::populateInlineFixpipePatterns(patterns);
+
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+  }
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass() {
+  return std::make_unique<InsertFixpipe>();
 }
 
 std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass() {

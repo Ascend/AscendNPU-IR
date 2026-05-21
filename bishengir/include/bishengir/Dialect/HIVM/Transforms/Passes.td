@@ -609,6 +609,13 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
+def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
+  let summary = "Insert HIVM Fixpipe op";
+  let constructor = "mlir::hivm::createInsertFixpipePass()";
+  let dependentDialects =
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+}
+
 def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
   let summary = "Convert ops to HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInlineFixpipeV2Pass()";

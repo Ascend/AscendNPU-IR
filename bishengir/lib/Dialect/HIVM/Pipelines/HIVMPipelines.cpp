@@ -280,6 +280,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
     pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   } else {
+    pm.addPass(mlir::hivm::createInsertFixpipePass());
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
@@ -307,6 +308,7 @@ static void hivmPreBufferizationOptimizationPipeline(
     } else {
       pm.addPass(createInsertNZ2NDForDebugPass());
     }
+    pm.addPass(mlir::hivm::createInsertFixpipePass());
     pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
