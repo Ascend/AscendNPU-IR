@@ -960,12 +960,22 @@ def VModOp : HIVM_ElementwiseBinaryOp<"vmod",
     [SameOperandsElementType, StaticMaxRankTrait<1>,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0, 1],
-       [I16, I32, I64]>
+       [I1, I8, I16, I32, I64, F16, F32]>
     ]> {
   let summary = "Elementwise Vector Mod Op";
   let description = baseClassDescription # [{
     Additional constraints:
       1. The input/init operands and result have the same element type.
+      2. For I1 (bool), normalization produces fill(0) since x % y is always 0 for booleans.
+      3. For I8, normalization widens both operands to I16, computes the remainder,
+         then casts the result back to I8. This matches the old HFusion normalize rule.
+      4. For float types (F16, F32), normalization rewrites
+         `x % y` into `x - trunc(x / y) * y`.
+         Note: BF16 is NOT supported because the infinity-modulus path uses
+         VIsInfOp, and VIsInfOp only supports F16/F32.
+         FP8, F64, and other float types are NOT supported because the current
+         HIVM normalize path depends on VDivOp/VMulOp/VSubOp/VIsInfOp, and that
+         op set does not provide a complete legal route for those types.
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -974,12 +984,15 @@ def VModUIOp : HIVM_ElementwiseBinaryOp<"vmodui",
     [SameOperandsElementType, StaticMaxRankTrait<1>,
      VectorOnlyTrait<0>,
      OperElemTypeConstraints<[0, 1],
-       [I16, I32, I64]>
+       [I1, I8, I16, I32, I64]>
     ]> {
   let summary = "Elementwise Vector Modui Op";
   let description = baseClassDescription # [{
     Additional constraints:
       1. The input/init operands and result have the same element type.
+      2. For I1 (bool), normalization produces fill(0) since x % y is always 0 for booleans.
+      3. For I8, normalization widens both operands to I16, computes unsigned
+         remainder, then casts the result back to I8.
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }

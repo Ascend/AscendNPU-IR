@@ -21,6 +21,7 @@
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/PatternMatch.h"
 
 #include <memory>
 
@@ -164,12 +165,13 @@ public:
 /// Base class for bubble up patterns using Template Method pattern
 class BubbleUpPattern : public OpRewritePattern<tensor::ExtractSliceOp> {
 public:
-  using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
-
-  // Use shared_ptr to manage strategy lifetime
+  // Benefit above tensor::populateFoldTensorEmptyPatterns (benefit 1) so odd
+  // tiling can attach buffer_size_in_byte on extract_slice before fold merges
+  // it into tensor.empty.
   BubbleUpPattern(MLIRContext *context,
-                  SmallVector<std::shared_ptr<BubbleUpStrategy>> strategies)
-      : OpRewritePattern<tensor::ExtractSliceOp>(context),
+                  SmallVector<std::shared_ptr<BubbleUpStrategy>> strategies,
+                  PatternBenefit benefit = PatternBenefit(10))
+      : OpRewritePattern<tensor::ExtractSliceOp>(context, benefit),
         bubbleUpStrategies(std::move(strategies)) {}
 
 protected:

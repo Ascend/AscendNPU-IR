@@ -2429,6 +2429,21 @@ def PintlvB32InstrOp: PintlvInstrOp<"hivm.pintlv.b32">;
 def PintlvB16InstrOp: PintlvInstrOp<"hivm.pintlv.b16">;
 def PintlvB8InstrOp: PintlvInstrOp<"hivm.pintlv.b8">;
 
+class PDintlvInstrOp<string mnemonic> : HIVMRegbaseIntrins_Op<
+                                         /*string opName=*/mnemonic,
+                                         /*list<int> overloadedResults=*/[],
+                                         /*list<int> overloadedOperands=*/[],
+                                         /*list<Trait> traits=*/[],
+                                         /*int numResults=*/2> {
+  let arguments = (ins predicateVector:$src0,
+                       predicateVector:$src1
+                       );
+}
+
+def PDintlvB32InstrOp: PDintlvInstrOp<"hivm.pdintlv.b32">;
+def PDintlvB16InstrOp: PDintlvInstrOp<"hivm.pdintlv.b16">;
+def PDintlvB8InstrOp: PDintlvInstrOp<"hivm.pdintlv.b8">;
+
 class VpackInstrOp<string mnemonic> :
   HIVMRegbaseIntrins_Op</*string opName=*/mnemonic,
                 /*list<int> overloadedResults=*/[0],

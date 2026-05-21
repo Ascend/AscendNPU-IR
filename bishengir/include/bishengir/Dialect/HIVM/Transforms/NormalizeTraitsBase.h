@@ -104,15 +104,25 @@ public:
 
   static bool archIsRegbased();
 
-  static Value createCastValueFromSourceOp(PatternRewriter &rewriter, Location loc, VCastOp op,
-                         Value input, Type targetElemType,
-                         CastRoundKind executionKind = CastRoundKind::Default,
-                         CastSignKind signKind = CastSignKind::Preserve,
-                         bool enableSaturate = false,
-                         CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);
+  static Value createCastValueFromSourceOp(PatternRewriter &rewriter,
+                                           Location loc, VCastOp op,
+                                           Value input, Type targetElemType,
+                                           CastRoundKind executionKind =
+                                               CastRoundKind::Default,
+                                           CastSignKind signKind =
+                                               CastSignKind::Preserve,
+                                           bool enableSaturate = false,
+                                           CastUnsignedModeKind
+                                               unsignedModeKind =
+                                                   CastUnsignedModeKind::
+                                                       Preserve);
 
   static Value castScalarThroughTensor(PatternRewriter &rewriter, Location loc,
                                        Value scalar, Type dstType);
+  static Value createSelectOp(PatternRewriter &rewriter, Location loc,
+                              Value cond, Value a, Value b, Value dst);
+
+  static Value createIsInfOp(PatternRewriter &rewriter, Location loc, Value y);
 };
 
 } // namespace mlir::hivm

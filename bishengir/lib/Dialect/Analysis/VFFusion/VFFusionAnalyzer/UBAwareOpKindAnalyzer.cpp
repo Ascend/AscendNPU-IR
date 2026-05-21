@@ -29,7 +29,7 @@ namespace mlir::analysis {
 /// Compute the byte size of a shaped type, rounded up to the given alignment.
 /// This matches PlanMemory's buffer sizing which aligns all UB allocations to
 /// UB_ALIGN_SIZE (from NPUTargetSpec.td, typically 256 bits = 32 bytes).
-static int64_t getShapedBytes(Type type, int64_t alignBytes) {
+int64_t getShapedBytes(Type type, int64_t alignBytes) {
   auto shaped = dyn_cast<ShapedType>(type);
   if (!shaped || !shaped.hasStaticShape() ||
       !shaped.getElementType().isIntOrFloat())
@@ -44,7 +44,7 @@ static int64_t getShapedBytes(Type type, int64_t alignBytes) {
 }
 
 /// partition block ops into two DSU group sets for the given roots.
-static void collectGroupOps(const SmallVector<Operation *> &opsInBlock,
+void collectGroupOps(const SmallVector<Operation *> &opsInBlock,
                             VFUnionFind &dsu, int xRoot, int yRoot,
                             SmallPtrSet<Operation *, 16> &groupXOps,
                             SmallPtrSet<Operation *, 16> &groupYOps) {
@@ -62,7 +62,11 @@ static void collectGroupOps(const SmallVector<Operation *> &opsInBlock,
 /// input per VF call, provided the output is write-only (DPS op with
 /// tensor.empty init), the input is read-only (not used as a DPS init), and
 /// the input buffer is at least as large as the output.
-static bool canReuseInputForOutput(
+// TODO: The liveness check below is conservative -- it rejects reuse if the
+// input has ANY user outside the merged group. PlanMemory is more nuanced
+// (checks point-wise liveness). This may over-estimate by ~1 buffer in
+// rare cases but never under-estimates, so it is safe.
+bool canReuseInputForOutput(
     Value output, Value input, const SmallPtrSet<Operation *, 32> &mergedOps,
     const SmallPtrSet<Operation *, 8> &hoistedOps, int64_t alignBytes) {
   auto *outputOp = output.getDefiningOp();
@@ -104,6 +108,42 @@ static bool canReuseInputForOutput(
   return true;
 }
 
+/// Collect external shaped inputs for a set of ops. An input is "external" if
+/// its defining op is outside \p allOps (or is hoisted). tensor.empty results
+/// are excluded because they are output placeholders, not true data inputs.
+void collectExternalInputs(
+    const SmallPtrSetImpl<Operation *> &groupOps,
+    const SmallPtrSetImpl<Operation *> &allOps,
+    const SmallPtrSetImpl<Operation *> &hoistedOps,
+    SetVector<Value> &inputs) {
+  for (Operation *op : groupOps) {
+    if (hoistedOps.contains(op))
+      continue;
+      // Walk handles ops with nested regions (e.g. scf.for, linalg.generic).
+    op->walk<WalkOrder::PreOrder>([&](Operation *inner) {
+      for (Value operand : inner->getOperands()) {
+        if (!isa<ShapedType>(operand.getType()))
+          continue;
+        if (auto *defOp = operand.getDefiningOp()) {
+          if (allOps.contains(defOp) && !hoistedOps.contains(defOp))
+            continue;
+          if (isa<tensor::EmptyOp>(defOp))
+            continue;
+        }
+        inputs.insert(operand);
+      }
+    });
+  }
+  for (Operation *op : groupOps) {
+    // Hoisted non-empty ops (e.g. memref.alloc) become caller-side arguments;
+    // their results are external inputs to the outlined function.
+    if (!hoistedOps.contains(op) || isa<tensor::EmptyOp>(op))
+      continue;
+    for (Value result : op->getResults())
+      inputs.insert(result);
+  }
+}
+
 /// Estimate the peak caller-side UB footprint if Union-Find groups X and Y
 /// were merged into a single outlined function.
 ///
@@ -136,31 +176,8 @@ int64_t UBAwareOpKindAnalyzer::estimateMergedGroupBytes(int xIndex,
       hoistedOps.insert(op);
   }
 
-  // external inputs (tensor.empty is an output init, not an input).
   SetVector<Value> externalInputs;
-  for (Operation *op : mergedOps) {
-    if (hoistedOps.contains(op))
-      continue;
-    op->walk<WalkOrder::PreOrder>([&](Operation *inner) {
-      for (Value operand : inner->getOperands()) {
-        if (!isa<ShapedType>(operand.getType()))
-          continue;
-        if (auto *defOp = operand.getDefiningOp()) {
-          if (mergedOps.contains(defOp) && !hoistedOps.contains(defOp))
-            continue;
-          if (isa<tensor::EmptyOp>(defOp))
-            continue;
-        }
-        externalInputs.insert(operand);
-      }
-    });
-  }
-  for (Operation *op : hoistedOps) {
-    if (isa<tensor::EmptyOp>(op))
-      continue;
-    for (Value result : op->getResults())
-      externalInputs.insert(result);
-  }
+  collectExternalInputs(mergedOps, mergedOps, hoistedOps, externalInputs);
 
   // external outputs: results used outside the group.
   SetVector<Value> externalOutputs;
@@ -203,81 +220,123 @@ int64_t UBAwareOpKindAnalyzer::estimateMergedGroupBytes(int xIndex,
   return totalBytes;
 }
 
-/// Compute the byte cost of shared intermediates that would be materialized at
-/// the caller level if groups X and Y were kept separate.
+/// Sum aligned bytes of results from \p ops where at least one user satisfies
+/// \p userPred. Used for both boundary-byte and external-output-byte queries.
+template <typename Pred>
+int64_t sumResultBytesIf(
+    const SmallPtrSetImpl<Operation *> &ops,
+    const SmallPtrSetImpl<Operation *> &hoistedOps, int64_t alignBytes,
+    Pred userPred) {
+  int64_t bytes = 0;
+  for (Operation *op : ops) {
+    if (hoistedOps.contains(op))
+      continue;
+    for (Value result : op->getResults()) {
+      for (Operation *user : result.getUsers()) {
+        if (userPred(user)) {
+          bytes += getShapedBytes(result.getType(), alignBytes);
+          break;
+        }
+      }
+    }
+  }
+  return bytes;
+}
+
+/// Estimate the peak caller-side UB pressure if groups X and Y are kept as
+/// separate VFs that run sequentially.
 ///
-/// When a producer op in group X has results consumed by both group X and
-/// group Y (a fan-out), splitting the groups forces the intermediate result to
-/// become a caller-side buffer. This would increase UB pressure rather than
-/// decrease it, so the merge should be allowed.
+/// When split, VF_X runs first, then VF_Y. The caller's UB must hold:
+///   - Shared inputs (used by both X and Y): live across both VF calls
+///   - Boundary tensors (X->Y results): produced by VF_X, persist until VF_Y
+///   - Exclusive inputs of whichever VF is currently running
+///   - Outputs of whichever VF is currently running
 ///
-/// Returns the byte size of the first such shared intermediate, or 0 if none.
-/// DPS ops whose init is tensor.empty are skipped because their output is
-/// hoisted to the caller regardless of merge/split.
-int64_t UBAwareOpKindAnalyzer::sharedProducerBytes(int xIndex, int yIndex) {
+///   splitPeak = max(peakDuringX, peakDuringY)
+///
+/// When merged, boundary tensors become internal (never in caller UB), but ALL
+/// exclusive inputs are live simultaneously. Split wins when exclusive inputs
+/// of the idle group offset boundary cost; merge wins when boundary tensors
+/// are large relative to exclusive inputs.
+int64_t UBAwareOpKindAnalyzer::estimateSplitCostBytes(int xIndex, int yIndex) {
   const int xRoot = dsu.find(xIndex);
   const int yRoot = dsu.find(yIndex);
 
   SmallPtrSet<Operation *, 16> groupXOps, groupYOps;
   collectGroupOps(opsInBlock, dsu, xRoot, yRoot, groupXOps, groupYOps);
 
-  const int64_t alignBytes = ubAlignBytes_;
-  auto fanoutBytes =
-      [alignBytes](const SmallPtrSet<Operation *, 16> &srcGroup,
-                   const SmallPtrSet<Operation *, 16> &dstGroup) -> int64_t {
-    for (Operation *op : srcGroup) {
-      if (isSafeToExcludeOps(op))
-        continue;
-      // DPS op with tensor.empty init: output is hoisted regardless of merge.
-      if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op)) {
-        bool hasEmptyInit = llvm::any_of(dpsOp.getDpsInits(), [](Value init) {
-          auto *initOp = init.getDefiningOp();
-          return initOp && isa<tensor::EmptyOp>(initOp);
-        });
-        if (hasEmptyInit)
-          continue;
-      }
-      for (Value result : op->getResults()) {
-        int64_t bytes = getShapedBytes(result.getType(), alignBytes);
-        if (bytes == 0)
-          continue;
-        bool usedByDst = false;
-        bool usedByExternal = false;
-        unsigned totalConsumers = 0;
-        for (Operation *user : result.getUsers()) {
-          if (dstGroup.contains(user))
-            usedByDst = true;
-          else if (!srcGroup.contains(user))
-            usedByExternal = true;
-          ++totalConsumers;
-        }
-        if (usedByDst && !usedByExternal && totalConsumers >= 2)
-          return bytes;
-      }
-    }
-    return 0;
-  };
+  SmallPtrSet<Operation *, 32> allOps;
+  allOps.insert(groupXOps.begin(), groupXOps.end());
+  allOps.insert(groupYOps.begin(), groupYOps.end());
+  SmallPtrSet<Operation *, 8> hoistedOps;
+  for (Operation *op : allOps) {
+    if (isSafeToExcludeOps(op))
+      hoistedOps.insert(op);
+  }
 
-  int64_t bytes = fanoutBytes(groupXOps, groupYOps);
-  if (bytes == 0)
-    bytes = fanoutBytes(groupYOps, groupXOps);
-  return bytes;
+  SetVector<Value> inputsX, inputsY;
+  collectExternalInputs(groupXOps, allOps, hoistedOps, inputsX);
+  collectExternalInputs(groupYOps, allOps, hoistedOps, inputsY);
+
+  int64_t exclusiveXBytes = 0, exclusiveYBytes = 0, sharedBytes = 0;
+  SetVector<Value> allInputs;
+  for (Value v : inputsX)
+    allInputs.insert(v);
+  for (Value v : inputsY)
+    allInputs.insert(v);
+  for (Value v : allInputs) {
+    int64_t bytes = getShapedBytes(v.getType(), ubAlignBytes_);
+    bool inX = inputsX.contains(v);
+    bool inY = inputsY.contains(v);
+    if (inX && inY)
+      sharedBytes += bytes;
+    else if (inX)
+      exclusiveXBytes += bytes;
+    else
+      exclusiveYBytes += bytes;
+  }
+
+  int64_t totalBoundary =
+      sumResultBytesIf(groupXOps, hoistedOps, ubAlignBytes_,
+                       [&](Operation *u) { return groupYOps.contains(u); }) +
+      sumResultBytesIf(groupYOps, hoistedOps, ubAlignBytes_,
+                       [&](Operation *u) { return groupXOps.contains(u); });
+  int64_t outputsXBytes = sumResultBytesIf(
+      groupXOps, hoistedOps, ubAlignBytes_,
+      [&](Operation *u) { return !allOps.contains(u) || hoistedOps.contains(u); });
+  int64_t outputsYBytes = sumResultBytesIf(
+      groupYOps, hoistedOps, ubAlignBytes_,
+      [&](Operation *u) { return !allOps.contains(u) || hoistedOps.contains(u); });
+
+  int64_t peakDuringX =
+      exclusiveXBytes + sharedBytes + totalBoundary + outputsXBytes;
+  int64_t peakDuringY =
+      exclusiveYBytes + sharedBytes + totalBoundary + outputsYBytes;
+  int64_t splitPeak = std::max(peakDuringX, peakDuringY);
+
+  LDBG("estimateSplitCostBytes:"
+       << " exclusiveX=" << exclusiveXBytes << " exclusiveY=" << exclusiveYBytes
+       << " shared=" << sharedBytes << " boundary=" << totalBoundary
+       << " outputsX=" << outputsXBytes << " outputsY=" << outputsYBytes
+       << " peakX=" << peakDuringX << " peakY=" << peakDuringY
+       << " splitPeak=" << splitPeak);
+  return splitPeak;
 }
 
 /// Decide whether merging Union-Find groups containing xIndex and yIndex is
 /// allowed under the UB budget constraint.
 ///
 /// Decision logic:
-///   1. If no budget is set (ubBudgetBytes_ <= 0), always allow (feature off).
-///   2. Estimate the combined caller-side UB footprint via
-///      estimateMergedGroupBytes (external inputs + unreused outputs, aligned).
-///   3. If the estimate fits within budget, allow the merge.
-///   4. If it exceeds budget, check sharedProducerBytes:
-///      - If shared intermediates exist, splitting would materialize them as
-///        additional caller-side buffers, making the overflow worse. Allow
-///        merge.
-///      - If no shared intermediates, the groups are independent and splitting
-///        them into separate VFs reduces peak UB. Reject the merge.
+///   1. If no budget is set, always allow (feature off).
+///   2. If the merged estimate fits within budget, allow.
+///   3. Consumer lookahead (up to maxLookaheadDepth_ iterations): if the
+///      estimate exceeds budget, iteratively expand the tentative group by
+///      including downstream consumers of external outputs. Each round
+///      internalizes outputs-to-consumers, potentially reducing the estimate
+///      below budget. Allow if any depth fits.
+///   4. Split-cost guard: if keeping X and Y separate would require strictly
+///      more UB than merging them, allow the merge as the lesser evil.
+///   5. Otherwise reject.
 bool UBAwareOpKindAnalyzer::isFusibleImpl(const int xIndex, const int yIndex) {
   if (ubBudgetBytes_ <= 0)
     return true;
@@ -290,23 +349,107 @@ bool UBAwareOpKindAnalyzer::isFusibleImpl(const int xIndex, const int yIndex) {
   if (mergedBytes <= ubBudgetBytes_)
     return true;
 
-  if (int64_t savedBytes = sharedProducerBytes(xIndex, yIndex)) {
-    LDBG("shared producer guard: overflow without merge="
-         << (mergedBytes + savedBytes)
-         << ", overflow with merge=" << mergedBytes
-         << " (budget=" << ubBudgetBytes_ << "), better to merge");
+  // --- Consumer lookahead (iterative, up to maxLookaheadDepth_) ---
+  const int xRoot = dsu.find(xIndex);
+  const int yRoot = dsu.find(yIndex);
+  SmallPtrSet<Operation *, 32> expandedOps;
+  for (size_t i = 0; i < opsInBlock.size(); ++i) {
+    int root = dsu.find(i);
+    if (root == xRoot || root == yRoot)
+      expandedOps.insert(opsInBlock[i]);
+  }
+  SmallPtrSet<Operation *, 8> expandedHoisted;
+  for (Operation *op : expandedOps) {
+    if (isSafeToExcludeOps(op))
+      expandedHoisted.insert(op);
+  }
+
+  for (int depth = 1; depth <= maxLookaheadDepth_; ++depth) {
+    // Find consumers of external outputs that are outside the expanded group.
+    SmallPtrSet<Operation *, 16> newConsumers;
+    for (Operation *op : expandedOps) {
+      if (expandedHoisted.contains(op))
+        continue;
+      for (Value result : op->getResults()) {
+        for (Operation *user : result.getUsers()) {
+          if (!expandedOps.contains(user) && opToIndex.contains(user))
+            newConsumers.insert(user);
+        }
+      }
+    }
+
+    if (newConsumers.empty())
+      break;
+
+    // Expand the group with new consumers.
+    expandedOps.insert(newConsumers.begin(), newConsumers.end());
+    for (Operation *op : newConsumers) {
+      if (isSafeToExcludeOps(op))
+        expandedHoisted.insert(op);
+    }
+
+    SetVector<Value> expandedInputs;
+    collectExternalInputs(expandedOps, expandedOps, expandedHoisted,
+                          expandedInputs);
+
+    SetVector<Value> expandedOutputs;
+    for (Operation *op : expandedOps) {
+      if (expandedHoisted.contains(op))
+        continue;
+      for (Value result : op->getResults()) {
+        for (Operation *user : result.getUsers()) {
+          if (!expandedOps.contains(user) || expandedHoisted.contains(user)) {
+            expandedOutputs.insert(result);
+            break;
+          }
+        }
+      }
+    }
+
+    int64_t expandedBytes = 0;
+    for (Value v : expandedInputs)
+      expandedBytes += getShapedBytes(v.getType(), ubAlignBytes_);
+    for (Value v : expandedOutputs)
+      expandedBytes += getShapedBytes(v.getType(), ubAlignBytes_);
+
+    LDBG("consumer-lookahead depth=" << depth << ": +" << newConsumers.size()
+         << " consumers -> " << expandedInputs.size() << " inputs, "
+         << expandedOutputs.size() << " outputs = " << expandedBytes
+         << " bytes (was " << mergedBytes << ")");
+
+    if (expandedBytes <= ubBudgetBytes_) {
+      LDBG("lookahead allows merge at depth " << depth << ": expanded="
+           << expandedBytes << " <= budget=" << ubBudgetBytes_);
+      return true;
+    }
+  }
+
+  // Split-cost guard: if keeping X and Y separate would require strictly MORE
+  // UB at the caller than merging them (due to boundary buffers between VFs),
+  // merging is the lesser evil even though the merged estimate exceeds budget.
+  // Use strict inequality: when costs are equal, prefer splitting because each
+  // individual VF is smaller and more likely to fit in downstream PlanMemory.
+  int64_t splitCost = estimateSplitCostBytes(xIndex, yIndex);
+  if (splitCost > mergedBytes) {
+    LDBG("split-cost guard: splitPeak=" << splitCost
+         << " > merged=" << mergedBytes
+         << " -> splitting is worse, allowing merge");
     return true;
   }
 
-  LDBG("rejecting merge: " << mergedBytes << " > " << ubBudgetBytes_);
+  LDBG("rejecting merge: " << mergedBytes << " > " << ubBudgetBytes_
+       << " (lookahead exhausted at depth " << maxLookaheadDepth_
+       << ", splitCost=" << splitCost
+       << " <= merged=" << mergedBytes << ")");
   return false;
 }
 
 /// Walk all ops in program order, attempting to fuse each op with its operand
 /// producers via the Union-Find. Each candidate pair is checked by the base
 /// class (outlineability, dependency validity, reshape constraints) then by
-/// isFusibleImpl (UB budget gate + shared-producer guard). Successfully fused
-/// pairs share a Union-Find group and will be outlined into the same function.
+/// isFusibleImpl (UB budget gate + consumer lookahead + split-cost guard).
+/// Successfully fused pairs share a Union-Find group and will be outlined
+/// into the same function.
 LogicalResult UBAwareOpKindAnalyzer::fuseImpl(Block &block) {
   LDBG("UBAwareOpKind fusing with UB budget " << ubBudgetBytes_ << " bytes");
   initialize(block);
@@ -316,6 +459,11 @@ LogicalResult UBAwareOpKindAnalyzer::fuseImpl(Block &block) {
     for (auto opr : op.getOperands()) {
       auto *defOp = opr.getDefiningOp();
       if (!defOp)
+        continue;
+      // tensor.empty is a shape placeholder, not a real data producer.
+      // Skip it to avoid creating false fusion edges between independent
+      // chains that share a CSE-merged tensor.empty.
+      if (isa<tensor::EmptyOp>(defOp))
         continue;
 
       LDBG("check if defOp is outside of the block " << defOp->getName());

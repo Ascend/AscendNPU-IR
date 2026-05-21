@@ -75,7 +75,6 @@ using NormalizeLogLikeOp =
 using NormalizeLog1pOp =
     mlir::NormalizeLog1pOpTemplate<hfusion::ElemwiseUnaryOp,
                                    HFusionNormalizeLog1pTraits>;
-
 ///  normalize mod op to rec op
 ///   z = x % y
 ///  is normalized to
@@ -84,233 +83,52 @@ using NormalizeLog1pOp =
 ///   41 % 20 = 1; 41 % (-20) = -19; (-72) % 8 = 0
 ///  fp16/bf16 type needs to convert to fp32 to calculate for higher
 ///  accuracy
-struct NormalizeModOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-private:
-  Value createCmpOpWithType(PatternRewriter &rewriter, Location loc, Value lhs,
-                            Value rhs, CompareFn cmpFn, Value typeValue) const {
-    Type boolType = rewriter.getIntegerType(1);
-    auto cmpInit = utils::createEmptyOpWithTargetElemType(rewriter, loc,
-                                                          typeValue, boolType);
-    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(cmpFn);
-    auto cmpModeAttr = rewriter.getNamedAttr(
-        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
-    return rewriter
-        .create<hfusion::CompareOp>(loc, TypeRange(cmpInit),
-                                    ValueRange({lhs, rhs}), ValueRange(cmpInit),
-                                    ArrayRef{cmpModeAttr})
-        ->getResult(0);
+struct HFusionModTraits : public NormalizeTraitsBase {
+  static bool isSupportedType(Type elemType) {
+    if (elemType.isInteger(1) || elemType.isInteger(8))
+      return true;
+
+    if (elemType.isInteger())
+      return false;
+
+    return true;
   }
 
-  Value createSelectOp(PatternRewriter &rewriter, Location loc, Value predicate,
-                       Value x, Value y, Value typeValue) const {
-    auto selectOpOut = utils::createEmptyOp(rewriter, loc, typeValue);
-    return rewriter
-        .create<SelectOp>(loc, TypeRange{selectOpOut.getType()},
-                          ValueRange({predicate, x, y}),
-                          ValueRange(selectOpOut))
-        ->getResults()[0];
+  static bool shouldNormalize(ElemwiseBinaryOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    auto fun = op.getFun();
+    return fun == hfusion::BinaryFn::mod || fun == hfusion::BinaryFn::modui;
   }
 
-  template <typename Op, typename Fn, typename Attr>
-  Value createBinaryOpWithEmptyTensor(PatternRewriter &rewriter, Location loc,
-                                      Fn op, Value x, Value y,
-                                      Value typeValue) const {
-    auto emptyTensor = utils::createEmptyOp(rewriter, loc, typeValue);
-
-    return hfusion::createBinaryOp<Op, Fn, Attr>(rewriter, loc, op,
-                                                 ValueRange{x, y}, emptyTensor)
-        ->getResults()[0];
+  static CastSignKind getCastSignKind(ElemwiseBinaryOp op) {
+    return op.getFun() == hfusion::BinaryFn::modui ? CastSignKind::Unsigned
+                                                   : CastSignKind::Signed;
   }
 
-  Value createHFusionBinaryOp(PatternRewriter &rewriter, Location loc,
-                              hfusion::BinaryFn op, Value x, Value y,
-                              Value typeValue) const {
-    return createBinaryOpWithEmptyTensor<
-        hfusion::ElemwiseBinaryOp, hfusion::BinaryFn, hfusion::BinaryFnAttr>(
-        rewriter, loc, op, x, y, typeValue);
+  static BinaryKind getModKind(ElemwiseBinaryOp op) {
+    return op.getFun() == hfusion::BinaryFn::modui ? BinaryKind::ModUnsigned
+                                                   : BinaryKind::Mod;
   }
 
-  Value createLinalgBinaryOp(PatternRewriter &rewriter, Location loc,
-                             linalg::BinaryFn op, Value x, Value y,
-                             Value typeValue) const {
-    return createBinaryOpWithEmptyTensor<
-        linalg::ElemwiseBinaryOp, linalg::BinaryFn, linalg::BinaryFnAttr>(
-        rewriter, loc, op, x, y, typeValue);
-  }
-
-  Value createDiv(PatternRewriter &rewriter, Location loc, Type resType,
-                  Value src0, Value src1) const {
-
-    if (resType.isInteger()) {
-      return createLinalgBinaryOp(rewriter, loc, linalg::BinaryFn::div, src0,
-                                  src1, src0);
-    } else {
-      // TODO: Use reciprocal here when we fix division to match torch_npu.
-      auto divOp = createHFusionBinaryOp(
-          rewriter, loc, hfusion::BinaryFn::divfhp, src0, src1, src0);
-      // cast directly to resType
-      return hfusion::castTo(rewriter, divOp, resType,
-                             hfusion::RoundMode::TRUNC);
-    }
-  }
-
-  Value ensureRankedTensor1F32(OpBuilder &rewriter, Location loc, Value val,
-                               Value shapeV) const {
-    Type ty = val.getType();
-    if (isa<RankedTensorType>(ty)) {
-      return val;
-    }
-
-    Type refType = shapeV.getType();
-
-    // Must be a ranked tensor
-    auto ranked = dyn_cast<RankedTensorType>(refType);
-    if (!ranked) {
-      llvm::errs() << "Reference tensor is not a ranked tensor\n";
-      assert(ranked);
-    }
-
-    // result type: same shape as the reference tensor
-    RankedTensorType resultTy =
-        RankedTensorType::get(ranked.getShape(), val.getType());
-
-    // Use tensor.generate to broadcast the scalar
-    return rewriter.create<tensor::GenerateOp>(
-        loc, resultTy,
-        /*dynamic extents*/ ValueRange{},
-        [&](OpBuilder &b, Location genLoc, ValueRange indices) {
-          // yield same scalar at every index
-          b.create<tensor::YieldOp>(genLoc, val);
-        });
-  }
-
-  Value handleInfinityModulus(PatternRewriter &rewriter, Location loc, Value x,
-                              Value y, Value result) const {
-    x = ensureRankedTensor1F32(rewriter, loc, x, result);
-    y = ensureRankedTensor1F32(rewriter, loc, y, result);
-    auto resultType = dyn_cast<ShapedType>(result.getType());
-    Type boolType = RankedTensorType::get(resultType.getShape(),
-                                          rewriter.getIntegerType(1));
-
-    auto nanConstType = getElementTypeOrSelf(resultType);
-    auto floatTy = cast<mlir::FloatType>(nanConstType);
-    Value constNan =
-        rewriter
-            .create<arith::ConstantOp>(
-                loc, nanConstType,
-                rewriter.getFloatAttr(
-                    nanConstType, APFloat::getNaN(floatTy.getFloatSemantics())))
-            ->getResults()[0];
-
-    auto yIsInf =
-        rewriter.create<hfusion::IsInfOp>(loc, boolType, y)->getResults()[0];
-    return createSelectOp(rewriter, loc, yIsInf, constNan, result, result);
-  }
-
-  Value rewriteModType(PatternRewriter &rewriter, Location loc, Value x,
-                       Value y, Value result, Type origType, Type castedType,
-                       hfusion::BinaryFn op) const {
-    TypeFn castTypeFn;
-    if (op == hfusion::BinaryFn::modui) {
-      castTypeFn = hfusion::TypeFn::cast_unsigned;
-    } else {
-      castTypeFn = hfusion::TypeFn::cast_signed;
-    }
-    auto xCasted = hfusion::castTo(rewriter, x, castedType, castTypeFn);
-    auto yCasted = hfusion::castTo(rewriter, y, castedType, castTypeFn);
-    auto modOp =
-        createHFusionBinaryOp(rewriter, loc, op, xCasted, yCasted, xCasted);
-
-    return hfusion::castTo(rewriter, modOp, origType);
-  }
-
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::BinaryFn::mod &&
-        op.getFun() != hfusion::BinaryFn::modui) {
-      return failure();
-    }
-
-    auto resTensor = op.getResultTensors()[0];
-    auto resTy = dyn_cast<TensorType>(resTensor.getType());
-    auto elemType = getElementTypeOrSelf(resTy);
-    if (!elemType.isIntOrIndexOrFloat()) {
-      return failure();
-    }
-
-    if (elemType.isInteger(1)) {
-      auto constZero =
-          utils::createConstantOp<bool>(rewriter, op.getLoc(), elemType, 0);
-      auto zeroTensor = utils::createEmptyOpWithTargetElemType(
-          rewriter, op.getLoc(), resTensor, elemType);
-      auto zeroOp =
-          rewriter.create<linalg::FillOp>(op.getLoc(), constZero, zeroTensor);
-      rewriter.replaceOp(op, zeroOp);
-      return success();
-    }
-
-    // BF16 and F16 are casted to F32
-    // All ints use their original encoding throughout.
-    // step 1: xCasted = cast(x) => castedtype
-    //         yCasted= cast(y) => castedtype
-    Value xOrig = op.getInputs()[0];
-    Value yOrig = op.getInputs()[1];
-    if (elemType.isInteger(8)) {
-      auto resultUint8 =
-          rewriteModType(rewriter, op.getLoc(), xOrig, yOrig, resTensor,
-                         elemType, rewriter.getI16Type(), op.getFun());
-      rewriter.replaceOp(op, resultUint8);
-      return success();
-    }
-
-    if (elemType.isInteger()) {
-      // int mod is handled in hivm
-      return failure();
-    }
-
-    // Reentrant implementation for fp8, cast and run this again with fp32
-    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
-      auto resultFp8 = rewriteModType(
-          rewriter, op.getLoc(), xOrig, yOrig, resTensor, elemType,
-          rewriter.getF32Type(), hfusion::BinaryFn::mod);
-      rewriter.replaceOp(op, resultFp8);
-      return success();
-    }
-
-    Value xCasted = xOrig;
-    Value yCasted = yOrig;
-    if (elemType.isBF16() || elemType.isF16()) {
-      auto castedType = rewriter.getF32Type();
-      xCasted = hfusion::castTo(rewriter, xOrig, castedType);
-      yCasted = hfusion::castTo(rewriter, yOrig, castedType);
-    }
-
-    // step 2: trunc_div = truncate_div(x, y)
-    Value truncDiv =
-        createDiv(rewriter, op.getLoc(), elemType, xCasted, yCasted);
-
-    // step 3: rem = x - trunc_div * y
-    auto mul =
-        createLinalgBinaryOp(rewriter, op.getLoc(), linalg::BinaryFn::mul,
-                             truncDiv, yOrig, resTensor);
-
-    auto rem = createLinalgBinaryOp(
-        rewriter, op.getLoc(), linalg::BinaryFn::sub, xOrig, mul, resTensor);
-
-    // step 7: handle inf (we are done for floats!)
-    Value result =
-        handleInfinityModulus(rewriter, op.getLoc(), xOrig, yOrig, rem);
-    rewriter.replaceOp(op, result);
-    return success();
+  static Value createDivOpForMod(PatternRewriter &rewriter, Location loc,
+                                 Value x, Value y, Type elemType) {
+    if (elemType.isInteger())
+      return createBinaryOp(rewriter, loc, x, y,
+                            utils::createEmptyOp(rewriter, loc, x),
+                            BinaryKind::Div);
+    auto divOp = hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp,
+                                         hfusion::BinaryFn,
+                                         hfusion::BinaryFnAttr>(
+                     rewriter, loc, hfusion::BinaryFn::divfhp,
+                     mlir::ValueRange{x, y},
+                     utils::createEmptyOp(rewriter, loc, x))
+                     ->getResults()[0];
+    return hfusion::castTo(rewriter, divOp, elemType, hfusion::RoundMode::TRUNC);
   }
 };
+
+using NormalizeModOp = mlir::NormalizeModOpTemplate<hfusion::ElemwiseBinaryOp, HFusionModTraits>;
 
 ///  TODO: hfusion::binaryfn::floormod unsupport right now
 ///  normalize mod op to rec op
@@ -588,6 +406,7 @@ public:
     return success();
   }
 };
+
 /// normalize expm1(x) to exp(x) - 1
 /// eg.
 /// y = hfusion elemwise unary {expm1} (x)
@@ -722,7 +541,6 @@ public:
                       rewriter, loc, linalg::UnaryFn::abs, ValueRange(exponent),
                       ValueRange(absExpInit))
                       ->getResult(0);
-
     ///   2. mask1 = cmp_eq(absy, inf)
     arith::ConstantOp constInf = nullptr;
     if (elementType.isF16()) {
@@ -842,21 +660,32 @@ public:
             ValueRange({absBase, positiveTwo}), ValueRange(modEmptyOp))
             ->getResult(0);
 
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange({mod, negativeTwo}), ValueRange(mulEmptyOp))
-                   ->getResult(0);
+    Value res;
+    if (archisAscend950 && elementType.isF32()) { 
+      auto fmaEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      res  = hfusion::createTernaryOp<hfusion::ElemwiseTernaryOp, hfusion::TernaryFn,
+                                           hfusion::TernaryFnAttr>(
+              rewriter, loc, hfusion::TernaryFn::fma,
+              ValueRange({mod, negativeTwo, positiveOne}), ValueRange(fmaEmptyOp))
+              ->getResult(0);
+    } else {
 
-    auto addEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto add = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::add,
-                   ValueRange({mul, positiveOne}), ValueRange(addEmptyOp))
-                   ->getResult(0);
+      auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
+                     rewriter, loc, linalg::BinaryFn::mul,
+                     ValueRange({mod, negativeTwo}), ValueRange(mulEmptyOp))
+                     ->getResult(0);
 
-    return add;
+      auto addEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+      res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
+                     rewriter, loc, linalg::BinaryFn::add,
+                     ValueRange({mul, positiveOne}), ValueRange(addEmptyOp))
+                     ->getResult(0);
+    }
+
+    return res;
   }
 
   /// calculate ((-1) ^ y) * exp(y * ln|x|), where x is baseNum and y is

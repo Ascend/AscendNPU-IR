@@ -89,14 +89,6 @@ struct HIVMNormalizeFillCastToTensorBrcTraits
   }
 };
 
-using HIVMNormalizeTruncfExtfTraits = hivm::NormalizeTraitsBase;
-
-struct HIVMNormalizeTruncfBf16Traits : public hivm::NormalizeTraitsBase {
-  static bool isInsideDialectCast(Operation &op) {
-    return isa<hivm::VCastOp>(op.getParentOp());
-  }
-};
-
 struct HIVMNormalizeScalarExtensionTraits : public hivm::NormalizeTraitsBase {
   template <typename OpTy> static bool shouldSkipScalarExtension(OpTy op) {
     return isa<hivm::VCastOp>(op->getParentOp()) ||
@@ -149,12 +141,6 @@ using NormalizeBrcCast =
 using NormalizefillCastToTensorBrc =
     NormalizeFillCastToTensorBrcTemplate<hivm::VCastOp,
                                          HIVMNormalizeFillCastToTensorBrcTraits>;
-using NormalizetruncfExtf =
-    NormalizeTruncfExtfTemplate<arith::ExtFOp,
-                                HIVMNormalizeTruncfExtfTraits>;
-using NormalizetruncfBf16 =
-    NormalizeTruncfBf16Template<arith::TruncFOp,
-                                HIVMNormalizeTruncfBf16Traits>;
 template <typename CastOp>
 using NormalizeScalarExtension =
     NormalizeScalarExtensionTemplate<CastOp,
@@ -176,8 +162,6 @@ void mlir::hivm::populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizefillCastToTensorBrc>(ctx);
   patterns.add<NormalizeAnyToF32UnaryRecOp>(ctx);
   patterns.add<NormalizeCastLoweringOp>(ctx);
-  patterns.add<NormalizetruncfExtf>(ctx);
-  patterns.add<NormalizetruncfBf16>(ctx);
   patterns.add<NormalizeScalarExtension<arith::ExtFOp>>(ctx);
   if (archIsRegbased)
     patterns.add<NormalizeScalarCastOp>(ctx);

@@ -59,3 +59,18 @@ func.func @test_round_with_attributes(%arg0: f32, %arg1: memref<64xf32, #hivm.ad
   vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
   return
 }
+
+// -----
+func.func @test_fma_scalar_to_vector(%arg0: f32, %arg1: f32, %arg2: f32, %arg14: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  // CHECK: vector.broadcast {{.*}} f32 to vector<64xf32>
+  // CHECK: math.absf {{.*}} : vector<64xf32>
+  // CHECK: vector.broadcast {{.*}} f32 to vector<64xf32>
+  // CHECK: vector.broadcast {{.*}} f32 to vector<64xf32>
+  // CHECK: math.fma {{.*}} {{.*}} {{.*}} : vector<64xf32>
+  %0 = math.absf %arg1 : f32
+  %1 = math.fma %arg0, %0, %arg2 : f32
+  %2 = vector.broadcast %1 : f32 to vector<64xf32>
+  vector.transfer_write %2, %arg14[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+  return
+}

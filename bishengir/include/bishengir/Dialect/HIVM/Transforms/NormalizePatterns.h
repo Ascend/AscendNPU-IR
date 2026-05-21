@@ -33,7 +33,9 @@ extern thread_local bool archisMembased;
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
+void populateNormalizeModPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns);
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);

@@ -21,9 +21,11 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "llvm/ADT/APFloat.h"
 
 #include <cmath>
 
@@ -357,6 +359,138 @@ public:
     Value result = Traits::createIlogbResult(rewriter, loc, log2);
 
     rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Template for normalizing mod operations across dialects.
+template <typename SourceOp, typename Traits>
+struct NormalizeModOpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  /// Normalize the shared i8 path by widening both operands, computing the
+  /// requested mod kind on the widened type, then casting the result back.
+  static Value rewriteModType(PatternRewriter &rewriter, SourceOp op, Value x,
+                              Value y, Type origType, Type castedType) {
+    Location loc = op->getLoc();
+    CastSignKind castSignKind = Traits::getCastSignKind(op);
+    BinaryKind modKind = Traits::getModKind(op);
+    Value dst = utils::createEmptyOpWithTargetElemType(rewriter, loc, x,
+                                                       castedType);
+    Value xCasted = Traits::createCastOp(rewriter, loc, x, castedType,
+                                         CastRoundKind::Default, Value(),
+                                         castSignKind);
+    Value yCasted = Traits::createCastOp(rewriter, loc, y, castedType,
+                                         CastRoundKind::Default, Value(),
+                                         castSignKind);
+    Value modResult =
+        Traits::createBinaryOp(rewriter, loc, xCasted, yCasted, dst, modKind);
+    return Traits::createCastOp(rewriter, loc, modResult, origType,
+                                CastRoundKind::Default, Value(),
+                                castSignKind);
+  }
+
+  static Value ensureRankedTensor(OpBuilder *rewriter, Location loc, Value val,
+                                  Value shapeV) {
+    Type ty = val.getType();
+    if (isa<RankedTensorType>(ty))
+      return val;
+
+    auto ranked = dyn_cast<RankedTensorType>(shapeV.getType());
+    if (!ranked)
+      llvm_unreachable("reference tensor is not a ranked tensor");
+
+    RankedTensorType resultTy =
+        RankedTensorType::get(ranked.getShape(), val.getType());
+    return rewriter->create<tensor::GenerateOp>(
+        loc, resultTy, ValueRange{},
+        [&](OpBuilder &b, Location genLoc, ValueRange indices) {
+          b.create<tensor::YieldOp>(genLoc, val);
+        });
+  }
+
+  /// Preserve the original HFusion behavior for floating mod: if the modulus
+  /// is +/-inf, select NaN instead of the computed remainder.
+  static Value handleInfinityModulus(PatternRewriter &rewriter, Location loc,
+                                     Value y, Value result) {
+    y = ensureRankedTensor(&rewriter, loc, y, result);
+
+    Type elemType = getElementTypeOrSelf(result.getType());
+    auto floatTy = cast<FloatType>(elemType);
+    Value constNan = rewriter.create<arith::ConstantOp>(
+        loc, elemType,
+        rewriter.getFloatAttr(
+            elemType, APFloat::getNaN(floatTy.getFloatSemantics())));
+    Value yIsInf = Traits::createIsInfOp(rewriter, loc, y);
+    Value selectDst = utils::createEmptyOp(rewriter, loc, result);
+    return Traits::createSelectOp(rewriter, loc, yIsInf, constNan, result,
+                                  selectDst);
+  }
+
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalize(op))
+      return failure();
+
+    auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp) {
+      op->emitError("NormalizeModOpTemplate: operation does not implement "
+                    "DestinationStyleOpInterface");
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    if (inputs.size() < 2) {
+      op->emitError("NormalizeModOpTemplate: expected at least 2 inputs");
+      return failure();
+    }
+
+    Value x = inputs[0];
+    Value y = inputs[1];
+    Value dst = dpsOp.getDpsInits()[0];
+    Type elemType = getElementTypeOrSelf(x.getType());
+    Location loc = op->getLoc();
+
+    if (!Traits::isSupportedType(elemType))
+      return failure();
+
+    if (elemType.isInteger(1)) {
+      auto constZero = utils::createConstantOp<bool>(rewriter, loc, elemType, 0);
+      auto zeroDst =
+          utils::createEmptyOpWithTargetElemType(rewriter, loc, dst, elemType);
+      rewriter.replaceOp(op,
+                         Traits::createFillOp(rewriter, loc, constZero, zeroDst));
+      return success();
+    }
+
+    if (elemType.isInteger(8)) {
+      rewriter.replaceOp(
+          op, rewriteModType(rewriter, op, x, y, elemType, rewriter.getI16Type()));
+      return success();
+    }
+
+    bool needsCast = elemType.isBF16() || elemType.isF16();
+    Value xForDiv = x;
+    Value yForDiv = y;
+    if (needsCast) {
+      Type f32Type = rewriter.getF32Type();
+      xForDiv = Traits::createCastOp(rewriter, loc, x, f32Type,
+                                     CastRoundKind::Round);
+      yForDiv = Traits::createCastOp(rewriter, loc, y, f32Type,
+                                     CastRoundKind::Round);
+    }
+
+    Value truncDiv = Traits::createDivOpForMod(rewriter, loc, xForDiv, yForDiv,
+                                               elemType);
+    Value mul = Traits::createBinaryOp(
+        rewriter, loc, truncDiv, y, utils::createEmptyOp(rewriter, loc, x),
+        BinaryKind::Mul);
+    Value rem = Traits::createBinaryOp(
+        rewriter, loc, x, mul, utils::createEmptyOp(rewriter, loc, x),
+        BinaryKind::Sub);
+
+    rewriter.replaceOp(op, handleInfinityModulus(rewriter, loc, y, rem));
     return success();
   }
 };

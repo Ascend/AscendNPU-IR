@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -32,6 +33,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SmallVector.h"
@@ -68,6 +70,32 @@ static bool areOperandsUpperLevel(tensor::ExtractSliceOp sliceOp) {
 
 static bool isDynamicSlice(OffsetSizeAndStrideOpInterface op) {
   return ShapedType::isDynamicShape(op.getStaticSizes());
+}
+
+/// When UB half-tiling succeeds in BufferizationBubbleUpStrategy, set
+/// `tiledTightlyCoupledAlloc` on the corresponding annotation.mark (see
+/// TileUtils.h).
+static void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
+                                                Value memrefValue) {
+  auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
+  if (!maybeAlloc)
+    return;
+  Value allocResult = maybeAlloc->getResult();
+  auto maybeMark = mlir::utils::getAnnotateOpWithAttr(
+      allocResult, hivm::HIVMTightlyCoupledBufferAttr::name);
+  if (!maybeMark.has_value())
+    return;
+  auto markOp = dyn_cast<annotation::MarkOp>(maybeMark.value());
+  if (!markOp)
+    return;
+  auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+      hivm::HIVMTightlyCoupledBufferAttr::name);
+  if (!attr || !attr.getId().has_value())
+    return;
+  rewriter.modifyOpInPlace(markOp, [&]() {
+    markOp->setAttr(kTiledTightlyCoupledAlloc,
+                    UnitAttr::get(rewriter.getContext()));
+  });
 }
 
 // This function create new parentOp after bubble up
@@ -1668,6 +1696,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.replaceOp(sliceOp, newToTensorOp);
         if (toTensorOp->use_empty())
           rewriter.eraseOp(toTensorOp);
+        markTiledTightlyCoupledAllocIfNeeded(rewriter,
+                                              newAllocOp.getResult());
       }
       return success();
     }
@@ -1764,6 +1794,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
            << newSubViewOp << "\n"
            << loadOp);
       LDBG(newSubViewOp->getParentOfType<func::FuncOp>());
+      markTiledTightlyCoupledAllocIfNeeded(rewriter, subViewOp.getSource());
       return success();
     }
   }
@@ -1832,11 +1863,29 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.replaceOp(sliceOp, newToTensorOp);
         if (toTensorOp->use_empty())
           rewriter.eraseOp(toTensorOp);
+
+        // If original memorySpaceCastOp has a subview user, replace all uses
+        // of that subview with newMemorySpaceCastOp only if the subview has
+        // to_be_bubbled_slice mark
+        for (Operation *userOp : llvm::make_early_inc_range(
+                 memorySpaceCastOp.getResult().getUsers())) {
+          if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
+            if (!isMarkedExtractSliceOp(subViewOp))
+              continue;
+            rewriter.replaceAllUsesWith(subViewOp.getResult(),
+                                        newMemorySpaceCastOp.getResult());
+            if (subViewOp->use_empty())
+              rewriter.eraseOp(subViewOp);
+          }
+        }
+
         if (memorySpaceCastOp->use_empty())
           rewriter.eraseOp(memorySpaceCastOp);
         if (UbAllocOp->use_empty())
           rewriter.eraseOp(UbAllocOp);
 
+        markTiledTightlyCoupledAllocIfNeeded(rewriter,
+                                              newUbAllocOp.getResult());
         return success();
       }
 

@@ -195,18 +195,51 @@ void ArithVectorMaskAnalysisPass::runOnOperation() {
           // reuse that restricted-predicate result in the unmasked context,
           // leaving the upper lanes of the vector invalid.
           Value annotatedVal = markOp.getSrc();
+          int reachedMaskIdx =
+              dyn_cast<IntegerAttr>(markedIdxArray[0]).getInt();
+          // Check whether a user still belongs to the same masked data flow as
+          // the annotated value.
+          auto isUserInSameMaskedFlow = [reachedMaskIdx](Operation *user) {
+            // Users with results must stay in the reached-mask data flow.
+            if (user->getNumResults() != 0) {
+              return static_cast<bool>(utils::getAnnotateOpWithAttr(
+                  user->getResult(0), utils::reachedMaskOpsIdx));
+            }
+
+            // Store-like users have no result, so check whether their mask
+            // matches the mask that reached the annotated value.
+            Value userMask;
+            if (auto maskedStoreOp = dyn_cast<vector::MaskedStoreOp>(user)) {
+              userMask = maskedStoreOp.getMask();
+            } else if (auto transferWriteOp =
+                           dyn_cast<vector::TransferWriteOp>(user)) {
+              userMask = transferWriteOp.getMask();
+            }
+            if (!userMask)
+              return false;
+
+            auto userMaskMark =
+                utils::getAnnotateOpWithAttr(userMask, utils::maskOpIdx);
+            if (!userMaskMark)
+              return false;
+
+            auto mark = dyn_cast<annotation::MarkOp>(userMaskMark.value());
+            if (!mark)
+              return false;
+            auto maskIdxAttr =
+                mark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx);
+            if (!maskIdxAttr)
+              return false;
+
+            return static_cast<int>(maskIdxAttr.getInt()) == reachedMaskIdx;
+          };
           bool hasUnmaskedUser = false;
           for (Operation *user : annotatedVal.getUsers()) {
             // Skip annotation mark ops themselves.
             if (isa<annotation::MarkOp>(user))
               continue;
-            // Skip ops with no results (e.g., the transfer_write anchor).
-            if (user->getNumResults() == 0)
-              continue;
-            // If this user's result has no reached_mask_ops_idx annotation it
-            // lies outside the masked chain — the value has mixed uses.
-            if (!utils::getAnnotateOpWithAttr(user->getResult(0),
-                                              utils::reachedMaskOpsIdx)) {
+            // Any user outside the same masked flow makes this a mixed use.
+            if (!isUserInSameMaskedFlow(user)) {
               hasUnmaskedUser = true;
               break;
             }

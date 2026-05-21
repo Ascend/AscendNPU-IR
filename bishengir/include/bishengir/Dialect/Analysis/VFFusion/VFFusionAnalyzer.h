@@ -325,7 +325,9 @@ private:
 //===----------------------------------------------------------------------===//
 
 /// Like AllOpKindAnalyzer but refuses merges whose estimated caller-side UB
-/// would exceed a budget, unless splitting would materialise shared producers.
+/// would exceed a budget. Uses a consumer lookahead to speculatively expand
+/// groups and a split-cost guard to allow merges that are no worse than
+/// keeping groups separate.
 class UBAwareOpKindAnalyzer
     : public VFFusionAnalyzerBase<UBAwareOpKindAnalyzer> {
 public:
@@ -334,18 +336,22 @@ public:
   bool isFusibleImpl(int xIndex, int yIndex);
   LogicalResult fuseImpl(Block &block);
 
+  /// \param maxLookaheadDepth  How many rounds of consumer expansion to try
+  ///   before falling back to the split-cost guard (0 disables lookahead).
   UBAwareOpKindAnalyzer(const VFFusionKindOption &option, int64_t ubBudgetBytes,
-                        int64_t ubAlignBytes)
+                        int64_t ubAlignBytes, int maxLookaheadDepth = 2)
       : VFFusionAnalyzerBase<UBAwareOpKindAnalyzer>(option),
-        ubBudgetBytes_(ubBudgetBytes), ubAlignBytes_(ubAlignBytes){};
+        ubBudgetBytes_(ubBudgetBytes), ubAlignBytes_(ubAlignBytes),
+        maxLookaheadDepth_(maxLookaheadDepth) {}
   ~UBAwareOpKindAnalyzer() override = default;
 
 private:
   const int64_t ubBudgetBytes_;
   const int64_t ubAlignBytes_;
+  const int maxLookaheadDepth_;
 
   int64_t estimateMergedGroupBytes(int xIndex, int yIndex);
-  int64_t sharedProducerBytes(int xIndex, int yIndex);
+  int64_t estimateSplitCostBytes(int xIndex, int yIndex);
 };
 
 } // namespace mlir::analysis

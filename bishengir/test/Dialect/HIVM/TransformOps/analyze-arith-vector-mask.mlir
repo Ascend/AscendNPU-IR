@@ -209,3 +209,20 @@ func.func @triton_test_reduction_mask(%arg0: memref<52xf32, #hivm.address_space<
   }
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @masked_store_mixed_mask
+// CHECK: %[[VL32:.*]] = vector.constant_mask [32]
+// CHECK: %[[ADD:.*]] = arith.addi {{.*}}, {{.*}} : vector<64xi32>
+// CHECK-NOT: annotation.mark %[[ADD]] {reached_mask_ops_idx = 0 : i32} : vector<64xi32>
+func.func @masked_store_mixed_mask(%arg0: memref<32xi32, #hivm.address_space<ub>>, %arg1: memref<64xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %cst_0 = arith.constant dense<[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]> : vector<64xi32>
+  %cst_1 = arith.constant dense<0> : vector<64xi32>
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [32] : vector<64xi1>
+  %1 = arith.addi %cst_1, %cst_0 : vector<64xi32>
+  vector.transfer_write %1, %arg0[%c0], %0 {in_bounds = [true]} : vector<64xi32>, memref<32xi32, #hivm.address_space<ub>>
+  vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xi32>, memref<64xi32, #hivm.address_space<ub>>
+  return
+}

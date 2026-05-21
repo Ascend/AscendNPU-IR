@@ -617,6 +617,10 @@ public:
       if (allInteger || allFloatingPoint)
         return builder.create<arith::SelectOp>(arg0.getLoc(), arg0, arg1, arg2);
       llvm_unreachable("unsupported type for select");
+    case TernaryFn::fma:
+      if (allFloatingPoint)
+        return builder.create<math::FmaOp>(arg0.getLoc(), arg0, arg1, arg2);
+      llvm_unreachable("unsupported type for multiply add");
     }
     llvm_unreachable("unsupported select function");
   }

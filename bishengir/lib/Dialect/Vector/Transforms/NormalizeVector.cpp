@@ -1504,6 +1504,62 @@ struct UnaryScalarOpToVectorPattern : public OpRewritePattern<UnaryOpType> {
   }
 };
 
+struct FmaOpScalarToVectorPattern : public OpRewritePattern<math::FmaOp> {
+  using OpRewritePattern<math::FmaOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::FmaOp op,
+                                PatternRewriter &rewriter) const override {
+    auto opTypes = op.getOperandTypes();
+
+    bool nonVecArgsAreF32 = std::all_of(opTypes.begin(), opTypes.end(), [](Type t) {
+        return t.isF32();
+    });
+
+    if (!nonVecArgsAreF32) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    auto operandType = op.getC().getType();
+    auto vectorType = VectorType::get({64}, operandType);
+
+    SmallVector<vector::BroadcastOp, 4> broadCastUsers;
+    for (auto user: op->getUsers()) {
+      if (auto bcUser = dyn_cast<vector::BroadcastOp>(user)) {
+        broadCastUsers.push_back(bcUser);
+      }
+    }
+
+    SmallVector<Value, 3> vOperands;
+    for (auto operand: op->getOperands()) {
+      Value vOperand;
+      if (isa<BlockArgument>(operand)) {
+        vOperand = rewriter.create<vector::BroadcastOp>(loc, vectorType, operand);
+      } else {
+        vOperand = rewriter.create<UnrealizedConversionCastOp>(
+            loc, vectorType, operand).getResult(0);
+      }
+      vOperands.push_back(vOperand);
+    }
+
+    auto vecFmaOp = rewriter.create<math::FmaOp>(loc, vectorType, vOperands);
+
+    for (auto bcUser : broadCastUsers) {
+      rewriter.replaceOp(bcUser, vecFmaOp.getResult());
+    }
+
+    if (!op->use_empty()) {
+      auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+          loc, operandType, vecFmaOp.getResult());
+      rewriter.replaceOp(op, castOp.getResult(0));
+    }
+
+    return success();
+  }
+};
+
+
+
 } // namespace
 /// This pass normalizes vector ops to meet HIVM requirements:
 ///  1. drop unit dims for elementwise and TransferRead/Write ops
@@ -1544,7 +1600,8 @@ void NormalizeVectorPass::runOnOperation() {
                  BinaryScalarOpToVectorPattern<arith::XOrIOp>,
                  BinaryScalarOpToVectorPattern<arith::MulFOp>,
                  BinaryScalarOpToVectorPattern<arith::SubFOp>,
-                 BinaryScalarOpToVectorPattern<arith::CmpFOp>>(
+                 BinaryScalarOpToVectorPattern<arith::CmpFOp>,
+                 FmaOpScalarToVectorPattern>(
         patterns.getContext());
   if (!enableDotScaledCompile)
     patterns.add<TransferReadToGatheringLoadPattern>(patterns.getContext());

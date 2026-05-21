@@ -259,6 +259,62 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 
+// Nested separator: a hivm.hir.fixpipe sitting inside an scf.if under the
+// pipelineLoop. createWorkItems should lift the scf.if to the separators
+// list via getContainedParent so partitioning still produces a CUBE and
+// VECTOR work item.
+
+// CHECK-LABEL: func.func @test_pipeline_nested_fixpipe
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// CHECK: scf.for
+// CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_pipeline_nested_fixpipe(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %input1 = "some_op"() : () -> memref<16x16xf16>
+    %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+    %input2 = "some_op"() : () -> memref<?xf16>
+    %initin = memref.reinterpret_cast %input2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+    %offset = "some_op"() : () -> index
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c0i = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    %cond = "some_op"() : () -> i1
+    scf.for %i = %c0 to %bound step %step iter_args(%sliding_input = %initin, %inc = %c0i) -> (memref<16x16xf16>, index) : i32 {
+      %alloc = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
+      %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      // Fixpipe nested inside scf.if — the scf.if must be lifted to a
+      // separator so the workitem boundary sits across it.
+      scf.if %cond {
+        hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      }
+      %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
+      %newinc = arith.addi %inc, %offset : index
+      %next = memref.reinterpret_cast %input2 to offset: [%newinc], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+
+      %vdest1 = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%wst : tensor<16x16xf16>) outs(%vdest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%exp:tensor<16x16xf16>) outs(%ws1_cast:memref<16x16xf16>)
+
+      scf.yield %next, %newinc : memref<16x16xf16>, index
+    }
+    return
+  }
+}
+
+// -----
+
 // Test: the lazy-load hint must only apply to LoadOp-backed to_tensors.
 // Marking a fixpipe-backed to_tensor with cv_pipeline_lazy_load = true is
 // silently ignored; the fixpipe output still flows through the default
@@ -352,6 +408,208 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
       %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
       %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
       hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
+    }
+    return
+  }
+}
+
+// -----
+
+// Same pattern as above, but the hivm.hir.fixpipe is nested inside an scf.if.
+// The nested-region walk in markOutputs must still catch it.
+
+// CHECK-LABEL: func.func @test_gm_alias_nested_rejected
+// CHECK-NOT: hivm.loop_core_type
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_gm_alias_nested_rejected(%gmArg: memref<16x16xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %input1 = "some_op"() : () -> memref<16x16xf16>
+    %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+    %input2 = "some_op"() : () -> memref<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    %cond = "some_op"() : () -> i1
+    scf.for %i = %c0 to %bound step %step : i32 {
+      %allocC = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%input2 : memref<16x16xf16>) outs(%allocC : memref<16x16xf16>)
+      %tensor2 = bufferization.to_tensor %allocC : memref<16x16xf16>
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      // Fixpipe (cube-only) writing to the GM func arg is nested inside
+      // scf.if — the nested-region walk in markOutputs must still catch it.
+      scf.if %cond {
+        hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%gmArg : memref<16x16xf16>)
+      }
+
+      %allocV = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      %allocV_cast = memref.memory_space_cast %allocV : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      // expected-warning@+1 {{using GM as intermediate buffer is unsupported}}
+      hivm.hir.load ins(%gmArg : memref<16x16xf16>) outs(%allocV_cast : memref<16x16xf16>)
+      %tv = bufferization.to_tensor %allocV_cast : memref<16x16xf16>
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%tv : tensor<16x16xf16>) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
+    }
+    return
+  }
+}
+
+// -----
+
+// Two mmadL1 ops chained via accumulator (%dot1 = mmadL1 outs(%dot0)) where
+// %dot0's init is neither tensor.empty nor a to_tensor. Without the chain
+// coalescing in extractAvailableOps, mmad0 would land in an earlier CUBE
+// WorkItem and %dot0 would become a cross-WorkItem localOutput that
+// expandOutputInits cannot expand (`expected to_tensor for non-tensor-empty
+// output`). The fix defers mmad0 so both mmads share one CUBE WorkItem.
+// CHECK-LABEL: func.func @test_pipeline_mmad_acc_chain
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// CHECK: scf.for
+// CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+// CHECK: scf.for
+// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.hir.mmadL1
+// CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_pipeline_mmad_acc_chain(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %inA = "some_op"() : () -> memref<16x16xf16>
+    %A = bufferization.to_tensor %inA : memref<16x16xf16>
+    %inB1 = "some_op"() : () -> memref<16x16xf16>
+    %B1 = bufferization.to_tensor %inB1 : memref<16x16xf16>
+    %unrelated_in = "some_op"() : () -> tensor<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    scf.for %i = %c0 to %bound step %step : i32 {
+      // Accumulator init from an opaque op so expandOutputInits cannot
+      // expand it via the tensor.empty / to_tensor branches.
+      %init_complex = "some_op"() : () -> tensor<16x16xf16>
+      %dot0 = hivm.hir.mmadL1 ins(%A, %B1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init_complex : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+      // Unrelated separator chain producing a value mmad1 reads via %B2.
+      // This forces mmad1 to be blocked behind the cross-core copy and
+      // would otherwise drop into a separate CUBE WorkItem from mmad0.
+      %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%unrelated_in : tensor<16x16xf16>) outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub_cast = memref.memory_space_cast %ub : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %ub_t = bufferization.to_tensor %ub_cast : memref<16x16xf16>
+      %vd = tensor.empty() : tensor<16x16xf16>
+      %vexp = hivm.hir.vexp ins(%ub_t : tensor<16x16xf16>) outs(%vd : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %cb = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %cb_cast = memref.memory_space_cast %cb : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%vexp : tensor<16x16xf16>) outs(%cb_cast : memref<16x16xf16>)
+      %B2 = bufferization.to_tensor %cb_cast : memref<16x16xf16>
+
+      // Chained mmad: outs(%dot0) and ins downstream of the cross-core copy.
+      %dot1 = hivm.hir.mmadL1 ins(%A, %B2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %out_buf = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%out_buf : memref<16x16xf16, #hivm.address_space<ub>>)
+    }
+    return
+  }
+}
+
+// -----
+
+// Regression for two cv-pipelining bugs surfaced by the HSTU FP8 attention
+// kernel under --enable-layout-optimization=true:
+//
+//   1. `hivm.hir.nd2nz` (the fused GM->L1 load with NZ layout conversion that
+//      replaces a plain LoadOp under layout optimization) was not treated as
+//      a load-like op. When its `to_tensor` result was consumed in a different
+//      cv-pipelining workitem, the writer was missing from `outputMemrefMap`
+//      and migrateOps asserted in IRMapping::lookup. Fix routes nd2nz through
+//      `isLoadLikeOp` (pulled into consumer workitems) and
+//      `isMemrefSubnetWriter` (registered in outputMemrefMap).
+//
+//   2. The cross-core `hivm.hir.copy`'s DPS init is a `to_tensor` of an L1
+//      alloc — a TensorType statically, but backed by a memref. migrateOps
+//      dispatched on the init's static type, took the tensor path, and crashed
+//      in createExtractSlice on a memref iter_arg. Fix dispatches on
+//      `expanded`'s actual type (the buffer expandOutputInits built).
+//
+// The test mirrors the failing pattern: two mmadL1 ops sandwiching vector
+// ops and a cross-core copy, with the second mmad's B operand loaded via
+// `hivm.hir.nd2nz` so the load is consumed in a downstream workitem.
+
+// CHECK-LABEL: func.func @test_pipeline_nd2nz_cross_workitem
+// Outer unrolled loop, then per-stage scf.fors for cube/vector/cube.
+// CHECK:   scf.for
+// First stage: CUBE — load + mmad + fixpipe to UB.
+// CHECK:     scf.for
+// CHECK:       hivm.hir.mmadL1
+// CHECK:     {{.*}}hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// Second stage: VECTOR — vexp + cross-core copy.
+// CHECK:     scf.for
+// CHECK:       hivm.hir.copy
+// CHECK:     {{.*}}hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+// Third stage: CUBE — the nd2nz writer must land here (with its consumer
+// mmadL1), not in the first cube stage.
+// CHECK:     scf.for
+// CHECK:       hivm.hir.nd2nz
+// CHECK:       hivm.hir.mmadL1
+// CHECK:     {{.*}}hivm.loop_core_type = #hivm.tcore_type<CUBE>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_pipeline_nd2nz_cross_workitem(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %gm_dst: memref<16x16xf16>) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true, true]> : vector<2xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %A = "some_op"() : () -> tensor<16x16xf16>
+    %v_src = "some_op"() : () -> memref<16x16xf16>
+    %k_src = "some_op"() : () -> memref<16x16xf16>
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    scf.for %i = %c0 to %bound step %step : i32 {
+      // First mmad's B comes from a plain load.
+      %allocK = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%k_src : memref<16x16xf16>) outs(%allocK : memref<16x16xf16>)
+      %tensorK = bufferization.to_tensor %allocK : memref<16x16xf16>
+      %dest1 = tensor.empty() : tensor<16x16xf16>
+      %dot1 = hivm.hir.mmadL1 ins(%A, %tensorK, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+      // Cube -> UB fixpipe (separator #1).
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot1 : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
+
+      // Vector op.
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%wst : tensor<16x16xf16>) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+      // Cross-core copy with TENSOR-typed DPS init (backed by to_tensor of
+      // a cbuf alloc). Bug #2: migrateOps dispatched on the init's static
+      // type and went down the wrong branch.
+      %ws_alloc = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws_cast = memref.memory_space_cast %ws_alloc : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      %ws_t = bufferization.to_tensor %ws_cast : memref<16x16xf16>
+      %copy_out = hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws_t : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+      // Second mmad's B operand comes from a hivm.hir.nd2nz — a load-like
+      // op not previously recognized by cv-pipelining. Bug #1: nd2nz was
+      // forced into workitem #0 alongside the first mmad's loads, then its
+      // to_tensor became a cross-workitem localOutput with no writer
+      // registered in outputMemrefMap.
+      %allocV = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+      hivm.hir.nd2nz {dst_continuous} ins(%v_src : memref<16x16xf16>) outs(%allocV : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>)
+      %allocV_cast = memref.memory_space_cast %allocV : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
+      %tensorV = bufferization.to_tensor %allocV_cast : memref<1x1x16x16xf16>
+
+      // Second mmad consumes the cross-core copy result and the nd2nz V tile.
+      %dest2 = tensor.empty() : tensor<16x16xf16>
+      %dot2 = hivm.hir.mmadL1 ins(%copy_out, %tensorV, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%dest2 : tensor<16x16xf16>) -> tensor<16x16xf16>
+
+      // Final fixpipe to GM (separator #3) — write to a func arg so
+      // populateDependencies accepts the destination.
+      hivm.hir.fixpipe ins(%dot2 : tensor<16x16xf16>) outs(%gm_dst : memref<16x16xf16>)
     }
     return
   }

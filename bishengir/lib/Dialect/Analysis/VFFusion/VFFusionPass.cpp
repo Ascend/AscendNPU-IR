@@ -136,6 +136,12 @@ void VFFusionPass::runOnOperation() {
   ubBudgetBytes_ = 0;
   ubAlignBytes_ = 0;
   if (fusionMode == FusionMode::UBAwareOp) {
+    // UB-aware mode requires outlining memref operands so that
+    // materialize_in_destination stores are included in VF groups.
+    // Without this, intermediate buffers persist in caller UB across VF
+    // boundaries, causing false UB overflow in PlanMemory.
+    enableOutlineMemref = true;
+
     if (auto spec = hacc::utils::getNPUTargetSpec(moduleOp)) {
       auto ubEntry = spec->getSpecForIdentifierEnum(hacc::DeviceSpec::UB_SIZE);
       ubBudgetBytes_ = cast<IntegerAttr>(ubEntry.getValue()).getInt() / 8;
