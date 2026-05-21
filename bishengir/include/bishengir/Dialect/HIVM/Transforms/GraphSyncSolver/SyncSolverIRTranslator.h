@@ -77,8 +77,8 @@ public:
   // cf::BranchOp operations.
   llvm::DenseMap<Value, llvm::SmallVector<Value>> blockArgAliases;
 
-  // Ordered map anchor-id -> anchor op.
-  std::map<int64_t, Anchor *> anchorOpMap;
+  // Ordered map anchor-id -> (anchor op / anchor-attr marked op).
+  std::map<int64_t, OperationBase *> anchorOpMap;
 
 public:
   IRTranslator(SyncSolverOptions options) : options(options) {}
@@ -179,6 +179,8 @@ protected:
   bool isCVUnrolledLoop(Loop *loopOp);
 
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
+
+  void handleAnchorIdAttrMarkedOp(OperationBase *opBase);
 
   std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);
 

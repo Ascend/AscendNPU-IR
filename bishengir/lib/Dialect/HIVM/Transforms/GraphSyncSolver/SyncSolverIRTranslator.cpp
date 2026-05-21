@@ -630,6 +630,23 @@ std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   return {};
 }
 
+void IRTranslator::handleAnchorIdAttrMarkedOp(OperationBase *opBase) {
+  assert(opBase != nullptr);
+  Operation *op = opBase->op;
+  assert(op != nullptr);
+
+  if (auto intAttr =
+          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdBeforeAttr::name)) {
+    int64_t anchorId = intAttr.getInt();
+    anchorOpMap[anchorId] = opBase;
+  }
+  if (auto intAttr =
+          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdAfterAttr::name)) {
+    int64_t anchorId = intAttr.getInt();
+    anchorOpMap[anchorId] = opBase;
+  }
+}
+
 std::optional<int64_t> IRTranslator::getScopePreloadNum(Scope *scopeOp) {
   assert(scopeOp != nullptr);
   if (scopeOp->op == nullptr) {
@@ -702,6 +719,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
+        handleAnchorIdAttrMarkedOp(conditionOp.get());
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
           parScope->body.push_back(std::move(conditionOp));
         }
@@ -723,6 +741,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto afterPlaceHolderOp =
             std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
         afterPlaceHolderOp->afterOp = loopOp.get();
+        handleAnchorIdAttrMarkedOp(loopOp.get());
         if (!skipEmptyScopes || !isEmptyScope(loopOp.get())) {
           parScope->body.push_back(std::move(beforePlaceHolderOp));
           parScope->body.push_back(std::move(loopOp));
@@ -739,6 +758,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));
         }
+        handleAnchorIdAttrMarkedOp(curScopeOp.get());
         scopeOp->body.push_back(std::move(curScopeOp));
         continue;
       }

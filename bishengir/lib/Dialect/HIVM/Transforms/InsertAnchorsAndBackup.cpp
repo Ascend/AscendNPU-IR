@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -56,6 +57,9 @@ private:
   void insertAnchor(Operation *op, OpBuilder &builder, int64_t &nextAnchorId,
                     bool insertBefore = false);
 
+  void insertAnchorAttr(Operation *op, OpBuilder &builder,
+                        int64_t &nextAnchorId, bool insertBefore = false);
+
   void insertAnchorsInBlock(Block &block, OpBuilder &builder,
                             int64_t &nextAnchorId);
 
@@ -85,6 +89,19 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
                            builder.getI64IntegerAttr(nextAnchorId++), nullptr);
 }
 
+void InsertAnchorsAndBackupPass::insertAnchorAttr(Operation *op,
+                                                  OpBuilder &builder,
+                                                  int64_t &nextAnchorId,
+                                                  bool insertBefore) {
+  if (insertBefore) {
+    op->setAttr(hivm::AnchorIdBeforeAttr::name,
+                builder.getI64IntegerAttr(nextAnchorId++));
+  } else {
+    op->setAttr(hivm::AnchorIdAfterAttr::name,
+                builder.getI64IntegerAttr(nextAnchorId++));
+  }
+}
+
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
                                                       OpBuilder &builder,
                                                       int64_t &nextAnchorId) {
@@ -94,9 +111,17 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
   }
   for (Operation *op : blockOps) {
     insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
-    for (Region &region : op->getRegions()) {
-      for (Block &nestedBlock : region) {
-        insertAnchorsInBlock(nestedBlock, builder, nextAnchorId);
+    if (op->getNumRegions() > 0) {
+      if (isa<scf::ForOp>(op)) {
+        insertAnchorAttr(op, builder, nextAnchorId, /*insertBefore=*/true);
+      }
+      for (Region &region : op->getRegions()) {
+        for (Block &nestedBlock : region) {
+          insertAnchorsInBlock(nestedBlock, builder, nextAnchorId);
+        }
+      }
+      if (isa<scf::ForOp>(op)) {
+        insertAnchorAttr(op, builder, nextAnchorId);
       }
     }
   }
@@ -104,7 +129,21 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
 
 void InsertAnchorsAndBackupPass::eraseAllAnchors(func::FuncOp funcOp) {
   SmallVector<hivm::AnchorOp> anchorOps;
-  funcOp.walk([&](hivm::AnchorOp anchorOp) { anchorOps.push_back(anchorOp); });
+  funcOp.walk([&](Operation *op) {
+    if (auto anchorOp = dyn_cast<hivm::AnchorOp>(op)) {
+      anchorOps.push_back(anchorOp);
+      return;
+    }
+    if (op->hasAttr(hivm::AnchorIdAttr::name)) {
+      op->removeAttr(hivm::AnchorIdAttr::name);
+    }
+    if (op->hasAttr(hivm::AnchorIdBeforeAttr::name)) {
+      op->removeAttr(hivm::AnchorIdBeforeAttr::name);
+    }
+    if (op->hasAttr(hivm::AnchorIdAfterAttr::name)) {
+      op->removeAttr(hivm::AnchorIdAfterAttr::name);
+    }
+  });
   for (hivm::AnchorOp anchorOp : anchorOps) {
     anchorOp->erase();
   }

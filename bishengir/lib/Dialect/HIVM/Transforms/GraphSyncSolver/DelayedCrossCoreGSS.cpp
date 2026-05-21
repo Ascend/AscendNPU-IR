@@ -112,7 +112,7 @@ static OperationBase *getNextOperation(OperationBase *op, bool &goingIn) {
   if (parentBody.back().get() == op) {
     return getNextOperation(parentScopeOp, goingIn = false);
   }
-
+  goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
                          [op](const auto &item) { return item.get() == op; });
   assert(it != parentBody.end());
@@ -121,7 +121,7 @@ static OperationBase *getNextOperation(OperationBase *op, bool &goingIn) {
 }
 
 static OperationBase *getNextOperation(OperationBase *op) {
-  bool goingIn = true;
+  bool goingIn = false;
   return getNextOperation(op, goingIn);
 }
 
@@ -146,7 +146,7 @@ static OperationBase *getPrevOperation(OperationBase *op, bool &goingIn) {
   if (parentBody.front().get() == op) {
     return getPrevOperation(parentScopeOp, goingIn = false);
   }
-
+  goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
                          [op](const auto &item) { return item.get() == op; });
   assert(it != parentBody.end());
@@ -155,7 +155,7 @@ static OperationBase *getPrevOperation(OperationBase *op, bool &goingIn) {
 }
 
 static OperationBase *getPrevOperation(OperationBase *op) {
-  bool goingIn = true;
+  bool goingIn = false;
   return getPrevOperation(op, goingIn);
 }
 
@@ -165,18 +165,18 @@ static AnchorInfo getAnchorInfo(IRTranslator *irTranslator, int64_t anchorId1,
   auto anchorIt2 = irTranslator->anchorOpMap.find(anchorId2);
   assert(anchorIt1 != irTranslator->anchorOpMap.end());
   assert(anchorIt2 != irTranslator->anchorOpMap.end());
-  Anchor *anchor1 = anchorIt1->second;
-  Anchor *anchor2 = anchorIt2->second;
+  auto *anchor1 = anchorIt1->second;
+  auto *anchor2 = anchorIt2->second;
   assert(anchor1 != nullptr && anchor2 != nullptr);
-  assert(anchor1->anchorId < anchor2->anchorId);
   return AnchorInfo(anchor1, anchor2);
 }
 
 static llvm::SmallVector<RWOperation *>
 getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo) {
   llvm::SmallVector<RWOperation *> collectedOps;
-  bool goingIn = true;
   OperationBase *curOp = anchorInfo.anchorBefore;
+  curOp = getNextOperation(curOp);
+  bool goingIn = true;
   while (curOp != anchorInfo.anchorAfter) {
     assert(curOp != nullptr);
     if (auto rwOp = dyn_cast<RWOperation>(curOp)) {
@@ -268,7 +268,6 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
           assert(cubeParentOp != nullptr);
           auto cubeParentLoopOp = dyn_cast<Loop>(cubeParentOp);
           assert(cubeParentLoopOp != nullptr);
-          parentOp->cubeAnchorInfo->loopOp = cubeParentLoopOp;
           loopMap[{mixParentLoopOp, TCoreType::CUBE}] = cubeParentLoopOp;
 
           auto vectorParentOp = vectorAnchorInfo.anchorAfter->getNthParent(
@@ -276,7 +275,6 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
           assert(vectorParentOp != nullptr);
           auto vectorParentLoopOp = dyn_cast<Loop>(vectorParentOp);
           assert(vectorParentLoopOp != nullptr);
-          parentOp->vectorAnchorInfo->loopOp = vectorParentLoopOp;
           loopMap[{mixParentLoopOp, TCoreType::VECTOR}] = vectorParentLoopOp;
         }
       }
