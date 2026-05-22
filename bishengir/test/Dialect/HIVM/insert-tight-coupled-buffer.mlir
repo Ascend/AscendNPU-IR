@@ -1,5 +1,7 @@
 // RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv="enable-layout-optimization=false enable-dot-scaled-compile=false" -split-input-file %s | FileCheck %s
 
+// TODO: add test case for indirect_store op
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @vf_mm_func(%x : tensor<16x16xf16>)
                       -> tensor<16x16xf16>

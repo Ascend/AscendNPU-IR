@@ -1125,3 +1125,24 @@ func.func @multi_scope_user_propagator(%arg0: memref<?xf32>, %arg1: index, %arg2
   hivm.hir.store ins(%10 : tensor<16x16xf32>) outs(%arg5 : memref<16x16xf32>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_fixpipe_indirect_store(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<16x16xf32>,
+// CHECK-SAME: %[[GM:.*]]: memref<?xf16>,
+// CHECK-SAME: %[[ARG2:.*]]: tensor<16x16xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[ARG2]] : tensor<16x16xi64>) 
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<16x16xf16>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[ARG0]] : tensor<16x16xf32>) outs(%[[ALLOC]] : memref<16x16xf16, #hivm.address_space<ub>>)
+// CHECK: hivm.hir.indirect_store ins(%[[TENSOR]] : tensor<16x16xf16>, %[[LOAD]] : tensor<16x16xi64>) outs(%[[GM]] : memref<?xf16>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_indirect_store(%arg0: tensor<16x16xf32>, %arg1: memref<?xf16>, %arg2: tensor<16x16xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<16x16xf32>) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    hivm.hir.indirect_store ins(%1 : tensor<16x16xf16>, %arg2 : tensor<16x16xi64>) outs(%arg1 : memref<?xf16>)
+    return
+  }
+}
