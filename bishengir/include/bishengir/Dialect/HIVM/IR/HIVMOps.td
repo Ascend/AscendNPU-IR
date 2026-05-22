@@ -1092,6 +1092,15 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
 
       bool isBuiltin() { return kBuiltins.contains(getName()); }
 
+      static constexpr StringLiteral kSymbolAttrName = "symbol";
+      std::optional<std::string> getSymbol() {
+        auto op = getOperation();
+        if (auto symbol = op->template getAttrOfType<StringAttr>(kSymbolAttrName)) {
+          return symbol.getValue().str();
+        }
+        return std::nullopt;
+      }
+
       // Builtins helpers
       template<typename CustomOpT>
       struct BuiltinInfoBase {
