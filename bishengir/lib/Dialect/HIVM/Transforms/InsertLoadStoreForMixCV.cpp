@@ -916,8 +916,6 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   
   PassManager pm(ctx);
 
-  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
-
   if (isEnabledTightCoupledBuffer() && failed(addConvertLayoutUBToL1(funcOp))) {
     return signalPassFailure();
   }
