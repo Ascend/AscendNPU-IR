@@ -81,6 +81,10 @@ struct BufferInfo {
   bool ignoreInplace{false};
   /// Buffer will use unique memory and will not share memory with other buffers
   bool memoryUnique{false};
+  /// CV mix id from HIVMTightlyCoupledBufferAttr (-1 = not a tightly-coupled
+  /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
+  /// analysis to identify a sharing pair.
+  int32_t cvMixId{-1};
 };
 
 /// linear operation info.
@@ -280,6 +284,11 @@ public:
 
   /// record inplace pair list.
   SmallVector<ValuePair> inplacePairList;
+
+  /// Sorted positions (in scope-time units, mirroring
+  /// GenerateBufferLife()'s scopeTime) of hivm sync ops in this func. Used
+  /// to verify CV-CV lifetime gaps are separated by an actual sync.
+  SmallVector<int64_t> syncBlockPositions;
 
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
@@ -523,6 +532,15 @@ MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
 
   inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
     vfInplaceReuseInfo = inplaceReuseInfo;
+  }
+
+  inline void SetSyncBlockPositions(SmallVector<int64_t> positions) {
+    syncBlockPositions = std::move(positions);
+  }
+
+  inline void SetCVMixIdReuseAllowedPairs(
+      DenseSet<std::pair<int32_t, int32_t>> pairs) {
+    cvMixIdReuseAllowedPairs = std::move(pairs);
   }
 
   /// Setup the device's storage specs
@@ -823,6 +841,17 @@ private:
 
   /// inplace-reuse info for the vf call.
   VFCallInplaceReuseInfo *vfInplaceReuseInfo;
+
+  /// Sorted positions of cross-core sync ops in the current func's
+  /// linearOperation scope-time. Used to verify CV-CV lifetime gaps are
+  /// separated by an actual sync before relaxing memoryUnique.
+  SmallVector<int64_t> syncBlockPositions;
+
+  /// Pairs (X, Y) of cvMixIds whose markOp position ranges do NOT
+  /// overlap in any function that uses them (AIC and AIV). Built once per
+  /// module by PlanMemoryPass and passed in. (X,Y) and (Y,X) are both stored
+  /// for symmetric lookup.
+  DenseSet<std::pair<int32_t, int32_t>> cvMixIdReuseAllowedPairs;
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
   std::map<hivm::AddressSpace, uint64_t> failApplyBufferInfo;

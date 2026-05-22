@@ -155,6 +155,19 @@ void MemLivenessAnalysis::build() {
   // the lifetime of the buffer.
   GenerateBufferLife();
   InitializeInplacePairList();
+
+  // Record positions of cross-core RECEIVE sync ops. Only
+  // SyncBlockWaitOp guarantees that the OTHER core has made progress past
+  // a known signal point. sync_block_set is a one-way signal that doesn't
+  // wait; pipe_barrier is intra-core. SyncBlockOp ALL_*-mode also doesn't
+  // cross cores. Conservative count keeps reuse safe.
+  int64_t scopeTime = 0;
+  for (size_t i = 0; i < linearOperation.size(); ++i) {
+    Operation *op = linearOperation[i]->operation;
+    if (isa<hivm::SyncBlockWaitOp>(op))
+      syncBlockPositions.push_back(scopeTime);
+    scopeTime++;
+  }
 }
 
 bool MemLivenessAnalysis::isLocalMemPlan() const {
@@ -504,13 +517,19 @@ bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
       (funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::L1)) {
     // AllocOp will be writed in another scope and read in current scope, so we
     // will update its genInfo in markOp.
-    if (disableTightlyCoupledBufferReuse) {
-      auto it = bufferInfos.find(allocValue);
-      if (it == bufferInfos.end()) {
-        llvm::report_fatal_error("Use allocOp before defined!");
-      }
-      it->second.memoryUnique = true;
+    auto it = bufferInfos.find(allocValue);
+    if (it == bufferInfos.end()) {
+      llvm::report_fatal_error("Use allocOp before defined!");
     }
+    // Owning-side CV buffer: always mark memoryUnique to prevent unsafe
+    // sharing by default. Always record cvMixId so PlanMemoryPass's
+    // cross-scope reuse analysis can identify candidate sharing pairs.
+    // The relaxation itself is gated by --disable-tightly-coupled-buffer-reuse:
+    // when true, BuildCVReuseAllowedPairs returns an empty allow-list and
+    // memoryUnique stays effective (no sharing). When false, the allow-list
+    // is populated and proven-safe pairs may share.
+    it->second.memoryUnique = true;
+    it->second.cvMixId = attr.getId().value();
     LDBG(allocValue << " Manually run UpdateOpGenInfo and set mem_unique \n");
     return true;
   }
@@ -2360,9 +2379,21 @@ MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
   auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
-    intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                             BufferLife(nullptr));
-    return intersection;
+    // Allow lifetime-based reuse between two tightly-coupled CV buffers
+    // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
+    // appear with non-overlapping markOp ranges in EVERY function (AIC +
+    // AIV) that references both — i.e., the pair was pre-computed as
+    // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
+    int32_t cvA = bufferInfoIt1->second.cvMixId;
+    int32_t cvB = bufferInfoIt2->second.cvMixId;
+    bool crossScopeSafe =
+        cvA >= 0 && cvB >= 0 && cvA != cvB &&
+        cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
+    if (!crossScopeSafe) {
+      intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
+                               BufferLife(nullptr));
+      return intersection;
+    }
   }
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
@@ -2649,6 +2680,18 @@ private:
                                   hivm::PointerCastOp op2) const;
 
   LogicalResult fixMultibufferEnabledPointerCastOps(Operation *funcOp) const;
+
+  /// Cross-scope tightly-coupled CV-buffer reuse analysis: build the set
+  /// of (cvMixId X, cvMixId Y) pairs whose markOp position ranges do not
+  /// overlap in any function (AIC or AIV) that references both. Pairs in
+  /// the returned set are safe to share UB / L1 slots — their use ranges
+  /// are disjoint on every core that touches them, so CVPipelining's
+  /// existing inter-core syncs at the phase boundary make the share safe.
+  DenseSet<std::pair<int32_t, int32_t>>
+  BuildCVReuseAllowedPairs(ModuleOp moduleOp);
+
+  /// Cached allowed-pairs set, populated once per pass invocation.
+  DenseSet<std::pair<int32_t, int32_t>> cvMixIdReuseAllowedPairs_;
 };
 } // namespace
 
@@ -2736,6 +2779,8 @@ PlanMemoryPass::PlanMemoryForFuncOp(
   memPlan.SetInplacePairList(memLiveness.inplacePairList);
   memPlan.SetVFInplaceReuseInfo(
       vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
+  memPlan.SetSyncBlockPositions(memLiveness.syncBlockPositions);
+  memPlan.SetCVMixIdReuseAllowedPairs(cvMixIdReuseAllowedPairs_);
   if (failed(memPlan.plan())) {
     return std::nullopt;
   }
@@ -2803,8 +2848,124 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
   return llvm::success();
 }
 
+DenseSet<std::pair<int32_t, int32_t>>
+PlanMemoryPass::BuildCVReuseAllowedPairs(ModuleOp moduleOp) {
+  // Respect --disable-tightly-coupled-buffer-reuse: when the user
+  // explicitly asks for no CV-buffer sharing, return an empty allow-list
+  // so memoryUnique remains effective and the analysis is a no-op. The
+  // compile-driver fallback may retry with disable=false on UB overflow,
+  // which re-enters this function with the flag cleared.
+  if (this->disableTightlyCoupledBufferReuse) {
+    LDBG("cross-scope CV-buffer reuse: disabled by "
+         "--disable-tightly-coupled-buffer-reuse\n");
+    return {};
+  }
+  // For each candidate function (non-host, non-VF), walk pre-order and
+  // assign every op an index. Then, for each markOp with a cvMixId,
+  // compute the alloc's USE range: min/max opIndex over all transitive
+  // uses of the alloc's result value (chasing through subview, cast, etc.
+  // via getOperation()'s use list at one hop is sufficient because the IR
+  // at this stage typically uses an alloc directly inside a function body;
+  // a more complete chase is unnecessary for the conservative
+  // non-overlap test). A pair (X, Y) is allowed iff for every function
+  // referencing both, the X and Y use-ranges don't overlap.
+  DenseMap<func::FuncOp, DenseMap<int32_t, std::pair<int64_t, int64_t>>>
+      perFuncRanges;
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    if (hivm::isVF(funcOp))
+      continue;
+    // First pass: assign opIndex to every op.
+    DenseMap<Operation *, int64_t> opIndex;
+    int64_t idx = 0;
+    funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
+      opIndex[op] = idx++;
+    });
+    // Second pass: for each cvMixId markOp, compute use range.
+    auto &ranges = perFuncRanges[funcOp];
+    funcOp->walk<WalkOrder::PreOrder>([&](annotation::MarkOp markOp) {
+      int32_t cvMixId;
+      auto maybeAlloc = GetCVMixIdAndAllocOpFromMarkOp(markOp, cvMixId);
+      if (!maybeAlloc.has_value())
+        return;
+      Value allocVal = maybeAlloc.value().getResult();
+      int64_t lo = opIndex[maybeAlloc.value().getOperation()];
+      int64_t hi = lo;
+      // Walk transitive users via a small worklist (subview/cast/etc.).
+      SmallVector<Value, 8> worklist{allocVal};
+      DenseSet<Value> visited;
+      while (!worklist.empty()) {
+        Value v = worklist.pop_back_val();
+        if (!visited.insert(v).second)
+          continue;
+        for (auto &use : v.getUses()) {
+          Operation *user = use.getOwner();
+          auto pIt = opIndex.find(user);
+          if (pIt != opIndex.end()) {
+            lo = std::min(lo, pIt->second);
+            hi = std::max(hi, pIt->second);
+          }
+          // Chase forward through view-like ops that produce new SSA values.
+          for (Value r : user->getResults()) {
+            if (isa<MemRefType>(r.getType()))
+              worklist.push_back(r);
+          }
+        }
+      }
+      auto it = ranges.find(cvMixId);
+      if (it == ranges.end())
+        ranges[cvMixId] = std::make_pair(lo, hi);
+      else {
+        it->second.first = std::min(it->second.first, lo);
+        it->second.second = std::max(it->second.second, hi);
+      }
+    });
+  }
+
+  // Collect the union of all cvMixIds seen.
+  SmallVector<int32_t> allIds;
+  DenseSet<int32_t> idSet;
+  for (auto &[funcOp, ranges] : perFuncRanges) {
+    for (auto &[id, range] : ranges) {
+      if (idSet.insert(id).second)
+        allIds.push_back(id);
+    }
+  }
+
+  DenseSet<std::pair<int32_t, int32_t>> allowed;
+  for (size_t i = 0; i < allIds.size(); ++i) {
+    for (size_t j = i + 1; j < allIds.size(); ++j) {
+      int32_t a = allIds[i], b = allIds[j];
+      bool nonOverlapEverywhere = true;
+      bool sharedFunction = false;
+      for (auto &[funcOp, ranges] : perFuncRanges) {
+        auto aIt = ranges.find(a);
+        auto bIt = ranges.find(b);
+        if (aIt == ranges.end() || bIt == ranges.end())
+          continue;
+        sharedFunction = true;
+        auto [aLo, aHi] = aIt->second;
+        auto [bLo, bHi] = bIt->second;
+        if (!(aHi < bLo || bHi < aLo)) {
+          nonOverlapEverywhere = false;
+          break;
+        }
+      }
+      if (sharedFunction && nonOverlapEverywhere) {
+        allowed.insert(std::make_pair(a, b));
+        allowed.insert(std::make_pair(b, a));
+      }
+    }
+  }
+  LDBG("cross-scope CV-buffer reuse: " << allowed.size() / 2
+                  << " pair(s) allowed\n");
+  return allowed;
+}
+
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
+  cvMixIdReuseAllowedPairs_ = BuildCVReuseAllowedPairs(moduleOp);
   VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
   // Map all funcs to buffer2Offsets obtained in PlanMemoryForFuncOp,
   // because in the second walk, buffer2Offset is needed to populate
