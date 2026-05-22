@@ -1070,7 +1070,7 @@ Value initCounter(PatternRewriter &rewriter, Operation *op) {
     // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
     // every outer iteration, so the counter resets per outer step.
     Location loc = op->getLoc();
-    Value counterBuf = rewriter.create<memref::AllocOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
+    Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
     Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
     return counterBuf;
