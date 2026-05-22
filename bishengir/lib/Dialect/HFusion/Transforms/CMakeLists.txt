@@ -66,6 +66,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   TilingInterfaceImpl.cpp
   TreeReduce.cpp
   UnfoldSymbolicDim.cpp
+  UpliftWhileToFor.cpp
   LegalizeScalar.cpp
   LegalizeBF16.cpp
   LegalizeBool.cpp
@@ -100,6 +101,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   MLIRMemRefDialect
   MLIRMemRefTransformOps
   MLIRSCFTransformOps
+  MLIRSCFTransforms
   MLIRShapeDialect
   MLIRShardingInterface
   MLIRTensorDialect

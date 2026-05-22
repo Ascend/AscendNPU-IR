@@ -173,6 +173,20 @@ constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
     "hivm.loop_core_type";
 constexpr llvm::StringLiteral kPreLoadAttrName =
     "preload_num";
+
+/// Attribute placed on a memref.alloca holding the multi-buffer iteration
+/// counter for a particular scf.while loop. Its IntegerAttr value matches the
+/// kMultiBufferLoopIdAttr placed on the owning scf.while op so multiple
+/// passes (GraphSyncSolver, EnableMultiBuffer) can locate and reuse the same
+/// counter without sharing pass-level state.
+constexpr llvm::StringLiteral kMultiBufferCounterAttr =
+    "hivm.multi_buffer_counter_for";
+
+/// Attribute placed on an scf.while op once a counter alloca has been
+/// associated with it. The IntegerAttr value is unique within the parent
+/// FunctionOpInterface.
+constexpr llvm::StringLiteral kMultiBufferLoopIdAttr =
+    "hivm.multi_buffer_loop_id";
 } // namespace hivm
 } // namespace mlir
 

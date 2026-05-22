@@ -386,12 +386,14 @@ std::string op2str(Operation *op) {
   return os.str();
 }
 
-// Verify that all loop-like parents of `op` are SCF ForOps. Used to ensure
-// certain multi-buffer/loop transformations are safe to apply.
+// Despite the legacy name, accepts both scf::ForOp and scf::WhileOp ancestors.
+// scf.while is supported by the multi-buffer pipeline via the alloca-based
+// MultiBufferLoopAdapter (see HIVM/Utils/MultiBufferLoopAdapter.h). Other
+// LoopLike ops (scf.parallel, scf.forall, ...) still bail out.
 bool checkAllParentLoopsAreForLoops(Operation *op) {
   while (op != nullptr) {
     auto parLoop = op->getParentOfType<LoopLikeOpInterface>();
-    if (parLoop != nullptr && !isa<scf::ForOp>(parLoop)) {
+    if (parLoop != nullptr && !isa<scf::ForOp, scf::WhileOp>(parLoop)) {
       return false;
     }
     op = parLoop;
