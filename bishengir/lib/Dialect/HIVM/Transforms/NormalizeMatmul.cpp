@@ -1355,26 +1355,10 @@ public:
       return rewriter.notifyMatchFailure(op, "Pattern already applied");
     }
 
-    if (op.isInitConstant(false)) {
-      LDBG("decompose matmul with elemwise add");
-      return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
-    }
-    if (!op.isInitConstant()) {
-      LDBG("decompose matmul with elemwise add and non-const init");
-      return decomposeMatmulWithConditionalElementwiseAdd<T>(rewriter, op);
-    }
-    if (op.isInitConstant(true)) {
-      LDBG("no need to decompose matmul with elemwise add since init is true");
-      return failure();
-    }
-    LDBG("no need to decompose matmul");
-    return failure();
-
     MatmulBiasMode biasMode = op.getMatmulBiasMode();
     if (biasMode == MatmulBiasMode::NoBias) {
       LDBG("no bias");
       return rewriter.notifyMatchFailure(op, "no bias");
-      //return decomposeMatmulWithInitCZero<T>(rewriter, op);
     }
     if (op.shouldDecomposeBiasByElementAdd() && op.isInitConstant(true)) {
       LDBG("no need to decompose matmul with elemwise add since init is true");
@@ -1407,34 +1391,6 @@ public:
     if (op.shouldDecomposeBiasByElementAdd() && !op.isInitConstant()) {
       LDBG("decompose matmul with elemwise add and non-const init");
       return decomposeMatmulWithConditionalElementwiseAdd<T>(rewriter, op);
-    }
-
-    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
-      if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitKFalseInit) {
-        LDBG(
-            "decompose matmul with post per channel add with split k add while "
-            "init contidtion is false");
-        return decomposeMatmulWithPostPerChannelAddWithSplitKFalseInit<T>(
-            rewriter, op);
-      }
-
-      if (biasMode == MatmulBiasMode::ZeroInitNoAccumulation) {
-        LDBG("decompose matmul with zero init no accumlation");
-        return decomposeMatmulWithInitCZero<T>(rewriter, op);
-      }
-
-      if (biasMode == MatmulBiasMode::ZeroInitInNestedLoop &&
-          !op->template getParentOfType<scf::IfOp>()) {
-        LDBG("decompose matmul with zero init in nested loop");
-        return decomposeMatmulWithInitCZeroInNestedLoop<T>(rewriter, op);
-      }
-
-      if (biasMode == MatmulBiasMode::ZeroInitInNestedLoop &&
-          op->template getParentOfType<scf::IfOp>()) {
-        LDBG("decompose matmul with zero init in nested loop inside if");
-        return decomposeMatmulWithInitCZeroInNestedLoopInsideIf<T>(rewriter,
-                                                                   op);
-      }
     }
 
     return failure();

@@ -207,8 +207,6 @@ void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
 
   if (auto curMemScope = dyn_cast_if_present<AddressSpaceAttr>(
           dyn_cast<BaseMemRefType>(type).getMemorySpace())) {
-    if (curMemScope != targetMemScope)
-      val.dump();
     assert(curMemScope == targetMemScope);
     return;
   }

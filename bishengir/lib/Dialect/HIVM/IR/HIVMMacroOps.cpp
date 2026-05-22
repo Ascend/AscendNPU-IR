@@ -473,19 +473,6 @@ LogicalResult MmadL1Op::verify() {
   return success();
 }
 
-/// Check if a value is a constant zero (integer/index 0, or +/-0.0 float).
-static bool isConstantZero(Value v) {
-  if (!v)
-    return false;
-  Type elemTy = getElementTypeOrSelf(v);
-  if (isa<FloatType>(elemTy))
-    return matchPattern(v, m_PosZeroFloat()) ||
-           matchPattern(v, m_NegZeroFloat());
-  if (elemTy.isIntOrIndex())
-    return matchPattern(v, m_Zero());
-  return false;
-}
-
 bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
                                         Operation *hookOp = nullptr) {
   // TODO: modify for batch matmul later.
@@ -590,57 +577,6 @@ static bool isPostPerChannelSplitKPattern(OpOperand &mmOut,
   return false;
 }
 
-/// Variant of isPostPerChannelSplitKPattern where the matmul's init condition
-/// is fixed to constant false (i.e. the matmul unconditionally does NOT
-/// accumulate onto its iter_arg — every iteration overwrites the loop-carried
-/// value). The post-bias structure (for-init = tensor.empty, for-result
-/// consumed by vadd with a per-channel vbrc) is unchanged.
-static bool isPostPerChannelSplitKFalseInitPattern(OpOperand &mmOut,
-                                                   OpOperand &mmInitCond) {
-  // matmul init condition must be constant false.
-  if (!matchPattern(mmInitCond.get(), m_Zero()))
-    return false;
-
-  Operation *localMatmulOp = mmOut.getOwner();
-  auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get());
-  if (!blockArg)
-    return false;
-
-  auto scfForOp = dyn_cast_if_present<scf::ForOp>(
-      blockArg.getOwner()->getParentOp());
-  if (!scfForOp)
-    return false;
-
-  auto correspondForRes = scfForOp.getTiedLoopResult(blockArg);
-  auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
-  if (!(localMatmulOp->getResults()[0].hasOneUse() &&
-        localMatmulOp->getResults()[0] == yieldValue->get() &&
-        correspondForRes.hasOneUse() &&
-        isa<hivm::VAddOp>(*(correspondForRes.user_begin()))))
-    return false;
-
-  auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
-  Operation *forInitDefOp = forInitArg->get().getDefiningOp();
-  bool initIsZero =
-      isa_and_nonnull<tensor::EmptyOp>(forInitDefOp) ||
-      (isa_and_nonnull<hivm::VBrcOp>(forInitDefOp) &&
-       isConstantZero(cast<hivm::VBrcOp>(forInitDefOp).getSrc()));
-  if (!initIsZero)
-    return false;
-
-  auto vaddOp = dyn_cast<hivm::VAddOp>(*(correspondForRes.user_begin()));
-  assert(vaddOp.getSrc().size() == 2);
-  for (Value src : vaddOp.getSrc()) {
-    auto vbrcOp = src.getDefiningOp<hivm::VBrcOp>();
-    // While anchor is vaddOp after matmul, use forOp to verify whether bias
-    // is defined before matmul.
-    if (vbrcOp && isSatisfiedBrcForPerChannel(vbrcOp, scfForOp))
-      return true;
-  }
-
-  return false;
-}
-
 static bool isMMInitPerChannelSplitKPattern(OpOperand &mmOut,
                                             OpOperand &mmInitCond) {
   // matmul init condition must be false.
@@ -666,121 +602,6 @@ static bool isMMInitPerChannelSplitKPattern(OpOperand &mmOut,
   return false;
 }
 
-/// Small helper: is `v` a "zero-init source" — either tensor.empty
-/// (uninitialized; treated as zero when consumed with initCondition=false)
-/// or a hivm.vbrc of a constant zero scalar/tensor.
-static bool isZeroInitSource(Value v) {
-  if (!v)
-    return false;
-  if (v.getDefiningOp<tensor::EmptyOp>())
-    return true;
-  if (auto vbrcOp = v.getDefiningOp<hivm::VBrcOp>())
-    return isConstantZero(vbrcOp.getSrc());
-  return false;
-}
-
-/// Match "C starts at zero, no meaningful accumulation" patterns for matmul.
-///
-/// Two accepted forms:
-///   A. matmul is outside any loop; outC is directly tensor.empty or vbrc 0.
-///   B. matmul is inside an scf.for; outC is the for iter_arg whose init is
-///      tensor.empty or vbrc 0; the scf.for result tied to this iter_arg is
-///      neither fed into a yield (would carry it to an outer loop) nor used
-///      by any op outside the for's enclosing block — so the loop-carried
-///      accumulation is semantically dead and each iteration's matmul starts
-///      from the zero-init value.
-static bool isZeroInitNoAccumulationPattern(OpOperand &mmOut,
-                                            OpOperand &mmInitCond) {
-  if (!matchPattern(mmInitCond.get(), m_Zero()))
-    return false;
-
-  Value src = mmOut.get();
-  if (!src)
-    return false;
-
-  Operation *matmulOp = mmOut.getOwner();
-  auto ancestorLoop = matmulOp->getParentOfType<LoopLikeOpInterface>();
-
-  // Case A — matmul outside any loop.
-  if (!ancestorLoop)
-    return isZeroInitSource(src);
-
-  // Case B — outC is the iter_arg of an scf.for; init is zero-init;
-  //          for-result has no escaping use.
-  if (auto blockArg = dyn_cast<BlockArgument>(src)) {
-    auto scfForOp =
-        dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
-    if (!scfForOp)
-      return false;
-    auto forInit = scfForOp.getTiedLoopInit(blockArg);
-    if (!isZeroInitSource(forInit->get()))
-      return false;
-    auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
-    if ((matmulOp->getResults()[0].hasOneUse() &&
-         (matmulOp->getResults()[0] == yieldValue->get())))
-      return false;
-    for (Operation *user : matmulOp->getResults()[0].getUsers()) {
-      auto core = queryCoreTypeHelper(user).value_or(TCoreType::CUBE_OR_VECTOR);
-      if (core == TCoreType::VECTOR)
-        return false;
-    }
-    Value forRes = scfForOp.getTiedLoopResult(blockArg);
-    Block *forParentBlock = scfForOp->getBlock();
-    for (Operation *user : forRes.getUsers()) {
-      if (isa<scf::YieldOp>(user) || user->getBlock() != forParentBlock)
-        return false;
-    }
-    return true;
-  }
-
-  // Case C — outC is loop-invariant zero-init (hoisted above the loop).
-  if (Operation *srcDefOp = src.getDefiningOp())
-    if (!ancestorLoop->isAncestor(srcDefOp) && isZeroInitSource(src)) {
-      return true;
-    }
-
-  return false;
-}
-
-/// Matches when:
-///   - matmul init condition is constant 0 (false),
-///   - matmul's outC is the iter_arg of an scf.for that itself sits inside
-///     another loop (nested loop),
-///   - matmul result is the loop-carried yield for that iter_arg,
-///   - the for init is either tensor.empty or hivm.vbrc of a constant zero.
-static bool isZeroInitInNestedLoopPattern(OpOperand &mmOut,
-                                          OpOperand &mmInitCond) {
-  if (!matchPattern(mmInitCond.get(), m_Zero()))
-    return false;
-
-  Operation *localMatmulOp = mmOut.getOwner();
-  auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get());
-  if (!blockArg)
-    return false;
-
-  auto scfForOp = dyn_cast_if_present<scf::ForOp>(
-      blockArg.getOwner()->getParentOp());
-  if (!scfForOp)
-    return false;
-
-  // Require a true nested loop: the enclosing scf.for must itself live
-  // inside another loop.
-  if (!scfForOp->getParentOfType<LoopLikeOpInterface>())
-    return false;
-
-  // The matmul result must be the loop-carried yield for this iter_arg.
-  auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
-  if (!(localMatmulOp->getResults()[0].hasOneUse() &&
-        localMatmulOp->getResults()[0] == yieldValue->get()))
-    return false;
-
-  auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
-  Operation *forInitDefOp = forInitArg->get().getDefiningOp();
-  return isa_and_nonnull<tensor::EmptyOp>(forInitDefOp) ||
-         (isa_and_nonnull<hivm::VBrcOp>(forInitDefOp) &&
-          isConstantZero(cast<hivm::VBrcOp>(forInitDefOp).getSrc()));
-}
-
 /// NoBias:
 /// %1 = tensor.empty()
 /// mmadL1 dst(%1)
@@ -802,7 +623,7 @@ static bool isZeroInitInNestedLoopPattern(OpOperand &mmOut,
 /// vadd(%mat, %bias)
 
 /// ElementwiseAdd
-/// %1 = ops // not 0 const or other no optimize cases
+/// %1 = ops // not 0 const
 /// mmadL1 dst(%1)
 
 /// MMInitPerChannelAddWithSplitK
@@ -816,25 +637,6 @@ static bool isZeroInitInNestedLoopPattern(OpOperand &mmOut,
 /// %mat = for split k (%iterator = %36) {
 ///   %acc_mad = mmadL1 dst(%iterator)
 ///   yield %acc_mad
-/// }
-
-/// MMInitCZeroByCounter
-/// %init = tensor.empty() or hivm.hir.vbrc ins(%const_0)
-/// %mat = for split k (%iterator = %init) {
-///   %acc_mad = mmadL1 ins(,%false,) outs(%iterator)
-///   yield %acc_mad
-/// }
-
-/// MMInitCZeroInConditonByCounter
-/// %init = tensor.empty() or hivm.hir.vbrc ins(%const_0)
-/// %mat = for split k (%iterator = %init) {
-///   %ifres = if %cond {
-///     %acc_mad = mmadL1 ins(,%false,) outs(%iterator)
-///     yield %acc_mad
-///   } else {
-///     yield %iterator
-///   }
-///   yield %ifres
 /// }
 
 /// Well, both per-channel modes are optimization and related pattern is a
@@ -853,15 +655,6 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
 
   if (isMMInitPerChannelSplitKPattern(matmulOutput, matmulInitCond))
     return MatmulBiasMode::MMInitPerChannelAddWithSplitK;
-
-  if (isPostPerChannelSplitKFalseInitPattern(matmulOutput, matmulInitCond))
-    return MatmulBiasMode::PostPerChannelAddWithSplitKFalseInit;
-
-  if (isZeroInitNoAccumulationPattern(matmulOutput, matmulInitCond))
-    return MatmulBiasMode::ZeroInitNoAccumulation;
-
-  if (isZeroInitInNestedLoopPattern(matmulOutput, matmulInitCond))
-    return MatmulBiasMode::ZeroInitInNestedLoop;
 
   // When all traced allocs of the mmadL1 init are in the same L0C memory
   // space, it means that the user is explicitly controlling buffer reuse on
