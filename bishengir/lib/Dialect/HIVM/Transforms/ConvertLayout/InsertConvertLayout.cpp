@@ -61,16 +61,18 @@ struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
     llvm::SmallDenseMap<Value, DataLayoutAttr> currentLayoutMap =
         opWithLayout.getOperandsCurrentLayout();
     LDBG("Checking " << op);
-    llvm::SmallDenseMap<Value, DataLayoutAttr> targetLayoutMap =
-        opWithLayout.getOperandsTargetFractalLayout();
+    auto targetLayoutMap = opWithLayout.getOperandsTargetFractalLayout();
 
     // Get layouts from the interface
     DataLayoutAttr srcLayoutA = currentLayoutMap.lookup(aMatrix);
-    DataLayoutAttr dstLayoutA = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.a);
+    DataLayoutAttr dstLayoutA =
+        dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.a);
     DataLayoutAttr srcLayoutB = currentLayoutMap.lookup(bMatrix);
-    DataLayoutAttr dstLayoutB = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.b);
+    DataLayoutAttr dstLayoutB =
+        dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.b);
     DataLayoutAttr srcLayoutC = currentLayoutMap.lookup(cMatrix);
-    DataLayoutAttr dstLayoutC = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.c);
+    DataLayoutAttr dstLayoutC =
+        dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.c);
 
     LDBG("A matrix - src: " << srcLayoutA << ", dst: " << dstLayoutA);
     LDBG("B matrix - src: " << srcLayoutB << ", dst: " << dstLayoutB);
