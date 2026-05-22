@@ -58,7 +58,10 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
 static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
-  options.enableLegacy = hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  options.enableLegacy =
+      hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  if (!hivmPipelineOptions.enableMixedCV)
+    options.enableLegacy = true;
   options.target = hivmPipelineOptions.target;
   options.enableDotScaledCompile =
       hivmPipelineOptions.enableDotScaledCompile;
