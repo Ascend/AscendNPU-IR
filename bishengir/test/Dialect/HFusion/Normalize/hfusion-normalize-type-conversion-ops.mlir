@@ -398,6 +398,20 @@ func.func @test_NormalizeToTargetType_gather_b8(%arg0: tensor<4x64xi8>, %arg1: t
 
 // -----
 
+// CHECK-LABEL: @test_NormalizeGatherIndexToI32
+// CHECK: %[[IDX32_EMPTY:.*]] = tensor.empty() : tensor<4x32xi32>
+// CHECK: %[[IDX32:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<4x32xi16>) outs(%[[IDX32_EMPTY]] : tensor<4x32xi32>) -> tensor<4x32xi32>
+// CHECK: hfusion.gather {{.*}} ins(%arg0, %[[IDX32]] : tensor<4x64xf16>, tensor<4x32xi32>)
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
+  func.func @test_NormalizeGatherIndexToI32(%arg0: tensor<4x64xf16>, %arg1: tensor<4x32xi16>) -> tensor<4x32xf16> {
+    %0 = tensor.empty() : tensor<4x32xf16>
+    %1 = hfusion.gather ins(%arg0, %arg1 : tensor<4x64xf16>, tensor<4x32xi16>) outs(%0 : tensor<4x32xf16>) axis = 1 -> tensor<4x32xf16>
+    return %1 : tensor<4x32xf16>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: @test_NormalizeToTargetType_reduce_i8_andi
 // CHECK: linalg.reduce { arith.andi } ins({{.*}} : tensor<16x32x64xi8>)
 func.func @test_NormalizeToTargetType_reduce_i8_andi(%arg0: tensor<16x32x64xi8>) -> tensor<16x32xi8> {
