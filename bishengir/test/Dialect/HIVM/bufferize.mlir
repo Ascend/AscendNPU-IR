@@ -288,9 +288,7 @@ func.func @hivm_tensor_copy_gm_to_ub() -> tensor<16x16xf32> {
   // CHECK: %[[T0:.*]] = tensor.empty() : tensor<16x16xf32>
   // CHECK: %[[T1:.*]] = bufferization.to_memref %[[T0]] : memref<16x16xf32>
   // CHECK: %[[T2:.*]] = tensor.empty() : tensor<16x16xf32>
-  // CHECK: %[[T3:.*]] = bufferization.to_memref %[[T2]] : memref<16x16xf32>
   // CHECK: %[[alloc:.*]] = memref.alloc() {alignment = 64 : i64} : memref<16x16xf32>
-  // CHECK: memref.copy %[[T3]], %[[alloc]] : memref<16x16xf32> to memref<16x16xf32>
   // CHECK: hivm.hir.copy ins(%[[T1]] : memref<16x16xf32>) outs(%[[alloc]] : memref<16x16xf32>)
   // CHECK: %[[T4:.*]] = bufferization.to_tensor %[[alloc]] : memref<16x16xf32>
 

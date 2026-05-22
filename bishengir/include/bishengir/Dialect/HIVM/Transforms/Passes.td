@@ -1435,5 +1435,4 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
   ];
 }
 
-
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

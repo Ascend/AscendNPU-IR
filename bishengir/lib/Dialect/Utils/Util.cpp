@@ -315,7 +315,6 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   return memref::createMemRefAllocOp(builder, loc, source);
 }
 
-
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          TensorType targetTensorType) {
   assert(targetTensorType.hasStaticShape());
