@@ -315,6 +315,8 @@ private:
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
   bool areFusibleOps(const int producerIndex, const int consumerIndex);
   bool fuseProducerConsumerImpl(Block &block);
+  bool fuseIOBoundGroupsWithNearestConsumer();
+  bool isIOBoundGroup(int groupId);
   bool parallelismSubModel(DenseSet<Operation *> &producerGroup,
                                   DenseSet<Operation *> &consumerGroup) const;
   bool execUnitUtilizationSubModel(DenseSet<Operation *> &producerGroup,
@@ -326,6 +328,7 @@ private:
   void printValidGroupCount();
   DenseMap<Operation *, size_t> opToGroupIndex;
   DenseMap<int64_t, DenseSet<Operation *>> AllFusedGroupBlocks;
+  int stage = 1;
 };
 
 //===----------------------------------------------------------------------===//

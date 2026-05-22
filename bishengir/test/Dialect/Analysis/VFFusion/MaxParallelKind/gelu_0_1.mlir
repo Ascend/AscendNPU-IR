@@ -1,7 +1,13 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_0(
-// CHECK: arith.constant
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+
+// CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_1(
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>}
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>}
@@ -9,44 +15,32 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 
-// CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_1(
-// CHECK: arith.constant
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-
 // CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_2(
-// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 
 // CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_3(
-// CHECK: arith.constant
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 
 // CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_4(
-// CHECK: arith.constant
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 
 // CHECK-LABEL: func.func private @triton_unk_fused_gelu_0_1_fused_5(
-// CHECK: arith.constant
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
-// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 
 // CHECK-LABEL: func.func @triton_unk_fused_gelu_0_1(
-// CHECK: arith.constant
 // CHECK: scf.for
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
@@ -54,12 +48,12 @@
 // CHECK: memref.subview
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
-// CHECK: func.call @triton_unk_fused_gelu_0_1_fused_0
 // CHECK: func.call @triton_unk_fused_gelu_0_1_fused_1
 // CHECK: func.call @triton_unk_fused_gelu_0_1_fused_2
 // CHECK: func.call @triton_unk_fused_gelu_0_1_fused_3
 // CHECK: func.call @triton_unk_fused_gelu_0_1_fused_4
 // CHECK: func.call @triton_unk_fused_gelu_0_1_fused_5
+// CHECK: func.call @triton_unk_fused_gelu_0_1_fused_0
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
 

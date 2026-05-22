@@ -360,8 +360,24 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   }
 
   // Only producer ExtractSliceOps need to be fused to VF.
-  if (isa<tensor::ExtractSliceOp>(consumerOp))
-    return false;
+  int producerGroupId = static_cast<int>(opToGroupIndex[producerOp]);
+  int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
+  auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+  auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+  DenseSet<Operation *> fusedGroupsSet;
+  for (Operation* op : producerGroup)
+    fusedGroupsSet.insert(op);
+  for (Operation* op : consumerGroup)
+    fusedGroupsSet.insert(op);
+  for (Operation* op : fusedGroupsSet) {
+    if (isa<tensor::ExtractSliceOp>(op)) {
+      for (Operation* user : op->getUsers()) {
+        if (!fusedGroupsSet.contains(user)) {
+          return false;
+        }
+      }
+    }
+  }
 
   if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
@@ -431,33 +447,34 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
     LDBG("candidateOp is Cast");
     return true;
   }
-  DenseSet<Operation *> candidateOpGroup;
-  candidateOpGroup.insert(candidateOp);
-  float_t producerComputeScores = getFusedOpsComputeScores(candidateOpGroup);
-  float_t producerIoScores = getFusedOpsIoScores(candidateOpGroup);
-  float consumerComputeScores = getFusedOpsComputeScores(consumerGroup);
-  float consumerIoScores = getFusedOpsIoScores(consumerGroup);
+  if (stage == 1) {
+    DenseSet<Operation *> candidateOpGroup;
+    candidateOpGroup.insert(candidateOp);
+    float_t producerComputeScores = getFusedOpsComputeScores(candidateOpGroup);
+    float_t producerIoScores = getFusedOpsIoScores(candidateOpGroup);
+    float consumerComputeScores = getFusedOpsComputeScores(consumerGroup);
+    float consumerIoScores = getFusedOpsIoScores(consumerGroup);
 
-  // IO Scores compute with uneliminated inputs/outputs
-  float_t fusedIoScores = producerIoScores + consumerIoScores;
-  float_t fusedComputeScores = producerComputeScores + consumerComputeScores;
+    // IO Scores compute with uneliminated inputs/outputs
+    float_t fusedIoScores = producerIoScores + consumerIoScores;
+    float_t fusedComputeScores = producerComputeScores + consumerComputeScores;
 
-  auto paralLift = parallelismSubModel(candidateOpGroup, consumerGroup);
-  auto execUtilLift =
+    auto paralLift = parallelismSubModel(candidateOpGroup, consumerGroup);
+    auto execUtilLift =
       execUnitUtilizationSubModel(candidateOpGroup, consumerGroup);
 
-  LDBG("candidate op producer: compute=" << producerComputeScores
+    LDBG("candidate op producer: compute=" << producerComputeScores
                                          << " io=" << producerIoScores);
-  LDBG("consumer(" << consumerGroup.size() << "): compute="
+    LDBG("consumer(" << consumerGroup.size() << "): compute="
                    << consumerComputeScores << " io=" << consumerIoScores);
 
-  if (producerIoScores + kEpsilon > producerComputeScores &&
-      consumerIoScores + kEpsilon > consumerComputeScores) {
-    LDBG("Both IO Bound -> Fuse");
-    return true;
-  }
+    if (producerIoScores + kEpsilon > producerComputeScores &&
+        consumerIoScores + kEpsilon > consumerComputeScores) {
+            LDBG("Both IO Bound -> Fuse");
+            return true;
+    }
 
-  if (!(producerIoScores < producerComputeScores &&
+    if (!(producerIoScores < producerComputeScores &&
         consumerIoScores < consumerComputeScores) &&
       fusedIoScores + kEpsilon > fusedComputeScores) {
     LDBG("Fused IO >= Compute -> Fuse");
@@ -465,6 +482,9 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
   }
   LDBG("execUtilLift=" << execUtilLift << "paralLift=" << paralLift);
   return (execUtilLift || paralLift);
+  } else {
+    return true;
+  }
 }
 
 bool MaxParallelAnalyzer::parallelismSubModel(
@@ -503,6 +523,15 @@ bool MaxParallelAnalyzer::execUnitUtilizationSubModel(
   float mergedUtil = getExecUnitUtilization(fusableOps);
   LDBG("mergedUtil=" << mergedUtil);
   return beforeUtil + kEpsilon < 1.0f && beforeUtil < mergedUtil + kEpsilon;
+}
+
+bool MaxParallelAnalyzer::isIOBoundGroup(int groupId) {
+  if (AllFusedGroupBlocks[groupId].empty()) {
+    return false;
+  }
+  float computeScores = getFusedOpsComputeScores(AllFusedGroupBlocks[groupId]);
+  float ioScores = getFusedOpsIoScores(AllFusedGroupBlocks[groupId]);
+  return ioScores + kEpsilon > computeScores;
 }
 
 bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,
@@ -632,6 +661,93 @@ bool MaxParallelAnalyzer::fuseProducerConsumerImpl(Block &block) {
   return hasFused;
 }
 
+
+bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
+  bool hasFused = false;
+  bool madeProgress = true;
+
+  while (madeProgress) {
+    madeProgress = false;
+
+    // Find all IO-bound groups
+    std::vector<int> ioBoundGroupIds;
+    for (auto &[id, ops] : AllFusedGroupBlocks) {
+      if (!ops.empty() && isIOBoundGroup(id)) {
+        ioBoundGroupIds.push_back(id);
+      }
+    }
+
+    for (int producerGroupId : ioBoundGroupIds) {
+      LDBG("IO-bound group " << producerGroupId);
+      auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
+      if (producerGroup.empty())
+        continue;
+
+      // Collect all consumer groups from every op in the producer group,
+      // then find the truly nearest consumer group.
+      int consumerGroupId = -1;
+      int consumerGroupMinIndex = -1;
+      for (auto *producerOp : producerGroup) {
+        if (!opToIndex.contains(producerOp))
+          continue;
+
+        std::vector<OpOperand *> validUses =
+            getSortedConsumerOperands(producerOp);
+
+        for (auto *opOperandPtr : validUses) {
+          auto *consumerOp = opOperandPtr->getOwner();
+          if (!opToGroupIndex.contains(consumerOp))
+            continue;
+          int foundGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
+          if (foundGroupId == producerGroupId)
+            continue;
+          if (AllFusedGroupBlocks[foundGroupId].empty())
+            continue;
+
+          int foundGroupMaxIndex = dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp]));
+          if (consumerGroupId < 0 || foundGroupMaxIndex < consumerGroupMinIndex) {
+            consumerGroupId = foundGroupId;
+            consumerGroupMinIndex = foundGroupMaxIndex;
+          }
+        }
+      }
+      if (consumerGroupId < 0)
+        continue;
+      if (AllFusedGroupBlocks[consumerGroupId].empty())
+        continue;
+
+      LDBG("IO-bound group " << producerGroupId
+                             << " -> consumer group " << consumerGroupId);
+
+      auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
+
+      // Use representative ops from each group for areFusibleOps/tryFuseGroups
+      auto *producerOp = *producerGroup.begin();
+      auto *consumerOp = *consumerGroup.begin();
+      if (!opToIndex.contains(producerOp) || !opToIndex.contains(consumerOp))
+        continue;
+
+      int producerIndex = static_cast<int>(opToIndex[producerOp]);
+      int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
+      
+      if (!areFusibleOps(producerIndex, consumerIndex)) {
+          LDBG("areFusibleOps returned false");
+          continue;
+      }
+
+      if (tryFuseGroups(producerIndex, consumerIndex,
+                        producerGroupId, consumerGroupId)) {
+        hasFused = true;
+        madeProgress = true;
+        LDBG("IO-bound group " << producerGroupId
+                               << " fused with consumer group "
+                               << consumerGroupId);
+      }
+    }
+  }
+  return hasFused;
+}
+
 void MaxParallelAnalyzer::printValidGroupCount() {
   int64_t count = 0;
   std::vector<int> validGroupIds;
@@ -663,10 +779,14 @@ void MaxParallelAnalyzer::printValidGroupCount() {
 LogicalResult MaxParallelAnalyzer::fuseImpl(Block &block) {
   LDBG("MaxParallel Fusing" << block << "\n");
   initialize(block);
+  stage = 1;
   // Perform producer-consumer fusion until no more fusions occur.
   while (fuseProducerConsumerImpl(block)) {
     // Keep looping
   }
+  stage = 2;
+  if (fuseIOBoundGroupsWithNearestConsumer())
+    LDBG("=== Phase 2: find IO bound group to be merged ===");
   printValidGroupCount();
   return success();
 }
