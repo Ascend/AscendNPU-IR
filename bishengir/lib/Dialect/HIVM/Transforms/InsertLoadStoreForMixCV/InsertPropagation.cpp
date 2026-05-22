@@ -244,7 +244,7 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
       })
       .Case<hivm::FixpipeOp>([&](auto op) {
         auto *dstOp = &op.getDstMutable();
-        if (op->use_empty() || isPropagatorInserted(op))
+        if (op->use_empty())
           return failure();
         PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
                                            rewriter);
@@ -252,7 +252,7 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
         return success();
       })
       .Case<hivm::IndirectLoadOp>([&](auto op) {
-        if (op->use_empty() || isPropagatorInserted(op))
+        if (op->use_empty())
           return failure();
         auto *srcOp = &op.getSrcMutable();
         PropagatorUtil::createPropagatorUp(srcOp, hivm::AddressSpace::GM,
@@ -268,6 +268,23 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
                                            hivm::AddressSpace::UB, rewriter);
         PropagatorUtil::createPropagatorsDown(
             op, TCoreType::VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::IndirectStoreOp>([&](auto op) {
+        auto *srcOp = &op.getSrcMutable();
+        PropagatorUtil::createPropagatorUp(srcOp, TCoreType::VECTOR, hivm::AddressSpace::UB,
+                                          rewriter);
+        for (auto &input : op.getDpsInputOperands()) {
+          if (input == srcOp)
+            continue;
+          PropagatorUtil::createPropagatorUp(input, TCoreType::VECTOR,
+                                            hivm::AddressSpace::UB, rewriter);
+        }
+        auto *dstOp = &op.getDstMutable();
+        PropagatorUtil::createPropagatorUp(dstOp,
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(
+            op, hivm::AddressSpace::GM, rewriter);
         return success();
       })
       .Default([&](auto *op) { return failure(); });
