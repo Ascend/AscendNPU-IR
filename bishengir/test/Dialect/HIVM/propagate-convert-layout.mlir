@@ -241,3 +241,46 @@ func.func @propagate_up_from_while_result_with_raw_user(
 
   return %raw_user, %w_up : tensor<16x16xf16>, tensor<1x1x16x16xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_down_from_multi_for_results(
+// CHECK:      %[[R:.*]]:2 = scf.for
+// CHECK-SAME: iter_args(%[[A:.*]] = %{{.*}}, %[[B:.*]] = %{{.*}})
+// CHECK:        %[[A_NEXT:.*]] = hivm.hir.vexp ins(%[[A]] : tensor<1x1x16x16xf16>)
+// CHECK:        %[[B_NEXT:.*]] = hivm.hir.vabs ins(%[[B]] : tensor<1x1x16x16xf16>)
+// CHECK:        scf.yield %[[A_NEXT]], %[[B_NEXT]]
+// CHECK-SAME:     : tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>
+// CHECK:      %[[A_DN:.*]] = hivm.hir.convert_layout %[[R]]#0 output_shape [16, 16]
+// CHECK:      %[[B_DN:.*]] = hivm.hir.convert_layout %[[R]]#1 output_shape [16, 16]
+// CHECK:      return %{{.*}}, %[[A_DN]], %[[B_DN]]
+// CHECK-SAME: : tensor<1xf16>, tensor<16x16xf16>, tensor<16x16xf16>
+func.func @propagate_down_from_multi_for_results(
+  %init_s: tensor<1xf16>,
+  %init_a_fr: tensor<1x1x16x16xf16>,
+  %init_b_fr: tensor<1x1x16x16xf16>,
+  %lb: index, %ub: index, %step: index
+) -> (tensor<1xf16>, tensor<16x16xf16>, tensor<16x16xf16>) {
+  %r:3 = scf.for %iv = %lb to %ub step %step
+      iter_args(%s = %init_s, %a = %init_a_fr, %b = %init_b_fr)
+      -> (tensor<1xf16>, tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>) {
+    %tmp_a = tensor.empty() : tensor<1x1x16x16xf16>
+    %next_a = hivm.hir.vexp ins(%a : tensor<1x1x16x16xf16>) outs(%tmp_a : tensor<1x1x16x16xf16>) -> tensor<1x1x16x16xf16>
+    %tmp_b = tensor.empty() : tensor<1x1x16x16xf16>
+    %next_b = hivm.hir.vabs ins(%b : tensor<1x1x16x16xf16>) outs(%tmp_b : tensor<1x1x16x16xf16>) -> tensor<1x1x16x16xf16>
+    scf.yield %s, %next_a, %next_b
+      : tensor<1xf16>, tensor<1x1x16x16xf16>, tensor<1x1x16x16xf16>
+  }
+
+  %a_nd = hivm.hir.convert_layout %r#1 output_shape [16, 16]
+    {dstLayout = #hivm.data_layout<ND>,
+     srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+    : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+  %b_nd = hivm.hir.convert_layout %r#2 output_shape [16, 16]
+    {dstLayout = #hivm.data_layout<ND>,
+     srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+    : (tensor<1x1x16x16xf16>) -> tensor<16x16xf16>
+
+  return %r#0, %a_nd, %b_nd
+    : tensor<1xf16>, tensor<16x16xf16>, tensor<16x16xf16>
+}
