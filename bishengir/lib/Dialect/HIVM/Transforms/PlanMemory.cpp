@@ -2759,8 +2759,7 @@ PlanMemoryPass::PlanMemoryForFuncOp(
   // was inserted before plan memory. Currently, changing this behavior will
   // cause many existing testcases to fail, so we added a compile option to
   // control it for now. This needs to be fixed.
-  MemLivenessAnalysis memLiveness(funcOp, this->memMode,
-                                  this->disableTightlyCoupledBufferReuse);
+  MemLivenessAnalysis memLiveness(funcOp, this->memMode);
   memLiveness.build();
 
   MemPlan memPlan(this->memMode, this->enableGlobalReuse,
