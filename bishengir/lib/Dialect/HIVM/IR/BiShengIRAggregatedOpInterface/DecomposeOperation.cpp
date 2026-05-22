@@ -319,15 +319,17 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
   auto loc = getLoc();
 
-  // The cv-pipelining pass marks multi-buffered allocs with the
-  // `cv_pipelined_multi_buffer` attribute. In that case `dst` is one
-  // slot of the alloc; padding the whole alloc would wipe sibling slots
-  // being consumed concurrently by other pipeline stages — so pad only
-  // the current slot tile (the dst subview itself). Otherwise fall back
-  // to the legacy "pad the whole alloc" behavior.
+  // The cv-pipelining pass marks multi-buffered allocs with an
+  // `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`. In
+  // that case `dst` is one slot of the alloc; padding the whole alloc
+  // would wipe sibling slots being consumed concurrently by other
+  // pipeline stages — so pad only the current slot tile (the dst
+  // subview itself). Otherwise fall back to the legacy "pad the whole
+  // alloc" behavior.
   Value vbrcTarget = padMemref.getResult();
-  if (padMemref->hasAttr(hivm::CVPipelinedMultiBufferAttr::name) &&
-      getDst() != padMemref.getResult()) {
+  auto maybeMarked = utils::getAnnotateOpWithAttr(
+      padMemref.getResult(), hivm::CVPipelinedMultiBufferAttr::name);
+  if (maybeMarked.has_value() && getDst() != padMemref.getResult()) {
     vbrcTarget = getDst();
   }
 

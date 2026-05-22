@@ -1724,12 +1724,15 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
                                    MemRefLayoutAttrInterface(), memspace);
     auto expandedAlloc = builder.create<memref::AllocOp>(
         loc, newType, ValueRange(), alloc.getAlignmentAttr());
-    // Mark the expanded alloc so downstream passes (notably the
-    // ND2NZOp aggregated-decompose pad/vbrc path) know this storage
-    // is sliced into per-stage slots — any pre-init must target only
-    // the current slot, never the whole alloc.
-    expandedAlloc->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
-                           UnitAttr::get(builder.getContext()));
+    // Mark the expanded alloc with an `annotation.mark` carrying
+    // `hivm.cv_pipelined_multi_buffer` so downstream passes (notably
+    // the ND2NZOp aggregated-decompose pad/vbrc path) know this
+    // storage is sliced into per-stage slots — any pre-init must
+    // target only the current slot, never the whole alloc.
+    auto markOp =
+        builder.create<annotation::MarkOp>(loc, expandedAlloc.getResult());
+    markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
+                    UnitAttr::get(builder.getContext()));
     expanded = expandedAlloc;
   }
   return success();

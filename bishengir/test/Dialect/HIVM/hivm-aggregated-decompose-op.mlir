@@ -666,16 +666,18 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   return %0 : tensor<16x32xf16>
 }
 // -----
-// When the nd2nz dst is a subview of an alloc marked
-// `hivm.cv_pipelined_multi_buffer` (set by the cv-pipelining pass on its
-// expanded multi-buffer storage), the pre-load vbrc must target only that
-// slot — i.e. the dst subview itself — not the whole alloc, which would
-// wipe sibling slots in flight under cv-pipelining.
+// When the nd2nz dst is a subview of an alloc carrying an
+// `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
+// (stamped by the cv-pipelining pass on its expanded multi-buffer
+// storage), the pre-load vbrc must target only that slot — i.e. the
+// dst subview itself — not the whole alloc, which would wipe sibling
+// slots in flight under cv-pipelining.
 //
 // AFTERLAYOUT-LABEL: func @nd2nz_cv_pipelined_multibuf_slot
 func.func @nd2nz_cv_pipelined_multibuf_slot(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
   %cst = arith.constant 0.000000e+00 : f32
-  %alloc = memref.alloc() {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  annotation.mark %alloc {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
   %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1]
     : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
    to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
@@ -692,10 +694,11 @@ func.func @nd2nz_cv_pipelined_multibuf_slot(%arg0: memref<?x?x?x?xf32, #hivm.add
 }
 
 // -----
-// Without the `hivm.cv_pipelined_multi_buffer` marker, even when dst is a
-// subview of the alloc, the vbrc must target the whole alloc — preserving
-// the legacy "pad the whole backing buffer" behavior for non-pipelined
-// kernels (e.g. matmul preamble) that rely on it.
+// Without any `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`
+// on the alloc, even when dst is a subview of the alloc, the vbrc must
+// target the whole alloc — preserving the legacy "pad the whole backing
+// buffer" behavior for non-pipelined kernels (e.g. matmul preamble) that
+// rely on it.
 //
 // AFTERLAYOUT-LABEL: func @nd2nz_unmarked_alloc_subview_targets_whole_alloc
 func.func @nd2nz_unmarked_alloc_subview_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
