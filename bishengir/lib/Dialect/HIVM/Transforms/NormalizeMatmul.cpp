@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -1185,10 +1186,7 @@ BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
   auto emptyOps = traceDefOps<tensor::EmptyOp>(outerInVal,
                                                /*isSingleChain=*/false,
                                                /*traceMode=*/TraceResultMode::StrictSame);
-  auto allocOps = traceDefOps<memref::AllocOp>(outerInVal,
-                                               /*isSingleChain=*/false,
-                                               /*traceMode=*/TraceResultMode::StrictSame);
-  info.brcBiasMode = (!emptyOps.empty() || !allocOps.empty())? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
+  info.brcBiasMode = !emptyOps.empty()? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
 
   return info;
 }
@@ -1200,6 +1198,11 @@ public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
+    if (op->template getParentOfType<scope::ScopeOp>()) {
+      LDBG("Affinity pattern already applied");
+      return rewriter.notifyMatchFailure(op, "Affinity pattern already applied");
+    }
+
     if (op->hasAttr(kNormalizedInL0C)) {
       LDBG("Pattern already applied");
       return rewriter.notifyMatchFailure(op, "Pattern already applied");
