@@ -142,6 +142,9 @@ computeTargetLayoutOffset(ArrayRef<OpFoldResult> currentOffset,
 
 void populateHoistConvertLayout(RewritePatternSet &patterns,
                                 MLIRContext *context);
+
+void populateCombineOptimizedConvertLayoutPatterns(
+    RewritePatternSet &patterns, MLIRContext *context);
 } // namespace mlir::hivm
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_CONVERTLAYOUTUTILS_H

@@ -607,6 +607,11 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let options = [
+    Option<"enableV2SliceSwapOpt", "enable-v2-slice-swap-opt", "bool",
+           /*default=*/"false",
+           "Enable fixpipe/extract_slice and fixpipe/insert_slice swap optimization.">
+  ];
 }
 
 def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
@@ -614,6 +619,11 @@ def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
   let constructor = "mlir::hivm::createInsertFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let options = [
+    Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+           /*default=*/"false",
+           "Infer fixpipe dma_mode from source/destination shape compatibility.">
+  ];
 }
 
 def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {

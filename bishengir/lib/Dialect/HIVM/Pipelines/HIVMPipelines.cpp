@@ -270,15 +270,22 @@ static void hivmPreBufferizationOptimizationPipeline(
 
     // Moves layout conversion to the start and end of the kernel
     // TODO: This part needs the most improvement compared to others
-    PropagateConvertLayoutOptions options;
-    options.allowAgnosticOps = false;
-    pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+    // PropagateConvertLayoutOptions options;
+    // options.allowAgnosticOps = false;
+    // pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
 
     // Add canonicalization passes
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
-    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
-    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+    // pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    // pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+    InsertFixpipeOptions fixpipeOpt;
+    fixpipeOpt.inferFixpipeDmaMode = true;
+    pm.addPass(mlir::hivm::createInsertFixpipePass(fixpipeOpt));
+    InlineFixpipeOptions inlineFixpipeOpt;
+    inlineFixpipeOpt.enableV2SliceSwapOpt = true;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpt));
+    // pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   } else {
     pm.addPass(mlir::hivm::createInsertFixpipePass());
     pm.addPass(mlir::hivm::createInlineFixpipePass());
@@ -293,13 +300,20 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Re-run Insert/Propagate to handle the new MmadL1Op ops materialized by
     // TileBatchMMIntoLoop, which the first round skipped.
     pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
-    PropagateConvertLayoutOptions postTileOptions;
-    postTileOptions.allowAgnosticOps = false;
-    pm.nest<func::FuncOp>().addPass(
-        createPropagateConvertLayoutPass(postTileOptions));
+    // PropagateConvertLayoutOptions postTileOptions;
+    // postTileOptions.allowAgnosticOps = false;
+    // pm.nest<func::FuncOp>().addPass(
+    //     createPropagateConvertLayoutPass(postTileOptions));
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
-    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    // pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
+    // pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+    InsertFixpipeOptions fixpipeOpt;
+    fixpipeOpt.inferFixpipeDmaMode = true;
+    pm.addPass(mlir::hivm::createInsertFixpipePass(fixpipeOpt));
+    InlineFixpipeOptions inlineFixpipeOpt;
+    inlineFixpipeOpt.enableV2SliceSwapOpt = true;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpt));
     pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
     pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
   } else {

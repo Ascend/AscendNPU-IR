@@ -619,6 +619,15 @@ struct FoldVCastConvertLayoutPattern
   }
 };
 
+void populateCombineOptimizedConvertLayoutPatterns(
+    RewritePatternSet &patterns, MLIRContext *context) {
+  patterns.add<FoldToTensorConvertLayoutPattern>(context);
+  patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
+  patterns.add<FoldFixpipeConvertLayoutPattern>(context);
+  // patterns.add<FoldVCastConvertLayoutPattern>(context);
+  ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
+}
+
 //===----------------------------------------------------------------------===//
 // Pass Definition
 //===----------------------------------------------------------------------===//
@@ -631,11 +640,7 @@ struct CombineOptimizedConvertLayoutPass
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-    patterns.add<FoldToTensorConvertLayoutPattern>(context);
-    patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
-    patterns.add<FoldFixpipeConvertLayoutPattern>(context);
-    // patterns.add<FoldVCastConvertLayoutPattern>(context);
-    ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
+    populateCombineOptimizedConvertLayoutPatterns(patterns, context);
 
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
