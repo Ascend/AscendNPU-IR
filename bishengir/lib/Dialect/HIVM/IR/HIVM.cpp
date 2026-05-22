@@ -1375,10 +1375,6 @@ static LogicalResult verifyCustomOp(CustomOpT op) {
       return op.emitOpError() << "Missing output pipe information";
   }
 
-  // Check symbol attribute
-  if (op.getSymbol().has_value() && op.getSymbol().value().empty())
-    return op.emitOpError() << "Missing implementation function name";
-
   return success();
 }
 
@@ -1458,10 +1454,9 @@ template <typename CustomOpT>
 static std::string getCustomOpsLibraryCallName(CustomOpT op) {
   if (op.isBuiltin())
     return CustomOpT::kBuiltins.at(op.getName()).getOpLibraryCallName(op);
-  if (!op.getSymbol().has_value())
-    op.emitOpError() << "Missing 'symbol' attribute";
 
-  return op.getSymbol().value();
+  // TODO: Extract from attributes (user provided hint)
+  return "custom_todo";
 }
 
 std::string CustomOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
