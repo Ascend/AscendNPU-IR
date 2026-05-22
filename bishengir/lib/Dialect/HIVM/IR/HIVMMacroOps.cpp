@@ -748,44 +748,37 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   return valLayoutMap;
 }
 
-llvm::SmallDenseMap<Value, DataLayoutAttr>
-MmadL1Op::getOperandsTargetFractalLayout() {
-  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
 
   auto operA = getA();
   auto aBlockSizes = getBlockSizes(operA);
-  auto mALayoutAttr = DataLayoutAttr::get(
+  layouts.a = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
-  valLayoutMap[operA] = mALayoutAttr;
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
   bool isA5 = hacc::utils::isAscend950(
       this->getOperation()->getParentOfType<ModuleOp>());
   auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
-  auto mBLayoutAttr = DataLayoutAttr::get(
+  layouts.b = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
-  valLayoutMap[operB] = mBLayoutAttr;
 
   llvm::SmallVector<int64_t> cBlockSizes;
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  auto mCLayoutAttr = DataLayoutAttr::get(
+  layouts.c = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
-  valLayoutMap[getC()] = mCLayoutAttr;
 
-  if (valLayoutMap.size() != 3) {
-    llvm::report_fatal_error("Ambiguous target layout mapping on matmul");
-  }
-  if (auto bias = getPerChannelBias()) {
-    auto biasLayoutAttr =
+  if (getPerChannelBias()) {
+    layouts.bias =
         DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
-    valLayoutMap[bias] = biasLayoutAttr;
   }
-  return valLayoutMap;
+
+  return layouts;
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {

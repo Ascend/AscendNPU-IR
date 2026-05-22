@@ -66,11 +66,11 @@ struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
 
     // Get layouts from the interface
     DataLayoutAttr srcLayoutA = currentLayoutMap.lookup(aMatrix);
-    DataLayoutAttr dstLayoutA = targetLayoutMap.lookup(aMatrix);
+    DataLayoutAttr dstLayoutA = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.a);
     DataLayoutAttr srcLayoutB = currentLayoutMap.lookup(bMatrix);
-    DataLayoutAttr dstLayoutB = targetLayoutMap.lookup(bMatrix);
+    DataLayoutAttr dstLayoutB = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.b);
     DataLayoutAttr srcLayoutC = currentLayoutMap.lookup(cMatrix);
-    DataLayoutAttr dstLayoutC = targetLayoutMap.lookup(cMatrix);
+    DataLayoutAttr dstLayoutC = dyn_cast_or_null<DataLayoutAttr>(targetLayouts.c);
 
     LDBG("A matrix - src: " << srcLayoutA << ", dst: " << dstLayoutA);
     LDBG("B matrix - src: " << srcLayoutB << ", dst: " << dstLayoutB);
