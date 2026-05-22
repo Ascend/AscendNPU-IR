@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -97,7 +98,7 @@ void IRTranslator::UpdateKernelArgMemInfo() {
 
 void IRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
+    if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp>(op)) {
       if (failed(UpdateAllocLikeOpMemInfo(op))) {
         return WalkResult::interrupt();
       }
@@ -164,6 +165,7 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
   hivm::AddressSpace space;
   SmallVector<Value> curAddress;
   Value rootBuffer, baseBuffer;
+  std::optional<int64_t> bufferSize;
   std::optional<bishengir::memref_ext::AllocWorkspaceOp> allocWorkspaceOp;
   if (auto pointerCastOp = dyn_cast<PointerCastOp>(op)) {
     auto spaceAttr = GetBufferSpaceAttr(pointerCastOp.getResult());
@@ -175,12 +177,14 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
     curAddress = pointerCastOp.getAddrs();
     rootBuffer = pointerCastOp.getResult();
     baseBuffer = pointerCastOp.getResult();
+    bufferSize = GetBufferBitSize(pointerCastOp.getResult());
   } else if (auto workspaceOp =
                  dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(op)) {
     space = hivm::AddressSpace::GM;
     curAddress = workspaceOp.getOffset();
     rootBuffer = workspaceOp.getWorkspaceArg();
     baseBuffer = workspaceOp.getResult();
+    bufferSize = GetBufferBitSize(workspaceOp.getResult());
     allocWorkspaceOp = workspaceOp;
   } else {
     return op->emitError(
@@ -207,7 +211,6 @@ LogicalResult IRTranslator::UpdateAllocLikeOpMemInfo(Operation *op) {
     }
   }
 
-  auto bufferSize = GetBufferBitSize(rootBuffer);
   if (!bufferSize.has_value()) {
     return op->emitError("Failed to get buffer size for alloc-like op.");
   }

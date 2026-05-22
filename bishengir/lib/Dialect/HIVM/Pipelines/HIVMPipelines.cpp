@@ -112,33 +112,90 @@ hivmIntraCoreSyncPipeline(OpPassManager &pm,
   }
 }
 
+enum CrossCoreAutoSyncMode { CCGSS_STEP_1, CCGSS_STEP_2 };
+
 static void
-hivmCrossCoreSyncPipeline(OpPassManager &pm,
-                          const HIVMPipelineOptions &hivmPipelineOptions) {
-  if (hivmPipelineOptions.disableAutoInjectBlockSync) {
-    return;
-  }
-  // Mark load/store scalar operations with core-type attributes so block
-  // synchronization passes recognize cross-core scalar-pipeline conflicts and
-  // insert needed sync operations.
-  canonicalizationHIVMPipeline(pm);
-  pm.addPass(createMarkRealCoreTypePass());
-  if (hivmPipelineOptions.enableHIVMCrossCoreGSS &&
-      !hivmPipelineOptions.enableHIVMInjectBlockAllSync) {
+hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
     pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
-  } else {
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  }
+}
+
+static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions,
+    CrossCoreAutoSyncMode mode) {
+  const bool useBlockAllWorkAround = false;
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    if (hivmPipelineOptions.enableCodeMotion) {
+      pm.addPass(createLoopInvariantCodeMotionPass());
+      pm.addPass(createLoopInvariantSubsetHoistingPass());
+    }
+    if (useBlockAllWorkAround) {
+      InjectBlockSyncOptions blockSyncOption;
+      blockSyncOption.blockAllSync = true;
+      pm.nest<func::FuncOp>().addPass(
+          createInjectBlockSyncPass(blockSyncOption));
+    } else {
+      pm.addPass(createMarkRealCoreTypePass());
+      pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+      MarkRealCoreTypeOptions markRealCoreTypeOptions;
+      markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+      pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    }
+    pm.addPass(createInsertAnchorsAndBackupPass());
+  } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.addPass(createDelayedCrossCoreGSSPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
+    insertAnchorsAndBackupOptions.cleanup = true;
+    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
+  }
+}
+
+static void
+hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
     InjectBlockSyncOptions blockSyncOption;
     blockSyncOption.blockAllSync =
         hivmPipelineOptions.enableHIVMInjectBlockAllSync;
     pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
   }
-  // Clear inserted core-type attributes as they are not needed for other
-  // passes. Note that they are only inserted by mark-real-core-type pass so
-  // it's safe to remove them. And after split-mix-kernel pass, they are not
-  // needed.
-  MarkRealCoreTypeOptions markRealCoreTypeOptions;
-  markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-  pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+}
+
+static void
+hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
+                              const HIVMPipelineOptions &hivmPipelineOptions,
+                              CrossCoreAutoSyncMode mode) {
+  if (hivmPipelineOptions.disableAutoInjectBlockSync) {
+    return;
+  }
+  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS ||
+      hivmPipelineOptions.enableHIVMInjectBlockAllSync) {
+    hivmCrossCoreAutoSyncINJPipeline(pm, hivmPipelineOptions, mode);
+  } else if (hivmPipelineOptions.enableHIVMDelayedCrossCoreGSS) {
+    hivmDelayedCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
+  } else {
+    hivmCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
+  }
 }
 
 static void
@@ -293,13 +350,13 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
-  // Cross-Core Auto-Sync passes (Inject-Block-Sync, Cross-Core-GSS)
-  hivmCrossCoreSyncPipeline(pm, hivmPipelineOptions);
+  // Cross-Core Auto-Sync passes STEP=1
+  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
+                                CrossCoreAutoSyncMode::CCGSS_STEP_1);
 
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
-  pm.addPass(mlir::createMemrefExtLoweringPass());
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
@@ -442,12 +499,17 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
+  // Cross-Core Auto-Sync passes STEP=2
+  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
+                                CrossCoreAutoSyncMode::CCGSS_STEP_2);
+
   // Lower hivm ops to loops
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
   // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
+  pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   canonicalizationHIVMPipeline(pm);

@@ -1084,6 +1084,11 @@ def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
 }
 
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
   let description = [{HIVM has alias scopes attribute}];
 }
@@ -1127,6 +1132,24 @@ def HIVM_SimtMemScopeHintAttr
   let description = [{
     Memory scope hint for SIMT VF arguments before address space
     materialization.
+  }];
+}
+
+def HIVM_AnchorIdAttr : HIVM_Attr<"AnchorId", "anchor_id"> {
+  let description = [{
+    HIVM anchor id attribute.
+  }];
+}
+
+def HIVM_AnchorIdBeforeAttr : HIVM_Attr<"AnchorIdBefore", "anchor_id_before"> {
+  let description = [{
+    HIVM anchor id before attribute.
+  }];
+}
+
+def HIVM_AnchorIdAfterAttr : HIVM_Attr<"AnchorIdAfter", "anchor_id_after"> {
+  let description = [{
+    HIVM anchor id after attribute.
   }];
 }
 

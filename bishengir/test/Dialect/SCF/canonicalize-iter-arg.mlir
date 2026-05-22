@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -scf-canonicalize-iter-arg -allow-unregistered-dialect -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(scf-canonicalize-iter-arg{enable-remove-dead-iter-arg-bwd-patterns=false}))" -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
 func.func @test() -> (tensor<?xi8>, tensor<?xi8>) {
   %size = "some_op"() : () -> index

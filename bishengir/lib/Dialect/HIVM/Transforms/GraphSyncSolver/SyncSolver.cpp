@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
@@ -218,6 +219,59 @@ bool Solver::checkAlreadySyncedWithUnitFlag(Occurrence *occ1,
   return false;
 }
 
+bool Solver::ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                  const MemInfo &memInfo1,
+                                  const MemInfo &memInfo2) {
+  if (options.isIntraCoreMode()) {
+    if (memInfo1.funcArgInfo.has_value() && memInfo2.funcArgInfo.has_value()) {
+      if (memInfo1.funcArgInfo->isWorkSpace &&
+          memInfo2.funcArgInfo->isWorkSpace) {
+        if (isa_and_present<hivm::FixpipeOp>(rwOp1->op) &&
+            isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+                rwOp2->op)) {
+          return false;
+        }
+        if (isa_and_present<hivm::FixpipeOp>(rwOp2->op) &&
+            isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+                rwOp1->op)) {
+          return false;
+        }
+        if (options.intraCoreIgnoreWorkSpaceFunctionArguments) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool Solver::checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                  const MemInfo &memInfo1,
+                                  const MemInfo &memInfo2,
+                                  std::optional<int64_t> lcmLen,
+                                  std::optional<int64_t> eventIdNum) {
+  if (ignoreMemoryConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+    return false;
+  }
+  return MemInfo::checkConflict(memInfo1, memInfo2, lcmLen, eventIdNum);
+}
+
+bool Solver::checkMemInfoConflict(
+    RWOperation *rwOp1, RWOperation *rwOp2,
+    const llvm::SmallVector<MemInfo> &memInfoList1,
+    const llvm::SmallVector<MemInfo> &memInfoList2,
+    std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum) {
+  for (auto &memInfo1 : memInfoList1) {
+    for (auto &memInfo2 : memInfoList2) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2, lcmLen,
+                               eventIdNum)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // High-level wrapper computing pipe pairs that represent memory conflicts
 // between two RW ops.
 llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
@@ -240,15 +294,18 @@ Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
            coreDst == hivm::TCoreType::CUBE);
   }
   llvm::SetVector<std::tuple<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
-  if (checkConflict(rwOp1->readMemInfo, rwOp2->writeMemInfo)) {
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                           rwOp2->writeMemInfo)) {
     collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeRead),
                                   CorePipeInfo(coreDst, rwOp2->pipeWrite)});
   }
-  if (checkConflict(rwOp1->writeMemInfo, rwOp2->readMemInfo)) {
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->readMemInfo)) {
     collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
                                   CorePipeInfo(coreDst, rwOp2->pipeRead)});
   }
-  if (checkConflict(rwOp1->writeMemInfo, rwOp2->writeMemInfo)) {
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->writeMemInfo)) {
     collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
                                   CorePipeInfo(coreDst, rwOp2->pipeWrite)});
   }
@@ -257,14 +314,18 @@ Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   return it->second = collectedConflicts;
 }
 
-bool Solver::checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
-                                                    Occurrence *occ2) {
+bool Solver::checkMemoryConflictBetweenOccExclusive(
+    Occurrence *occ1, Occurrence *occ2,
+    std::function<bool(RWOperation *)> filter) {
   assert(occ1 != nullptr && occ2 != nullptr);
   auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
   auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
   for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
     if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
+      if (!filter(otherOp)) {
+        continue;
+      }
       if (!checkMemoryConflicts(rwOp1, otherOp).empty()) {
         return true;
       }
@@ -276,13 +337,14 @@ bool Solver::checkMemoryConflictBetweenOccExclusive(Occurrence *occ1,
   return false;
 }
 
-std::optional<LoopLikeOpInterface>
-Solver::getMultiBufferLoop(const llvm::SmallVector<MemInfo> &memInfoList1,
+std::optional<Loop *>
+Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
+                           const llvm::SmallVector<MemInfo> &memInfoList1,
                            const llvm::SmallVector<MemInfo> &memInfoList2) {
-  std::optional<LoopLikeOpInterface> multibufferLoop;
+  std::optional<Loop *> multibufferLoop;
   for (auto &memInfo1 : memInfoList1) {
     for (auto &memInfo2 : memInfoList2) {
-      if (checkConflict(memInfo1, memInfo2)) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
         if (!memInfo1.pointerLikeInfo.has_value() ||
             !memInfo2.pointerLikeInfo.has_value()) {
           return {};
@@ -293,41 +355,54 @@ Solver::getMultiBufferLoop(const llvm::SmallVector<MemInfo> &memInfoList1,
             multibufferLoop1 != multibufferLoop2) {
           return {};
         }
-        if (multibufferLoop.has_value() &&
-            multibufferLoop.value() != multibufferLoop1) {
+        auto *parentOp1 =
+            rwOp1->getParentWithOp(multibufferLoop1, /*assertExists=*/false);
+        auto *parentOp2 =
+            rwOp2->getParentWithOp(multibufferLoop2, /*assertExists=*/false);
+        if (!parentOp1 || !parentOp2) {
           return {};
         }
-        multibufferLoop = multibufferLoop1;
+        assert(parentOp1 == parentOp2);
+        auto *parentLoop = dyn_cast<Loop>(parentOp1);
+        assert(parentLoop != nullptr);
+        if (multibufferLoop.has_value() &&
+            multibufferLoop.value() != parentLoop) {
+          return {};
+        }
+        multibufferLoop = parentLoop;
       }
     }
   }
   return multibufferLoop;
 }
 
-std::optional<LoopLikeOpInterface>
-Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2) {
-  std::optional<LoopLikeOpInterface> multibufferLoop;
-  if (checkConflict(rwOp1->readMemInfo, rwOp2->writeMemInfo)) {
-    auto curMultibufferLoop =
-        getMultiBufferLoop(rwOp1->readMemInfo, rwOp2->writeMemInfo);
+std::optional<Loop *> Solver::getMultiBufferLoop(RWOperation *rwOp1,
+                                                 RWOperation *rwOp2) {
+  std::optional<Loop *> multibufferLoop;
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                           rwOp2->writeMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->readMemInfo, rwOp2->writeMemInfo);
     if (multibufferLoop.has_value() &&
         multibufferLoop.value() != curMultibufferLoop) {
       return {};
     }
     multibufferLoop = curMultibufferLoop;
   }
-  if (checkConflict(rwOp1->writeMemInfo, rwOp2->readMemInfo)) {
-    auto curMultibufferLoop =
-        getMultiBufferLoop(rwOp1->writeMemInfo, rwOp2->readMemInfo);
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->readMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->readMemInfo);
     if (multibufferLoop.has_value() &&
         multibufferLoop.value() != curMultibufferLoop) {
       return {};
     }
     multibufferLoop = curMultibufferLoop;
   }
-  if (checkConflict(rwOp1->writeMemInfo, rwOp2->writeMemInfo)) {
-    auto curMultibufferLoop =
-        getMultiBufferLoop(rwOp1->writeMemInfo, rwOp2->writeMemInfo);
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->writeMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->writeMemInfo);
     if (multibufferLoop.has_value() &&
         multibufferLoop.value() != curMultibufferLoop) {
       return {};
@@ -344,7 +419,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 
   int64_t lcm = 1;
   int64_t minWriteSize = LONG_MAX;
-  LoopLikeOpInterface multibufferLoop{nullptr};
+  Loop *multibufferLoop{nullptr};
 
   if (options.isTestMode()) {
     auto *parLoop1 = occ1->getParentOfType<Loop>();
@@ -375,7 +450,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 
   for (auto &memInfo1 : rwOp1->readMemInfo) {
     for (auto &memInfo2 : rwOp2->writeMemInfo) {
-      if (checkConflict(memInfo1, memInfo2)) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
         int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
         lcm = std::lcm(lcm, curLcm);
         minWriteSize = std::min(minWriteSize, memInfo2.getSz());
@@ -384,7 +459,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   }
   for (auto &memInfo1 : rwOp1->writeMemInfo) {
     for (auto &memInfo2 : rwOp2->readMemInfo) {
-      if (checkConflict(memInfo1, memInfo2)) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
         int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
         lcm = std::lcm(lcm, curLcm);
         minWriteSize = std::min(minWriteSize, memInfo1.getSz());
@@ -393,7 +468,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   }
   for (auto &memInfo1 : rwOp1->writeMemInfo) {
     for (auto &memInfo2 : rwOp2->writeMemInfo) {
-      if (checkConflict(memInfo1, memInfo2)) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
         int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
         lcm = std::lcm(lcm, curLcm);
         minWriteSize = std::min(minWriteSize, memInfo1.getSz());
@@ -410,14 +485,13 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 
   int64_t eventIdNum = minWriteSize;
   for (; eventIdNum >= 1; eventIdNum--) {
-    // llvm::dbgs() << "checking event-id-num: " << eventIdNum << '\n';
     int64_t curLcm = std::lcm(lcm, eventIdNum);
-    bool okRW = !checkConflict(rwOp1->readMemInfo, rwOp2->writeMemInfo, curLcm,
-                               eventIdNum);
-    bool okWR = !checkConflict(rwOp1->writeMemInfo, rwOp2->readMemInfo, curLcm,
-                               eventIdNum);
-    bool okWW = !checkConflict(rwOp1->writeMemInfo, rwOp2->writeMemInfo, curLcm,
-                               eventIdNum);
+    bool okRW = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                                      rwOp2->writeMemInfo, curLcm, eventIdNum);
+    bool okWR = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                                      rwOp2->readMemInfo, curLcm, eventIdNum);
+    bool okWW = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                                      rwOp2->writeMemInfo, curLcm, eventIdNum);
     if (okRW && okWR && okWW) {
       break;
     }
@@ -473,14 +547,21 @@ Solver::checkCVMultiBufferEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
       return {};
     }
   }
+  auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
+  auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
+  if (parentCVUnrolledLoop1 == nullptr ||
+      parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
+    return {};
+  }
+  if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
+    return {};
+  }
   assert(parentLoop1->multibufferUnrollNum.value() ==
          parentLoop2->multibufferUnrollNum.value());
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = parentLoop1->multibufferUnrollNum.value();
-  eventIdInfo.multibufferUnrollLoop1 =
-      cast<LoopLikeOpInterface>(parentLoop1->op);
-  eventIdInfo.multibufferUnrollLoop2 =
-      cast<LoopLikeOpInterface>(parentLoop2->op);
+  eventIdInfo.multibufferUnrollLoop1 = parentLoop1;
+  eventIdInfo.multibufferUnrollLoop2 = parentLoop2;
   return eventIdInfo;
 }
 
@@ -830,7 +911,9 @@ std::optional<UnitFlagInfo> Solver::checkUnitFlagPatterns(Occurrence *occ1,
       !occ2->unitFlagInfo.disabledAsWait()) {
     return {};
   }
-  if (checkMemoryConflictBetweenOccExclusive(occ1, occ2)) {
+  if (checkMemoryConflictBetweenOccExclusive(occ1, occ2, [](RWOperation *rwOp) {
+        return isa_and_present<hivm::MmadL1Op, hivm::FixpipeOp>(rwOp->op);
+      })) {
     return {};
   }
   scf::ForOp backwardSyncLoop;
@@ -1243,7 +1326,7 @@ void Solver::pickAndInsertABarrierAll() {
     if (vec.empty()) {
       continue;
     }
-    if (chosenOp == nullptr || chosenOp->id > op->id) {
+    if (chosenOp == nullptr || chosenOp->preOrderIndex > op->preOrderIndex) {
       chosenOp = op;
     }
   }
@@ -1253,7 +1336,7 @@ void Solver::pickAndInsertABarrierAll() {
 }
 
 bool Solver::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
-  if (occ1->op->id >= occ2->op->id) {
+  if (occ1->op->preOrderIndex >= occ2->op->preOrderIndex) {
     return true;
   }
   assert(occ1 != nullptr && occ2 != nullptr);
@@ -1275,10 +1358,12 @@ bool Solver::reuseCmp(ConflictPair *conflictPair1,
     return conflictPair1->endIndex > conflictPair2->endIndex;
   }
   if (conflictPair1->op1 != conflictPair2->op1) {
-    return conflictPair1->op1->id > conflictPair2->op1->id;
+    return conflictPair1->op1->preOrderIndex >
+           conflictPair2->op1->preOrderIndex;
   }
   if (conflictPair1->op2 != conflictPair2->op2) {
-    return conflictPair1->op2->id > conflictPair2->op2->id;
+    return conflictPair1->op2->preOrderIndex >
+           conflictPair2->op2->preOrderIndex;
   }
   return false;
 }
@@ -2054,7 +2139,8 @@ void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
     coreTypes = {hivm::TCoreType::CUBE_OR_VECTOR};
   }
   size_t pipeNumMax = static_cast<size_t>(hivm::PIPE::PIPE_NUM);
-  size_t eventIdMax = static_cast<size_t>(getHWAvailableEventIdNum(options.syncMode));
+  size_t eventIdMax =
+      static_cast<size_t>(getHWAvailableEventIdNum(options.syncMode));
 
   for (size_t eventId = 0; eventId < eventIdMax; eventId++) {
     for (auto coreSrc : coreTypes) {

@@ -212,6 +212,14 @@ def EnableHIVMCrossCoreGSS : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableHIVMDelayedCrossCoreGSS : FeatureControlOptions<
+  "Use hivm delayed cross-core graph-sync-solver instead of inject-block-sync.",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "Disable auto inject sync intra core.",
   "bool",

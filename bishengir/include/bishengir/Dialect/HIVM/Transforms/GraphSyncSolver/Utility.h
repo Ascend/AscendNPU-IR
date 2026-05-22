@@ -77,8 +77,7 @@ struct CorePipeInfo {
 } // namespace mlir::hivm::syncsolver
 
 namespace llvm {
-template <>
-struct DenseMapInfo<mlir::hivm::syncsolver::CorePipeInfo> {
+template <> struct DenseMapInfo<mlir::hivm::syncsolver::CorePipeInfo> {
   using CorePipePairTy = std::pair<mlir::hivm::TCoreType, mlir::hivm::PIPE>;
   static inline mlir::hivm::syncsolver::CorePipeInfo getEmptyKey() {
     // Use sentinel values that are guaranteed never to appear as valid keys
@@ -143,6 +142,18 @@ struct SyncSolverOptions {
 
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
+
+  // Ignore workspace function arguments.
+  bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
+
+  // Build unrolled sync IR.
+  bool buildUnrolledSyncIR{true};
+
+  // Ignore non-anchor ops when building sync IR.
+  bool ignoreNonAnchorOps{false};
+
+  // Skip unrolling anchor ops.
+  bool skipUnrollingAnchorOps{true};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),

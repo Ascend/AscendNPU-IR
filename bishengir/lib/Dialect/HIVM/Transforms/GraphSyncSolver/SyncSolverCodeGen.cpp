@@ -21,7 +21,6 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -140,8 +139,9 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
   return opBase->op->getLoc();
 }
 
-void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
-                                  BarrierOp *barrierOp, bool insertAfterOp) {
+void CodeGenerator::insertBlockAllOp(IRRewriter &rewriter,
+                                     OperationBase *opBase,
+                                     BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (barrierOp->pipe != PIPE::PIPE_ALL) {
     llvm_unreachable("barriers in cross-core sync are expected to be of type "
@@ -165,14 +165,20 @@ void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
   auto pipeAllAttr = PipeAttr::get(ctx, PIPE::PIPE_ALL);
 
   rewriter.create<PipeBarrierOp>(loc, pipeAllAttr);
-  rewriter.create<hivm::SyncBlockSetOp>(loc, vectorCoreAttr, pipeSAttr,
-                                        pipeSAttr, intraBlockSyncFlagIdAttr1);
-  rewriter.create<hivm::SyncBlockWaitOp>(loc, cubeCoreAttr, pipeSAttr,
-                                         pipeSAttr, intraBlockSyncFlagIdAttr1);
-  rewriter.create<hivm::SyncBlockSetOp>(loc, cubeCoreAttr, pipeSAttr, pipeSAttr,
-                                        intraBlockSyncFlagIdAttr2);
-  rewriter.create<hivm::SyncBlockWaitOp>(loc, vectorCoreAttr, pipeSAttr,
-                                         pipeSAttr, intraBlockSyncFlagIdAttr2);
+  if (!barrierOp->coreType.has_value() ||
+      barrierOp->coreType == TCoreType::VECTOR) {
+    rewriter.create<hivm::SyncBlockSetOp>(loc, vectorCoreAttr, pipeSAttr,
+                                          pipeSAttr, intraBlockSyncFlagIdAttr1);
+    rewriter.create<hivm::SyncBlockWaitOp>(
+        loc, vectorCoreAttr, pipeSAttr, pipeSAttr, intraBlockSyncFlagIdAttr2);
+  }
+  if (!barrierOp->coreType.has_value() ||
+      barrierOp->coreType == TCoreType::CUBE) {
+    rewriter.create<hivm::SyncBlockWaitOp>(
+        loc, cubeCoreAttr, pipeSAttr, pipeSAttr, intraBlockSyncFlagIdAttr1);
+    rewriter.create<hivm::SyncBlockSetOp>(loc, cubeCoreAttr, pipeSAttr,
+                                          pipeSAttr, intraBlockSyncFlagIdAttr2);
+  }
 }
 
 // Insert a PipeBarrierOp at the resolved insertion point and location.
@@ -180,7 +186,7 @@ void CodeGenerator::insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                                     BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (options.isCrossCoreMode()) {
-    insertBlockOp(rewriter, opBase, barrierOp, insertAfterOp);
+    insertBlockAllOp(rewriter, opBase, barrierOp, insertAfterOp);
     return;
   }
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
@@ -338,12 +344,9 @@ void CodeGenerator::insertWaitBlockFlagOp(IRRewriter &rewriter,
 // Build/select a runtime i64 value that picks which buffer/event to use for
 // multi-buffer sync.
 Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
-                                           SetWaitOp *syncOp) {
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
-  assert(multibufferLoop != nullptr);
-
-  int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
-  auto key = std::make_pair(multibufferLoop, eventIdNum);
+                                           LoopLikeOpInterface multibufferLoop,
+                                           int64_t modulo) {
+  auto key = std::make_pair(multibufferLoop, modulo);
   auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
   if (!isInserted) {
     return it->second;
@@ -351,23 +354,25 @@ Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
 
   PatternRewriter::InsertionGuard guard(rewriter);
   Value modularIndex =
-      createNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
+      createNestedIndexModular(rewriter, multibufferLoop, modulo);
   return it->second = modularIndex;
 }
 
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                             SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  if (!syncOp->eventIdInfo.multibufferLoop) {
+
+  auto multibufferLoopOp = syncOp->eventIdInfo.multibufferLoop;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
 
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
   // scf.for path: legacy (iv-lb)/step in createNestedIndexModular.
   // scf.while path: alloca-based counter via MultiBufferLoopAdapter (see
   // MultiBufferLoopAdapter.h). All other LoopLike ops bail out.
   // Extra parens around the template args so the assert macro doesn't see
   // the comma as an argument separator.
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert((llvm::isa_and_present<scf::ForOp, scf::WhileOp>(multibufferLoop)) &&
          "multi-buffer requires scf.for or scf.while parent");
   auto [it, isInserted] =
@@ -376,7 +381,8 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
     return it->second;
   }
 
-  Value counter = getNestedIndexModular(rewriter, syncOp);
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop,
+                                        /*modulo=*/syncOp->eventIds.size());
   assert(counter.getDefiningOp() != nullptr);
 
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -418,10 +424,10 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
 Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                                          SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  auto multibufferLoop = isa<SetFlagOp>(syncOp)
-                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
-                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
-  if (!multibufferLoop) {
+  auto multibufferLoopOp = isa<SetFlagOp>(syncOp)
+                               ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                               : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
   for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
@@ -429,9 +435,12 @@ Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
       return nullptr;
     }
   }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
   assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
   assert(scf::utils::isNormalized(forOp));
+
   auto loc = forOp->getLoc();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(forOp.getBody());
@@ -447,15 +456,18 @@ Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 Value CodeGenerator::getCVMultiBufferSelectOp(IRRewriter &rewriter,
                                               SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  auto multibufferLoop = isa<SetFlagOp>(syncOp)
-                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
-                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
-  if (!multibufferLoop) {
+  auto multibufferLoopOp = isa<SetFlagOp>(syncOp)
+                               ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                               : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
   assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
   assert(scf::utils::isNormalized(forOp));
+
   auto loc = forOp->getLoc();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(forOp.getBody());
