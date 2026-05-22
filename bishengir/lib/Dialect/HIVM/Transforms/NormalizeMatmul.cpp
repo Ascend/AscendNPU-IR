@@ -1185,8 +1185,11 @@ BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
   auto emptyOps = traceDefOps<tensor::EmptyOp>(outerInVal,
                                                /*isSingleChain=*/false,
                                                /*traceMode=*/TraceResultMode::StrictSame);
-  info.brcBiasMode = !emptyOps.empty()? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
-          
+  auto allocOps = traceDefOps<memref::AllocOp>(outerInVal,
+                                               /*isSingleChain=*/false,
+                                               /*traceMode=*/TraceResultMode::StrictSame);
+  info.brcBiasMode = (!emptyOps.empty() || !allocOps.empty())? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
+
   return info;
 }
 
@@ -1256,17 +1259,19 @@ public:
     tmpNewMmad.setInitCondition(initCondition);
 
     // Normalize the outermost init arg to tensor.empty
-    if (!isa<T>(insertPointOp) && blockArg) {
-      auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
-      if (forOp) {
-        auto blockArgIdx = blockArg.getArgNumber() - 1;
-        forOp.getInitArgsMutable()[blockArgIdx].assign(newInit);
+    if (biasInfo.brcBiasMode != MatmulBiasMode::NoBias){
+      if (!isa<T>(insertPointOp) && blockArg) {
+        auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+        if (forOp) {
+          auto blockArgIdx = blockArg.getArgNumber() - 1;
+          forOp.getInitArgsMutable()[blockArgIdx].assign(newInit);
+        } else {
+          return rewriter.notifyMatchFailure(op, "expected the outermost init arg to be a block argument of a for op");
+        }
       } else {
-        return rewriter.notifyMatchFailure(op, "expected the outermost init arg to be a block argument of a for op");
+        // not in the for loop
+        tmpNewMmad.getCMutable().assign(newInit);
       }
-    } else {
-      // not in the for loop
-      tmpNewMmad.getCMutable().assign(newInit);
     }
 
     // If it could be merged with bias
@@ -1281,7 +1286,7 @@ public:
     tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
 
     // Add if block for the case that mmad is probably not executed
-    if (biasInfo.brcBiasMode==MatmulBiasMode::NoBias || biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
+    if (biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
       // vadd
       rewriter.setInsertionPointAfter(insertPointOp);
       auto addInit = mlir::utils::createEmptyOp(rewriter, op.getLoc(), op.getC());
