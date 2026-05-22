@@ -742,37 +742,27 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 }
 
 // -----
-// When the nd2nz dst is a subview of an alloc carrying an
-// `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
-// (stamped by the cv-pipelining pass on its expanded multi-buffer
-// storage), the decompose must materialize a fresh subview of the
-// alloc that pins the slot dim to the current slot (size 1) but
-// expands every within-slot dim to the alloc's full extent, and use
-// that subview as the vbrc destination. Targeting the whole alloc
-// would clobber sibling slots in flight; targeting only the dst tile
-// would leave the rest of the current slot uninitialized.
-//
-// In this case the dst subview already covers the entire slot (every
-// non-slot size equals the corresponding alloc size), so the
-// materialized subview is geometrically equivalent to the dst, but it
-// is still emitted as a fresh SubViewOp off the alloc (CSE may dedup
-// it later).
+// When the nd2nz dst is a subview of an alloc marked
+// `hivm.cv_pipelined_multi_buffer` (set by the cv-pipelining pass on its
+// expanded multi-buffer storage), the pre-load vbrc must target only that
+// slot — i.e. the dst subview itself — not the whole alloc, which would
+// wipe sibling slots in flight under cv-pipelining.
 //
 // AFTERLAYOUT-LABEL: func @nd2nz_cv_pipelined_multibuf_slot
-// AFTERLAYOUT-SAME:  %[[ARG0:.+]]: {{.*}}, %[[SLOT:.+]]: index, %[[COND:.+]]: i1
 func.func @nd2nz_cv_pipelined_multibuf_slot(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
   %cst = arith.constant 0.000000e+00 : f32
-  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
-  annotation.mark %alloc {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %alloc = memref.alloc() {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
   %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1]
     : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
-     to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
-  // AFTERLAYOUT:      %[[VBRC_DST:.+]] = memref.subview %alloc[%[[SLOT]], 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1] : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>> to memref<1x4x2x16x8xf32, strided<[1024, 256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
-  // AFTERLAYOUT-NOT:  outs(%alloc :
-  // AFTERLAYOUT:      scf.if %[[COND]] {
-  // AFTERLAYOUT-NEXT:   hivm.hir.vbrc {{.*}} outs(%[[VBRC_DST]] :
+   to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // The vbrc target must be exactly the dst subview (the current slot
+  // tile), and must NOT be the whole alloc. No new subview is built —
+  // the existing dst is reused as the vbrc destination.
+  // AFTERLAYOUT-NOT: outs(%alloc :
+  // AFTERLAYOUT: scf.if %{{.*}} {
+  // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%subview
   // AFTERLAYOUT-NEXT: }
-  // AFTERLAYOUT:      hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
 }
