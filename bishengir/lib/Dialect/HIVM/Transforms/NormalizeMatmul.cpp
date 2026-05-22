@@ -1226,12 +1226,12 @@ public:
     Value outerOutVal = ccfInfo.outVal;
     Operation *insertPointOp = ccfInfo.insertPointOp;
     BlockArgument blockArg = ccfInfo.blockArg;
-    bool allowOptimize = ccfInfo.isFailure;
+    bool skipOptimize = ccfInfo.isFailure;
     bool mayNotExec = mayMmadNotExecute(op);
     // get bias Info
     BrcBiasInfo biasInfo = getBrcBiasMode<T>(outerInVal, op);
     LDBG("BiasMode:" << biasInfo.brcBiasMode);
-    LDBG("allowOptimize:" << allowOptimize);
+    LDBG("skipOptimize:" << skipOptimize);
     LDBG("mayNotExec:" << mayNotExec);
     // create counter buffer
     Value counterBuf;
@@ -1256,7 +1256,6 @@ public:
       rewriter.setInsertionPoint(insertPointOp);
       initCondition = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
       mayNotExec = false;
-      allowOptimize = true;
       LDBG("initCondition always true");
     }
     tmpNewMmad.setInitCondition(initCondition);
@@ -1278,7 +1277,8 @@ public:
     }
 
     // If it could be merged with bias
-    if (allowOptimize && biasInfo.perChannelValue) {
+    if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
+          biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
       tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
       // remove vadd
       if (biasInfo.addOp) {
