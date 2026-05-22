@@ -48,7 +48,6 @@ struct PropagateConvertLayoutPass
     options.allowAgnosticOps = allowAgnosticOps;
     populateConvertLayoutExtractSlice(patterns, context);
     // Enable this only for vcast
-    populateConvertLayoutElementwise(patterns, context, options);
     populateConvertLayoutScfIf(patterns, context);
     populateConvertLayoutScfFor(patterns, context);
     populateConvertLayoutScfWhile(patterns, context);

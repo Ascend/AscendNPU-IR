@@ -267,6 +267,13 @@ static void hivmPreBufferizationOptimizationPipeline(
     // For regbase convert layout optimization is done early in the pass
     // Inserts convert layout before and after cube operations
     pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+    // Moves layout conversion to the start and end of the kernel
+    // TODO: This part needs the most improvement compared to others
+    PropagateConvertLayoutOptions options;
+    options.allowAgnosticOps = false;
+    pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+
     // Add canonicalization passes
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
@@ -292,6 +299,13 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Re-run Insert/Propagate to handle the new MmadL1Op ops materialized by
     // TileBatchMMIntoLoop, which the first round skipped.
     pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+    // Moves layout conversion to the start and end of the kernel
+    // TODO: This part needs the most improvement compared to others
+    PropagateConvertLayoutOptions options;
+    options.allowAgnosticOps = false;
+    pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+
     pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     InsertFixpipeOptions fixpipeOpt;
