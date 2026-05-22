@@ -1170,18 +1170,17 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
                            "mlir::scope::ScopeDialect",
                            "annotation::AnnotationDialect"];
-  let options = [
-      Option<"enableSkewMode", "enable-skew-mode", "bool",
-            /*default=*/"false",
-            "Enable skew-mode cv-pipelining instead of the "
-            "default unroll-mode.">,
-      Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
-            /*default=*/"-1",
-            "Specify pipeline depth for cv-pipelining.">,
-      Option<"enableLazyLoading", "enable-lazy-loading", "bool",
-            /*default=*/"false",
-            "Allow load ops to be cloned into multiple work items "
-            "to reduce intermediate buffer expansion">];
+  let options = [Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
+                        /*default=*/"-1",
+                        "Specify pipeline depth for cv-pipelining.">,
+                 Option<"enableSkewMode", "enable-skew-mode", "bool",
+                        /*default=*/"false",
+                        "Enable skew-mode cv-pipelining instead of the "
+                        "default unroll-mode.">,
+                 Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+                        /*default=*/"false",
+                        "Allow load ops to be cloned into multiple work items "
+                        "to reduce intermediate buffer expansion">];
 }
 
 def AutoBlockifyParallelLoop
