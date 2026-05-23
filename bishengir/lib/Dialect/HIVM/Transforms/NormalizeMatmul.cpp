@@ -933,6 +933,7 @@ struct CCFInfo {
   BlockArgument blockArg;
   Operation *insertPointOp = nullptr;
   bool isFailure = false;
+  bool mayNotExec = false;
 
   static CCFInfo getFailure(CCFInfo &info) {
     info.isFailure = true;
@@ -978,6 +979,16 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
         return CCFInfo::getFailure(info);
     }
 
+    IntegerAttr ubAttr, lbAttr;
+    if (matchPattern(forOp.getUpperBound(), m_Constant(&ubAttr)) &&
+        matchPattern(forOp.getLowerBound(), m_Constant(&lbAttr))) {
+      if (ubAttr.getValue().sle(lbAttr.getValue())) {
+        info.mayNotExec = true;
+      }
+    } else {
+      info.mayNotExec = true;
+    }
+
     info.blockArg = blockArg;
     info.inVal = forOp.getInitArgs()[argIdx];
     info.outVal = forOp->getResult(argIdx);
@@ -1017,6 +1028,11 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
       if (thenYieldOp->getOperand(resultIdx) != info.inVal)
         return CCFInfo::getFailure(info);
     }
+
+    if (!matchPattern(ifOp.getCondition(), m_One())) {
+      info.mayNotExec = true;
+    }
+
     info.outVal = ifOp->getResult(resultIdx);
     info.insertPointOp = ifOp;
   }
@@ -1031,6 +1047,7 @@ CCFInfo getResFromSingleUseChain(Operation *op) {
   initInfo.outVal = op->getResult(0);
   initInfo.insertPointOp = op;
   initInfo.isFailure = false;
+  initInfo.mayNotExec = false;
 
   return getOutermostCCFInfo(op, initInfo);
 }
@@ -1227,7 +1244,8 @@ public:
     Operation *insertPointOp = ccfInfo.insertPointOp;
     BlockArgument blockArg = ccfInfo.blockArg;
     bool skipOptimize = ccfInfo.isFailure;
-    bool mayNotExec = mayMmadNotExecute(op);
+    bool mayNotExec = ccfInfo.mayNotExec;
+    bool isUsingCounter = false;
     // get bias Info
     BrcBiasInfo biasInfo = getBrcBiasMode<T>(outerInVal, op);
     LDBG("BiasMode:" << biasInfo.brcBiasMode);
@@ -1246,6 +1264,7 @@ public:
     Value initCondition;
     if (!isa<T>(insertPointOp)){
       initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
+      isUsingCounter = true;
       LDBG("initCondition using counter");
     } else if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
       LDBG("initCondition always false");
@@ -1315,13 +1334,16 @@ public:
         }
       }
       LDBG("Default: decompose matmul with elemwise add");
-    } else if (biasInfo.brcBiasMode == MatmulBiasMode::ZeroInitNoAccumulation) {
-      LDBG("Default: decompose matmul with  zero init no accumlation");
+    } else if ((biasInfo.brcBiasMode ==
+                MatmulBiasMode::ZeroInitNoAccumulation) &&
+               (isUsingCounter == false)) {
+      LDBG("decompose matmul with  zero init no accumlation");
     } else {
       if (mayNotExec) {
         // generate yield
         addTailFallback(rewriter, insertPointOp, counterBuf, outerInVal, outerOutVal);
       }
+      LDBG("decompose matmul with other cases");
     }
 
     // replace mmad op with the new one finally
