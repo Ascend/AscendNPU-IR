@@ -696,36 +696,6 @@ CCFInfo getResFromSingleUseChain(Operation *op) {
   return getOutermostCCFInfo(op, initInfo);
 }
 
-// If lb<ub in for or there exist if, the mmad may not be executed
-// TODO: enhanced
-bool mayMmadNotExecute(Operation *op) {
-  while (op) {
-    Operation *parentOp = op->getParentOp();
-    if (!parentOp)
-      return false;
-
-    if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
-      IntegerAttr ubAttr, lbAttr;
-      if (matchPattern(forOp.getUpperBound(), m_Constant(&ubAttr)) &&
-          matchPattern(forOp.getLowerBound(), m_Constant(&lbAttr))) {
-        if (ubAttr.getValue().sle(lbAttr.getValue())) {
-          return true;
-        }
-      }
-    } else if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
-      if (!matchPattern(ifOp.getCondition(), m_One())) {
-        return true;
-      }
-    } else if (isa<func::FuncOp>(parentOp)) {
-      return false;
-    }
-
-    op = parentOp;
-  }
-  return false;
-}
-
-
 Value initCounter(PatternRewriter &rewriter, Operation *op) {
     rewriter.setInsertionPoint(op);
     // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
@@ -762,6 +732,7 @@ Value updateInitTrue(PatternRewriter &rewriter, T op) {
   Value constTrue = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
   return constTrue;
 }
+
 template<typename T>
 Value getCounterBufFromInitCondition(T mmadLikeOp) {
   // Attempt to get the init condition value from the operation
@@ -1073,7 +1044,8 @@ void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
   patterns.add<NormalizeMmadCCFPattern<hivm::MmadL1Op>,
                NormalizeMmadCCFPattern<hivm::BatchMmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
-               DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>>(
+               DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>,
+               DecomposeMatmulWithBiasPattern<hivm::MmadMxL1Op>>(
       patterns.getContext());
 }
 
