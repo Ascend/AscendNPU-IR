@@ -184,7 +184,14 @@ void MmadL1InfoCollector<T, U>::extractInitCondition(
 
   // Defaultly create init flag as 'true' for state where MmadL1 destination
   // could be inferred as zero data
-  if (op_->template getParentOfType<scope::ScopeOp>()) {
+  // only applied for affinity pattern
+  // TODO: need to be reverted when Affinity GMM supported
+  auto moduleOp = op_->template getParentOfType<ModuleOp>();
+  bool isDisableHfusionVectorize = false;
+  if (moduleOp) {
+    isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
+  }
+  if (op_->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
     initInfo.currentCondition = rewriter.create<arith::ConstantIntOp>(
         op_->getLoc(), /*value*/ 1, /*width*/ 1);
     // Get defining op for init tensor and build up condition

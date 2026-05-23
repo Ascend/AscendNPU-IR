@@ -836,7 +836,13 @@ public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
-    if (op->template getParentOfType<scope::ScopeOp>()) {
+    // TODO: need to be reverted when Affinity GMM supported
+    auto moduleOp = op->template getParentOfType<ModuleOp>();
+    bool isDisableHfusionVectorize = false;
+    if (moduleOp) {
+      isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
+    }
+    if (op->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
       LDBG("Affinity pattern already applied");
       return rewriter.notifyMatchFailure(op, "Affinity pattern already applied");
     }
