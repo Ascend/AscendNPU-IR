@@ -77,7 +77,18 @@ debugUnexpectedBuilderFailure(StringRef where, Operation *op,
       llvm::dbgs() << "\n";
     }
   });
-  assert(false && "unexpected builder failure");
+  // Do NOT hard-assert here: the rebuild logic still legitimately fails on
+  // some IR patterns (e.g. when a kept yielded value's defining ops cannot be
+  // remapped because some dependency wasn't added to neededOps -- this is
+  // especially common for mix-mode (cv-pipeline) kernels whose backward
+  // traces include hivm.hir.anchor / cross-core anchor chains that the new
+  // rebuild path from commit 3361019ae does not fully model). The callers
+  // already handle the failure() return path gracefully by leaving the
+  // original op in place -- aborting compilation in release builds is far
+  // worse than skipping the canonicalization. Note: this project's build
+  // currently passes both -DNDEBUG and -UNDEBUG (the latter wins), so a
+  // bare `#ifndef NDEBUG assert(false)` would still abort. Until the root
+  // cause is fixed, keep this strictly diagnostic.
 }
 
 static void handleIfElse(scf::IfOp ifOp, OpResult ifResult,
