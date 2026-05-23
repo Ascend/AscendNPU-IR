@@ -2383,33 +2383,33 @@ MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
   auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
-    // Allow reuse between two tightly-coupled CV buffers when both have
-    // memoryUnique=true (owning-side CV) AND their cvMixIds appear with
-    // non-overlapping use ranges in EVERY function (AIC + AIV) that
-    // references both — i.e., the pair was pre-computed as
+    // Allow lifetime-based reuse between two tightly-coupled CV buffers
+    // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
+    // appear with non-overlapping markOp ranges in EVERY function (AIC +
+    // AIV) that references both — i.e., the pair was pre-computed as
     // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
     //
-    // For an allow-listed pair, trust that analysis and return an empty
-    // intersection (= no conflict, share allowed). We deliberately do NOT
-    // fall through to the lifetime-intersection loop below: that loop uses
-    // buffer2Life's alloc/free times which for CV workspaces (allocated
-    // at function scope without explicit dealloc) span the entire function
-    // and would always report overlap, defeating the analysis above.
-    // BuildCVReuseAllowedPairs proves use-range disjointness on both cores;
-    // CVPipelining's existing inter-core syncs at the phase boundary make
-    // the cross-core ordering correct at every point a share could be
-    // observed.
+    // When the pair is NOT cross-scope safe, mark as conflicting and bail.
+    // When it IS safe, fall through to the lifetime-intersection loop
+    // below: the cross-scope analysis is necessary but not sufficient on
+    // its own. Its use-range computation is a single linear pre-order walk
+    // and has no awareness of MultiBufferAttr; at depth N>1 the producer
+    // writes slot[i] while the consumer of the prior iter still reads
+    // slot[i-1], so the markOp positions can be textually disjoint while
+    // the real lifetimes overlap. The lifetime-intersection loop using
+    // alloc/free times catches that overlap. This matches the behavior on
+    // PR 1198, where the depth-2 CV multi-buffer aliasing introduced by
+    // bdc020c20's unconditional short-circuit was not present.
     int32_t cvA = bufferInfoIt1->second.cvMixId;
     int32_t cvB = bufferInfoIt2->second.cvMixId;
     bool crossScopeSafe =
         cvA >= 0 && cvB >= 0 && cvA != cvB &&
         cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
-    if (crossScopeSafe) {
+    if (!crossScopeSafe) {
+      intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
+                               BufferLife(nullptr));
       return intersection;
     }
-    intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                             BufferLife(nullptr));
-    return intersection;
   }
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
