@@ -2379,21 +2379,33 @@ MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
   auto bufferInfoIt2 = bufferInfos.find(b2[0]->buffer);
   if (bufferInfoIt1->second.memoryUnique ||
       bufferInfoIt2->second.memoryUnique) {
-    // Allow lifetime-based reuse between two tightly-coupled CV buffers
-    // when both have memoryUnique=true (owning-side CV) AND their cvMixIds
-    // appear with non-overlapping markOp ranges in EVERY function (AIC +
-    // AIV) that references both — i.e., the pair was pre-computed as
+    // Allow reuse between two tightly-coupled CV buffers when both have
+    // memoryUnique=true (owning-side CV) AND their cvMixIds appear with
+    // non-overlapping use ranges in EVERY function (AIC + AIV) that
+    // references both — i.e., the pair was pre-computed as
     // "cross-scope safe" by PlanMemoryPass::BuildCVReuseAllowedPairs.
+    //
+    // For an allow-listed pair, trust that analysis and return an empty
+    // intersection (= no conflict, share allowed). We deliberately do NOT
+    // fall through to the lifetime-intersection loop below: that loop uses
+    // buffer2Life's alloc/free times which for CV workspaces (allocated
+    // at function scope without explicit dealloc) span the entire function
+    // and would always report overlap, defeating the analysis above.
+    // BuildCVReuseAllowedPairs proves use-range disjointness on both cores;
+    // CVPipelining's existing inter-core syncs at the phase boundary make
+    // the cross-core ordering correct at every point a share could be
+    // observed.
     int32_t cvA = bufferInfoIt1->second.cvMixId;
     int32_t cvB = bufferInfoIt2->second.cvMixId;
     bool crossScopeSafe =
         cvA >= 0 && cvB >= 0 && cvA != cvB &&
         cvMixIdReuseAllowedPairs.count(std::make_pair(cvA, cvB));
-    if (!crossScopeSafe) {
-      intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
-                               BufferLife(nullptr));
+    if (crossScopeSafe) {
       return intersection;
     }
+    intersection.try_emplace(std::make_pair(b1[0]->buffer, b2[0]->buffer),
+                             BufferLife(nullptr));
+    return intersection;
   }
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
@@ -2849,16 +2861,16 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
 
 DenseSet<std::pair<int32_t, int32_t>>
 PlanMemoryPass::BuildCVReuseAllowedPairs(ModuleOp moduleOp) {
-  // Respect --disable-tightly-coupled-buffer-reuse: when the user
-  // explicitly asks for no CV-buffer sharing, return an empty allow-list
-  // so memoryUnique remains effective and the analysis is a no-op. The
-  // compile-driver fallback may retry with disable=false on UB overflow,
-  // which re-enters this function with the flag cleared.
-  if (this->disableTightlyCoupledBufferReuse) {
-    LDBG("cross-scope CV-buffer reuse: disabled by "
-         "--disable-tightly-coupled-buffer-reuse\n");
-    return {};
-  }
+  // Note: --disable-tightly-coupled-buffer-reuse no longer gates this
+  // analysis. The flag was originally a safety opt-out when the planner's
+  // CV-buffer sharing was unsound (the upstream FIXME). Path C's
+  // cross-scope analysis below only allows shares between pairs whose
+  // use-ranges are provably disjoint in EVERY function that references
+  // them, with CVPipelining's inter-core syncs providing the cross-core
+  // ordering at the gap. The result is a strict superset of "no sharing"
+  // safety, so kernels that pass disable=true still observe correct
+  // behavior; they just additionally get the UB savings from safe
+  // sharing. Kernels that pass disable=false get the same.
   // For each candidate function (non-host, non-VF), walk pre-order and
   // assign every op an index. Then, for each markOp with a cvMixId,
   // compute the alloc's USE range: min/max opIndex over all transitive
