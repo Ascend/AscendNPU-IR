@@ -957,7 +957,7 @@ public:
       LDBG("Default: decompose matmul with elemwise add");
     } else if ((biasInfo.brcBiasMode ==
                 MatmulBiasMode::ZeroInitNoAccumulation) &&
-               (isUsingCounter == false)) {
+               (!isUsingCounter)) {
       LDBG("decompose matmul with  zero init no accumlation");
     } else {
       if (mayNotExec) {
