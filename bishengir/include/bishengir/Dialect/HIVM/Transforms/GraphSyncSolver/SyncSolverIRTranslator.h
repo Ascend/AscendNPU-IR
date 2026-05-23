@@ -179,8 +179,6 @@ protected:
   bool isCVUnrolledLoop(Loop *loopOp);
 
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
-
-  void handleAnchorIdAttrMarkedOp(OperationBase *opBase);
 };
 
 class DelayedCrossCoreIRTranslator : public IRTranslator {

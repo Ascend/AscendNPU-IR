@@ -110,7 +110,8 @@ static OperationBase *getNextOperation(OperationBase *op, bool &goingIn) {
 
   auto &parentBody = parentScopeOp->body;
   if (parentBody.back().get() == op) {
-    return getNextOperation(parentScopeOp, goingIn = false);
+    goingIn = false;
+    return parentScopeOp;
   }
   goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
@@ -144,7 +145,8 @@ static OperationBase *getPrevOperation(OperationBase *op, bool &goingIn) {
 
   auto &parentBody = parentScopeOp->body;
   if (parentBody.front().get() == op) {
-    return getPrevOperation(parentScopeOp, goingIn = false);
+    goingIn = false;
+    return parentScopeOp;
   }
   goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
@@ -292,18 +294,27 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
         parentOp->vectorAnchorInfo->anchorAfter = vectorAnchorInfo.anchorAfter;
       }
       if (depthBefore != depthAfter) {
-        auto beforeAnchorNextOp = getNextOperation(mixAnchorInfo.anchorBefore);
-        assert(beforeAnchorNextOp != nullptr);
-        auto afterAnchorPrevOp = getPrevOperation(mixAnchorInfo.anchorAfter);
-        assert(afterAnchorPrevOp != nullptr);
-        assert(beforeAnchorNextOp != afterAnchorPrevOp);
-        if (auto placeHolderOp = dyn_cast<PlaceHolder>(beforeAnchorNextOp)) {
+        OperationBase *beforeAnchorNextOp{nullptr};
+        OperationBase *afterAnchorPrevOp{nullptr};
+        if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+          beforeAnchorNextOp = getNextOperation(mixAnchorInfo.anchorBefore);
+          assert(beforeAnchorNextOp != nullptr);
+        }
+        if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+          afterAnchorPrevOp = getPrevOperation(mixAnchorInfo.anchorAfter);
+          assert(afterAnchorPrevOp != nullptr);
+          assert(beforeAnchorNextOp == nullptr ||
+                 beforeAnchorNextOp != afterAnchorPrevOp);
+        }
+        if (auto placeHolderOp =
+                dyn_cast_if_present<PlaceHolder>(beforeAnchorNextOp)) {
           placeHolderOp->cubeAnchorInfo =
               AnchorInfo(cubeAnchorInfo.anchorBefore);
           placeHolderOp->vectorAnchorInfo =
               AnchorInfo(vectorAnchorInfo.anchorBefore);
         }
-        if (auto placeHolderOp = dyn_cast<PlaceHolder>(afterAnchorPrevOp)) {
+        if (auto placeHolderOp =
+                dyn_cast_if_present<PlaceHolder>(afterAnchorPrevOp)) {
           placeHolderOp->cubeAnchorInfo =
               AnchorInfo(cubeAnchorInfo.anchorAfter);
           placeHolderOp->vectorAnchorInfo =
