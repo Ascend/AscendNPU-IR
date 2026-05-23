@@ -180,8 +180,6 @@ protected:
 
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
 
-  void handleAnchorIdAttrMarkedOp(OperationBase *opBase);
-
   std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);
 
   std::optional<int64_t> getScopeMaxPreloadNum(Scope *scopeOp);

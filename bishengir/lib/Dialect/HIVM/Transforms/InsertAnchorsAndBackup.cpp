@@ -20,12 +20,18 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/DestinationStyleOpInterface.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
@@ -57,8 +63,8 @@ private:
   void insertAnchor(Operation *op, OpBuilder &builder, int64_t &nextAnchorId,
                     bool insertBefore = false);
 
-  void insertAnchorAttr(Operation *op, OpBuilder &builder,
-                        int64_t &nextAnchorId, bool insertBefore = false);
+  void insertAnchorBlockOp(Operation *op, Block &block, OpBuilder &builder,
+                           int64_t id_start, int64_t id_end);
 
   void insertAnchorsInBlock(Block &block, OpBuilder &builder,
                             int64_t &nextAnchorId);
@@ -74,6 +80,58 @@ private:
   void eraseAllAnchors(func::FuncOp funcOp);
 
   void eraseBackupFuncOps(ModuleOp mod);
+
+  bool isOpTypeToBeAnchored(Operation *op) const {
+    if (this->insertAnchorOpsBeforeAll) {
+      return true;
+    }
+    if (isa<hivm::PipeBarrierOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+            hivm::SyncBlockOp, hivm::SetFlagOp, hivm::WaitFlagOp>(op)) {
+      return false;
+    }
+    if (isa<hivm::BitcastOp>(op)) {
+      return true;
+    }
+    if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
+            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
+      return true;
+    }
+    if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
+      return true;
+    }
+    if (isa<LoopLikeOpInterface, scf::IfOp, scope::ScopeOp, func::CallOp>(op)) {
+      return true;
+    }
+    if (op->hasTrait<OpTrait::IsTerminator>()) {
+      return true;
+    }
+    if (isa<hivm::InferCoreTypeInterface, DestinationStyleOpInterface>(op)) {
+      return true;
+    }
+    if (op->hasTrait<OpTrait::CoreTypeTrait<TCoreType::CUBE>::Impl>()) {
+      return true;
+    }
+    if (op->hasTrait<OpTrait::CoreTypeTrait<TCoreType::VECTOR>::Impl>()) {
+      return true;
+    }
+    if (op->hasTrait<
+            OpTrait::CoreTypeTrait<TCoreType::CUBE_OR_VECTOR>::Impl>()) {
+      return true;
+    }
+    if (op->hasTrait<
+            OpTrait::CoreTypeTrait<TCoreType::CUBE_AND_VECTOR>::Impl>()) {
+      return true;
+    }
+    if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      mei.getEffects(effects);
+      if (!effects.empty()) {
+        return true;
+      }
+    }
+    return false;
+  }
 };
 
 void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
@@ -89,17 +147,14 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
                            builder.getI64IntegerAttr(nextAnchorId++), nullptr);
 }
 
-void InsertAnchorsAndBackupPass::insertAnchorAttr(Operation *op,
-                                                  OpBuilder &builder,
-                                                  int64_t &nextAnchorId,
-                                                  bool insertBefore) {
-  if (insertBefore) {
-    op->setAttr(hivm::AnchorIdBeforeAttr::name,
-                builder.getI64IntegerAttr(nextAnchorId++));
-  } else {
-    op->setAttr(hivm::AnchorIdAfterAttr::name,
-                builder.getI64IntegerAttr(nextAnchorId++));
-  }
+void InsertAnchorsAndBackupPass::insertAnchorBlockOp(Operation *op,
+                                                     Block &block,
+                                                     OpBuilder &builder,
+                                                     int64_t id_start,
+                                                     int64_t id_end) {
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointToStart(&block);
+  builder.create<AnchorBlockOp>(op->getLoc(), id_start, id_end);
 }
 
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
@@ -110,42 +165,32 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
     blockOps.push_back(&op);
   }
   for (Operation *op : blockOps) {
-    insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
+    if (op == blockOps.front() || isOpTypeToBeAnchored(op)) {
+      insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
+    }
     if (op->getNumRegions() > 0) {
-      if (isa<scf::ForOp>(op)) {
-        insertAnchorAttr(op, builder, nextAnchorId, /*insertBefore=*/true);
-      }
       for (Region &region : op->getRegions()) {
         for (Block &nestedBlock : region) {
+          int64_t block_start_id = nextAnchorId++;
           insertAnchorsInBlock(nestedBlock, builder, nextAnchorId);
+          int64_t block_end_id = nextAnchorId++;
+          insertAnchorBlockOp(op, nestedBlock, builder, block_start_id,
+                              block_end_id);
         }
-      }
-      if (isa<scf::ForOp>(op)) {
-        insertAnchorAttr(op, builder, nextAnchorId);
       }
     }
   }
 }
 
 void InsertAnchorsAndBackupPass::eraseAllAnchors(func::FuncOp funcOp) {
-  SmallVector<hivm::AnchorOp> anchorOps;
+  SmallVector<Operation *> toBeErased;
   funcOp.walk([&](Operation *op) {
-    if (auto anchorOp = dyn_cast<hivm::AnchorOp>(op)) {
-      anchorOps.push_back(anchorOp);
-      return;
-    }
-    if (op->hasAttr(hivm::AnchorIdAttr::name)) {
-      op->removeAttr(hivm::AnchorIdAttr::name);
-    }
-    if (op->hasAttr(hivm::AnchorIdBeforeAttr::name)) {
-      op->removeAttr(hivm::AnchorIdBeforeAttr::name);
-    }
-    if (op->hasAttr(hivm::AnchorIdAfterAttr::name)) {
-      op->removeAttr(hivm::AnchorIdAfterAttr::name);
+    if (isa<hivm::AnchorOp, hivm::AnchorBlockOp>(op)) {
+      toBeErased.push_back(op);
     }
   });
-  for (hivm::AnchorOp anchorOp : anchorOps) {
-    anchorOp->erase();
+  for (Operation *op : toBeErased) {
+    op->erase();
   }
 }
 

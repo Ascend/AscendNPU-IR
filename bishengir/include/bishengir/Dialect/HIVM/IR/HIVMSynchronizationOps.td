@@ -301,4 +301,23 @@ def AnchorOp
   let assemblyFormat = "attr-dict";
 }
 
+def AnchorBlockOp
+    : HIVM_Op<"anchor_block", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Marker operation for recording IR positional information.";
+  let description = [{
+    Anchor operation used as a marker to record positional information in the
+    IR. Anchors carry a unique monotonically-increasing `id`.
+
+    They are inserted into the IR first, then later checked after other passes
+    have modified the IR so their positions can be used to analyze how the IR
+    changed.
+
+    Anchors declare a write effect on an internal resource so that
+    canonicalization / CSE / DCE / LICM cannot remove or reorder them.
+  }];
+  let arguments = (ins I64Attr:$id_start,
+                       I64Attr:$id_end);
+  let assemblyFormat = "attr-dict";
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMSYNCHRONIZATIONOPS_TD
