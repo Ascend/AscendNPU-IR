@@ -319,33 +319,18 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
   auto loc = getLoc();
 
-  // Under cv-pipelining the dst is `alloc[..., slot_idx, ...][..., 1, ...]`
-  // — one slot of a multi-buffered alloc. Zeroing the whole alloc would
-  // wipe sibling slots being consumed concurrently. When we detect the
-  // slot-dim pattern, target only the current slot at its full extent.
+  // The cv-pipelining pass marks multi-buffered allocs with an
+  // `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`. In
+  // that case `dst` is one slot of the alloc; padding the whole alloc
+  // would wipe sibling slots being consumed concurrently by other
+  // pipeline stages — so pad only the current slot tile (the dst
+  // subview itself). Otherwise fall back to the legacy "pad the whole
+  // alloc" behavior.
   Value vbrcTarget = padMemref.getResult();
-  if (auto subview = getDst().getDefiningOp<memref::SubViewOp>();
-      subview && subview.getSource() == padMemref.getResult()) {
-    auto allocSizes = memref::getMixedSizes(b, loc, padMemref.getResult());
-    auto subSizes = subview.getMixedSizes();
-    bool hasSlot = false;
-    SmallVector<OpFoldResult> newSizes;
-    newSizes.reserve(subSizes.size());
-    for (auto [s, a] : llvm::zip(subSizes, allocSizes)) {
-      auto sc = getConstantIntValue(s), ac = getConstantIntValue(a);
-      bool slot = sc && ac && *sc == 1 && *ac > 1;
-      hasSlot |= slot;
-      newSizes.push_back(slot ? s : a);
-    }
-    if (hasSlot) {
-      auto resTy = memref::SubViewOp::inferRankReducedResultType(
-          cast<MemRefType>(subview.getResult().getType()).getShape(),
-          cast<MemRefType>(padMemref.getResult().getType()),
-          subview.getMixedOffsets(), newSizes, subview.getMixedStrides());
-      vbrcTarget = b.create<memref::SubViewOp>(
-          loc, cast<MemRefType>(resTy), padMemref.getResult(),
-          subview.getMixedOffsets(), newSizes, subview.getMixedStrides());
-    }
+  auto maybeMarked = utils::getAnnotateOpWithAttr(
+      padMemref.getResult(), hivm::CVPipelinedMultiBufferAttr::name);
+  if (maybeMarked.has_value() && getDst() != padMemref.getResult()) {
+    vbrcTarget = getDst();
   }
 
   if (getInitCondition()) {
