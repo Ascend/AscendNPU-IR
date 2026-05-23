@@ -46,6 +46,8 @@ struct PropagateConvertLayoutPass
     // PropagateConvertLayoutOptions from the `HIVM/Transforms/Passes.td`
     PropagateConvertLayoutInternalOptions options;
     options.allowAgnosticOps = allowAgnosticOps;
+    if (enableElementwisePropagate)
+      populateConvertLayoutElementwise(patterns, context, options);
     populateConvertLayoutExtractSlice(patterns, context);
     // Enable this only for vcast
     populateConvertLayoutScfIf(patterns, context);
