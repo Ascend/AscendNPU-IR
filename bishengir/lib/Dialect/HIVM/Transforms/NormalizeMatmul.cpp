@@ -769,7 +769,13 @@ void addTailFallback(PatternRewriter &rewriter, Operation *op, Value counterBuf,
   auto fallbackIf = rewriter.create<scf::IfOp>(
       loc, neverRan,
       [&](OpBuilder &b, Location loc) {
-        b.create<scf::YieldOp>(loc, ValueRange{outerInVal});
+        if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
+          auto newVbrcOp =
+              cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
+          b.create<scf::YieldOp>(loc, ValueRange{newVbrcOp.getResult()});
+        } else {
+          b.create<scf::YieldOp>(loc, ValueRange{outerInVal});
+        }
       },
       [&](OpBuilder &b, Location loc) {
         b.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
