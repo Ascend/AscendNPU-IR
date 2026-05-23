@@ -673,10 +673,6 @@ def InsertLoadStoreForMixCV
       /*default=*/"false",
       "Enable dot scaled compile">,
     Option<
-      "enableLayoutOptimization", "enable-layout-optimization", "bool",
-      /*default=*/"false",
-      "Enable Layout Optimization">,
-    Option<
       "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
       /*default=*/"false",
       "Disable Tight Coupled Buffer Allocation">];

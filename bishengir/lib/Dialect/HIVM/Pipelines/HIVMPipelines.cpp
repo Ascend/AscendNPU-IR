@@ -65,8 +65,6 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   options.target = hivmPipelineOptions.target;
   options.enableDotScaledCompile =
       hivmPipelineOptions.enableDotScaledCompile;
-  options.enableLayoutOptimization =
-      hivmPipelineOptions.enableLayoutOptimization;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
