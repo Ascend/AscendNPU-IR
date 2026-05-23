@@ -521,15 +521,19 @@ bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
     if (it == bufferInfos.end()) {
       llvm::report_fatal_error("Use allocOp before defined!");
     }
-    // Owning-side CV buffer: always mark memoryUnique to prevent unsafe
-    // sharing by default. Always record cvMixId so PlanMemoryPass's
-    // cross-scope reuse analysis can identify candidate sharing pairs.
-    // The relaxation itself is gated by --disable-tightly-coupled-buffer-reuse:
-    // when true, BuildCVReuseAllowedPairs returns an empty allow-list and
-    // memoryUnique stays effective (no sharing). When false, the allow-list
-    // is populated and proven-safe pairs may share.
-    it->second.memoryUnique = true;
+    // Always record cvMixId so PlanMemoryPass's cross-scope reuse analysis
+    // can identify candidate sharing pairs.
     it->second.cvMixId = attr.getId().value();
+    // Only force memoryUnique when reuse is explicitly disabled. When reuse
+    // is enabled (default), let the standard lifetime-based analysis run as
+    // it did before the cross-scope rework; BuildCVReuseAllowedPairs runs
+    // as an additional opportunistic optimization on top of it. Previously
+    // forcing memoryUnique=true unconditionally caused UB overflow on
+    // workloads (e.g. compile-triton-hstu-attn-fwd) that relied on the
+    // original lifetime-based sharing of CV-coupled buffers.
+    if (disableTightlyCoupledBufferReuse) {
+      it->second.memoryUnique = true;
+    }
     LDBG(allocValue << " Manually run UpdateOpGenInfo and set mem_unique \n");
     return true;
   }
@@ -2771,7 +2775,8 @@ PlanMemoryPass::PlanMemoryForFuncOp(
   // was inserted before plan memory. Currently, changing this behavior will
   // cause many existing testcases to fail, so we added a compile option to
   // control it for now. This needs to be fixed.
-  MemLivenessAnalysis memLiveness(funcOp, this->memMode);
+  MemLivenessAnalysis memLiveness(funcOp, this->memMode,
+                                  this->disableTightlyCoupledBufferReuse);
   memLiveness.build();
 
   MemPlan memPlan(this->memMode, this->enableGlobalReuse,

@@ -257,8 +257,10 @@ using BufferCondPair = std::pair<Value, bool>;
 
 class MemLivenessAnalysis {
 public:
-  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode)
-      : func_(func), planMode(planMode) {}
+  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
+                      bool disableTightlyCoupledBufferReuse = false)
+      : func_(func), planMode(planMode),
+        disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse) {}
 
   void build();
 
@@ -447,6 +449,9 @@ private:
 
   /// different mode for mem plan.
   MemPlanMode planMode;
+
+  /// Disable tightly coupled buffer reuse. Default is false.
+  bool disableTightlyCoupledBufferReuse;
 
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
