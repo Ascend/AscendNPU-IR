@@ -10,6 +10,7 @@
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -258,6 +259,16 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     return failure();
 
   config.setEnableMixedCV(first != StringRef{"aiv"} || config.shouldEnableMixedCV());
+  return success();
+}
+
+llvm::LogicalResult inferLayoutOptimization(
+    ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
+  module.walk<WalkOrder::PreOrder>([&](linalg::BatchMatmulOp) -> WalkResult {
+    config.setEnableLayoutOptimization(false);
+    // TODO: fix layout optimization for linalg.batch_matmul.
+    return WalkResult::interrupt();
+  });
   return success();
 }
 
