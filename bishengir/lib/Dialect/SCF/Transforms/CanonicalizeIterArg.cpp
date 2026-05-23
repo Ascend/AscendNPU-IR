@@ -1172,9 +1172,40 @@ cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
     }
 
     // Guard against dropping a nested channel still needed by a live op.
+    //
+    // The outer rebuild is currently iterating through `oldOp.getParentOp()`'s
+    // body and will rebuild that parent's terminator(s) via `filterByKeep`
+    // on the *outer* keep mask. If the immediate-parent terminator (e.g. the
+    // outer `scf.yield`) is the user of a dropped nested result, the
+    // corresponding operand on the new terminator will be filtered out by
+    // that mechanism — the use never makes it into the rebuilt IR, so it is
+    // not an obstacle here. Real obstacles are uses by ops that the outer
+    // rebuild will clone as-is (any non-terminator user). Limit the assert
+    // to those.
+    auto isHandledByOuterTerminator = [&](Operation *user) {
+      Operation *parent = oldOp.getParentOp();
+      if (!parent)
+        return false;
+      if (auto outerFor = dyn_cast<scf::ForOp>(parent))
+        return user == outerFor.getBody()->getTerminator();
+      if (auto outerIf = dyn_cast<scf::IfOp>(parent)) {
+        if (user == outerIf.thenYield().getOperation())
+          return true;
+        return outerIf.elseBlock() &&
+               user == outerIf.elseYield().getOperation();
+      }
+      if (auto outerWhile = dyn_cast<scf::WhileOp>(parent)) {
+        return user == outerWhile.getConditionOp().getOperation() ||
+               user == outerWhile.getYieldOp().getOperation();
+      }
+      return false;
+    };
+
     for (Value result :
          filterByKeep(nestedFor.getResults(), childKeep, false)) {
       for (OpOperand &use : result.getUses()) {
+        if (isHandledByOuterTerminator(use.getOwner()))
+          continue;
         if (neededOps.contains(use.getOwner())) {
           assert(false &&
                  "dropping nested iter-arg/result still used by needed op");
