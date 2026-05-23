@@ -23,10 +23,15 @@
 namespace mlir {
 namespace hivm {
 
+enum InsertionPriority: uint8_t {
+  DefaultInsertion = 1,
+  RegbaseInsertion = 2
+};
+
 struct InsertPropagationPattern : public RewritePattern {
 public:
   explicit InsertPropagationPattern(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/DefaultInsertion, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;
@@ -46,41 +51,13 @@ private:
 struct A5InsertionPattern : public RewritePattern {
 public:
   explicit A5InsertionPattern(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/2, context) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/RegbaseInsertion, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;
 
 private:
   bool isPropagatorInserted(Operation *op) const;
-};
-
-struct InsertCVDataMovementPattern : public RewritePattern {
-public:
-  explicit InsertCVDataMovementPattern(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
-
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override;
-
-private:
-  bool isPropagatorInserted(Operation *op) const;
-  LogicalResult insertPropagatorForDMAOp(Operation *op,
-                                         PatternRewriter &rewriter) const;
-};
-
-struct InsertTightCoupledBufferPattern : public RewritePattern {
-public:
-  explicit InsertTightCoupledBufferPattern(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
-
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override;
-
-private:
-  bool isPropagatorInserted(Operation *op) const;
-  LogicalResult insertPropagatorForDMAOp(Operation *op,
-                                         PatternRewriter &rewriter) const;
 };
 
 } // namespace hivm

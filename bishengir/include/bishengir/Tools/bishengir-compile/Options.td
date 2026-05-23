@@ -713,7 +713,7 @@ def EnableTritonIRCompile : FeatureControlOptions<
 def EnableLayoutOptimization : FeatureControlOptions<
   "Enable Layout Optimization",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
