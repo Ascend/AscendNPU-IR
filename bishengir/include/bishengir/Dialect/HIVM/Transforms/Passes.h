@@ -103,6 +103,13 @@ createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
 std::unique_ptr<Pass>
 createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
 
+// Create a pass to run delayed cross-core GSS driven by anchors.
+std::unique_ptr<Pass> createDelayedCrossCoreGSSPass();
+
+// Create a pass to insert anchor operations and backup mixed kernels.
+std::unique_ptr<Pass> createInsertAnchorsAndBackupPass(
+    const InsertAnchorsAndBackupOptions &options = {});
+
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
 createInjectBlockSyncPass(const InjectBlockSyncOptions &options = {});
@@ -195,7 +202,8 @@ std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
 
 // Create a pass to insert load/store op for mix cv function.
-std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass();
+std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
+    const InsertLoadStoreForMixCVOptions &options = {});
 
 // Create a pass to insert cv tight coupled buffer for mix cv function.
 std::unique_ptr<Pass> createInsertCVTightCoupledBufferPass();

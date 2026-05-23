@@ -614,3 +614,75 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+ 
+// -----
+
+// Test: auto cross-core detection -- a load whose tensor result is consumed
+// by ops on both the CUBE (mmadL1) and the VECTOR (vexp) cores is treated
+// as lazy-loaded automatically, without any per-tensor
+// `cv_pipeline_lazy_load` annotation and even when the kernel-level
+// enable-lazy-loading switch is off.  The load is cloned into each
+// consuming work item; no expanded multi-buffer alloc is produced for its
+// result.  CHECK-HINT covers both RUN lines (kernel-off and kernel-on), so
+// this asserts the behavior under either configuration.
+
+// CHECK-HINT-LABEL: func.func @test_auto_cross_core_lazy_load
+// Outer unrolled loop
+// CHECK-HINT: scf.for
+// CUBE stage loop: own hivm.hir.load + hivm.hir.mmadL1
+// CHECK-HINT: scf.for
+// CHECK-HINT: hivm.hir.load
+// CHECK-HINT: hivm.hir.mmadL1
+// CHECK-HINT: hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// VECTOR stage loop: own cloned hivm.hir.load + hivm.hir.vexp
+// CHECK-HINT: scf.for
+// CHECK-HINT: hivm.hir.load
+// CHECK-HINT: hivm.hir.vexp
+// CHECK-HINT: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
+// No expanded 2x buffer for the load result:
+// CHECK-HINT-NOT: memref<2x16x16xf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_auto_cross_core_lazy_load(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %input1 = "some_op"() : () -> memref<16x16xf16>
+    %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+    %input2 = "some_op"() : () -> memref<?xf16>
+    %initin = memref.reinterpret_cast %input2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+    %offset = "some_op"() : () -> index
+    %c0 = arith.constant 0 : i32
+    %true = arith.constant true
+    %c0i = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %step = arith.constant 2 : i32
+    %bound = "some_op"() : () -> i32
+    scf.for %i = %c0 to %bound step %step iter_args(%sliding_input = %initin, %inc = %c0i) -> (memref<16x16xf16>, index) : i32 {
+      // Load whose result is consumed by both CUBE and VECTOR -- no hint,
+      // no kernel switch; auto cross-core detection alone must enable
+      // lazy loading.
+      %alloc = memref.alloc() : memref<16x16xf16>
+      hivm.hir.load ins(%sliding_input : memref<16x16xf16>) outs(%alloc : memref<16x16xf16>)
+      %tensor2 = bufferization.to_tensor %alloc : memref<16x16xf16>
+
+      // CUBE consumer
+      %dest = tensor.empty() : tensor<16x16xf16>
+      %dot = hivm.hir.mmadL1 ins(%tensor1, %tensor2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ub0 = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      hivm.hir.fixpipe ins(%dot : tensor<16x16xf16>) outs(%ub0 : memref<16x16xf16, #hivm.address_space<ub>>)
+      %ub0_cast = memref.memory_space_cast %ub0 : memref<16x16xf16, #hivm.address_space<ub>> to memref<16x16xf16>
+      %wst = bufferization.to_tensor %ub0_cast : memref<16x16xf16>
+
+      %newinc = arith.addi %inc, %offset : index
+      %next = memref.reinterpret_cast %input2 to offset: [%newinc], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+
+      // VECTOR consumer of the same load result
+      %vdest = tensor.empty() : tensor<16x16xf16>
+      %exp = hivm.hir.vexp ins(%tensor2 : tensor<16x16xf16>) outs(%vdest : tensor<16x16xf16>) -> tensor<16x16xf16>
+      %ws1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+      %ws1_cast = memref.memory_space_cast %ws1 : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+      hivm.hir.copy ins(%exp : tensor<16x16xf16>) outs(%ws1_cast : memref<16x16xf16>)
+
+      scf.yield %next, %newinc : memref<16x16xf16>, index
+    }
+    return
+  }
+}

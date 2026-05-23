@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -35,108 +36,6 @@ using namespace mlir::hivm;
 //===----------------------------------------------------------------------===//
 // MultiBufferHelper
 //===----------------------------------------------------------------------===//
-
-struct LoopInfo {
-  Value inductionVar;
-  OpFoldResult lowerBound;
-  OpFoldResult upperBound;
-  OpFoldResult singleStep;
-};
-
-/// Get info of parent and ancestor loop of ptrCastOp.
-/// The info is stored from inner to outer parent loop.
-std::vector<LoopInfo> getLoopsInfo(LoopLikeOpInterface ptrParentLoop) {
-  std::vector<LoopInfo> loopInfoVec;
-  LoopLikeOpInterface curOp = ptrParentLoop;
-  while (isa_and_nonnull<scf::ForOp>(curOp)) {
-    std::optional<Value> inductionVar = curOp.getSingleInductionVar();
-    std::optional<OpFoldResult> lowerBound = curOp.getSingleLowerBound();
-    std::optional<OpFoldResult> upperBound = curOp.getSingleUpperBound();
-    std::optional<OpFoldResult> singleStep = curOp.getSingleStep();
-
-    assert((inductionVar.has_value() && lowerBound.has_value() &&
-            upperBound.has_value() && singleStep.has_value()) &&
-           "iv, lb, ub and step shouldn't be null.");
-
-    loopInfoVec.push_back(
-        {*inductionVar, *lowerBound, *upperBound, *singleStep});
-
-    curOp = curOp->getParentOfType<LoopLikeOpInterface>();
-  }
-
-  return loopInfoVec;
-}
-
-/// Flatten loops into one dimension and then modulo modular.
-/// for example modular is 2, use all induction var of loops to generate
-/// sequence data 0,1,2,3,... then mod 2 to get 0,1,0,1,...
-///
-/// IR:
-/// for i, 0, upperI, step=1:
-///   for j, 0, upperJ, step=1:
-///     affine.apply #map()[j, i]
-///
-/// the sequence is: 0,1,2,..., i*upperJ + j, ...
-///
-/// \return Index value of affineApply
-Value createNestedIndexModularUsingLoopInfo(
-    OpBuilder &builder, Location loc, const std::vector<LoopInfo> &loopInfoVec,
-    int modular) {
-  auto ctx = builder.getContext();
-  AffineExpr nElems = builder.getAffineConstantExpr(1);
-  AffineExpr targetExpr = builder.getAffineConstantExpr(0);
-  std::vector<OpFoldResult> symbolValueVec;
-
-  // In order to create affineMap, bind symbols, affineExpr and values are
-  // needed. loopInfoVec would be used, loop from inner to outer.
-  for (size_t i = 0; i < loopInfoVec.size(); ++i) {
-    AffineExpr iv;
-    AffineExpr lb;
-    AffineExpr ub;
-    AffineExpr step;
-
-    // bind symbols
-    iv = getAffineSymbolExpr(i * 4, ctx);
-    lb = getAffineSymbolExpr(i * 4 + 1, ctx);
-    ub = getAffineSymbolExpr(i * 4 + 2, ctx);
-    step = getAffineSymbolExpr(i * 4 + 3, ctx);
-
-    // create affineExpr
-    targetExpr = targetExpr + (iv - lb).floorDiv(step) * nElems;
-    nElems = nElems * ((ub - lb + step - 1).floorDiv(step));
-
-    // values
-    auto info = loopInfoVec[i];
-    Value ivVal = getValueOrCreateCastToIndexLike(
-        builder, loc, builder.getIndexType(), info.inductionVar);
-    Value lbVal = getValueOrCreateCastToIndexLike(
-        builder, loc, builder.getIndexType(),
-        getValueOrCreateConstantIndexOp(builder, loc, info.lowerBound));
-    Value ubVal = getValueOrCreateCastToIndexLike(
-        builder, loc, builder.getIndexType(),
-        getValueOrCreateConstantIndexOp(builder, loc, info.upperBound));
-    Value stepVal = getValueOrCreateCastToIndexLike(
-        builder, loc, builder.getIndexType(),
-        getValueOrCreateConstantIndexOp(builder, loc, info.singleStep));
-
-    symbolValueVec.push_back(ivVal);
-    symbolValueVec.push_back(lbVal);
-    symbolValueVec.push_back(ubVal);
-    symbolValueVec.push_back(stepVal);
-  }
-
-  if (modular == -1) {
-    Value affineApply = mlir::affine::makeComposedAffineApply(
-        builder, loc, targetExpr, ArrayRef(symbolValueVec));
-    return affineApply;
-  }
-
-  targetExpr = targetExpr % modular;
-
-  Value affineApply = mlir::affine::makeComposedAffineApply(
-      builder, loc, targetExpr, ArrayRef(symbolValueVec));
-  return affineApply;
-}
 
 /// Index of yielded value where is alias of targetVal.
 std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
@@ -200,49 +99,44 @@ LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
 
 Value mlir::hivm::createNestedIndexModular(OpBuilder &builder, Operation *op,
                                            int modular) {
+  // Resolve the parent loop via the value-following helper (which threads
+  // through scf.if yields) and delegate to the LoopLikeOpInterface
+  // overload for the actual codegen. Keeping a single source of truth
+  // there reflects the unified strategy: scf.for and scf.while share the
+  // same alloca-based counter materialized by MultiBufferLoopAdapter
+  // (see bishengir/include/bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h).
   LoopLikeOpInterface parentLoop = getParentLoop(op->getResult(0));
-  assert(parentLoop &&
-         " ptrCastOp has no proper parent loop to do multi buffer");
-
-  auto loopInfoVec = getLoopsInfo(parentLoop);
-
-  // Insert at the beginning of the For loop.
-  auto forOp = cast<scf::ForOp>(parentLoop.getOperation());
-  builder.setInsertionPointToStart(forOp.getBody());
-  return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
-                                               loopInfoVec, modular);
+  assert(parentLoop && " op has no proper parent loop to do multi buffer");
+  return createNestedIndexModular(builder, parentLoop, modular);
 }
 
 Value mlir::hivm::createNestedIndexForOp(OpBuilder &builder,
                                          Operation *operation) {
+  // Historical name (kept for call-site stability in SyncCodegen.cpp and
+  // SyncSolverCodeGen.cpp); semantically equivalent to
+  // `createNestedIndexModular(op, /*modular=*/-1)` but tolerates missing
+  // parent loops by returning nullptr instead of asserting.
   LoopLikeOpInterface parentLoop =
       operation->getParentOfType<LoopLikeOpInterface>();
-  if (!parentLoop) {
+  if (!parentLoop)
     return nullptr;
-  }
-  assert(parentLoop &&
-         " ptrCastOp has no proper parent loop to do multi buffer");
-  if (!llvm::isa<scf::ForOp>(parentLoop)) {
+  auto adapterOr = MultiBufferLoopAdapter::create(parentLoop);
+  if (failed(adapterOr))
     return nullptr;
-  }
-  auto loopInfoVec = getLoopsInfo(parentLoop);
-  // Insert at the beginning of the For loop.
-  auto forOp = cast<scf::ForOp>(parentLoop.getOperation());
-  builder.setInsertionPointToStart(forOp.getBody());
-  return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
-                                               loopInfoVec, -1);
+  return adapterOr->getIterationCounter(builder);
 }
 
 Value mlir::hivm::createNestedIndexModular(OpBuilder &builder,
                                            LoopLikeOpInterface loopOp,
                                            int modular) {
-  auto loopInfoVec = getLoopsInfo(loopOp);
-  // Insert at the beginning of the For loop.
-  auto forOp = dyn_cast<scf::ForOp>(loopOp.getOperation());
-  assert(forOp != nullptr);
-  builder.setInsertionPointToStart(forOp.getBody());
-  return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
-                                               loopInfoVec, modular);
+  // Unified path: same as the (Operation*, int) overload but with the
+  // parent loop supplied directly (used by GraphSyncSolver's SetWait
+  // codegen).
+  auto adapterOr = MultiBufferLoopAdapter::create(loopOp);
+  assert(succeeded(adapterOr) &&
+         "createNestedIndexModular: loop is neither scf.for nor scf.while");
+  return modular == -1 ? adapterOr->getIterationCounter(builder)
+                       : adapterOr->getModuloIndex(builder, modular);
 }
 
 class MultiBufferHelper {
@@ -252,8 +146,10 @@ public:
 
   /// Transformation to do multi-buffering/array expansion to remove
   /// dependencies on the temporary pointerCastOp between consecutive loop
-  /// iterations. It returns the new pointerCastOp if the original pointerCastOp
-  /// was multi-buffered and returns failure() otherwise. Example:
+  /// iterations. It returns the new pointerCastOp if the original
+  /// pointerCastOp was multi-buffered and returns failure() otherwise.
+  /// Example (scf.for; scf.while is fully analogous, body block is
+  /// `whileOp.getAfter().front()`):
   /// ```
   /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %0 = hivm.hir.pointer_cast(addr1, addr2) [] : memref<4x128xf32>
@@ -261,16 +157,21 @@ public:
   ///   "some_use"(%0) : (memref<4x128xf32>) -> ()
   /// }
   /// ```
-  /// into:
+  /// into (unified alloca-based counter, see MultiBufferLoopAdapter):
   /// ```
-  /// #map = affine_map<()[s0] -> ((s0 floordiv 4) mod 2)>
+  /// %counter = memref.alloca() {hivm.multi_buffer_counter_for = 0 : i64} :
+  ///                memref<1xi64>
+  /// memref.store %c0_i64, %counter[%c0]
   /// %0 = hivm.hir.pointer_cast(addr1) [] : memref<4x128xf32>
   /// %1 = hivm.hir.pointer_cast(addr2) [] : memref<4x128xf32>
-  /// scf.for %iv = %c0 to %c16 step %c4 {
-  ///   %2 = affine.apply #map()[%iv]
-  ///   %3 = arith.index_cast %2 : index to i64
-  ///   %4 = ... // Select a value within [%0, %1] based on the value of %3.
-  ///   "some_use"(%4) : (memref<4x128xf32, strided<...>) -> ()
+  /// scf.for %iv = %c0 to %c16 step %c4 {hivm.multi_buffer_loop_id = 0 : i64} {
+  ///   %loaded = memref.load %counter[%c0] : memref<1xi64>
+  ///   %idx    = arith.remui %loaded, %c2_i64 : i64
+  ///   %cond   = arith.cmpi eq, %idx, %c1_i64 : i64
+  ///   %sel    = arith.select %cond, %1, %0 : memref<4x128xf32>
+  ///   "some_use"(%sel) : (memref<4x128xf32>) -> ()
+  ///   %next   = arith.addi %loaded, %c1_i64 : i64
+  ///   memref.store %next, %counter[%c0]
   /// }
   /// ```
   LogicalResult extMultiBuffer() {
@@ -427,7 +328,9 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
 
     LoopLikeOpInterface loopOp = getParentLoop(op.getResult());
     while (loopOp) {
-      if (!isa<scf::ForOp>(loopOp))
+      // scf.for and scf.while are both supported (while via alloca-based
+      // counter in MultiBufferLoopAdapter); other LoopLike ops bail out.
+      if (!isa<scf::ForOp, scf::WhileOp>(loopOp))
         return failure();
       loopOp = loopOp->getParentOfType<LoopLikeOpInterface>();
     }

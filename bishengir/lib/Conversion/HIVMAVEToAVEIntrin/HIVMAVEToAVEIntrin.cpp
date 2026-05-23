@@ -3970,6 +3970,7 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
                                                    increaseDirectionI32);
 
     Value result;
+    auto elementAlignmentBitwidth = getOpElementAlignmentBitWidth(op);
     if (elemType.isInteger(32) && resType.getNumElements() <= 64) {
       auto targetType = VectorType::get(64, rewriter.getI32Type());
       result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
@@ -3988,7 +3989,10 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
     } else {
       return rewriter.notifyMatchFailure(op, "Unsupported vector type");
     }
-
+    if (elemType.getIntOrFloatBitWidth() == 16 && elementAlignmentBitwidth == 32) {
+      // FIXME: patch for vci elem bitwidth is 16 but alignment is 32
+      result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
+    }
     rewriter.replaceOp(op, result);
     return success();
   }

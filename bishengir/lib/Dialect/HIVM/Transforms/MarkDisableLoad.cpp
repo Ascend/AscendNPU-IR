@@ -49,9 +49,6 @@ using namespace mlir::hivm;
 
 namespace {
 
-constexpr llvm::StringLiteral kMixAicSuffix = "_mix_aic";
-constexpr llvm::StringLiteral kMixAivSuffix = "_mix_aiv";
-
 // Trace a value back through ViewLike ops to a function argument.
 // Returns {the BlockArgument value, its index in the function arg list},
 // or nullopt if the value does not originate from a function argument.
@@ -92,12 +89,12 @@ std::optional<func::FuncOp> findPairedMixFunc(func::FuncOp func,
                                               ModuleOp module) {
   StringRef name = func.getSymName();
   std::string pairedName;
-  if (name.ends_with(kMixAicSuffix))
-    pairedName =
-        name.drop_back(kMixAicSuffix.size()).str() + kMixAivSuffix.str();
-  else if (name.ends_with(kMixAivSuffix))
-    pairedName =
-        name.drop_back(kMixAivSuffix.size()).str() + kMixAicSuffix.str();
+  if (name.ends_with(kMixFuncAicSuffix))
+    pairedName = name.drop_back(kMixFuncAicSuffix.size()).str() +
+                 kMixFuncAivSuffix.str();
+  else if (name.ends_with(kMixFuncAivSuffix))
+    pairedName = name.drop_back(kMixFuncAivSuffix.size()).str() +
+                 kMixFuncAicSuffix.str();
   else
     return std::nullopt;
   auto sym = module.lookupSymbol(pairedName);

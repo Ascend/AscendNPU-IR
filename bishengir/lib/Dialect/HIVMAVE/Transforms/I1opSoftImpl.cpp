@@ -58,7 +58,7 @@ std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
                 dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp())) {
           Value upperBound = forOp.getUpperBound();
           std::optional<int64_t> constVal = getConstantIntValue(upperBound);
-          if (constVal.has_value() && constVal > util::VL / 2)
+          if (constVal.has_value() && constVal > util::VL)
             llvm::report_fatal_error(
                 "The offset of the vector is larger than the length of preg");
         }
@@ -66,7 +66,7 @@ std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
       newOffset = rewriter.create<arith::AddIOp>(loc, v, currOffset);
     } else if (Attribute attr = dyn_cast<Attribute>(offsetOperands[0])) {
       int64_t offset = dyn_cast<IntegerAttr>(attr).getSInt();
-      if (offset > util::VL / 2)
+      if (offset > util::VL)
         llvm::report_fatal_error(
             "The offset of the vector is larger than the length of preg");
       Value cstVal = rewriter.create<arith::ConstantIndexOp>(loc, offset);

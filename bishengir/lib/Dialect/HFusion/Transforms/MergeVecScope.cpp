@@ -171,6 +171,19 @@ bool analyzeMemrefDepdencies(Operation *op1, Operation *op2,
 
 using DependMap = DenseMap<Operation *, DenseSet<Operation *>>;
 
+bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
+
+bool containsAnchor(Operation *op) {
+  if (isa<hivm::AnchorOp>(op))
+    return true;
+  bool found = false;
+  op->walk([&](hivm::AnchorOp) {
+    found = true;
+    return WalkResult::interrupt();
+  });
+  return found;
+}
+
 DependMap computeDependencyClosure(const DependMap &directDeps) {
   DependMap closure;
   llvm::DenseSet<mlir::Operation *> processing;
@@ -716,7 +729,9 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
 
   Operation *between = call1->getNextNode();
   while (between && between != call2) {
-    betweenOps.push_back(between);
+    if (!isIgnoredBetweenOp(between)) {
+      betweenOps.push_back(between);
+    }
     between = between->getNextNode();
   }
 
@@ -728,6 +743,60 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
       return false;
     }
   }
+
+  // Identify ops that must NOT move because moving them would reorder
+  // hivm.hir.anchor IDs. Start from any op whose region transitively contains
+  // an anchor, then close over SSA neighbours within the gap (including values
+  // captured inside their regions) so dominance is preserved when they stay
+  // in place.
+  DenseSet<Operation *> pinnedOps;
+  DenseSet<Operation *> betweenOpsSet(betweenOps.begin(), betweenOps.end());
+  SmallVector<Operation *> pinWorklist;
+  for (Operation *op : betweenOps) {
+    if (containsAnchor(op)) {
+      pinnedOps.insert(op);
+      pinWorklist.push_back(op);
+    }
+  }
+  while (!pinWorklist.empty()) {
+    Operation *cur = pinWorklist.pop_back_val();
+    for (Value res : cur->getResults()) {
+      for (Operation *user : res.getUsers()) {
+        if (betweenOpsSet.contains(user) && pinnedOps.insert(user).second)
+          pinWorklist.push_back(user);
+      }
+    }
+    auto handleOperand = [&](Value v) {
+      if (Operation *def = v.getDefiningOp()) {
+        if (betweenOpsSet.contains(def) && pinnedOps.insert(def).second)
+          pinWorklist.push_back(def);
+      }
+    };
+    for (Value operand : cur->getOperands())
+      handleOperand(operand);
+    cur->walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands())
+        handleOperand(operand);
+    });
+  }
+
+  // Pinned ops must not feed call2; if they do, leaving them in place would
+  // break dominance once call2 is replaced by the merged call at call1's slot.
+  DenseSet<Value> call2Args(call2.getArgOperands().begin(),
+                            call2.getArgOperands().end());
+  for (Operation *p : pinnedOps) {
+    for (Value res : p->getResults()) {
+      if (call2Args.contains(res))
+        return false;
+    }
+  }
+
+  // From here on, only non-pinned ops are eligible to be moved.
+  SmallVector<Operation *> movableBetweenOps;
+  for (Operation *op : betweenOps)
+    if (!pinnedOps.contains(op))
+      movableBetweenOps.push_back(op);
+  betweenOps = movableBetweenOps;
 
   SmallVector<Operation *> memOps;
   GetMemOps(betweenOps, memOps);
@@ -796,11 +865,14 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
   betweenOps.clear();
   Operation *current = call1->getNextNode();
   while (current && current != call2) {
-    betweenOps.push_back(current);
+    if (!isIgnoredBetweenOp(current) && !pinnedOps.contains(current)) {
+      betweenOps.push_back(current);
+    }
     current = current->getNextNode();
   }
 
-  // when megeLevel==1, there should be no betweenOps here
+  // when megeLevel==1, there should be no movable betweenOps here
+  // (pinned anchor-bearing ops are allowed to remain in the gap)
   if (mergeLevel == 1 && !betweenOps.empty()) {
     return false;
   }

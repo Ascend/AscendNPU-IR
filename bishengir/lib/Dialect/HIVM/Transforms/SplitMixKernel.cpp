@@ -475,7 +475,6 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
     LDBG("current op: " << *op);
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       if (isLoopOfCoreType(forOp, filterCoreType)) {
-        forOp.setUpperBound(forOp.getLowerBound());
         return WalkResult::skip();
       }
     }
@@ -496,7 +495,7 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
             return WalkResult::interrupt();
           }
           if (innerRes.value()) {
-            annotateOpOperand(builder, innerOp, coreType);
+            annotateOpOperand(builder, op, coreType);
             (void)replaceResultWithInitOperand(innerOp);
           }
           return WalkResult::advance();
@@ -553,15 +552,14 @@ void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
 
 void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   StringRef funcName = func.getSymName();
-  if (!func->hasAttr(hivm::TFuncCoreTypeAttr::name))
-    return;
-
-  hivm::TFuncCoreTypeAttr funcCoreTypeAttr = cast<hivm::TFuncCoreTypeAttr>(
-      func.getOperation()->getAttr(hivm::TFuncCoreTypeAttr::name));
+  hivm::TFuncCoreTypeAttr funcCoreTypeAttr =
+      func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
   // only operate on functions with CUBE_OR_VECTOR attribute
   if (!funcCoreTypeAttr ||
-      funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX)
+      funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX) {
     return;
+  }
 
   // generate a Mix function declaration for host callers
   generateMixKernelDecl(func);
@@ -577,8 +575,9 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   OpBuilder builder(func);
   builder.setInsertionPointAfter(func.getOperation());
   auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
-  vecFunc.setSymNameAttr(builder.getStringAttr(funcName + "_mix_aiv"));
-  func.setSymNameAttr(builder.getStringAttr(funcName + "_mix_aic"));
+
+  func.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAicSuffix));
+  vecFunc.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAivSuffix));
 
   func->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
   vecFunc->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());

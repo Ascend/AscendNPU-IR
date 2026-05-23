@@ -108,6 +108,8 @@ static void convertAllToHFusion(OpPassManager &pm,
 
 static void preProcess(OpPassManager &pm,
                        const HFusionPipelineOptions &options) {
+  pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
+
   LegalizeBoolPassOptions clampOptions;
   clampOptions.enableClamp = true;
   pm.addPass(createLegalizeBoolPass(clampOptions));

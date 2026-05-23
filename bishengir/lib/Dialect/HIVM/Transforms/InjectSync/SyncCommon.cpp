@@ -202,9 +202,14 @@ bool isBackwardSync(const CompoundInstanceElement *nowCompound,
   return frontCompound->GetIndex() > nowCompound->GetIndex();
 }
 
+// Despite the legacy name, this check returns true for both scf::ForOp and
+// scf::WhileOp ancestors. scf.while is supported by the multi-buffer pipeline
+// via the alloca-based MultiBufferLoopAdapter (see HIVM/Utils/
+// MultiBufferLoopAdapter.h). Other LoopLike ops (scf.parallel, scf.forall,
+// ...) still bail out.
 bool checkAllParentLoopsAreForLoops(Operation *op) {
   while ((op = op->getParentOfType<LoopLikeOpInterface>())) {
-    if (!isa<scf::ForOp>(op)) {
+    if (!isa<scf::ForOp, scf::WhileOp>(op)) {
       return false;
     }
   }

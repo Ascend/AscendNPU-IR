@@ -119,11 +119,15 @@ struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
         return failure();
       }
 
-      // Currently, only allow scf::ForOp to handle the multi buffering
+      // Allow scf::ForOp and scf::WhileOp ancestors. scf.while is supported
+      // via the alloca-based counter scheme implemented in
+      // MultiBufferLoopAdapter; other LoopLike ops (scf.parallel,
+      // scf.forall, ...) are not yet supported because their semantics break
+      // the per-iteration slot rotation invariant.
       while (parentLoop) {
-        if (!isa<scf::ForOp>(parentLoop)) {
-          LLVM_DEBUG(DBGS()
-                     << "Currently only scf.for is supported loop type.\n");
+        if (!isa<scf::ForOp, scf::WhileOp>(parentLoop)) {
+          LLVM_DEBUG(DBGS() << "Unsupported loop type for multi-buffer: "
+                            << parentLoop->getName() << "\n");
           return failure();
         }
         parentLoop = parentLoop->getParentOfType<LoopLikeOpInterface>();

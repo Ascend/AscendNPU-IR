@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -674,6 +675,10 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
         .Case<ViewLikeOpInterface>([&](ViewLikeOpInterface op) {
           updateLayout(op->getResults(), info, changed);
         })
+        .Case<bishengir::memref_ext::AllocWorkspaceOp>(
+            [&](bishengir::memref_ext::AllocWorkspaceOp op) {
+              updateLayout(op->getResults(), info, changed);
+            })
         .Case<scf::YieldOp>([&](scf::YieldOp op) {
           Operation *parentOp = op->getParentOp();
           if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {

@@ -411,6 +411,12 @@ std::optional<int32_t> adjustAlignDim(Operation *op, Value operand,
     return std::nullopt;
   }
 
+  if (isNoNeedAlign(operand, alignDim ? std::optional(alignDim.value() - 1)
+                                      : std::nullopt) &&
+      hacc::utils::isRegBasedArch(moduleOp)) {
+    return std::nullopt;
+  }
+
   if (auto implByScalarOp = dyn_cast<hivm::ImplByScalarOpInterface>(op)) {
     if (implByScalarOp.shouldLowerToScalarLoops()) {
       LDBG("no need to stride align because it will be decomposed to scalar "

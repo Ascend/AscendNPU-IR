@@ -14,6 +14,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 
@@ -127,7 +128,8 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
   } else if (auto memSpaceCastOp =
                  v.getDefiningOp<memref::MemorySpaceCastOp>()) {
     return traceDefOp<OpType>(memSpaceCastOp.getSource(), isSingleChain);
-  }
+  } else if (auto unrealizedConversionCastOp = v.getDefiningOp<UnrealizedConversionCastOp>())
+    return traceDefOp<OpType>(unrealizedConversionCastOp.getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
   return std::nullopt;
 }
 
@@ -387,6 +389,8 @@ void traceDefOpsImpl(Value v,
   } else if (auto memSpaceCastOp =
                  v.getDefiningOp<memref::MemorySpaceCastOp>()) {
     traceSource(memSpaceCastOp.getSource());
+  } else if (auto unrealizedConversionCastOp = v.getDefiningOp<UnrealizedConversionCastOp>()) {
+    traceSource(unrealizedConversionCastOp.getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
   } else if (traceMode == TraceResultMode::StrictSame) {
     if (Operation *defOp = v.getDefiningOp()) {
       if (usesTraceRootValue(defOp, traceRoot)) {

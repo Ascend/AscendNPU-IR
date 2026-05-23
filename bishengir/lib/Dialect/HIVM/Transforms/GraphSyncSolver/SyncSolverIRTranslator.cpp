@@ -149,15 +149,12 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
   return collectedVals;
 }
 
-llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
-                                                        func::FuncOp funcOp) {
+llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
   std::queue<Value> que;
   llvm::DenseSet<Value> visitedVals;
   llvm::SetVector<Value> collectedValsSet;
   que.push(val);
   visitedVals.insert(val);
-  bool isSplittedMixKernel =
-      funcOp->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name);
 
   while (!que.empty()) {
     auto curVal = que.front();
@@ -175,14 +172,6 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
     }
 
     if (auto blockArg = dyn_cast<BlockArgument>(curVal)) {
-      if (options.isIntraCoreMode()) {
-        if (hacc::utils::isKernelArg(funcOp, blockArg.getArgNumber(),
-                                     hacc::KernelArgType::kWorkspace)) {
-          if (isSplittedMixKernel) {
-            continue;
-          }
-        }
-      }
       collectedValsSet.insert(curVal);
       continue;
     }
@@ -197,12 +186,14 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
     assert(defOp != nullptr);
 
     if (options.isIntraCoreMode()) {
-      if (isa<hivm::PointerCastOp, tensor::EmptyOp, memref::AllocOp>(defOp)) {
+      if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp,
+              tensor::EmptyOp, memref::AllocOp>(defOp)) {
         collectedValsSet.insert(resultVal);
         continue;
       }
     } else if (options.isCrossCoreMode()) {
-      if (isa<bishengir::memref_ext::AllocWorkspaceOp>(defOp)) {
+      if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp>(
+              defOp)) {
         collectedValsSet.insert(resultVal);
         continue;
       }
@@ -223,12 +214,10 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
 
 // Collect pointer operands for a vector of Values (flattening aliases).
 llvm::SmallVector<Value>
-IRTranslator::getMemoryOps(const SmallVector<Value> &vals,
-                           std::optional<func::FuncOp> funcOpOpt) {
+IRTranslator::getMemoryOps(const SmallVector<Value> &vals) {
   llvm::SetVector<Value> collectedValsSet;
-  auto curFuncOp = funcOpOpt.has_value() ? funcOpOpt.value() : this->funcOp;
   for (auto val : vals) {
-    for (auto memVal : tracebackMemVals(val, curFuncOp)) {
+    for (auto memVal : tracebackMemVals(val)) {
       collectedValsSet.insert(memVal);
     }
   }
@@ -458,6 +447,32 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
 }
 
 std::unique_ptr<OperationBase>
+IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
+  if (auto dstOp = dyn_cast<DestinationStyleOpInterface>(op)) {
+    return getDestinationStyleInterfaceOp(dstOp, parentOp);
+  }
+  if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+    return getLoadStoreOp(storeOp, parentOp);
+  }
+  if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+    return getLoadStoreOp(loadOp, parentOp);
+  }
+  if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+    return getLoadStoreOp(storeOp, parentOp);
+  }
+  if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
+    return getLoadStoreOp(loadOp, parentOp);
+  }
+  if (auto extractOp = dyn_cast<tensor::ExtractOp>(op)) {
+    return getTensorExtractOp(extractOp, parentOp);
+  }
+  if (auto callOp = dyn_cast<func::CallOp>(op)) {
+    return getCallOp(callOp, parentOp);
+  }
+  return nullptr;
+}
+
+std::unique_ptr<OperationBase>
 IRTranslator::getTensorExtractOp(tensor::ExtractOp extractOp,
                                  OperationBase *parentOp) {
   auto pipeRead = hivm::PIPE::PIPE_S;
@@ -488,7 +503,7 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
   }
   llvm::SetVector<Value> readMemVals, writeMemVals;
   auto handleRWValue = [&](Value val, hivm::MemoryEffect memoryEffect) {
-    for (auto &rwVal : getMemoryOps({val}, calledFuncOp)) {
+    for (auto &rwVal : getMemoryOps({val})) {
       if (auto blockArg = dyn_cast<BlockArgument>(rwVal)) {
         auto callArg = callOp->getOperand(blockArg.getArgNumber());
         if (memoryEffect == MemoryEffect::READ ||
@@ -572,6 +587,14 @@ bool IRTranslator::isParallelLoop(Loop *loopOp) {
   return false;
 }
 
+bool IRTranslator::isCVUnrolledLoop(Loop *loopOp) {
+  assert(loopOp != nullptr);
+  if (loopOp->op != nullptr) {
+    return loopOp->op->hasAttrOfType<UnitAttr>(hivm::kCVUnrolledLoopName);
+  }
+  return false;
+}
+
 std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   assert(loopOp != nullptr);
   auto forOp = dyn_cast<scf::ForOp>(loopOp->op);
@@ -589,6 +612,23 @@ std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
     return intAttr.getInt();
   }
   return {};
+}
+
+void IRTranslator::handleAnchorIdAttrMarkedOp(OperationBase *opBase) {
+  assert(opBase != nullptr);
+  Operation *op = opBase->op;
+  assert(op != nullptr);
+
+  if (auto intAttr =
+          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdBeforeAttr::name)) {
+    int64_t anchorId = intAttr.getInt();
+    anchorOpMap[anchorId] = opBase;
+  }
+  if (auto intAttr =
+          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdAfterAttr::name)) {
+    int64_t anchorId = intAttr.getInt();
+    anchorOpMap[anchorId] = opBase;
+  }
 }
 
 void IRTranslator::updateBlockArgAliases(Block *block,
@@ -639,6 +679,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
+        handleAnchorIdAttrMarkedOp(conditionOp.get());
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
           parScope->body.push_back(std::move(conditionOp));
         }
@@ -647,6 +688,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (isa<LoopLikeOpInterface>(op)) {
         auto loopOp = std::make_unique<Loop>(&op, parScope);
         loopOp->isParallel = isParallelLoop(loopOp.get());
+        loopOp->isCVUnrolledLoop = isCVUnrolledLoop(loopOp.get());
         loopOp->multibufferUnrollNum =
             getLoopMultibufferUnrollNum(loopOp.get());
         for (auto &region : op.getRegions()) {
@@ -659,6 +701,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto afterPlaceHolderOp =
             std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
         afterPlaceHolderOp->afterOp = loopOp.get();
+        handleAnchorIdAttrMarkedOp(loopOp.get());
         if (!skipEmptyScopes || !isEmptyScope(loopOp.get())) {
           parScope->body.push_back(std::move(beforePlaceHolderOp));
           parScope->body.push_back(std::move(loopOp));
@@ -673,6 +716,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));
         }
+        handleAnchorIdAttrMarkedOp(curScopeOp.get());
         scopeOp->body.push_back(std::move(curScopeOp));
         continue;
       }
@@ -687,33 +731,14 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
                               condBranchOp.getFalseDestOperands());
         continue;
       }
-
-      if (auto dstOp = dyn_cast<DestinationStyleOpInterface>(op)) {
-        if (auto rwOp = getDestinationStyleInterfaceOp(dstOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(storeOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(loadOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(storeOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
-        if (auto rwOp = getLoadStoreOp(loadOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto extractOp = dyn_cast<tensor::ExtractOp>(op)) {
-        if (auto rwOp = getTensorExtractOp(extractOp, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
-      } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
-        if (auto rwOp = getCallOp(callOp, parScope)) {
+      if (auto anchorOp = dyn_cast<hivm::AnchorOp>(op)) {
+        auto anchor = std::make_unique<Anchor>(&op, parScope, anchorOp.getId());
+        anchorOpMap[anchor->anchorId] = anchor.get();
+        parScope->body.push_back(std::move(anchor));
+        continue;
+      }
+      if (!options.ignoreNonAnchorOps) {
+        if (auto rwOp = translateRWLikeOp(&op, parScope)) {
           parScope->body.push_back(std::move(rwOp));
         }
       }
@@ -839,6 +864,16 @@ void IRTranslator::generateProcessingOrders(RWOperation *rwOp1,
 void IRTranslator::syncIrBuilder(OperationBase *op, Occurrence *parentOcc,
                                  int depth, bool isUseless) {
   assert(op != nullptr);
+  if (op->preOrderIndex == -1) {
+    op->preOrderIndex = globalPreOrderTraversalIndex++;
+  }
+
+  if (options.skipUnrollingAnchorOps) {
+    if (isa<Anchor>(op)) {
+      return;
+    }
+  }
+
   int startIndex = globalIndex++;
   auto occ = std::make_unique<Occurrence>(op, parentOcc, depth, startIndex, -1);
   occ->syncIrIndex = static_cast<int>(syncIr.size());

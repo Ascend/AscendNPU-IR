@@ -1,3 +1,16 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 //===------------- Util.cpp -----------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -15,9 +28,12 @@
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -213,15 +229,21 @@ createSinglePointStore(RewriterBase &rewriter, Location loc, Value storeValue,
   return rewriter.create<memref::StoreOp>(loc, storeValue, memOper, indexes);
 }
 
-Value createEmptyOpWithTargetElemType(OpBuilder &builder, Location loc,
-                                      Value source, Type targetElemType) {
+Value createEmptyOpWithTargetElemType(
+    OpBuilder &builder, Location loc, Value source, Type targetElemType,
+    std::optional<MemRefLayoutAttrInterface> layout) {
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
+#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
+    llvm_unreachable("Not implemented");
+#else
+    // TODO: it should be defined in Dialect/Tensor/IR
     return tensor::createTensorEmptyOpWithTargetElemType(builder, loc, source,
                                                          targetElemType);
+#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   }
-  return memref::createMemRefAllocOpWithTargetElemType(builder, loc, source,
-                                                       targetElemType);
+  return memref::createMemRefAllocOpWithTargetElemType(
+      builder, loc, source, targetElemType, std::move(layout));
 }
 
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
@@ -230,6 +252,22 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
     return tensor::createTensorEmptyOp(builder, loc, source);
   }
   return memref::createMemRefAllocOp(builder, loc, source);
+}
+
+Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source) {
+  auto shapedType = cast<ShapedType>(source.getType());
+  auto targetElemType = getElementTypeOrSelf(source);
+
+  ArrayRef<int64_t> staticShapes = shapedType.getShape();
+  llvm::SmallVector<Value, 2> dynamicSizes;
+  for (size_t i = 0; i < staticShapes.size(); i++) {
+    if (staticShapes[i] == ShapedType::kDynamic) {
+      Operation *dynDimOp = builder.create<tensor::DimOp>(loc, source, i);
+      dynamicSizes.push_back(dynDimOp->getResults()[0]);
+    }
+  }
+  return builder.create<bufferization::AllocTensorOp>(
+      loc, RankedTensorType::get(staticShapes, targetElemType), dynamicSizes);
 }
 
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
@@ -617,6 +655,13 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
       .Default([&](Type t) { return nullptr; });
 }
 
+bool isUnstructuredMemAccLoop(Operation *op) {
+  auto forOp = dyn_cast<scf::ForOp>(op);
+  if (!forOp)
+    return false;
+  return forOp->hasAttr("ExtractedLoadOrStore");
+}
+
 hivm::AxisKind getAxisKind(int dim, int rank) {
   if (dim == rank - 1)
     return hivm::AxisKind::LAST;
@@ -899,9 +944,14 @@ Value createPRegFromConstantOp(VectorType vecTy, bool condition,
   auto pgePattern =
       condition ? hivmave::PgePattern::ALL : hivmave::PgePattern::ALLF;
   auto pgeAttr = hivmave::PgePatternAttr::get(vecTy.getContext(), pgePattern);
+  // Create a 1D i1 vector type with the same number of elements as vecTy
+  auto maskType = VectorType::get({vecTy.getNumElements()}, rewriter.getI1Type());
   auto maskOp = rewriter.create<hivmave::VFPgeOp>(rewriter.getUnknownLoc(),
-                                                  vecTy, pgeAttr);
-  return maskOp;
+                                                  maskType, pgeAttr);
+  // Convert the 1D mask back to the original vector shape
+  auto castOp = rewriter.create<UnrealizedConversionCastOp>(
+      rewriter.getUnknownLoc(), vecTy, maskOp.getResult());
+  return castOp.getResult(0);
 }
 
 } // namespace utils
@@ -919,15 +969,17 @@ bool utils::isAllocLikeOp(Operation *op) {
 memref::ViewOp
 utils::createAllocWithSettingBufferSize(Operation *op, int64_t bufferSize,
                                         RewriterBase &opBuilder) {
-  assert(isAllocLikeOp(op));
+  assert(isAllocLikeOp(op) && "op is not alloc-like");
   OpBuilder::InsertionGuard g(opBuilder);
   opBuilder.setInsertionPointAfter(op);
   Location loc = op->getLoc();
   auto oldType = dyn_cast<MemRefType>(op->getResultTypes().front());
-  assert(oldType);
+  assert(oldType && "type is not a memref");
   // Create new alloc with static size.
-  auto newMemrefType =
-      MemRefType::get({bufferSize}, opBuilder.getI8Type(), mlir::AffineMap{},
+  MemRefType newMemrefType =
+      MemRefType::get({bufferSize}, opBuilder.getI8Type(),
+                      AffineMapAttr::get(AffineMap::getMultiDimIdentityMap(
+                          1, opBuilder.getContext())),
                       oldType.getMemorySpace());
   Value newAlloc;
   if (isa<memref::AllocOp>(op)) {

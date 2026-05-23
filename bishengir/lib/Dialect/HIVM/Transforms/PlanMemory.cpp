@@ -1055,8 +1055,17 @@ static bool noneReachableOpCheck(Operation *op) { return false; }
 template <typename DstOpType>
 bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
                                 DenseSet<Value> &visited,
+                                InplaceReuseReachableMap &reachableMap,
                                 llvm::function_ref<bool(Operation *)>
                                     extraCheck = defaultReachableOpCheck) {
+  // don't perform traversal if we already know that `src` is reachable or
+  // unreachable
+  if (auto computedReachable = reachableMap.get<DstOpType>(src)) {
+    return computedReachable.value();
+  }
+
+  // skip `src` if it was already processed in previous recursion steps,
+  // mark it as processed otherwise
   if (visited.contains(src)) {
     return false;
   }
@@ -1066,19 +1075,20 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
     if (isa<DstOpType>(user) && extraCheck(user)) {
       // successfully reach `DstOpType`
       LDBG("inplace-reuse reachable to op: " << *user << "\n");
+      reachableMap.put<DstOpType>(src, true);
       return true;
     }
 
     if (auto subview = dyn_cast<memref::SubViewOp>(user)) {
       // recursively visit subview result users
-      return VisitInplaceReuseReachable<DstOpType>(subview.getResult(), vfInfo,
-                                                   visited, extraCheck);
+      return VisitInplaceReuseReachable<DstOpType>(
+          subview.getResult(), vfInfo, visited, reachableMap, extraCheck);
     } else if (auto reshapeOp = dyn_cast<memref::CollapseShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(),
-                                                   vfInfo, visited, extraCheck);
+      return VisitInplaceReuseReachable<DstOpType>(
+          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
     } else if (auto reshapeOp = dyn_cast<memref::ExpandShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(),
-                                                   vfInfo, visited, extraCheck);
+      return VisitInplaceReuseReachable<DstOpType>(
+          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
     }
 
     if (!hivm::isVFCall(user)) {
@@ -1095,8 +1105,8 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
       if (!reuseAlloc.has_value()) {
         continue;
       }
-      if (VisitInplaceReuseReachable<DstOpType>(reuseAlloc.value(), vfInfo,
-                                                visited, extraCheck)) {
+      if (VisitInplaceReuseReachable<DstOpType>(
+              reuseAlloc.value(), vfInfo, visited, reachableMap, extraCheck)) {
         return true;
       }
     }
@@ -1105,9 +1115,39 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
   // not reachable for all paths
   LDBG("not inplace-reuse reachable from: "
        << src << ", to: " << DstOpType::getOperationName() << "\n");
+  reachableMap.put<DstOpType>(src, false);
   return false;
 }
 } // namespace
+
+template <typename DstOpType>
+void InplaceReuseReachableMap::put(Value key, bool val) {
+  if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
+    storeReachable[key] = val;
+  } else if constexpr (std::is_same_v<DstOpType, hivm::LoadOp>) {
+    loadReachable[key] = val;
+  } else {
+    llvm::report_fatal_error("Unsupported op type");
+  }
+}
+
+template <typename DstOpType>
+std::optional<bool> InplaceReuseReachableMap::get(Value key) {
+  if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
+    auto iter = storeReachable.find(key);
+    if (iter != storeReachable.end()) {
+      return iter->second;
+    }
+  } else if constexpr (std::is_same_v<DstOpType, hivm::LoadOp>) {
+    auto iter = loadReachable.find(key);
+    if (iter != loadReachable.end()) {
+      return iter->second;
+    }
+  } else {
+    llvm::report_fatal_error("Unsupported op type");
+  }
+  return std::nullopt;
+}
 
 /// Determines whether the value `src` is reachable to an operand of a
 /// `DstOpType` operation.
@@ -1116,16 +1156,18 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
 /// 1. `memref.subview`
 /// 2. Other vf operands that support inplace reuse
 template <typename DstOpType>
-bool MemPlan::IsInplaceReuseReachable(Value src) const {
+bool MemPlan::IsInplaceReuseReachable(
+    Value src, InplaceReuseReachableMap &reachableMap) const {
   LDBG("-- start visiting inplace-reuse path from: "
        << src << ", to: " << DstOpType::getOperationName() << "\n");
   DenseSet<Value> visited;
   return VisitInplaceReuseReachable<DstOpType>(
-      src, vfInplaceReuseInfo, visited,
+      src, vfInplaceReuseInfo, visited, reachableMap,
       disableVFReachableCheck ? noneReachableOpCheck : defaultReachableOpCheck);
 }
 
-bool MemPlan::IsReuseVFCall(Value gen, Value kill) const {
+bool MemPlan::IsReuseVFCall(Value gen, Value kill,
+                            InplaceReuseReachableMap &reachableMap) const {
   auto genAlloc = utils::tracebackMemRefToAlloc(gen);
   auto killAlloc = utils::tracebackMemRefToAlloc(kill);
   if (!genAlloc.has_value() || !killAlloc.has_value()) {
@@ -1138,8 +1180,8 @@ bool MemPlan::IsReuseVFCall(Value gen, Value kill) const {
   //
   // Note that we can still do inplace-reuse if it is only reachable from
   // one-side, because there will be synchronization inside other vf functions.
-  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value()) &&
-      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value())) {
+  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap) &&
+      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap)) {
     return false;
   }
   return true;
@@ -1151,6 +1193,7 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
   inplaceList.insert(inplaceList.end(), inplacePairList.begin(),
                      inplacePairList.end());
   DenseSet<Operation *> visitedInplaceVFCall;
+  InplaceReuseReachableMap reachableMap;
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
     if (it == genKillMap.end())
@@ -1183,8 +1226,9 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
         if (!VFCallInplaceReuseInfo::hasAliasArgRisk(op) &&
             vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
           if (record.find({genBuffer, killBuffer}) == record.end()) {
-            record.try_emplace({genBuffer, killBuffer},
-                               IsReuseVFCall(genBuffer, killBuffer));
+            record.try_emplace(
+                {genBuffer, killBuffer},
+                IsReuseVFCall(genBuffer, killBuffer, reachableMap));
           }
           isReuseVFCall = record[{genBuffer, killBuffer}];
         }
@@ -2721,10 +2765,22 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
   });
 
   for (auto [pointerCastOp, markedOp] : markedOps) {
-    if (auto forOp = pointerCastOp->getParentOfType<scf::ForOp>()) {
-      pointerCastOp->moveBefore(&forOp.getBody()->front());
-      markedOp->moveAfter(pointerCastOp);
+    auto loopOp = pointerCastOp->getParentOfType<LoopLikeOpInterface>();
+    if (!loopOp)
+      continue;
+    Block *targetBlock = nullptr;
+    if (auto forOp = dyn_cast<scf::ForOp>(loopOp.getOperation())) {
+      targetBlock = forOp.getBody();
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+      // scf.while body lives in the after region; the before region only runs
+      // the condition test, so hoisting pointer_cast there would evaluate it
+      // every guard check, breaking semantics.
+      targetBlock = &whileOp.getAfter().front();
+    } else {
+      continue;
     }
+    pointerCastOp->moveBefore(&targetBlock->front());
+    markedOp->moveAfter(pointerCastOp);
   }
 
   std::vector<PointerCastOp> visitedOps;

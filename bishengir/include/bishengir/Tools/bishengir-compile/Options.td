@@ -212,6 +212,14 @@ def EnableHIVMCrossCoreGSS : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableHIVMDelayedCrossCoreGSS : FeatureControlOptions<
+  "Use hivm delayed cross-core graph-sync-solver instead of inject-block-sync.",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "Disable auto inject sync intra core.",
   "bool",
@@ -228,6 +236,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
 > {
   let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
+}
+
+def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
+  "Use legacy InsertLoadStoreForMixCV.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
 }
 
 //===----------------------------------------------------------------------===//
@@ -696,6 +712,14 @@ def EnableTritonIRCompile : FeatureControlOptions<
 
 def EnableLayoutOptimization : FeatureControlOptions<
   "Enable Layout Optimization",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
+def DisableTightCoupledBuffer : FeatureControlOptions<
+  "Disable Tight Coupled Buffer Allocation",
   "bool",
   "false"
 > {

@@ -227,6 +227,30 @@ def SimplifyOps : Pass<"hfusion-simplify-ops", "func::FuncOp"> {
   let dependentDialects = ["hfusion::HFusionDialect"];
 }
 
+def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
+  let summary = "Uplift scf.while loops to scf.for when shape matches the "
+                "upstream populateUpliftWhileToForPatterns contract";
+  let description = [{
+    Thin downstream wrapper around upstream
+    `scf::populateUpliftWhileToForPatterns` (MLIR community pass; see
+    third-party/llvm-project/.../UpliftWhileToFor.cpp). The pass converts
+    each `scf.while` whose `before` block is a single `arith.cmpi`-driven
+    `scf.condition` and whose `after` block linearly increments the
+    induction variable via `arith.addi` into an equivalent `scf.for`.
+
+    Wired into HFusion preProcess so downstream HIVM passes (multi-buffer
+    in particular) can take the simpler scf.for path whenever the input
+    while-loop is already structurally for-shaped. While-loops that do
+    not match the pattern (e.g. data-driven loops where the comparison
+    is not against a monotonically-incremented IV) are left untouched
+    and continue to flow through the alloca-based MultiBufferLoopAdapter
+    counter (see
+    bishengir/include/bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h).
+  }];
+  let constructor = "mlir::hfusion::createUpliftWhileToForPass()";
+  let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
+}
+
 def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";

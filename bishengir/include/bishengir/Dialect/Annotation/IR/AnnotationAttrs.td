@@ -48,4 +48,27 @@ def Annotation_EffectModeAttr : Annotation_I32EnumAttr<"effect_mode", Annotation
   }];
 }
 
+class Annotation_Attr<string attrName, string attrMnemonic, list<Trait> traits = []>
+  : AttrDef<Annotation_Dialect, attrName, traits> {
+  let mnemonic = attrMnemonic;
+}
+
+def Annotation_FilterPassesAttr : Annotation_Attr<"FilterPasses", "filter_passes"> {
+  let summary = "Restricts which passes run on the annotated operation";
+  let description = [{
+    When attached to an operation, the pass manager will only execute the passes
+    whose command-line argument names appear in the comma-separated `passes`
+    list. All other passes are silently skipped for that operation.
+
+    Example:
+    ```mlir
+    func.func @foo() attributes {
+        annotation.filter_passes = #annotation.filter_passes<"canonicalize,cse">
+    } { ... }
+    ```
+  }];
+  let parameters = (ins AttrParameter<"StringAttr", "comma-separated pass argument names">:$passes);
+  let assemblyFormat = "`<` $passes `>`";
+}
+
 #endif // BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATIONATTRS_TD

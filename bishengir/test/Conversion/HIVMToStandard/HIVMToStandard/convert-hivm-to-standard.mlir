@@ -230,10 +230,10 @@ func.func @hivm_memref_load_gm_to_ub_bf16(%src : memref<2048xbf16, #hivm.address
 module {
   func.func @copyop1d() {
     // CHECK: func.func private @load_gm_to_ubuf_1d_int8_t(memref<{{.*}}, #hivm.address_space<gm>>,
-    // CHECK: memref<{{.*}}, #hivm.address_space<ub>>, i32, i8, index)
+    // CHECK: memref<{{.*}}, #hivm.address_space<ub>>, i32, i8, index, i32)
     %src = memref.alloc() : memref<16xi8, #hivm.address_space<gm>>
     %dst = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
-    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}})
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(%{{.*}}, %{{.*}}, %c0_i32, %c0_i8, %{{.*}}, %c0_i32)
     hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
                   outs(%dst : memref<16xi8, #hivm.address_space<ub>>)
     return
@@ -280,7 +280,7 @@ module {
 // -----
 module {
   func.func @copyop3d() {
-    // CHECK: func.func private @load_gm_to_ubuf_3d_half(memref<{{.*}}>, memref<{{.*}}>, i32, f16, index)
+    // CHECK: func.func private @load_gm_to_ubuf_3d_half(memref<{{.*}}>, memref<{{.*}}>, i32, f16, index, i32)
     // CHECK: attributes{{.*}}llvm.emit_c_interface
     %val = arith.constant 10.0 : f16
     %src = memref.alloc() : memref<2x1024x2048xf16, #hivm.address_space<gm>>
@@ -289,7 +289,7 @@ module {
                   outs(%dst : memref<2x1024x2048xf16, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadValue>
                   pad_value = %val : f16
-    // CHECK: call @load_gm_to_ubuf_3d_half(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[atomicKind:.*]])
+    // CHECK: call @load_gm_to_ubuf_3d_half(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[evict:.*]])
     return
  }
 }
@@ -297,7 +297,7 @@ module {
 // -----
 module {
   func.func @copyop4d() {
-    // CHECK: func.func private @load_gm_to_ubuf_3d_int16_t(memref<{{.*}}>, memref<{{.*}}>, i32, i16, index)
+    // CHECK: func.func private @load_gm_to_ubuf_3d_int16_t(memref<{{.*}}>, memref<{{.*}}>, i32, i16, index, i32)
     // CHECK: attributes{{.*}}llvm.emit_c_interface
     %val = arith.constant 10.0 : f16
     %src = memref.alloc() : memref<2x4x8x32xi16, #hivm.address_space<gm>>
@@ -305,7 +305,7 @@ module {
     hivm.hir.load ins(%src : memref<2x4x8x32xi16, #hivm.address_space<gm>>)
                   outs(%dst : memref<2x4x8x32xi16, #hivm.address_space<ub>>)
                   pad_mode = #hivm.padmode<PadFirstElem>
-    // CHECK: call @load_gm_to_ubuf_3d_int16_t(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[atomicKind:.*]])
+    // CHECK: call @load_gm_to_ubuf_3d_int16_t(%[[src:.*]], %[[dst:.*]], %[[padMode:.*]], %[[padValue:.*]], %[[leftPad:.*]], %[[evict:.*]])
     return
  }
 }
@@ -2843,6 +2843,25 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @fix_pipe_quant_scale(%arg0: tensor<64x64xf32>, %arg1: memref<32x64xf32, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>, %arg2: f32) {
     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%arg0 : tensor<64x64xf32>) outs(%arg1 : memref<32x64xf32, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>) quant_scale = %arg2 : f32 dual_dst_mode = <ROW_SPLIT>
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: @copyop1d_without_eviction_policy
+  func.func @copyop1d_without_eviction_policy() {
+    %src = memref.alloc() : memref<16xi8, #hivm.address_space<gm>>
+    %dst = memref.alloc() : memref<16xi8, #hivm.address_space<ub>>
+
+    // CHECK: %[[LEFT_PAD:.*]] = arith.constant 0 : index
+    // CHECK: %[[PAD_VALUE:.*]] = arith.constant 0 : i8
+    // CHECK: %[[EVICT:.*]] = arith.constant 0 : i32
+    // CHECK: call @load_gm_to_ubuf_1d_int8_t(
+    // CHECK-SAME: %{{.*}}, %{{.*}}, %[[EVICT]], %[[PAD_VALUE]], %[[LEFT_PAD]], %[[EVICT]]
+    hivm.hir.load ins(%src : memref<16xi8, #hivm.address_space<gm>>)
+                  outs(%dst : memref<16xi8, #hivm.address_space<ub>>)
+
     return
   }
 }

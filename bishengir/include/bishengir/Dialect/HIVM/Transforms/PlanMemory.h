@@ -460,6 +460,21 @@ private:
 /// Pair of StorageEntry.
 using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 
+/// Memoization cache intended to prevent recomputation of
+/// MemPlan::IsInplaceReuseReachable when it called with the same value.
+class InplaceReuseReachableMap {
+public:
+  template <typename DstOpType>
+  void put(Value key, bool val);
+
+  template <typename DstOpType>
+  std::optional<bool> get(Value key);
+
+private:
+  DenseMap<Value, bool> storeReachable;
+  DenseMap<Value, bool> loadReachable;
+};
+
 class MemPlan {
 public:
 MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
@@ -688,12 +703,14 @@ private:
 
   /// the vf call `op` that can reuse dst address `gen` and src address `kill`
   /// in limited situation
-  bool IsReuseVFCall(Value gen, Value kill) const;
+  bool IsReuseVFCall(Value gen, Value kill,
+                     InplaceReuseReachableMap &reachableMap) const;
 
   /// Determines whether the value `src` is reachable to an operand of a
   /// `DstOpType` operation.
   template <typename DstOpType>
-  bool IsInplaceReuseReachable(Value src) const;
+  bool IsInplaceReuseReachable(Value src,
+                               InplaceReuseReachableMap &reachableMap) const;
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>

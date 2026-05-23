@@ -322,6 +322,17 @@ def HIVM_TCoreTypeAttr : HIVM_Attr<"TCoreType", "tcore_type"> {
   let description = [{
     HIVM op core type attribute.
   }];
+  let constBuilderCall =
+      "::mlir::hivm::TCoreTypeAttr::get($_builder.getContext(), "
+      "::mlir::hivm::TCoreType::CUBE_OR_VECTOR)";
+}
+
+def HIVM_TCoreTypeMarkerAttr : HIVM_Attr<"TCoreTypeMarker", "tcore_type_marker"> {
+  let parameters = (ins EnumParameter<HIVM_TCoreTypeEnum>:$tcoretype);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    HIVM op core type marker attribute.
+  }];
 }
 
 def HIVM_TPartOfMixAttr : HIVM_Attr<"TPartOfMix", "part_of_mix"> {
@@ -1073,6 +1084,11 @@ def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
 }
 
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
   let description = [{HIVM has alias scopes attribute}];
 }
@@ -1116,6 +1132,24 @@ def HIVM_SimtMemScopeHintAttr
   let description = [{
     Memory scope hint for SIMT VF arguments before address space
     materialization.
+  }];
+}
+
+def HIVM_AnchorIdAttr : HIVM_Attr<"AnchorId", "anchor_id"> {
+  let description = [{
+    HIVM anchor id attribute.
+  }];
+}
+
+def HIVM_AnchorIdBeforeAttr : HIVM_Attr<"AnchorIdBefore", "anchor_id_before"> {
+  let description = [{
+    HIVM anchor id before attribute.
+  }];
+}
+
+def HIVM_AnchorIdAfterAttr : HIVM_Attr<"AnchorIdAfter", "anchor_id_after"> {
+  let description = [{
+    HIVM anchor id after attribute.
   }];
 }
 

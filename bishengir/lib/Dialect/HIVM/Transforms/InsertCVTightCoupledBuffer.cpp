@@ -282,61 +282,62 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
 
       // Skip nd2nz conversion for bias operand, just do simple copy
       if constexpr (!EnableND2NZ) {
-        auto l1SpaceAttr =
-            hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
-        auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),
-                                                  tensorType.getElementType(),
-                                                  nullptr, l1SpaceAttr);
-        auto plainMemrefType = mlir::MemRefType::get(
-            tensorType.getShape(), tensorType.getElementType());
-        Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
-        Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
-            loc, plainMemrefType, alloc);
-        auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
-            loc, tensorType, memspacecast,
-            /*restrict=*/true,
-            /*writable=*/true);
+         auto l1SpaceAttr =	 
+             hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);	 
+         auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),	 
+                                                   tensorType.getElementType(),	 
+                                                   nullptr, l1SpaceAttr);	 
+         auto plainMemrefType = mlir::MemRefType::get(	 
+             tensorType.getShape(), tensorType.getElementType());	 
+         Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);	 
+         Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(	 
+             loc, plainMemrefType, alloc);	 
+         auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(	 
+             loc, tensorType, memspacecast,	 
+             /*restrict=*/true,	 
+             /*writable=*/true);	 
+ 
+ 
+         rewriter.create<hivm::CopyOp>(loc,	 
+                                       /*resultType=*/TypeRange(),	 
+                                       /*src=*/origTensor,	 
+                                       /*dst=*/memspacecast);	 
+         rewriter.modifyOpInPlace(consumerOp, [&]() {	 
+           consumerOperand->set(emptyTensor.getResult());	 
+         });	 
+         changed = true;	 
+         continue;
+        }
 
-        rewriter.create<hivm::CopyOp>(loc,
-                                      /*resultType=*/TypeRange(),
-                                      /*src=*/origTensor,
-                                      /*dst=*/memspacecast);
-        rewriter.modifyOpInPlace(consumerOp, [&]() {
-          consumerOperand->set(emptyTensor.getResult());
-        });
-        changed = true;
-        continue;
+      // TODO: Consider encapsulating it as an nd2dz function
+      int64_t M = tensorType.getDimSize(0);
+      int64_t N = tensorType.getDimSize(1);
+      static constexpr int32_t alignM = 16;
+      static constexpr int32_t alignN = 32;
+      auto elemType = tensorType.getElementType();
+      uint64_t elemTypeSize = getElemBytesForAlign(elemType);
+      int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
+                              static_cast<uint64_t>(alignN)) / elemTypeSize);
+      if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
+        int64_t newM = static_cast<int64_t>(
+          AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
+        auto paddedType = RankedTensorType::get({newM, newN}, elemType);
+        Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
+
+        Value emptyForVbrc = rewriter.create<tensor::EmptyOp>(
+                loc, paddedType.getShape(), elemType);
+        auto vbrcOp = rewriter.create<hivm::VBrcOp>(
+                loc, paddedType, zeroConst, emptyForVbrc);
+        Value initializedMatrix = vbrcOp->getResult(0);
+        SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0), rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M), rewriter.getIndexAttr(N)};
+        SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+        origTensor = rewriter.create<tensor::InsertSliceOp>(
+                loc, origTensor, initializedMatrix, offsets, sizes, strides);
+        tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
+        M = newM;
+        N = newN;
       }
-
-    // TODO: Consider encapsulating it as an nd2dz function
-    int64_t M = tensorType.getDimSize(0);
-    int64_t N = tensorType.getDimSize(1);
-    static constexpr int32_t alignM = 16;
-    static constexpr int32_t alignN = 32;
-    auto elemType = tensorType.getElementType();
-    uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-    int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
-                            static_cast<uint64_t>(alignN)) / elemTypeSize);
-    if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
-      int64_t newM = static_cast<int64_t>(
-        AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
-      auto paddedType = RankedTensorType::get({newM, newN}, elemType);
-      Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
-
-      Value emptyForVbrc = rewriter.create<tensor::EmptyOp>(
-              loc, paddedType.getShape(), elemType);
-      auto vbrcOp = rewriter.create<hivm::VBrcOp>(
-              loc, paddedType, zeroConst, emptyForVbrc);
-      Value initializedMatrix = vbrcOp->getResult(0);
-      SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0), rewriter.getIndexAttr(0)};
-      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M), rewriter.getIndexAttr(N)};
-      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
-      origTensor = rewriter.create<tensor::InsertSliceOp>(
-              loc, origTensor, initializedMatrix, offsets, sizes, strides);
-      tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
-      M = newM;
-      N = newN;
-    }
 
       SmallVector<ReassociationIndices> reassociation = {{0}, {1, 2}};
       auto blkOr = getBlockElemsFor32BAlign(elemType);
@@ -531,7 +532,12 @@ struct InsertMoveL1BetweenVectorAndCube
           gatherOp->setAttr("hivm.fractal_layout", StringAttr::get(op.getContext(), layout));
       }
       bool isBiasOperand = (beforeValue == op.getPerChannelBias());
-      LogicalResult result = (isBiasOperand || layoutConversionOnTheFly)?
+      auto tensorType = mlir::dyn_cast<RankedTensorType>(beforeValue.getType());
+      // Only rank-2 tensors (original ND format) need to be transposed.
+      // After ND2NZ conversion the tensor becomes rank-4 (NZ format), so
+      // transposition is not required.
+      bool needTransposed = (tensorType.getRank() == 2);
+      LogicalResult result = (isBiasOperand || layoutConversionOnTheFly || !needTransposed)?
           InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
           InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
       if (failed(result))

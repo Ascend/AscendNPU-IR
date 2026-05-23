@@ -912,18 +912,20 @@ private:
 
   void addEvictionOperands(PatternRewriter &rewriter, CopyOpType op,
                            SmallVector<Value> &inputOperands) const {
-    Value evictionPolicy;
+    hivm::EvictionPolicy policy = hivm::EvictionPolicy::EvictFirst;
+
     if (op.getEvictionPolicy()) {
-      auto policy = op.getEvictionPolicyAttr().getPolicy();
+      policy = op.getEvictionPolicyAttr().getPolicy();
       if (!EvictionPolicyMap.contains(policy)) {
         op->emitWarning() << "Only support EvictFirst & EvictLast Policy for "
                              "now, fallback to EvictFirst instead.\n";
         policy = hivm::EvictionPolicy::EvictFirst;
       }
-      evictionPolicy = this->constantI32(rewriter, op->getLoc(),
-                                         EvictionPolicyMap.at(policy));
-      inputOperands.push_back(evictionPolicy);
     }
+
+    Value evictionPolicy =
+        this->constantI32(rewriter, op->getLoc(), EvictionPolicyMap.at(policy));
+    inputOperands.push_back(evictionPolicy);
   }
 
   void appendExtraOperands(PatternRewriter &rewriter, CopyOpType op,
