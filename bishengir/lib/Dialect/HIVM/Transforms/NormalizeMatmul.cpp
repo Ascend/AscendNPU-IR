@@ -918,6 +918,11 @@ public:
     if (!isa<T>(insertPointOp)){
       initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
       isUsingCounter = true;
+      if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
+        op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+        LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");
+        return success();
+      }
       LDBG("initCondition using counter");
     } else if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
       LDBG("initCondition always false");
