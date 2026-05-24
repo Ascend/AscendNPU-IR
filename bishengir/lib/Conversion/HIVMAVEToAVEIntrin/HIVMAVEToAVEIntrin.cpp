@@ -1267,13 +1267,6 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     int elementAlignment = getElementAlignmentBitWidth(load);
     auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
     bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
-    // If the op's own alignment equals elemWidth, it doesn't need
-    // unpack/pack — respect the op's own attribute over the parent's.
-    int opOwnAlignment = getOpElementAlignmentBitWidth(load);
-    if (opOwnAlignment != -1 &&
-        static_cast<unsigned>(opOwnAlignment) == elemWidth) {
-      elementAlignment = opOwnAlignment;
-    }
     if (elementAlignment != -1) {
       if (load.getPattern() == hivmave::LoadDist::NORM) {
         if (elemWidth == 8 && elementAlignment == 16) {
@@ -1477,13 +1470,6 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       elementAlignment = getElementAlignmentBitWidth(store);
     }
     auto elemWidth = dElemType.getIntOrFloatBitWidth();
-    // If the store op's own alignment equals elemWidth, it doesn't need
-    // pack — respect the op's own attribute over the parent's.
-    int storeOwnAlignment = getOpElementAlignmentBitWidth(store);
-    if (storeOwnAlignment != -1 &&
-        static_cast<unsigned>(storeOwnAlignment) == elemWidth) {
-      elementAlignment = storeOwnAlignment;
-    }
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
     auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
@@ -1934,15 +1920,7 @@ struct HIVMPgeOpLowering : public ConvertOpToLLVMPattern<VFPgeOp> {
     // elementAlignmentBitWidth of the parent ForOp. Here only handle user is
     // MaskedStoreOp, other op also should be handled in the future.
     if (auto store = dyn_cast<VFMaskedStoreOp>(*pge->getUsers().begin())) {
-      // If the store op's own alignment matches its element width, use it
-      // directly instead of inheriting from the parent function.
-      int storeOwnAlign = getOpElementAlignmentBitWidth(store);
-      VectorType storeVecTy = store.getVectorType();
-      auto storeElemWidth = storeVecTy.getElementType().getIntOrFloatBitWidth();
-      if (storeOwnAlign != -1 &&
-          static_cast<unsigned>(storeOwnAlign) == storeElemWidth) {
-        elementAlignment = storeOwnAlign;
-      } else if (auto valOp = store.getVal().getDefiningOp()) {
+      if (auto valOp = store.getVal().getDefiningOp()) {
         elementAlignment = getElementAlignmentBitWidth(valOp);
       }
     }
@@ -1952,19 +1930,6 @@ struct HIVMPgeOpLowering : public ConvertOpToLLVMPattern<VFPgeOp> {
     // mask bitwidth.
     if (elementAlignment == -1) {
       elementAlignment = getOpElementAlignmentBitWidth(pge);
-    }
-    if (elementAlignment == -1) {
-      // Check if the user op's own alignment matches the natural element width
-      // implied by the pge vector size, to avoid inheriting a mismatched
-      // parent alignment.
-      int naturalAlignment = util::VL_BITS / dstType.getNumElements();
-      for (auto *user : pge->getUsers()) {
-        int userOwnAlign = getOpElementAlignmentBitWidth(user);
-        if (userOwnAlign != -1 && userOwnAlign == naturalAlignment) {
-          elementAlignment = naturalAlignment;
-          break;
-        }
-      }
     }
     if (elementAlignment == -1) {
       elementAlignment = getElementAlignmentBitWidth(pge);
