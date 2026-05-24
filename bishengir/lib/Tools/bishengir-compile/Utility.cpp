@@ -278,6 +278,15 @@ llvm::LogicalResult inferLayoutOptimization(
         return WalkResult::interrupt();
       }
     }
+    // scope.scope indicates hand-coded IR (e.g. ssbuf, Affinity programming IR)
+    // that already contains fixpipe between mmadL1 and convert_layout. The new
+    // convert_layout optimization pass may insert a redundant fixpipe between
+    // mmadL1 and convert_layout in such IR. Disable layout optimization to use
+    // the original layout pipeline.
+    if (isa<scope::ScopeOp>(op)) {
+      config.setEnableLayoutOptimization(false);
+      return WalkResult::interrupt();
+    }
     return WalkResult::advance();
   });
   return success();
