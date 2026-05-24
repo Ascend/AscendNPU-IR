@@ -758,7 +758,17 @@ Value getCounterBufFromInitCondition(T mmadLikeOp) {
   return nullptr;
 }
 
-void addTailFallback(PatternRewriter &rewriter, Operation *op, Value counterBuf, Value outerInVal, Value outerOutVal) {
+hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type, Value operand_l, Value operand_r) {
+  auto addInit = mlir::utils::createEmptyOp(rewriter, loc, operand_l);
+  auto addOp = rewriter.create<hivm::VAddOp>(
+      loc, TypeRange{type},
+      ValueRange{operand_l, operand_r},
+      ValueRange{addInit});
+  return addOp;
+}
+
+template<typename T>
+void addTailFallback(PatternRewriter &rewriter, Operation *op, T mmad, Value counterBuf, Value outerInVal, Value outerOutVal, bool isAdd=false) {
   rewriter.setInsertionPointAfter(op);
   Location loc = op->getLoc();
   Value postCount = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
@@ -767,22 +777,38 @@ void addTailFallback(PatternRewriter &rewriter, Operation *op, Value counterBuf,
       loc, arith::CmpIPredicate::eq, postCount, zeroI32);
 
   auto fallbackIf = rewriter.create<scf::IfOp>(
-      loc, neverRan,
-      [&](OpBuilder &b, Location loc) {
-        if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
-          auto newVbrcOp =
-              cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
-          b.create<scf::YieldOp>(loc, ValueRange{newVbrcOp.getResult()});
-        } else {
-          b.create<scf::YieldOp>(loc, ValueRange{outerInVal});
-        }
-      },
-      [&](OpBuilder &b, Location loc) {
-        b.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
-      });
+      loc, mmad->getResultTypes(), neverRan, /*withElseRegion=*/true);
 
-  rewriter.replaceAllUsesExcept(outerOutVal, fallbackIf.getResult(0),
-                                fallbackIf.elseBlock()->getTerminator());
+  // Then block
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(fallbackIf.thenBlock());
+    if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
+      auto newVbrcOp = cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
+      rewriter.create<scf::YieldOp>(loc, ValueRange{newVbrcOp.getResult()});
+    } else {
+      rewriter.create<scf::YieldOp>(loc, ValueRange{outerInVal});
+    }
+  }
+
+
+  // Else block
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(fallbackIf.elseBlock());
+    if (isAdd) {
+      auto addOp = createVadd(rewriter, loc, outerOutVal.getType(), outerInVal, outerOutVal);
+      rewriter.create<scf::YieldOp>(loc, ValueRange{addOp.getResults()[0]});
+    } else {
+      rewriter.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
+    }
+  }
+
+  // replace user of output of CCF
+  rewriter.replaceUsesWithIf(outerOutVal, fallbackIf.getResult(0), [&](OpOperand &operand) {
+    Operation *userOp = operand.getOwner();
+    return !fallbackIf->isAncestor(userOp);
+  });
 }
 
 struct BrcBiasInfo {
@@ -936,18 +962,14 @@ public:
 
     // Add if block for the case that mmad is probably not executed
     if (biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
-      // vadd
-      rewriter.setInsertionPointAfter(insertPointOp);
-      auto addInit = mlir::utils::createEmptyOp(rewriter, op.getLoc(), op.getC());
-      auto addOp = rewriter.create<hivm::VAddOp>(
-          op.getLoc(), TypeRange{tmpNewMmad.getResults()[0].getType()},
-          ValueRange{insertPointOp->getResults()[0], outerInVal},
-          ValueRange{addInit});
       if (mayNotExec) {
         // generate vadd + yield
-        addTailFallback(rewriter, insertPointOp, counterBuf, addOp.getResult()[0], outerOutVal);
+        addTailFallback<T>(rewriter, insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal, true);
       } else {
-        // rewriter.replaceAllUsesWith(outerOutVal, addOp.getResult()[0]);
+        // generate vadd
+        rewriter.setInsertionPointAfter(insertPointOp);
+        Location loc = insertPointOp->getLoc();
+        auto addOp = createVadd(rewriter, loc, insertPointOp->getResults()[0].getType(), insertPointOp->getResults()[0], outerInVal);
         mlir::DominanceInfo domInfo(op->getParentOp());
         for (auto &use : llvm::make_early_inc_range(outerOutVal.getUses())) {
           Operation *userOp = use.getOwner();
@@ -968,7 +990,7 @@ public:
     } else {
       if (mayNotExec) {
         // generate yield
-        addTailFallback(rewriter, insertPointOp, counterBuf, outerInVal, outerOutVal);
+        addTailFallback<T>(rewriter, insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal);
       }
       LDBG("decompose matmul with other cases");
     }
