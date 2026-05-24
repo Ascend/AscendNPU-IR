@@ -35,7 +35,7 @@
 
 namespace mlir::hivm {
 
-static LogicalResult
+[[maybe_unused]] static LogicalResult
 resolveByInsertingStoreAndLoad(UnrealizedConversionCastOp downPropOp,
                                UnrealizedConversionCastOp upPropOp,
                                PatternRewriter &rewriter) {
@@ -67,9 +67,10 @@ resolveByInsertingStoreAndLoad(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-static LogicalResult resolveLocalToLocal(UnrealizedConversionCastOp downPropOp,
-                                         UnrealizedConversionCastOp upPropOp,
-                                         PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveLocalToLocal(UnrealizedConversionCastOp downPropOp,
+                    UnrealizedConversionCastOp upPropOp,
+                    PatternRewriter &rewriter) {
   auto downCoreType = PropagatorUtil::getCoreType(downPropOp);
   auto upCoreType = PropagatorUtil::getCoreType(upPropOp);
   if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
@@ -107,9 +108,10 @@ static LogicalResult resolveLocalToLocal(UnrealizedConversionCastOp downPropOp,
   return result;
 }
 
-static LogicalResult resolveGMtoLocal(UnrealizedConversionCastOp downPropOp,
-                                      UnrealizedConversionCastOp upPropOp,
-                                      PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveGMtoLocal(UnrealizedConversionCastOp downPropOp,
+                 UnrealizedConversionCastOp upPropOp,
+                 PatternRewriter &rewriter) {
   auto loadOp = PropagatorUtil::insertLoad(downPropOp->getResult(0),
                                            downPropOp.getLoc(), rewriter);
   Value loadedValue;
@@ -129,9 +131,10 @@ static LogicalResult resolveGMtoLocal(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
-                                      UnrealizedConversionCastOp upPropOp,
-                                      PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
+                 UnrealizedConversionCastOp upPropOp,
+                 PatternRewriter &rewriter) {
   auto storeOp = PropagatorUtil::insertStore(downPropOp->getResult(0),
                                              downPropOp.getLoc(), rewriter);
   Value loadedValue;
@@ -150,9 +153,9 @@ static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-[[maybe_unused]] static LogicalResult resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
-                                    UnrealizedConversionCastOp upPropOp,
-                                    PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
+               UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) {
   // Insert load from L0C to rematerialize the value in UB
   // for fixpipe op.
   auto fixpipeOp = downPropOp.getInputs()[0].getDefiningOp<FixpipeOp>();
@@ -192,9 +195,9 @@ static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
-                                   UnrealizedConversionCastOp upPropOp,
-                                   PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
+              UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) {
   Value srcValue = downPropOp->getResult(0);
   Location loc = downPropOp.getLoc();
 
@@ -231,9 +234,9 @@ static LogicalResult resolveL1ToUB(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-static LogicalResult resolveUBToL1(UnrealizedConversionCastOp downPropOp,
-                                   UnrealizedConversionCastOp upPropOp,
-                                   PatternRewriter &rewriter) {
+[[maybe_unused]] static LogicalResult
+resolveUBToL1(UnrealizedConversionCastOp downPropOp,
+              UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) {
   Value value = downPropOp->getResult(0);
   auto [allocationResult, ToTensorOp] =
       PropagatorUtil::insertTightCoupledBufferToL1(
@@ -259,68 +262,26 @@ static LogicalResult resolveUBToL1(UnrealizedConversionCastOp downPropOp,
 }
 
 //===----------------------------------------------------------------------===//
-// CVDataMovementResolvePropagationPattern
-//===----------------------------------------------------------------------===//
-
-LogicalResult CVDataMovementResolvePropagationPattern::matchAndRewrite(
-    UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) const {
-  if (!upPropOp->hasAttr(kPropagateUpAttr))
-    return failure();
-  auto downPropOp =
-      upPropOp.getInputs()[0].getDefiningOp<UnrealizedConversionCastOp>();
-  if (!downPropOp || !downPropOp->hasAttr(kPropagateDownAttr))
-    return failure();
-  auto [downCoreType, downAddressSpace] =
-      PropagatorUtil::extractPropagatorInfo(downPropOp);
-  auto [upCoreType, upAddressSpace] =
-      PropagatorUtil::extractPropagatorInfo(upPropOp);
-  rewriter.setInsertionPointAfter(downPropOp);
-  if (downCoreType == TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
-          upAddressSpace.end()) {
-    LDBG("Resolving Local to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveL0CToUB(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::UB) !=
-          downAddressSpace.end() &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::L1) !=
-          upAddressSpace.end()) {
-    LDBG("Resolving UB to L1: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveUBToL1(downPropOp, upPropOp, rewriter);
-  }
-  if (downCoreType != TCoreType::CUBE_AND_VECTOR &&
-      upCoreType != TCoreType::CUBE_AND_VECTOR &&
-      llvm::find(downAddressSpace, hivm::AddressSpace::L1) !=
-          downAddressSpace.end() &&
-      llvm::find(upAddressSpace, hivm::AddressSpace::UB) !=
-          upAddressSpace.end()) {
-    LDBG("Resolving L1 to UB: " << downPropOp << "\n" << upPropOp << "\n");
-    return resolveL1ToUB(downPropOp, upPropOp, rewriter);
-  }
-  return failure();
-}
-
-//===----------------------------------------------------------------------===//
 // TightCoupledBufferResolvePropagationPattern
 //===----------------------------------------------------------------------===//
 
-LogicalResult TightCoupledBufferResolvePropagationPattern::resolveUBToL1(UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp, PatternRewriter &rewriter) const {
+LogicalResult TightCoupledBufferResolvePropagationPattern::resolveUBToL1(
+    UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp,
+    PatternRewriter &rewriter) const {
   Value value = downPropOp->getResult(0);
   auto [allocationResult, ToTensorOp] =
       PropagatorUtil::insertTightCoupledBufferToL1(
           value, downPropOp.getLoc(), rewriter,
           cast<RankedTensorType>(value.getType()).getShape());
-  auto copyOp = rewriter.create<CopyOp>(downPropOp.getLoc(),
-                                        TypeRange{},
-                                        value, allocationResult.plainMemref);
+  auto copyOp = rewriter.create<CopyOp>(downPropOp.getLoc(), TypeRange{}, value,
+                                        allocationResult.plainMemref);
   copyOp->setAttr("inserted-copy", rewriter.getUnitAttr());
 
   // Update operand to use the L1-buffered tensor
   auto tensor = ToTensorOp;
-  rewriter.modifyOpInPlace(
-      upPropOp, [&]() { upPropOp.getInputsMutable()[0].set(tensor.getResult()); });
+  rewriter.modifyOpInPlace(upPropOp, [&]() {
+    upPropOp.getInputsMutable()[0].set(tensor.getResult());
+  });
   PropagatorUtil::createPropagatorUp(&copyOp.getSrcMutable(), downPropOp,
                                      rewriter);
   PropagatorUtil::createPropagatorUp(&copyOp.getDstMutable(), upPropOp,

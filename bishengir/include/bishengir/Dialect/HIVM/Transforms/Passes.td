@@ -607,6 +607,23 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let options = [
+    Option<"enableV2SliceSwapOpt", "enable-v2-slice-swap-opt", "bool",
+           /*default=*/"false",
+           "Enable fixpipe/extract_slice and fixpipe/insert_slice swap optimization.">
+  ];
+}
+
+def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
+  let summary = "Insert HIVM Fixpipe op";
+  let constructor = "mlir::hivm::createInsertFixpipePass()";
+  let dependentDialects =
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let options = [
+    Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+           /*default=*/"false",
+           "Infer fixpipe dma_mode from source/destination shape compatibility.">
+  ];
 }
 
 def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
@@ -655,10 +672,6 @@ def InsertLoadStoreForMixCV
       "enableDotScaledCompile", "enable-dot-scaled-compile", "bool",
       /*default=*/"false",
       "Enable dot scaled compile">,
-    Option<
-      "enableLayoutOptimization", "enable-layout-optimization", "bool",
-      /*default=*/"false",
-      "Enable Layout Optimization">,
     Option<
       "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
       /*default=*/"false",
@@ -928,11 +941,16 @@ def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
 
-  let options = [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
-                        /*default=*/"false",
-                        "Enable allow agnostic ops propagate reshape."
-                        "Currently disabled because other passes has not supported"
-                        "fractal-layout operations.">];
+  let options = [
+    Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
+           /*default=*/"false",
+           "Enable allow agnostic ops propagate reshape."
+           "Currently disabled because other passes has not supported"
+           "fractal-layout operations.">,
+    Option<"enableElementwisePropagate", "enable-elementwise-propagate", "bool",
+           /*default=*/"false",
+           "Enable elementwise convert layout propagation patterns.">
+  ];
 }
 
 def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {

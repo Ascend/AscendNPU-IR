@@ -1,14 +1,13 @@
-// REQUIRES: issue78
 // REQUIRES: enable-lir-compile
 
-// RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-legacy-insert-load-store-for-mix-cv=true --enable-sanitizer=true %s | FileCheck %s
+// RUN: bishengir-compile --target=Ascend950PR_9589 --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-sanitizer=true %s | FileCheck %s
 
-// CHECK-DAG: call void @llvm.hivm.SET.CROSS.CORE({{.*}}, {{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[S_API:.*]], !asan.stub.mangling.name ![[S_STUB:.*]]
-// CHECK-DAG: call void @llvm.hivm.WAIT.FLAG.DEV.REG({{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[W_API:.*]], !asan.stub.mangling.name ![[W_STUB:.*]]
-// CHECK-DAG: ![[S_API]] = !{!"ffts_cross_core_sync"}
-// CHECK-DAG: ![[S_STUB]] = !{!"_Z39__sanitizer_report_ffts_cross_core_syncPU3AS1hmmljm"}
-// CHECK-DAG: ![[W_API]] = !{!"wait_flag_dev"}
-// CHECK-DAG: ![[W_STUB]] = !{!"_Z32__sanitizer_report_wait_flag_devPU3AS1hmmll"}
+// CHECK-DAG: call void @llvm.hivm.SET.FLAG.IMM({{.*}}, {{.*}}, {{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[S_API:.*]], !asan.stub.mangling.name ![[S_STUB:.*]]
+// CHECK-DAG: call void @llvm.hivm.WAIT.FLAG.IMM({{.*}}, {{.*}}, {{.*}}), !dbg {{.*}}, !asan.cce.api.name ![[W_API:.*]], !asan.stub.mangling.name ![[W_STUB:.*]]
+// CHECK-DAG: ![[S_API]] = !{!"set_flag"}
+// CHECK-DAG: ![[S_STUB]] = !{!"_Z27__sanitizer_report_set_flagPU3AS1hmmljjj"}
+// CHECK-DAG: ![[W_API]] = !{!"wait_flag"}
+// CHECK-DAG: ![[W_STUB]] = !{!"_Z28__sanitizer_report_wait_flagPU3AS1hmmljjj"}
 
 module {
   func.func @fn_dot(%arg0: memref<?xi8>, %arg1: memref<?xf32> {tt.divisibility = 16 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "mix"} {

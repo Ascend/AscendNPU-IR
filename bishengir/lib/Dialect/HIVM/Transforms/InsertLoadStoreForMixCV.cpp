@@ -96,7 +96,6 @@ public:
 private:
   void runLegacyInsertLoadStoreForMixCV();
   bool isA5Target();
-  bool isEnabledCvDataMovement();
   bool isEnabledTightCoupledBuffer();
   LogicalResult insertPropagationOp(func::FuncOp funcOp);
   LogicalResult propagateAndResolve(func::FuncOp funcOp);
@@ -115,13 +114,8 @@ bool InsertLoadStoreForMixCVPass::isA5Target() {
   return hacc::utils::isAscend950(this->target);
 }
 
-bool InsertLoadStoreForMixCVPass::isEnabledCvDataMovement()  {
-  if (enableDotScaledCompile || !enableLayoutOptimization) return false;
-  return isA5Target();
-}
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer()  {
-  if (disableTightCoupledBuffer) return false;
-  if (enableDotScaledCompile || enableLayoutOptimization) return false;
+  if (disableTightCoupledBuffer || enableDotScaledCompile) return false;
   return isA5Target();
 }
 
@@ -423,9 +417,7 @@ LogicalResult InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp f
       patterns.getContext());
   rewriteConfig.fold = false;
 
-  if (isEnabledCvDataMovement()) {
-    patterns.add<CVDataMovementResolvePropagationPattern>(patterns.getContext());
-  } else if (isEnabledTightCoupledBuffer()) {
+  if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferResolvePropagationPattern>(patterns.getContext());
   }
 
@@ -453,13 +445,8 @@ LogicalResult InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp func
   GreedyRewriteConfig rewriteConfig;
   patterns.add<InsertPropagationPattern>(patterns.getContext());
   patterns.add<A5InsertionPattern>(patterns.getContext());
-  if (isEnabledCvDataMovement()) {
-    // TODO: add case for InsertUBAfterFixpipePattern
-    // case of InsertL1BeforeMmadPattern tested by compile-triton-hstu-attn-fwd.mlir
-    patterns.add<InsertCVDataMovementPattern>(patterns.getContext());
-  } else if (isEnabledTightCoupledBuffer()) {
-    patterns.add<InsertTightCoupledBufferPattern>(patterns.getContext());
-  }
+  // TODO: add case for InsertUBAfterFixpipePattern
+  // case of InsertL1BeforeMmadPattern tested by compile-triton-hstu-attn-fwd.mlir
   rewriteConfig.fold = false;
   if (failed(
           applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
