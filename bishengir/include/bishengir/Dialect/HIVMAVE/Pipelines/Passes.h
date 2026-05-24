@@ -32,7 +32,7 @@ struct HIVMAVEPipelineOptions
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableLayoutOptimization{
       *this, "enable-layout-optimization",
-      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(true)};
+      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
   PassOptions::Option<bool> enableFullSIMTCompile{
       *this, "pure-simt", llvm::cl::desc("Enable full simt compile"),
       llvm::cl::init(false)};
