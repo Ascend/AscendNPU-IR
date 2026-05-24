@@ -91,10 +91,6 @@ bool hasSplitModules(mlir::ModuleOp topMod);
 llvm::LogicalResult inferMixedCV(mlir::ModuleOp &module,
                                  bishengir::BiShengIRCompileMainConfig &config);
 
-llvm::LogicalResult
-inferLayoutOptimization(mlir::ModuleOp &module,
-                        bishengir::BiShengIRCompileMainConfig &config);
-
 llvm::LogicalResult inferDotScale(mlir::ModuleOp &module,
                                   bishengir::BiShengIRCompileMainConfig &config);
 

@@ -32,7 +32,7 @@ struct HIVMAVEPipelineOptions
       llvm::cl::init(false)};
   PassOptions::Option<bool> enableLayoutOptimization{
       *this, "enable-layout-optimization",
-      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(true)};
+      llvm::cl::desc("Enable Layout Optimization"), llvm::cl::init(false)};
   PassOptions::Option<bool> enableFullSIMTCompile{
       *this, "pure-simt", llvm::cl::desc("Enable full simt compile"),
       llvm::cl::init(false)};
@@ -158,9 +158,9 @@ struct HIVMAVEPipelineOptions
       llvm::cl::init(false)};
 
   PassOptions::Option<bool> useDPX{
-      *this, "use-dpx",
-      llvm::cl::desc("Enable SIMT lowering through DPX Dialect."),
-      llvm::cl::init(true)};
+    *this, "use-dpx",
+    llvm::cl::desc("Enable SIMT lowering through DPX Dialect."),
+    llvm::cl::init(true)};
 
   PassOptions::Option<int> enableBishengirSimtOptimization{
       *this, "enable-bishengir-simt-optimization",
@@ -179,7 +179,7 @@ struct HIVMAVEPipelineOptions
       *this, "simt-vf-dynamic-size",
       llvm::cl::desc("Dynamic ub size(KB) for simt VF. Default is 216"),
       llvm::cl::init(216)};
-
+       
   PassOptions::Option<int> maxReductionSplitNum{
       *this, "max-reduction-split",
       llvm::cl::desc("Max split times for reductionLoop. Default is 1"),

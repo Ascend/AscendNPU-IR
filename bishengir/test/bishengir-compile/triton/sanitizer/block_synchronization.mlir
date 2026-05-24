@@ -1,4 +1,3 @@
-// REQUIRES: issue78
 // REQUIRES: enable-lir-compile
 
 // RUN: bishengir-compile --enable-lir-compile=false --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true --enable-legacy-insert-load-store-for-mix-cv=true --enable-sanitizer=true %s | FileCheck %s

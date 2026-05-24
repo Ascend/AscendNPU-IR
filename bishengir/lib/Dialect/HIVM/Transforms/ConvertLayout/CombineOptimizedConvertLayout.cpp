@@ -6,7 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
@@ -129,22 +128,10 @@ struct FoldToTensorConvertLayoutPattern
       return rewriter.notifyMatchFailure(
           op, "source layout is not ND");
 
-    // Multi-use to_tensor is allowed: fold only this convert_layout and keep
-    // original ND path for other users.
-    // Only erase original ND producer chain if no other users besides this
-    // convert_layout and annotation.mark ops.
-    SmallVector<annotation::MarkOp> annotationUsers;
-    bool canEraseOriginalProducerChain = true;
-    for (Operation *user : toTensorOp.getResult().getUsers()) {
-      if (user == op.getOperation())
-        continue;
-      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-        annotationUsers.push_back(markOp);
-        continue;
-      }
-      canEraseOriginalProducerChain = false;
-      break;
-    }
+    // If to_tensor has multiple uses, do a split rewrite:
+    // - fold only this convert_layout
+    // - keep original ND producer chain for other users.
+    bool canEraseOriginalProducerChain = toTensorOp.getResult().hasOneUse();
 
     rewriter.setInsertionPointAfter(loadOp);
     // Get the result tensor type (fractal shape)
@@ -167,29 +154,21 @@ struct FoldToTensorConvertLayoutPattern
                              hasInitOutBuffer, padValue, initCondition);
 
     auto newToTensorOp =
-        rewriter.create<bufferization::ToTensorOp>(
-        op.getLoc(), allocOp);
+        rewriter.create<bufferization::ToTensorOp>(op.getLoc(), allocOp);
     newToTensorOp->setAttrs(toTensorOp->getAttrs());
 
     // Replace only this convert_layout.
     rewriter.replaceOp(op, newToTensorOp.getResult());
 
-    // Single-use or annotation-only case: old ND chain is now dead, erase it.
-    // Re-point any annotation.mark ops to the new fractal tensor first.
+    // Single-use case: old ND chain is now dead, erase it.
     // Multi-use case: keep load/to_tensor/memref alloc for other users.
     if (canEraseOriginalProducerChain) {
-      for (auto markOp : annotationUsers)
-        rewriter.modifyOpInPlace(markOp, [&]() {
-          markOp->replaceUsesOfWith(toTensorOp.getResult(),
-                                    newToTensorOp.getResult());
-        });
       auto oldAllocOp = toTensorMemref.getDefiningOp<memref::AllocOp>();
       rewriter.eraseOp(loadOp);
       rewriter.eraseOp(toTensorOp);
       if (oldAllocOp && oldAllocOp->use_empty())
         rewriter.eraseOp(oldAllocOp);
     }
-    
     return success();
   }
 };
@@ -277,20 +256,7 @@ struct FoldToTensorConvertLayoutSubviewPattern
 
     // Multi-use to_tensor is allowed: fold only this convert_layout and keep
     // original ND path for other users.
-    // Only erase original ND producer chain if no other users besides this
-    // convert_layout and annotation.mark ops.
-    SmallVector<annotation::MarkOp> annotationUsers;
-    bool canEraseOriginalProducerChain = true;
-    for (Operation *user : toTensorOp.getResult().getUsers()) {
-      if (user == op.getOperation())
-        continue;
-      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-        annotationUsers.push_back(markOp);
-        continue;
-      }
-      canEraseOriginalProducerChain = false;
-      break;
-    }
+    bool canEraseOriginalProducerChain = toTensorOp.getResult().hasOneUse();
 
     Value allocMemref = toTensorOp.getMemref();
     auto origAllocOp = allocMemref.getDefiningOp<memref::AllocOp>();
@@ -396,18 +362,12 @@ struct FoldToTensorConvertLayoutSubviewPattern
     // Replace only this convert_layout.
     rewriter.replaceOp(op, newToTensorOp.getResult());
 
-    // Single-use or annotation-only case: old ND chain is dead and can be
-    // erased. Re-point any annotation.mark ops to the new fractal tensor first.
+    // Single-use case: old ND chain is dead and can be erased.
     // Multi-use case: preserve old chain for remaining users.
     if (canEraseOriginalProducerChain) {
-      for (auto markOp : annotationUsers)
-        rewriter.modifyOpInPlace(markOp, [&]() {
-          markOp->replaceUsesOfWith(toTensorOp.getResult(),
-                                    newToTensorOp.getResult());
-        });
-      rewriter.eraseOp(loadOp);      // user of subview_out
-      rewriter.eraseOp(subviewOut);  // user of origAllocOp
-      rewriter.eraseOp(toTensorOp);  // user of origAllocOp
+      rewriter.eraseOp(loadOp);     // user of subview_out
+      rewriter.eraseOp(subviewOut); // user of origAllocOp
+      rewriter.eraseOp(toTensorOp); // user of origAllocOp
       if (origAllocOp->use_empty())
         rewriter.eraseOp(origAllocOp);
     }
@@ -619,15 +579,6 @@ struct FoldVCastConvertLayoutPattern
   }
 };
 
-void populateCombineOptimizedConvertLayoutPatterns(
-    RewritePatternSet &patterns, MLIRContext *context) {
-  patterns.add<FoldToTensorConvertLayoutPattern>(context);
-  patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
-  patterns.add<FoldFixpipeConvertLayoutPattern>(context);
-  // patterns.add<FoldVCastConvertLayoutPattern>(context);
-  ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-}
-
 //===----------------------------------------------------------------------===//
 // Pass Definition
 //===----------------------------------------------------------------------===//
@@ -640,7 +591,11 @@ struct CombineOptimizedConvertLayoutPass
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-    populateCombineOptimizedConvertLayoutPatterns(patterns, context);
+    patterns.add<FoldToTensorConvertLayoutPattern>(context);
+    patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
+    patterns.add<FoldFixpipeConvertLayoutPattern>(context);
+    // patterns.add<FoldVCastConvertLayoutPattern>(context);
+    ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
 
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;

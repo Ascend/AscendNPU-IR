@@ -9,12 +9,12 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 
 #define DEBUG_TYPE "fixpipe-opts"
 
@@ -27,10 +27,12 @@ namespace {
 //===----------------------------------------------------------------------===//
 
 FailureOr<std::pair<SmallVector<Value>, SmallVector<Value>>>
-computeSliceParamsInNZLayout(ArrayRef<OpFoldResult> mixedOffsets,
-                             ArrayRef<OpFoldResult> mixedSizes,
-                             RankedTensorType sourceType, OpBuilder &builder,
-                             Location loc) {
+computeSliceParamsInNZLayout(
+    ArrayRef<OpFoldResult> mixedOffsets,
+    ArrayRef<OpFoldResult> mixedSizes,
+    RankedTensorType sourceType,
+    OpBuilder &builder,
+    Location loc) {
 
   auto sourceShape = sourceType.getShape();
   int64_t sourceRank = sourceType.getRank();
@@ -103,7 +105,8 @@ computeSliceParamsInNZLayout(ArrayRef<OpFoldResult> mixedOffsets,
 /// After:
 ///   %new_slice = tensor.extract_slice %t0[...'][...'][1,1,1,1]  // slice in nZ
 ///   %result = hivm.hir.fixpipe {dma_mode = nz2nd} ins(%new_slice) outs(...)
-struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
+struct SwapFixpipeDownThroughExtractSlice
+    : public OpRewritePattern<FixpipeOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(FixpipeOp fixpipeOp,
@@ -131,8 +134,8 @@ struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
     for (OpFoldResult stride : extractSliceOp.getMixedStrides()) {
       std::optional<int64_t> strideVal = getConstantIntValue(stride);
       if (!strideVal || *strideVal != 1)
-        return rewriter.notifyMatchFailure(
-            fixpipeOp, "extract_slice has non-unit or dynamic strides");
+        return rewriter.notifyMatchFailure(fixpipeOp,
+                                           "extract_slice has non-unit or dynamic strides");
     }
 
     Location loc = extractSliceOp.getLoc();
@@ -144,12 +147,15 @@ struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
 
     // Compute slice parameters in source (nZ) layout
     auto sliceParamsResult = computeSliceParamsInNZLayout(
-        extractSliceOp.getMixedOffsets(), extractSliceOp.getMixedSizes(),
-        sourceType, rewriter, loc);
+        extractSliceOp.getMixedOffsets(),
+        extractSliceOp.getMixedSizes(),
+        sourceType,
+        rewriter,
+        loc);
 
     if (failed(sliceParamsResult))
-      return rewriter.notifyMatchFailure(
-          fixpipeOp, "failed to compute slice parameters in nZ layout");
+      return rewriter.notifyMatchFailure(fixpipeOp,
+                                         "failed to compute slice parameters in nZ layout");
 
     auto &[newOffsets, newSizes] = *sliceParamsResult;
 
@@ -165,14 +171,18 @@ struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
 
     // Result type for new extract_slice (dynamic since sizes may be dynamic)
     SmallVector<int64_t> newSliceShape(sourceRank, ShapedType::kDynamic);
-    auto newSliceType =
-        RankedTensorType::get(newSliceShape, sourceType.getElementType());
+    auto newSliceType = RankedTensorType::get(
+        newSliceShape, sourceType.getElementType());
 
     // Create new extract_slice on source (in nZ layout)
     auto newExtractSlice = rewriter.create<tensor::ExtractSliceOp>(
-        loc, newSliceType, source, newOffsetsOFR, newSizesOFR, newStrides);
+        loc, newSliceType, source,
+        newOffsetsOFR, newSizesOFR, newStrides);
 
     // Create new fixpipe to convert sliced nZ to ND
+    auto quantModeAttr = fixpipeOp.getPreQuantAttr();
+    auto reluModeAttr = fixpipeOp.getPreReluAttr();
+
     auto newExtractSliceResult = newExtractSlice.getResult();
 
     // Determine output element type from original fixpipe output
@@ -185,12 +195,14 @@ struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
     FixpipeDMAModeAttr newDmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
 
-    auto newFixpipeOp = rewriter.create<FixpipeOp>(loc, fixpipeInit.getType(),
-                                                   fixpipeOp->getOperands(),
-                                                   fixpipeOp->getAttrs());
-    newFixpipeOp.getSrcMutable().assign(newExtractSliceResult);
-    newFixpipeOp.getDstMutable().assign(fixpipeInit);
-    newFixpipeOp.setDmaModeAttr(newDmaModeAttr);
+    auto newFixpipeOp = rewriter.create<FixpipeOp>(
+        loc, fixpipeInit.getType(),
+        /*src=*/newExtractSliceResult,
+        /*dst=*/fixpipeInit,
+        newDmaModeAttr,
+        FixpipeDualDstModeAttr{},
+        quantModeAttr,
+        reluModeAttr);
 
     // Replace original extract_slice with new fixpipe result
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
@@ -202,7 +214,7 @@ struct SwapFixpipeDownThroughExtractSlice : public OpRewritePattern<FixpipeOp> {
     return success();
   }
 };
-} // namespace
+}
 
 void mlir::hivm::populateFixpipeExtractSlice(RewritePatternSet &patterns,
                                              MLIRContext *context) {

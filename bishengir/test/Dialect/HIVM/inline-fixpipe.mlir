@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK: func.func @matmul
 func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {global_kernel = "local"} {
@@ -88,7 +88,7 @@ func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memr
       %45 = arith.subi %c256, %44 : index
       %46 = arith.minsi %45, %c256 : index
       %extracted_slice = tensor.extract_slice %39[0, 0] [%46, %42] [1, 1] : tensor<256x128xf16> to tensor<?x?xf16>
-      // CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}}
+      // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
       %subview_16 = memref.subview %reinterpret_cast_10[0, 0] [%46, %42] [1, 1] : memref<256x128xf16, strided<[128, 1], offset: ?>> to memref<?x?xf16, strided<[128, 1], offset: ?>>
       hivm.hir.store ins(%extracted_slice : tensor<?x?xf16>) outs(%subview_16 : memref<?x?xf16, strided<[128, 1], offset: ?>>)
     }
@@ -109,7 +109,7 @@ func.func @test_batchMmadL1_fixpipe(%ma : tensor<2x256x128xf16>, %mb : tensor<2x
                               outs(%mc: tensor<2x256x256xf32>) -> tensor<2x256x256xf32>
   %mc_cast = tensor.empty() : tensor<2x256x256xf16>
   %casted = hivm.hir.vcast ins(%ret : tensor<2x256x256xf32>) outs(%mc_cast : tensor<2x256x256xf16>) round_mode = <rint> -> tensor<2x256x256xf16>
-  // CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}}
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
   // CHECK-SAME: ins(%[[RET]] : tensor<2x256x256xf32>) outs({{.*}} : memref<2x256x256xf16>)
   hivm.hir.store ins(%casted : tensor<2x256x256xf16>) outs(%dst : memref<2x256x256xf16>)
   return
@@ -211,7 +211,7 @@ func.func @matmul_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
   %40 = arith.minsi %34, %c16 : index
   %41 = arith.minsi %39, %c16 : index
   %extracted_slice = tensor.extract_slice %26[0, 0] [%40, %41] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
-  // CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}}
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
   // CHECK: ins({{.*}} : tensor<?x?xf32>) outs({{.*}} : memref<?x?xf16, strided<[?, 1], offset: ?>>)
   %subview = memref.subview %reinterpret_cast_3[0, 0] [%40, %41] [1, 1] : memref<16x16xf16, strided<[?, 1], offset: ?>> to memref<?x?xf16, strided<[?, 1], offset: ?>>
   hivm.hir.store ins(%extracted_slice : tensor<?x?xf16>) outs(%subview : memref<?x?xf16, strided<[?, 1], offset: ?>>)
@@ -266,7 +266,7 @@ module {
     %21 = arith.minsi %20, %c16 : index
     %extracted_slice = tensor.extract_slice %16[0, 0] [%21, 32] [1, 1] : tensor<16x32xf16> to tensor<?x32xf16>
     %subview = memref.subview %reinterpret_cast_2[0, 0] [%21, 32] [1, 1] : memref<16x32xf16, strided<[32, 1], offset: ?>> to memref<?x32xf16, strided<[32, 1], offset: ?>>
-    // CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}}
+    // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
     hivm.hir.store ins(%extracted_slice : tensor<?x32xf16>) outs(%subview : memref<?x32xf16, strided<[32, 1], offset: ?>>)
     return
   }
@@ -1245,7 +1245,7 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
 
 // CHECK: func.func @only_inline_quant_scale_fixpipe_vmul_store(%[[SRC:.*]]: tensor<?x64xf32>, %[[_:.*]]: tensor<?x64xf32>, %[[QUANT_SCALE:.*]]: f32, %[[_:.*]], %[[STORE_DST:.*]]: memref<2x64xf32, strided<[256, 1], offset: ?>>)
 // CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice %[[SRC]][0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
-// CHECK: hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
 // CHECK-NEXT: return
 module {
   func.func @only_inline_quant_scale_fixpipe_vmul_store(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: tensor<?x64xf32>, %arg5: memref<2x64xf32, strided<[256, 1], offset: ?>>) {
@@ -1352,8 +1352,7 @@ module {
   }
 }
 
-// -----
-
+// ----
 module {
   // CHECK-LABEL: func.func @test_matmulscale_e5m2
   func.func @test_matmulscale_e5m2(%arg0: memref<4x8xf8E5M2>, %arg1: memref<8x16xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>, %arg4: memref<4x16xf8E5M2>, %arg5: memref<4x16xf8E5M2>) -> tensor<4x16xf8E5M2> {

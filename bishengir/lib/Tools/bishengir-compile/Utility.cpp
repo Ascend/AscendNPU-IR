@@ -10,8 +10,6 @@
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -260,26 +258,6 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     return failure();
 
   config.setEnableMixedCV(first != StringRef{"aiv"} || config.shouldEnableMixedCV());
-  return success();
-}
-
-llvm::LogicalResult inferLayoutOptimization(
-    ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
-  module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
-    if (isa<linalg::BatchMatmulOp>(op)) {
-      config.setEnableLayoutOptimization(false);
-      // TODO: fix layout optimization for linalg.batch_matmul.
-      return WalkResult::interrupt();
-    }
-    if (auto callOp = dyn_cast<func::CallOp>(op)) {
-      auto callee = callOp.getCallee();
-      if (callee.starts_with("triton_print")) {
-        config.setEnableLayoutOptimization(false);
-        return WalkResult::interrupt();
-      }
-    }
-    return WalkResult::advance();
-  });
   return success();
 }
 
