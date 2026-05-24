@@ -212,7 +212,9 @@ FixpipeDMAMode inferSwapFixpipeDmaMode(Value src, Value dst,
 
   if (srcType.hasRank() && dstType.hasRank() &&
       succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
-    // Support both 2D (ND-like) and 4D (fractal-like) same-layout copies.
+    if (dstType.getRank() == 2)
+      // 2d→2d may come from the old layout pipeline, so use nz2nd.
+      return FixpipeDMAMode::NZ2ND;
     return FixpipeDMAMode::NZ2NZ;
   }
   return fallbackMode;
