@@ -53,39 +53,3 @@ func.func @fold_two_use_split(%arg0: memref<16x256xbf16, strided<[?, 1], offset:
   %4 = hivm.hir.convert_layout %3 output_shape [2, 16, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<256x16xbf16>) -> tensor<2x16x16x8xbf16>
   return %1, %4 : tensor<16x1x16x16xbf16>, tensor<2x16x16x8xbf16>
 }
-
-// -----
-
-// CHECK-LABEL: func.func @fold_subview_annotation_mark
-// CHECK-NOT: hivm.hir.load
-// CHECK: %[[FRACTAL_ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16>
-// CHECK: hivm.hir.nd2nz {dst_continuous} ins(
-// CHECK: %[[NEW_TENSOR:.*]] = bufferization.to_tensor %[[FRACTAL_ALLOC]] restrict writable
-// CHECK: annotation.mark %[[NEW_TENSOR]] {dot_pad_only_k} : tensor<1x1x16x16xf16>
-func.func @fold_subview_annotation_mark(%arg0: memref<16x16xf16, strided<[?, 1], offset: ?>>, %arg1: index) -> tensor<1x1x16x16xf16> {
-  %alloc = memref.alloc() : memref<16x16xf16>
-  %subview_in = memref.subview %arg0[0, 0] [%arg1, 16] [1, 1] : memref<16x16xf16, strided<[?, 1], offset: ?>> to memref<?x16xf16, strided<[?, 1], offset: ?>>
-  %subview_out = memref.subview %alloc[0, 0] [%arg1, 16] [1, 1] : memref<16x16xf16> to memref<?x16xf16, strided<[16, 1]>>
-  hivm.hir.load ins(%subview_in : memref<?x16xf16, strided<[?, 1], offset: ?>>) outs(%subview_out : memref<?x16xf16, strided<[16, 1]>>) eviction_policy = <EvictFirst>
-  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
-  %1 = hivm.hir.convert_layout %0 output_shape [1, 1, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf16>) -> tensor<1x1x16x16xf16>
-  annotation.mark %0 {dot_pad_only_k} : tensor<16x16xf16>
-  return %1 : tensor<1x1x16x16xf16>
-}
-
-// -----
-
-// CHECK-LABEL: func.func @fold_direct_load_annotation_mark
-// CHECK-NOT: hivm.hir.load
-// CHECK: %[[FRACTAL_ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16>
-// CHECK: hivm.hir.nd2nz {dst_continuous} ins(
-// CHECK: %[[NEW_TENSOR:.*]] = bufferization.to_tensor %[[FRACTAL_ALLOC]] restrict writable
-// CHECK: annotation.mark %[[NEW_TENSOR]] {dot_pad_only_k} : tensor<1x1x16x16xf16>
-func.func @fold_direct_load_annotation_mark(%arg0: memref<16x16xf16, strided<[?, 1], offset: ?>>) -> tensor<1x1x16x16xf16> {
-  %alloc = memref.alloc() : memref<16x16xf16>
-  hivm.hir.load ins(%arg0 : memref<16x16xf16, strided<[?, 1], offset: ?>>) outs(%alloc : memref<16x16xf16>) eviction_policy = <EvictFirst>
-  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
-  %1 = hivm.hir.convert_layout %0 output_shape [1, 1, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf16>) -> tensor<1x1x16x16xf16>
-  annotation.mark %0 {dot_pad_only_k} : tensor<16x16xf16>
-  return %1 : tensor<1x1x16x16xf16>
-}

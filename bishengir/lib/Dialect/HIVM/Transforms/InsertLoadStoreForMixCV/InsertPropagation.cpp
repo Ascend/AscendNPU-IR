@@ -76,10 +76,10 @@ bool InsertPropagationPattern::isPropagatorInserted(Operation *op) const {
         return user->hasAttr(kPropagateDownAttr);
       });
   bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
-    auto *oprOp = opr.getDefiningOp();
+    auto *op = opr.getDefiningOp();
     if (!isa<ShapedType>(opr.getType()))
       return true;
-    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
+    return op && op->hasAttr(kPropagateUpAttr);
   });
   return upPropInserted || downPropInserted;
 }
@@ -296,12 +296,106 @@ bool A5InsertionPattern::isPropagatorInserted(Operation *op) const {
         return user->hasAttr(kPropagateDownAttr);
       });
   bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
-    auto *oprOp = opr.getDefiningOp();
+    auto *op = opr.getDefiningOp();
     if (!isa<ShapedType>(opr.getType()))
       return true;
-    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
+    return op && op->hasAttr(kPropagateUpAttr);
   });
   return upPropInserted || downPropInserted;
+}
+
+//===----------------------------------------------------------------------===//
+// InsertCVDataMovementPattern
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+InsertCVDataMovementPattern::matchAndRewrite(Operation *op,
+                                          PatternRewriter &rewriter) const {
+  if (isPropagatorInserted(op))
+  return failure();
+
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>(
+          [&](Operation *op) { return insertPropagatorForDMAOp(op, rewriter); })
+      .Default([&](auto *op) { return failure(); });
+}
+
+bool InsertCVDataMovementPattern::isPropagatorInserted(Operation *op) const {
+  bool downPropInserted =
+      !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
+        return user->hasAttr(kPropagateDownAttr);
+      });
+  bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
+    auto *op = opr.getDefiningOp();
+    if (!isa<ShapedType>(opr.getType()))
+      return true;
+    return op && op->hasAttr(kPropagateUpAttr);
+  });
+  return upPropInserted || downPropInserted;
+}
+
+LogicalResult InsertCVDataMovementPattern::insertPropagatorForDMAOp(
+    Operation *op, PatternRewriter &rewriter) const {
+  // Assumes other operands are inferrable from other op or function argument.
+  LDBG("[A5-CV-DATA-MOVEMENT] Inserting propagator for DMA Op: " << *op);
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>([&](auto op) {
+        auto *dstOp = &op.getDstMutable();
+        if (op->use_empty() || isPropagatorInserted(op))
+          return failure();
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Default([](auto *op) { return failure(); });
+}
+
+//===----------------------------------------------------------------------===//
+// InsertTightCoupledBufferPattern
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+InsertTightCoupledBufferPattern::matchAndRewrite(Operation *op,
+                                          PatternRewriter &rewriter) const {
+  if (isPropagatorInserted(op))
+  return failure();
+
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>(
+          [&](Operation *op) { return insertPropagatorForDMAOp(op, rewriter); })
+      .Default([&](auto *op) { return failure(); });
+}
+
+bool InsertTightCoupledBufferPattern::isPropagatorInserted(Operation *op) const {
+  bool downPropInserted =
+      !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
+        return user->hasAttr(kPropagateDownAttr);
+      });
+  bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
+    auto *op = opr.getDefiningOp();
+    if (!isa<ShapedType>(opr.getType()))
+      return true;
+    return op && op->hasAttr(kPropagateUpAttr);
+  });
+  return upPropInserted || downPropInserted;
+}
+
+LogicalResult InsertTightCoupledBufferPattern::insertPropagatorForDMAOp(
+    Operation *op, PatternRewriter &rewriter) const {
+  // Assumes other operands are inferrable from other op or function argument.
+  LDBG("[A5-CV-TightCoupledBuffer] Inserting propagator for DMA Op: " << *op);
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>([&](auto op) {
+        auto *dstOp = &op.getDstMutable();
+        if (op->use_empty() || isPropagatorInserted(op))
+          return failure();
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Default([](auto *op) { return failure(); });
 }
 
 } // namespace mlir::hivm

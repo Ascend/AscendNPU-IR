@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv="enable-dot-scaled-compile=false" -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv="enable-layout-optimization=false enable-dot-scaled-compile=false" -split-input-file %s | FileCheck %s
 
 // TODO: add test case for indirect_store op
 

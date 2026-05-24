@@ -184,12 +184,7 @@ std::unique_ptr<Pass> createReduceRankSubviewPass();
 std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
-std::unique_ptr<Pass>
-createInlineFixpipePass(const InlineFixpipeOptions &options = {});
-
-// Create a pass to insert fixpipe
-std::unique_ptr<Pass>
-createInsertFixpipePass(const InsertFixpipeOptions &options = {});
+std::unique_ptr<Pass> createInlineFixpipePass();
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass> createInlineFixpipeV2Pass();

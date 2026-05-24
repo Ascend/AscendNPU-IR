@@ -24,8 +24,8 @@ def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
   let cppNamespace = "::mlir::hivm";
   let methods = [
     InterfaceMethod<
-    /*desc=*/"Returns fractal target layouts for Matrix A/B/C and optional bias.",
-    /*retTy=*/"::mlir::hivm::FractalOperandLayouts",
+    /*desc=*/"Returns the target data layouts for memref-typed operands.",
+    /*retTy=*/"llvm::SmallDenseMap<mlir::Value, mlir::hivm::DataLayoutAttr>",
     /*methodName=*/"getOperandsTargetFractalLayout",
     /*args=*/(ins), /*methodBody=*/[{}],
     /*defaultImplementation=*/[{
