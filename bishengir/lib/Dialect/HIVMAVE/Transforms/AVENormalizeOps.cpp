@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
@@ -80,6 +81,26 @@ static bool isAlignByElementAlignment(Operation *op) {
     dstAlignment = getOpElementAlignmentBitWidth(user);
     if (dstAlignment != -1) {
       break;
+    }
+    // If user is scf.for, trace through iter_args to find the real consumer
+    // alignment, since scf.for itself does not carry alignment attributes.
+    if (auto forOp = dyn_cast<scf::ForOp>(user)) {
+      for (auto [idx, initVal] : llvm::enumerate(forOp.getInitArgs())) {
+        for (auto res : op->getResults()) {
+          if (initVal == res) {
+            Value forResult = forOp.getResult(idx);
+            for (auto forResultUser : forResult.getUsers()) {
+              dstAlignment = getOpElementAlignmentBitWidth(forResultUser);
+              if (dstAlignment != -1)
+                break;
+            }
+            if (dstAlignment != -1)
+              break;
+          }
+        }
+        if (dstAlignment != -1)
+          break;
+      }
     }
   }
   return srcAlignment == dstAlignment && srcAlignment != -1;
@@ -201,6 +222,47 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
       }
     }
     return failure();
+  }
+};
+
+/// Handle func_dist_type (DINTLV2/DINTLV4) on store_with_stride ops by
+/// inserting dintlv ops before the store to densify the data layout.
+struct AVEStoreWithStridePattern
+    : public OpRewritePattern<VFStoreWithStrideOp> {
+  AVEStoreWithStridePattern(MLIRContext *context)
+      : OpRewritePattern<VFStoreWithStrideOp>(context) {}
+
+  LogicalResult matchAndRewrite(VFStoreWithStrideOp storeOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcDistAttr =
+        storeOp->getAttrOfType<FunctionDistTypeAttr>("functionType");
+    if (!funcDistAttr)
+      return failure();
+
+    int numDIntlv = 0;
+    switch (funcDistAttr.getValue()) {
+    case FunctionDistType::DINTLV2:
+      numDIntlv = 1;
+      break;
+    case FunctionDistType::DINTLV4:
+      numDIntlv = 2;
+      break;
+    default:
+      return failure();
+    }
+
+    Location loc = storeOp.getLoc();
+    auto bitWidthAttr = storeOp->getAttr(utils::elementAlignmentBitWidth);
+    Value srcVal = storeOp.getVal();
+
+    rewriter.setInsertionPoint(storeOp);
+    Value result = srcVal;
+    for (int i = 0; i < numDIntlv; ++i)
+      result = denseByDIntlv(result, rewriter, loc, bitWidthAttr);
+
+    storeOp->setOperand(storeOp->getNumOperands() - 1, result);
+    storeOp->removeAttr("functionType");
+    return success();
   }
 };
 
@@ -443,6 +505,7 @@ public:
     // add dist for load/store op
     patterns.add<AVELoadPattern>(ctx);
     patterns.add<AVEStorePattern>(ctx);
+    patterns.add<AVEStoreWithStridePattern>(ctx);
     patterns.add<AVEFpToUIntPattern>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {

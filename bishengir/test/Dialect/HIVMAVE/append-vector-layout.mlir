@@ -19,7 +19,7 @@
 // CHECK: %14 = ave.hir.vtrunci %12, false, %13 {functionType = #ave.func_dist_type<even>, pp = #ave.vcvt_pp_type<pp0>} : vector<64xi32, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>, vector<64xi8, #ave.vector_layout<{mem = #ave.vec_mem_type<b8_4vl>}>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>
 // CHECK: %16 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>
 // CHECK: ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %16, %14 {functionType = #ave.func_dist_type<pk4>} : memref<64xi8, #hivm.address_space<ub>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>, vector<64xi8, #ave.vector_layout<{mem = #ave.vec_mem_type<b8_4vl>}>>
-func.func @test_vector_layout_attr(%arg0: i32, %arg1: i32, %arg2: memref<2x512xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+func.func @test_vector_layout_attr(%arg0: i32, %arg1: i32, %arg2: memref<2x512xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
     %c0 = arith.constant 0 : index
     %c512 = arith.constant 512 : index
     %c64 = arith.constant 64 : index
@@ -50,7 +50,7 @@ func.func @test_vector_layout_attr(%arg0: i32, %arg1: i32, %arg2: memref<2x512xi
         %16 = ave.hir.pge <ALL> : vector<64xi1>
 
         ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %16, %14 : memref<64xi8, #map1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi8>
-      } {element_alignment_bit_width = 8 : i32}
-    } {element_alignment_bit_width = 32 : i32}
+      }
+    }
     return
   }

@@ -119,12 +119,6 @@ def HoistVstas : Pass<"hoist-vstas",  "func::FuncOp"> {
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
-def AnalyzeDataLayout : Pass<"data-layout-analyze", "func::FuncOp"> {
-  let summary = "Analyze hivmave ops inside VF to get element alignment bit width";
-  let constructor = "mlir::hivmave::createDataLayoutAnalysisPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
 def AnalyzeVectorLayout : Pass<"analyze-vector-layout", "func::FuncOp"> {
   let summary = "Analyze vector layout";
   let constructor = "::mlir::hivmave::createAnalyzeVectorLayoutPass()";

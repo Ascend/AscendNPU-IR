@@ -2,7 +2,7 @@
   // RUN: -remove-vector-layout-attr -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 
 // CHECK-LABEL:   func.func @triton_load_mask_outlined_vf_0
-func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   // CHECK:           %[[VAL_16:.*]] = builtin.unrealized_conversion_cast %[[VAL_15:.*]] : vector<256xi8> to vector<64xi8>
   // CHECK:           %[[VAL_19:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%{{.*}}, %{{.*}}) {mask_bit_width = 32 : i32} : (i32, i32) -> vector<256xi1>
   // CHECK:           %[[VAL_23:.*]] = "hivm_regbaseintrins.intr.hivm.vdups.z"(%{{.*}}, %{{.*}}, %{{.*}}) : (i32, vector<256xi1>, i32) -> vector<64xi32>

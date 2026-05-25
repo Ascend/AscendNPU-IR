@@ -430,14 +430,14 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
       return {wrapThis(FunctionType::NORM,
                        {{vector, State::B8}, {mask, State::B8}}),
               wrapThis(FunctionType::DINTLV2,
-                       {{vector, State::B8_2VL}, {mask, State::B16}}),
+                       {{vector, State::B8_2VL}, {mask, State::B8}}),
               wrapThis(FunctionType::DINTLV4,
-                       {{vector, State::B8_4VL}, {mask, State::B32}})};
+                       {{vector, State::B8_4VL}, {mask, State::B8}})};
     case 16:
       return {wrapThis(FunctionType::NORM,
                        {{vector, State::B16}, {mask, State::B16}}),
               wrapThis(FunctionType::DINTLV2,
-                       {{vector, State::B16_2VL}, {mask, State::B32}})};
+                       {{vector, State::B16_2VL}, {mask, State::B16}})};
     case 32:
       return {wrapThis(FunctionType::NORM,
                        {{vector, State::B32}, {mask, State::B32}})};

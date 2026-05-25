@@ -1761,28 +1761,6 @@ struct HIVMPltOpLowering : public ConvertOpToLLVMPattern<VFPltOp> {
     Operation *extractOp;
 
     int elementAlignment = getElementAlignmentBitWidth(plt);
-    // when plt is in the top block of VF func, plt's elem align bit width
-    // is obtained from the VF func's attr(maybe b8). However, plt is used for
-    // like vsts 64xf32. Thus plt.b8 is used for vsts.b32 which is wrong.
-    if (auto parFuncOp = plt->getParentOfType<func::FuncOp>()) {
-      llvm::SmallSet<int, 4> userElemAlignSet;
-      for (auto *u : plt.getResult(0).getUsers()) {
-        int curUserElemAlign = getOpElementAlignmentBitWidth(u);
-        if (curUserElemAlign != -1) {
-          userElemAlignSet.insert(curUserElemAlign);
-        }
-      }
-      if (userElemAlignSet.size() == 1) {
-        // fix only the simple case.
-        // TODO: refactor the data layout analysis to fix all the cases.
-        //       or create new plt op to fix the case of various users.
-        elementAlignment = *userElemAlignSet.begin();
-      } else if (userElemAlignSet.size() > 1) {
-        return plt.emitError("plt has multiple users of various "
-                             "elementAlignmentBitWidth"),
-               failure();
-      }
-    }
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
 
