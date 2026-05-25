@@ -1245,7 +1245,7 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
 
 // CHECK: func.func @only_inline_quant_scale_fixpipe_vmul_store(%[[SRC:.*]]: tensor<?x64xf32>, %[[_:.*]]: tensor<?x64xf32>, %[[QUANT_SCALE:.*]]: f32, %[[_:.*]], %[[STORE_DST:.*]]: memref<2x64xf32, strided<[256, 1], offset: ?>>)
 // CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice %[[SRC]][0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
-// CHECK: hivm.hir.fixpipe {pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
+// CHECK: hivm.hir.fixpipe {{{.*}}pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>{{.*}}} ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
 // CHECK-NEXT: return
 module {
   func.func @only_inline_quant_scale_fixpipe_vmul_store(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: tensor<?x64xf32>, %arg5: memref<2x64xf32, strided<[256, 1], offset: ?>>) {
