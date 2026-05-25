@@ -222,6 +222,8 @@ bufferizationPipeline(OpPassManager &pm,
       bufferization::LayoutMapOption::IdentityLayoutMap);
   oneShotOptions.allowReturnAllocsFromLoops = true;
   oneShotOptions.allowUnknownOps = true;
+  oneShotOptions.analysisHeuristic =
+      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   if (hivmPipelineOptions.enableVfMergeLevel == 2) {
     MergeVecScopeOptions VfMergeOpsOpt;

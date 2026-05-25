@@ -238,9 +238,6 @@ std::unique_ptr<Pass> createAutoInferBufferSizePass();
 // Create a pass to insert workspace for mix cv function.
 std::unique_ptr<Pass> createInsertWorkSpaceForMixCVPass();
 
-// Create a pass to normalize special state of loop iterator before plan-memory
-std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
-
 /// Create a pass to Inline Load and Store operation on the fly.
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 
