@@ -212,8 +212,9 @@ FixpipeDMAMode inferSwapFixpipeDmaMode(Value src, Value dst,
 
   if (srcType.hasRank() && dstType.hasRank() &&
       succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+    // For same-shape cases, use rank to distinguish ND-like tensors.
+    // A 2D destination is treated as ND; otherwise keep normal mode.
     if (dstType.getRank() == 2)
-      // 2d→2d may come from the old layout pipeline, so use nz2nd.
       return FixpipeDMAMode::NZ2ND;
     return FixpipeDMAMode::NZ2NZ;
   }
