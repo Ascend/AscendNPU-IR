@@ -696,11 +696,11 @@ CCFInfo getResFromSingleUseChain(Operation *op) {
   return getOutermostCCFInfo(op, initInfo);
 }
 
-Value initCounter(PatternRewriter &rewriter, Operation *op) {
+Value initCounter(PatternRewriter &rewriter, Operation &op) {
     rewriter.setInsertionPoint(op);
     // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
     // every outer iteration, so the counter resets per outer step.
-    Location loc = op->getLoc();
+    Location loc = op.getLoc();
     Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
     Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
@@ -768,9 +768,9 @@ hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type, Valu
 }
 
 template<typename T>
-void addTailFallback(PatternRewriter &rewriter, Operation *op, T mmad, Value counterBuf, Value outerInVal, Value outerOutVal, bool isAdd=false) {
-  rewriter.setInsertionPointAfter(op);
-  Location loc = op->getLoc();
+void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad, Value counterBuf, Value outerInVal, Value outerOutVal, bool isAdd=false) {
+  rewriter.setInsertionPointAfter(&op);
+  Location loc = op.getLoc();
   Value postCount = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   Value neverRan = rewriter.create<arith::CmpIOp>(
@@ -907,7 +907,7 @@ public:
     // create counter buffer
     Value counterBuf;
     if (!isa<T>(insertPointOp))
-      counterBuf = initCounter(rewriter, insertPointOp);
+      counterBuf = initCounter(rewriter, *insertPointOp);
 
     // create new mmad op
     Value newInit = mlir::utils::createEmptyOp(rewriter, insertPointOp->getLoc(), outerInVal);
@@ -969,7 +969,7 @@ public:
     if (biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
       if (mayNotExec) {
         // generate vadd + yield
-        addTailFallback<T>(rewriter, insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal, true);
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal, true);
       } else {
         // generate vadd
         rewriter.setInsertionPointAfter(insertPointOp);
@@ -995,7 +995,7 @@ public:
     } else {
       if (mayNotExec) {
         // generate yield
-        addTailFallback<T>(rewriter, insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal);
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal);
       }
       LDBG("decompose matmul with other cases");
     }
