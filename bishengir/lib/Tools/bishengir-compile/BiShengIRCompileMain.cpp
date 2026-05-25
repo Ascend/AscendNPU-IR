@@ -260,18 +260,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   }
 
   if (config.getEnableTuningMode() && !config.getEnableTritonKernelCompile()) {
-    bool originalPrintIrAfterFailure = false;
-    auto &opts = cl::getRegisteredOptions();
-    if (opts.count("mlir-print-ir-after-failure") != 0) {
-      originalPrintIrAfterFailure =
-          static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
-              ->getValue();
-
-      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
-          ->setValue(false);
-    }
-    retriablePm.addPolicy(
-        std::make_unique<TuningRetryPolicy>(originalPrintIrAfterFailure));
+    retriablePm.addPolicy(std::make_unique<TuningRetryPolicy>());
   }
 
   std::vector<AppliedCompileFallback> retriablePipelineFallbacks;

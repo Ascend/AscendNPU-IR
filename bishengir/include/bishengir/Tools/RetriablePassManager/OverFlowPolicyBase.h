@@ -22,12 +22,12 @@
 
 namespace bishengir {
 
-/// Base retry policy for plan-memory scope overflow failures. Disables
-/// enable-code-motion first, then enable-auto-multi-buffer. No retry if those
-/// options are already false.
+/// Base retry policy for plan-memory scope overflow failures. Sets
+/// enable-code-motion to false first, then enable-auto-multi-buffer to false.
+/// No retry if those options are already false.
 class OverFlowPolicyBase : public RetryPolicy {
 public:
-  std::optional<std::string> onFailure(
+  std::optional<RetryRecoveryAction> onFailure(
       llvm::ArrayRef<std::unique_ptr<mlir::Diagnostic>> attemptDiagnostics,
       BiShengIRCompileMainConfig &config) override;
 

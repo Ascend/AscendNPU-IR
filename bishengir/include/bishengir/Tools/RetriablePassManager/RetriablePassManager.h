@@ -30,10 +30,11 @@
 
 namespace bishengir {
 
-/// Option disabled during a retriable pipeline retry, with the policy's
+/// Option changed during a retriable pipeline retry, with the policy's
 /// user-visible reason (from \c RetryPolicy::userVisibleRetryCause()).
 struct AppliedCompileFallback {
-  std::string disabledOption;
+  std::string retryOption;
+  std::string retryValue;
   std::string retryCause;
 };
 
@@ -66,13 +67,13 @@ public:
                std::vector<std::unique_ptr<mlir::Diagnostic>> &collectedDiagnostics,
                std::vector<AppliedCompileFallback> &appliedFallbacks);
 
-  /// Print a user-visible note that disabledOption was turned off and a retry
-  /// will follow. retryCause comes from the active policy (e.g. "UBoverflow").
+  /// Print a user-visible note for a pipeline retry (e.g. "set X to Y").
   static void emitFallbackNote(llvm::StringRef retryCause,
-                               llvm::StringRef disabledOption);
+                               llvm::StringRef retryOption,
+                               llvm::StringRef retryValue);
 
-  /// Print a summary of all options disabled during this compile after fallback
-  /// retries. No output if appliedFallbacks is empty.
+  /// Print a summary of all options changed during this compile after retry
+  /// fallbacks. No output if appliedFallbacks is empty.
   static void emitFallbackSummary(llvm::ArrayRef<AppliedCompileFallback> appliedFallbacks,
                                   bool compilationSucceeded);
 

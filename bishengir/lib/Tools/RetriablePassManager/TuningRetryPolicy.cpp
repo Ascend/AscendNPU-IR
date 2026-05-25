@@ -20,6 +20,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
+#include <string>
+
 #define DEBUG_TYPE "bishengir-tuning-retry-policy"
 
 using namespace bishengir;
@@ -30,9 +32,17 @@ constexpr llvm::StringLiteral kHfusionMaxBufferCountTuningOption =
     "hfusion-max-buffer-count-tuning";
 } // namespace
 
-TuningRetryPolicy::TuningRetryPolicy(bool restorePrintIrAfterFailureOnLastAttempt)
-    : restorePrintIrAfterFailureOnLastAttempt_(
-          restorePrintIrAfterFailureOnLastAttempt) {}
+TuningRetryPolicy::TuningRetryPolicy() {
+  auto &opts = llvm::cl::getRegisteredOptions();
+  if (opts.count("mlir-print-ir-after-failure") == 0)
+    return;
+
+  restorePrintIrAfterFailureOnLastAttempt_ =
+      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+          ->getValue();
+  static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+      ->setValue(false);
+}
 
 void TuningRetryPolicy::onBeforePipelineAttempt() const {
   if (!restorePrintIrAfterFailureOnLastAttempt_)
@@ -48,7 +58,7 @@ void TuningRetryPolicy::onBeforePipelineAttempt() const {
       ->setValue(isLastTuningAttempt);
 }
 
-std::optional<std::string> TuningRetryPolicy::onFailure(
+std::optional<RetryRecoveryAction> TuningRetryPolicy::onFailure(
     llvm::ArrayRef<std::unique_ptr<mlir::Diagnostic>> attemptDiagnostics,
     BiShengIRCompileMainConfig &config) {
   (void)attemptDiagnostics;
@@ -62,8 +72,10 @@ std::optional<std::string> TuningRetryPolicy::onFailure(
   LLVM_DEBUG(llvm::dbgs()
              << "[BiShengHIR] HFusion buffer tuning retry "
              << tuningRetriesUsed_ << "/" << kMaxAttempts
-             << " with max buffer count tuning delta: "
+             << ", set " << kHfusionMaxBufferCountTuningOption << " to "
              << config.getHfusionMaxBufferCountTuning() << "\n");
 
-  return std::string(kHfusionMaxBufferCountTuningOption);
+  return RetryRecoveryAction{
+      std::string(kHfusionMaxBufferCountTuningOption),
+      std::to_string(config.getHfusionMaxBufferCountTuning())};
 }

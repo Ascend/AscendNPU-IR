@@ -23,7 +23,7 @@
 using namespace mlir;
 using namespace bishengir;
 
-std::optional<std::string> OverFlowPolicyBase::onFailure(
+std::optional<RetryRecoveryAction> OverFlowPolicyBase::onFailure(
     llvm::ArrayRef<std::unique_ptr<Diagnostic>> attemptDiagnostics,
     BiShengIRCompileMainConfig &config) {
   if (!bishengir::diagnosticsContainOverflowMessage(attemptDiagnostics,
@@ -32,12 +32,12 @@ std::optional<std::string> OverFlowPolicyBase::onFailure(
 
   if (config.getEnableCodeMotion()) {
     config.setEnableCodeMotion(false);
-    return "enable-code-motion";
+    return RetryRecoveryAction{"enable-code-motion", "false"};
   }
 
   if (config.getEnableAutoMultiBuffer()) {
     config.setEnableAutoMultiBuffer(false);
-    return "enable-auto-multi-buffer";
+    return RetryRecoveryAction{"enable-auto-multi-buffer", "false"};
   }
 
   return std::nullopt;

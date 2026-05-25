@@ -29,7 +29,7 @@ class TuningRetryPolicy : public RetryPolicy {
 public:
   static constexpr int kMaxAttempts = 5;
 
-  explicit TuningRetryPolicy(bool restorePrintIrAfterFailureOnLastAttempt = false);
+  TuningRetryPolicy();
 
   llvm::StringRef userVisibleRetryCause() const override {
     return "HFusion buffer tuning";
@@ -39,13 +39,13 @@ public:
 
   void onBeforePipelineAttempt() const override;
 
-  std::optional<std::string> onFailure(
+  std::optional<RetryRecoveryAction> onFailure(
       llvm::ArrayRef<std::unique_ptr<mlir::Diagnostic>> attemptDiagnostics,
       BiShengIRCompileMainConfig &config) override;
 
 private:
   int tuningRetriesUsed_ = 0;
-  bool restorePrintIrAfterFailureOnLastAttempt_;
+  bool restorePrintIrAfterFailureOnLastAttempt_ = false;
 };
 
 } // namespace bishengir

@@ -28,9 +28,14 @@
 
 namespace bishengir {
 
-/// Invoked when a pipeline attempt fails. Returns the CLI option name involved
-/// in the recovery action (e.g. disabled or tuned), or std::nullopt if this
-/// policy does not apply or cannot retry further.
+/// Config change applied by a retry policy after a failed pipeline attempt.
+struct RetryRecoveryAction {
+  std::string option;
+  std::string value;
+};
+
+/// Invoked when a pipeline attempt fails. Returns the config change applied for
+/// retry, or std::nullopt if this policy does not apply or cannot retry further.
 class RetryPolicy {
 public:
   virtual ~RetryPolicy() = default;
@@ -42,14 +47,13 @@ public:
   }
 
   /// If false, onFailure may still trigger a retry but no fallback note or
-  /// summary entry is recorded (e.g. tuning adjusts an option instead of
-  /// disabling it).
+  /// summary entry is recorded (e.g. tuning retries).
   virtual bool recordsCompileFallback() const { return true; }
 
   /// Called before each pipeline clone/run attempt.
   virtual void onBeforePipelineAttempt() const {}
 
-  virtual std::optional<std::string> onFailure(
+  virtual std::optional<RetryRecoveryAction> onFailure(
       llvm::ArrayRef<std::unique_ptr<mlir::Diagnostic>> attemptDiagnostics,
       BiShengIRCompileMainConfig &config) = 0;
 };

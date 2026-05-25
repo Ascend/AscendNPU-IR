@@ -26,6 +26,13 @@
 
 #define DEBUG_TYPE "bishengir-retriable-pass-manager"
 
+namespace {
+void printSetOptionAction(llvm::raw_ostream &os, llvm::StringRef option,
+                          llvm::StringRef value) {
+  os << "set " << option << " to " << value;
+}
+} // namespace
+
 using namespace mlir;
 using namespace bishengir;
 
@@ -38,10 +45,11 @@ void RetriablePassManager::addPolicy(std::unique_ptr<RetryPolicy> policy) {
 }
 
 void RetriablePassManager::emitFallbackNote(llvm::StringRef retryCause,
-                                            llvm::StringRef disabledOption) {
-  llvm::errs() << "[NOTE] " << retryCause
-               << " detected; automatically disabled " << disabledOption
-               << " and retrying compilation.\n";
+                                            llvm::StringRef retryOption,
+                                            llvm::StringRef retryValue) {
+  llvm::errs() << "[NOTE] " << retryCause << " detected; automatically ";
+  printSetOptionAction(llvm::errs(), retryOption, retryValue);
+  llvm::errs() << " and retrying compilation.\n";
 }
 
 void RetriablePassManager::emitFallbackSummary(
@@ -50,27 +58,28 @@ void RetriablePassManager::emitFallbackSummary(
   if (appliedFallbacks.empty())
     return;
 
-  const std::string &firstCause = appliedFallbacks.front().retryCause;
+  const AppliedCompileFallback &first = appliedFallbacks.front();
   const bool allSameCause = llvm::all_of(appliedFallbacks, [&](const AppliedCompileFallback &fb) {
-    return fb.retryCause == firstCause;
+    return fb.retryCause == first.retryCause;
   });
 
   llvm::errs() << "[NOTE] ";
   if (allSameCause) {
-    llvm::errs() << "Due to " << firstCause << ", the following option"
-                 << (appliedFallbacks.size() == 1 ? " was" : "s were")
-                 << " automatically disabled: ";
-    llvm::SmallVector<llvm::StringRef, 8> optionNames;
-    for (const auto &fb : appliedFallbacks)
-      optionNames.push_back(fb.disabledOption);
-    llvm::interleaveComma(optionNames, llvm::errs());
-  } else {
-    llvm::errs() << "The following options were automatically disabled: ";
+    llvm::errs() << "Due to " << first.retryCause << ", automatically ";
     for (size_t i = 0, e = appliedFallbacks.size(); i != e; ++i) {
       if (i != 0)
         llvm::errs() << ", ";
-      llvm::errs() << appliedFallbacks[i].disabledOption << " (due to "
-                   << appliedFallbacks[i].retryCause << ")";
+      printSetOptionAction(llvm::errs(), appliedFallbacks[i].retryOption,
+                           appliedFallbacks[i].retryValue);
+    }
+  } else {
+    llvm::errs() << "Automatically ";
+    for (size_t i = 0, e = appliedFallbacks.size(); i != e; ++i) {
+      if (i != 0)
+        llvm::errs() << ", ";
+      const AppliedCompileFallback &fb = appliedFallbacks[i];
+      printSetOptionAction(llvm::errs(), fb.retryOption, fb.retryValue);
+      llvm::errs() << " (due to " << fb.retryCause << ")";
     }
   }
   if (compilationSucceeded)
@@ -124,36 +133,34 @@ LogicalResult RetriablePassManager::runWithRetry(
         collectedDiagnostics.size() - pipelineAttemptDiagStart);
 
     RetryPolicy *matchedPolicy = nullptr;
-    std::optional<std::string> retryOption;
+    std::optional<RetryRecoveryAction> retryAction;
     for (const std::unique_ptr<RetryPolicy> &policy : policies) {
-      if (std::optional<std::string> action =
+      if (std::optional<RetryRecoveryAction> action =
               policy->onFailure(attemptDiagnostics, config)) {
-        retryOption = std::move(action);
+        retryAction = std::move(action);
         matchedPolicy = policy.get();
         break;
       }
     }
 
-    if (!retryOption || !matchedPolicy)
+    if (!retryAction || !matchedPolicy)
       return failure();
 
     LLVM_DEBUG({
       llvm::dbgs() << "[BiShengHIR] Pipeline retry ("
                    << matchedPolicy->userVisibleRetryCause() << "): ";
-      if (matchedPolicy->recordsCompileFallback())
-        llvm::dbgs() << "disabling " << *retryOption;
-      else
-        llvm::dbgs() << "adjusting " << *retryOption;
+      printSetOptionAction(llvm::dbgs(), retryAction->option, retryAction->value);
       llvm::dbgs() << " and retrying\n";
     });
     if (matchedPolicy->recordsCompileFallback()) {
       if (llvm::none_of(appliedFallbacks, [&](const AppliedCompileFallback &a) {
-            return a.disabledOption == *retryOption;
+            return a.retryOption == retryAction->option;
           }))
         appliedFallbacks.push_back(
-            {*retryOption,
+            {retryAction->option, retryAction->value,
              std::string(matchedPolicy->userVisibleRetryCause())});
-      emitFallbackNote(matchedPolicy->userVisibleRetryCause(), *retryOption);
+      emitFallbackNote(matchedPolicy->userVisibleRetryCause(), retryAction->option,
+                       retryAction->value);
     }
 
     collectedDiagnostics.resize(pipelineAttemptDiagStart);
