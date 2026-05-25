@@ -1,4 +1,3 @@
-// XFAIL: *
 // RUN: bishengir-compile %s  --target=Ascend910_9589 --enable-auto-multi-buffer=False --enable-auto-bind-sub-block=True --disable-ffts --enable-hfusion-compile=true --enable-triton-kernel-compile=true --enable-vf-merge-level=1 -o %t
 #map = affine_map<(d0) -> (d0)>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
