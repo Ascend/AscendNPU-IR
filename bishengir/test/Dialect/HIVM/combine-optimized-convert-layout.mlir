@@ -21,6 +21,37 @@ func.func @fold_one_use_subview(%arg0: memref<16x16xf16, strided<[?, 1], offset:
 
 // -----
 
+// CHECK-LABEL: func.func @fold_convert_fixpipe
+// CHECK-SAME: %[[DSTR:.*]]: memref<128x256xf16
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x8x16x16xf32>) outs(%[[DSTR]] : memref<128x256xf16
+func.func @fold_convert_fixpipe(%dst: memref<128x256xf16, strided<[1024, 1], offset: ?>>) {
+  %mmad_out = arith.constant dense<0.0> : tensor<16x8x16x16xf32>
+  %conv = hivm.hir.convert_layout %mmad_out output_shape [128, 256] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>} : (tensor<16x8x16x16xf32>) -> tensor<128x256xf32>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%conv : tensor<128x256xf32>) outs(%dst : memref<128x256xf16, strided<[1024, 1], offset: ?>>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @fold_convert_extract_slice_fixpipe
+// CHECK-SAME: %[[DSTR:.*]]: memref<128x256xf16
+// CHECK-SAME: %[[S0:.*]]: index, %[[S1:.*]]: index
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: %[[FR_SLICE:.*]] = tensor.extract_slice %{{.*}}[0, 0, 0, 0] {{\[}}%{{.*}}, %{{.*}}, 16, 16] [1, 1, 1, 1] : tensor<16x8x16x16xf32> to tensor<?x?x16x16xf32>
+// CHECK: hivm.hir.fixpipe {{.*}} ins(%[[FR_SLICE]] : tensor<?x?x16x16xf32>)
+func.func @fold_convert_extract_slice_fixpipe(%dst: memref<128x256xf16, strided<[1024, 1], offset: ?>>, %s0: index, %s1: index) {
+  %c0 = arith.constant 0 : index
+  %mmad_out = arith.constant dense<0.0> : tensor<16x8x16x16xf32>
+  %conv = hivm.hir.convert_layout %mmad_out output_shape [128, 256] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>} : (tensor<16x8x16x16xf32>) -> tensor<128x256xf32>
+  %slice = tensor.extract_slice %conv[0, 0] [%s0, %s1] [1, 1] : tensor<128x256xf32> to tensor<?x?xf32>
+  %subview = memref.subview %dst[0, 0] [%s0, %s1] [1, 1] : memref<128x256xf16, strided<[1024, 1], offset: ?>> to memref<?x?xf16, strided<[1024, 1], offset: ?>>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf16, strided<[1024, 1], offset: ?>>)
+  return
+}
+
+// -----
+
 
 // CHECK: func.func @fold_two_use_split(%[[VAL_0:.*]]: memref<16x256xbf16, strided<[?, 1], offset: ?>>,
 // CHECK-DAG: %[[VAL_5:.*]] = memref.alloc() : memref<16x256xbf16>

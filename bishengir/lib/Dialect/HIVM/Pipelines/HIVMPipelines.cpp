@@ -255,13 +255,6 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
 
-  InsertFixpipeOptions fixpipeOpt;
-  fixpipeOpt.inferFixpipeDmaMode = true;
-  pm.addPass(mlir::hivm::createInsertFixpipePass(fixpipeOpt));
-
-  InlineFixpipeOptions inlineFixpipeOpt;
-  inlineFixpipeOpt.enableV2SliceSwapOpt = true;
-  pm.addPass(mlir::hivm::createInlineFixpipePass(inlineFixpipeOpt));
 
   pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
@@ -281,6 +274,10 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
+
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
     // Combine optimized folds:
@@ -289,29 +286,17 @@ static void hivmPreBufferizationOptimizationPipeline(
     // For regbase convert layout optimization is done early in the pass
     // Inserts convert layout before and after cube operations
     addOptimizedConvertLayoutFixpipePipeline(pm);
-  } else {
-    pm.addPass(mlir::hivm::createInsertFixpipePass());
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
   }
-  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  // TODO: Currently, the optimized layout optimization pipeline is incompatible
-  // with the affinity programming cases.
-  if (hivmPipelineOptions.enableLayoutOptimization &&
-      hivmPipelineOptions.enableMixedCV) {
-    // Re-run Insert/Propagate to handle the new MmadL1Op ops materialized by
-    // TileBatchMMIntoLoop, which the first round skipped.
-    addOptimizedConvertLayoutFixpipePipeline(pm);
+
+  if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
+    pm.addPass(createInsertL12UBForDebugPass());
   } else {
-    if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
-      pm.addPass(createInsertL12UBForDebugPass());
-    } else {
-      pm.addPass(createInsertNZ2NDForDebugPass());
-    }
-    pm.addPass(mlir::hivm::createInsertFixpipePass());
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
+    pm.addPass(createInsertNZ2NDForDebugPass());
   }
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.addPass(createInsertWorkSpaceForMixCVPass());
   // keep this for the debug feature (device print, etc.)

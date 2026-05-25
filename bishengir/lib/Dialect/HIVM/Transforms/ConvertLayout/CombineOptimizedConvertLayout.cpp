@@ -417,7 +417,165 @@ struct FoldToTensorConvertLayoutSubviewPattern
 };
 
 //===----------------------------------------------------------------------===//
-// Fold Fixpipe + ConvertLayout into Enhanced Fixpipe
+// Fold ConvertLayout + Fixpipe
+//
+// fixpipe output is 2D (ND), but src comes from mmad output which is nZ
+// (Fractal). fixpipe always uses dma_mode = NZ2ND to convert nZ→ND inline.
+// The separate convert_layout{nZ→ND} can be eliminated by feeding the
+// fractal tensor directly to fixpipe.
+//
+// Matches:
+//   %conv = hivm.hir.convert_layout %mmad_output {Fractal -> ND}
+//   hivm.hir.fixpipe {dma_mode = nz2nd} ins(%conv) outs(%dst_memref)
+//
+// Transforms to:
+//   hivm.hir.fixpipe {dma_mode = nz2nd} ins(%mmad_output) outs(%dst_memref)
+//===----------------------------------------------------------------------===//
+
+struct FoldConvertLayoutFixpipePattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldConvertLayoutFixpipePattern(MLIRContext *context)
+    : OpRewritePattern(context) {
+  }
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto srcLayout = op.getSrcLayout();
+    auto dstLayout = op.getDstLayout();
+    if (srcLayout.getDataLayout() != DataLayout::Fractal ||
+        !dstLayout.isNDLayout())
+      return rewriter.notifyMatchFailure(op, "not a Fractal->ND conversion");
+
+    if (!op.getResult().hasOneUse())
+      return rewriter.notifyMatchFailure(op, "convert_layout has multiple uses");
+
+    auto fixpipeOp = dyn_cast<FixpipeOp>(*op.getResult().user_begin());
+    if (!fixpipeOp)
+      return rewriter.notifyMatchFailure(op, "user is not a fixpipe");
+
+    if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
+        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN)
+      return rewriter.notifyMatchFailure(
+          fixpipeOp, "fixpipe dma_mode is not nz2nd or nz2dn");
+
+    rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+      fixpipeOp.getSrcMutable().assign(op.getSource());
+    });
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Fold ConvertLayout + ExtractSlice + Fixpipe
+//
+// Same as FoldConvertLayoutFixpipePattern but with an extract_slice in
+// between. The 2D (ND) slice offsets/sizes are converted to Fractal space
+// so the extract_slice operates directly on the nZ tensor.
+//
+// Matches:
+//   %conv = hivm.hir.convert_layout %mmad_output {Fractal -> ND}
+//   %slice = tensor.extract_slice %conv [nd_offsets] [nd_sizes] [1, 1]
+//   hivm.hir.fixpipe {dma_mode = nz2nd} ins(%slice) outs(%dst_memref)
+//
+// Transforms to:
+//   %fractal_slice = tensor.extract_slice %mmad_output
+//       [fractal_offsets] [fractal_sizes] [1, 1, 1, 1]
+//   hivm.hir.fixpipe {dma_mode = nz2nd} ins(%fractal_slice) outs(%dst_memref)
+//===----------------------------------------------------------------------===//
+
+struct FoldConvertLayoutExtractSliceFixpipePattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldConvertLayoutExtractSliceFixpipePattern(MLIRContext *context)
+    : OpRewritePattern(context) {
+  }
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto srcLayout = op.getSrcLayout();
+    auto dstLayout = op.getDstLayout();
+    if (srcLayout.getDataLayout() != DataLayout::Fractal ||
+        !dstLayout.isNDLayout())
+      return rewriter.notifyMatchFailure(op, "not a Fractal->ND conversion");
+
+    if (!op.getResult().hasOneUse())
+      return rewriter.notifyMatchFailure(
+          op, "convert_layout result has multiple uses");
+
+    auto extractSliceOp =
+        dyn_cast<tensor::ExtractSliceOp>(*op.getResult().user_begin());
+    if (!extractSliceOp)
+      return rewriter.notifyMatchFailure(
+          op, "user is not a tensor.extract_slice");
+
+    if (!extractSliceOp.getResult().hasOneUse())
+      return rewriter.notifyMatchFailure(
+          extractSliceOp, "extract_slice result has multiple uses");
+
+    auto fixpipeOp =
+        dyn_cast<FixpipeOp>(*extractSliceOp.getResult().user_begin());
+    if (!fixpipeOp)
+      return rewriter.notifyMatchFailure(
+          extractSliceOp, "user of extract_slice is not a fixpipe");
+
+    if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
+        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN)
+      return rewriter.notifyMatchFailure(
+          fixpipeOp, "fixpipe dma_mode is not nz2nd or nz2dn");
+
+    for (OpFoldResult stride : extractSliceOp.getMixedStrides()) {
+      std::optional<int64_t> strideVal = getConstantIntValue(stride);
+      if (!strideVal || *strideVal != 1)
+        return rewriter.notifyMatchFailure(
+            extractSliceOp, "extract_slice has non-unit strides");
+    }
+
+    Location loc = extractSliceOp.getLoc();
+
+    // Set insertion point before computing offsets/sizes so that any
+    // affine.apply ops created by the helpers dominate the new extract_slice.
+    rewriter.setInsertionPoint(extractSliceOp);
+
+    // Convert ND offsets/sizes to Fractal offsets/sizes.
+    // convert_layout is Fractal -> ND, so srcLayout = Fractal, dstLayout = ND.
+    // The extract_slice operates on the ND tensor (op's result).
+    // We convert from ND (dstLayout) to Fractal (srcLayout).
+    auto newSizes = computeMixedTargetLayoutShape(
+        extractSliceOp.getMixedSizes(), op.getDstLayout(),
+        op.getSrcLayout(), rewriter, loc);
+    if (failed(newSizes))
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute fractal slice sizes");
+
+    auto newOffsets = computeTargetLayoutOffset(
+        extractSliceOp.getMixedOffsets(), op.getDstLayout(),
+        op.getSrcLayout(), rewriter, loc);
+    if (failed(newOffsets))
+      return rewriter.notifyMatchFailure(
+          op, "failed to compute fractal slice offsets");
+
+    Value source = op.getSource();
+    auto sourceType = cast<RankedTensorType>(source.getType());
+    int64_t sourceRank = sourceType.getRank();
+    SmallVector<OpFoldResult> newStrides(sourceRank, rewriter.getIndexAttr(1));
+
+    auto newSliceType = RankedTensorType::get(
+        decomposeMixedValues(*newSizes).first, sourceType.getElementType());
+
+    auto newExtractSlice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, newSliceType, source, *newOffsets, *newSizes, newStrides);
+
+    // Replace the fixpipe's src with the fractal slice, erase the ND ops
+    rewriter.modifyOpInPlace(fixpipeOp, [&]() {
+      fixpipeOp.getSrcMutable().assign(newExtractSlice.getResult());
+    });
+
+    rewriter.eraseOp(extractSliceOp);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 //
 // Matches:
 //   %fixpipe_result = hivm.hir.fixpipe ins(%src) outs(%dst) -> tensor<nZ>
@@ -625,6 +783,8 @@ void populateCombineOptimizedConvertLayoutPatterns(
   patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
   patterns.add<FoldFixpipeConvertLayoutPattern>(context);
   // patterns.add<FoldVCastConvertLayoutPattern>(context);
+  patterns.add<FoldConvertLayoutFixpipePattern>(context);
+  patterns.add<FoldConvertLayoutExtractSliceFixpipePattern>(context);
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
 }
 
