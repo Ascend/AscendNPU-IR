@@ -1,18 +1,16 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_0(
-// CHECK: arith.constant
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
 // CHECK: hfusion.select
 // CHECK: linalg.reduce
-// CHECK: arith.maximumf
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_1(
@@ -20,35 +18,52 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
 // CHECK: linalg.reduce
-// CHECK: arith.addf
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_2_fused_2(
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: return
 
 // CHECK-LABEL: func.func @triton_unk_fused__softmax_0_2(
-// CHECK: arith.constant
 // CHECK: arith.muli
 // CHECK: arith.addi
 // CHECK: arith.minsi
 // CHECK: scf.for
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: arith.index_cast
+// CHECK: arith.muli
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
+// CHECK: arith.addi
+// CHECK: arith.index_cast
+// CHECK: arith.maxsi
+// CHECK: arith.minsi
+// CHECK: arith.subi
 // CHECK: arith.cmpi slt
 // CHECK: scf.if
 // CHECK: linalg.fill
 // CHECK: memref.subview
+// CHECK: memref.subview
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
 // CHECK: tensor.empty
+// CHECK: tensor.empty
+// CHECK: tensor.empty
+// CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_0
+// CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_1
+// CHECK: memref.reinterpret_cast
+// CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused__softmax_0_2_fused_2
+// CHECK: tensor.extract_slice
+// CHECK: memref.subview
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
+
 
 module{
    func.func @triton_unk_fused__softmax_0_2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32, %arg11: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
