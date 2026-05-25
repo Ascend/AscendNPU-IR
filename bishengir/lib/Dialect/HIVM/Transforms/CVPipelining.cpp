@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -441,6 +442,62 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
                  m->print(dbgs()); dbgs() << '\n');
     }
   }
+
+  // Absorb counter-update ops (arith.addi + memref.store) that follow each
+  // mmadL1 using an init_cond loaded from an alloca. These ops are not
+  // reachable from scf.yield so the loop above misses them.
+  //
+  // Pattern: memref.load %alloca -> cmpi -> init_cond operand of mmadL1
+  //          mmadL1 result ... (other ops) ...
+  //          arith.addi %counter, %c1
+  //          memref.store %incremented, %alloca
+  //
+  // For each workitem, find alloca values read as init_cond, then absorb
+  // any memref.store to those allocas (and their arith.addi operands).
+  for (const auto &item : worklist) {
+    // Collect alloca values whose load feeds an init_cond in this workitem.
+    SmallPtrSet<Value, 4> initCondAllocas;
+    for (Operation *op : item->ops) {
+      for (Value operand : op->getOperands()) {
+        // init_cond is an i1; trace cmpi -> load -> alloca
+        auto cmpi = dyn_cast_if_present<arith::CmpIOp>(operand.getDefiningOp());
+        if (!cmpi)
+          continue;
+        for (Value cmpOperand : cmpi->getOperands()) {
+          auto load = dyn_cast_if_present<memref::LoadOp>(
+              cmpOperand.getDefiningOp());
+          if (!load)
+            continue;
+          Value memref = load.getMemRef();
+          if (isa_and_nonnull<memref::AllocaOp>(memref.getDefiningOp()))
+            initCondAllocas.insert(memref);
+        }
+      }
+    }
+
+    // Absorb memref.store to those allocas and their addi operand.
+    for (Operation &op : *body) {
+      auto store = dyn_cast<memref::StoreOp>(op);
+      if (!store || !initCondAllocas.contains(store.getMemRef()))
+        continue;
+      if (opToWorkItemMap.contains(&op))
+        continue;
+      // Also absorb the defining arith.addi of the stored value.
+      if (Operation *addi = store.getValue().getDefiningOp()) {
+        if (isa<arith::AddIOp>(addi) && !opToWorkItemMap.contains(addi)) {
+          item->ops.insert(addi);
+          opToWorkItemMap[addi].push_back(item.get());
+          LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
+                     addi->print(dbgs()); dbgs() << '\n');
+        }
+      }
+      item->ops.insert(&op);
+      opToWorkItemMap[&op].push_back(item.get());
+      LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter store: ";
+                 op.print(dbgs()); dbgs() << '\n');
+    }
+  }
+
   return success();
 }
 
