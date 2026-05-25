@@ -1,5 +1,5 @@
   // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
-  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
+  // RUN: -remove-vector-layout-attr -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 
 // CHECK-LABEL: @sort_kernel_2d_outlined_vf_0
 #map = affine_map<()[s0] -> (s0 * 12)>
@@ -14,15 +14,13 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     scf.for %arg2 = %c0 to %c10 step %c1 {
       %res, %new_true_shape = ave.hir.plt %c12 {mask_op_idx = 0 : i32} : vector<64xi1>, index
       %base_buffer, %offset, %sizes:2, %strides:2 = memref.extract_strided_metadata %arg0 : memref<10x12xf8E4M3FN, #hivm.address_space<ub>> -> memref<f8E4M3FN, #hivm.address_space<ub>>, index, index, index, index, index
-      %0 = affine.apply #map()[%arg2]
-      %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%0], sizes: [12], strides: [1] : memref<f8E4M3FN, #hivm.address_space<ub>> to memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>
-      // CHECK: llvm.mlir.constant(0 : i8) : i8
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vbr
-      // CHECK-NEXT: llvm.bitcast {{.*}} : vector<256xi8> to vector<256xf8E4M3FN>
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vintlv
-      // CHECK-NEXT: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vintlv
-      %res_0 = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>> into vector<64xf8E4M3FN>
+        %0 = affine.apply #map()[%arg2]
+        %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%0], sizes: [12], strides: [1] : memref<f8E4M3FN, #hivm.address_space<ub>> to memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>
+        // CHECK: hivm_regbaseintrins.intr.hivm.vintlv
+        // CHECK: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
+        // CHECK: hivm_regbaseintrins.intr.hivm.vintlv
+        // CHECK: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
+        %res_0 = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>> into vector<64xf8E4M3FN>
       %1 = ave.hir.vextf %res_0, <part_even>, %res : vector<64xf8E4M3FN>, vector<64xf32>, vector<64xi1>
       %base_buffer_1, %offset_2, %sizes_3:2, %strides_4:2 = memref.extract_strided_metadata %arg1 : memref<10x12xf32, strided<[32, 1]>, #hivm.address_space<ub>> -> memref<f32, #hivm.address_space<ub>>, index, index, index, index, index
       %2 = affine.apply #map2()[%arg2]
@@ -44,16 +42,14 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%0], sizes: [12], strides: [1] : memref<f32, #hivm.address_space<ub>> to memref<12xf32, #map1, #hivm.address_space<ub>>
       %res_0 = ave.hir.vload <NORM> %reinterpret_cast[%c0] : memref<12xf32, #map1, #hivm.address_space<ub>> into vector<64xf32>
       %1 = ave.hir.vtruncf %res_0, <round>, false, <part_even>, %res : vector<64xf32>, vector<64xf8E4M3FN>, vector<64xi1>
-      %base_buffer_1, %offset_2, %sizes_3:2, %strides_4:2 = memref.extract_strided_metadata %arg1 : memref<10x12xf8E4M3FN, #hivm.address_space<ub>> -> memref<f8E4M3FN, #hivm.address_space<ub>>, index, index, index, index, index
-      %2 = affine.apply #map()[%arg2]
-      %reinterpret_cast_5 = memref.reinterpret_cast %base_buffer_1 to offset: [%2], sizes: [12], strides: [1] : memref<f8E4M3FN, #hivm.address_space<ub>> to memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>
-      // CHECK: llvm.mlir.constant(0 : i8) : i8
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vbr
-      // CHECK-NEXT: llvm.bitcast {{.*}} : vector<256xi8> to vector<256xf8E4M3FN>
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vdintlv
-      // CHECK-NEXT: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
-      // CHECK-NEXT: hivm_regbaseintrins.intr.hivm.vdintlv
-      ave.hir.masked_store <NORM_B8> %reinterpret_cast_5[%c0], %res, %1 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf8E4M3FN>
+        %base_buffer_1, %offset_2, %sizes_3:2, %strides_4:2 = memref.extract_strided_metadata %arg1 : memref<10x12xf8E4M3FN, #hivm.address_space<ub>> -> memref<f8E4M3FN, #hivm.address_space<ub>>, index, index, index, index, index
+        %2 = affine.apply #map()[%arg2]
+        %reinterpret_cast_5 = memref.reinterpret_cast %base_buffer_1 to offset: [%2], sizes: [12], strides: [1] : memref<f8E4M3FN, #hivm.address_space<ub>> to memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>
+        // CHECK: hivm_regbaseintrins.intr.hivm.vdintlv
+        // CHECK: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
+        // CHECK: hivm_regbaseintrins.intr.hivm.vdintlv
+        // CHECK: llvm.extractvalue {{.*}}[0] : !llvm.struct<(vector<256xf8E4M3FN>, vector<256xf8E4M3FN>)>
+        ave.hir.masked_store <NORM_B8> %reinterpret_cast_5[%c0], %res, %1 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<12xf8E4M3FN, #map1, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf8E4M3FN>
     } {element_alignment_bit_width = 32 : i32}
     return
   }

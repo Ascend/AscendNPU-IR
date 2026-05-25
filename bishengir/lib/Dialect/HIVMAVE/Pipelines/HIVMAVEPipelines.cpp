@@ -76,6 +76,8 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeVectorLayoutPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeAlignmentBitwidthPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
   }
 }
 

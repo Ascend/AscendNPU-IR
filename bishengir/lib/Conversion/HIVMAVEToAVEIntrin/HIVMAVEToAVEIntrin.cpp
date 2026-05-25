@@ -846,155 +846,6 @@ static Value interleaveDataLayoutForExtCast(ConversionPatternRewriter &rewriter,
   llvm_unreachable("Unexpected element type in interleaveDataLayoutForExtCast");
 }
 
-static Operation *
-deinterleaveDataLayoutForTruncCast(ConversionPatternRewriter &rewriter,
-                                   Location loc, int packCoefficient, bool isUI,
-                                   Operation *cvt) {
-  assert(cvt != nullptr);
-  Value src = cvt->getResult(0);
-  Type srcElemType = cast<VectorType>(src.getType()).getElementType();
-  auto srcVLVectorTy = hivm_regbaseintrins::createVLVectorType(srcElemType);
-
-  auto dintlvType = LLVM::LLVMStructType::getLiteral(
-      rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-
-  unsigned bitWidth = srcElemType.getIntOrFloatBitWidth();
-  bool shouldPack = (bitWidth == 8 && packCoefficient == 4);
-
-  auto createDintlv = [&rewriter, loc, srcVLVectorTy, dintlvType, src,
-                       srcElemType, shouldPack](auto vbrOpType,
-                                                auto vdintlvOpType) -> Value {
-    using VbrOp = typename decltype(vbrOpType)::type;
-    using VDintlvOp = typename decltype(vdintlvOpType)::type;
-
-    Value vbr;
-    if (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()) {
-      // Workaround: VbrOp does not support FP8 scalar variables.
-      // Broadcast an i8 zero and bitcast the result to FP8 vector.
-
-      // TODO: I16 to avoid the problem in #ISSUE#81, fix when cce adapted.
-      Value cstZeroI8 = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(rewriter.getI8Type()));
-      auto i8VLVectorTy =
-          hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
-      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI8);
-      vbr = rewriter.create<LLVM::BitcastOp>(loc, srcVLVectorTy, vbrI8);
-    } else {
-      Value cstZero = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(srcElemType));
-      vbr = rewriter.create<VbrOp>(loc, srcVLVectorTy, cstZero);
-    }
-
-    Value result = rewriter.create<VDintlvOp>(loc, dintlvType, src, vbr);
-
-    if (shouldPack) {
-      Value extracted = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
-      result = rewriter.create<VDintlvOp>(loc, dintlvType, extracted, vbr);
-    }
-    return result;
-  };
-  if (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2() ||
-      srcElemType.isBF16() || srcElemType.isF16() || srcElemType.isF32() ||
-      srcElemType.isSignedInteger(8) || srcElemType.isSignlessInteger(8) ||
-      srcElemType.isUnsignedInteger(8) || srcElemType.isSignedInteger(16) ||
-      srcElemType.isSignlessInteger(16) || srcElemType.isUnsignedInteger(16) ||
-      srcElemType.isSignedInteger(32) || srcElemType.isSignlessInteger(32) ||
-      srcElemType.isUnsignedInteger(32)) {
-    Value dintlv = createDintlv(OpTag<VbrInstrOp>{}, OpTag<VDintlvInstrOp>{});
-    return rewriter.create<LLVM::ExtractValueOp>(loc, dintlv, 0);
-  }
-  llvm_unreachable(
-      "Unexpected element type in deinterleaveDataLayoutForExtCast");
-}
-
-static Value addDistForUnalignedLoad(Value srcVal, Value dist,
-                                     bool isSignedInteger, Location loc,
-                                     ConversionPatternRewriter &rewriter) {
-  // vldus have no dist operand
-  // Implement BRC_xxx by using vdup
-  // Implement UNPK_xxx by using vintlv
-  auto constantOp = dyn_cast<LLVM::ConstantOp>(dist.getDefiningOp());
-  IntegerAttr attr = dyn_cast<IntegerAttr>(constantOp.getValue());
-  uint32_t distValue = (uint32_t)(attr.getValue().getZExtValue());
-  Value dst = srcVal;
-  switch (distValue) {
-  case (uint32_t)hivmave::LoadDist::NORM:
-    break;
-  case (uint32_t)hivmave::LoadDist::BRC_B8:
-  case (uint32_t)hivmave::LoadDist::BRC_B16:
-  case (uint32_t)hivmave::LoadDist::BRC_B32: {
-    Type elementType = cast<VectorType>(srcVal.getType()).getElementType();
-    unsigned elementBitWidth = elementType.getIntOrFloatBitWidth();
-    Value cstZero =
-        rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
-    Operation *allOneMask = buildPsetOp(cstZero, elementBitWidth, rewriter);
-    Operation *dupOp =
-        buildVdupOp(srcVal, allOneMask->getResult(0), elementType, rewriter);
-    dst = dupOp->getResult(0);
-    break;
-  }
-  case (uint32_t)hivmave::LoadDist::UNPK_B8:
-  case (uint32_t)hivmave::LoadDist::UNPK_B16:
-  case (uint32_t)hivmave::LoadDist::UNPK_B32: {
-    dst = interleaveDataLayoutForExtCast(rewriter, loc, 2, isSignedInteger,
-                                         srcVal);
-    break;
-  }
-  case (uint32_t)hivmave::LoadDist::UNPK4_B8: {
-    dst = interleaveDataLayoutForExtCast(rewriter, loc, 4, isSignedInteger,
-                                         srcVal);
-    break;
-  }
-  default: {
-    llvm::errs() << "Unalgined load not support dist: " << distValue << "\n";
-    break;
-  }
-  }
-  return dst;
-}
-
-static Value addDistForUnalignedStore(Value srcVal, Value dist,
-                                      bool isSignedInteger, Location loc,
-                                      ConversionPatternRewriter &rewriter) {
-  // vstus have no dist operand
-  // Implement ONEPT_xxx by using vsel
-  // Implement PK_xxx by using vdintlv
-  auto constantOp = dyn_cast<LLVM::ConstantOp>(dist.getDefiningOp());
-  IntegerAttr attr = dyn_cast<IntegerAttr>(constantOp.getValue());
-  uint32_t distValue = (uint32_t)(attr.getValue().getZExtValue());
-  Value dst = srcVal;
-  switch (distValue) {
-  case (uint32_t)hivmave::StoreDist::NORM_B8:
-  case (uint32_t)hivmave::StoreDist::NORM_B16:
-  case (uint32_t)hivmave::StoreDist::NORM_B32:
-  case (uint32_t)hivmave::StoreDist::NORM_B64:
-    break;
-  case (uint32_t)hivmave::StoreDist::ONEPT_B8:
-  case (uint32_t)hivmave::StoreDist::ONEPT_B16:
-  case (uint32_t)hivmave::StoreDist::ONEPT_B32:
-    break;
-  case (uint32_t)hivmave::StoreDist::PK_B16:
-  case (uint32_t)hivmave::StoreDist::PK_B32:
-  case (uint32_t)hivmave::StoreDist::PK_B64: {
-    dst = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, isSignedInteger,
-                                             srcVal.getDefiningOp())
-              ->getResult(0);
-    break;
-  }
-  case (uint32_t)hivmave::StoreDist::PK4_B32: {
-    dst = deinterleaveDataLayoutForTruncCast(rewriter, loc, 4, isSignedInteger,
-                                             srcVal.getDefiningOp())
-              ->getResult(0);
-    break;
-  }
-  default: {
-    llvm::errs() << "Unalgined store not support dist: " << distValue << "\n";
-    break;
-  }
-  }
-  return dst;
-}
-
 static bool isBRCDist(Value dist) {
   // check load dist is brc
   auto constantOp = dyn_cast<LLVM::ConstantOp>(dist.getDefiningOp());
@@ -1267,23 +1118,6 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     int elementAlignment = getElementAlignmentBitWidth(load);
     auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
     bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
-    if (elementAlignment != -1) {
-      if (load.getPattern() == hivmave::LoadDist::NORM) {
-        if (elemWidth == 8 && elementAlignment == 16) {
-          dist = rewriter.create<LLVM::ConstantOp>(
-              loc, rewriter.getI32Type(),
-              static_cast<uint32_t>(hivmave::LoadDist::UNPK_B8));
-        } else if (elemWidth == 16 && elementAlignment == 32) {
-          dist = rewriter.create<LLVM::ConstantOp>(
-              loc, rewriter.getI32Type(),
-              static_cast<uint32_t>(hivmave::LoadDist::UNPK_B16));
-        } else if (elemWidth == 8 && elementAlignment == 32 && archIs910_95) {
-          dist = rewriter.create<LLVM::ConstantOp>(
-              loc, rewriter.getI32Type(),
-              static_cast<uint32_t>(hivmave::LoadDist::UNPK4_B8));
-        }
-      }
-    }
 
     if (archIs910_95 && load->hasAttr(UnalignedAttr::name) &&
         !isBRCDist(dist)) {
@@ -1323,8 +1157,6 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
 
       Value extractOp =
           rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
-      extractOp = addDistForUnalignedLoad(
-          extractOp, dist, elementType.isSignedInteger(), loc, rewriter);
       rewriter.replaceOp(load, extractOp);
       return success();
     }
@@ -1361,19 +1193,10 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
                elementType.isSignlessInteger(8)) {
       Value result = rewriter.create<Vldsx1V256S8InstrOp>(loc, vtype, dataPtr,
                                                           offset, dist, mode);
-      // If data bits = 1/4 * ElementAlignment, because vlds/vsts
-      // intrin of 310b4 doesn't support UNPK4 or PK4 dist, we have to
-      // load/store data in compact manner and interleave data after load and
-      // deinterleave data before store.
-      if (elementAlignment == 32 && !archIs910_95)
-        result =
-            interleaveDataLayoutForExtCast(rewriter, loc, 4, false, result);
       rewriter.replaceOp(load, result);
     } else if (elementType.isUnsignedInteger(8)) {
       Value result = rewriter.create<Vldsx1V256U8InstrOp>(loc, vtype, dataPtr,
                                                           offset, dist, mode);
-      if (elementAlignment == 32 && !archIs910_95)
-        result = interleaveDataLayoutForExtCast(rewriter, loc, 4, true, result);
       rewriter.replaceOp(load, result);
     } else if (elementType.isF32()) {
       auto result = rewriter.create<Vldsx1V64F32InstrOp>(loc, vtype, dataPtr,
@@ -1474,22 +1297,6 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
     auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
     bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
-    if (store.getPattern() == hivmave::StoreDist::NORM_B8 ||
-        store.getPattern() == hivmave::StoreDist::NORM_B16) {
-      if (elemWidth == 8 && elementAlignment == 16) {
-        dist = rewriter.create<LLVM::ConstantOp>(
-            loc, rewriter.getI32Type(),
-            static_cast<uint32_t>(hivmave::StoreDist::PK_B16));
-      } else if (elemWidth == 16 && elementAlignment == 32) {
-        dist = rewriter.create<LLVM::ConstantOp>(
-            loc, rewriter.getI32Type(),
-            static_cast<uint32_t>(hivmave::StoreDist::PK_B32));
-      } else if (elemWidth == 8 && elementAlignment == 32 && archIs910_95) {
-        dist = rewriter.create<LLVM::ConstantOp>(
-            loc, rewriter.getI32Type(),
-            static_cast<uint32_t>(hivmave::StoreDist::PK4_B32));
-      }
-    }
     Value mask = store.getMask();
     if (mask.getDefiningOp() &&
         mask.getDefiningOp()->getAttr(utils::maskOpIdx)) {
@@ -1511,8 +1318,6 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       // vstus have no mask operand. vstus will only store the least significant
       // Sm-byte of Vd. Method getElemSizeByStoreMask will calculate Sm by dist
       // and mask.
-      data = addDistForUnalignedStore(data, dist, dElemType.isSignedInteger(),
-                                      loc, rewriter);
       Value elemSize =
           getElemSizeByStoreMask(store.getMask(), dElemType, loc, rewriter);
       VectorType vector32I8Type = VectorType::get(32, rewriter.getI8Type());
@@ -1532,8 +1337,6 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     if (archIs910_95 && store->hasAttr("hivm.is_continuous") &&
         isONEPTDist(dist)) {
       // use vstus + vstas to access onept
-      data = addDistForUnalignedStore(data, dist, dElemType.isSignedInteger(),
-                                      loc, rewriter);
       int32_t sizeInBytes =
           static_cast<int32_t>(dElemType.getIntOrFloatBitWidth() / 8);
       Value elemSize = rewriter.create<arith::ConstantOp>(
@@ -1582,18 +1385,10 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
     } else if (dElemType.isSignedInteger(8) || dElemType.isSignlessInteger(8)) {
-      if (elementAlignment == 32 && !archIs910_95)
-        data = deinterleaveDataLayoutForTruncCast(rewriter, loc, 4, false,
-                                                  data.getDefiningOp())
-                   ->getResult(0);
       auto result = rewriter.create<Vstsx1V256S8InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
     } else if (dElemType.isUnsignedInteger(8)) {
-      if (elementAlignment == 32 && !archIs910_95)
-        data = deinterleaveDataLayoutForTruncCast(rewriter, loc, 4, true,
-                                                  data.getDefiningOp())
-                   ->getResult(0);
       auto result = rewriter.create<Vstsx1V256U8InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
@@ -2650,112 +2445,57 @@ struct HIVMTypeConvertionOpLowering
         findProperMaskOrCreateOne(rewriter, srcOp, srcOp.getMask(), dataWidth);
     // If the data have been arranged by ElementAlignment when load, do not need
     // to interleave/deinterleave when type cast, otherwise need.
-    bool alignByElementAlignment = isAlignByElementAlignment(srcOp);
     Operation *newOp = nullptr;
     if constexpr (std::is_same_v<OpToBeConverted, VFExtFOp>) {
       if (outElemType.isF32()) {
-        int unpackCoefficient =
-            static_cast<int>(outElemType.getIntOrFloatBitWidth()) /
-            static_cast<int>(inElemType.getIntOrFloatBitWidth());
         if (inElemType.isBF16()) {
           newOp = rewriter.create<VcvtffBF162F32InstrOp>(
-              loc, dstVLVectorTy,
-              alignByElementAlignment
-                  ? srcCasted
-                  : interleaveDataLayoutForExtCast(
-                        rewriter, loc, unpackCoefficient, false, srcCasted),
-              mask, cstValue(srcOp.getPart()));
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (inElemType.isFloat8E4M3FN()) {
           newOp = rewriter.create<VcvtffF8E4M32F32InstrOp>(
-              loc, dstVLVectorTy,
-              alignByElementAlignment
-                  ? srcCasted
-                  : interleaveDataLayoutForExtCast(
-                        rewriter, loc, unpackCoefficient, false, srcCasted),
-              mask, cstValue(srcOp.getPart()));
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (inElemType.isFloat8E5M2()) {
           newOp = rewriter.create<VcvtffF8E5M22F32InstrOp>(
-              loc, dstVLVectorTy,
-              alignByElementAlignment
-                  ? srcCasted
-                  : interleaveDataLayoutForExtCast(
-                        rewriter, loc, unpackCoefficient, false, srcCasted),
-              mask, cstValue(srcOp.getPart()));
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (inElemType.isF16()) {
           newOp = rewriter.create<VcvtffF162F32InstrOp>(
-              loc, dstVLVectorTy,
-              alignByElementAlignment
-                  ? srcCasted
-                  : interleaveDataLayoutForExtCast(
-                        rewriter, loc, unpackCoefficient, false, srcCasted),
-              mask, cstValue(srcOp.getPart()));
+              loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         }
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFExtSIOp>) {
       if (inElemType.isSignlessInteger(8) && outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtiiS82S32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 4, false, srcCasted),
-            mask, cstValue(*srcOp.getPp()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPp()));
       else if (inElemType.isSignlessInteger(8) &&
                outElemType.isSignlessInteger(16))
         newOp = rewriter.create<VcvtiiS82S16InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
       else if (inElemType.isSignlessInteger(16) &&
                outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtiiS162S32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
       else if (inElemType.isSignlessInteger(32) &&
                outElemType.isSignlessInteger(64))
         newOp = rewriter.create<VcvtiiS322S64InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
     } else if constexpr (std::is_same_v<OpToBeConverted, VFExtUIOp>) {
       if (inElemType.isSignlessInteger(8) && outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtiiU82U32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 4, true, srcCasted),
-            mask, cstValue(*srcOp.getPp()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPp()));
       else if (inElemType.isSignlessInteger(8) &&
                outElemType.isSignlessInteger(16))
         newOp = rewriter.create<VcvtiiU82U16InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, true, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
       else if (inElemType.isSignlessInteger(16) &&
                outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtiiU162U32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, true, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
     } else if constexpr (std::is_same_v<OpToBeConverted, VFTruncIOp>) {
       if (inElemType.isSignlessInteger(64) &&
           outElemType.isSignlessInteger(32)) {
         newOp = rewriter.create<VcvtiiS642S32InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getSat()),
             cstValue(*srcOp.getPart()));
-        if (!alignByElementAlignment)
-          newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, false,
-                                                     newOp);
       } else if (inElemType.isSignlessInteger(32) &&
                  outElemType.isSignlessInteger(16)) {
         auto uniAttr = srcOp->getAttr("uni");
@@ -2799,9 +2539,6 @@ struct HIVMTypeConvertionOpLowering
             return failure();
           }
         }
-        if (!alignByElementAlignment)
-          newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, false,
-                                                     newOp);
       } else if (inElemType.isSignlessInteger(16) &&
                  outElemType.isSignlessInteger(8)) {
         auto uniAttr = srcOp->getAttr("uni");
@@ -2845,9 +2582,6 @@ struct HIVMTypeConvertionOpLowering
             return failure();
           }
         }
-        if (!alignByElementAlignment)
-          newOp =
-              deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, true, newOp);
       } else if (inElemType.isSignlessInteger(32) &&
                  outElemType.isSignlessInteger(8)) {
         auto uniAttr = srcOp->getAttr("uni");
@@ -2891,9 +2625,6 @@ struct HIVMTypeConvertionOpLowering
             return failure();
           }
         }
-        if (!alignByElementAlignment)
-          newOp =
-              deinterleaveDataLayoutForTruncCast(rewriter, loc, 4, true, newOp);
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFTruncFOp>) {
       if (outElemType.isBF16())
@@ -2912,12 +2643,6 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtffF322F8E5M2InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      if (resType.getNumElements() == srcType.getNumElements() &&
-          !alignByElementAlignment) {
-        int packCoefficient = outElemType.getIntOrFloatBitWidth() == 8 ? 4 : 2;
-        newOp = deinterleaveDataLayoutForTruncCast(
-            rewriter, loc, packCoefficient, false, newOp);
-      }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFFpToSIntOp>) {
       if (srcOp.getRnd() == hivm::RoundMode::TRUNCWITHOVERFLOW) {
         auto rintMode = hivm::RoundMode::TRUNC;
@@ -2925,12 +2650,8 @@ struct HIVMTypeConvertionOpLowering
       }
       if (inElemType.isF32() && outElemType.isSignlessInteger(64))
         newOp = rewriter.create<VcvtfiF322S64InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(srcOp.getRnd()), cstValue(*srcOp.getSat()),
-            cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+            cstValue(*srcOp.getSat()), cstValue(*srcOp.getPart()));
       else if (inElemType.isF32() && outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtfiF322S32InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
@@ -2939,16 +2660,10 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtfiF322S16InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(*srcOp.getSat()), cstValue(*srcOp.getPart()));
-        if (!alignByElementAlignment)
-          newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, false,
-                                                     newOp);
       } else if (inElemType.isF16() && outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtfiF162S32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(srcOp.getRnd()), cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+            cstValue(*srcOp.getPart()));
       else if (inElemType.isF16() && outElemType.isSignlessInteger(16))
         newOp = rewriter.create<VcvtfiF162S16InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
@@ -2957,17 +2672,10 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtfiF162S8InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(*srcOp.getSat()), cstValue(*srcOp.getPart()));
-        if (!alignByElementAlignment)
-          newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, false,
-                                                     newOp);
       } else if (inElemType.isBF16() && outElemType.isSignlessInteger(32))
         newOp = rewriter.create<VcvtfiBF162S32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(srcOp.getRnd()), cstValue(*srcOp.getSat()),
-            cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
+            cstValue(*srcOp.getSat()), cstValue(*srcOp.getPart()));
     } else if constexpr (std::is_same_v<OpToBeConverted, VFFpToUIntOp>) {
       if (srcOp.getRnd() == hivm::RoundMode::TRUNCWITHOVERFLOW) {
         auto rintMode = hivm::RoundMode::TRUNC;
@@ -2977,95 +2685,17 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtfiF162U8InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-        if (!alignByElementAlignment)
-          newOp =
-              deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, true, newOp);
-      }
-      if (inElemType.isF16() && outElemType.isSignlessInteger(16)) {
-        MLIRContext *ctx = rewriter.getContext();
-        auto srcVectorTy = mlir::dyn_cast<VectorType>(src.getType());
-        if (!srcVectorTy) {
-          return failure();
-        }
-
-        int64_t totalElements = srcVectorTy.getNumElements();
-        if (totalElements <= 64) {
-          auto s32VectorTy =
-              VectorType::get({totalElements}, IntegerType::get(ctx, 32));
-          auto u8Op = rewriter.create<VcvtfiF162S32InstrOp>(
-              loc, s32VectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
-              cstValue(srcOp.getPart()));
-          newOp = rewriter.create<VcvtiiS322U16InstrOp>(
-              loc, dstVLVectorTy, u8Op, mask, cstValue(srcOp.getSat()),
-              cstValue(srcOp.getPart()));
-          if (!alignByElementAlignment)
-            newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, true,
-                                                       newOp);
-        } else {
-          assert(totalElements == 128 && "Only support 128 for now");
-          auto innerVecTy = VectorType::get({64}, inElemType);
-          auto srcStructTy =
-              LLVM::LLVMStructType::getLiteral(ctx, {innerVecTy, innerVecTy});
-          Value srcCastedStruct =
-              rewriter
-                  .create<UnrealizedConversionCastOp>(loc, srcStructTy, src)
-                  ->getResult(0);
-
-          auto firstHalf = rewriter.create<LLVM::ExtractValueOp>(
-              loc, VectorType::get({64}, inElemType), srcCastedStruct,
-              ArrayRef<int64_t>{0});
-          auto secondHalf = rewriter.create<LLVM::ExtractValueOp>(
-              loc, VectorType::get({64}, inElemType), srcCastedStruct,
-              ArrayRef<int64_t>{1});
-
-          auto s32Ty = VectorType::get({64}, IntegerType::get(ctx, 32));
-          auto i16Ty = VectorType::get({64}, IntegerType::get(ctx, 16));
-          auto u8Op1 = rewriter.create<VcvtfiF162S32InstrOp>(
-              loc, s32Ty, firstHalf, mask, cstValue(srcOp.getRnd()),
-              cstValue(srcOp.getPart()));
-          auto result1 = rewriter.create<VcvtiiS322U16InstrOp>(
-              loc, i16Ty, u8Op1, mask, cstValue(srcOp.getSat()),
-              cstValue(srcOp.getPart()));
-          auto u8Op2 = rewriter.create<VcvtfiF162S32InstrOp>(
-              loc, s32Ty, secondHalf, mask, cstValue(srcOp.getRnd()),
-              cstValue(srcOp.getPart()));
-          auto result2 = rewriter.create<VcvtiiS322U16InstrOp>(
-              loc, i16Ty, u8Op2, mask, cstValue(srcOp.getSat()),
-              cstValue(srcOp.getPart()));
-
-          auto dstStructTy =
-              LLVM::LLVMStructType::getLiteral(ctx, {i16Ty, i16Ty});
-          auto zeroVector = rewriter.create<LLVM::UndefOp>(loc, dstStructTy);
-          auto merged1 = rewriter.create<LLVM::InsertValueOp>(
-              loc, dstStructTy, zeroVector, result1, ArrayRef<int64_t>{0});
-          auto merged2 = rewriter.create<LLVM::InsertValueOp>(
-              loc, dstStructTy, merged1, result2, ArrayRef<int64_t>{1});
-
-          newOp = rewriter.create<UnrealizedConversionCastOp>(
-              loc, resType, ValueRange{merged2.getResult()});
-          if (!alignByElementAlignment)
-            newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, true,
-                                                       newOp);
-        }
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFSIntToFpOp>) {
       if (inElemType.isSignlessInteger(8) && outElemType.isF16())
         newOp = rewriter.create<VcvtifS82F16InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
       else if (inElemType.isSignlessInteger(16) && outElemType.isF16())
         newOp = rewriter.create<VcvtifS162F16InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getRnd()));
       else if (inElemType.isSignlessInteger(16) && outElemType.isF32())
         newOp = rewriter.create<VcvtifS162F32InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, false, srcCasted),
-            mask, cstValue(*srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getPart()));
       else if (inElemType.isSignlessInteger(32) && outElemType.isF32())
         newOp = rewriter.create<VcvtifS322F32InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getRnd()));
@@ -3073,18 +2703,11 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtifS642F32InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(*srcOp.getRnd()),
             cstValue(*srcOp.getPart()));
-        if (!alignByElementAlignment)
-          newOp = deinterleaveDataLayoutForTruncCast(rewriter, loc, 2, false,
-                                                     newOp);
       }
     } else if constexpr (std::is_same_v<OpToBeConverted, VFUIntToFpOp>) {
       if (inElemType.isSignlessInteger(8) && outElemType.isF16())
         newOp = rewriter.create<VcvtifU82F16InstrOp>(
-            loc, dstVLVectorTy,
-            alignByElementAlignment ? srcCasted
-                                    : interleaveDataLayoutForExtCast(
-                                          rewriter, loc, 2, true, srcCasted),
-            mask, cstValue(srcOp.getPart()));
+            loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
       llvm_unreachable("Unsupported type conversion op.");
