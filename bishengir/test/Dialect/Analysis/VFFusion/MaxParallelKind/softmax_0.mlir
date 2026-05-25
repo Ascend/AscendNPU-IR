@@ -17,6 +17,7 @@
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_1(
 // CHECK: arith.constant
+// CHECK: tensor.extract
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
 // CHECK: linalg.fill
@@ -25,6 +26,7 @@
 // CHECK: linalg.yield
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_2(
+// CHECK: tensor.extract
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
 
@@ -45,9 +47,7 @@
 // CHECK: bufferization.to_tensor
 // CHECK: tensor.empty
 // CHECK: func.call @triton_unk_fused__softmax_0_fused_0
-// CHECK: tensor.extract
 // CHECK: func.call @triton_unk_fused__softmax_0_fused_1
-// CHECK: tensor.extract
 // CHECK: func.call @triton_unk_fused__softmax_0_fused_2
 // CHECK: bufferization.materialize_in_destination
 // CHECK: return
