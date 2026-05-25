@@ -113,7 +113,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_3d_core(
   if (((stride0_gm < stride1_gm || stride1_gm < stride2_gm) ||
        (stride0_ub < stride1_ub || stride1_ub < stride2_ub))) {
     // Implicit transposition scenarios
-    load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_3d_by_scalar<T>(src, dst);
+    } else {
+      load_gm_to_ubuf_3d_by_nddma<T>(src, dst);
+    }
     return;
   }
   // axis 1 is contiguous

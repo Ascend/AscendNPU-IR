@@ -760,8 +760,25 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
     if (vecSize != vlLength) {
       vecTy = VectorType::get(SmallVector<int64_t>{vlLength}, elementType);
     }
-    mlir::Value result =
-        rewriter.create<IntrOpTy>(loc, vecTy, scalar, mask, mode);
+    mlir::Value result;
+    if (dataWidth == 16 || dataWidth == 32) {
+      result = rewriter.create<IntrOpTy>(loc, vecTy, scalar, mask, mode);
+    } else if (dataWidth == 8) {
+      Value i8Value;
+      auto i8Type = IntegerType::get(rewriter.getContext(), 8);
+      auto i8VecTy =
+          VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()}, i8Type);
+      if (elementType.isFloat8E4M3FN() || elementType.isFloat8E5M2() ||
+          scalar.getType().isFloat8E4M3FN() || scalar.getType().isFloat8E5M2()) {
+        i8Value = rewriter.create<LLVM::BitcastOp>(loc, i8Type, scalar);
+      } else if (scalar.getType().getIntOrFloatBitWidth() == 16) {
+        i8Value = rewriter.create<arith::TruncIOp>(loc, i8Type, scalar);
+      } else {
+        i8Value = scalar;
+      }
+      result = rewriter.create<IntrOpTy>(loc, i8VecTy, i8Value, mask, mode);
+      result = rewriter.create<LLVM::BitcastOp>(loc, vecTy, result);
+    }
     if (oriVecTy != vecTy) {
       Operation *ucc =
           rewriter.create<UnrealizedConversionCastOp>(loc, oriVecTy, result);
