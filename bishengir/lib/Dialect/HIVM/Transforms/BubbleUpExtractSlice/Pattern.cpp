@@ -1781,11 +1781,25 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         auto newUbAllocOp = rewriter.create<memref::AllocOp>(loc, newType);
 
         // deal with the annotation.mark Op
+        auto oldShape = originalType.getShape();
         for (Operation *userOp :
              llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
           if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
-            rewriter.modifyOpInPlace(
-                mark, [&]() { mark->setOperand(0, newUbAllocOp.getResult()); });
+            rewriter.modifyOpInPlace(mark, [&]() {
+              mark->setOperand(0, newUbAllocOp.getResult());
+              for (int64_t i = 0, e = (int64_t)staticShape.size(); i < e; ++i) {
+                if (staticShape[i] != oldShape[i]) {
+                  auto tilingDimAttr =
+                      mark->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
+                  if (tilingDimAttr) {
+                    mark->setAttr(AICAttrTilingDim,
+                                  IntegerAttr::get(
+                                      IndexType::get(mark->getContext()), i));
+                  }
+                  break;
+                }
+              }
+            });
           }
         }
 

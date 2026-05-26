@@ -413,6 +413,11 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
         tightlyCoupledBufferToTilingDim.erase(id))
       erasedAny = true;
+    auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
+    if (tilingDimAttr) {
+      int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+      tightlyCoupledBufferToTilingDim[id] = tilingDim;
+    }
   });
   return erasedAny ? failure() : success();
 }
