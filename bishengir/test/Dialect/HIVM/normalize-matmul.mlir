@@ -30,6 +30,64 @@ func.func @test_MmadL1_Normalize_Mkn(%arg0: memref<16x16xf32>) -> tensor<16x16xf
 }
 
 // -----
+// CHECK-LABEL: func.func @test_MmadL1_Normalize_Mkn_init_false(
+// CHECK-SAME:                                         %[[VAL_0:.*]]: memref<16x16xf32>) -> tensor<16x16xf32> {
+// CHECK-DAG: %[[VAL_1:.*]] = arith.constant true
+// CHECK-DAG: %[[VAL_2:.*]] = arith.constant 16 : index
+// CHECK: %[[VAL_3:.*]] = bufferization.to_tensor %[[VAL_0]] restrict writable : memref<16x16xf32>
+// CHECK: %[[VAL_4:.*]] = memref.alloc() : memref<16x16xf16>
+// CHECK: %[[VAL_5:.*]] = bufferization.to_tensor %[[VAL_4]] restrict writable : memref<16x16xf16>
+// CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<16x16xf16>
+// CHECK: %[[VAL_7:.*]] = bufferization.to_tensor %[[VAL_6]] restrict writable : memref<16x16xf16>
+// CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK-NOT: %[[VAL_9:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins(%[[VAL_5]], %[[VAL_7]], %[[VAL_1]], %[[VAL_2]], %[[VAL_2]], %[[VAL_2]], %[[VAL_3]] : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index, tensor<16x16xf32>) outs(%[[VAL_8]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: }
+
+func.func @test_MmadL1_Normalize_Mkn_init_false(%arg0: memref<16x16xf32>) -> tensor<16x16xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf32>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %alloc_0 = memref.alloc() : memref<16x16xf16>
+    %2 = bufferization.to_tensor %alloc_0 restrict writable : memref<16x16xf16>
+    %false = arith.constant false
+    %3 = tensor.empty() : tensor<16x16xf32>
+    %c0 = arith.constant 0 : index
+    %4 = hivm.hir.mmadL1 ins(%1, %2, %false, %c0, %c0, %c0, %0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index, tensor<16x16xf32>) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %4 : tensor<16x16xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_MmadL1_Normalize_Mkn_init_false_vbrc(
+// CHECK-SAME:                                         %[[VAL_0:.*]]: memref<16x16xf32>) -> tensor<16x16xf32> {
+// CHECK-DAG: %[[VAL_1:.*]] = arith.constant true
+// CHECK-DAG: %[[VAL_2:.*]] = arith.constant 16 : index
+// CHECK: %[[VAL_3:.*]] = bufferization.to_tensor %[[VAL_0]] restrict writable : memref<16x16xf32>
+// CHECK: %[[VAL_4:.*]] = memref.alloc() : memref<16x16xf16>
+// CHECK: %[[VAL_5:.*]] = bufferization.to_tensor %[[VAL_4]] restrict writable : memref<16x16xf16>
+// CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<16x16xf16>
+// CHECK: %[[VAL_7:.*]] = bufferization.to_tensor %[[VAL_6]] restrict writable : memref<16x16xf16>
+// CHECK: %[[VAL_8:.*]] = tensor.empty() : tensor<16x16xf32>
+// CHECK-NOT:  %[[VAL_9:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins(%[[VAL_5]], %[[VAL_7]], %[[VAL_1]], %[[VAL_2]], %[[VAL_2]], %[[VAL_2]], %[[VAL_3]] : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index, tensor<16x16xf32>) outs(%[[VAL_8]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK--: return %[[VAL_9]] : tensor<16x16xf32>
+// CHECK: }
+
+func.func @test_MmadL1_Normalize_Mkn_init_false_vbrc(%arg0: memref<16x16xf32>) -> tensor<16x16xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = bufferization.to_tensor %arg0 restrict writable : memref<16x16xf32>
+    %alloc = memref.alloc() : memref<16x16xf16>
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf16>
+    %alloc_0 = memref.alloc() : memref<16x16xf16>
+    %2 = bufferization.to_tensor %alloc_0 restrict writable : memref<16x16xf16>
+    %false = arith.constant false
+    %3 = tensor.empty() : tensor<16x16xf32>
+    %4 = hivm.hir.vbrc ins(%cst : f32) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    %c0 = arith.constant 0 : index
+    %5 = hivm.hir.mmadL1 ins(%1, %2, %false, %c0, %c0, %c0, %0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index, tensor<16x16xf32>) outs(%4 : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %5 : tensor<16x16xf32>
+}
+
+// -----
 // CHECK-LABEL:   func.func @test_MmadL1_Normalize_decompose_matmul(
 // CHECK-SAME:                                         %[[VAL_0:.*]]: memref<16x16xf32>) -> tensor<16x16xf32> {
 // CHECK-DAG:       %[[VAL_1:.*]] = arith.constant true
@@ -42,7 +100,7 @@ func.func @test_MmadL1_Normalize_Mkn(%arg0: memref<16x16xf32>) -> tensor<16x16xf
 // CHECK:           %[[VAL_8:.*]] = tensor.empty() : tensor<16x16xf32>
 // CHECK:           %[[VAL_9:.*]] = hivm.hir.load ins(%[[VAL_3]] : tensor<16x16xf32>) outs(%[[VAL_8]] : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK:           %[[VAL_10:.*]] = tensor.empty() : tensor<16x16xf32>
-// CHECK:           %[[VAL_11:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins(%[[VAL_5]], %[[VAL_7]], %[[VAL_1]], %[[VAL_2]], %[[VAL_2]], %[[VAL_2]] : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%[[VAL_10]] : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK:           %[[VAL_11:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[VAL_5]], %[[VAL_7]], %[[VAL_1]], %[[VAL_2]], %[[VAL_2]], %[[VAL_2]] : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%[[VAL_10]] : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK:           %[[VAL_12:.*]] = tensor.empty() : tensor<16x16xf32>
 // CHECK:           %[[VAL_13:.*]] = hivm.hir.vadd ins(%[[VAL_11]], %[[VAL_9]] : tensor<16x16xf32>, tensor<16x16xf32>) outs(%[[VAL_12]] : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK:           return %[[VAL_13]] : tensor<16x16xf32>
@@ -90,7 +148,7 @@ func.func @test_madL1_normal_PerChannelAdd(%arg2: memref<?xf16> , %arg3: memref<
   // CHECK-DAG: %[[INIT_TRUE:.*]] = arith.constant true
   // CHECK-DAG: %[[VAL_2:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<1x768xf32>
   // CHECK-DAG: %[[VAL_3:.*]] = tensor.empty() : tensor<29x768xf32>
-  // CHECK: %[[VAL_7:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, %[[INIT_TRUE]], %[[VAL_4]], %[[VAL_5]], %[[VAL_6]], %[[VAL_2]] : tensor<29x128xf16>, tensor<128x768xf16>, i1, index, index, index, tensor<1x768xf32>) outs(%[[VAL_3]] : tensor<29x768xf32>) -> tensor<29x768xf32>
+  // CHECK-NOT: %[[VAL_7:.*]] = hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, %[[INIT_TRUE]], %[[VAL_4]], %[[VAL_5]], %[[VAL_6]], %[[VAL_2]] : tensor<29x128xf16>, tensor<128x768xf16>, i1, index, index, index, tensor<1x768xf32>) outs(%[[VAL_3]] : tensor<29x768xf32>) -> tensor<29x768xf32>
   %11 = bufferization.to_tensor %alloc_4 restrict writable : memref<1x768xf32>
   %12 = tensor.empty() : tensor<29x768xf32>
   %13 = hivm.hir.vbrc ins(%11 : tensor<1x768xf32>) outs(%12 : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
@@ -413,7 +471,7 @@ func.func @fused_matmul_fwd_kernel_MMInitPerChannelAddWithSplitK(%arg0: memref<?
     %37 = arith.addi %arg8, %c127_i32 : i32
     %38 = arith.divsi %37, %c128_i32 : i32
     // CHECK: %[[VAL_35:.*]] = tensor.empty() : tensor<64x64xf32>
-    // CHECK: %36 = scf.for %[[VAL_arg12:.*]] = %[[VAL_c0_i32:.*]] to {{.*}} step {{.*}} iter_args(%[[VAL_arg13:.*]] = %[[VAL_35]]) -> (tensor<64x64xf32>)  : i32 {
+    // CHECK-NOT: %36 = scf.for %[[VAL_arg12:.*]] = %[[VAL_c0_i32:.*]] to {{.*}} step {{.*}} iter_args(%[[VAL_arg13:.*]] = %[[VAL_35]]) -> (tensor<64x64xf32>)  : i32 {
     %39 = scf.for %arg12 = %c0_i32 to %38 step %c1_i32 iter_args(%arg13 = %36) -> (tensor<64x64xf32>)  : i32 {
       %52 = arith.muli %arg12, %c128_i32 : i32
       %53 = arith.index_cast %20 : i32 to index
@@ -452,8 +510,6 @@ func.func @fused_matmul_fwd_kernel_MMInitPerChannelAddWithSplitK(%arg0: memref<?
       %subview_10 = memref.subview %alloc_8[0, 0] [%68, %75] [1, 1] : memref<128x64xf16> to memref<?x?xf16, strided<[64, 1]>>
       hivm.hir.load ins(%subview_9 : memref<?x?xf16, strided<[?, 1], offset: ?>>) outs(%subview_10 : memref<?x?xf16, strided<[64, 1]>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %77 : i1 eviction_policy = <EvictFirst>
       %78 = bufferization.to_tensor %alloc_8 restrict writable : memref<128x64xf16>
-      // CHECK: %[[VAL_76:.*]] = arith.cmpi eq, %[[VAL_arg12]], %[[VAL_c0_i32]] : i32
-      // CHECK: {{.*}} = hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, %[[VAL_76]], {{.*}}, {{.*}}, {{.*}}, %[[VAL_32]] : tensor<64x128xf16>, tensor<128x64xf16>, i1, index, index, index, tensor<64xf16>) outs(%[[VAL_arg13]] : tensor<64x64xf32>) -> tensor<64x64xf32>
       %79 = hivm.hir.mmadL1 ins(%72, %78, %false, %c0, %c0, %c0 : tensor<64x128xf16>, tensor<128x64xf16>, i1, index, index, index) outs(%arg13 : tensor<64x64xf32>) -> tensor<64x64xf32>
       scf.yield %79 : tensor<64x64xf32>
     }
@@ -528,7 +584,7 @@ module {
     %c16 = arith.constant 16 : index
     %c16_4 = arith.constant 16 : index
     %c16_5 = arith.constant 16 : index
-    // CHECK-NOT: hivm.hir.vadd
+    // CHECK: hivm.hir.vadd
     %3 = hivm.hir.mmadL1 ins(%0, %1, %false, %c16, %c16_4, %c16_5 : tensor<16x16xi8>, tensor<16x16xi8>, i1, index, index, index) outs(%2 : tensor<16x16xi32>) -> tensor<16x16xi32>
     %reinterpret_cast_6 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xi32> to memref<16x16xi32, strided<[16, 1]>>
     hivm.hir.store ins(%3 : tensor<16x16xi32>) outs(%reinterpret_cast_6 : memref<16x16xi32, strided<[16, 1]>>)
@@ -560,11 +616,7 @@ module {
       %3 = arith.index_cast %2 : i32 to index
       %a = memref.alloc() : memref<128x256xf16>
       %aTensor = bufferization.to_tensor %a restrict writable : memref<128x256xf16>
-      // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<128x64xf32>
-      // CHECK: hivm.hir.mmadL1
-      // CHECK-SAME: %[[TRUE]]
-      // CHECK-SAME: %[[BIAS]]
-      // CHECK-SAME: outs(%[[EMPTY]]
+      // %5 = hivm.hir.mmadL1 {{.*}} ins({{.*}} %cst : {{.*}} tensor<1x64xf32>) outs(%[[EMPTY]] : tensor<128x64xf32>) -> tensor<128x64xf32>
       %mad = hivm.hir.mmadL1 ins(%aTensor, %bTensor, %false, %c0, %c0, %c0 : tensor<128x256xf16>, tensor<256x64xf16>, i1, index, index, index) outs(%bias_brc : tensor<128x64xf32>) -> tensor<128x64xf32>
       %4 = arith.muli %3, %c64 : index
       %reinterpret_cast = memref.reinterpret_cast %arg4 to offset: [%4], sizes: [128, 64], strides: [64, 1] : memref<?xf32> to memref<128x64xf32, strided<[64, 1], offset: ?>>
@@ -676,6 +728,49 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_madL1_with_PerChannelAdd_in_cond(
+  func.func @test_madL1_with_PerChannelAdd_in_cond(%arg2: memref<?xf16>, %arg3: memref<?xf16>, %arg4: memref<?xf16>, %arg5: memref<?xf32>, %cond: i1) {
+    %false = arith.constant false
+    %c29 = arith.constant 29 : index
+    %c128 = arith.constant 128 : index
+    %c768 = arith.constant 768 : index
+    %alloc = memref.alloc() : memref<29x128xf16>
+    %9 = bufferization.to_tensor %alloc restrict writable : memref<29x128xf16>
+    %alloc_3 = memref.alloc() : memref<128x768xf16>
+    %10 = bufferization.to_tensor %alloc_3 restrict writable : memref<128x768xf16>
+    %alloc_4 = memref.alloc() : memref<1x768xf32>
+    %reinterpret_cast_1 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [1, 768], strides: [768, 1] : memref<?xf32> to memref<1x768xf32, strided<[768, 1]>>
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [29, 768], strides: [768, 1] : memref<?xf16> to memref<29x768xf16, strided<[768, 1]>>
+    hivm.hir.load ins(%reinterpret_cast_1 : memref<1x768xf32, strided<[768, 1]>>) outs(%alloc_4 : memref<1x768xf32>)
+    %11 = bufferization.to_tensor %alloc_4 restrict writable : memref<1x768xf32>
+    %12 = tensor.empty() : tensor<29x768xf32>
+    %outC = hivm.hir.vbrc ins(%11 : tensor<1x768xf32>) outs(%12 : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+    // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[BRC_1D:.*]] : tensor<1x768xf32>) outs(%[[BRC_INIT:.*]] : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
+    // CHECK: memref.store %[[C0:.*]], %[[CNT:.*]][] : memref<i32>
+    // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<29x768xf32>
+    // CHECK: %[[IFRES:.*]] = scf.if
+    // CHECK: %[[LOAD:.*]] = memref.load %[[CNT]][] : memref<i32>
+    // CHECK: %[[INIT:.*]] = arith.cmpi eq, %[[LOAD]], %[[C0]] : i32
+    // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+    // CHECK: scf.yield %[[MMAD]] : tensor<29x768xf32>
+    // CHECK: } else {
+    // CHECK: scf.yield %[[BRC]] : tensor<29x768xf32>
+    // CHECK: }
+    %res = scf.if %cond -> tensor<29x768xf32> {
+      %14 = hivm.hir.mmadL1 ins(%9, %10, %false, %c29, %c128, %c768 : tensor<29x128xf16>, tensor<128x768xf16>, i1, index, index, index) outs(%outC : tensor<29x768xf32>) -> tensor<29x768xf32>
+      scf.yield %14 : tensor<29x768xf32>
+    } else {
+      scf.yield %outC : tensor<29x768xf32>
+    }
+    %15 = tensor.empty() : tensor<29x768xf16>
+    %16 = hivm.hir.vcast ins(%res : tensor<29x768xf32>) outs(%15 : tensor<29x768xf16>) round_mode = <rint> -> tensor<29x768xf16>
+    hivm.hir.store ins(%16 : tensor<29x768xf16>) outs(%reinterpret_cast_2 : memref<29x768xf16, strided<[768, 1]>>)
+    return
+  }
+}
+
+// -----
+module {
   func.func @dot_used_chain_access_if() -> tensor<16x16xf32> {
     %c0_i32 = arith.constant 0 : i32
     %c1_i32 = arith.constant 1 : i32
@@ -758,7 +853,7 @@ module {
 }
 
 // -----
-// CHECK-LABEL:   func.func @dot_bias_init_with_vec
+  // CHECK-LABEL:   func.func @dot_bias_init_with_vec
 module {
   func.func @dot_bias_init_with_vec() -> tensor<64x32xf32> {
     %c0_i32 = arith.constant 0 : i32
@@ -773,13 +868,16 @@ module {
     %c = hivm.hir.vmul ins(%a, %b : tensor<64x32xf32>, tensor<64x32xf32>) outs(%a : tensor<64x32xf32>) -> tensor<64x32xf32>
     %alloc_d = memref.alloc() : memref<32x32xf32>
     %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
+    // CHECK: %[[C:.*]] = hivm.hir.vmul
+    // CHECK: %[[E:.*]] = tensor.empty()
+    // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[E]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
-      // CHECK: hivm.hir.mmadL1
-      // CHECK-NEXT: tensor.empty
-      // CHECK-NEXT: hivm.hir.vadd
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
+    // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<64x32xf32>
+    // CHECK: hivm.hir.vadd ins(%[[FOR]], %[[C]] : tensor<64x32xf32>, tensor<64x32xf32>) outs(%[[EMPTY]] : tensor<64x32xf32>) -> tensor<64x32xf32>
     return %0 : tensor<64x32xf32>
   }
 }

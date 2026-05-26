@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -41,10 +42,13 @@ using namespace mlir::hivm;
 #define DEBUG_TYPE "hivm-normalize-matmul"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
-
+bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
+                                        Operation *hookOp = nullptr);
 namespace {
 
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
+constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
+constexpr StringLiteral kNormalizedInitOrBias = "normalized_init_or_bias";
 
 /// Hint that we only need to pad the k-dimension for Dot.
 constexpr llvm::StringLiteral kDotPadOnlyK = "dot_pad_only_k";
@@ -564,14 +568,472 @@ bool hasDebugUse(Value val) {
   return false;
 }
 
+// Find the outer res of scf.if and scf.for block
+// The %arg should be the output of op if in scf.for
+// The output only used by yield op
+struct CCFInfo {
+  Value inVal;
+  Value outVal;
+  BlockArgument blockArg;
+  Operation *insertPointOp = nullptr;
+  bool isFailure = false;
+  bool mayNotExec = false;
+
+  static CCFInfo getFailure(CCFInfo &info) {
+    info.isFailure = true;
+    return info;
+  }
+};
+
+CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
+  Operation *parentOp = op->getParentOp();
+  if (!parentOp || !(isa<scf::ForOp>(parentOp) || isa<scf::IfOp>(parentOp)))
+    return info;
+
+  if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
+    auto blockArg = dyn_cast_if_present<BlockArgument>(info.inVal);
+    if (!blockArg || blockArg.getOwner() != forOp.getBody())
+      return CCFInfo::getFailure(info);
+
+    unsigned argIdx = blockArg.getArgNumber() - 1;
+    // Relax single-use: allow uses that are scf.if else pass-throughs and the
+    // op itself.
+    for (OpOperand &use : blockArg.getUses()) {
+      Operation *user = use.getOwner();
+      // Allowed: the op itself (mmad or inner for/if that chains to mmad).
+      if (user == op)
+        continue;
+      // Allowed: scf.if else-yield that passes blockArg through unchanged.
+      if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
+        if (yieldOp->getBlock() ==
+            dyn_cast<scf::IfOp>(yieldOp->getParentOp()).elseBlock())
+          continue;
+      }
+      return CCFInfo::getFailure(info);
+    }
+    // The res should only be used by yields in the for body.
+    for (OpOperand &use : info.outVal.getUses()) {
+      Operation *user = use.getOwner();
+      auto yieldOp = dyn_cast<scf::YieldOp>(user);
+      if (!yieldOp)
+        return CCFInfo::getFailure(info);
+      if (yieldOp->getBlock() != forOp.getBody())
+        return CCFInfo::getFailure(info);
+      if (use.getOperandNumber() != argIdx)
+        return CCFInfo::getFailure(info);
+    }
+
+    IntegerAttr ubAttr, lbAttr;
+    if (matchPattern(forOp.getUpperBound(), m_Constant(&ubAttr)) &&
+        matchPattern(forOp.getLowerBound(), m_Constant(&lbAttr))) {
+      if (ubAttr.getValue().sle(lbAttr.getValue())) {
+        info.mayNotExec = true;
+      }
+    } else {
+      info.mayNotExec = true;
+    }
+
+    info.blockArg = blockArg;
+    info.inVal = forOp.getInitArgs()[argIdx];
+    info.outVal = forOp->getResult(argIdx);
+    info.insertPointOp = forOp;
+  } else if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
+    if (!ifOp.elseBlock())
+      return CCFInfo::getFailure(info);
+    auto thenYieldOp = cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
+    auto elseYieldOp = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
+
+    unsigned resultIdx = 0;
+    bool found = false;
+    if (op->getBlock() == ifOp.thenBlock()) {
+      for (unsigned i = 0; i < thenYieldOp->getNumOperands(); ++i) {
+        if (thenYieldOp->getOperand(i) == info.outVal) {
+          resultIdx = i;
+          found = true;
+          break;
+        }
+      }
+    } else {
+      for (unsigned i = 0; i < elseYieldOp->getNumOperands(); ++i) {
+        if (elseYieldOp->getOperand(i) == info.outVal) {
+          resultIdx = i;
+          found = true;
+          break;
+        }
+      }
+    }
+    if (!found)
+      return CCFInfo::getFailure(info);
+
+    if (op->getBlock() == ifOp.thenBlock()) {
+      if (elseYieldOp->getOperand(resultIdx) != info.inVal)
+        return CCFInfo::getFailure(info);
+    } else {
+      if (thenYieldOp->getOperand(resultIdx) != info.inVal)
+        return CCFInfo::getFailure(info);
+    }
+
+    if (!matchPattern(ifOp.getCondition(), m_One())) {
+      info.mayNotExec = true;
+    }
+
+    info.outVal = ifOp->getResult(resultIdx);
+    info.insertPointOp = ifOp;
+  }
+
+  return getOutermostCCFInfo(parentOp, info);
+}
+
+template <typename T>
+CCFInfo getResFromSingleUseChain(Operation *op) {
+  CCFInfo initInfo;
+  initInfo.inVal = cast<T>(op).getC();
+  initInfo.outVal = op->getResult(0);
+  initInfo.insertPointOp = op;
+  initInfo.isFailure = false;
+  initInfo.mayNotExec = false;
+
+  return getOutermostCCFInfo(op, initInfo);
+}
+
+Value initCounter(PatternRewriter &rewriter, Operation &op) {
+    rewriter.setInsertionPoint(&op);
+    // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
+    // every outer iteration, so the counter resets per outer step.
+    Location loc = op.getLoc();
+    Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
+    Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
+    return counterBuf;
+}
+
+template<typename T>
+Value updateInitCondition(PatternRewriter &rewriter, T op, Value counterBuf) {
+  rewriter.setInsertionPoint(op);
+  Location loc = op->getLoc();
+  Value curCount =
+      rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+  Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  auto firstIterCond = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, curCount, zeroI32);
+
+  // In the same then-branch, right after matmul: counter += 1; store back.
+  // Counter only advances on iterations where the scf.if condition fired,
+  // which is exactly what the fallback below relies on.
+  rewriter.setInsertionPointAfter(op);
+  Value oneI32 = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+  Value nextCount = rewriter.create<arith::AddIOp>(loc, curCount, oneI32);
+  rewriter.create<memref::StoreOp>(loc, nextCount, counterBuf, ValueRange{});
+  return firstIterCond;
+}
+
+template<typename T>
+Value updateInitTrue(PatternRewriter &rewriter, T op) {
+  Value constTrue = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
+  return constTrue;
+}
+
+template<typename T>
+Value getCounterBufFromInitCondition(T mmadLikeOp) {
+  // Attempt to get the init condition value from the operation
+  Value initCond = mmadLikeOp.getInitCondition();
+  if (!initCond)
+    return nullptr;
+
+  // Trace back from initCondition to find the counter buffer
+  auto cmpOp = initCond.getDefiningOp<arith::CmpIOp>();
+  if (!cmpOp)
+    return nullptr;
+
+  auto loadOp = cmpOp.getOperand(0).getDefiningOp<memref::LoadOp>();
+  if (!loadOp)
+    return nullptr;
+
+  Value counterBuf = loadOp.getOperand(0);
+  if (counterBuf.getDefiningOp<memref::AllocOp>() ||
+      counterBuf.getDefiningOp<memref::AllocaOp>()) {
+    return counterBuf;
+  }
+
+  return nullptr;
+}
+
+hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type, Value operand_l, Value operand_r) {
+  auto addInit = mlir::utils::createEmptyOp(rewriter, loc, operand_l);
+  auto addOp = rewriter.create<hivm::VAddOp>(
+      loc, TypeRange{type},
+      ValueRange{operand_l, operand_r},
+      ValueRange{addInit});
+  return addOp;
+}
+
+template<typename T>
+void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad, Value counterBuf, Value outerInVal, Value outerOutVal, bool isAdd=false) {
+  rewriter.setInsertionPointAfter(&op);
+  Location loc = op.getLoc();
+  Value postCount = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+  Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  Value neverRan = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, postCount, zeroI32);
+
+  auto fallbackIf = rewriter.create<scf::IfOp>(
+      loc, mmad->getResultTypes(), neverRan, /*withElseRegion=*/true);
+
+  // Then block
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(fallbackIf.thenBlock());
+    if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
+      auto newVbrcOp = cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
+      rewriter.create<scf::YieldOp>(loc, ValueRange{newVbrcOp.getResult()});
+    } else {
+      rewriter.create<scf::YieldOp>(loc, ValueRange{outerInVal});
+    }
+  }
+
+
+  // Else block
+  {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPointToStart(fallbackIf.elseBlock());
+    if (isAdd) {
+      auto addOp = createVadd(rewriter, loc, outerOutVal.getType(), outerInVal, outerOutVal);
+      rewriter.create<scf::YieldOp>(loc, ValueRange{addOp.getResults()[0]});
+    } else {
+      rewriter.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
+    }
+  }
+
+  // replace user of output of CCF
+  rewriter.replaceUsesWithIf(outerOutVal, fallbackIf.getResult(0), [&](OpOperand &operand) {
+    Operation *userOp = operand.getOwner();
+    return !fallbackIf->isAncestor(userOp);
+  });
+}
+
+struct BrcBiasInfo {
+  MatmulBiasMode brcBiasMode = MatmulBiasMode::NoBias;
+  Value perChannelValue;
+  hivm::VAddOp addOp;
+};
+
+template<typename T>
+BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
+  // refer to getMatmulLikeBiasMode
+  BrcBiasInfo info;
+  if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
+    if (isSatisfiedBrcForPerChannel(brcOp)) {
+      info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
+      info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
+      return info;
+    }
+    if (isConstZero(brcOp.getSrc())){
+      info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
+      return info;
+    }
+  } else if (auto preMmadOp = outerInVal.getDefiningOp<hivm::MmadL1Op>()) {
+    info.brcBiasMode = MatmulBiasMode::ReuseL0C;
+    return info;
+  } else if (outerInVal.hasOneUse()) {
+    if (auto addOp = dyn_cast<hivm::VAddOp>(*outerInVal.getUsers().begin())) {
+      for (Value src : addOp.getSrc()) {
+        if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
+          if (isSatisfiedBrcForPerChannel(brcOp)) {
+            info.perChannelValue = getBiasInputForPerChannelAdd(src);
+            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+            return info;
+          }
+        }
+      }
+    }
+  }
+  auto emptyOps = traceDefOps<tensor::EmptyOp>(outerInVal,
+                                               /*isSingleChain=*/false,
+                                               /*traceMode=*/TraceResultMode::StrictSame);
+  info.brcBiasMode = !emptyOps.empty()? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
+
+  return info;
+}
+
+// Add counter and if block in the tail for the case that mmad is probably not executed
+template <typename T>
+struct NormalizeMmadCCFPattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    // TODO: need to be reverted when Affinity GMM supported
+    auto moduleOp = op->template getParentOfType<ModuleOp>();
+    bool isDisableHfusionVectorize = false;
+    if (moduleOp) {
+      isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
+    }
+    if (op->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
+      LDBG("Affinity pattern already applied");
+      return rewriter.notifyMatchFailure(op, "Affinity pattern already applied");
+    }
+
+    if (op->hasAttr(kNormalizedInL0C)) {
+      LDBG("Pattern already applied");
+      return rewriter.notifyMatchFailure(op, "Pattern already applied");
+    }
+
+    if (!matchPattern(op.getInitConditionMutable().get(), m_Zero())) {
+      LDBG("Init condition is not zero");
+      return rewriter.notifyMatchFailure(op, "Init condition is not zero");
+    }
+    // Check if in CCF
+    if (!op->template getParentOfType<scf::ForOp>() && !op->template getParentOfType<scf::IfOp>()) {
+      LDBG("Not in CCF");
+    } else {
+      LDBG("In CCF");
+    }
+
+    // get Mmad Pattern: isSingleUseChain blockOp
+    auto ccfInfo = getResFromSingleUseChain<T>(op);
+
+    Value outerInVal = ccfInfo.inVal;
+    Value outerOutVal = ccfInfo.outVal;
+    Operation *insertPointOp = ccfInfo.insertPointOp;
+    BlockArgument blockArg = ccfInfo.blockArg;
+    bool skipOptimize = ccfInfo.isFailure;
+    bool mayNotExec = ccfInfo.mayNotExec;
+    bool isUsingCounter = false;
+    // get bias Info
+    BrcBiasInfo biasInfo = getBrcBiasMode<T>(outerInVal, op);
+    LDBG("BiasMode:" << biasInfo.brcBiasMode);
+    LDBG("skipOptimize:" << skipOptimize);
+    LDBG("mayNotExec:" << mayNotExec);
+    // create counter buffer
+    Value counterBuf;
+    if (!isa<T>(insertPointOp))
+      counterBuf = initCounter(rewriter, *insertPointOp);
+
+    // create new mmad op
+    Value newInit = mlir::utils::createEmptyOp(rewriter, insertPointOp->getLoc(), outerInVal);
+    auto tmpNewMmad = cast<T>(rewriter.clone(*op.getOperation()));
+
+    // set init condition before mmad op
+    Value initCondition;
+    if (!isa<T>(insertPointOp)){
+      initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
+      isUsingCounter = true;
+      if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
+        op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+        LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");
+        return success();
+      }
+      LDBG("initCondition using counter");
+    } else if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
+      LDBG("initCondition always false");
+      LDBG("ReuseL0C no need to decompose matmul");
+      op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+      return success();
+    } else {
+      rewriter.setInsertionPoint(insertPointOp);
+      initCondition = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
+      mayNotExec = false;
+      LDBG("initCondition always true");
+    }
+    tmpNewMmad.setInitCondition(initCondition);
+
+    // Normalize the outermost init arg to tensor.empty
+    if (biasInfo.brcBiasMode != MatmulBiasMode::NoBias){
+      if (!isa<T>(insertPointOp) && blockArg) {
+        auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+        if (forOp) {
+          auto blockArgIdx = blockArg.getArgNumber() - 1;
+          forOp.getInitArgsMutable()[blockArgIdx].assign(newInit);
+        } else {
+          return rewriter.notifyMatchFailure(op, "expected the outermost init arg to be a block argument of a for op");
+        }
+      } else {
+        // not in the for loop
+        tmpNewMmad.getCMutable().assign(newInit);
+      }
+    }
+
+    // If it could be merged with bias
+    if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
+          biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+      tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
+      // remove vadd
+      if (biasInfo.addOp) {
+        rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0], insertPointOp->getResults()[0]);
+      }
+      tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
+    }
+    tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+
+    // Add if block for the case that mmad is probably not executed
+    if (biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
+      if (mayNotExec) {
+        // generate vadd + yield
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal, true);
+      } else {
+        // generate vadd
+        rewriter.setInsertionPointAfter(insertPointOp);
+        Location loc = insertPointOp->getLoc();
+        auto addOp = createVadd(rewriter, loc, insertPointOp->getResults()[0].getType(), insertPointOp->getResults()[0], outerInVal);
+        mlir::DominanceInfo domInfo(op->getParentOp());
+        for (auto &use : llvm::make_early_inc_range(outerOutVal.getUses())) {
+          Operation *userOp = use.getOwner();
+          if (!domInfo.properlyDominates(addOp, userOp))
+            continue;
+          if (userOp == addOp)
+            continue;
+          rewriter.modifyOpInPlace(userOp, [&]() {
+            use.set(addOp.getResult()[0]);
+          });
+        }
+      }
+      LDBG("Default: decompose matmul with elemwise add");
+    } else if ((biasInfo.brcBiasMode ==
+                MatmulBiasMode::ZeroInitNoAccumulation) &&
+               (!isUsingCounter)) {
+      LDBG("decompose matmul with  zero init no accumlation");
+    } else {
+      if (mayNotExec) {
+        // generate yield
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal);
+      }
+      LDBG("decompose matmul with other cases");
+    }
+
+    // replace mmad op with the new one finally
+    Operation* lastOperandDef = initCondition.getDefiningOp();
+    for (auto operand : tmpNewMmad->getOperands()) {
+      auto defOp = operand.getDefiningOp();
+      if (!defOp)
+        continue;
+      if (defOp->getBlock() != lastOperandDef->getBlock())
+        continue;
+      if (lastOperandDef->isBeforeInBlock(defOp)) 
+        lastOperandDef = defOp;
+    }
+    rewriter.setInsertionPointAfter(op);
+    auto newMmad = cast<T>(rewriter.clone(*tmpNewMmad.getOperation()));
+    rewriter.eraseOp(tmpNewMmad);
+    rewriter.replaceOp(op, newMmad);
+
+    return success();
+  }
+};
+
 template <typename T>
 struct DecomposeMatmulWithBiasPattern : public OpRewritePattern<T> {
 public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
+    if (op->hasAttr(kNormalizedInitOrBias) || op->hasAttr(kNormalizedInL0C)) {
+      LDBG("Pattern already applied");
+      return rewriter.notifyMatchFailure(op, "Pattern already applied");
+    }
+
     MatmulBiasMode biasMode = op.getMatmulBiasMode();
     if (biasMode == MatmulBiasMode::NoBias) {
+      LDBG("no bias");
       return rewriter.notifyMatchFailure(op, "no bias");
     }
     if (op.shouldDecomposeBiasByElementAdd() && op.isInitConstant(true)) {
@@ -618,7 +1080,9 @@ void populateSetRealMKNPattern(RewritePatternSet &patterns) {
 }
 
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
-  patterns.add<DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
+  patterns.add<NormalizeMmadCCFPattern<hivm::MmadL1Op>,
+               NormalizeMmadCCFPattern<hivm::BatchMmadL1Op>,
+               DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadMxL1Op>>(
       patterns.getContext());

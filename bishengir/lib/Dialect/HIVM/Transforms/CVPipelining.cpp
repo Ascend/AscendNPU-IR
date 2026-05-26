@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -78,8 +79,8 @@ private:
 
   LogicalResult markOutputs();
 
-  LogicalResult expandOutputInits(WorkItem *item);
-  LogicalResult expandOutputInitsForPreload(WorkItem *item);
+  LogicalResult expandOutputInits(WorkItem &item);
+  LogicalResult expandOutputInitsForPreload(WorkItem &item);
 
   LogicalResult createNewLoops();
 
@@ -97,8 +98,8 @@ private:
   // Returns failure() on malformed input. On success, the returned Value may
   // still be nullptr when there is no masking subview to update.
   FailureOr<Value> updateMaskingSubview(OpBuilder &builder, Location loc,
-                                        Value expanded, OpOperand *initOperand,
-                                        Value iv);
+                                        Value expanded, OpOperand &initOperand,
+                                        Value iv) const;
 
   // ===========================================================================
   // Data members
@@ -441,6 +442,62 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
                  m->print(dbgs()); dbgs() << '\n');
     }
   }
+
+  // Absorb counter-update ops (arith.addi + memref.store) that follow each
+  // mmadL1 using an init_cond loaded from an alloca. These ops are not
+  // reachable from scf.yield so the loop above misses them.
+  //
+  // Pattern: memref.load %alloca -> cmpi -> init_cond operand of mmadL1
+  //          mmadL1 result ... (other ops) ...
+  //          arith.addi %counter, %c1
+  //          memref.store %incremented, %alloca
+  //
+  // For each workitem, find alloca values read as init_cond, then absorb
+  // any memref.store to those allocas (and their arith.addi operands).
+  for (const auto &item : worklist) {
+    // Collect alloca values whose load feeds an init_cond in this workitem.
+    SmallPtrSet<Value, 4> initCondAllocas;
+    for (Operation *op : item->ops) {
+      for (Value operand : op->getOperands()) {
+        // init_cond is an i1; trace cmpi -> load -> alloca
+        auto cmpi = dyn_cast_if_present<arith::CmpIOp>(operand.getDefiningOp());
+        if (!cmpi)
+          continue;
+        for (Value cmpOperand : cmpi->getOperands()) {
+          auto load = dyn_cast_if_present<memref::LoadOp>(
+              cmpOperand.getDefiningOp());
+          if (!load)
+            continue;
+          Value memref = load.getMemRef();
+          if (isa_and_nonnull<memref::AllocaOp>(memref.getDefiningOp()))
+            initCondAllocas.insert(memref);
+        }
+      }
+    }
+
+    // Absorb memref.store to those allocas and their addi operand.
+    for (Operation &op : *body) {
+      auto store = dyn_cast<memref::StoreOp>(op);
+      if (!store || !initCondAllocas.contains(store.getMemRef()))
+        continue;
+      if (opToWorkItemMap.contains(&op))
+        continue;
+      // Also absorb the defining arith.addi of the stored value.
+      if (Operation *addi = store.getValue().getDefiningOp()) {
+        if (isa<arith::AddIOp>(addi) && !opToWorkItemMap.contains(addi)) {
+          item->ops.insert(addi);
+          opToWorkItemMap[addi].push_back(item.get());
+          LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
+                     addi->print(dbgs()); dbgs() << '\n');
+        }
+      }
+      item->ops.insert(&op);
+      opToWorkItemMap[&op].push_back(item.get());
+      LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter store: ";
+                 op.print(dbgs()); dbgs() << '\n');
+    }
+  }
+
   return success();
 }
 
@@ -563,10 +620,10 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
 
 /// Expand the localOutputs of each work item by number of multibuffer/pipeline
 /// stages.
-LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
+LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(newLoop.getBody());
-  for (auto &[output, expanded] : item->localOutputs) {
+  for (auto &[output, expanded] : item.localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
       return pipelineLoop->emitWarning(
@@ -662,10 +719,10 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
   return success();
 }
 
-LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
+LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem &item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(pipelineLoop.getBody());
-  for (auto &[output, expanded] : item->localOutputs) {
+  for (auto &[output, expanded] : item.localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
       return pipelineLoop->emitWarning(
@@ -712,7 +769,7 @@ LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
     LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] alloc: "; alloc.dump());
     LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] expanded: ";
                expanded.dump());
-    item->ops.remove(alloc.getOperation());
+    item.ops.remove(alloc.getOperation());
     alloc->erase();
   }
   return success();
@@ -768,7 +825,7 @@ LogicalResult CVPipelineImpl::createNewLoops() {
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
-    if (failed(expandOutputInits(item.get())))
+    if (failed(expandOutputInits(*item.get())))
       return failure();
 
     // Create iter arg inits in order: yieldOutputs followed by localOutputs
@@ -829,10 +886,10 @@ LogicalResult CVPipelineImpl::createNewLoops() {
 FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
                                                       Location loc,
                                                       Value expanded,
-                                                      OpOperand *initOperand,
-                                                      Value iv) {
+                                                      OpOperand &initOperand,
+                                                      Value iv) const {
   auto subview =
-      dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp());
+      dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
   if (!subview)
     return Value(nullptr);
   if (!isa<memref::AllocOp>(subview.getSource().getDefiningOp())) {
@@ -849,7 +906,7 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
   strides.append(subview.getMixedStrides());
   // Set up dynamic stride
   int64_t offset;
-  auto targetTy = cast<MemRefType>(initOperand->get().getType());
+  auto targetTy = cast<MemRefType>(initOperand.get().getType());
   SmallVector<int64_t> layoutStrides;
   if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
     subview->emitWarning("[cv-pipelining] unexpected memref layout");
@@ -1031,7 +1088,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         }
         // If there are masking subviews, update those first
         FailureOr<Value> updatedSubviewOr =
-            updateMaskingSubview(builder, loc, expanded, initOperand, iv);
+            updateMaskingSubview(builder, loc, expanded, *initOperand, iv);
         if (failed(updatedSubviewOr))
           return failure();
         Value updatedSubview = *updatedSubviewOr;
@@ -1125,7 +1182,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
     OpBuilder::InsertionGuard g(builder);
-    if (failed(expandOutputInitsForPreload(item.get())))
+    if (failed(expandOutputInitsForPreload(*item.get())))
       return failure();
 
     LLVM_DEBUG(dbgs() << "Creating scope for work item #" << item->id << '\n');

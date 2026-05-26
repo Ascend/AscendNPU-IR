@@ -472,7 +472,7 @@ LogicalResult MmadL1Op::verify() {
   return success();
 }
 
-static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
+bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
                                         Operation *hookOp = nullptr) {
   // TODO: modify for batch matmul later.
   ArrayRef<int64_t> brcDims = brcOp.getBroadcastDims();
