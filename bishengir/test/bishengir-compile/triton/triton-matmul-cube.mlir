@@ -1,10 +1,10 @@
 // REQUIRES: hivmc-a5
 // REQUIRES: enable-lir-compile
 
-// RUN: bishengir-compile -enable-triton-kernel-compile -enable-lir-compile=false -enable-hfusion-compile -block-dim=1 -target=Ascend910_9589  %s | FileCheck %s
+// RUN: bishengir-compile -enable-triton-kernel-compile -enable-lir-compile=false -enable-hfusion-compile -block-dim=1 -target=Ascend310B4  %s | FileCheck %s
 
 module {
-  func.func @triton_dot(%arg0: memref<?xi8>, %arg1: memref<?xf32> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "mix", hivm.func_core_type = #hivm.func_core_type<MIX>} {
+  func.func @triton_dot(%arg0: memref<?xi8>, %arg1: memref<?xf32> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", mix_mode = "mix", hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %cst = arith.constant 0.000000e+00 : f32
     %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [32, 64], strides: [64, 1] : memref<?xf16> to memref<32x64xf16, strided<[64, 1]>>
     %alloc = memref.alloc() : memref<32x64xf16>

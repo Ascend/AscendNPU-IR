@@ -9,7 +9,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -473,7 +472,7 @@ LogicalResult MmadL1Op::verify() {
   return success();
 }
 
-bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
+static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
                                         Operation *hookOp = nullptr) {
   // TODO: modify for batch matmul later.
   ArrayRef<int64_t> brcDims = brcOp.getBroadcastDims();

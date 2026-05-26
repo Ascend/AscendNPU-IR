@@ -12,7 +12,6 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -184,26 +183,16 @@ void MmadL1InfoCollector<T, U>::extractInitCondition(
 
   // Defaultly create init flag as 'true' for state where MmadL1 destination
   // could be inferred as zero data
-  // only applied for affinity pattern
-  // TODO: need to be reverted when Affinity GMM supported
-  auto moduleOp = op_->template getParentOfType<ModuleOp>();
-  bool isDisableHfusionVectorize = false;
-  if (moduleOp) {
-    isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
-  }
-  if (op_->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
-    initInfo.currentCondition = rewriter.create<arith::ConstantIntOp>(
-        op_->getLoc(), /*value*/ 1, /*width*/ 1);
-    // Get defining op for init tensor and build up condition
-    if (succeeded(buildInitCondition(initInfo, rewriter))) {
-      initCondition_ = initInfo.currentCondition;
-      insertAndUseNewInitTensor(initInfo, rewriter);
-      return;
-    }
+  initInfo.currentCondition = rewriter.create<arith::ConstantIntOp>(
+      op_->getLoc(), /*value*/ 1, /*width*/ 1);
+  // Get defining op for init tensor and build up condition
+  if (succeeded(buildInitCondition(initInfo, rewriter))) {
+    initCondition_ = initInfo.currentCondition;
+    insertAndUseNewInitTensor(initInfo, rewriter);
+    return;
   }
 
-  // Move all init c matmul functions to normalize-matmul,
-  // init flag should be `false` as MmadL1 destination(c) has
+  // Otherwise, init flag should be `false` as MmadL1 destination(c) has
   // meaningful value
   initCondition_ = rewriter.create<arith::ConstantIntOp>(
       op_->getLoc(), /*value*/ 0, /*width*/ 1);

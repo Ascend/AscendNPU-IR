@@ -945,16 +945,12 @@ def HIVM_LocalMatmul_PerChannelAdd : I32EnumAttrCase<"PerChannelAdd", 1>;
 def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 2>;
 def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
 def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 4>;
-def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 5>;
-def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
 def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
   HIVM_LocalMatmul_NoBias,
   HIVM_LocalMatmul_PerChannelAdd,
   HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
   HIVM_LocalMatmul_ElementwiseAdd,
-  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
-  HIVM_LocalMatmul_ZeroInitNoAccumulation,
-  HIVM_LocalMatmul_ReuseL0c,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
 ]>;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
