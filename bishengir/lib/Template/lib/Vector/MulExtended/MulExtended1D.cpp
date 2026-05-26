@@ -19,6 +19,60 @@
 #include "Vector/MulExtended/MulExtendedUtils.h"
 #include "Vector/VecUtils.h"
 
+/// Scalar implementation for unaligned mul_extended 1D
+template <typename T>
+__aiv__ __attribute__((always_inline)) void vector_mul_extended_1d_scalar_impl(
+    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
+    memref_t<__ubuf__ int16_t, 1> *dst0, memref_t<__ubuf__ int16_t, 1> *dst1) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("mul_extended_1d");
+#endif
+  const int64_t size = dst0->sizes[0];
+  int64_t src0_stride = src0->sizes[0] == 1 ? 0 : src0->strides[0];
+  int64_t src1_stride = src1->sizes[0] == 1 ? 0 : src1->strides[0];
+  int64_t dst0_stride = dst0->strides[0];
+  int64_t dst1_stride = dst1->strides[0];
+
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
+  __ubuf__ int16_t *dst0_ptr = dst0->aligned + dst0->offset;
+  __ubuf__ int16_t *dst1_ptr = dst1->aligned + dst1->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  for (int64_t i = 0; i < size; ++i) {
+    int32_t result =
+        (int32_t)src0_ptr[i * src0_stride] * (int32_t)src1_ptr[i * src1_stride];
+    dst0_ptr[i * dst0_stride] = (int16_t)(result >> 16);
+    dst1_ptr[i * dst1_stride] = (int16_t)(result & 0xFFFF);
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+/// Check if mul_extended 1D is unaligned
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool is_unaligned_mul_extended_1d(
+    memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *src1,
+    memref_t<__ubuf__ int16_t, 1> *dst0, memref_t<__ubuf__ int16_t, 1> *dst1) {
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
+  __ubuf__ int16_t *dst0_ptr = dst0->aligned + dst0->offset;
+  __ubuf__ int16_t *dst1_ptr = dst1->aligned + dst1->offset;
+
+  bool is_addr_aligned =
+      isAddress32ByteAligned(src0_ptr) && isAddress32ByteAligned(src1_ptr) &&
+      isAddress32ByteAligned(dst0_ptr) && isAddress32ByteAligned(dst1_ptr);
+
+  bool is_stride_continuous =
+      (src0->strides[0] == 1) && (src1->strides[0] == 1) &&
+      (dst0->strides[0] == 1) && (dst1->strides[0] == 1);
+
+  return !is_addr_aligned || !is_stride_continuous;
+}
+
 /// mul_extended op description:
 /// perform multiplication on src0(N-bits) and src1(N-bits),
 /// return dst0(N-bits) and dst1(N-bits),
@@ -46,6 +100,13 @@ __aiv__ __attribute__((always_inline)) void vector_mul_extended_1d(
   // check type T, need to be int16_t
   static_assert(std::is_same<T, int16_t>::value,
                 "mul extended op only support int16_t operands right now!");
+
+  // Check if unaligned, use scalar implementation
+  bool is_unalign = is_unaligned_mul_extended_1d<T>(src0, src1, dst0, dst1);
+  if (is_unalign) [[unlikely]] {
+    vector_mul_extended_1d_scalar_impl<T>(src0, src1, dst0, dst1);
+    return;
+  }
 
   const int64_t size0 = src0->sizes[0];
   constexpr int bytes = sizeof(T);

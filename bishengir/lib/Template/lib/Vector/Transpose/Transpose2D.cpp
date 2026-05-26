@@ -1,5 +1,60 @@
 #include "Vector/Transpose/TransposeUtils.h"
 
+/// Scalar implementation for unaligned transpose 2D
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+transpose_2d_scalar_impl(memref_t<__ubuf__ T, 2> *src,
+                         memref_t<__ubuf__ T, 2> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("transpose_2d");
+#endif
+  const int64_t m = src->sizes[0];
+  const int64_t n = src->sizes[1];
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t dst_stride0 = dst->strides[0];
+
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  for (int64_t i = 0; i < m; ++i) {
+    for (int64_t j = 0; j < n; ++j) {
+      dst_ptr[j * dst_stride0 + i] = src_ptr[i * src_stride0 + j];
+    }
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+/// Check if transpose 2D is unaligned
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_transpose_2d(memref_t<__ubuf__ T, 2> *src,
+                          memref_t<__ubuf__ T, 2> *dst) {
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t dst_stride0 = dst->strides[0];
+
+  bool is_addr_aligned =
+      isAddress32ByteAligned(src_ptr) && isAddress32ByteAligned(dst_ptr);
+  bool is_stride_aligned = isSizeAlignedToBlock<T>(src_stride0) &&
+                           isSizeAlignedToBlock<T>(dst_stride0);
+
+  if constexpr (sizeof(T) == 4) {
+    bool is_b32_stride_valid =
+        (dst_stride0 % 8 == 0 && src_stride0 % 16 == 0) ||
+        (dst_stride0 % 16 == 0 && src_stride0 % 8 == 0);
+    return !is_addr_aligned || !is_stride_aligned || !is_b32_stride_valid;
+  } else {
+    return !is_addr_aligned || !is_stride_aligned;
+  }
+}
+
 /// transpose 2d with last axis op description:
 /// transpose src (a, b) to dst (b, a),
 ///
@@ -249,6 +304,13 @@ vnchwconv_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   static_assert((sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4) &&
                 "Transpose can not support this type");
 
+  // Check if unaligned, use scalar implementation
+  bool is_unalign = is_unaligned_transpose_2d<T>(src, dst);
+  if (is_unalign) [[unlikely]] {
+    transpose_2d_scalar_impl<T>(src, dst);
+    return;
+  }
+
   // Input parameter constraints assert.
   check_inputs_of_vnchwconv_2d(src, dst);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
@@ -392,6 +454,14 @@ vnchwconv_2d_with_tmp(memref_t<__ubuf__ T, 2> *src,
   }
 
   static_assert(sizeof(T) == 8 && "Transpose b64 can not support this type");
+
+  // Check if unaligned, use scalar implementation
+  bool is_unalign = is_unaligned_transpose_2d<T>(src, dst);
+  if (is_unalign) [[unlikely]] {
+    transpose_2d_scalar_impl<T>(src, dst);
+    return;
+  }
+
   // Input parameter constraints assert.
   check_inputs_of_vnchwconv_2d(src, dst);
 

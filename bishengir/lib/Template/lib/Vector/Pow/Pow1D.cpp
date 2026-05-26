@@ -24,6 +24,80 @@
 #include "Vector/VecUtils.h"
 
 template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+pow_is_aligned(memref_t<__ubuf__ T, 1> *base, memref_t<__ubuf__ T, 1> *exp,
+               memref_t<__ubuf__ T, 1> *res) {
+  if (base->strides[0] != 1 || exp->strides[0] != 1 || res->strides[0] != 1) {
+    return false;
+  }
+  if (!isAddress32ByteAligned(base->aligned + base->offset) ||
+      !isAddress32ByteAligned(exp->aligned + exp->offset) ||
+      !isAddress32ByteAligned(res->aligned + res->offset)) {
+    return false;
+  }
+  return true;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) T scalar_pow_calc(T base_val,
+                                                         T exp_val) {
+  if (exp_val == INT32_MIN) {
+    exp_val = -2;
+  }
+  bool is_neg = exp_val < 0;
+  if (is_neg) {
+    exp_val = -exp_val;
+  }
+  T result = 1;
+  while (exp_val > 0) {
+    if (exp_val & 1) {
+      result *= base_val;
+    }
+    exp_val >>= 1;
+    base_val *= base_val;
+  }
+  return is_neg ? 0 : result;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+pow_scalar_1d(memref_t<__ubuf__ T, 1> *base, memref_t<__ubuf__ T, 1> *exp,
+              memref_t<__ubuf__ T, 1> *res) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("pow 1d");
+#endif
+  auto base_ptr = base->aligned + base->offset;
+  auto exp_ptr = exp->aligned + exp->offset;
+  auto res_ptr = res->aligned + res->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  int64_t size = res->sizes[0];
+  int64_t base_stride = base->sizes[0] == 1 ? 0 : base->strides[0];
+  int64_t exp_stride = exp->sizes[0] == 1 ? 0 : exp->strides[0];
+  int64_t res_stride = res->strides[0];
+
+  // Determine if reverse traversal is needed to avoid data overwriting during
+  // in-place operations. When res shares memory with base or exp and has a
+  // larger offset, forward traversal would cause unread base/exp values to be
+  // overwritten by res writes, so reverse traversal is required.
+  bool reverse =
+      (res->allocated == base->allocated && res->offset > base->offset) ||
+      (res->allocated == exp->allocated && res->offset > exp->offset);
+
+  for (int64_t i = 0; i < size; ++i) {
+    int64_t idx = reverse ? size - 1 - i : i;
+    T base_val = *(base_ptr + idx * base_stride);
+    T exp_val = *(exp_ptr + idx * exp_stride);
+    *(res_ptr + idx * res_stride) = scalar_pow_calc(base_val, exp_val);
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <typename T>
 __aiv__ __attribute__((always_inline)) void
 pow_int_min_exp_init_1d(memref_t<__ubuf__ T, 1> *exp,
                         memref_t<__ubuf__ T, 1> *tmp_buf) {
@@ -320,6 +394,15 @@ vector_pow_1d(memref_t<__ubuf__ T, 1> *base, memref_t<__ubuf__ T, 1> *exp,
   //    base *= base
   //  }
   //  res = (exp < 0 && base != 0) ? 1 / res : res;
+
+  if (is_no_op<1>(res->sizes)) {
+    return;
+  }
+
+  if (!pow_is_aligned<T>(base, exp, res)) [[unlikely]] {
+    pow_scalar_1d<T>(base, exp, res);
+    return;
+  }
 
   // step1: initialize result
   // 1. set every element in res to 1

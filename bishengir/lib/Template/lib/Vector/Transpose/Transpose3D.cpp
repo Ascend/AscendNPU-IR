@@ -18,6 +18,62 @@
 #include "Vector/Transpose/TransposeUtils.h"
 #include "Vector/VecUtils.h"
 
+/// Scalar implementation for unaligned transpose 01 axis (3D)
+/// transpose src (a, b, c) to dst (b, a, c)
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+transpose_01_axis_3d_scalar_impl(memref_t<__ubuf__ T, 3> *src,
+                                 memref_t<__ubuf__ T, 3> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("transpose_01_axis_3d");
+#endif
+  const int64_t a = src->sizes[0];
+  const int64_t b = src->sizes[1];
+  const int64_t c = src->sizes[2];
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t src_stride1 = src->strides[1];
+  const int64_t dst_stride0 = dst->strides[0];
+  const int64_t dst_stride1 = dst->strides[1];
+
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  for (int64_t i = 0; i < a; ++i) {
+    for (int64_t j = 0; j < b; ++j) {
+      for (int64_t k = 0; k < c; ++k) {
+        dst_ptr[j * dst_stride0 + i * dst_stride1 + k] =
+            src_ptr[i * src_stride0 + j * src_stride1 + k];
+      }
+    }
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+/// Check if transpose 01 axis (3D) is unaligned
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_transpose_01_axis_3d(memref_t<__ubuf__ T, 3> *src,
+                                  memref_t<__ubuf__ T, 3> *dst) {
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+
+  bool is_addr_aligned =
+      isAddress32ByteAligned(src_ptr) && isAddress32ByteAligned(dst_ptr);
+  bool is_stride0_aligned = isSizeAlignedToBlock<T>(src->strides[0]) &&
+                            isSizeAlignedToBlock<T>(dst->strides[0]);
+  bool is_stride1_aligned = isSizeAlignedToBlock<T>(src->strides[1]) &&
+                            isSizeAlignedToBlock<T>(dst->strides[1]);
+  bool is_stride2_continuous = (src->strides[2] == 1) && (dst->strides[2] == 1);
+
+  return !is_addr_aligned || !is_stride0_aligned || !is_stride1_aligned ||
+         !is_stride2_continuous;
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src,
@@ -53,6 +109,14 @@ transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
   if (is_no_op<3>(src->sizes)) {
     return;
   }
+
+  // Check if unaligned, use scalar implementation
+  bool is_unalign = is_unaligned_transpose_01_axis_3d<T>(src, dst);
+  if (is_unalign) [[unlikely]] {
+    transpose_01_axis_3d_scalar_impl<T>(src, dst);
+    return;
+  }
+
   // Input parameter constraints assert.
   check_inputs_of_transpose_nlast_3d(src, dst);
 
@@ -90,7 +154,7 @@ transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
   }
 }
 
-/// transpose with last axis, src (a, b, c) to  dst (c, b, c)
+/// transpose with last axis, src (a, b, c) to  dst (c, b, a)
 /// \param src (type: memref<axbxcxT, stride[m0, n0, 1]>)
 /// \param dst (type: memref<cxbxaxT, stride[m1, n1, 1]>)
 /// 'm0' and 'm1' are stride of src and dst separately
@@ -135,7 +199,7 @@ vnchwconv_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
   }
 }
 
-/// transpose with last axis, src (a, b, c) to  dst (c, b, c)
+/// transpose with last axis, src (a, b, c) to  dst (c, b, a)
 /// \param src (type: memref<axbxcxb64, stride[m0, n0, 1]>)
 /// \param dst (type: memref<cxbxaxb64, stride[m1, n1, 1]>)
 /// 'm0' and 'm1' are stride of src and dst separately
