@@ -86,6 +86,7 @@ static bool isReductionOp(Operation *innerOp, Operation *outterOp) {
 
 static bool isInFusionWhiteList(Operation *op) {
   return isReshapeOp(op) || isa<tensor::ExtractSliceOp>(op) ||
+         isa<tensor::ExtractOp>(op) ||
          isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
 }
 
@@ -359,7 +360,7 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
     }
   }
 
-  // Only producer ExtractSliceOps need to be fused to VF.
+  // Only producer ExtractSlice/Extract Ops need to be fused to VF.
   int producerGroupId = static_cast<int>(opToGroupIndex[producerOp]);
   int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
   auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
@@ -370,7 +371,7 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   for (Operation* op : consumerGroup)
     fusedGroupsSet.insert(op);
   for (Operation* op : fusedGroupsSet) {
-    if (isa<tensor::ExtractSliceOp>(op)) {
+    if (isa<tensor::ExtractSliceOp>(op) || isa<tensor::ExtractOp>(op)) {
       for (Operation* user : op->getUsers()) {
         if (!fusedGroupsSet.contains(user)) {
           return false;
