@@ -186,7 +186,14 @@ runExternalHIVMC(ModuleOp &module,
   arguments.push_back("");
   arguments.push_back(inputFile);
 
-  auto hivmcOptions = filterSharedHIVMCOptions(config.getHIVMCArgsDashDash());
+  // HIVMCArgs is populated by collectHIVMCArgs from (a) the auto-collected
+  // cl::opt sweep, which only emits options whose Options.td entry has
+  // isSharedWithDownstreamToolchain = 1 (already filtered at codegen time),
+  // and (b) verbatim user --hivmc-args content (intentional passthrough).
+  // filterSharedHIVMCOptions would only ever strip (b), which is exactly the
+  // case where users want diagnostic flags like -debug-only, -stats, or
+  // -print-after-all to reach hivmc; skip the filter on this path.
+  auto hivmcOptions = config.getHIVMCArgsDashDash();
   llvm::append_range(arguments, hivmcOptions);
   for (const auto &arg : filterSharedHIVMCOptions(config.getClArgs())) {
     auto argName = StringRef(arg).ltrim('-').split('=').first;

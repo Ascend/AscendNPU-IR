@@ -1269,7 +1269,11 @@ def DeviceMaxInputParamSizeInBytes : BiShengIRCompileInternalStateOpt<
 >;
 
 def SimtStackLimit : BiShengIRCompileInternalStateOpt<
-  "SIMT stack limit.",
+  "Per-thread stack size limit (bytes) for SIMT kernels. The compiler fails "
+  "compilation if a kernel's per-thread stack usage exceeds this limit. If "
+  "unset, the check is skipped — Triton-Ascend owns the policy (env var, "
+  "default) and always forwards a resolved value. Set to a negative value "
+  "to disable the check; 0 is a valid (strict) limit.",
   "int32_t",
   "-1"
 > {
