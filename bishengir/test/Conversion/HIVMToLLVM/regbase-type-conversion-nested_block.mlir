@@ -19,6 +19,6 @@ func.func @test_store_in_nested_for(%arg0: vector<64xf32>, %arg1: memref<128xf16
     // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v128f16"(%[[CASTED_VAL_2]], {{.*}}, %[[DIST]], {{.*}}, %[[CASTED_MASK_2]]
     %2 = ave.hir.pge <ALL> : vector<64xi1>
     ave.hir.masked_store <NORM_B16> %arg1[%arg2], %2, %1 {element_alignment_bit_width = 32 : i32} : memref<128xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
-  } {element_alignment_bit_width = 16 : i32}
+  }
   return
 }

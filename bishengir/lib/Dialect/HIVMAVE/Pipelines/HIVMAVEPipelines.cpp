@@ -70,7 +70,6 @@ static void hivmAVEOptimizationPipeline(
         hivmave::createCombineAVEOPsPass(combineAVEOPsOptions));
     pm.nest<func::FuncOp>().addPass(
         hivmave::createScalarBroadcastToVLoadPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createDataLayoutAnalysisPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPLTMPass());
     pm.nest<func::FuncOp>().addPass(scf::createLegalizeLoopIterArgsPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeVectorLayoutPass());

@@ -63,9 +63,6 @@ std::unique_ptr<Pass> createScalarBroadcastToVLoadPass();
 // Create a pass to hoist vstas
 std::unique_ptr<Pass> createHoistVstasPass();
 
-/// Create a pass to analyze data layout
-std::unique_ptr<Pass> createDataLayoutAnalysisPass();
-
 /// Soft implement for reduction <xor>
 std::unique_ptr<Pass> createComplexReductionIntermediateLoweringPass();
 

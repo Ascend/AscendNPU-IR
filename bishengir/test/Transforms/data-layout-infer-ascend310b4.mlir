@@ -1,5 +1,5 @@
 // RUN: bishengir-opt --arith-vector-mask-analyze --convert-vector-to-hivmave  \
-// RUN: --convert-arith-to-hivmave --annotation-lowering --data-layout-analyze \
+// RUN: --convert-arith-to-hivmave --annotation-lowering  \
 // RUN: --analyze-vector-layout --analyze-alignment-bitwidth --remove-vector-layout-attr \
 // RUN: -ave-normalize-ops --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
 // RUN: -split-input-file %s | FileCheck %s
@@ -18,7 +18,7 @@ func.func @test_i8_cast_i16(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
   return
 }
 
-// CHECK: func.func @test_i8_cast_i16{{.*}} attributes {element_alignment_bit_width = 16 : i32, hivm.vector_function}
+// CHECK: func.func @test_i8_cast_i16{{.*}} attributes {hivm.vector_function}
 // CHECK-NEXT:   %[[UCC2:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC1:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC0:.+]] = builtin.unrealized_conversion_cast
@@ -57,7 +57,7 @@ func.func @test_i8_cast_i32(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
   return
 }
 
-// CHECK: func.func @test_i8_cast_i32{{.*}} attributes {element_alignment_bit_width = 32 : i32, hivm.vector_function}
+// CHECK: func.func @test_i8_cast_i32{{.*}} attributes {hivm.vector_function}
 // CHECK-NEXT:   %[[UCC2:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC1:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC0:.+]] = builtin.unrealized_conversion_cast
