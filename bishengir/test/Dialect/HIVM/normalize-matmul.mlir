@@ -746,10 +746,10 @@ module {
     %12 = tensor.empty() : tensor<29x768xf32>
     %outC = hivm.hir.vbrc ins(%11 : tensor<1x768xf32>) outs(%12 : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
     // CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[BRC_1D:.*]] : tensor<1x768xf32>) outs(%[[BRC_INIT:.*]] : tensor<29x768xf32>) broadcast_dims = [0] -> tensor<29x768xf32>
-    // CHECK: memref.store %[[C0:.*]], %[[CNT:.*]][] : memref<i32>
+    // CHECK: memref.store %[[C0:.*]], %[[CNT:.*]][]
     // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<29x768xf32>
     // CHECK: %[[IFRES:.*]] = scf.if
-    // CHECK: %[[LOAD:.*]] = memref.load %[[CNT]][] : memref<i32>
+    // CHECK: %[[LOAD:.*]] = memref.load %[[CNT]][]
     // CHECK: %[[INIT:.*]] = arith.cmpi eq, %[[LOAD]], %[[C0]] : i32
     // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
     // CHECK: scf.yield %[[MMAD]] : tensor<29x768xf32>

@@ -703,7 +703,8 @@ Value initCounter(PatternRewriter &rewriter, Operation &op) {
     Location loc = op.getLoc();
     Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
     Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-    rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
+    auto storeOp = rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
+    storeOp->setAttr(hivm::TCoreTypeAttr::name, hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::CUBE_AND_VECTOR));
     return counterBuf;
 }
 
@@ -711,18 +712,18 @@ template<typename T>
 Value updateInitCondition(PatternRewriter &rewriter, T op, Value counterBuf) {
   rewriter.setInsertionPoint(op);
   Location loc = op->getLoc();
-  Value curCount =
+  auto loadOp =
       rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   auto firstIterCond = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, curCount, zeroI32);
+      loc, arith::CmpIPredicate::eq, loadOp.getResult(), zeroI32);
 
   // In the same then-branch, right after matmul: counter += 1; store back.
   // Counter only advances on iterations where the scf.if condition fired,
   // which is exactly what the fallback below relies on.
   rewriter.setInsertionPointAfter(op);
   Value oneI32 = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
-  Value nextCount = rewriter.create<arith::AddIOp>(loc, curCount, oneI32);
+  Value nextCount = rewriter.create<arith::AddIOp>(loc, loadOp.getResult(), oneI32);
   rewriter.create<memref::StoreOp>(loc, nextCount, counterBuf, ValueRange{});
   return firstIterCond;
 }
