@@ -1422,6 +1422,34 @@ void CVPipeliningPass::runOnOperation() {
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
+  // Check if we should skip the entire pass due to autoblockify with NormalizeMatmul counter
+  bool hasAutoblockifyLoop = false;
+  bool hasNormalizeMatmulCounter = false;
+  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr = "autoblockify.subloop";
+  
+  // Check for autoblockify loop tag
+  func->walk([&](scf::ForOp forOp) {
+    if (forOp->hasAttr(kAutoBlockifySubloopAttr)) {
+      hasAutoblockifyLoop = true;
+    }
+  });
+
+  // Check for NormalizeMatmul counter (attribute on storeOp)
+  func->walk([&](memref::StoreOp storeOp) {
+    if (storeOp->hasAttr(hivm::TCoreTypeAttr::name)) {
+      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+      if (coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
+        hasNormalizeMatmulCounter = true;
+      }
+    }
+  });
+
+  // Skip entire CV Pipelining pass if there's autoblockify loop with NormalizeMatmul counter
+  if (hasAutoblockifyLoop && hasNormalizeMatmulCounter) {
+    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to autoblockify loop with NormalizeMatmul counter\n");
+    return;
+  }
+
   func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
 
