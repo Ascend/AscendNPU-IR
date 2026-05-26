@@ -253,6 +253,13 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   }
 
   bool hasUboverflow = false;
+  // Cube-side on-chip memory overflow (L0C as "cc", L1 as "cbuf"). These
+  // spaces also expand under auto-multi-buffer when
+  // LimitAutoMultiBufferOnlyForLocalBuffer is NO_LIMIT (the A5 default),
+  // so disabling auto-multi-buffer is a valid first-tier mitigation just
+  // like for "ub overflow". The follow-up VFFusion fallback, on the
+  // other hand, is vector-side and does NOT help with Cube overflow.
+  bool hasCubeBufferOverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -266,8 +273,18 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       std::string errMsg;
       llvm::raw_string_ostream errStream(errMsg);
       errStream << diag;
-      if (errStream.str().find("ub overflow") != std::string::npos) {
+      const std::string &msg = errStream.str();
+      if (msg.find("ub overflow") != std::string::npos) {
         hasUboverflow = true;
+      }
+      // PlanMemory emits "<addr-space> overflow, requires X bits ..." where
+      // the address-space string comes from stringifyEnum(AddressSpace);
+      // see HIVMAttrs.td (L0C => "cc", L1 => "cbuf"). Extend here if more
+      // cube-side spaces (e.g. "ca"/"cb" for L0A/L0B) need the same
+      // fallback.
+      if (msg.find("cc overflow") != std::string::npos ||
+          msg.find("cbuf overflow") != std::string::npos) {
+        hasCubeBufferOverflow = true;
       }
     }
     collectedDiagnostics.emplace_back(std::move(diag));
@@ -297,6 +314,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     // simt-simd mixed pipeline
     bool success = true;
     hasUboverflow = false;
+    hasCubeBufferOverflow = false;
     if (config.getEnableSimdSimtMixCompile()) {
       success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
                                        config, "BiShengHIR"));
@@ -319,32 +337,38 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                                       config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
-      if (!success && hasUboverflow) {
+      bool hasMemoryOverflow = hasUboverflow || hasCubeBufferOverflow;
+      if (!success && hasMemoryOverflow) {
         if (config.getEnableAutoMultiBuffer()) {
-          // First-tier fallback on ub overflow: turn off
-          // auto-multi-buffer and retry. Keep the diagnostic handler
-          // registered so a subsequent ub overflow on the retry can
-          // still be detected; clear the captured diagnostics so they
-          // are not surfaced if the retry succeeds (or are replaced by
-          // fresher ones before the next-tier fallback re-emits them).
-          LDBG("ub overflow detected at attempt "
+          // First-tier fallback on any on-chip memory overflow (ub /
+          // cc / cbuf): turn off auto-multi-buffer and retry. Multi-
+          // buffer can roughly double the live footprint of every
+          // candidate buffer, so disabling it is the cheapest knob
+          // that affects all three address spaces uniformly.
+          LDBG("memory overflow (ub/cc/cbuf) detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled auto multi buffer");
           collectedDiagnostics.clear();
           config.setEnableAutoMultiBuffer(false);
-        } else if (config.getEnableVFFusion()) {
+        } else if (hasUboverflow && config.getEnableVFFusion()) {
+          // Subsequent tiers (VFFusion / VF reachable check / tight-
+          // coupled buffer) are vector-side and do NOT help with the
+          // Cube-side cc/cbuf overflow, so they are gated on
+          // hasUboverflow. If only Cube memory overflowed and multi-
+          // buffer is already off, the loop falls through with no
+          // remaining knobs to flip.
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled vffusion");
           collectedDiagnostics.clear();
           config.setEnableVFFusion(false);
-        } else if (!config.getDisableVFReachableCheck()) {
+        } else if (hasUboverflow && !config.getDisableVFReachableCheck()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled VF reachable check");
           collectedDiagnostics.clear();
           config.setDisableVFReachableCheck(true);
-        } else if (!config.getDisableTightCoupledBuffer()) {
+        } else if (hasUboverflow && !config.getDisableTightCoupledBuffer()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with MixCV GM path");
