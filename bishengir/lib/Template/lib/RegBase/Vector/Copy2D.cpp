@@ -137,7 +137,11 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
     // Implicit transposition scenarios need to be moved through scalar
-    load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+    } else {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+    }
     return;
   }
 
@@ -152,12 +156,12 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
-        INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+        INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
         int64_t scalar = static_cast<int64_t>(pad_value);
         align_pad_for_load_b64_2d<T>(dst, scalar, left_padding_num);
-        INTRINSIC(set_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+        INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
       }
     }
     return;
