@@ -414,7 +414,7 @@ class HIVMOptimizationControlOptions<
 def LimitAutoMultiBufferOfLocalBuffer : HIVMOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit local buffer mode.",
   "MultiBufferStrategy",
-  "MultiBufferStrategy::CUBE_NO_L0C"
+  "MultiBufferStrategy::NO_LIMIT"
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
