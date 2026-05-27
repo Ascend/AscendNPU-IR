@@ -3,7 +3,7 @@
 // RUN: -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @test_preg_arith_op_lowering
-func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<ub>>, %arg1: memref<8x8xi1, strided<[256, 1]>, #hivm.address_space<ub>>, %arg2: memref<8x8xi32, #hivm.address_space<ub>>, %arg3: memref<i32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<ub>>, %arg1: memref<8x8xi1, strided<[256, 1]>, #hivm.address_space<ub>>, %arg2: memref<8x8xi32, #hivm.address_space<ub>>, %arg3: memref<i32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0_i16 = arith.constant 0 : i16
   %c1_i8 = arith.constant 1 : i8
   %c0_i8 = arith.constant 0 : i8
@@ -89,7 +89,7 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
     %49 = builtin.unrealized_conversion_cast %48 : i32 to vector<i32>
     %50 = builtin.unrealized_conversion_cast %49 : vector<i32> to vector<64xi32>
     scf.yield %49, %50 : vector<i32>, vector<64xi32>
-  } {element_alignment_bit_width = -1 : i32}
+  }
   %6 = builtin.unrealized_conversion_cast %5#1 : vector<64xi32> to vector<i32>
   %7 = builtin.unrealized_conversion_cast %6 : vector<i32> to vector<1xi32>
   %8 = ave.hir.pge <ALL> : vector<1xi1>
@@ -133,6 +133,6 @@ func.func @plds_i1_as_msk_of_vsel_f32(%arg0: memref<64x64xi1, strided<[256, 1]>,
     %14 = ave.hir.pge <VL64> : vector<128xi1>
     %reinterpret_cast_23 = memref.reinterpret_cast %base_buffer_19 to offset: [%13], sizes: [4, 16], strides: [1040, 1] : memref<bf16, #hivm.address_space<ub>> to memref<4x16xbf16, #map18, #hivm.address_space<ub>>
     ave.hir.store_with_stride %reinterpret_cast_23[%c0, %c0], %c1040, %14, %11 : memref<4x16xbf16, #map18, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
-  } {element_alignment_bit_width = -1 : i32}
+  }
   return
 }

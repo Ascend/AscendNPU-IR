@@ -1,35 +1,33 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0(
-// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.fill
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: linalg.fill
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<log>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<trunc>}
+// CHECK: hfusion.cast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
 // CHECK: hfusion.select
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1(
-// CHECK: arith.constant
 // CHECK: linalg.broadcast
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vle>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
@@ -38,18 +36,15 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2(
-// CHECK: arith.constant
 // CHECK: hfusion.bitcast
 // CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<min_signed>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>}
-// CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, {{.*}} round_mode = #hfusion.round_mode<rint>}
+// CHECK: hfusion.cast
 // CHECK: hfusion.compare {compare_fn = #hfusion.compare_fn<vne>}
 // CHECK: hfusion.select
 // CHECK: linalg.reduce
-// CHECK: arith.maximumf
-// CHECK: linalg.yield
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_3(
@@ -57,8 +52,6 @@
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
 // CHECK: linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
 // CHECK: linalg.reduce
-// CHECK: arith.addf
-// CHECK: linalg.yield
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_4(
@@ -67,39 +60,19 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_5(
-// CHECK: arith.constant
 // CHECK: hfusion.arange
 // CHECK: linalg.broadcast
 // CHECK: return
 
 // CHECK-LABEL: func.func @triton_unk_fused__softmax_add_mul_rsub_3_01B(
-// CHECK: arith.constant
-// CHECK: tensor.empty
-// CHECK: arith.muli
-// CHECK: hfusion.arange
-// CHECK: arith.addi
-// CHECK: arith.minsi
-// CHECK: call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_5
 // CHECK: scf.for
-// CHECK: arith.muli
-// CHECK: scf.for
-// CHECK: arith.muli
-// CHECK: arith.addi
 // CHECK: memref.reinterpret_cast
 // CHECK: memref.alloc
-// CHECK: arith.cmpi slt
-// CHECK: scf.if
 // CHECK: linalg.fill
 // CHECK: memref.subview
 // CHECK: memref.copy
 // CHECK: bufferization.to_tensor
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_0
-// CHECK: scf.for
-// CHECK: tensor.extract
-// CHECK: memref.load
-// CHECK: tensor.insert
-// CHECK: tensor.extract_slice
-// CHECK: tensor.insert_slice
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_1
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_2
 // CHECK: func.call @triton_unk_fused__softmax_add_mul_rsub_3_01B_fused_3

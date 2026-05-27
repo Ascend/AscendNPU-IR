@@ -36,7 +36,7 @@ func.func @entry_outlined_vf_1(%arg0: memref<?x128xf16, #hivm.address_space<ub>>
 
 // -----
 // CHECK: builtin.unrealized_conversion_cast %[[FOR_RES:.*]]#1 : vector<64xf32> to vector<f32>
-func.func @fused_sigmoid_gating_delta_rule_update_kernel_outlined_vf_4(%arg0: memref<128xbf16, #hivm.address_space<ub>>, %arg1: memref<128xbf16, #hivm.address_space<ub>>, %arg2: memref<f32, #hivm.address_space<ub>>, %arg3: memref<f32, #hivm.address_space<ub>>, %arg4: memref<128xf32, #hivm.address_space<ub>>, %arg5: memref<128xf32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @fused_sigmoid_gating_delta_rule_update_kernel_outlined_vf_4(%arg0: memref<128xbf16, #hivm.address_space<ub>>, %arg1: memref<128xbf16, #hivm.address_space<ub>>, %arg2: memref<f32, #hivm.address_space<ub>>, %arg3: memref<f32, #hivm.address_space<ub>>, %arg4: memref<128xf32, #hivm.address_space<ub>>, %arg5: memref<128xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c64 = arith.constant 64 : index
   %c128 = arith.constant 128 : index
   %c0 = arith.constant 0 : index
@@ -84,7 +84,7 @@ func.func @fused_sigmoid_gating_delta_rule_update_kernel_outlined_vf_4(%arg0: me
     %35 = builtin.unrealized_conversion_cast %34 : vector<1xf32> to f32
     %36 = builtin.unrealized_conversion_cast %35 : f32 to vector<f32>
     scf.yield %21, %36 : vector<f32>, vector<f32>
-  } {element_alignment_bit_width = 32 : i32}
+  }
   %3 = builtin.unrealized_conversion_cast %2#1 : vector<f32> to vector<1xf32>
   %4 = ave.hir.pge <ALL> : vector<1xi1>
   ave.hir.masked_store <ONEPT_B32> %arg3[], %4, %3 : memref<f32, #hivm.address_space<ub>>, vector<1xi1>, vector<1xf32>

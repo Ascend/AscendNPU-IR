@@ -10,7 +10,7 @@
 #map8 = affine_map<()[s0, s1] -> (s0 * 16 + s1 * 8)>
 #map10 = affine_map<()[s0, s1] -> (s0 * 128 + s1)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  func.func @_hstu_attn_bwd_mix_aiv_outlined_vf_6(%arg0: memref<2x8x1x16xf16, #hivm.address_space<ub>>, %arg1: memref<1x16x2x8xf16, #hivm.address_space<ub>>, %arg2: memref<1x16x2x8xf32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  func.func @_hstu_attn_bwd_mix_aiv_outlined_vf_6(%arg0: memref<2x8x1x16xf16, #hivm.address_space<ub>>, %arg1: memref<1x16x2x8xf16, #hivm.address_space<ub>>, %arg2: memref<1x16x2x8xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %0 = llvm.mlir.constant(2 : i32) : i32
     %1 = llvm.mlir.constant(1 : i32) : i32
     %2 = llvm.mlir.constant(16 : i32) : i32
@@ -95,8 +95,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
         %75 = llvm.mlir.constant(0 : i32) : i32
         %76 = llvm.mlir.constant(2 : i32) : i32
         "hivm_regbaseintrins.intr.hivm.vstsx1.v64f32"(%67, %73, %74, %76, %75, %44) : (vector<64xf32>, !llvm.ptr<6>, i32, i32, i32, vector<256xi1>) -> ()
-      } {element_alignment_bit_width = 32 : i32}
-    } {element_alignment_bit_width = 32 : i32}
+      }
+    }
     return
   }
 }

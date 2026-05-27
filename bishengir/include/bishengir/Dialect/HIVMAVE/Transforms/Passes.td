@@ -11,6 +11,12 @@
 
 include "mlir/Pass/PassBase.td"
 
+def AVENormalizeOps : Pass<"ave-normalize-ops", "func::FuncOp"> {
+  let summary = "Normalize AVE-Ops to adapt the preg/vector register bitwidth.";
+  let constructor = "mlir::hivmave::createAVENormalizeOpsPass()";
+  let dependentDialects = ["hivmave::AVEDialect", "arith::ArithDialect", "hivm::HIVMDialect"];
+}
+
 def ReplaceWithVectorScalar : Pass<"ave-replace-with-vector-scalar", "func::FuncOp"> {
   let summary = "Replace vector-vector op with vector-scalar op if possible";
   let constructor = "mlir::hivmave::createReplaceWithVectorScalarPass()";
@@ -110,12 +116,6 @@ def ScalarBroadcastToVLoad : Pass<"hivmave-scalar-broadcast-to-vload", "func::Fu
 def HoistVstas : Pass<"hoist-vstas",  "func::FuncOp"> {
   let summary = "Hoist vstas op out of loops";
   let constructor = "::mlir::hivmave::createHoistVstasPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
-def AnalyzeDataLayout : Pass<"data-layout-analyze", "func::FuncOp"> {
-  let summary = "Analyze hivmave ops inside VF to get element alignment bit width";
-  let constructor = "mlir::hivmave::createDataLayoutAnalysisPass()";
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 

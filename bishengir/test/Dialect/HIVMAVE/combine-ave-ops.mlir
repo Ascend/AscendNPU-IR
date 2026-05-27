@@ -4,7 +4,7 @@
 
 // CHECK-LABEL: func.func @subexp_to_vexp
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @subexp_to_vexp(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  func.func @subexp_to_vexp(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %c0 = arith.constant 0 : index
     %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
     %1 = ave.hir.vload <NORM> %arg1[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
@@ -25,7 +25,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: func.func @muladd_to_mula_lhs
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @muladd_to_mula_lhs(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>, %arg3: memref<64xf32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  func.func @muladd_to_mula_lhs(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>, %arg3: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %c0 = arith.constant 0 : index
     %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
     %1 = ave.hir.vload <NORM> %arg1[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
@@ -47,7 +47,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: func.func @muladd_to_mula_rhs
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-  func.func @muladd_to_mula_rhs(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>, %arg3: memref<64xf32, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  func.func @muladd_to_mula_rhs(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>, %arg3: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %c0 = arith.constant 0 : index
     %0 = ave.hir.vload <NORM> %arg0[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
     %1 = ave.hir.vload <NORM> %arg1[%c0] : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>

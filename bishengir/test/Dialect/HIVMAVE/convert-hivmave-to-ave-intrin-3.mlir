@@ -1,17 +1,16 @@
   // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
-  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
+  // RUN: -remove-vector-layout-attr -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 
 // CHECK-LABEL:   func.func @triton_load_mask_outlined_vf_0
-func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @triton_load_mask_outlined_vf_0(%arg0: memref<32xi8, #hivm.address_space<ub>>, %arg1: memref<32xf8E5M2, #hivm.address_space<ub>>, %arg2: memref<32xf8E5M2, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   // CHECK:           %[[VAL_16:.*]] = builtin.unrealized_conversion_cast %[[VAL_15:.*]] : vector<256xi8> to vector<64xi8>
   // CHECK:           %[[VAL_19:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%{{.*}}, %{{.*}}) {mask_bit_width = 32 : i32} : (i32, i32) -> vector<256xi1>
   // CHECK:           %[[VAL_23:.*]] = "hivm_regbaseintrins.intr.hivm.vdups.z"(%{{.*}}, %{{.*}}, %{{.*}}) : (i32, vector<256xi1>, i32) -> vector<64xi32>
   // CHECK:           %[[VAL_26:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%{{.*}}, %{{.*}}) {mask_bit_width = 32 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
   // CHECK:           %[[VAL_28:.*]] = llvm.getelementptr %{{.*}}{{\[}}%{{.*}}] : (!llvm.ptr<6>, i64) -> !llvm.ptr<6>, i8
-  // CHECK:           %[[VAL_32:.*]] = "hivm_regbaseintrins.intr.hivm.vldsx1.v256s8"(%[[VAL_28:.*]], %{{.*}}, %{{.*}}, %{{.*}}) : (!llvm.ptr<6>, i32, i32, i32) -> vector<256xi8>
-  // CHECK:           %[[VAL_34:.*]] = "hivm_regbaseintrins.intr.hivm.vbr"(%{{.*}}) : (i8) -> vector<256xi8>
-  // CHECK:           %[[VAL_35:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[VAL_32:.*]], %[[VAL_34]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
-  // CHECK:           %[[VAL_37:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%{{.*}}, %[[VAL_34]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
+   // CHECK:           %[[VAL_32:.*]] = "hivm_regbaseintrins.intr.hivm.vldsx1.v256s8"(%[[VAL_28:.*]], %{{.*}}, %{{.*}}, %{{.*}}) : (!llvm.ptr<6>, i32, i32, i32) -> vector<256xi8>
+   // CHECK:           %[[VAL_35:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%[[VAL_32:.*]], %[[VAL_32:.*]]) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
+   // CHECK:           %[[VAL_37:.*]] = "hivm_regbaseintrins.intr.hivm.vintlv"(%{{.*}}, %{{.*}}) : (vector<256xi8>, vector<256xi8>) -> !llvm.struct<(vector<256xi8>, vector<256xi8>)>
   // CHECK:           %[[VAL_45:.*]] = "hivm_regbaseintrins.intr.hivm.vldsx1.v256f8e5m2"(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) : (!llvm.ptr<6>, i32, i32, i32) -> vector<256xf8E5M2>
   // CHECK:           %[[VAL_50:.*]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s82s32.x"(%{{.*}}, %[[VAL_26:.*]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<64xi32>
   // CHECK:           %[[VAL_52:.*]] = "hivm_regbaseintrins.intr.hivm.vcmp.ne.s.z"(%{{.*}}, %[[VAL_23:.*]], %[[VAL_26:.*]]) : (vector<64xi32>, vector<64xi32>, vector<256xi1>) -> vector<256xi1>

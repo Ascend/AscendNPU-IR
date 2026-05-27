@@ -1,4 +1,5 @@
 add_bishengir_library(BishengIRSCFTransforms
+  BufferizableOpInterfaceImpl.cpp
   MapForToForall.cpp
   LegalizeLoopIterArg.cpp
   RemoveRedundantLoopInit.cpp
@@ -16,4 +17,5 @@ add_bishengir_library(BishengIRSCFTransforms
   MLIRIR
   MLIRDialect
   MLIRPass
+  MLIRBufferizationTransforms
 )

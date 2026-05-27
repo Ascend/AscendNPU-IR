@@ -10,7 +10,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
-#include "bishengir/Dialect/HIVM/Transforms/NormalizeLoopIterator.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
@@ -2762,14 +2761,6 @@ void PlanMemoryPass::UpdateBuffer2OffsetsForFuncOp(
 std::optional<DenseMap<Value, SmallVector<uint64_t>>>
 PlanMemoryPass::PlanMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
-  if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN) {
-    RewritePatternSet normalizeLoopIterPatterns(&getContext());
-    populateNormalizeLoopIneratorPattern(normalizeLoopIterPatterns);
-    if (failed(applyPatternsGreedily(funcOp,
-                                     std::move(normalizeLoopIterPatterns)))) {
-      return std::nullopt;
-    }
-  }
 
   // FIXME: Reusing tightly coupled buffer is dangerous because inter-core sync
   // was inserted before plan memory. Currently, changing this behavior will

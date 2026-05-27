@@ -13,6 +13,7 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -24,7 +25,10 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 
+#include <bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h>
+
 namespace mlir {
+#define GEN_PASS_DEF_INSERTFIXPIPE
 #define GEN_PASS_DEF_INLINEFIXPIPE
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
@@ -43,6 +47,11 @@ static constexpr llvm::StringLiteral fixpipeAlreadyInserted =
 } // namespace
 
 namespace {
+struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
+  using Base::Base;
+  void runOnOperation() override;
+};
+
 struct InlineFixpipe : public impl::InlineFixpipeBase<InlineFixpipe> {
   using Base::Base;
   void runOnOperation() override;
@@ -163,6 +172,66 @@ bool needYieldOut(Operation *user, Value val) {
   return false;
 }
 
+/// Infer a conservative fixpipe dma mode from src/dst shaped values.
+///
+/// If src and dst are shape-compatible, fixpipe acts as a layout-preserving copy
+/// (e.g. NZ2NZ or ND2ND-like path), so use the normal dma mode. Otherwise,
+/// fallback to NZ2ND for layout-conversion cases.
+FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
+                                         bool inferFixpipeDmaMode) {
+  if (!inferFixpipeDmaMode)
+    return FixpipeDMAMode::NZ2ND;
+
+  auto srcType = dyn_cast<ShapedType>(src.getType());
+  auto dstType = dyn_cast<ShapedType>(dst.getType());
+  if (!srcType || !dstType)
+    return FixpipeDMAMode::NZ2ND;
+
+  if (srcType.hasRank() && dstType.hasRank() &&
+      succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+    // For same-shape cases, use rank to distinguish ND-like tensors.
+    // A 2D destination is treated as ND; otherwise keep normal mode.
+    if (dstType.getRank() == 2)
+      return FixpipeDMAMode::NZ2ND;
+    return FixpipeDMAMode::NZ2NZ;
+  }
+
+  return FixpipeDMAMode::NZ2ND;
+}
+
+/// Infer dma_mode after slice-swap rewrites. DMAMode in Fixpipe is unreliable x_x
+///
+/// If the swapped source/destination keep compatible shapes, treat it as a
+/// layout-preserving path (NZ2NZ / ND2ND-like), otherwise keep original mode.
+FixpipeDMAMode inferSwapFixpipeDmaMode(Value src, Value dst,
+                                       FixpipeDMAMode fallbackMode) {
+  auto srcType = dyn_cast<ShapedType>(src.getType());
+  auto dstType = dyn_cast<ShapedType>(dst.getType());
+  if (!srcType || !dstType)
+    return fallbackMode;
+
+  if (srcType.hasRank() && dstType.hasRank() &&
+      succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+    // For same-shape cases, use rank to distinguish ND-like tensors.
+    // A 2D destination is treated as ND; otherwise keep normal mode.
+    if (dstType.getRank() == 2)
+      return FixpipeDMAMode::NZ2ND;
+    return FixpipeDMAMode::NZ2NZ;
+  }
+  return fallbackMode;
+}
+
+bool hasCompatibleShape(Value lhs, Value rhs) {
+  auto lhsType = dyn_cast<ShapedType>(lhs.getType());
+  auto rhsType = dyn_cast<ShapedType>(rhs.getType());
+  if (!lhsType || !rhsType || !lhsType.hasRank() || !rhsType.hasRank())
+    return false;
+  if (lhsType.getRank() != rhsType.getRank())
+    return false;
+  return succeeded(
+      verifyCompatibleShape(lhsType.getShape(), rhsType.getShape()));
+}
+
 /// Pushed down insert point only when a unique yieldop is trace
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
   // if op has multiple users, don't push the insert point down
@@ -206,7 +275,11 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
 template <typename OpType>
 struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
 public:
-  using OpRewritePattern<OpType>::OpRewritePattern;
+  InsertFixpipeOpPattern(MLIRContext *context,
+                         InsertFixpipePatternOptions options)
+      : OpRewritePattern<OpType>(context),
+        options(options) {}
+
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op.getResultTensors()[0];
@@ -246,8 +319,11 @@ public:
         utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
     LDBG("Replacing fix pipe for " << op);
     MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(
+        ctx,
+        getInsertedFixpipeDmaMode(insertAfterOp->getResult(resultIndx),
+                                  fixpipeInit,
+                                  options.inferFixpipeDmaMode));
     auto res = rewriter.create<FixpipeOp>(
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/insertAfterOp->getResult(resultIndx),
@@ -267,12 +343,19 @@ public:
                                   res.getResultTensor(), exceptedOps);
     return success();
   }
+
+private:
+  InsertFixpipePatternOptions options;
 };
 
 template <>
 struct InsertFixpipeOpPattern<hivm::MmadMxL1Op> : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
-  using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
+  InsertFixpipeOpPattern(MLIRContext *context,
+                         InsertFixpipePatternOptions options)
+      : OpRewritePattern<hivm::MmadMxL1Op>(context),
+        options(options) {}
+
   LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op->getResults()[0];
@@ -301,8 +384,11 @@ public:
         utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
     LDBG("Replacing fix pipe for " << op);
     MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(
+        ctx,
+        getInsertedFixpipeDmaMode(insertAfterOp->getResult(resultIndx),
+                                  fixpipeInit,
+                                  options.inferFixpipeDmaMode));
     auto res = rewriter.create<FixpipeOp>(
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/insertAfterOp->getResult(resultIndx),
@@ -312,6 +398,9 @@ public:
                                   res.getResultTensor(), res);
     return success();
   }
+
+private:
+  InsertFixpipePatternOptions options;
 };
 
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
@@ -377,7 +466,11 @@ int64_t getSiftedUsersNum(Value v) {
 // Potential optimization is to fuse condition 1&2&3 into fixpipe.
 struct InlineFixpipeOpPattern : public OpRewritePattern<FixpipeOp> {
 public:
-  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+  InlineFixpipeOpPattern(MLIRContext *context,
+                         InlineFixpipePatternOptions options)
+      : OpRewritePattern<FixpipeOp>(context),
+        options(options) {}
+
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.getResultTensor())
@@ -443,8 +536,10 @@ private:
       auto vMulOp = cast<hivm::VMulOp>(curOp);
       matched = true;
       inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
-    } else if (auto extractSliceOp =
-                   dyn_cast_if_present<tensor::ExtractSliceOp>(curOp)) {
+    } else if (isa<tensor::ExtractSliceOp>(curOp) &&
+               hasCompatibleShape(op.getSource(),
+                                  cast<tensor::ExtractSliceOp>(curOp).getSource())) {
+      auto extractSliceOp = cast<tensor::ExtractSliceOp>(curOp);
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
       if (op->getBlock() == extractSliceOp->getBlock()) {
         // only swap when fixpipe op and extract slice op are in same block,
@@ -453,8 +548,10 @@ private:
         matched = true;
         swapFixpipeAndExtractSliceOp(rewriter, loc, op, extractSliceOp);
       }
-    } else if (auto insertSliceOp =
-                   dyn_cast_if_present<tensor::InsertSliceOp>(curOp)) {
+    } else if (isa<tensor::InsertSliceOp>(curOp) &&
+               hasCompatibleShape(op.getSource(),
+                                  cast<tensor::InsertSliceOp>(curOp).getSource())) {
+      auto insertSliceOp = cast<tensor::InsertSliceOp>(curOp);
       // change to fixpipe op + insert_slice + store op to insert_slice +
       // fixpipe op + store op, and besides store op, there is no anther user
       // for insert_slice
@@ -472,6 +569,8 @@ private:
     return matched ? success() : failure();
   }
 
+  InlineFixpipePatternOptions options;
+
   void inlineFixPipeWithRreQuant(PatternRewriter &rewriter, Location loc,
                                  hivm::FixpipeOp op, hivm::VCastOp castOp,
                                  Value newFixpipeSrcTensor) const {
@@ -486,9 +585,7 @@ private:
     rewriter.setInsertionPointAfter(castOp);
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, loc, castOp.getResult()[0]);
-    MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    FixpipeDMAModeAttr dmaModeAttr = op.getDmaModeAttr();
     SmallVector<Value> oprs({newFixpipeSrcTensor, fixpipeInit});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
@@ -630,8 +727,9 @@ private:
         rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
         getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
     MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    auto dmaMode = inferSwapFixpipeDmaMode(newExtractSliceResult, fixpipeInit,
+                                           op.getDmaMode());
+    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(ctx, dmaMode);
     SmallVector<Value> oprs({newExtractSliceResult, fixpipeInit});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
@@ -659,8 +757,9 @@ private:
         rewriter, insertSliceOp.getLoc(), newInsertSliceResult,
         getInitType(newInsertSliceResult, op.getPreQuant(), rewriter));
     MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+    auto dmaMode = inferSwapFixpipeDmaMode(newInsertSliceResult, fixpipeInit,
+                                           op.getDmaMode());
+    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(ctx, dmaMode);
     SmallVector<Value> oprs({newInsertSliceResult, fixpipeInit});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
@@ -711,12 +810,18 @@ private:
   }
 };
 
-void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
+void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns,
+                                               InsertFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
-  patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
-  patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
-  patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx);
-  patterns.add<InlineFixpipeOpPattern>(ctx);
+  patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx, options);
+  patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx, options);
+  patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx, options);
+}
+
+void mlir::hivm::populateInlineFixpipePatterns(
+    RewritePatternSet &patterns, InlineFixpipePatternOptions options) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<InlineFixpipeOpPattern>(ctx, options);
 }
 
 struct InsertFixpipeForDevicePrint : public OpRewritePattern<DebugOp> {
@@ -758,9 +863,11 @@ void populateDevicePrintPatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
 
-void InlineFixpipe::runOnOperation() {
+void InsertFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  populateInlineFixpipePatterns(patterns);
+  InsertFixpipePatternOptions options;
+  options.inferFixpipeDmaMode = inferFixpipeDmaMode;
+  mlir::hivm::populateInsertFixpipePatterns(patterns, options);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
@@ -776,6 +883,27 @@ void InlineFixpipe::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass() {
-  return std::make_unique<InlineFixpipe>();
+void InlineFixpipe::runOnOperation() {
+  RewritePatternSet patterns(&getContext());
+  InlineFixpipePatternOptions options;
+  options.enableV2SliceSwapOpt = enableV2SliceSwapOpt;
+  mlir::hivm::populateInlineFixpipePatterns(patterns, options);
+  if (options.enableV2SliceSwapOpt) {
+    // dogshit pattern
+    populateFixpipeExtractSlice(patterns, &getContext());
+    populateCombineOptimizedConvertLayoutPatterns(patterns, &getContext());
+  }
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+  }
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass(
+    const InsertFixpipeOptions &options) {
+  return std::make_unique<InsertFixpipe>(options);
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass(
+    const InlineFixpipeOptions &options) {
+  return std::make_unique<InlineFixpipe>(options);
 }

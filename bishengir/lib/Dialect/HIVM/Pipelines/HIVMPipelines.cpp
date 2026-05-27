@@ -65,8 +65,6 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   options.target = hivmPipelineOptions.target;
   options.enableDotScaledCompile =
       hivmPipelineOptions.enableDotScaledCompile;
-  options.enableLayoutOptimization =
-      hivmPipelineOptions.enableLayoutOptimization;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
@@ -222,6 +220,8 @@ bufferizationPipeline(OpPassManager &pm,
       bufferization::LayoutMapOption::IdentityLayoutMap);
   oneShotOptions.allowReturnAllocsFromLoops = true;
   oneShotOptions.allowUnknownOps = true;
+  oneShotOptions.analysisHeuristic =
+      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   if (hivmPipelineOptions.enableVfMergeLevel == 2) {
     MergeVecScopeOptions VfMergeOpsOpt;
@@ -245,6 +245,21 @@ bufferizationPipeline(OpPassManager &pm,
   }
 }
 
+static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
+  pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+  PropagateConvertLayoutOptions options;
+  options.allowAgnosticOps = false;
+  pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+
+  pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+  pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
+}
+
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
@@ -259,8 +274,10 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  // TODO: Currently, the optimized layout optimization pipeline is incompatible
-  // with the affinity programming cases.
+
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
     // Combine optimized folds:
@@ -268,40 +285,18 @@ static void hivmPreBufferizationOptimizationPipeline(
     // - convert layout + fixpipe
     // For regbase convert layout optimization is done early in the pass
     // Inserts convert layout before and after cube operations
-    pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
-
-    // Moves layout conversion to the start and end of the kernel
-    // TODO: This part needs the most improvement compared to others
-    PropagateConvertLayoutOptions options;
-    options.allowAgnosticOps = false;
-    pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
-
-    // Add canonicalization passes
-    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
-    pm.nest<func::FuncOp>().addPass(createCSEPass());
-    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
-    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
-  } else {
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
+    addOptimizedConvertLayoutFixpipePipeline(pm);
   }
-  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  // TODO: Currently, the optimized layout optimization pipeline is incompatible
-  // with the affinity programming cases.
-  if (hivmPipelineOptions.enableLayoutOptimization &&
-      hivmPipelineOptions.enableMixedCV) {
-    pm.addPass(mlir::hivm::createInlineFixpipeV2Pass());
-    pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
-    pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
+
+  if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
+    pm.addPass(createInsertL12UBForDebugPass());
   } else {
-    if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
-      pm.addPass(createInsertL12UBForDebugPass());
-    } else {
-      pm.addPass(createInsertNZ2NDForDebugPass());
-    }
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
+    pm.addPass(createInsertNZ2NDForDebugPass());
   }
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.addPass(createInsertWorkSpaceForMixCVPass());
   // keep this for the debug feature (device print, etc.)

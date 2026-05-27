@@ -184,7 +184,12 @@ std::unique_ptr<Pass> createReduceRankSubviewPass();
 std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
-std::unique_ptr<Pass> createInlineFixpipePass();
+std::unique_ptr<Pass>
+createInlineFixpipePass(const InlineFixpipeOptions &options = {});
+
+// Create a pass to insert fixpipe
+std::unique_ptr<Pass>
+createInsertFixpipePass(const InsertFixpipeOptions &options = {});
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass> createInlineFixpipeV2Pass();
@@ -237,9 +242,6 @@ std::unique_ptr<Pass> createAutoInferBufferSizePass();
 
 // Create a pass to insert workspace for mix cv function.
 std::unique_ptr<Pass> createInsertWorkSpaceForMixCVPass();
-
-// Create a pass to normalize special state of loop iterator before plan-memory
-std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
 
 /// Create a pass to Inline Load and Store operation on the fly.
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();

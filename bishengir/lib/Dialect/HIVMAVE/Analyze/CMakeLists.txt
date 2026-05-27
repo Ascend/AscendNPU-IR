@@ -1,6 +1,5 @@
 add_bishengir_conversion_library(MLIRAnalyzeArithVectorMask
   AnalyzeAlignmentBitwidth.cpp
-  AnalyzeDataLayout.cpp
   AnalyzeVectorLayout.cpp
   RemoveVectorLayoutAttr.cpp
 

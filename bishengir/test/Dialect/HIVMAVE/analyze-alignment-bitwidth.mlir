@@ -1,7 +1,7 @@
 // RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth -remove-vector-layout-attr -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: @test_gather_using_plt_mask
-func.func @test_gather_using_plt_mask(%arg0: memref<23xi64, #hivm.address_space<ub>>, %arg1: memref<21xf16, #hivm.address_space<ub>>, %arg2: memref<23xf16, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @test_gather_using_plt_mask(%arg0: memref<23xi64, #hivm.address_space<ub>>, %arg1: memref<21xf16, #hivm.address_space<ub>>, %arg2: memref<23xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0_i64 = arith.constant 0 : i64
   %0 = llvm.mlir.constant(1 : i64) : i64
   %c23 = arith.constant 23 : index
@@ -23,7 +23,7 @@ func.func private @_mlir_ciface_cast_int64_t_to_int32_t(!llvm.ptr, vector<256xi1
 
 // -----
 // CHECK-LABEL: @test_gather_using_pge_mask
-func.func @test_gather_using_pge_mask(%arg0: memref<2xi64, #hivm.address_space<ub>>, %arg1: memref<1xf16, #hivm.address_space<ub>>, %arg2: memref<2xf16, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @test_gather_using_pge_mask(%arg0: memref<2xi64, #hivm.address_space<ub>>, %arg1: memref<1xf16, #hivm.address_space<ub>>, %arg2: memref<2xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %0 = ave.hir.pge <VL2> {mask_op_idx = 0 : i32} : vector<64xi1>
   %res = ave.hir.vload <NORM> %arg0[%c0] : memref<2xi64, #hivm.address_space<ub>> into vector<64xi64>

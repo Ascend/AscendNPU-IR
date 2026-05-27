@@ -2,7 +2,7 @@
 
 //----- Case From #2768
 
-func.func @triton_mod_outlined_vf_0(%arg0: memref<1x1x23xf32, #hivm.address_space<ub>>, %arg1: memref<1x1x23xf32, #hivm.address_space<ub>>, %arg2: memref<1x1x23xi16, #hivm.address_space<ub>>) attributes {hivm.vector_function, element_alignment_bit_width = 32 : i32} {
+func.func @triton_mod_outlined_vf_0(%arg0: memref<1x1x23xf32, #hivm.address_space<ub>>, %arg1: memref<1x1x23xf32, #hivm.address_space<ub>>, %arg2: memref<1x1x23xi16, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
 %c0 = arith.constant 0 : index
 %c46 = arith.constant 46 : index
 %res, %new_true_shape = ave.hir.plt %c46 : vector<128xi1>, index
