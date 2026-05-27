@@ -243,6 +243,14 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
       pipeWrite = rwOp->pipeWrite;
     }
     assert(pipeRead.has_value() && pipeWrite.has_value());
+    LLVM_DEBUG({
+      if (pipeRead.value() != rwOp->pipeRead ||
+          pipeWrite.value() != rwOp->pipeWrite) {
+        llvm::dbgs() << "createMergedRWOperation: unexpected rw ops with "
+                        "different read/write pipes, check sync-block-ops with "
+                        "src/dst pipe_s.\n";
+      }
+    });
     if (pipeRead.value() != rwOp->pipeRead) {
       pipeRead = hivm::PIPE::PIPE_S;
     }
@@ -298,96 +306,14 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
   int64_t anchorIdEnd = mixIRTranslator->anchorOpMap.rbegin()->first;
   assert(anchorIdEnd - anchorIdStart + 1 ==
          static_cast<int64_t>(mixIRTranslator->anchorOpMap.size()));
-  for (int64_t anchorId = anchorIdStart; anchorId < anchorIdEnd; anchorId++) {
-    auto mixAnchorInfo =
-        getAnchorInfo(mixIRTranslator.get(), anchorId, anchorId + 1);
-    auto cubeAnchorInfo =
-        getAnchorInfo(cubeIRTranslator.get(), anchorId, anchorId + 1);
-    auto vectorAnchorInfo =
-        getAnchorInfo(vectorIRTranslator.get(), anchorId, anchorId + 1);
-    if (mixAnchorInfo.anchorBefore->parentOp !=
-        mixAnchorInfo.anchorAfter->parentOp) {
-      int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
-      int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
-      if (depthBefore < depthAfter) {
-        auto *parentOp =
-            mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
-        assert(parentOp != nullptr);
-        if (!parentOp->cubeAnchorInfo.has_value()) {
-          parentOp->cubeAnchorInfo = AnchorInfo();
-        }
-        if (!parentOp->vectorAnchorInfo.has_value()) {
-          parentOp->vectorAnchorInfo = AnchorInfo();
-        }
-        parentOp->cubeAnchorInfo->anchorBefore = cubeAnchorInfo.anchorBefore;
-        parentOp->vectorAnchorInfo->anchorBefore =
-            vectorAnchorInfo.anchorBefore;
-        if (auto mixParentLoopOp = dyn_cast<Loop>(parentOp)) {
-          auto cubeParentOp = cubeAnchorInfo.anchorAfter->getNthParent(
-              depthAfter - depthBefore);
-          assert(cubeParentOp != nullptr);
-          auto cubeParentLoopOp = dyn_cast<Loop>(cubeParentOp);
-          assert(cubeParentLoopOp != nullptr);
-          loopMap[{mixParentLoopOp, TCoreType::CUBE}] = cubeParentLoopOp;
 
-          auto vectorParentOp = vectorAnchorInfo.anchorAfter->getNthParent(
-              depthAfter - depthBefore);
-          assert(vectorParentOp != nullptr);
-          auto vectorParentLoopOp = dyn_cast<Loop>(vectorParentOp);
-          assert(vectorParentLoopOp != nullptr);
-          loopMap[{mixParentLoopOp, TCoreType::VECTOR}] = vectorParentLoopOp;
-        }
-      }
-      if (depthBefore > depthAfter) {
-        auto *parentOp =
-            mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
-        assert(parentOp != nullptr);
-        if (!parentOp->cubeAnchorInfo.has_value()) {
-          parentOp->cubeAnchorInfo = AnchorInfo();
-        }
-        if (!parentOp->vectorAnchorInfo.has_value()) {
-          parentOp->vectorAnchorInfo = AnchorInfo();
-        }
-        parentOp->cubeAnchorInfo->anchorAfter = cubeAnchorInfo.anchorAfter;
-        parentOp->vectorAnchorInfo->anchorAfter = vectorAnchorInfo.anchorAfter;
-      }
-      if (depthBefore != depthAfter) {
-        OperationBase *beforeAnchorNextOp{nullptr};
-        OperationBase *afterAnchorPrevOp{nullptr};
-        if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
-          beforeAnchorNextOp = getNextOperation(mixAnchorInfo.anchorBefore);
-          assert(beforeAnchorNextOp != nullptr);
-        }
-        if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
-          afterAnchorPrevOp = getPrevOperation(mixAnchorInfo.anchorAfter);
-          assert(afterAnchorPrevOp != nullptr);
-          assert(beforeAnchorNextOp == nullptr ||
-                 beforeAnchorNextOp != afterAnchorPrevOp);
-        }
-        if (auto placeHolderOp =
-                dyn_cast_if_present<PlaceHolder>(beforeAnchorNextOp)) {
-          placeHolderOp->cubeAnchorInfo =
-              AnchorInfo(cubeAnchorInfo.anchorBefore);
-          placeHolderOp->vectorAnchorInfo =
-              AnchorInfo(vectorAnchorInfo.anchorBefore);
-        }
-        if (auto placeHolderOp =
-                dyn_cast_if_present<PlaceHolder>(afterAnchorPrevOp)) {
-          placeHolderOp->cubeAnchorInfo =
-              AnchorInfo(cubeAnchorInfo.anchorAfter);
-          placeHolderOp->vectorAnchorInfo =
-              AnchorInfo(vectorAnchorInfo.anchorAfter);
-        }
-      }
-      continue;
-    }
-
-    // Same-scope interval: build the merged RW summary the solver will see.
+  auto createRWOperation = [&](int64_t anchorId, AnchorInfo mixAnchorInfo,
+                               AnchorInfo cubeAnchorInfo,
+                               AnchorInfo vectorAnchorInfo) {
     auto cubeRWOps = getAllRWOperationsBetweenAnchors(cubeAnchorInfo);
     auto vectorRWOps = getAllRWOperationsBetweenAnchors(vectorAnchorInfo);
     if (cubeRWOps.empty() && vectorRWOps.empty()) {
-      // Empty on both sides: no hazard, skip.
-      continue;
+      return;
     }
 
     // Synthetic core type:
@@ -405,7 +331,18 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
       coreType = TCoreType::CUBE_AND_VECTOR;
     }
 
+    LLVM_DEBUG({
+      if (coreType == TCoreType::CUBE_AND_VECTOR) {
+        llvm::dbgs() << "createRWOperation: unexpected for both cube and "
+                        "vector kernels to have rw ops between given anchors, "
+                        "check anchor-id="
+                     << anchorId << "\n";
+      }
+    });
+
     auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
+    auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+    assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
     auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
     assert(parentScopeOp != nullptr);
 
@@ -429,6 +366,229 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
                            });
     assert(it != body.end());
     body.insert(it + 1, std::move(mergedRWOperation));
+  };
+
+  auto createRWOperationBlockBefore = [&](int64_t anchorId,
+                                          AnchorInfo mixAnchorInfo,
+                                          AnchorInfo cubeAnchorInfo,
+                                          AnchorInfo vectorAnchorInfo) {
+    assert(isa<Anchor>(mixAnchorInfo.anchorBefore));
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    assert(depthBefore < depthAfter);
+    mixAnchorInfo.anchorAfter =
+        mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    cubeAnchorInfo.anchorAfter =
+        cubeAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    vectorAnchorInfo.anchorAfter =
+        vectorAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(mixAnchorInfo.anchorAfter))) {
+      mixAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(cubeAnchorInfo.anchorAfter))) {
+      cubeAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(vectorAnchorInfo.anchorAfter))) {
+      vectorAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                      vectorAnchorInfo);
+  };
+
+  auto createRWOperationBlockAfter = [&](int64_t anchorId,
+                                         AnchorInfo mixAnchorInfo,
+                                         AnchorInfo cubeAnchorInfo,
+                                         AnchorInfo vectorAnchorInfo) {
+    assert(isa<Anchor>(mixAnchorInfo.anchorAfter));
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    assert(depthBefore > depthAfter);
+    mixAnchorInfo.anchorBefore =
+        mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    cubeAnchorInfo.anchorBefore =
+        cubeAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    vectorAnchorInfo.anchorBefore =
+        vectorAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(mixAnchorInfo.anchorBefore))) {
+      mixAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(cubeAnchorInfo.anchorBefore))) {
+      cubeAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(vectorAnchorInfo.anchorBefore))) {
+      vectorAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                      vectorAnchorInfo);
+  };
+
+  auto createRWOperationBlockBegin =
+      [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo) {
+        assert(isa<Anchor>(mixAnchorInfo.anchorAfter));
+        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+        assert(depthBefore < depthAfter);
+        mixAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        cubeAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        vectorAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                          vectorAnchorInfo);
+      };
+
+  auto createRWOperationBlockEnd =
+      [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo) {
+        assert(isa<Anchor>(mixAnchorInfo.anchorBefore));
+        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+        assert(depthBefore > depthAfter);
+        mixAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        cubeAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        vectorAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                          vectorAnchorInfo);
+      };
+
+  for (int64_t anchorId = anchorIdStart; anchorId < anchorIdEnd; anchorId++) {
+    auto mixAnchorInfo =
+        getAnchorInfo(mixIRTranslator.get(), anchorId, anchorId + 1);
+    auto cubeAnchorInfo =
+        getAnchorInfo(cubeIRTranslator.get(), anchorId, anchorId + 1);
+    auto vectorAnchorInfo =
+        getAnchorInfo(vectorIRTranslator.get(), anchorId, anchorId + 1);
+
+    if (mixAnchorInfo.anchorBefore->parentOp ==
+        mixAnchorInfo.anchorAfter->parentOp) {
+      createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                        vectorAnchorInfo);
+      continue;
+    }
+
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    if (depthBefore < depthAfter) {
+      auto *mixParentOp =
+          mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      auto *cubeParentOp =
+          cubeAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      auto *vectorParentOp =
+          vectorAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      assert(mixParentOp && cubeParentOp && vectorParentOp);
+
+      mixParentOp->cubeAnchorInfo = AnchorInfo(cubeParentOp);
+      mixParentOp->vectorAnchorInfo = AnchorInfo(vectorParentOp);
+
+      if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+        createRWOperationBlockBefore(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                     vectorAnchorInfo);
+        if (auto mixPlaceHolderOp = dyn_cast_if_present<PlaceHolder>(
+                getPrevOperation(mixParentOp))) {
+          auto *cubePlaceHolderOp = getPrevOperation(cubeParentOp);
+          auto *vectorPlaceHolderOp = getPrevOperation(vectorParentOp);
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockBegin(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+        auto *mixBlockFrontOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockFrontOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+    }
+    if (depthBefore > depthAfter) {
+      auto *mixParentOp =
+          mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      auto *cubeParentOp =
+          cubeAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      auto *vectorParentOp =
+          vectorAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      assert(mixParentOp && cubeParentOp && vectorParentOp);
+
+      mixParentOp->cubeAnchorInfo = AnchorInfo(cubeParentOp);
+      mixParentOp->vectorAnchorInfo = AnchorInfo(vectorParentOp);
+
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockAfter(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+        if (auto mixPlaceHolderOp = dyn_cast_if_present<PlaceHolder>(
+                getNextOperation(mixParentOp))) {
+          auto *cubePlaceHolderOp = getNextOperation(cubeParentOp);
+          auto *vectorPlaceHolderOp = getNextOperation(vectorParentOp);
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+
+      if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+        createRWOperationBlockEnd(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                  vectorAnchorInfo);
+        auto *mixBlockBackOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockBackOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+    }
   }
 
   return std::move(mixIRTranslator->funcIr);
@@ -474,24 +634,38 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
 
   // The solver decides set/wait pairs in terms of the mix-side loops; codegen
   // needs the cube/vector-side loop counterparts when materializing them.
-  auto loopMap = std::move(mixIRTranslator->loopMap);
-  auto fixEventIdInfoMultiBufferLoops = [&loopMap](SetWaitOp *setWaitOp,
-                                                   hivm::TCoreType coreType) {
+  auto fixEventIdInfoMultiBufferLoops = [](SetWaitOp *setWaitOp,
+                                           hivm::TCoreType coreType) {
     auto &eventIdInfo = setWaitOp->eventIdInfo;
+    auto fixLoop = [coreType](Loop *loopOp) -> Loop * {
+      if (!loopOp) {
+        return nullptr;
+      }
+      if (coreType == hivm::TCoreType::CUBE) {
+        assert(loopOp->cubeAnchorInfo.has_value());
+        auto *fixedLoopOp =
+            dyn_cast<Loop>(loopOp->cubeAnchorInfo->anchorBefore);
+        assert(fixedLoopOp != nullptr);
+        return fixedLoopOp;
+      } else if (coreType == hivm::TCoreType::VECTOR) {
+        assert(loopOp->vectorAnchorInfo.has_value());
+        auto *fixedLoopOp =
+            dyn_cast<Loop>(loopOp->vectorAnchorInfo->anchorBefore);
+        assert(fixedLoopOp != nullptr);
+        return fixedLoopOp;
+      }
+      return loopOp;
+    };
     if (eventIdInfo.multibufferLoop) {
-      auto it = loopMap.find({eventIdInfo.multibufferLoop, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferLoop = it->second;
+      eventIdInfo.multibufferLoop = fixLoop(eventIdInfo.multibufferLoop);
     }
     if (eventIdInfo.multibufferUnrollLoop1) {
-      auto it = loopMap.find({eventIdInfo.multibufferUnrollLoop1, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferUnrollLoop1 = it->second;
+      eventIdInfo.multibufferUnrollLoop1 =
+          fixLoop(eventIdInfo.multibufferUnrollLoop1);
     }
     if (eventIdInfo.multibufferUnrollLoop2) {
-      auto it = loopMap.find({eventIdInfo.multibufferUnrollLoop2, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferUnrollLoop2 = it->second;
+      eventIdInfo.multibufferUnrollLoop2 =
+          fixLoop(eventIdInfo.multibufferUnrollLoop2);
     }
   };
 
