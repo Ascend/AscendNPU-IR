@@ -1316,52 +1316,48 @@ public:
       memrefValsMaybe.push_back(op.getIndices());
     }
     memrefValsMaybe.push_back(op.getDstValue());
-    auto arith = op.getArithAttr();
-    if (VReduceOp::isArgminOrArgmax(arith.getReduceOp())) {
+    bool isWithIndex = op.isWithIndex();
+    if (isWithIndex) {
       memrefValsMaybe.push_back(op.getDstIndex());
     }
 
+    // With-index reduce ops only have 2D library support
+    // (_ra_/_ar_ with index). 3D templates (_ra0a1_/_ara_/_aar_) do not
+    // register with-index variants, so peel to rank 2 for with-index cases.
+    int targetRank = isWithIndex ? 2 : 3;
+
     if (midAxis) {
-      // TODO: enhance inferOpLibraryMaxRank for VReduceOp
-      int originalRank = rank;
+      // Mid-axis: collect non-reduce axes and peel them outward.
+      // When rank <= targetRank, no peeling is needed — the library
+      // handles it directly (e.g., _ara_ for rank-3 non-index).
+      int numToPeel = std::max(0, rank - targetRank);
 
       std::set<int> loopIndices;
-      for (int loopIndice = 0; loopIndice < reduceIdx; loopIndice++) {
-        loopIndices.insert(loopIndice);
-      }
-
-      int curReducedRank =
-          originalRank - static_cast<int>(loopIndices.size());
-
-      if (curReducedRank > 3) {
-        int additionalLoopNum = curReducedRank - 3;
-
-        for (int loopIndice = reduceIdx + 1;
-             loopIndice < originalRank && additionalLoopNum > 0; loopIndice++) {
-          if (loopIndices.count(loopIndice) == 0) {
-            loopIndices.insert(loopIndice);
-            additionalLoopNum--;
-          }
+      for (int i = 0;
+           i < rank && static_cast<int>(loopIndices.size()) < numToPeel;
+           i++) {
+        if (i != reduceIdx) {
+          loopIndices.insert(i);
         }
       }
-
-      convertedVals = reduceMemrefsToNestedForUsingAxes(
+      if (!loopIndices.empty()) {
+        convertedVals = reduceMemrefsToNestedForUsingAxes(
           rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
-
-      reducedRank = originalRank - static_cast<int>(loopIndices.size());
-    } else if (firstAxis && rank > 3) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 1, rank - 2);
-      reducedRank = 3;
-    } else if (lastAxis && rank > 2) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 0, rank - 2);
-      reducedRank = 2;
-    } else if (firstAxis && (rank > 2) &&
-               VReduceOp::isArgminOrArgmax(arith.getReduceOp())) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 1, rank - 1);
-      reducedRank = 2;
+        reducedRank = rank - static_cast<int>(loopIndices.size());
+      }
+    } else {
+      // First/last axis: peel outer dimensions down to targetRank.
+      if (firstAxis && rank > targetRank) {
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 1,
+                                                 rank - targetRank + 1);
+        reducedRank = targetRank;
+      } else if (lastAxis && rank > targetRank) {
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 0,
+                                                 rank - targetRank);
+        reducedRank = targetRank;
+      }
     }
 
     if (reducedRank == rank) {

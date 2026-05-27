@@ -333,12 +333,15 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
     return alignDim;
   }
 
-  // adjust to find previous uncontiguous dimension to do alignment
+  // With reduce_aar support, the dim immediately before the reduce axis
+  // (flattenRank - 2) does not need strict alignment. Skip it and look
+  // further back. For 3D this means no alignment at all; for 4D+ only
+  // dims 0..flattenRank-3 need alignment.
   auto operTypes = reduceOp.getHIVMOperandTypes(/*includeExtraBuffer=*/false);
   auto memrefTypes = util::getMemRefTypes(operTypes);
   auto flattenedAssociations = flattenResult->reassociation[0];
   auto adjustAlignDim = getPrevUncontiguousDim(
-      flattenAlignDim.value(), flattenedAssociations, memrefTypes);
+      flattenAlignDim.value() - 1, flattenedAssociations, memrefTypes);
   if (isNoNeedAlign(operand, adjustAlignDim)) {
     return std::nullopt;
   }

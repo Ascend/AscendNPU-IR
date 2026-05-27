@@ -1158,6 +1158,14 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
              op == ReduceOperation::min_with_index_right ||
              op == ReduceOperation::max_with_index_right;
     }
+
+    static bool isWithIndex(ReduceOperation op) {
+      return isArgminOrArgmax(op);
+    }
+
+    bool isWithIndex() {
+      return isWithIndex(getArithAttr().getReduceOp());
+    }
   }];
 }
 

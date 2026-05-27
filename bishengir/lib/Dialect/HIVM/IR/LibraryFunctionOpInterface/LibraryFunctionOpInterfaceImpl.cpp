@@ -1010,13 +1010,16 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   bool firstAxis = reduceDims[0] == 0;
   bool lastAxis = reduceDims[0] == rank - 1;
   bool midAxis = !firstAxis && !lastAxis;
-  if (firstAxis && (rank > 2) &&
-      VReduceOp::isArgminOrArgmax(concreteOp.getArithAttr().getReduceOp())) {
-    rank = 2;
-  }
-
   auto reduceOpName =
       stringifyReduceOperation(concreteOp.getArith().getReduceOp());
+  // With-index reduce ops only have 2D library registrations
+  // (_r_, _ra_, _ar_ with index). 3D-only templates (_ra0a1_, _ara_, _aar_)
+  // do not register with-index variants, so we must skip them here.
+  bool isWithIndex = VReduceOp::isWithIndex(concreteOp.getArith().getReduceOp());
+  // Cap rank to 2 so 3D-only paths are unreachable.
+  if (isWithIndex && rank > 2) {
+    rank = 2;
+  }
   std::stringstream ss;
   if (concreteOp.useVectorCrossIntr(lastAxis, rank)) {
     ss << (enableVCG ? "enablevcg_" : "enablevc_");
@@ -1029,12 +1032,19 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   const int maxLastDim = 2;
   if (rank == 1) {
     ss << "_r_";
-  } else if ((firstAxis && rank >= dim3Rank) ||
-             (midAxis && (rank - reduceDims[0] >= dim3Rank))) {
+  } else if (!isWithIndex && ((firstAxis && rank >= dim3Rank) ||
+             (midAxis && (reduceDims[0] <= rank - 3)))) {
     ss << "_ra0a1_";
     rank = dim3Rank;
-  } else if ((firstAxis && rank < dim3Rank) ||
-             (midAxis && (rank - reduceDims[0] < dim3Rank))) {
+  } else if (!isWithIndex && midAxis && (reduceDims[0] > rank - 3)) {
+    ss << "_ara_";
+    rank = dim3Rank;
+  } else if (firstAxis) {
+    ss << "_ra_";
+  } else if (!isWithIndex && lastAxis && rank >= dim3Rank) {
+    ss << "_aar_";
+    rank = dim3Rank;
+  } else if (midAxis) {
     ss << "_ra_";
   } else if (lastAxis) {
     ss << "_ar_";

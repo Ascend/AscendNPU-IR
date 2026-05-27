@@ -479,7 +479,7 @@ func.func @triton_part_max_2d_dim01(%arg0: memref<3x1835xf32, #hivm.address_spac
 
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
 
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<5x2x4x1x1xf16, #hivm.address_space<ub>> into memref<5x2x4x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
@@ -529,7 +529,7 @@ func.func @triton_part_min_3d_dim12(%arg0: memref<1x22x39xf16, #hivm.address_spa
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x3xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() {alignment = 64 : i64} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_0]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC_0]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<203x1x2x2x1xf16, #hivm.address_space<ub>> into memref<203x1x2x2xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2xf16, #hivm.address_space<ub>>
@@ -555,7 +555,7 @@ func.func @triton_part_min_5d_dim0m1(%arg0: memref<203x1x2x2x3xi8, #hivm.address
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x4xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<2x91x4x2x1xf16, #hivm.address_space<ub>> into memref<2x91x4x2xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2xf16, #hivm.address_space<ub>>
@@ -687,7 +687,7 @@ func.func @triton_part_argmax_dim0m1_4d(%arg0: memref<5x35x7x8xf32, #hivm.addres
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x2x2x2xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x2x1x2x2xf16, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_0]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x2xf16, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>

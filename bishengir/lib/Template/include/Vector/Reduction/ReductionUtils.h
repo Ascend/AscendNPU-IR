@@ -1043,6 +1043,58 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
     reduce_ra0a1<op_type, dtype>(src0, dst, tmp, initvalue);                   \
   }
 
+/// Reduce src (a0, r, a1) with stride [n0, n1, 1] to dst (a0, 1, a1) with
+/// stride [n0, n1, 1] by dichotomy + hardware repeat, reducing along dim1.
+#define DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                 \
+  __aiv__ __attribute__((always_inline)) void                                   \
+      _mlir_ciface_##op_name##_ara_##dtype(                                     \
+          memref_t<__ubuf__ dtype, dim> *src0,                                  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                   \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                \
+  DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype) {                    \
+    reduce_ara<op_type, dtype>(src0, dst, tmp, initvalue);                     \
+  }
+
+/// Reduce src (a0, a1, r) with stride [n0, n1, 1] to dst (a0, a1, 1) with
+/// stride [n0, n1, 1] by merging first two dims and reusing reduce_ar.
+#define DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                 \
+  __aiv__ __attribute__((always_inline)) void                                   \
+      _mlir_ciface_##op_name##_aar_##dtype(                                     \
+          memref_t<__ubuf__ dtype, dim> *src0,                                  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                   \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                \
+  DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype) {                    \
+    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                     \
+  }
+
+#define DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)        \
+  __aiv__ __attribute__((always_inline)) void                                    \
+      _mlir_ciface_enablevc_##op_name##_aar_##dtype(                             \
+          memref_t<__ubuf__ dtype, dim> *src0,                                   \
+          memref_t<__ubuf__ dtype, dim> *dst,                                    \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)       \
+  DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype) {            \
+    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                      \
+  }
+
+#define DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)       \
+  __aiv__ __attribute__((always_inline)) void                                    \
+      _mlir_ciface_enablevcg_##op_name##_aar_##dtype(                            \
+          memref_t<__ubuf__ dtype, dim> *src0,                                   \
+          memref_t<__ubuf__ dtype, dim> *dst,                                    \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)      \
+  DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype) {           \
+    reduce_aar_vcg<op_type, dtype>(src0, dst, tmp, initvalue);                  \
+  }
+
 #define REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
                                                                  op_type,      \
                                                                  with_index_type, \
@@ -1440,6 +1492,120 @@ DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+//===-------------------------------------------------------------------===//
+// reduce 3d middim (dim1), 3 dim
+//===-------------------------------------------------------------------===//
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int64_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+//===-------------------------------------------------------------------===//
+// reduce aar (3D, reduce along last axis), 3 dim
+//===-------------------------------------------------------------------===//
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int64_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3,
+                                     float);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                   float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                    half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                    float);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                   float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                    half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                    float);
 
 //===-------------------------------------------------------------------===//
 // reduce r with index, 1 dim
