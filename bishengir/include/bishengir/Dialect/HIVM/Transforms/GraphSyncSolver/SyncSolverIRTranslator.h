@@ -190,7 +190,6 @@ public:
   CVTripletKernels tripletKernels;
   std::unique_ptr<IRTranslator> cubeIRTranslator;
   std::unique_ptr<IRTranslator> vectorIRTranslator;
-  llvm::DenseMap<std::pair<Loop *, TCoreType>, Loop *> loopMap;
 
 public:
   DelayedCrossCoreIRTranslator(const CVTripletKernels &t,
