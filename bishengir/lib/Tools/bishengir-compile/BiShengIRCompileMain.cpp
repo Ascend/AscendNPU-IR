@@ -247,10 +247,11 @@ bool runSIMDToLLVMCompile(ModuleOp module, BiShengIRCompileMainConfig &config) {
 
 LogicalResult
 bishengir::runBiShengIRPipeline(ModuleOp mod,
-                                BiShengIRCompileMainConfig config) {                          
+                                BiShengIRCompileMainConfig config) {
   if (failed(checkOptionValidity(config))) {
     return failure();
   }
+
   bool hasUboverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
@@ -258,8 +259,9 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Collect diagnostics and emit them afterwards because we have tuning
   // mechanism.
   auto handlerID = diagEngine.registerHandler([&](Diagnostic &diag) {
-  // VF fusion may cause ub overflow. in this case, it will fallback to allop fused to decrease ub occupation
-  // Todo: use Enum to standardize the format of error message printing
+    // VF fusion may cause ub overflow. in this case, it will fallback to allop
+    // fused to decrease ub occupation
+    // Todo: use Enum to standardize the format of error message printing
     if (diag.getSeverity() == mlir::DiagnosticSeverity::Error) {
       std::string errMsg;
       llvm::raw_string_ostream errStream(errMsg);
@@ -285,13 +287,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   //   - MultiBuffer retry policy: disable auto-multi-buffer.
   // Once the retryPassManager exists, the tryTimes / nested-if logic below
   // should be replaced by composing those policies.
-  if (config.getEnableVFFusion()) {
-    // With VFFusion enabled, the ub-overflow fallback runs in tiers:
-    // first try disabling auto-multi-buffer, then disable VFFusion plus
-    // the VF reachable check. Reserve one extra attempt when
-    // auto-multi-buffer is also enabled so both tiers have room to run.
-    tryTimes = config.getEnableAutoMultiBuffer() ? 3 : 2;
-  } else if (config.getEnableTuningMode() || config.getEnableTritonKernelCompile()) {
+  if (config.getEnableTuningMode()) {
     tryTimes = 1;
   }
   for (int i = 0; i < tryTimes; i++) {
@@ -302,8 +298,8 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     bool success = true;
     hasUboverflow = false;
     if (config.getEnableSimdSimtMixCompile()) {
-        success &= succeeded(runPipeline(
-            hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                       config, "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
@@ -311,16 +307,16 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
                                          config, "BiShengTTIR"));
       }
-      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRFinishPipeline,
-                                         config, "BishengHIR"));
-      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines,
-                                         config, "buildFinalHIVMPipelines"));
+      success &= succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BishengHIR"));
+      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines, config,
+                                       "buildFinalHIVMPipelines"));
     } else if (config.getEnableTritonIRCompile()) {
-      success = succeeded(runPipeline(
-          hirCompileMode, buildBiShengTTIRPipeline, config, "BiShengTTIR"));
+      success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
+                                      config, "BiShengTTIR"));
     } else {
-      success = succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRPipeline, config, "BiShengHIR"));
+      success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                      config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
       if (!success && hasUboverflow) {
@@ -331,23 +327,29 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
           // still be detected; clear the captured diagnostics so they
           // are not surfaced if the retry succeeds (or are replaced by
           // fresher ones before the next-tier fallback re-emits them).
-          LDBG("ub overflow detected, fallback with disabled auto multi "
-               "buffer");
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled auto multi buffer");
           collectedDiagnostics.clear();
           config.setEnableAutoMultiBuffer(false);
-        } else {
-          // Next-tier fallback (or first tier when auto-multi-buffer
-          // was already off): disable VFFusion and the VF reachable
-          // check.
-          diagEngine.eraseHandler(handlerID);
-          for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-            diagEngine.emit(std::move(diag));
-          }
-          if (config.getEnableVFFusion()) {
-            LDBG("ub overflow detected, fallback with disabled vffusion");
-            config.setEnableVFFusion(false);
-          }
+        } else if (config.getEnableVFFusion()) {
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled vffusion");
+          collectedDiagnostics.clear();
+          config.setEnableVFFusion(false);
+        } else if (!config.getDisableVFReachableCheck()) {
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled VF reachable check");
+          collectedDiagnostics.clear();
           config.setDisableVFReachableCheck(true);
+        } else if (!config.getDisableTightCoupledBuffer()) {
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with MixCV GM path");
+          collectedDiagnostics.clear();
+          config.setDisableTightCoupledBuffer(true);
         }
       }
     }
