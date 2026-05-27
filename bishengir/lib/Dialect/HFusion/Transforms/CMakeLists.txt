@@ -30,6 +30,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   AddFFTSAddr.cpp
   AutoVectorize.cpp
   AutoVectorizeV2.cpp
+  AutoVectorizeVerifier.cpp
   BufferizableOpInterfaceImpl.cpp
   CacheIO.cpp
   CacheIOForReturnArg.cpp

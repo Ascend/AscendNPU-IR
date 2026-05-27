@@ -116,6 +116,9 @@ std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
 std::unique_ptr<Pass>
 createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
 
+/// Create an auto vectorize verifier pass.
+std::unique_ptr<Pass> createAutoVectorizeVerifierPass();
+
 /// Create an outline vector function pass.
 std::unique_ptr<Pass> createOutlineVectorFunctionPass();
 
