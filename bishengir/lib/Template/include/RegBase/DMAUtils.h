@@ -1942,8 +1942,7 @@ apply_padding_b64(memref_t<__ubuf__ T, DIM> *dst, int64_t offset,
   if (align_pad == 0) {
     return;
   }
-  const int64_t factor = sizeof(T) / sizeof(uint32_t);
-  __ubuf__ T *base_ptr = dst->aligned + dst->offset + offset / factor;
+  __ubuf__ T *base_ptr = dst->aligned + dst->offset;
   for (int64_t i = 0; i < repeat; ++i) {
     __ubuf__ T *row_ptr = base_ptr + i * size_aligned;
     for (int64_t j = 0; j < align_pad; ++j) {
