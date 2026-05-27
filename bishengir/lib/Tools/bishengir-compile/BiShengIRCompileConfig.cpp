@@ -99,18 +99,17 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             llvm::cl::cat(enableCPURunnerCategory)};
 #endif
 
-    // Keep a tiny manual parser for this option: the config/storage itself is
-    // generated from Options.td, but the current generator does not directly
-    // model this custom sentinel-style parsing path.
-    static cl::opt<std::string> simtStackLimitStr(
-        "simt-stack-limit", cl::desc("SIMT stack limit."), cl::value_desc("N"),
-        cl::callback([this](const std::string &arg) {
-          int32_t v;
-          llvm::StringRef s(arg);
-          if (s.getAsInteger(0, v))
-            report_fatal_error("Invalid value for --simt-stack-limit: " + s);
-          this->setSimtStackLimit(v);
-        }));
+    static cl::opt<int32_t, /*ExternalStorage=*/true> simtStackLimitOpt(
+        "simt-stack-limit",
+        cl::desc("Per-thread stack size limit (bytes) for SIMT kernels. The "
+                 "compiler fails compilation if a kernel's per-thread stack "
+                 "usage exceeds this limit. If unset, the check is skipped "
+                 "— Triton-Ascend owns the policy (env var, default) and "
+                 "always forwards a resolved value. Set to a negative value "
+                 "to disable the check; 0 is a valid (strict) limit."),
+        cl::value_desc("bytes-per-thread"),
+        cl::location(simtStackLimitFlag),
+        cl::cat(sharedWithDownstreamToolchainCategory));
 
     // when enableSanitizer is true, enable printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();

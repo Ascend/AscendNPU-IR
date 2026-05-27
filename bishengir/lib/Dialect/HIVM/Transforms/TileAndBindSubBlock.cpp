@@ -144,7 +144,7 @@ LogicalResult modifyStoreCopyOp(OpType Op, int64_t tilingDim, OpOperand *srcOpr,
         Op, "failed to calculate tile size for tiled store/copy source");
   rewriter.setInsertionPointToStart(containingLoop.getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, loc, containingLoop, maybeSingleTileSize.value());
+      rewriter, loc, containingLoop, src, tilingDim);
 
   rewriter.setInsertionPoint(Op);
 
@@ -196,7 +196,7 @@ static LogicalResult modifyIndirectStoreOp(hivm::IndirectStoreOp op,
     return failure();
   rewriter.setInsertionPointToStart(containingLoop.getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, loc, containingLoop, maybeSingleTileSize.value());
+      rewriter, loc, containingLoop, srcVal, tilingDim);
 
   rewriter.setInsertionPoint(op);
 
@@ -377,7 +377,7 @@ private:
       return storeOp.emitError("failed to calculate masked store tile size");
 
     auto offsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, loc, containingLoop, maybeSingleTileSize.value());
+        rewriter, loc, containingLoop, src, tilingDim);
 
     auto lb = getValueOrCreateConstantIndexOp(rewriter, loc, offsetAtTileDim);
     auto ub = getValueOrCreateConstantIndexOp(rewriter, loc,
@@ -510,7 +510,7 @@ public:
       return failure();
     rewriter.setInsertionPointToStart(containingLoop.getBody());
     auto offsetAtTileDim = calculateOffsetAtTilingDim(
-        rewriter, loc, containingLoop, maybeSingleTileSize.value());
+        rewriter, loc, containingLoop, debugOp.getArg(), tilingDim);
 
     rewriter.setInsertionPoint(debugOp);
 
@@ -565,7 +565,7 @@ public:
         continue;
       rewriter.setInsertionPointToStart(containingLoop.getBody());
       auto offsetAtTileDim = calculateOffsetAtTilingDim(
-          rewriter, loc, containingLoop, maybeSingleTileSize.value());
+          rewriter, loc, containingLoop, res, tilingDim);
 
       rewriter.setInsertionPointAfter(op);
 

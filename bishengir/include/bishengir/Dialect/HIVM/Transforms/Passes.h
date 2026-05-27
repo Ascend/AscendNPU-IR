@@ -103,6 +103,13 @@ createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
 std::unique_ptr<Pass>
 createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
 
+// Create a pass to run delayed cross-core GSS driven by anchors.
+std::unique_ptr<Pass> createDelayedCrossCoreGSSPass();
+
+// Create a pass to insert anchor operations and backup mixed kernels.
+std::unique_ptr<Pass> createInsertAnchorsAndBackupPass(
+    const InsertAnchorsAndBackupOptions &options = {});
+
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
 createInjectBlockSyncPass(const InjectBlockSyncOptions &options = {});
@@ -177,7 +184,12 @@ std::unique_ptr<Pass> createReduceRankSubviewPass();
 std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
-std::unique_ptr<Pass> createInlineFixpipePass();
+std::unique_ptr<Pass>
+createInlineFixpipePass(const InlineFixpipeOptions &options = {});
+
+// Create a pass to insert fixpipe
+std::unique_ptr<Pass>
+createInsertFixpipePass(const InsertFixpipeOptions &options = {});
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass> createInlineFixpipeV2Pass();
@@ -195,7 +207,8 @@ std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
 
 // Create a pass to insert load/store op for mix cv function.
-std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass();
+std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
+    const InsertLoadStoreForMixCVOptions &options = {});
 
 // Create a pass to insert cv tight coupled buffer for mix cv function.
 std::unique_ptr<Pass> createInsertCVTightCoupledBufferPass();
@@ -229,9 +242,6 @@ std::unique_ptr<Pass> createAutoInferBufferSizePass();
 
 // Create a pass to insert workspace for mix cv function.
 std::unique_ptr<Pass> createInsertWorkSpaceForMixCVPass();
-
-// Create a pass to normalize special state of loop iterator before plan-memory
-std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
 
 /// Create a pass to Inline Load and Store operation on the fly.
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();

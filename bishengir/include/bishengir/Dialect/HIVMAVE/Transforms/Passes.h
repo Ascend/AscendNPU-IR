@@ -22,6 +22,9 @@ namespace mlir {
 
 namespace hivmave {
 
+/// Create a pass to normalize AVE-ops to adapt the register bitwidth
+std::unique_ptr<Pass> createAVENormalizeOpsPass();
+
 /// Create a pass to normalize arith ops for simd backend
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 
@@ -60,20 +63,17 @@ std::unique_ptr<Pass> createScalarBroadcastToVLoadPass();
 // Create a pass to hoist vstas
 std::unique_ptr<Pass> createHoistVstasPass();
 
-// Create a pass to append vector layout attribute
-std::unique_ptr<Pass> createAppendVectorLayoutPass();
-
-// Create a pass to annotate dist op layout
-std::unique_ptr<Pass> createAnnotateDistOpLayoutPass();
-
-// Create a pass to eliminate layout attribute for lowering
-std::unique_ptr<Pass> createEliminateVectorLayoutPass();
-
-/// Create a pass to analyze data layout
-std::unique_ptr<Pass> createDataLayoutAnalysisPass();
-
 /// Soft implement for reduction <xor>
 std::unique_ptr<Pass> createComplexReductionIntermediateLoweringPass();
+
+// Create a pass to analyze vector layout attribute
+std::unique_ptr<Pass> createAnalyzeVectorLayoutPass();
+
+// Create a pass to analyze alignment bitiwidth
+std::unique_ptr<Pass> createAnalyzeAlignmentBitwidthPass();
+
+// Create a pass to remove vector layout attribute
+std::unique_ptr<Pass> createRemoveVectorLayoutAttrPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

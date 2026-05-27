@@ -1244,6 +1244,27 @@ public:
   }
 };
 
+struct NormalizeGatherIndexToI32 : public OpRewritePattern<hfusion::GatherOp> {
+public:
+  using OpRewritePattern<hfusion::GatherOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::GatherOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    Value index = op.getIndex();
+    Type indexElemType = getElementTypeOrSelf(index.getType());
+    if (!indexElemType.isInteger() || indexElemType.isInteger(32))
+      return failure();
+
+    Value castedIndex = hfusion::castTo(rewriter, index, rewriter.getI32Type());
+    rewriter.replaceOpWithNewOp<hfusion::GatherOp>(
+        op, op.getSrc(), castedIndex, op.getInit(), op.getAxis());
+    return success();
+  }
+};
+
 template <>
 struct NormalizeToTargetType<int8_t, hfusion::GatherOp>
     : public OpRewritePattern<hfusion::GatherOp> {
@@ -1494,6 +1515,10 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
   }
   // TODO: support regbase i8 template function implementation
   patterns.add<NormalizeToTargetType<int8_t, hfusion::ReduceWithIndexOp>>(ctx);
+}
+
+void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns) {
+  patterns.add<NormalizeGatherIndexToI32>(patterns.getContext());
 }
 
 void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {

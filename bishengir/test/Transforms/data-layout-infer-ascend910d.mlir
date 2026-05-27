@@ -1,7 +1,7 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend950PR_9589 --arith-vector-mask-analyze --convert-vector-to-hivmave  \
-// RUN: --convert-arith-to-hivmave --annotation-lowering --data-layout-analyze \
-// RUN: --append-vector-layout --annotate-dist-op-layout --eliminate-vector-layout \
-// RUN: --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
+// RUN: --convert-arith-to-hivmave --annotation-lowering  \
+// RUN: --analyze-vector-layout --analyze-alignment-bitwidth --remove-vector-layout-attr \
+// RUN: -ave-normalize-ops --convert-hivmave-to-ave-intrin -reconcile-unrealized-casts -cse  \
 // RUN: -split-input-file %s | FileCheck %s
 
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
@@ -20,7 +20,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
   }
 }
 
-// CHECK: func.func @test_i8_cast_i32_ascend910d{{.*}} attributes {element_alignment_bit_width = 32 : i32, hivm.vector_function} {
+// CHECK: func.func @test_i8_cast_i32_ascend910d{{.*}} attributes {hivm.vector_function} {
 // CHECK-NEXT:   %[[UCC2:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC1:.+]] = builtin.unrealized_conversion_cast
 // CHECK-NEXT:   %[[UCC0:.+]] = builtin.unrealized_conversion_cast
@@ -62,7 +62,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
   }
 }
 
-// CHECK: func.func @test_i8_cast_i32_brc_onept_dist{{.*}} attributes {element_alignment_bit_width = 32 : i32, hivm.vector_function} {
+// CHECK: func.func @test_i8_cast_i32_brc_onept_dist{{.*}} attributes {hivm.vector_function} {
 // CHECK:   %[[c1:.+]] = llvm.mlir.constant(1 : i32) : i32
 // CHECK:   %[[LOAD0:.+]] = "hivm_regbaseintrins.intr.hivm.vldsx1.v256s8"(%{{.*}}, %[[c1]], %{{.*}}) : (!llvm.ptr<6>, i32, i32, i32) -> vector<256xi8>
 // CHECK:   %[[LOAD1:.+]] = "hivm_regbaseintrins.intr.hivm.vldsx1.v256s8"(%{{.*}}, %[[c1]], %{{.*}}) : (!llvm.ptr<6>, i32, i32, i32) -> vector<256xi8>

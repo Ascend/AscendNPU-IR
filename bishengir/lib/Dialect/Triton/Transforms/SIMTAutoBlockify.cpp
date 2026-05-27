@@ -105,32 +105,22 @@ struct SIMTAutoBlockifyPass
     : public impl::SIMTAutoBlockifyBase<SIMTAutoBlockifyPass> {
   void runOnOperation() override {
     mlir::triton::FuncOp ttFunc = getOperation();
-    if (!ttFunc.isPublic())
+    // FIXME: Canonicalize the checking on entry functions.
+    // Skip non-kernel functions.
+    if (!ttFunc.isPublic() || !ttFunc.getResultTypes().empty())
       return;
-    if (!ttFunc.getBody().hasOneBlock())
-      return signalPassFailure();
 
-    Block &entryBlock = ttFunc.getBody().front();
-    auto returnOp =
-        dyn_cast<mlir::triton::ReturnOp>(entryBlock.getTerminator());
-    if (!returnOp)
-      return signalPassFailure();
-
-    SmallVector<Operation *> originalBodyOps;
-    for (auto &op : entryBlock) {
-      if (&op != returnOp.getOperation())
-        originalBodyOps.push_back(&op);
-    }
-
+    // Collect `tt.program_id`.
     SmallVector<mlir::triton::GetProgramIdOp> programIdOps;
     ttFunc.walk([&programIdOps](Operation *op) {
       if (auto getProgramId = dyn_cast<mlir::triton::GetProgramIdOp>(op))
         programIdOps.push_back(getProgramId);
     });
-
+    // Skip if no program id is used.
     if (programIdOps.empty())
       return;
 
+    // Collect the underlying hardware capability.
     auto maybePhysicalBlockNum = getPhysicalBlockNum(ttFunc);
     if (failed(maybePhysicalBlockNum)) {
       ttFunc.emitError(
@@ -138,28 +128,36 @@ struct SIMTAutoBlockifyPass
       return signalPassFailure();
     }
 
+    // Collect grid dims.
     auto gridX = getGridArg(ttFunc, gpu::MappingId::DimX);
     auto gridY = getGridArg(ttFunc, gpu::MappingId::DimY);
     auto gridZ = getGridArg(ttFunc, gpu::MappingId::DimZ);
-
     if (failed(gridX) || failed(gridY) || failed(gridZ)) {
       ttFunc.emitError("failed to get grid args for SIMT auto blockify");
       return signalPassFailure();
     }
-
     GridArgs grid = {gridX.value(), gridY.value(), gridZ.value()};
 
-    OpBuilder builder(ttFunc);
-    builder.setInsertionPointToStart(&entryBlock);
+    bool originalFuncHasOneBlock = ttFunc.getBody().hasOneBlock();
+
+    Block *entryBlock = &ttFunc.getBody().front();
+    // Split the entry block so that
+    // - 'entryBlock' is the new entry block where the prologue code is
+    //   populated, and
+    // - 'bodyBlock' is the beginning of the original function body.
+    auto *bodyBlock = entryBlock->splitBlock(entryBlock->begin());
+
+    // Generate the prologue to prepare the loop over blocks.
     Location loc = ttFunc.getLoc();
+    OpBuilder builder(entryBlock, entryBlock->begin());
 
     Value yz = builder.create<arith::MulIOp>(loc, grid.y, grid.z);
     Value logicalBlockNums = builder.create<arith::MulIOp>(loc, grid.x, yz);
     Value linearHwBlockIdx = builder.create<gpu::LinearBlockIdOp>(loc);
     Value blockIdx = builder.create<arith::IndexCastOp>(
         loc, builder.getI32Type(), linearHwBlockIdx);
-    Value physicalBlockNum = builder.create<arith::ConstantIntOp>(
-        loc, maybePhysicalBlockNum.value(), 32);
+    Value physicalBlockNum =
+        builder.create<arith::ConstantIntOp>(loc, *maybePhysicalBlockNum, 32);
     Value chunk = builder.create<arith::CeilDivUIOp>(loc, logicalBlockNums,
                                                      physicalBlockNum);
     Value lowerBound = builder.create<arith::MulIOp>(loc, blockIdx, chunk);
@@ -167,16 +165,42 @@ struct SIMTAutoBlockifyPass
     Value upperBound =
         builder.create<arith::MinUIOp>(loc, end, logicalBlockNums);
     Value one = builder.create<arith::ConstantIntOp>(loc, 1, 32);
+
+    // Create the loop over blocks.
     // scf.for LinearIdx = blockIdx * chunk
     //          to min((blockIdx + 1) * chunk, logicalBlocks), step 1
     auto forOp = builder.create<scf::ForOp>(loc, lowerBound, upperBound, one);
+    // Create the final `tt.return` following that loop.
+    builder.create<mlir::triton::ReturnOp>(loc);
+
+    if (originalFuncHasOneBlock) {
+      assert(std::next(Region::iterator(bodyBlock)) == ttFunc.getBody().end() &&
+             "If there's only one block, the original block must be the last "
+             "one!");
+      // Now transfer original operations into the new body block.
+      auto *newBodyBlock = forOp.getBody();
+      newBodyBlock->getOperations().splice(newBodyBlock->begin(),
+                                           bodyBlock->getOperations());
+      bodyBlock->erase();
+    } else {
+      // Create 'scf.execute_region' op to hold the function body with multiple
+      // blocks.
+      OpBuilder b(forOp.getBody(), forOp.getBody()->begin());
+      auto execRegionOp =
+          b.create<scf::ExecuteRegionOp>(forOp.getLoc(), TypeRange{});
+      auto &newBodyRegion = execRegionOp.getRegion();
+      // Now transfer original blocks into the new body region.
+      auto &bodyRegion = ttFunc.getBody();
+      newBodyRegion.getBlocks().splice(
+          newBodyRegion.begin(), bodyRegion.getBlocks(),
+          Region::iterator(bodyBlock), bodyRegion.end());
+    }
+
+    // Start the replacement of `tt.program_id` and `tt.return` in that loop
+    // body.
+
     builder.setInsertionPointToStart(forOp.getBody());
     Value linearProgramId = forOp.getInductionVar();
-
-    Block *loopBody = forOp.getBody();
-    Operation *yieldOp = loopBody->getTerminator();
-    for (Operation *op : originalBodyOps)
-      op->moveBefore(yieldOp);
 
     builder.setInsertionPointAfterValue(linearProgramId);
     LogicalProgramIds logicalPids =
@@ -200,6 +224,22 @@ struct SIMTAutoBlockifyPass
     };
     for (auto op : programIdOps)
       replaceProgramId(op);
+
+    // Collect all `tt.return`s within that loop.
+    SmallVector<mlir::triton::ReturnOp> retOps;
+    forOp.walk([&](Operation *op) {
+      if (auto retOp = dyn_cast<mlir::triton::ReturnOp>(op))
+        retOps.push_back(retOp);
+    });
+    // Erase all 'tt.return's and replace them with `scf.yield` if the function
+    // body has multiple blocks.
+    for (auto retOp : retOps) {
+      if (!originalFuncHasOneBlock) {
+        OpBuilder b(retOp);
+        b.create<scf::YieldOp>(retOp.getLoc(), retOp.getOperands());
+      }
+      retOp.erase();
+    }
   }
 };
 

@@ -212,6 +212,14 @@ def EnableHIVMCrossCoreGSS : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableHIVMDelayedCrossCoreGSS : FeatureControlOptions<
+  "Use hivm delayed cross-core graph-sync-solver instead of inject-block-sync.",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "Disable auto inject sync intra core.",
   "bool",
@@ -228,6 +236,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
 > {
   let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
+}
+
+def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
+  "Use legacy InsertLoadStoreForMixCV.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
 }
 
 //===----------------------------------------------------------------------===//
@@ -463,9 +479,9 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 >;
 
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
-  "Override number of multibuffers for workspace, defaults to 1 (off).",
+  "Override number of multibuffers for workspace, defaults to 2 (double-buffer).",
   "unsigned",
-  "1"
+  "2"
 >;
 
 def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<
@@ -696,6 +712,14 @@ def EnableTritonIRCompile : FeatureControlOptions<
 
 def EnableLayoutOptimization : FeatureControlOptions<
   "Enable Layout Optimization",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
+def DisableTightCoupledBuffer : FeatureControlOptions<
+  "Disable Tight Coupled Buffer Allocation",
   "bool",
   "false"
 > {
@@ -1245,7 +1269,11 @@ def DeviceMaxInputParamSizeInBytes : BiShengIRCompileInternalStateOpt<
 >;
 
 def SimtStackLimit : BiShengIRCompileInternalStateOpt<
-  "SIMT stack limit.",
+  "Per-thread stack size limit (bytes) for SIMT kernels. The compiler fails "
+  "compilation if a kernel's per-thread stack usage exceeds this limit. If "
+  "unset, the check is skipped — Triton-Ascend owns the policy (env var, "
+  "default) and always forwards a resolved value. Set to a negative value "
+  "to disable the check; 0 is a valid (strict) limit.",
   "int32_t",
   "-1"
 > {

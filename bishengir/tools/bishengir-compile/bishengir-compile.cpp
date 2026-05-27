@@ -146,6 +146,10 @@ int main(int argc, char **argv) {
   }
 
   mlir::ModuleOp module = *moduleRef;
+  if (failed(inferLayoutOptimization(module, config))) {
+    llvm::errs() << "[ERROR] Failed to infer layout optimization\n";
+    return EXIT_FAILURE;
+  }
   if (config.getEnableTritonKernelCompile()) {
     if (failed(inferMixedCV(module, config))) {
       llvm::errs() << "[ERROR] Failed to infer mix mode\n";

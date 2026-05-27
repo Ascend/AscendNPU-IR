@@ -245,6 +245,8 @@ struct RedudantVReduceOp : public OpRewritePattern<VReduceOp> {
 
 struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
   using OpRewritePattern<VReduceOp>::OpRewritePattern;
+  explicit RedudantVReduceInitOp(MLIRContext *context)
+      : OpRewritePattern<VReduceOp>(context, 2) {};
 
   bool isFillByConst(Value v, Attribute cstAttr) const {
     if (isa<BlockArgument>(v)) {

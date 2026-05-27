@@ -236,6 +236,12 @@ std::optional<TCoreType> SyncBlockOp::inferCoreType() {
 //===----------------------------------------------------------------------===//
 
 std::optional<TCoreType> LoadOp::inferCoreType() {
+  std::optional<hivm::TCoreTypeAttr> maybeTCoreTypeAttr = this->getTcoretype();
+  if (maybeTCoreTypeAttr.has_value() &&
+      maybeTCoreTypeAttr.value().getTcoretype() !=
+          hivm::TCoreType::CUBE_OR_VECTOR) {
+    return maybeTCoreTypeAttr.value().getTcoretype();
+  }
   MemRefType srcMemRefTy = dyn_cast<MemRefType>(getSrc().getType());
   MemRefType dstMemRefTy = dyn_cast<MemRefType>(getDst().getType());
   if (srcMemRefTy && dstMemRefTy) {

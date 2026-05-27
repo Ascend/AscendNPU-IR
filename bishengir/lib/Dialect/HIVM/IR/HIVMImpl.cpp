@@ -379,6 +379,16 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
           op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name)) {
     return coreTypeAttr.getTcoretype();
   }
+  // annotation.mark has the second highest priority.
+  if (op->getNumResults() > 0) {
+    auto res = getAnnotateOpWithAttr(op->getResult(0),
+                                     mlir::hivm::TCoreTypeMarkerAttr::name);
+    if (res.has_value()) {
+      return cast<mlir::hivm::TCoreTypeMarkerAttr>(
+                 res.value()->getAttr(mlir::hivm::TCoreTypeMarkerAttr::name))
+          .getTcoretype();
+    }
+  }
 
   if (auto opCoreType = hivm::detail::queryCoreTypeHelper(op))
     return opCoreType.value();
@@ -559,22 +569,38 @@ std::pair<bool, bool> analyzeCoreTypes(Block *block) {
   return std::pair<bool, bool>(hasC, hasV);
 }
 
-bool hasOnlyIfRegionOperations(Block *block) {
+bool hasOnlySplittableRegions(Block *block) {
   if (!block) {
     return true;
   }
   for (Operation &op : *block) {
-    if (op.getNumRegions() > 0) {
-      if (!isa<scf::IfOp>(&op)) {
-        return false;
-      }
+    if (op.getNumRegions() == 0) {
+      continue;
+    }
+    if (isa<scf::IfOp>(&op)) {
       for (Region &region : op.getRegions()) {
         for (Block &nestedBlock : region) {
-          if (!hasOnlyIfRegionOperations(&nestedBlock)) {
+          if (!hasOnlySplittableRegions(&nestedBlock)) {
             return false;
           }
         }
       }
+      continue;
+    }
+    // Non-scf.if region ops (scf.for, scf.while, ...) are allowed only if
+    // their body is uniform-core. WorklistBuilder treats such ops atomically
+    // via pipeline.cubeonly / pipeline.veconly annotations. Mixed-core region
+    // ops need a different transformation (hoisting / unrolling) first.
+    bool hasC = false, hasV = false;
+    for (Region &region : op.getRegions()) {
+      for (Block &nestedBlock : region) {
+        auto [nc, nv] = analyzeCoreTypes(&nestedBlock);
+        hasC = hasC || nc;
+        hasV = hasV || nv;
+      }
+    }
+    if (hasC && hasV) {
+      return false;
     }
   }
   return true;
@@ -584,8 +610,8 @@ bool hasOnlyIfRegionOperations(Block *block) {
 // Termination Check
 //===----------------------------------------------------------------------===//
 bool needsSplit(scf::IfOp ifOp) {
-  if (!hasOnlyIfRegionOperations(ifOp.thenBlock()) ||
-      !hasOnlyIfRegionOperations(ifOp.elseBlock())) {
+  if (!hasOnlySplittableRegions(ifOp.thenBlock()) ||
+      !hasOnlySplittableRegions(ifOp.elseBlock())) {
     return false;
   }
 

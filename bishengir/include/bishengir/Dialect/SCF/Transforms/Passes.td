@@ -39,12 +39,12 @@ def RemoveRedundantLoopInit
   ];
 }
 
- def CanonicalizeIterArg
-     : Pass<"scf-canonicalize-iter-arg", "func::FuncOp"> {
-   let constructor = "mlir::scf::createCanonicalizeIterArgPass()";
-   let dependentDialects = [
-     "scf::SCFDialect"
-   ];
- }
+def CanonicalizeIterArg : Pass<"scf-canonicalize-iter-arg", "func::FuncOp"> {
+  let constructor = "mlir::scf::createCanonicalizeIterArgPass()";
+  let options = [Option<"enableRemoveDeadIterArgBackwardPatterns",
+                        "enable-remove-dead-iter-arg-bwd-patterns", "bool",
+                        "true", "Enable RemoveDeadIterArgBackward patterns">];
+  let dependentDialects = ["scf::SCFDialect"];
+}
 
 #endif // BISHENGIR_DIALECT_SCF_TRANSFORMS_PASSES_TD

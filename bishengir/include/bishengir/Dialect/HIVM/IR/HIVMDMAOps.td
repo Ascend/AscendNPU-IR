@@ -87,7 +87,8 @@ def LoadOp : HIVM_DmaOp<"load", [
                        Optional<AnyType>:$right_padding_num,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
                        Optional<AnyType>:$init_condition,
-                       OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy
+                       OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy,
+                       DefaultValuedOptionalAttr<HIVM_TCoreTypeAttr, "::mlir::hivm::TCoreType::CUBE_OR_VECTOR">:$tcoretype
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
@@ -128,6 +129,7 @@ def LoadOp : HIVM_DmaOp<"load", [
     (`right_padding_num` `=` $right_padding_num^ `:` type($right_padding_num))?
     (`init_condition` `=` $init_condition^ `:` type($init_condition))?
     (`eviction_policy` `=` $eviction_policy^)?
+    (`core_type` `=` $tcoretype^ )?
     (`->` type($result_tensor)^)?
   }];
   let hasFolder = 1;

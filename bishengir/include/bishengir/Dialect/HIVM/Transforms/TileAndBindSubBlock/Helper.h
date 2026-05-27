@@ -47,7 +47,7 @@ bool isMarkedExtractSliceOp(Operation *op);
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
-                                        OpFoldResult singleTileSize);
+                                        Value input, int64_t tileDimension);
 
 /// This function calculates the tile size by dividing the dimension size
 /// by kSubBlockDim (using ceiling division).

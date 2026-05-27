@@ -8,9 +8,9 @@
 // CHECK-NOT: IR Dump After AutoSchedule (hfusion-auto-schedule)
 
 // RUN: bishengir-compile -enable-lir-compile=false \
-// RUN:   -enable-hivm-cross-core-gss=true -mlir-print-ir-after=hivm-cross-core-gss %s 2>&1 \
+// RUN:   -enable-hivm-delayed-cross-core-gss=true -mlir-print-ir-after=hivm-delayed-cross-core-gss %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CROSS-CORE
-// CROSS-CORE: IR Dump After CrossCoreGSS (hivm-cross-core-gss)
+// CROSS-CORE: IR Dump After DelayedCrossCoreGSS (hivm-delayed-cross-core-gss)
 
 module {
   func.func @foo(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>, %arg2: memref<16xf16, #hivm.address_space<gm>>) attributes {hacc.entry} {

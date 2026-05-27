@@ -99,10 +99,17 @@ private:
 
   std::optional<SmallVector<int64_t>> getConstantStrides(MemRefType memrefType);
 
-  void calculateStrides(memref::SubViewOp slicingOp,
-                        ReassociationIndices &collapseGroup,
-                        SmallVector<OpFoldResult> &newMixedStrides,
-                        OpBuilder &builder);
+  void calculateSubviewStrides(memref::SubViewOp slicingOp,
+                               ReassociationIndices &collapseGroup,
+                               SmallVector<OpFoldResult> &newMixedStrides,
+                               OpBuilder &builder);
+  template <class T, typename = std::enable_if_t<
+                                std::is_same_v<T, tensor::ExtractSliceOp> ||
+                                std::is_same_v<T, tensor::InsertSliceOp>>>
+  void calculateSliceStrides(T extractSliceOp,
+                             ReassociationIndices &collapseGroup,
+                             SmallVector<OpFoldResult> &newMixedStrides,
+                             OpBuilder &builder);
   
   template <class T>
   void calculateOffsets(T slicingOp,

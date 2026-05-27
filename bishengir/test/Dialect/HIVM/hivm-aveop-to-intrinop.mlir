@@ -139,7 +139,7 @@ func.func @test_vextf_bf162f32(%arg0 : vector<128xbf16>, %mask: vector<256xi1>) 
 
 // CHECK-LABEL: @test_vcmp_ule_uint8
 #map = affine_map<(d0) -> (-d0 + 3978, 256)>
-func.func @test_vcmp_ule_uint8(%arg0: memref<3978xi8, #hivm.address_space<ub>>, %arg1: memref<3978xi8, #hivm.address_space<ub>>, %arg2: memref<3978xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+func.func @test_vcmp_ule_uint8(%arg0: memref<3978xi8, #hivm.address_space<ub>>, %arg1: memref<3978xi8, #hivm.address_space<ub>>, %arg2: memref<3978xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %c0 = arith.constant 0 : index
   %c3978 = arith.constant 3978 : index
   %c256 = arith.constant 256 : index
@@ -165,7 +165,7 @@ func.func @test_vcmp_ule_uint8(%arg0: memref<3978xi8, #hivm.address_space<ub>>, 
     %8 = ave.hir.vcmp <ULE> %6, %7, %5 : vector<256xi8>, vector<256xi1> -> vector<256xi1>
     %9 = ave.hir.vsel %8, %1, %3 : vector<256xi1>, vector<256xi8>
     ave.hir.masked_store <NORM_B8> %reinterpret_cast_9[%c0], %5, %9 : memref<?xi8, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-  } {element_alignment_bit_width = 8 : i32}
+  }
   return
 }
 
@@ -175,7 +175,7 @@ func.func @test_vcmp_ule_uint8(%arg0: memref<3978xi8, #hivm.address_space<ub>>, 
 #map1 = affine_map<(d0) -> (-d0 + 40000, 256)>
 #map2 = affine_map<(d0)[s0] -> (d0 + s0)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
-  func.func @triton_xor_sum_dim_outlined_vf_0(%arg0: memref<1x40000xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  func.func @triton_xor_sum_dim_outlined_vf_0(%arg0: memref<1x40000xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
     %c40000 = arith.constant 40000 : index
     %c256 = arith.constant 256 : index
     %c0 = arith.constant 0 : index
@@ -190,7 +190,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       %base_buffer, %offset, %sizes:2, %strides:2 = memref.extract_strided_metadata %arg0 : memref<1x40000xi8, #hivm.address_space<ub>> -> memref<i8, #hivm.address_space<ub>>, index, index, index, index, index
       %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%arg1], sizes: [%2], strides: [1] : memref<i8, #hivm.address_space<ub>> to memref<?xi8, #map2, #hivm.address_space<ub>>
       ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %3, %1 : memref<?xi8, #map2, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
-    } {element_alignment_bit_width = 8 : i32}
+    }
     return
   }
 }
@@ -198,7 +198,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // -----
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b32_op
-func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
   %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
   "test.test"(%res, %new_true_shape) {element_alignment_bit_width = 32 : i32} : (vector<64xi1>, index) -> ()
   return
@@ -209,9 +209,9 @@ func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {el
 // -----
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b16_op
-func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
-  "test.test"(%res, %new_true_shape) {element_alignment_bit_width = 16 : i32} : (vector<64xi1>, index) -> ()
+func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 16 : i32} : vector<64xi1>, index
+  "test.test"(%res, %new_true_shape) : (vector<64xi1>, index) -> ()
   return
 }
 // CHECK: "hivm_regbaseintrins.intr.hivm.plt.b16.v300"
@@ -220,8 +220,8 @@ func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {el
 // -----
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_user_has_no_elem_align
-func.func @test_plt_b8_in_top_region_user_has_no_elem_align(%arg0: index) attributes {element_alignment_bit_width = 8 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
+func.func @test_plt_b8_in_top_region_user_has_no_elem_align(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 8 : i32} : vector<64xi1>, index
   "test.test"(%res) : (vector<64xi1>) -> ()
   return
 }
@@ -234,7 +234,7 @@ func.func @test_plt_b8_in_top_region_user_has_no_elem_align(%arg0: index) attrib
 #map3 = affine_map<()[s0, s1] -> (s0 * 2048 + s1 * 256)>
 #map4 = affine_map<(d0)[s0] -> (d0 + s0)>
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9589">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
-  func.func @cast_to_nd_with_overflow_outlined_vf_0(%arg0: memref<9x8x32xi1, strided<[2048, 256, 1]>, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+  func.func @cast_to_nd_with_overflow_outlined_vf_0(%arg0: memref<9x8x32xi1, strided<[2048, 256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
     %c0 = arith.constant 0 : index
     %c8 = arith.constant 8 : index
     %c1 = arith.constant 1 : index
@@ -273,8 +273,8 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
         // CHECK: %[[BYTE_OFFSET:.*]] = llvm.udiv %[[BIT_OFFSET]], %[[C8]] : i64
         %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%18], sizes: [32], strides: [1] : memref<i1, #hivm.address_space<ub>> to memref<32xi1, #map4, #hivm.address_space<ub>>
         ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %17, %16 : memref<32xi1, #map4, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
-      } {element_alignment_bit_width = 32 : i32}
-    } {element_alignment_bit_width = 32 : i32}
+      }
+    }
     return
   }
 }

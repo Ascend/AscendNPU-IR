@@ -1,8 +1,6 @@
 add_bishengir_dialect_library(MLIRHIVMAVETransforms
-  AnnotateDistOpLayout.cpp
-  AppendVectorLayout.cpp
+  AVENormalizeOps.cpp
   ComplexReductionIntermediateLowering.cpp
-  EliminateVectorLayout.cpp
   I1opSoftImpl.cpp
   LegalizeOptHIVMAVE.cpp
   PLTToPLTM.cpp

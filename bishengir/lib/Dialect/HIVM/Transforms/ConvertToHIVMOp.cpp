@@ -44,7 +44,13 @@ namespace {
 // Patterns that convert ops from other dialects to HIVM ops.
 //===---------------------------------------------------------------------===//
 
-std::optional<hivm::VBrcOp> findBroadcast(Operation *op) {
+std::optional<hivm::VBrcOp> findBroadcastImpl(Operation *op,
+                                              DenseSet<Operation *> &visited) {
+  if (visited.contains(op)) {
+    return std::nullopt;
+  }
+  visited.insert(op);
+
   if (llvm::isa_and_nonnull<hivm::VBrcOp>(op))
     return cast<hivm::VBrcOp>(op);
   for (auto *user : op->getUsers()) {
@@ -52,18 +58,23 @@ std::optional<hivm::VBrcOp> findBroadcast(Operation *op) {
     if (isa<memref::CollapseShapeOp, memref::ExpandShapeOp>(user)) {
       for (auto result : user->getResults()) {
         for (auto *resultUser : result.getUsers()) {
-          auto maybeBroadcast = findBroadcast(resultUser);
+          auto maybeBroadcast = findBroadcastImpl(resultUser, visited);
           if (maybeBroadcast.has_value())
             return maybeBroadcast.value();
         }
       }
     } else {
-      auto maybeBroadcast = findBroadcast(user);
+      auto maybeBroadcast = findBroadcastImpl(user, visited);
       if (maybeBroadcast.has_value())
         return maybeBroadcast.value();
     }
   }
   return std::nullopt;
+}
+
+std::optional<hivm::VBrcOp> findBroadcast(Operation *op) {
+  DenseSet<Operation *> visited;
+  return findBroadcastImpl(op, visited);
 }
 
 std::optional<Value> getPadValue(PatternRewriter &rewriter,

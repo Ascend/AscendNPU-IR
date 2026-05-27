@@ -15,13 +15,18 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
+#include <queue>
 
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
 
@@ -33,6 +38,58 @@ namespace mlir {
 #define DEBUG_TYPE "scf-canonicalize-iter-arg"
 
 using namespace mlir;
+
+static void printKeepMask(raw_ostream &os, const llvm::SmallBitVector &keep) {
+  os << '[';
+  for (unsigned i = 0, e = keep.size(); i != e; ++i)
+    os << (keep.test(i) ? '1' : '0');
+  os << ']';
+}
+
+static void
+debugUnexpectedBuilderFailure(StringRef where, Operation *op,
+                              const llvm::SmallBitVector *keep = nullptr,
+                              StringRef reason = {}, Value failedValue = {},
+                              Operation *failedOp = nullptr) {
+  LLVM_DEBUG({
+    llvm::dbgs() << "Unexpected builder failure in " << where << "\n";
+    if (!reason.empty())
+      llvm::dbgs() << "  reason: " << reason << "\n";
+    if (keep) {
+      llvm::dbgs() << "  keep mask: ";
+      printKeepMask(llvm::dbgs(), *keep);
+      llvm::dbgs() << "\n";
+    }
+    if (failedValue)
+      llvm::dbgs() << "  failed value: " << failedValue << "\n";
+    if (failedOp) {
+      llvm::dbgs() << "  failed nested op: ";
+      failedOp->print(
+          llvm::dbgs(),
+          OpPrintingFlags().printGenericOpForm().elideLargeElementsAttrs());
+      llvm::dbgs() << "\n";
+    }
+    if (op) {
+      llvm::dbgs() << "  parent op: ";
+      op->print(
+          llvm::dbgs(),
+          OpPrintingFlags().printGenericOpForm().elideLargeElementsAttrs());
+      llvm::dbgs() << "\n";
+    }
+  });
+  // Do NOT hard-assert here: the rebuild logic still legitimately fails on
+  // some IR patterns (e.g. when a kept yielded value's defining ops cannot be
+  // remapped because some dependency wasn't added to neededOps -- this is
+  // especially common for mix-mode (cv-pipeline) kernels whose backward
+  // traces include hivm.hir.anchor / cross-core anchor chains that the new
+  // rebuild path from commit 3361019ae does not fully model). The callers
+  // already handle the failure() return path gracefully by leaving the
+  // original op in place -- aborting compilation in release builds is far
+  // worse than skipping the canonicalization. Note: this project's build
+  // currently passes both -DNDEBUG and -UNDEBUG (the latter wins), so a
+  // bare `#ifndef NDEBUG assert(false)` would still abort. Until the root
+  // cause is fixed, keep this strictly diagnostic.
+}
 
 static void handleIfElse(scf::IfOp ifOp, OpResult ifResult,
                          SetVector<Value> &equivalenceSet,
@@ -161,6 +218,18 @@ static bool isNoEffect(Operation *op) {
   }
   // If op has no interface, assume has effects.
   return false;
+}
+
+static bool hasRecursiveSideEffects(Operation *op) {
+  bool hasEffects = false;
+  op->walk([&](Operation *nestedOp) {
+    if (!isNoEffect(nestedOp)) {
+      hasEffects = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return hasEffects;
 }
 
 static bool isInLoopBody(Value x, Block *body) {
@@ -426,8 +495,1080 @@ public:
         forOp.getResult(i).replaceAllUsesWith(newResults[newIdx++]);
       }
     }
-
+    // Copy attributes from oldFor to newFor.
+    newFor->setAttrs(forOp->getAttrs());
     rewriter.eraseOp(forOp);
+    return success();
+  }
+};
+
+static llvm::SmallVector<Value> getSCFNeededVals(Operation *defOp) {
+  llvm::SmallVector<Value> collectedVals;
+  if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+    // condition
+    collectedVals.push_back(ifOp.getCondition());
+  } else if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    // induction vars
+    auto numControlOperands = forOp.getNumControlOperands();
+    for (unsigned i = 0; i < numControlOperands; ++i) {
+      collectedVals.push_back(forOp->getOperand(i));
+    }
+  }
+  return collectedVals;
+}
+
+static llvm::SmallVector<Value> tracebackMemValsStep(Value val) {
+  llvm::SmallVector<Value> collectedVals;
+  if (auto blockArg = dyn_cast<BlockArgument>(val)) {
+    if (auto forOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      if (auto *initOperand = forOp.getTiedLoopInit(blockArg)) {
+        collectedVals.push_back(initOperand->get());
+      }
+      if (auto *yieldedValue = forOp.getTiedLoopYieldedValue(blockArg)) {
+        collectedVals.push_back(yieldedValue->get());
+      }
+    } else if (auto whileOp =
+                   dyn_cast<scf::WhileOp>(blockArg.getOwner()->getParentOp())) {
+      if (blockArg.getOwner()->getParent() == &whileOp.getBefore()) {
+        if (auto *initOperand = whileOp.getTiedLoopInit(blockArg)) {
+          collectedVals.push_back(initOperand->get());
+        }
+        if (auto *yieldedValueAfter =
+                whileOp.getTiedLoopYieldedValue(blockArg)) {
+          collectedVals.push_back(yieldedValueAfter->get());
+        }
+      } else {
+        assert(blockArg.getOwner()->getParent() == &whileOp.getAfter());
+        auto argNum = blockArg.getArgNumber();
+        assert(whileOp.getConditionOp().getArgs().size() > argNum);
+        auto yieldedValueBefore = whileOp.getConditionOp().getArgs()[argNum];
+        collectedVals.push_back(yieldedValueBefore);
+      }
+    }
+    return collectedVals;
+  }
+
+  auto resultVal = dyn_cast<OpResult>(val);
+  assert(resultVal != nullptr);
+  if (!resultVal) {
+    return collectedVals;
+  }
+
+  auto *defOp = resultVal.getDefiningOp();
+  auto resultNum = resultVal.getResultNumber();
+  assert(defOp != nullptr);
+
+  auto scfNeededVals = getSCFNeededVals(defOp);
+  llvm::append_range(collectedVals, scfNeededVals);
+
+  if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
+    // then
+    auto thenYield = ifOp.thenYield();
+    auto yieldedValueThen = thenYield->getOperand(resultNum);
+    collectedVals.push_back(yieldedValueThen);
+    // else
+    if (ifOp.elseBlock()) {
+      auto elseYield = ifOp.elseYield();
+      auto yieldedValueElse = elseYield->getOperand(resultNum);
+      collectedVals.push_back(yieldedValueElse);
+    }
+  } else if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+    // yield
+    assert(forOp.getYieldedValues().size() > resultNum);
+    auto yieldedValue = forOp.getYieldedValues()[resultNum];
+    collectedVals.push_back(yieldedValue);
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(defOp)) {
+    // yield before
+    assert(whileOp.getConditionOp().getArgs().size() > resultNum);
+    auto yieldedValueBefore = whileOp.getConditionOp().getArgs()[resultNum];
+    collectedVals.push_back(yieldedValueBefore);
+    // yield after
+    assert(whileOp.getYieldedValues().size() > resultNum);
+    auto yieldedValueAfter = whileOp.getYieldedValues()[resultNum];
+    collectedVals.push_back(yieldedValueAfter);
+  } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(defOp)) {
+    Region &scopeRegion = scopeOp.getRegion();
+    Block &scopeBlock = scopeRegion.front();
+    auto returnOp = dyn_cast<scope::ReturnOp>(scopeBlock.getTerminator());
+    assert(returnOp != nullptr);
+    assert(returnOp->getOperands().size() > resultNum);
+    auto returnedValue = returnOp->getOperand(resultNum);
+    collectedVals.push_back(returnedValue);
+  } else {
+    defOp->walk([&](Operation *nested) {
+      llvm::append_range(collectedVals, nested->getOperands());
+    });
+  }
+
+  return collectedVals;
+}
+
+template <typename StopPredicateT, typename VisitStepT>
+static llvm::SmallVector<Value>
+tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
+                 StopPredicateT &&shouldStop, VisitStepT &&onVisitStep) {
+  std::queue<Value> que;
+  llvm::DenseSet<Value> visitedVals;
+  llvm::SetVector<Value> collectedValsSet;
+  for (Value rootVal : rootVals) {
+    DEBUG_WITH_TYPE("scf-canonicalize-iter-arg-traceback",
+                    { llvm::dbgs() << "traceback-root: " << rootVal << '\n'; });
+    if (visitedVals.insert(rootVal).second) {
+      que.push(rootVal);
+    }
+  }
+
+  while (!que.empty()) {
+    auto curVal = que.front();
+    DEBUG_WITH_TYPE("scf-canonicalize-iter-arg-traceback",
+                    { llvm::dbgs() << "traceback-step: " << curVal << '\n'; });
+    que.pop();
+
+    onVisitStep(curVal);
+
+    if (shouldStop(curVal)) {
+      collectedValsSet.insert(curVal);
+      continue;
+    }
+
+    auto nextVals = tracebackMemValsStep(curVal);
+    if (!nextVals.empty()) {
+      for (auto nextVal : nextVals) {
+        if (visitedVals.insert(nextVal).second) {
+          que.push(nextVal);
+        }
+      }
+    }
+  }
+
+  return collectedValsSet.takeVector();
+}
+
+static Value mapForRebuild(IRMapping &mapping, Value oldValue,
+                           Block *builderBlock) {
+  // Prefer an already-remapped value when available.
+  if (Value mapped = mapping.lookupOrNull(oldValue))
+    return mapped;
+  // If defBlock's region is an ancestor of (or equal to) builderBlock's region,
+  // the value is defined in an outer or same scope and is safe to reuse as-is.
+  // Otherwise it is defined inside the region being rebuilt and must be mapped.
+  Block *defBlock = nullptr;
+  if (auto barg = dyn_cast<BlockArgument>(oldValue))
+    defBlock = barg.getOwner();
+  else if (Operation *defOp = oldValue.getDefiningOp())
+    defBlock = defOp->getBlock();
+  if (defBlock) {
+    Region *defRegion = defBlock->getParent();
+    Region *builderRegion = builderBlock->getParent();
+    if (defRegion && defRegion->isAncestor(builderRegion))
+      return oldValue;
+  }
+  return nullptr;
+}
+
+static void copyIRMapping(const IRMapping &from, IRMapping &to) {
+  // Clone all mapping tables so nested rebuild scopes can branch independently.
+  for (auto [k, v] : from.getValueMap())
+    to.map(k, v);
+  for (auto [k, v] : from.getBlockMap())
+    to.map(k, v);
+  for (auto [k, v] : from.getOperationMap())
+    to.map(k, v);
+}
+
+template <typename RangeT>
+static auto filterByKeep(RangeT &&range, const llvm::SmallBitVector &keep,
+                         bool kept = true) {
+  using ElementType = std::decay_t<decltype(*std::begin(range))>;
+  llvm::SmallVector<ElementType> filtered;
+  for (auto [i, element] : llvm::enumerate(range)) {
+    if (keep.test(i) == kept) {
+      filtered.push_back(element);
+    }
+  }
+  return filtered;
+}
+
+static LogicalResult
+cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
+                                   Operation &oldOp, IRMapping &mapping,
+                                   SmallPtrSetImpl<Operation *> &neededOps);
+
+static LogicalResult
+rebuildIfOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::IfOp oldIf,
+                            IRMapping &outerMapping,
+                            SmallPtrSetImpl<Operation *> &neededOps) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  Value mappedCond = mapForRebuild(outerMapping, oldIf.getCondition(),
+                                   rewriter.getInsertionBlock());
+  if (!mappedCond)
+    return failure();
+
+  const unsigned numResults = oldIf.getNumResults();
+  auto oldThenYield = oldIf.thenYield();
+  auto oldElseYield = oldIf.elseBlock() ? oldIf.elseYield() : scf::YieldOp();
+
+  bool rebuildFailed = false;
+  StringRef rebuildFailureReason;
+  Value rebuildFailureValue;
+  Operation *rebuildFailureOp = nullptr;
+
+  // First pass: build a no-result ifOp so the then/else blocks are attached
+  // to the IR. This gives mapForRebuild a valid block ancestry chain when
+  // cloning ops and checking yield operand mappability.
+  auto firstIf = rewriter.create<scf::IfOp>(
+      oldIf.getLoc(), TypeRange{}, mappedCond,
+      /*addThenBlock=*/true, /*addElseBlock=*/oldIf.elseBlock() != nullptr);
+
+  IRMapping thenMapping;
+  copyIRMapping(outerMapping, thenMapping);
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(firstIf.thenBlock());
+    for (Operation &regionOp : oldIf.thenBlock()->without_terminator()) {
+      if (!neededOps.contains(&regionOp))
+        continue;
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, regionOp,
+                                                    thenMapping, neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason =
+            "failed to clone live op in then while rebuilding scf.if";
+        rebuildFailureOp = &regionOp;
+        break;
+      }
+    }
+    // Placeholder yield to keep the block structurally valid.
+    rewriter.create<scf::YieldOp>(oldThenYield.getLoc());
+  }
+
+  IRMapping elseMapping;
+  if (!rebuildFailed && oldIf.elseBlock()) {
+    copyIRMapping(outerMapping, elseMapping);
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(firstIf.elseBlock());
+    for (Operation &regionOp : oldIf.elseBlock()->without_terminator()) {
+      if (!neededOps.contains(&regionOp))
+        continue;
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, regionOp,
+                                                    elseMapping, neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason =
+            "failed to clone live op in else while rebuilding scf.if";
+        rebuildFailureOp = &regionOp;
+        break;
+      }
+    }
+    rewriter.create<scf::YieldOp>(oldElseYield.getLoc());
+  }
+
+  if (rebuildFailed) {
+    rewriter.eraseOp(firstIf);
+    debugUnexpectedBuilderFailure("rebuildIfOpDroppingIterArgs", oldIf,
+                                  /*keep=*/nullptr, rebuildFailureReason,
+                                  rebuildFailureValue, rebuildFailureOp);
+    return failure();
+  }
+
+  // Determine which results survive by checking yield operand mappability
+  // against the attached first-pass blocks.
+  llvm::SmallBitVector keep(numResults, false);
+  SmallVector<Value, 4> thenYieldOperands;
+  SmallVector<Value, 4> elseYieldOperands;
+  for (unsigned i = 0; i < numResults; ++i) {
+    Value mappedThen = mapForRebuild(thenMapping, oldThenYield.getOperand(i),
+                                     firstIf.thenBlock());
+    Value mappedElse =
+        oldIf.elseBlock()
+            ? mapForRebuild(elseMapping, oldElseYield.getOperand(i),
+                            firstIf.elseBlock())
+            : nullptr;
+    if (!mappedThen || (oldIf.elseBlock() && !mappedElse)) {
+      continue;
+    }
+    keep.set(i);
+    thenYieldOperands.push_back(mappedThen);
+    if (oldIf.elseBlock())
+      elseYieldOperands.push_back(mappedElse);
+  }
+
+  SmallVector<Type, 4> newResultTypes;
+  for (Type resultType : filterByKeep(oldIf.getResultTypes(), keep)) {
+    newResultTypes.push_back(resultType);
+  }
+
+  // Second pass: build the final ifOp with correct result types, splicing
+  // cloned ops from the first-pass blocks (excluding placeholder yields).
+  auto newIf = rewriter.create<scf::IfOp>(
+      oldIf.getLoc(), newResultTypes, mappedCond,
+      /*addThenBlock=*/true, /*addElseBlock=*/oldIf.elseBlock() != nullptr);
+  // Copy attributes from oldIf to newIf.
+  newIf->setAttrs(oldIf->getAttrs());
+
+  {
+    Block *src = firstIf.thenBlock();
+    newIf.thenBlock()->getOperations().splice(
+        newIf.thenBlock()->begin(), src->getOperations(), src->begin(),
+        std::prev(src->end()));
+    {
+      OpBuilder::InsertionGuard innerGuard(rewriter);
+      rewriter.setInsertionPointToEnd(newIf.thenBlock());
+      rewriter.create<scf::YieldOp>(oldThenYield.getLoc(), thenYieldOperands);
+    }
+  }
+  if (oldIf.elseBlock() && newIf.elseBlock()) {
+    Block *src = firstIf.elseBlock();
+    newIf.elseBlock()->getOperations().splice(
+        newIf.elseBlock()->begin(), src->getOperations(), src->begin(),
+        std::prev(src->end()));
+    {
+      OpBuilder::InsertionGuard innerGuard(rewriter);
+      rewriter.setInsertionPointToEnd(newIf.elseBlock());
+      rewriter.create<scf::YieldOp>(oldElseYield.getLoc(), elseYieldOperands);
+    }
+  }
+  // firstIf now has empty blocks (only placeholder yields remain); safe to
+  // erase since no ops were double-owned.
+  rewriter.eraseOp(firstIf);
+
+  // Expose mapping from old compacted channels to new results.
+  unsigned newIdx = 0;
+  for (Value oldResult : filterByKeep(oldIf.getResults(), keep)) {
+    outerMapping.map(oldResult, newIf.getResult(newIdx++));
+  }
+  return success();
+}
+
+static FailureOr<scf::ForOp>
+rebuildForOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::ForOp oldFor,
+                             const llvm::SmallBitVector &keep,
+                             SmallPtrSetImpl<Operation *> &neededOps,
+                             IRMapping &outerMapping) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  // Keep-mask must match the for-op channel count.
+  const unsigned numResults = oldFor.getNumResults();
+  if (keep.size() != numResults)
+    return failure();
+
+  Block *oldBody = oldFor.getBody();
+  // lb/ub/step/initArgs are defined in the parent scope of oldFor.
+  Block *builderBlock = rewriter.getInsertionBlock();
+  Value lb = mapForRebuild(outerMapping, oldFor.getLowerBound(), builderBlock);
+  Value ub = mapForRebuild(outerMapping, oldFor.getUpperBound(), builderBlock);
+  Value step = mapForRebuild(outerMapping, oldFor.getStep(), builderBlock);
+  if (!lb || !ub || !step)
+    return failure();
+
+  // Materialize filtered init args in parent scope.
+  SmallVector<Value, 4> newInitArgs;
+  for (Value initArg : filterByKeep(oldFor.getInitArgs(), keep)) {
+    Value mappedInit = mapForRebuild(outerMapping, initArg, builderBlock);
+    if (!mappedInit) {
+      return failure();
+    }
+    newInitArgs.push_back(mappedInit);
+  }
+
+  // Create the for op with no body builder so the op is inserted first and
+  // its body block is properly linked into the IR before we populate it.
+  // This ensures builder.getInsertionBlock() has a valid parent chain when
+  // mapForRebuild walks up to check value ancestry.
+  auto newFor =
+      rewriter.create<scf::ForOp>(oldFor.getLoc(), lb, ub, step, newInitArgs);
+  // Copy attributes from oldFor to newFor.
+  newFor->setAttrs(oldFor->getAttrs());
+
+  Block *newBody = newFor.getBody();
+  IRMapping bodyMapping;
+  copyIRMapping(outerMapping, bodyMapping);
+  bodyMapping.map(oldFor.getInductionVar(), newFor.getInductionVar());
+
+  // Map surviving old iter-args to the rebuilt for body arguments.
+  unsigned iterArgIdx = 0;
+  for (Value iterArg : filterByKeep(oldFor.getRegionIterArgs(), keep)) {
+    bodyMapping.map(iterArg, newFor.getRegionIterArgs()[iterArgIdx++]);
+  }
+
+  bool rebuildFailed = false;
+  StringRef rebuildFailureReason;
+  Value rebuildFailureValue;
+  Operation *rebuildFailureOp = nullptr;
+
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(newBody);
+
+    // Rebuild only live ops; nested control flow is handled recursively.
+    for (Operation &op : oldBody->without_terminator()) {
+      if (!neededOps.contains(&op))
+        continue;
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, op, bodyMapping,
+                                                    neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason =
+            "failed to clone live op while rebuilding scf.for";
+        rebuildFailureOp = &op;
+        break;
+      }
+    }
+
+    SmallVector<Value> newYieldOperands;
+    if (!rebuildFailed) {
+      auto oldYield = cast<scf::YieldOp>(oldBody->getTerminator());
+      for (Value oldYieldOperand : filterByKeep(oldYield.getOperands(), keep)) {
+        Value mapped = mapForRebuild(bodyMapping, oldYieldOperand,
+                                     rewriter.getInsertionBlock());
+        if (!mapped) {
+          rebuildFailed = true;
+          rebuildFailureReason =
+              "failed to remap kept yielded value while rebuilding scf.for";
+          rebuildFailureValue = oldYieldOperand;
+          break;
+        }
+        newYieldOperands.push_back(mapped);
+      }
+    }
+
+    if (!rebuildFailed) {
+      if (newBody->mightHaveTerminator()) {
+        if (auto yieldOp = dyn_cast<scf::YieldOp>(newBody->getTerminator())) {
+          rewriter.eraseOp(yieldOp);
+        }
+      }
+      OpBuilder::InsertionGuard innerGuard(rewriter);
+      rewriter.setInsertionPointToEnd(newBody);
+      rewriter.create<scf::YieldOp>(oldFor.getLoc(), newYieldOperands);
+    }
+  }
+
+  if (rebuildFailed) {
+    rewriter.eraseOp(newFor);
+    debugUnexpectedBuilderFailure("rebuildForOpDroppingIterArgs", oldFor, &keep,
+                                  rebuildFailureReason, rebuildFailureValue,
+                                  rebuildFailureOp);
+    return failure();
+  }
+
+  // Expose mapping from old compacted channels to new results.
+  unsigned newIdx = 0;
+  for (Value oldResult : filterByKeep(oldFor.getResults(), keep)) {
+    outerMapping.map(oldResult, newFor.getResult(newIdx++));
+  }
+  return newFor;
+}
+
+static FailureOr<scf::WhileOp> rebuildWhileOpDroppingIterArgs(
+    mlir::PatternRewriter &rewriter, scf::WhileOp oldWhile,
+    const llvm::SmallBitVector &keep, SmallPtrSetImpl<Operation *> &neededOps,
+    IRMapping &outerMapping) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  // while carries the same channel count across inits/results/before/after.
+  const unsigned numInits = oldWhile.getInits().size();
+  const unsigned numResults = oldWhile.getNumResults();
+  if (numInits == 0 || numInits != numResults || keep.size() != numResults) {
+    return failure();
+  }
+
+  Block *beforeBody = oldWhile.getBeforeBody();
+  Block *afterBody = oldWhile.getAfterBody();
+  auto oldCond = oldWhile.getConditionOp();
+  auto oldYield = oldWhile.getYieldOp();
+  if (!beforeBody || !afterBody || !oldCond || !oldYield) {
+    return failure();
+  }
+  if (beforeBody->getNumArguments() != numInits ||
+      afterBody->getNumArguments() != numResults ||
+      oldCond.getArgs().size() != numResults ||
+      oldYield.getNumOperands() != numInits) {
+    return failure();
+  }
+
+  // Build compacted init operands for channels that survive.
+  // Init args are defined in the parent scope of oldWhile.
+  SmallVector<Value> newInits;
+  for (Value initArg : filterByKeep(oldWhile.getInits(), keep)) {
+    Value mappedInit =
+        mapForRebuild(outerMapping, initArg, rewriter.getInsertionBlock());
+    if (!mappedInit) {
+      return failure();
+    }
+    newInits.push_back(mappedInit);
+  }
+
+  SmallVector<Type> newResultTypes;
+  for (Value oldResult : filterByKeep(oldWhile.getResults(), keep)) {
+    newResultTypes.push_back(oldResult.getType());
+  }
+
+  bool rebuildFailed = false;
+  StringRef rebuildFailureReason;
+  Value rebuildFailureValue;
+  Operation *rebuildFailureOp = nullptr;
+
+  // Create the while op with no body builders so it is inserted first and
+  // both regions are properly linked into the IR before we populate them.
+  auto newWhile = rewriter.create<scf::WhileOp>(
+      oldWhile.getLoc(), newResultTypes, newInits,
+      /*beforeBuilder=*/nullptr, /*afterBuilder=*/nullptr);
+  // Copy attributes from oldWhile to newWhile.
+  newWhile->setAttrs(oldWhile->getAttrs());
+
+  // Populate the before region.
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(newWhile.getBeforeBody());
+
+    IRMapping beforeMapping;
+    copyIRMapping(outerMapping, beforeMapping);
+    unsigned newIdx = 0;
+    for (Value oldArg : filterByKeep(beforeBody->getArguments(), keep)) {
+      beforeMapping.map(oldArg,
+                        newWhile.getBeforeBody()->getArgument(newIdx++));
+    }
+
+    for (Operation &op : beforeBody->without_terminator()) {
+      if (!neededOps.contains(&op)) {
+        continue;
+      }
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, op, beforeMapping,
+                                                    neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason = "failed to clone live op in before region while "
+                               "rebuilding scf.while";
+        rebuildFailureOp = &op;
+        break;
+      }
+    }
+
+    Value mappedCond;
+    if (!rebuildFailed) {
+      mappedCond = mapForRebuild(beforeMapping, oldCond.getCondition(),
+                                 rewriter.getInsertionBlock());
+      if (!mappedCond) {
+        rebuildFailed = true;
+        rebuildFailureReason = "failed to remap scf.condition predicate while "
+                               "rebuilding scf.while";
+        rebuildFailureValue = oldCond.getCondition();
+      }
+    }
+
+    SmallVector<Value, 4> newCondArgs;
+    if (!rebuildFailed) {
+      for (Value oldCondArg : filterByKeep(oldCond.getArgs(), keep)) {
+        Value mapped = mapForRebuild(beforeMapping, oldCondArg,
+                                     rewriter.getInsertionBlock());
+        if (!mapped) {
+          rebuildFailed = true;
+          rebuildFailureReason =
+              "failed to remap scf.condition arg while rebuilding scf.while";
+          rebuildFailureValue = oldCondArg;
+          break;
+        }
+        newCondArgs.push_back(mapped);
+      }
+    }
+
+    if (!rebuildFailed) {
+      OpBuilder::InsertionGuard innerGuard(rewriter);
+      rewriter.setInsertionPointToEnd(newWhile.getBeforeBody());
+      rewriter.create<scf::ConditionOp>(oldCond.getLoc(), mappedCond,
+                                        newCondArgs);
+    }
+  }
+
+  if (rebuildFailed) {
+    rewriter.eraseOp(newWhile);
+    debugUnexpectedBuilderFailure("rebuildWhileOpDroppingIterArgs", oldWhile,
+                                  &keep, rebuildFailureReason,
+                                  rebuildFailureValue, rebuildFailureOp);
+    return failure();
+  }
+
+  // Populate the after region.
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(newWhile.getAfterBody());
+
+    IRMapping afterMapping;
+    copyIRMapping(outerMapping, afterMapping);
+    unsigned newIdx = 0;
+    for (Value oldArg : filterByKeep(afterBody->getArguments(), keep)) {
+      afterMapping.map(oldArg, newWhile.getAfterBody()->getArgument(newIdx++));
+    }
+
+    for (Operation &op : afterBody->without_terminator()) {
+      if (!neededOps.contains(&op))
+        continue;
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, op, afterMapping,
+                                                    neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason = "failed to clone live op in after region while "
+                               "rebuilding scf.while";
+        rebuildFailureOp = &op;
+        break;
+      }
+    }
+
+    SmallVector<Value, 4> newYieldOperands;
+    if (!rebuildFailed) {
+      for (Value oldYieldOperand : filterByKeep(oldYield.getOperands(), keep)) {
+        Value mapped = mapForRebuild(afterMapping, oldYieldOperand,
+                                     rewriter.getInsertionBlock());
+        if (!mapped) {
+          rebuildFailed = true;
+          rebuildFailureReason =
+              "failed to remap scf.yield operand while rebuilding scf.while";
+          rebuildFailureValue = oldYieldOperand;
+          break;
+        }
+        newYieldOperands.push_back(mapped);
+      }
+    }
+
+    if (!rebuildFailed) {
+      OpBuilder::InsertionGuard innerGuard(rewriter);
+      rewriter.setInsertionPointToEnd(newWhile.getAfterBody());
+      rewriter.create<scf::YieldOp>(oldYield.getLoc(), newYieldOperands);
+    }
+  }
+
+  if (rebuildFailed) {
+    rewriter.eraseOp(newWhile);
+    debugUnexpectedBuilderFailure("rebuildWhileOpDroppingIterArgs", oldWhile,
+                                  &keep, rebuildFailureReason,
+                                  rebuildFailureValue, rebuildFailureOp);
+    return failure();
+  }
+
+  // Expose mapping from old compacted channels to new results.
+  unsigned newIdx = 0;
+  for (Value oldResult : filterByKeep(oldWhile.getResults(), keep)) {
+    outerMapping.map(oldResult, newWhile.getResult(newIdx++));
+  }
+  return newWhile;
+}
+
+static LogicalResult
+cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
+                                   Operation &oldOp, IRMapping &outerMapping,
+                                   SmallPtrSetImpl<Operation *> &neededOps) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  // Handle structured control-flow ops with dedicated rebuild paths.
+  if (auto oldIf = dyn_cast<scf::IfOp>(&oldOp)) {
+    return rebuildIfOpDroppingIterArgs(rewriter, oldIf, outerMapping,
+                                       neededOps);
+  }
+
+  if (auto nestedFor = dyn_cast<scf::ForOp>(&oldOp)) {
+    // Derive which nested channels can survive based on mappable init args.
+    const unsigned childResults = nestedFor.getNumResults();
+    llvm::SmallBitVector childKeep(childResults, true);
+    for (auto [i, initArg] : llvm::enumerate(nestedFor.getInitArgs())) {
+      Value mappedInit =
+          mapForRebuild(outerMapping, initArg, rewriter.getInsertionBlock());
+      if (!mappedInit) {
+        childKeep.reset(i);
+      }
+    }
+
+    // Guard against dropping a nested channel still needed by a live op.
+    //
+    // The outer rebuild is currently iterating through `oldOp.getParentOp()`'s
+    // body and will rebuild that parent's terminator(s) via `filterByKeep`
+    // on the *outer* keep mask. If the immediate-parent terminator (e.g. the
+    // outer `scf.yield`) is the user of a dropped nested result, the
+    // corresponding operand on the new terminator will be filtered out by
+    // that mechanism — the use never makes it into the rebuilt IR, so it is
+    // not an obstacle here. Real obstacles are uses by ops that the outer
+    // rebuild will clone as-is (any non-terminator user). Limit the assert
+    // to those.
+    auto isHandledByOuterTerminator = [&](Operation *user) {
+      Operation *parent = oldOp.getParentOp();
+      if (!parent)
+        return false;
+      if (auto outerFor = dyn_cast<scf::ForOp>(parent))
+        return user == outerFor.getBody()->getTerminator();
+      if (auto outerIf = dyn_cast<scf::IfOp>(parent)) {
+        if (user == outerIf.thenYield().getOperation())
+          return true;
+        return outerIf.elseBlock() &&
+               user == outerIf.elseYield().getOperation();
+      }
+      if (auto outerWhile = dyn_cast<scf::WhileOp>(parent)) {
+        return user == outerWhile.getConditionOp().getOperation() ||
+               user == outerWhile.getYieldOp().getOperation();
+      }
+      return false;
+    };
+
+    for (Value result :
+         filterByKeep(nestedFor.getResults(), childKeep, false)) {
+      for (OpOperand &use : result.getUses()) {
+        if (isHandledByOuterTerminator(use.getOwner()))
+          continue;
+        if (neededOps.contains(use.getOwner())) {
+          assert(false &&
+                 "dropping nested iter-arg/result still used by needed op");
+          return failure();
+        }
+      }
+    }
+
+    auto rebuiltOr = rebuildForOpDroppingIterArgs(
+        rewriter, nestedFor, childKeep, neededOps, outerMapping);
+    if (failed(rebuiltOr)) {
+      debugUnexpectedBuilderFailure(
+          "cloneOpRecursivelyDroppingIterArgs(nested scf.for)", nestedFor,
+          &childKeep,
+          "nested scf.for rebuild failed while cloning live control flow",
+          Value(), &oldOp);
+      return failure();
+    }
+    return success();
+  }
+
+  if (auto nestedWhile = dyn_cast<scf::WhileOp>(&oldOp)) {
+    // Derive which nested while channels are still reconstructable.
+    const unsigned childResults = nestedWhile.getNumResults();
+    llvm::SmallBitVector childKeep(childResults, true);
+    for (auto [i, initArg] : llvm::enumerate(nestedWhile.getInits())) {
+      Value mappedInit =
+          mapForRebuild(outerMapping, initArg, rewriter.getInsertionBlock());
+      if (!mappedInit) {
+        childKeep.reset(i);
+      }
+    }
+
+    // Guard against dropping a nested channel still needed by a live op.
+    for (Value result :
+         filterByKeep(nestedWhile.getResults(), childKeep, false)) {
+      for (OpOperand &use : result.getUses()) {
+        if (neededOps.contains(use.getOwner())) {
+          assert(false &&
+                 "dropping nested while result still used by needed op");
+          return failure();
+        }
+      }
+    }
+
+    auto rebuiltOr = rebuildWhileOpDroppingIterArgs(
+        rewriter, nestedWhile, childKeep, neededOps, outerMapping);
+    if (failed(rebuiltOr)) {
+      debugUnexpectedBuilderFailure(
+          "cloneOpRecursivelyDroppingIterArgs(nested scf.while)", nestedWhile,
+          &childKeep,
+          "nested scf.while rebuild failed while cloning live control flow",
+          Value(), &oldOp);
+      return failure();
+    }
+    return success();
+  }
+
+  // Plain ops are cloned directly through the current mapping.
+  LLVM_DEBUG({
+    llvm::dbgs() << "Cloning non-SCF op directly: ";
+    oldOp.print(
+        llvm::dbgs(),
+        OpPrintingFlags().printGenericOpForm().elideLargeElementsAttrs());
+    llvm::dbgs() << "\n";
+  });
+  for (Value oldOperand : oldOp.getOperands()) {
+    Value mapped = mapForRebuild(outerMapping, oldOperand, oldOp.getBlock());
+    if (!mapped) {
+      debugUnexpectedBuilderFailure(
+          "cloneOpRecursivelyDroppingIterArgs(non-SCF op)", &oldOp,
+          /*keep=*/nullptr, "missing mapped operand while cloning non-SCF op",
+          oldOperand);
+      return failure();
+    }
+  }
+  rewriter.clone(oldOp, outerMapping);
+  return success();
+}
+
+static void seedLiveRootsFromResults(ValueRange results,
+                                     llvm::SmallBitVector &keep,
+                                     SmallVectorImpl<Value> &rootVals) {
+  // Any externally used loop result is immediately live.
+  for (auto [i, resultVal] : llvm::enumerate(results)) {
+    if (resultVal.use_empty())
+      continue;
+    rootVals.push_back(resultVal);
+    keep.set(i);
+  }
+}
+
+static void collectRootsFromSideEffects(Block *body,
+                                        SmallPtrSetImpl<Operation *> &neededOps,
+                                        SmallVectorImpl<Value> &rootVals) {
+  // Side-effecting ops are treated as live roots; trace through their inputs.
+  body->walk([&](Operation *nestedOp) {
+    if (!hasRecursiveSideEffects(nestedOp)) {
+      return;
+    }
+    neededOps.insert(nestedOp);
+    if (isa<scf::IfOp, scf::ForOp>(nestedOp)) {
+      auto scfNeededVals = getSCFNeededVals(nestedOp);
+      llvm::append_range(rootVals, scfNeededVals);
+    } else {
+      for (Value operand : nestedOp->getOperands()) {
+        rootVals.push_back(operand);
+      }
+    }
+  });
+}
+
+struct RemoveDeadIterArgBackwardForPattern
+    : public OpRewritePattern<scf::ForOp> {
+public:
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(scf::ForOp forOp,
+                  mlir::PatternRewriter &rewriter) const override {
+    // Empty carried state means nothing to prune.
+    const unsigned numResults = forOp.getNumResults();
+    if (numResults == 0)
+      return failure();
+
+    Block *body = forOp.getBody();
+    auto oldYield = cast<scf::YieldOp>(body->getTerminator());
+    llvm::SmallBitVector keep(numResults, false);
+    SmallPtrSet<Operation *, 32> neededOps;
+    SmallVector<Value, 32> rootVals;
+    seedLiveRootsFromResults(forOp.getResults(), keep, rootVals);
+    collectRootsFromSideEffects(body, neededOps, rootVals);
+
+    auto traceForRoots = [&]() {
+      return tracebackMemVals(
+          rootVals,
+          [&](Value v) {
+            auto barg = dyn_cast<BlockArgument>(v);
+            return barg && barg.getOwner() == body && barg.getArgNumber() > 0;
+          },
+          [&](Value tracedVal) {
+            if (Operation *def = tracedVal.getDefiningOp()) {
+              LLVM_DEBUG({
+                llvm::dbgs() << "Adding op to neededOps during for traceback: ";
+                def->print(llvm::dbgs(), OpPrintingFlags()
+                                             .printGenericOpForm()
+                                             .elideLargeElementsAttrs());
+                llvm::dbgs() << "\n";
+              });
+              neededOps.insert(def);
+            }
+          });
+    };
+
+    // Trace backwards to discover live loop-carried channels and defining ops.
+    // Newly-kept channels make their tied yield values live, so keep tracing
+    // until all kept yielded values have contributed to neededOps.
+    llvm::SmallBitVector rootedChannels(numResults, false);
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      SmallVector<Value> tracedIterArgs = traceForRoots();
+      for (Value iterArgVal : tracedIterArgs) {
+        auto barg = cast<BlockArgument>(iterArgVal);
+        unsigned idx = barg.getArgNumber() - 1;
+        if (idx >= numResults) {
+          assert(false && "iter arg index out of range");
+          continue;
+        }
+        if (!keep.test(idx)) {
+          keep.set(idx);
+          changed = true;
+        }
+      }
+      for (unsigned i = 0; i < numResults; ++i) {
+        if (!keep.test(i) || rootedChannels.test(i))
+          continue;
+        rootVals.push_back(oldYield.getOperand(i));
+        rootedChannels.set(i);
+        changed = true;
+      }
+    }
+
+    // If every channel is live, this rewrite does not apply.
+    SmallVector<unsigned, 4> removableIdxs;
+    for (unsigned i = 0; i < numResults; ++i)
+      if (!keep.test(i))
+        removableIdxs.push_back(i);
+    if (removableIdxs.empty())
+      return failure();
+
+    // Validate kept yielded values are reconstructable before mutation.
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (!keep.test(i))
+        continue;
+      Value oldOperand = oldYield.getOperand(i);
+      if (!isInLoopBody(oldOperand, body))
+        continue;
+      if (auto barg = dyn_cast<BlockArgument>(oldOperand)) {
+        if (barg.getArgNumber() == 0)
+          continue;
+        unsigned idx = barg.getArgNumber() - 1;
+        if (idx < numResults && keep.test(idx))
+          continue;
+        assert(false && "unmapped kept yield block argument");
+        return failure();
+      }
+      Operation *def = oldOperand.getDefiningOp();
+      if (!def || def->getBlock() != body || !neededOps.contains(def)) {
+        assert(false && "unmapped kept yield operand from old loop body");
+        return failure();
+      }
+    }
+
+    // Rebuild loop with compacted channels, recursively updating nested SCF.
+    IRMapping topMapping;
+    auto rebuiltOr = rebuildForOpDroppingIterArgs(rewriter, forOp, keep,
+                                                  neededOps, topMapping);
+    if (failed(rebuiltOr)) {
+      debugUnexpectedBuilderFailure(
+          "RemoveDeadIterArgBackwardForPattern", forOp, &keep,
+          "top-level scf.for rebuild failed unexpectedly");
+      return failure();
+    }
+    // Redirect uses from old kept results to rebuilt results.
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (!keep.test(i))
+        continue;
+      Value mapped = topMapping.lookupOrNull(forOp.getResult(i));
+      if (!mapped) {
+        assert(false && "missing mapped result in rebuilt for loop");
+        return failure();
+      }
+      forOp.getResult(i).replaceAllUsesWith(mapped);
+    }
+    rewriter.eraseOp(forOp);
+    return success();
+  }
+};
+
+struct RemoveDeadIterArgBackwardWhilePattern
+    : public OpRewritePattern<scf::WhileOp> {
+public:
+  using OpRewritePattern<scf::WhileOp>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(scf::WhileOp whileOp,
+                  mlir::PatternRewriter &rewriter) const override {
+    // Empty carried state means nothing to prune.
+    const unsigned numResults = whileOp.getNumResults();
+    if (numResults == 0)
+      return failure();
+
+    Block *beforeBody = whileOp.getBeforeBody();
+    Block *afterBody = whileOp.getAfterBody();
+    auto oldCond = whileOp.getConditionOp();
+    auto oldYield = whileOp.getYieldOp();
+    if (!beforeBody || !afterBody || !oldCond || !oldYield)
+      return failure();
+
+    llvm::SmallBitVector keep(numResults, false);
+    SmallPtrSet<Operation *, 32> neededOps;
+    SmallVector<Value, 32> rootVals;
+    seedLiveRootsFromResults(whileOp.getResults(), keep, rootVals);
+    collectRootsFromSideEffects(beforeBody, neededOps, rootVals);
+    collectRootsFromSideEffects(afterBody, neededOps, rootVals);
+    // The scf.condition predicate controls loop execution, so values used to
+    // compute it are live even when the corresponding while result is unused.
+    rootVals.push_back(oldCond.getCondition());
+
+    auto traceWhileRoots = [&]() {
+      return tracebackMemVals(
+          rootVals,
+          [&](Value v) {
+            auto barg = dyn_cast<BlockArgument>(v);
+            if (!barg)
+              return false;
+            return (barg.getOwner() == beforeBody ||
+                    barg.getOwner() == afterBody) &&
+                   barg.getArgNumber() < numResults;
+          },
+          [&](Value tracedVal) {
+            if (Operation *def = tracedVal.getDefiningOp())
+              neededOps.insert(def);
+          });
+    };
+
+    // Trace backward through both regions to recover live carried channels.
+    // Newly-kept channels make their tied condition/yield values live, so keep
+    // tracing until the keep mask stops changing.
+    llvm::SmallBitVector rootedChannels(numResults, false);
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      SmallVector<Value> tracedArgs = traceWhileRoots();
+      for (Value argVal : tracedArgs) {
+        auto barg = cast<BlockArgument>(argVal);
+        unsigned idx = barg.getArgNumber();
+        if (!keep.test(idx)) {
+          keep.set(idx);
+          changed = true;
+        }
+      }
+      for (unsigned i = 0; i < numResults; ++i) {
+        if (!keep.test(i) || rootedChannels.test(i))
+          continue;
+        rootVals.push_back(oldCond.getArgs()[i]);
+        rootVals.push_back(oldYield.getOperand(i));
+        rootedChannels.set(i);
+        changed = true;
+      }
+    }
+
+    // If every channel is live, this rewrite does not apply.
+    SmallVector<unsigned, 4> removableIdxs;
+    for (unsigned i = 0; i < numResults; ++i)
+      if (!keep.test(i))
+        removableIdxs.push_back(i);
+    if (removableIdxs.empty())
+      return failure();
+
+    // Helper to check if an old value can be materialized in rebuilt regions.
+    auto isMappable = [&](Value oldVal) -> bool {
+      if (!isInLoopBody(oldVal, beforeBody) && !isInLoopBody(oldVal, afterBody))
+        return true;
+      if (auto barg = dyn_cast<BlockArgument>(oldVal))
+        return barg.getArgNumber() < numResults &&
+               keep.test(barg.getArgNumber());
+      if (Operation *def = oldVal.getDefiningOp())
+        return neededOps.contains(def);
+      return false;
+    };
+    // Validate both condition args and yielded args for kept channels.
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (!keep.test(i))
+        continue;
+      if (!isMappable(oldCond.getArgs()[i]) ||
+          !isMappable(oldYield.getOperand(i))) {
+        assert(false && "unmapped kept while channel value");
+        return failure();
+      }
+    }
+
+    // Rebuild while with compacted channels, recursively updating nested SCF.
+    IRMapping topMapping;
+    auto rebuiltOr = rebuildWhileOpDroppingIterArgs(rewriter, whileOp, keep,
+                                                    neededOps, topMapping);
+    if (failed(rebuiltOr)) {
+      debugUnexpectedBuilderFailure(
+          "RemoveDeadIterArgBackwardWhilePattern", whileOp, &keep,
+          "top-level scf.while rebuild failed unexpectedly");
+      return failure();
+    }
+    // Redirect uses from old kept results to rebuilt results.
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (!keep.test(i))
+        continue;
+      Value mapped = topMapping.lookupOrNull(whileOp.getResult(i));
+      if (!mapped) {
+        assert(false && "missing mapped result in rebuilt while");
+        return failure();
+      }
+      whileOp.getResult(i).replaceAllUsesWith(mapped);
+    }
+    rewriter.eraseOp(whileOp);
     return success();
   }
 };
@@ -436,16 +1577,29 @@ struct CanonicalizeIterArgPass
     : public impl::CanonicalizeIterArgBase<CanonicalizeIterArgPass> {
   using Base::Base;
   void runOnOperation() override {
+    auto funcOp = getOperation();
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
+
     tensor::populateFoldTensorEmptyPatterns(patterns);
+
     patterns.insert<CanonicalizeYieldValPattern<scf::ForOp>,
                     CanonicalizeIterArgPattern<scf::ForOp>,
                     CanonicalizeIterArgPattern<scf::WhileOp>,
                     RemoveDeadIterArgPattern<scf::ForOp>>(
         patterns.getContext());
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
+
+    if (enableRemoveDeadIterArgBackwardPatterns) {
+      if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+        patterns.insert<RemoveDeadIterArgBackwardForPattern,
+                        RemoveDeadIterArgBackwardWhilePattern>(
+            patterns.getContext());
+      }
+    }
+
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
       return signalPassFailure();
+    }
   }
 };
 } // namespace

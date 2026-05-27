@@ -289,6 +289,10 @@ TModuleCoreTypeAttr getModuleCoreTypeAttr(ModuleOp mod);
 /// Constraints: Skip bufferization::ToMemrefOp
 void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 
+/// Get dynamic values of the tensor.
+SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
+                                          Value src);
+
 Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
                           MemRefType memrefType, ValueRange dynamicDims,
                           ArrayRef<int64_t> staticAllocSize, Type elemType);
@@ -301,6 +305,14 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
 
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes, Type elementType);
+
+// Create local workspace and to_tensor ops. When staticAllocShape is provided,
+// add annotation::MarkOp to mark the static buffer size in byte (for dynamic
+// tensor case). When std::nullopt, skip the mark (for static tensor case).
+Value getLocalWorkSpaceTensor(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
+    ArrayRef<Value> dynamicShape, Type elementType,
+    std::optional<ArrayRef<int64_t>> staticAllocShape = std::nullopt);
 
 // Create local lock var
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
@@ -399,6 +411,10 @@ constexpr static unsigned BITS_PER_BYTE = 8;
 constexpr static unsigned VL_BITS = VL * BITS_PER_BYTE;
 constexpr static unsigned PREDICATE_BITS = 256;
 
+constexpr static unsigned VL_B32 = VL / 4;
+constexpr static unsigned VL_B16 = VL / 2;
+constexpr static unsigned VL_B8 = VL;
+
 // ======= for sync operations =======
 constexpr static unsigned INTRA_BLOCK_FLAG_ID_OFFSET = 16;
 
@@ -471,6 +487,7 @@ BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

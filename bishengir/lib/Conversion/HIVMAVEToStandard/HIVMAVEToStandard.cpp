@@ -626,7 +626,7 @@ struct SplitVectorForPattern : public OpRewritePattern<scf::ForOp> {
     rewriter.setInsertionPoint(oldFor);
     scf::ForOp newFor =
         rewriter.create<scf::ForOp>(loc, lb, ub, step, newInitArgs);
-    newFor->setAttr(utils::elementAlignmentBitWidth, oldFor->getAttr(utils::elementAlignmentBitWidth));
+
 
     // clone body and map arguments
     cloneAndMapBody(rewriter, oldFor, newFor, oldBody, oldIterCount);

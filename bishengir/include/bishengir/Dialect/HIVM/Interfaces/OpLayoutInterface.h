@@ -14,8 +14,13 @@
 
 namespace mlir {
 namespace hivm {
-/// Forward declaration.
-class DataLayoutAttr;
+struct FractalOperandLayouts {
+  Attribute a;
+  Attribute b;
+  Attribute c;
+  // Null attribute indicates the op does not have per-channel bias.
+  Attribute bias;
+};
 } // namespace hivm
 } // namespace mlir
 

@@ -15,6 +15,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
 
 using namespace mlir;
 using namespace hivm;
@@ -178,6 +179,18 @@ struct HIVMLoadOpInterface
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+
+  FailureOr<BaseMemRefType>
+  getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+                SmallVector<Value> &invocationStack) const {
+    auto loadOp = cast<hivm::LoadOp>(op);
+    auto dst = loadOp.getDst();
+    if (dst.getDefiningOp<tensor::EmptyOp>())
+      return getMemRefTypeWithStaticIdentityLayout(cast<TensorType>(dst.getType()));
+    auto dstMemrefType = bufferization::getBufferType(
+        loadOp.getDst(), options, invocationStack);
+    return dstMemrefType;
   }
 };
 
@@ -878,6 +891,7 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
+    L12UBOp::attachInterface<HIVMCopyOrStoreOpInterface<L12UBOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
     CustomOp::attachInterface<HIVMCustomOpInterface<CustomOp>>(*ctx);
     CustomMacroOp::attachInterface<HIVMCustomOpInterface<CustomMacroOp>>(*ctx);

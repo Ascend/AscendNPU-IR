@@ -322,6 +322,17 @@ def HIVM_TCoreTypeAttr : HIVM_Attr<"TCoreType", "tcore_type"> {
   let description = [{
     HIVM op core type attribute.
   }];
+  let constBuilderCall =
+      "::mlir::hivm::TCoreTypeAttr::get($_builder.getContext(), "
+      "::mlir::hivm::TCoreType::CUBE_OR_VECTOR)";
+}
+
+def HIVM_TCoreTypeMarkerAttr : HIVM_Attr<"TCoreTypeMarker", "tcore_type_marker"> {
+  let parameters = (ins EnumParameter<HIVM_TCoreTypeEnum>:$tcoretype);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    HIVM op core type marker attribute.
+  }];
 }
 
 def HIVM_TPartOfMixAttr : HIVM_Attr<"TPartOfMix", "part_of_mix"> {
@@ -934,12 +945,16 @@ def HIVM_LocalMatmul_PerChannelAdd : I32EnumAttrCase<"PerChannelAdd", 1>;
 def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 2>;
 def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
 def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 4>;
+def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 5>;
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
 def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
   HIVM_LocalMatmul_NoBias,
   HIVM_LocalMatmul_PerChannelAdd,
   HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
   HIVM_LocalMatmul_ElementwiseAdd,
-  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c,
 ]>;
 def HIVM_LocalMatmulMx_DataFormat
     : HIVM_I32Enum<"HIVMMatmulDataformat", "",
@@ -1035,6 +1050,19 @@ def HIVM_MultiBufferAttr : HIVM_Attr<"MultiBuffer", "multi_buffer"> {
   }];
 }
 
+def HIVM_CVPipelinedMultiBufferAttr
+    : HIVM_Attr<"CVPipelinedMultiBuffer", "cv_pipelined_multi_buffer"> {
+  let description = [{
+    Marks a `memref.alloc` as a multi-buffered storage produced by the
+    cv-pipelining transformation. The leading dimension is the slot
+    dimension (one slot per pipeline stage); sibling slots may be in
+    concurrent use by other pipeline stages, so any pre-init / pad
+    operation derived from the aggregated `hivm.hir.nd2nz` (or similar)
+    must target only the current slot tile (the subview that drives the
+    consumer op), never the whole alloc.
+  }];
+}
+
 def HIVM_StrideAlignValueAttr : HIVM_Attr<"StrideAlignDims", "stride_align_dims"> {
   let description = [{
     HIVM stride align dims.
@@ -1071,6 +1099,11 @@ def HIVM_FuncDynMemrefArgsAttr
 
 def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
   let description = [{HIVM vector function attribute}];
+}
+
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
 }
 
 def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
@@ -1116,6 +1149,24 @@ def HIVM_SimtMemScopeHintAttr
   let description = [{
     Memory scope hint for SIMT VF arguments before address space
     materialization.
+  }];
+}
+
+def HIVM_AnchorIdAttr : HIVM_Attr<"AnchorId", "anchor_id"> {
+  let description = [{
+    HIVM anchor id attribute.
+  }];
+}
+
+def HIVM_AnchorIdBeforeAttr : HIVM_Attr<"AnchorIdBefore", "anchor_id_before"> {
+  let description = [{
+    HIVM anchor id before attribute.
+  }];
+}
+
+def HIVM_AnchorIdAfterAttr : HIVM_Attr<"AnchorIdAfter", "anchor_id_after"> {
+  let description = [{
+    HIVM anchor id after attribute.
   }];
 }
 

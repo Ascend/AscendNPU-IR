@@ -199,7 +199,15 @@ private:
                                          numLaneToReduce, interleave);
     if (success)
       return;
+    // Get the physical warp size to bound the butterfly range.
+    // shuffleXor with offset >= numLanes wraps back to the same lane (self-shuffle),
+    // which doubles the accumulated value instead of exchanging with a peer.
+    auto mod = op->getParentOfType<ModuleOp>();
+    unsigned numLanes = static_cast<unsigned>(
+        triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
     for (unsigned N = numLaneToReduce / 2; N > 0; N >>= 1) {
+      if (N * interleave >= numLanes)
+        continue; // XOR offset >= warpSize causes self-shuffle; skip
       SmallVector<Value> shfl(acc.size());
       for (unsigned i = 0; i < acc.size(); ++i) {
         shfl[i] = targetInfo.shuffleXor(rewriter, loc, acc[i], N * interleave);
@@ -509,7 +517,7 @@ private:
   void accumulatePartialReductions(AscendReduceOpHelper &helper,
                                    SmallVector<Value> &smemBases,
                                    ConversionPatternRewriter &rewriter,
-				   bool ReplaceButterflyReduction) const {
+                                   bool ReplaceButterflyReduction) const {
     triton::ReduceOp op = helper.getOperation();
     auto smemShape = helper.getScratchRepShape();
     unsigned elems = product<unsigned>(smemShape);
@@ -645,7 +653,7 @@ private:
                                   SmallVector<unsigned> smemShape,
                                   SmallVector<Value> &smemBases,
                                   ConversionPatternRewriter &rewriter,
-				  bool ReplaceButterflyReduction) const {
+                                  bool ReplaceButterflyReduction) const {
     triton::ReduceOp op = helper.getOperation();
     Location loc = op.getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
@@ -656,16 +664,26 @@ private:
       smemOrder[0] = smemOrder[smemOrder.size() - 1];
       smemOrder[smemOrder.size() - 1] = tmp;
     }
+
+    // When sizeInterWarps > numLanes, accumulatePartialReductions can only
+    // reduce within each physical warp (32 lanes). Each warp group g writes
+    // its partial sum to smem[readOffset + g * numLanes]. Combine all groups here.
+    auto mod = op->getParentOfType<ModuleOp>();
+    unsigned numLanes = static_cast<unsigned>(
+        triton::gpu::TritonGPUDialect::getThreadsPerWarp(mod));
+    unsigned sizeInterWarps = helper.getInterWarpSizeWithUniqueData();
+    unsigned numGroups = sizeInterWarps / numLanes;
+    // numGroups = 1 for 32 warps (no-op), 2 for 64 warps, etc.
+
     SmallVector<Value> results(op.getNumOperands());
     for (unsigned i = 0; i < op.getNumOperands(); ++i) {
       auto elemTy = getElementType(op, i);
       if (auto resultTy =
             dyn_cast<RankedTensorType>(op.getResult()[i].getType())) {
-        // nd-tensor where n >= 1
         auto resultLayout = cast<SliceEncodingAttr>(resultTy.getEncoding());
         unsigned resultElems = getTotalElemsPerThread(resultTy);
         auto resultIndices = emitIndices(loc, rewriter, targetInfo,
-                                         resultLayout, resultTy, true);
+                                        resultLayout, resultTy, true);
         auto resultShape = resultTy.getShape();
         assert(resultIndices.size() == resultElems);
 
@@ -674,7 +692,7 @@ private:
           SmallVector<Value> readIdx = resultIndices[j];
           readIdx.insert(readIdx.begin() + op.getAxis(), b.i32_val(0));
           for (size_t resultIdx = 0, resultDim = resultShape.size();
-               resultIdx < resultDim; ++resultIdx) {
+              resultIdx < resultDim; ++resultIdx) {
             auto smemIdx = resultIdx < op.getAxis() ? resultIdx : resultIdx + 1;
             if (resultShape[resultIdx] > smemShape[smemIdx]) {
               // When srcShape smaller than src sizePerThread, only srcShape
@@ -686,20 +704,38 @@ private:
           }
           Value readOffset =
               linearize(rewriter, loc, readIdx, smemShape, smemOrder);
+
+          // Group 0: the base address
           Value readPtr =
               b.gep(smemBases[i].getType(), elemTy, smemBases[i], readOffset);
-          resultVals[j] = b.load(elemTy, readPtr);
-        }
+          SmallVector<Value> acc = {b.load(elemTy, readPtr)};
 
+          // Groups 1..numGroups-1: partial sums at readOffset + g * numLanes
+          for (unsigned g = 1; g < numGroups; ++g) {
+            Value groupOffset = b.add(readOffset, b.i32_val(g * numLanes));
+            Value groupPtr =
+                b.gep(smemBases[i].getType(), elemTy, smemBases[i], groupOffset);
+            SmallVector<Value> groupVal = {b.load(elemTy, groupPtr)};
+            accumulate(loc, rewriter, op.getCombineOp(), acc, groupVal);
+          }
+          resultVals[j] = acc[0];
+        }
         results[i] = packLLElements(loc, getTypeConverter(), resultVals,
                                     rewriter, resultTy);
       } else {
         // 0d-tensor -> scalar
-        results[i] = b.load(elemTy, smemBases[i]);
+        SmallVector<Value> acc = {b.load(elemTy, smemBases[i])};
+        for (unsigned g = 1; g < numGroups; ++g) {
+          Value groupPtr = b.gep(smemBases[i].getType(), elemTy, smemBases[i],
+                                b.i32_val(g * numLanes));
+          SmallVector<Value> groupVal = {b.load(elemTy, groupPtr)};
+          accumulate(loc, rewriter, op.getCombineOp(), acc, groupVal);
+        }
+        results[i] = acc[0];
       }
     }
     rewriter.replaceOp(op, results);
-  }
+  } 
 };
 } // namespace
 

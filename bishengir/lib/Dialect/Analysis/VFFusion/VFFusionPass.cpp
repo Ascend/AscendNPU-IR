@@ -21,9 +21,9 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <string>
 
 #define DEBUG_TYPE "vf-fusion"
@@ -93,7 +93,7 @@ LogicalResult VFFusionPass::tryToFuse(Operation *op, OpBuilder &builder) const {
     for (auto &block : region.getBlocks()) {
       std::unique_ptr<FusionKindBase> fuser =
           std::make_unique<FusionKind>(getFusionOption());
-      if (failed(fuser->fuse(block, builder)))
+      if (failed(fuser->fuse(block, builder, maxVFParams)))
         return failure();
     }
   }
@@ -160,7 +160,7 @@ void VFFusionPass::runOnOperation() {
   moduleOp.walk([&](tensor::ExtractSliceOp sliceOp) {
     if (sliceOp->use_empty() || sliceOp->hasOneUse())
       return;
-      
+
     sliceOps.push_back(sliceOp);
   });
 

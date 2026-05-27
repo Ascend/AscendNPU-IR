@@ -1,8 +1,10 @@
 file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
 file(GLOB BUBBLE_UP_EXTRACT_SLICE ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
-file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
 file(GLOB GRAPH_SYNC_CONFLICT_SOLVER ${CMAKE_CURRENT_SOURCE_DIR}/GraphSyncSolver/*.cpp)
+file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
+file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadStoreForMixCV/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
+file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadStoreForMixCV/*.cpp)
 file(GLOB TILE_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/*.cpp)
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/*.cpp)
@@ -10,9 +12,10 @@ file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/*.cpp)
 add_bishengir_dialect_library(MLIRHIVMTransforms
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
-  ${INJECT_SYNC}
   ${GRAPH_SYNC_CONFLICT_SOLVER}
   ${TILING}
+  ${INJECT_SYNC}
+  ${INSERT_LOAD_STORE_FOR_MIX_CV}
   ${TILE_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
   Normalize/NormalizeMath.cpp
@@ -31,6 +34,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ComposeCollapseExpand.cpp
   ConstantizeBufferSize.cpp
   ConvertToHIVMOp.cpp
+  InsertAnchorsAndBackup.cpp
   ConvertLayout/CombineOptimizedConvertLayout.cpp
   ConvertLayout/ConvertLayoutToTranspose.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
@@ -88,7 +92,6 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MarkDisableLoad.cpp
   MarkMultiBuffer.cpp
   MarkRealCoreType.cpp
-  NormalizeLoopIterator.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp

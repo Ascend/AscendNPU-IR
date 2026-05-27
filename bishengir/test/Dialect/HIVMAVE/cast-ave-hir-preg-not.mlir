@@ -3,7 +3,7 @@
   func.func private @_mlir_ciface_vcmp_ne_int64_t(!llvm.ptr, !llvm.ptr, vector<256xi1>) -> vector<256xi1> attributes {hacc.always_inline, llvm.emit_c_interface}
   func.func private @vload_NORM_int64_t_rank1(!llvm.ptr, memref<?xi64, strided<[?], offset: ?>, #hivm.address_space<ub>>, i64) attributes {hacc.always_inline, llvm.emit_c_interface}
   func.func private @_mlir_ciface_vdups_int64_t(!llvm.ptr, i64, vector<256xi1>) attributes {hacc.always_inline, llvm.emit_c_interface}
-  func.func @triton_unk_fused__npu_dtype_cast__softmax_div_eq_masked_fill_2_outlined_vf_6(%arg0: memref<1x1x39xi64, strided<[40, 40, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x1x39xi1, strided<[256, 256, 1]>, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 32 : i32, hivm.vector_function} {
+  func.func @triton_unk_fused__npu_dtype_cast__softmax_div_eq_masked_fill_2_outlined_vf_6(%arg0: memref<1x1x39xi64, strided<[40, 40, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x1x39xi1, strided<[256, 256, 1]>, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
     %0 = llvm.mlir.constant(1 : i64) : i64
     %c39 = arith.constant 39 : index
     %c0 = arith.constant 0 : index

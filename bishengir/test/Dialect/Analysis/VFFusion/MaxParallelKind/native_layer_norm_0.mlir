@@ -1,7 +1,6 @@
 // RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_0(
-// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.broadcast
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
@@ -10,9 +9,6 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func private @triton_unk_fused_native_layer_norm_0_fused_1(
-// CHECK: arith.constant
-// CHECK: arith.constant
-// CHECK: arith.constant
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
 // CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
 // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>}
@@ -26,7 +22,6 @@
 // CHECK: return
 
 // CHECK-LABEL: func.func @triton_unk_fused_native_layer_norm_0(
-// CHECK: arith.constant
 // CHECK: tensor.empty
 // CHECK: arith.muli
 // CHECK: arith.addi

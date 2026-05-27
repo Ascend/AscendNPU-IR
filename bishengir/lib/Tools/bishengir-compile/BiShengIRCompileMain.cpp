@@ -186,7 +186,14 @@ runExternalHIVMC(ModuleOp &module,
   arguments.push_back("");
   arguments.push_back(inputFile);
 
-  auto hivmcOptions = filterSharedHIVMCOptions(config.getHIVMCArgsDashDash());
+  // HIVMCArgs is populated by collectHIVMCArgs from (a) the auto-collected
+  // cl::opt sweep, which only emits options whose Options.td entry has
+  // isSharedWithDownstreamToolchain = 1 (already filtered at codegen time),
+  // and (b) verbatim user --hivmc-args content (intentional passthrough).
+  // filterSharedHIVMCOptions would only ever strip (b), which is exactly the
+  // case where users want diagnostic flags like -debug-only, -stats, or
+  // -print-after-all to reach hivmc; skip the filter on this path.
+  auto hivmcOptions = config.getHIVMCArgsDashDash();
   llvm::append_range(arguments, hivmcOptions);
   for (const auto &arg : filterSharedHIVMCOptions(config.getClArgs())) {
     auto argName = StringRef(arg).ltrim('-').split('=').first;
@@ -268,8 +275,22 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   int tryTimes = 5;
   // triton compile has nothing to do with HFusion auto schedule, so we don't
   // need to tune for it.
+  //
+  // TODO: refactor this ad-hoc retry loop into a dedicated retryPassManager
+  // so each fallback policy is composable and explicit. Planned policies:
+  //   - OpFusion retry policy: bump tiling-max-counter each attempt, up to 5
+  //     retries (the current default branch).
+  //   - AutoBlockify retry policy: progressively disable hoisting and then
+  //     multi-buffer.
+  //   - MultiBuffer retry policy: disable auto-multi-buffer.
+  // Once the retryPassManager exists, the tryTimes / nested-if logic below
+  // should be replaced by composing those policies.
   if (config.getEnableVFFusion()) {
-    tryTimes = 2;
+    // With VFFusion enabled, the ub-overflow fallback runs in tiers:
+    // first try disabling auto-multi-buffer, then disable VFFusion plus
+    // the VF reachable check. Reserve one extra attempt when
+    // auto-multi-buffer is also enabled so both tiers have room to run.
+    tryTimes = config.getEnableAutoMultiBuffer() ? 3 : 2;
   } else if (config.getEnableTuningMode() || config.getEnableTritonKernelCompile()) {
     tryTimes = 1;
   }
@@ -303,15 +324,31 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
       if (!success && hasUboverflow) {
-        diagEngine.eraseHandler(handlerID);
-        for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-          diagEngine.emit(std::move(diag));
+        if (config.getEnableAutoMultiBuffer()) {
+          // First-tier fallback on ub overflow: turn off
+          // auto-multi-buffer and retry. Keep the diagnostic handler
+          // registered so a subsequent ub overflow on the retry can
+          // still be detected; clear the captured diagnostics so they
+          // are not surfaced if the retry succeeds (or are replaced by
+          // fresher ones before the next-tier fallback re-emits them).
+          LDBG("ub overflow detected, fallback with disabled auto multi "
+               "buffer");
+          collectedDiagnostics.clear();
+          config.setEnableAutoMultiBuffer(false);
+        } else {
+          // Next-tier fallback (or first tier when auto-multi-buffer
+          // was already off): disable VFFusion and the VF reachable
+          // check.
+          diagEngine.eraseHandler(handlerID);
+          for (auto &diag : llvm::reverse(collectedDiagnostics)) {
+            diagEngine.emit(std::move(diag));
+          }
+          if (config.getEnableVFFusion()) {
+            LDBG("ub overflow detected, fallback with disabled vffusion");
+            config.setEnableVFFusion(false);
+          }
+          config.setDisableVFReachableCheck(true);
         }
-        if (config.getEnableVFFusion()) {
-          LDBG("ub overflow detected, fallback with disabled vffusion");
-          config.setEnableVFFusion(false);
-        }
-        config.setDisableVFReachableCheck(true);
       }
     }
 

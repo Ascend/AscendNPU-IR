@@ -135,7 +135,8 @@ createNewParentOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
 
   rewriter.setInsertionPointToStart(maybeSubBlockLoop.value().getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(), size.value());
+      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(),
+      parentOp.getSource(), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -183,7 +184,8 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
       childOp->template getParentOfType<scf::ForOp>().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
       rewriter, childOp->getLoc(),
-      childOp->template getParentOfType<scf::ForOp>(), newSize.value());
+      childOp->template getParentOfType<scf::ForOp>(),
+      createdNewParent->getResult(0), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -523,7 +525,7 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
 
     auto offsetAtTileDim =
         calculateOffsetAtTilingDim(rewriter, expandOp.getLoc(), containingLoop,
-                                   maybeSingleTileSize.value());
+                                   expandOp.getSrc(), tilingDim);
 
     // Calculate inputOffsets
     for (int64_t i = 0; i < inputRankType.getRank(); i++) {
@@ -881,7 +883,7 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
       sliceOp->getParentOfType<scf::ForOp>().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
       rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
-      size.value());
+      parentInsertOp.getSource(), tilingDim);
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
           newInsertStrides, newInsertOffsets, newInsertSizes, newInsertShape)))
@@ -1515,65 +1517,6 @@ BitcastBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
-// This strategy handles odd tiling scenarios where a static tensor.empty is
-// sliced into a dynamic-sized extract_slice (e.g., tensor<115xf32> ->
-// tensor<?xf32>). It marks the buffer size for the sliced tensor to support
-// double buffering.
-bool EmptyBubbleUpStrategy::isSupportedOperation(
-    tensor::ExtractSliceOp sliceOp) const {
-  auto *sourceOp = sliceOp.getSource().getDefiningOp();
-  if (!sourceOp)
-    return false;
-  auto emptyOp = dyn_cast<tensor::EmptyOp>(sourceOp);
-  if (!emptyOp)
-    return false;
-
-  // Must be dynamic slice (odd tiling produces dynamic sizes)
-  // e.g., 115 -> ceil(115/2) = 58 (dynamic)
-  if (!isDynamicSlice(sliceOp))
-    return false;
-
-  // EmptyOp must have static shape (key characteristic of odd tiling)
-  // Odd tiling: static empty -> dynamic slice
-  // Non-odd tiling or dynamic input: dynamic empty -> dynamic slice
-  auto emptyType = cast<RankedTensorType>(emptyOp.getType());
-  if (!emptyType.hasStaticShape())
-    return false;
-
-  // Must slice only one dimension (1:2 tiling pattern)
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  if (extractDims.size() != 1)
-    return false;
-  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(), kBufferSizeInByteAttr))
-    return false;
-  return true;
-}
-
-LogicalResult EmptyBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-                                             PatternRewriter &rewriter) const {
-  auto emptyOp = cast<tensor::EmptyOp>(sliceOp.getSource().getDefiningOp());
-  auto extractDims = getExtractOrInsertDim(sliceOp);
-  auto tilingDim = *extractDims.begin();
-  auto bufferSize = calculateBufferSizeInBytes(
-      sliceOp.getType(), emptyOp.getType().getShape(),
-      static_cast<int64_t>(tilingDim));
-
-  rewriter.setInsertionPointAfter(sliceOp);
-  // Mark on sliceOp instead of emptyOp because emptyOp may have multiple users
-  // (multiple extract_slice ops). Marking on emptyOp would prevent folding due
-  // to multiple users. Each slice gets its own buffer_size_in_byte annotation.
-  //
-  // After tensor.empty folding pass (FoldTensorEmptyPatterns), the sliceOp will
-  // be folded: emptyOp + extract_slice -> smaller emptyOp (sliced shape).
-  // The MarkOp will follow the fold and eventually annotate the new emptyOp.
-  auto newMarkOp = rewriter.create<annotation::MarkOp>(sliceOp->getLoc(),
-                                                       sliceOp.getResult());
-  newMarkOp->setAttr(kBufferSizeInByteAttr,
-                     rewriter.getI64IntegerAttr(bufferSize));
-
-  return success();
-}
-
 static LogicalResult
 markOddTilingBufferSizeIfNeeded(tensor::ExtractSliceOp sliceOp,
                                 TensorType sourceTensorType, Value buffer,
@@ -1838,11 +1781,25 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         auto newUbAllocOp = rewriter.create<memref::AllocOp>(loc, newType);
 
         // deal with the annotation.mark Op
+        auto oldShape = originalType.getShape();
         for (Operation *userOp :
              llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
           if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
-            rewriter.modifyOpInPlace(
-                mark, [&]() { mark->setOperand(0, newUbAllocOp.getResult()); });
+            rewriter.modifyOpInPlace(mark, [&]() {
+              mark->setOperand(0, newUbAllocOp.getResult());
+              for (int64_t i = 0, e = (int64_t)staticShape.size(); i < e; ++i) {
+                if (staticShape[i] != oldShape[i]) {
+                  auto tilingDimAttr =
+                      mark->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
+                  if (tilingDimAttr) {
+                    mark->setAttr(AICAttrTilingDim,
+                                  IntegerAttr::get(
+                                      IndexType::get(mark->getContext()), i));
+                  }
+                  break;
+                }
+              }
+            });
           }
         }
 
@@ -2315,6 +2272,56 @@ FixpipeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.replaceOp(sliceOp, newFixpipeOp);
   if (fixpipeOp->use_empty())
     rewriter.eraseOp(fixpipeOp);
+
+  return success();
+}
+
+LogicalResult MarkEmptySliceBufferSize::matchAndRewrite(
+    tensor::ExtractSliceOp sliceOp,
+    PatternRewriter &rewriter) const {
+
+  // 0) Must have the to_be_bubbled_slice attribute set by tiling.
+  if (!isMarkedExtractSliceOp(sliceOp))
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "not marked to_be_bubbled_slice");
+
+  // 1) Source must be a tensor::EmptyOp with static shape.
+  auto emptyOp = dyn_cast_or_null<tensor::EmptyOp>(
+      sliceOp.getSource().getDefiningOp());
+  if (!emptyOp)
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "source is not tensor.empty");
+  auto emptyType = cast<RankedTensorType>(emptyOp.getType());
+  if (!emptyType.hasStaticShape())
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "emptyOp must have static shape");
+
+  // 2) Slice must be dynamic (odd tiling produces dynamic sizes).
+  if (!ShapedType::isDynamicShape(sliceOp.getStaticSizes()))
+    return rewriter.notifyMatchFailure(sliceOp, "expected dynamic slice");
+
+  // 3) Exactly one extract dim (1:2 tiling pattern).
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "expected exactly 1 extract dim");
+
+  // 4) No existing buffer_size annotation.
+  if (utils::getAnnotateOpWithAttr(sliceOp.getResult(),
+                                   kBufferSizeInByteAttr))
+    return rewriter.notifyMatchFailure(sliceOp,
+                                       "already has buffer_size mark");
+
+  auto tilingDim = *extractDims.begin();
+  auto bufferSize = calculateBufferSizeInBytes(
+      sliceOp.getType(), emptyOp.getType().getShape(),
+      static_cast<int64_t>(tilingDim));
+
+  rewriter.setInsertionPointAfter(sliceOp);
+  auto newMarkOp = rewriter.create<annotation::MarkOp>(
+      sliceOp->getLoc(), sliceOp.getResult());
+  newMarkOp->setAttr(kBufferSizeInByteAttr,
+                     rewriter.getI64IntegerAttr(bufferSize));
 
   return success();
 }

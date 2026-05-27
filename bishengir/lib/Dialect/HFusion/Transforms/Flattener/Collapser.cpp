@@ -840,10 +840,9 @@ void Flattener::calculateOffsets(T slicingOp,
   }
 }
 
-void Flattener::calculateStrides(memref::SubViewOp slicingOp,
-                                 ReassociationIndices &collapseGroup,
-                                 SmallVector<OpFoldResult> &newMixedStrides,
-                                 OpBuilder &builder) {
+void Flattener::calculateSubviewStrides(
+    memref::SubViewOp slicingOp, ReassociationIndices &collapseGroup,
+    SmallVector<OpFoldResult> &newMixedStrides, OpBuilder &builder) {
   auto src = slicingOp.getSource();
   auto res = slicingOp.getResult();
   auto resMemRefType = res.getType();
@@ -908,6 +907,68 @@ void Flattener::calculateStrides(memref::SubViewOp slicingOp,
   }
 }
 
+template <class T, typename>
+void Flattener::calculateSliceStrides(
+    T sliceOp,
+    ReassociationIndices &collapseGroup,
+    SmallVector<OpFoldResult> &newMixedStrides,
+    OpBuilder &builder) {
+  // We could not combine sliceOp with subviewOp currently,
+  // please read this before trying combining.
+  // FlattenOps process subviewOp & sliceOp differently,
+  // axis continuity is processed during processBFS in
+  // processSlicingOp for sliceOp, but during adjusting in
+  // calculateSubviewStrides of subviewOp
+  assert(!collapseGroup.empty() && "collapse group must not be empty");
+
+  Value src = sliceOp.getSource();
+  if (std::is_same_v<T, tensor::InsertSliceOp>)
+      src = sliceOp.getResult();
+  auto previousTy = dyn_cast<RankedTensorType>(previousType_[src]);
+  assert(previousTy &&
+         "extract_slice source must have previous ranked tensor type");
+
+  auto mixedSizes = sliceOp.getMixedSizes();
+  auto mixedStrides = sliceOp.getMixedStrides();
+  assert(previousTy.getRank() == static_cast<int64_t>(mixedSizes.size()) &&
+         "extract_slice rank must match source rank");
+  // Find the last non-unit pos in the collapse group.
+  int64_t pivotPos = static_cast<int64_t>(collapseGroup.size()) - 1;
+  while (pivotPos > 0) {
+    int64_t axis = collapseGroup[pivotPos];
+    auto maybeSize = getConstantIntValue(mixedSizes[axis]);
+    if (!maybeSize.has_value() || maybeSize.value() != 1)
+      break;
+    --pivotPos;
+  }
+
+  // If there is no trailing unit dim, keep the stride of the last
+  // non-unit extract axis.
+  int64_t pivotAxis = collapseGroup[pivotPos];
+  OpFoldResult collapsedStride = mixedStrides[pivotAxis];
+  if (pivotPos == static_cast<int64_t>(collapseGroup.size()) - 1) {
+    newMixedStrides.push_back(collapsedStride);
+    return;
+  }
+
+  // For trailing unit dims absorbed into the collapse group, preserve the
+  // source storage step of the first absorbed unit axis. Example:
+  // <a x b x c> -> <a x b x 1> with [[0], [1, 2]] collapses to <a x b>,
+  // and the final stride should stay c rather than 1.
+  auto previousMixedSizes = getFlattenMixedSizes(src);
+  assert(previousMixedSizes.size() == mixedSizes.size() &&
+         "previous mixed sizes must match original extract rank");
+  int64_t trailingProduct = 1;
+  while (pivotPos < static_cast<int64_t>(collapseGroup.size()) - 1) {
+    auto axis = collapseGroup[pivotPos + 1];
+    auto trailingSize = getConstantIntValue(previousMixedSizes[axis]);
+    assert(trailingSize.has_value());
+    trailingProduct *= trailingSize.value();
+    ++pivotPos;
+  }
+  newMixedStrides.push_back(builder.getI64IntegerAttr(trailingProduct));
+}
+
 template <class T>
 void Flattener::computeNewSlicingOperands(
     T slicingOp, SmallVector<OpFoldResult> &newMixedOffsets,
@@ -940,7 +1001,16 @@ void Flattener::computeNewSlicingOperands(
     if (dimPushed == 0) {
       dimPushed++;
       if (auto subview = dyn_cast<memref::SubViewOp>(*slicingOp)) {
-        calculateStrides(subview, collapseGroup, newMixedStrides, builder);
+        calculateSubviewStrides(subview, collapseGroup, newMixedStrides,
+                                builder);
+      } else if (auto extractSliceOp =
+                     dyn_cast<tensor::ExtractSliceOp>(*slicingOp)) {
+        calculateSliceStrides(extractSliceOp, collapseGroup,
+                              newMixedStrides, builder);
+      } else if (auto insertSliceOp =
+                     dyn_cast<tensor::InsertSliceOp>(*slicingOp)) {
+        calculateSliceStrides(insertSliceOp, collapseGroup,
+                              newMixedStrides, builder);
       } else {
         auto realStridedValue =
             getConstantIntValue(mixedStrides[collapseGroup.back()]);

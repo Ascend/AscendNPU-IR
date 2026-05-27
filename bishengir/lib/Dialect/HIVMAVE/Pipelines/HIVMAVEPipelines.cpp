@@ -70,12 +70,13 @@ static void hivmAVEOptimizationPipeline(
         hivmave::createCombineAVEOPsPass(combineAVEOPsOptions));
     pm.nest<func::FuncOp>().addPass(
         hivmave::createScalarBroadcastToVLoadPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createDataLayoutAnalysisPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPLTMPass());
     pm.nest<func::FuncOp>().addPass(scf::createLegalizeLoopIterArgsPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createAppendVectorLayoutPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createAnnotateDistOpLayoutPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createEliminateVectorLayoutPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeVectorLayoutPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAnalyzeAlignmentBitwidthPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createRemoveVectorLayoutAttrPass());
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAVENormalizeOpsPass());
   }
 }
 

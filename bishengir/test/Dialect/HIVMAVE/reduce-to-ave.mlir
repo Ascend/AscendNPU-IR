@@ -3,7 +3,7 @@
 #map1 = affine_map<(d0)[s0] -> (d0 + s0)>
 
 // CHECK-LABEL: func.func @reduction_max
-func.func @reduction_max(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>, %arg2: memref<16xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 16 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @reduction_max(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>, %arg2: memref<16xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c16 = arith.constant 16 : index
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -26,7 +26,7 @@ func.func @reduction_max(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: 
     %11 = builtin.unrealized_conversion_cast %10 : vector<128xi16> to vector<1xi16>
     %12 = ave.hir.pge <ALL> : vector<1xi1>
     ave.hir.masked_store <ONEPT_B16> %reinterpret_cast_5[], %12, %11 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<i16, strided<[], offset: ?>, #hivm.address_space<ub>>, vector<1xi1>, vector<1xi16>
-  } {element_alignment_bit_width = 16 : i32}
+  }
   %2 = ave.hir.pge <VL16> {mask_op_idx = 1 : i32} : vector<128xi1>
   %res = ave.hir.vload <NORM> %arg0[%c0] : memref<16xi16, #hivm.address_space<ub>> into vector<128xi16>
   %3 = ave.hir.vtrunci %res, false, %2 {part = #ave.vcvt_part_type<part_even>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
@@ -39,7 +39,7 @@ func.func @reduction_max(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: 
 
 
 // CHECK-LABEL: func.func @reduction_umax
-func.func @reduction_umax(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>, %arg2: memref<16xi8, #hivm.address_space<ub>>) attributes {element_alignment_bit_width = 16 : i32, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+func.func @reduction_umax(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1: memref<16x16xi8, #hivm.address_space<ub>>, %arg2: memref<16xi8, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c16 = arith.constant 16 : index
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -62,7 +62,7 @@ func.func @reduction_umax(%arg0: memref<16xi16, #hivm.address_space<ub>>, %arg1:
     %11 = builtin.unrealized_conversion_cast %10 : vector<128xi16> to vector<1xi16>
     %12 = ave.hir.pge <ALL> : vector<1xi1>
     ave.hir.masked_store <ONEPT_B16> %reinterpret_cast_5[], %12, %11 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<i16, strided<[], offset: ?>, #hivm.address_space<ub>>, vector<1xi1>, vector<1xi16>
-  } {element_alignment_bit_width = 16 : i32}
+  }
   %2 = ave.hir.pge <VL16> {mask_op_idx = 1 : i32} : vector<128xi1>
   %res = ave.hir.vload <NORM> %arg0[%c0] : memref<16xi16, #hivm.address_space<ub>> into vector<128xi16>
   %3 = ave.hir.vtrunci %res, false, %2 {part = #ave.vcvt_part_type<part_even>} : vector<128xi16>, vector<128xi8>, vector<128xi1>
