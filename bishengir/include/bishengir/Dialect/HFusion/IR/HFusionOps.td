@@ -781,4 +781,40 @@ def NextAfterOp : HFusion_Op<"nextafter", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
+def HypotOp : HFusion_Op<"hypot", [Pure]> {
+  let summary = [{
+    Computes the element-wise hypotenuse of two or three tensors
+  }];
+
+  let description = [{
+    Computes:
+      hypot(x, y)    = sqrt(x * x + y * y)
+      hypot(x, y, z) = sqrt(x * x + y * y + z * z)
+
+    The third operand is optional. Therefore this op supports exactly
+    2-input and 3-input forms.
+
+    BF16 is supported only for the 2-input form. The 3-input form supports
+    F16 and F32.
+  }];
+
+  let arguments = (ins
+    RankedTensorOf<[BF16, F16, F32]>:$x,
+    RankedTensorOf<[BF16, F16, F32]>:$y,
+    Optional<RankedTensorOf<[BF16, F16, F32]>>:$z
+  );
+
+  let results = (outs
+    RankedTensorOf<[BF16, F16, F32]>:$output
+  );
+
+  let assemblyFormat = [{
+    $x `,` $y (`,` $z^)?
+    attr-dict
+    `:` type($x) `,` type($y) (`,` type($z)^)? `->` type($output)
+  }];
+
+  let hasVerifier = 1;
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

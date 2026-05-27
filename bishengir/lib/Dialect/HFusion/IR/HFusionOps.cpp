@@ -3780,3 +3780,28 @@ Conv3DOp::getRegionBuilder() {
     helper.yieldOutputs(yields);
   };
 }
+
+
+LogicalResult HypotOp::verify() {
+  auto xType = dyn_cast<RankedTensorType>(getX().getType());
+  auto yType = dyn_cast<RankedTensorType>(getY().getType());
+  auto outType = dyn_cast<RankedTensorType>(getOutput().getType());
+  if (!xType || !yType || !outType)
+    return emitOpError() << "requires ranked tensor types for x, y and output";
+  if (yType != xType)
+    return emitOpError() << "requires x and y to have the same type";
+  if (outType != xType)
+    return emitOpError() << "requires output to have the same type as inputs";
+  if (Value z = getZ()) {
+    auto zType = dyn_cast<RankedTensorType>(z.getType());
+    if (!zType)
+      return emitOpError() << "requires z to be a ranked tensor";
+    if (zType != xType)
+      return emitOpError() << "requires z to have the same type as x and y";
+    auto elemType = dyn_cast<FloatType>(xType.getElementType());
+    if (elemType && elemType.isBF16()) {
+      return emitOpError() << "supports bf16 only for the 2-input form";
+    }
+  }
+  return success();
+}

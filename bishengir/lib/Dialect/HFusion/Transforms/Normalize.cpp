@@ -8551,6 +8551,537 @@ private:
   }
 };
 
+// Lowers hypot for 2 or 3 inputs with dtype-specific compute paths.
+// bf16 is accepted only for the 2-input form.
+//
+// Let inputs be v_i, i in [0, arity), where arity is 2 or 3.
+// For f16/bf16, inputs are first promoted to f32. Then:
+//   a_i = |v_i|
+//   any_nan = OR_i isnan(v_i)
+//   any_inf = OR_i (a_i == +inf)
+//
+// Direct path:
+//   direct_sum = sum_i (a_i * a_i)
+//   direct_result = sqrt(direct_sum)
+//
+// Scaled path:
+//   scale = max_i a_i
+//   safe_scale = scale == 0 ? 1 : scale
+//   scaled_term_i =
+//       0                          if scale == 0
+//       1                          if a_i == scale
+//       (a_i / safe_scale)^2       otherwise
+//   scaled_sum = sum_i scaled_term_i
+//   scaled_root = sqrt(scaled_sum)
+//   if original dtype is bf16:
+//     scaled_root =
+//         scaled_root                                      if scale == 0 or
+//         scaled_root == 0 0.5 * (scaled_root + scaled_sum / scaled_root)
+//         otherwise
+//   scaled_result = scale * scaled_root
+//
+// Final finite-result selection:
+//   f32:
+//     result = scaled_result
+//   f16:
+//     result = direct_result
+//   bf16 (2-input only):
+//     use_direct =
+//         sqrt(min_f32_normal) <= scale <= sqrt(max_f32 / 2)
+//     result = use_direct ? direct_result : scaled_result
+//
+// Special values are applied after the finite path:
+//   result = any_nan ? NaN : result
+//   result = any_inf ? +Inf : result
+// Therefore +Inf wins if both NaN and Inf appear across operands.
+//
+// Cast-back:
+//   f32: keep result as is
+//   f16: cast f32 -> f16 with round-to-nearest-even (RINT)
+//   bf16: first round to a bf16-exact f32 bit pattern, then cast with RINT
+struct NormalizeHypotOp : public OpRewritePattern<hfusion::HypotOp> {
+  using OpRewritePattern<hfusion::HypotOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::HypotOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    PreparedOperands operands;
+    if (failed(prepareOperands(rewriter, op, operands)))
+      return failure();
+
+    HypotConstants constants =
+        createHypotConstants(rewriter, loc, operands.computeElemType);
+    Value floatEmpty =
+        utils::createEmptyOp(rewriter, loc, operands.values.front());
+    Value i1Empty = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, operands.values.front(), rewriter.getI1Type());
+
+    SmallVector<Value> absOperands =
+        createAbsOperands(rewriter, loc, operands.values, floatEmpty);
+    if (absOperands.size() != operands.values.size())
+      return failure();
+    SpecialValueMasks masks = createSpecialValueMasks(
+        rewriter, loc, operands.values, absOperands, constants.inf, i1Empty);
+
+    Value result;
+    if (operands.originalElemType.isF16()) {
+      result = createDirectHypotResult(rewriter, loc, absOperands, floatEmpty);
+    } else {
+      Value scale =
+          createScale(rewriter, loc, absOperands, floatEmpty, i1Empty);
+      Value scaleIsZero;
+      Value safeScale = createSafeScale(rewriter, loc, constants, scale,
+                                        floatEmpty, i1Empty, scaleIsZero);
+      Value squareSum = createNormalizedSquareSum(
+          rewriter, loc, absOperands, constants, scale, safeScale, scaleIsZero,
+          floatEmpty, i1Empty);
+      result =
+          createHypotResult(rewriter, loc, operands, absOperands, constants,
+                            scale, squareSum, scaleIsZero, floatEmpty, i1Empty);
+    }
+    result =
+        applySpecialCases(rewriter, loc, constants, masks, result, floatEmpty);
+    result = castResultToOriginalType(rewriter, loc, operands, result);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  struct PreparedOperands {
+    SmallVector<Value> values;
+    FloatType originalElemType;
+    FloatType computeElemType;
+    bool castBackToOriginal = false;
+
+    bool isBinary() const { return values.size() == 2; }
+  };
+
+  struct SpecialValueMasks {
+    Value anyInf;
+    Value anyNan;
+  };
+
+  struct HypotConstants {
+    Value nan;
+    Value inf;
+    Value one;
+    Value zero;
+  };
+
+  bool hasSupportedHypotArity(ArrayRef<Value> operands) const {
+    return operands.size() >= 2 && operands.size() <= 3;
+  }
+
+  LogicalResult prepareOperands(PatternRewriter &rewriter, hfusion::HypotOp op,
+                                PreparedOperands &operands) const {
+    operands.values = {op.getX(), op.getY()};
+    if (Value z = op.getZ())
+      operands.values.push_back(z);
+    if (!hasSupportedHypotArity(operands.values))
+      return failure();
+
+    auto elemType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(operands.values.front().getType()));
+    auto yElemType =
+        dyn_cast<FloatType>(getElementTypeOrSelf(operands.values[1].getType()));
+    if (!elemType || !yElemType || elemType != yElemType)
+      return failure();
+    if (!elemType.isBF16() && !elemType.isF16() && !elemType.isF32())
+      return failure();
+    if (!operands.isBinary()) {
+      auto zElemType = dyn_cast<FloatType>(
+          getElementTypeOrSelf(operands.values[2].getType()));
+      if (!zElemType || zElemType != elemType)
+        return failure();
+      if (elemType.isBF16())
+        return failure();
+    }
+
+    operands.originalElemType = elemType;
+    operands.computeElemType = elemType;
+    operands.castBackToOriginal = !elemType.isF32();
+    if (!operands.castBackToOriginal)
+      return success();
+
+    operands.computeElemType = rewriter.getF32Type();
+    for (Value &operand : operands.values) {
+      operand = hfusion::castTo(rewriter, operand, operands.computeElemType,
+                                hfusion::RoundMode::ROUND);
+    }
+    return success();
+  }
+
+  HypotConstants createHypotConstants(PatternRewriter &rewriter, Location loc,
+                                      FloatType elemType) const {
+    return {createFloatConst(rewriter, loc, elemType,
+                             std::numeric_limits<double>::quiet_NaN()),
+            createFloatConst(rewriter, loc, elemType,
+                             std::numeric_limits<double>::infinity()),
+            createFloatConst(rewriter, loc, elemType, 1.0),
+            createFloatConst(rewriter, loc, elemType, 0.0)};
+  }
+
+  SmallVector<Value> createAbsOperands(PatternRewriter &rewriter, Location loc,
+                                       ArrayRef<Value> operands,
+                                       Value floatEmpty) const {
+    SmallVector<Value> absOperands;
+    absOperands.reserve(operands.size());
+    for (Value operand : operands) {
+      absOperands.push_back(createLinalgUnaryOp<linalg::UnaryFn::abs>(
+          rewriter, loc, operand, floatEmpty));
+    }
+    return absOperands;
+  }
+
+  SpecialValueMasks createSpecialValueMasks(PatternRewriter &rewriter,
+                                            Location loc,
+                                            ArrayRef<Value> operands,
+                                            ArrayRef<Value> absOperands,
+                                            Value inf, Value i1Empty) const {
+    Value anyInf = createOr(
+        rewriter, loc, createIsInf(rewriter, loc, absOperands[0], inf, i1Empty),
+        createIsInf(rewriter, loc, absOperands[1], inf, i1Empty), i1Empty);
+    Value anyNan = createOr(
+        rewriter, loc, createIsNan(rewriter, loc, operands[0], i1Empty),
+        createIsNan(rewriter, loc, operands[1], i1Empty), i1Empty);
+    for (size_t i = 2; i < operands.size(); ++i) {
+      anyInf = createOr(
+          rewriter, loc, anyInf,
+          createIsInf(rewriter, loc, absOperands[i], inf, i1Empty), i1Empty);
+      anyNan =
+          createOr(rewriter, loc, anyNan,
+                   createIsNan(rewriter, loc, operands[i], i1Empty), i1Empty);
+    }
+    return {anyInf, anyNan};
+  }
+
+  Value createScale(PatternRewriter &rewriter, Location loc,
+                    ArrayRef<Value> absOperands, Value floatEmpty,
+                    Value i1Empty) const {
+    Value scale = createMax(rewriter, loc, absOperands[0], absOperands[1],
+                            floatEmpty, i1Empty);
+    for (Value absOperand : absOperands.drop_front(2))
+      scale = createMax(rewriter, loc, scale, absOperand, floatEmpty, i1Empty);
+    return scale;
+  }
+
+  Value createSafeScale(PatternRewriter &rewriter, Location loc,
+                        const HypotConstants &constants, Value scale,
+                        Value floatEmpty, Value i1Empty,
+                        Value &scaleIsZero) const {
+    scaleIsZero = createCompare(rewriter, loc, scale, constants.zero,
+                                CompareFn::veq, i1Empty);
+    return createSelect(rewriter, loc, scaleIsZero, constants.one, scale,
+                        floatEmpty);
+  }
+
+  Value createNormalizedSquareSum(PatternRewriter &rewriter, Location loc,
+                                  ArrayRef<Value> absOperands,
+                                  const HypotConstants &constants, Value scale,
+                                  Value safeScale, Value scaleIsZero,
+                                  Value floatEmpty, Value i1Empty) const {
+    Value normalizedXSquare = createNormalizedSquareTerm(
+        rewriter, loc, absOperands[0], constants, scale, safeScale, scaleIsZero,
+        floatEmpty, i1Empty);
+    Value normalizedYSquare = createNormalizedSquareTerm(
+        rewriter, loc, absOperands[1], constants, scale, safeScale, scaleIsZero,
+        floatEmpty, i1Empty);
+    Value squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, normalizedXSquare, normalizedYSquare, floatEmpty);
+    for (Value absOperand : absOperands.drop_front(2)) {
+      Value normalizedSquare = createNormalizedSquareTerm(
+          rewriter, loc, absOperand, constants, scale, safeScale, scaleIsZero,
+          floatEmpty, i1Empty);
+      squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+          rewriter, loc, squareSum, normalizedSquare, floatEmpty);
+    }
+    return squareSum;
+  }
+
+  Value createNormalizedSquareTerm(PatternRewriter &rewriter, Location loc,
+                                   Value absInput,
+                                   const HypotConstants &constants, Value scale,
+                                   Value safeScale, Value scaleIsZero,
+                                   Value floatEmpty, Value i1Empty) const {
+    // The dominant term should be exactly 1 in real arithmetic. Selecting that
+    // exact contribution avoids rounding noise from (scale / safeScale)^2.
+    Value inputIsScale =
+        createCompare(rewriter, loc, absInput, scale, CompareFn::veq, i1Empty);
+    Value normalized =
+        createNormalizedValue(rewriter, loc, absInput, safeScale, floatEmpty);
+    Value normalizedSquare =
+        createSquare(rewriter, loc, normalized, floatEmpty);
+    Value nonZeroTerm = createSelect(rewriter, loc, inputIsScale, constants.one,
+                                     normalizedSquare, floatEmpty);
+    return createSelect(rewriter, loc, scaleIsZero, constants.zero, nonZeroTerm,
+                        floatEmpty);
+  }
+
+  Value createNormalizedValue(PatternRewriter &rewriter, Location loc,
+                              Value absInput, Value safeScale,
+                              Value floatEmpty) const {
+    return createLinalgBinOp<linalg::BinaryFn::div>(rewriter, loc, absInput,
+                                                    safeScale, floatEmpty);
+  }
+
+  Value createSquare(PatternRewriter &rewriter, Location loc, Value normalized,
+                     Value floatEmpty) const {
+    return createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, normalized,
+                                                    normalized, floatEmpty);
+  }
+
+  Value createHypotResult(PatternRewriter &rewriter, Location loc,
+                          const PreparedOperands &operands,
+                          ArrayRef<Value> absOperands,
+                          const HypotConstants &constants, Value scale,
+                          Value squareSum, Value scaleIsZero, Value floatEmpty,
+                          Value i1Empty) const {
+    Value scaledRoot = createHFusionUnaryOp<hfusion::UnaryFn::sqrt>(
+        rewriter, loc, squareSum, floatEmpty);
+    if (operands.originalElemType.isBF16()) {
+      Value directResult =
+          createDirectHypotResult(rewriter, loc, absOperands, floatEmpty);
+      Value useDirectResult = createUseDirectHypotMask(
+          rewriter, loc, constants, scale, absOperands.size(), i1Empty);
+      scaledRoot =
+          refineSqrtForBF16(rewriter, loc, constants, squareSum, scaledRoot,
+                            scaleIsZero, floatEmpty, i1Empty);
+      Value scaledResult = createLinalgBinOp<linalg::BinaryFn::mul>(
+          rewriter, loc, scale, scaledRoot, floatEmpty);
+      return createSelect(rewriter, loc, useDirectResult, directResult,
+                          scaledResult, floatEmpty);
+    }
+    return createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, scale,
+                                                    scaledRoot, floatEmpty);
+  }
+
+  Value createDirectHypotResult(PatternRewriter &rewriter, Location loc,
+                                ArrayRef<Value> absOperands,
+                                Value floatEmpty) const {
+    Value xSquare = createSquare(rewriter, loc, absOperands[0], floatEmpty);
+    Value ySquare = createSquare(rewriter, loc, absOperands[1], floatEmpty);
+    Value squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, xSquare, ySquare, floatEmpty);
+    for (Value absOperand : absOperands.drop_front(2)) {
+      Value operandSquare = createSquare(rewriter, loc, absOperand, floatEmpty);
+      squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+          rewriter, loc, squareSum, operandSquare, floatEmpty);
+    }
+    return createHFusionUnaryOp<hfusion::UnaryFn::sqrt>(rewriter, loc,
+                                                        squareSum, floatEmpty);
+  }
+
+  Value createUseDirectHypotMask(PatternRewriter &rewriter, Location loc,
+                                 const HypotConstants &constants, Value scale,
+                                 size_t arity, Value i1Empty) const {
+    double directMinScale = std::sqrt(std::numeric_limits<float>::min());
+    double directMaxScale = std::sqrt(std::numeric_limits<float>::max() /
+                                      static_cast<double>(arity));
+    Value minScale = createFloatConst(rewriter, loc, constants.zero.getType(),
+                                      directMinScale);
+    Value maxScale = createFloatConst(rewriter, loc, constants.zero.getType(),
+                                      directMaxScale);
+    Value scaleGeMin =
+        createCompare(rewriter, loc, scale, minScale, CompareFn::vge, i1Empty);
+    Value scaleLeMax =
+        createCompare(rewriter, loc, scale, maxScale, CompareFn::vle, i1Empty);
+    return createAnd(rewriter, loc, scaleGeMin, scaleLeMax, i1Empty);
+  }
+
+  Value refineSqrtForBF16(PatternRewriter &rewriter, Location loc,
+                          const HypotConstants &constants, Value squareSum,
+                          Value root, Value scaleIsZero, Value floatEmpty,
+                          Value i1Empty) const {
+    // For bf16 inputs the final answer is cast back from f32. A single Newton
+    // step on sqrt(sum), where sum is already normalized into a small range,
+    // reduces residual error enough to avoid rare multi-ulp bf16 mismatches.
+    Value rootIsZero = createCompare(rewriter, loc, root, constants.zero,
+                                     CompareFn::veq, i1Empty);
+    Value skipRefine =
+        createOr(rewriter, loc, scaleIsZero, rootIsZero, i1Empty);
+    Value sumOverRoot = createLinalgBinOp<linalg::BinaryFn::div>(
+        rewriter, loc, squareSum, root, floatEmpty);
+    Value rootPlusCorrection = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, root, sumOverRoot, floatEmpty);
+    Value half = createFloatConst(rewriter, loc, constants.zero.getType(), 0.5);
+    Value refined = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, rootPlusCorrection, half, floatEmpty);
+    return createSelect(rewriter, loc, skipRefine, root, refined, floatEmpty);
+  }
+
+  Value applySpecialCases(PatternRewriter &rewriter, Location loc,
+                          const HypotConstants &constants,
+                          const SpecialValueMasks &masks, Value result,
+                          Value floatEmpty) const {
+    result = createSelect(rewriter, loc, masks.anyNan, constants.nan, result,
+                          floatEmpty);
+    return createSelect(rewriter, loc, masks.anyInf, constants.inf, result,
+                        floatEmpty);
+  }
+
+  Value roundF32ToNearestEvenBF16Value(PatternRewriter &rewriter, Location loc,
+                                       Value input) const {
+    Type i32Type = rewriter.getI32Type();
+    Value i32Empty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, input, i32Type);
+    Value f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    Value bitPattern = createBitcast(rewriter, loc, input, i32Type, i32Empty);
+    Value shift16 = createIntConst(rewriter, loc, i32Type, 16);
+    Value one = createIntConst(rewriter, loc, i32Type, 1);
+    Value biasBase = createIntConst(rewriter, loc, i32Type, 0x7FFF);
+    Value truncationMask = createIntConst(rewriter, loc, i32Type, -65536);
+
+    Value upperHalf = createHFusionBinOp<hfusion::BinaryFn::shrui>(
+        rewriter, loc, bitPattern, shift16, i32Empty);
+    Value lsb = createHFusionBinOp<hfusion::BinaryFn::vand>(
+        rewriter, loc, upperHalf, one, i32Empty);
+    Value roundBias = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, biasBase, lsb, i32Empty);
+    Value biased = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, bitPattern, roundBias, i32Empty);
+    Value roundedBits = createHFusionBinOp<hfusion::BinaryFn::vand>(
+        rewriter, loc, biased, truncationMask, i32Empty);
+    return createBitcast(rewriter, loc, roundedBits, rewriter.getF32Type(),
+                         f32Empty);
+  }
+
+  Value castResultToOriginalType(PatternRewriter &rewriter, Location loc,
+                                 const PreparedOperands &operands,
+                                 Value result) const {
+    if (!operands.castBackToOriginal)
+      return result;
+    if (operands.originalElemType.isBF16()) {
+      // Round to a bf16-exact f32 value first so the subsequent cast becomes an
+      // exact representation change instead of relying on backend tie-breaking
+      // at f32->bf16 midpoint cases.
+      result = roundF32ToNearestEvenBF16Value(rewriter, loc, result);
+    }
+    // Hypot computes low-precision results in f32, so cast-back should follow
+    // IEEE round-to-nearest-even for both f16 and bf16.
+    return hfusion::castTo(rewriter, result, operands.originalElemType,
+                           hfusion::RoundMode::RINT);
+  }
+
+  template <linalg::BinaryFn fun>
+  Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                          Value rhs, Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <linalg::UnaryFn fun>
+  Value createLinalgUnaryOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Value out) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::UnaryFn fun>
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             Value input, Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::BinaryFn fun>
+  Value createHFusionBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                           Value rhs, Value out) const {
+    return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                   hfusion::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+
+  Value createIntConst(PatternRewriter &rewriter, Location loc, Type intType,
+                       int64_t value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, value));
+  }
+
+  Value createBitcast(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, Value out) const {
+    auto shapedType = cast<ShapedType>(input.getType());
+    return rewriter
+        .create<hfusion::BitcastOp>(loc,
+                                    TypeRange{shapedType.clone(targetElemType)},
+                                    ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createCompare(PatternRewriter &rewriter, Location loc, Value lhs,
+                      Value rhs, CompareFn compareFn, Value out) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(loc, TypeRange{out}, ValueRange{lhs, rhs},
+                                    ValueRange{out}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createVNot(PatternRewriter &rewriter, Location loc, Value input,
+                   Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::vnot, ValueRange{input},
+               ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createIsNan(PatternRewriter &rewriter, Location loc, Value input,
+                    Value i1Out) const {
+    auto equalSelf =
+        createCompare(rewriter, loc, input, input, CompareFn::veq, i1Out);
+    return createVNot(rewriter, loc, equalSelf, i1Out);
+  }
+
+  Value createIsInf(PatternRewriter &rewriter, Location loc, Value absInput,
+                    Value inf, Value i1Out) const {
+    return createCompare(rewriter, loc, absInput, inf, CompareFn::veq, i1Out);
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value trueValue, Value falseValue, Value out) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{out},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createMax(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out, Value i1Out) const {
+    auto lhsGtRhs =
+        createCompare(rewriter, loc, lhs, rhs, CompareFn::vgt, i1Out);
+    return createSelect(rewriter, loc, lhsGtRhs, lhs, rhs, out);
+  }
+
+  Value createOr(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                 Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vor>(rewriter, loc, lhs, rhs,
+                                                      out);
+  }
+
+  Value createAnd(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vand>(rewriter, loc, lhs, rhs,
+                                                       out);
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -8671,6 +9202,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
+  patterns.add<NormalizeHypotOp>(patterns.getContext());
   patterns.add<NormalizeErfInvOp>(patterns.getContext());
   patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());
   patterns.add<NormalizeNextAfterOp>(patterns.getContext());
