@@ -46,7 +46,32 @@ static FuncOpAnalysisState getFuncOpAnalysisState(const AnalysisState &state,
 namespace CallOpInterfaceForOpReuseInPlanMemory {
 static bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
                              const AnalysisState &state) {
-  if (uRead->getOwner() != uWrite->getOwner())
+  /// Same callOp and different value are the preconditions to have no
+  /// conflict. Because OpOperand can be read and written both.
+  ///
+  /// case:
+  ///
+  /// @test_vf(%arg: tensor<16xf32>) -> tensor<16xf32> {
+  ///   %0 = read %arg : tensor<16xf32>
+  ///   %1 = vadd %0, %cst
+  ///   %2 = write %1 to %arg : tensor<16xf32>
+  ///   return %2 : tensor<16xf32>
+  ///  }
+
+  /// @AIV (%arg0 = memref<16xf32>) {
+  ///   %1 = vbrc %0 : tensor<16xf32>
+  ///   for
+  ///     %2 = call @test_vf(%1) {hivm.vector_function, no_inline} :
+  ///     store %2 to %arg0 : memref<16xf32>
+  ///   endfor
+  ///  }
+
+  /// def:vbrcOp, uRead:callOp OpOperand #0(%1), uWrite:callOp OpOperand #0(%1).
+  /// In this case, we expect a RaW conflict because def is out of loop.
+  /// But wouldCreateReadAfterWriteInterference will return noConflict. So we
+  /// add extra check to make sure the uRead and uWrite are not the same value.
+
+  if (uRead->getOwner() != uWrite->getOwner() || uRead->get() == uWrite->get())
     return false;
 
   func::CallOp callOp = cast<func::CallOp>(op);

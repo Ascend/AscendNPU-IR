@@ -636,6 +636,45 @@ module {
 
 // -----
 
+module {
+
+  func.func @init_vf(%arg0: tensor<16xf32>) -> tensor<16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %c0 = arith.constant 0 : index
+    %mask = vector.constant_mask [16] : vector<64xi1>
+    %ret = vector.transfer_write %cst, %arg0[%c0], %mask {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+    return %ret : tensor<16xf32>
+  }
+
+  func.func @test_vf(%arg0: tensor<16xf32>) -> tensor<16xf32> attributes {hivm.vector_function, no_inline} {
+    %cst = arith.constant dense<1.000000e+00> : vector<64xf32>
+    %cst_1 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %0 = vector.constant_mask [16] : vector<64xi1>
+    %1 = vector.transfer_read %arg0[%c0], %cst_1, %0 {in_bounds = [true]} : tensor<16xf32>, vector<64xf32>
+    %2 = arith.addf %1, %cst : vector<64xf32>
+    %3 = vector.transfer_write %2, %arg0[%c0], %0 {in_bounds = [true]} : vector<64xf32>, tensor<16xf32>
+    return %3 : tensor<16xf32>
+  }
+
+  func.func @test_conflict_in_vf(%arg0: tensor<16xf32>, %arg1: memref<16xf32>) {
+    %c0_i32 = arith.constant 0 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %0 = tensor.empty() : tensor<16xf32>
+    // CHECK: %[[CALL_RESULT:.*]] = call @init_vf
+    %1 = func.call @init_vf(%0) {hivm.vector_function, no_inline} : (tensor<16xf32>) -> tensor<16xf32>
+    scf.for %arg2 = %c0_i32 to %c8_i32 step %c1_i32 : i32 {
+      // CHECK: memref.copy %[[CALL_RESULT]], %[[ALLOC:.*]] : memref<16xf32> to memref<16xf32>
+      %2 = func.call @test_vf(%1) {hivm.vector_function, no_inline} : (tensor<16xf32>) -> tensor<16xf32>
+      hivm.hir.store ins(%2 : tensor<16xf32>) outs(%arg1 : memref<16xf32>)
+    }
+    return
+  }
+}
+
+// -----
+
 func.func @test_not_copy_in_scf_whileOp(%arg0: tensor<16xf32>,
                                         %arg1: tensor<16xf32>,
                                         %arg2: i32) -> tensor<16xf32> {
