@@ -62,6 +62,10 @@ using namespace hivm::syncsolver;
 namespace mlir {
 struct DelayedCrossCoreGSSPass
     : public impl::DelayedCrossCoreGSSBase<DelayedCrossCoreGSSPass> {
+
+  explicit DelayedCrossCoreGSSPass(const DelayedCrossCoreGSSOptions &options)
+      : DelayedCrossCoreGSSBase(options) {}
+
   void runOnOperation() override;
 
 private:
@@ -617,6 +621,9 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
   }
+  if (this->blockAllSync) {
+    options.enableBlockAllMode = true;
+  }
 
   // Build the synthetic mix IR (consuming cube and vector translators in the
   // process) and hand its translators off so we can talk to live IR later.
@@ -929,6 +936,7 @@ void DelayedCrossCoreGSSPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createDelayedCrossCoreGSSPass() {
-  return std::make_unique<DelayedCrossCoreGSSPass>();
+std::unique_ptr<Pass> mlir::hivm::createDelayedCrossCoreGSSPass(
+    const DelayedCrossCoreGSSOptions &options) {
+  return std::make_unique<DelayedCrossCoreGSSPass>(options);
 }

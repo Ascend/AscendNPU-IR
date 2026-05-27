@@ -196,6 +196,9 @@ protected:
     customMacroSync.collectReservedEventIds(funcOp, options);
   }
 
+  // Run solver in block-all mode.
+  void solveBlockAllMode();
+
   // Reset solver internal bookkeeping prior to another pass.
   void reset(bool resetEventIdRanOutOpts = false);
 

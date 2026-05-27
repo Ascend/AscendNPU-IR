@@ -154,6 +154,9 @@ struct SyncSolverOptions {
   // Skip unrolling anchor ops.
   bool skipUnrollingAnchorOps{true};
 
+  // Enable block-all mode.
+  bool enableBlockAllMode{false};
+
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
         isRegBasedArch(isRegBasedArch) {

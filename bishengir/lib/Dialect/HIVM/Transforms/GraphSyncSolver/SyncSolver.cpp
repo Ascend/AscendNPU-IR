@@ -2720,10 +2720,24 @@ llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
   return llvm::success(runNum < maxRunNum);
 }
 
+void Solver::solveBlockAllMode() {
+  reset(/*resetEventIdRanOutOpts=*/true);
+  for (auto &[op, occs] : opAllOccurrences) {
+    if (auto *rwOp = dyn_cast<RWOperation>(op)) {
+      insertBarrierAllBeforeOp(rwOp, /*isUseless=*/false,
+                               /*isPersistent=*/true);
+    }
+  }
+}
+
 void Solver::solve() {
   if (customMacroSync.hasConflict())
     return;
 
+  if (options.enableBlockAllMode) {
+    solveBlockAllMode();
+    return;
+  }
   if (llvm::succeeded(runSolver())) {
     return;
   }

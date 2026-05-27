@@ -119,7 +119,8 @@ std::unique_ptr<Pass>
 createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
 
 // Create a pass to run delayed cross-core GSS driven by anchors.
-std::unique_ptr<Pass> createDelayedCrossCoreGSSPass();
+std::unique_ptr<Pass>
+createDelayedCrossCoreGSSPass(const DelayedCrossCoreGSSOptions &options = {});
 
 // Create a pass to insert anchor operations and backup mixed kernels.
 std::unique_ptr<Pass> createInsertAnchorsAndBackupPass(
