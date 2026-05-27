@@ -1793,7 +1793,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.setInsertionPoint(UbAllocOp);
         auto newUbAllocOp = rewriter.create<memref::AllocOp>(loc, newType);
 
-        // deal with the annotation.mark Op
+        // deal with the annotation.mark Op and sibling Op path
         auto oldShape = originalType.getShape();
         for (Operation *userOp :
              llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
@@ -1813,6 +1813,9 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                 }
               }
             });
+          } else if (!isa<memref::MemorySpaceCastOp>(userOp)){
+            // If there is a sibling user that is not memory_space_cast, we cannot tile.
+            return failure();
           }
         }
 
