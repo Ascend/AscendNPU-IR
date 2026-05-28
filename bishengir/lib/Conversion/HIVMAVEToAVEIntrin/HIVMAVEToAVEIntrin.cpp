@@ -1069,6 +1069,10 @@ unsigned getMaxDataTypeWidths(Operation *op, int elementAlignment) {
   if (opElementWidth != -1 && opElementWidth != 1) {
     return static_cast<unsigned>(opElementWidth);
   }
+  opElementWidth = getOpElementAlignmentBitWidth(op);	 
+  if (opElementWidth != -1 && opElementWidth != 1) { 
+    return static_cast<unsigned>(opElementWidth); 
+  }
   for (size_t i = 0; i < op->getNumOperands(); ++i) {
     Value operand = op->getOperand(i);
     Type optype = operand.getType();
