@@ -31,7 +31,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include <iterator>
 #include <memory>
 
 #define DEBUG_TYPE "hivm-delayed-cross-core-gss"
@@ -210,19 +212,40 @@ static AnchorInfo getAnchorInfo(IRTranslator *irTranslator, int64_t anchorId1,
 // Walk the open interval (anchorBefore, anchorAfter) and collect every
 // RWOperation reachable in pre-order, recursing into nested scopes.
 static llvm::SmallVector<RWOperation *>
-getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo) {
+getAllRWOperationsBetweenAnchors(OperationBase *opStart, OperationBase *opEnd,
+                                 bool includeOpEnd = false) {
   llvm::SmallVector<RWOperation *> collectedOps;
-  OperationBase *curOp = anchorInfo.anchorBefore;
+  OperationBase *curOp = opStart;
   curOp = getNextOperation(curOp);
   bool goingIn = true;
-  while (curOp != anchorInfo.anchorAfter) {
+  while (true) {
     assert(curOp != nullptr);
+    if (curOp == opEnd) {
+      if (!includeOpEnd) {
+        break;
+      }
+      if (isa<Scope>(curOp) && !goingIn) {
+        break;
+      }
+    }
     if (auto rwOp = dyn_cast<RWOperation>(curOp)) {
       collectedOps.push_back(rwOp);
+    }
+    if (curOp == opEnd) {
+      if (!isa<Scope>(curOp)) {
+        break;
+      }
     }
     curOp = getNextOperation(curOp, goingIn);
   }
   return collectedOps;
+}
+
+static llvm::SmallVector<RWOperation *>
+getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo,
+                                 bool includeOpEnd = false) {
+  return getAllRWOperationsBetweenAnchors(anchorInfo.anchorBefore,
+                                          anchorInfo.anchorAfter, includeOpEnd);
 }
 
 // Collapse all RW ops collected from one interval (across both cube and
@@ -236,8 +259,8 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
                         const llvm::SmallVector<RWOperation *> &rwOps) {
   std::optional<hivm::PIPE> pipeRead;
   std::optional<hivm::PIPE> pipeWrite;
-  llvm::SmallVector<Value> readMemVals;
-  llvm::SmallVector<Value> writeMemVals;
+  llvm::SetVector<Value> readMemVals;
+  llvm::SetVector<Value> writeMemVals;
   for (auto *rwOp : rwOps) {
     assert(rwOp != nullptr);
     if (!pipeRead.has_value()) {
@@ -261,13 +284,17 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
     if (pipeWrite.value() != rwOp->pipeWrite) {
       pipeWrite = hivm::PIPE::PIPE_S;
     }
-    llvm::append_range(readMemVals, rwOp->readMemVals);
-    llvm::append_range(writeMemVals, rwOp->writeMemVals);
+    for (auto value : rwOp->readMemVals) {
+      readMemVals.insert(value);
+    }
+    for (auto value : rwOp->writeMemVals) {
+      writeMemVals.insert(value);
+    }
   }
   assert(pipeRead.has_value() && pipeWrite.has_value());
-  return std::make_unique<RWOperation>(nullptr, parentOp, coreType,
-                                       pipeRead.value(), pipeWrite.value(),
-                                       readMemVals, writeMemVals);
+  return std::make_unique<RWOperation>(
+      nullptr, parentOp, coreType, pipeRead.value(), pipeWrite.value(),
+      readMemVals.takeVector(), writeMemVals.takeVector());
 }
 
 void DelayedCrossCoreIRTranslator::initIRTranslators() {
@@ -311,6 +338,57 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
   assert(anchorIdEnd - anchorIdStart + 1 ==
          static_cast<int64_t>(mixIRTranslator->anchorOpMap.size()));
 
+  auto createRWOperations =
+      [&](AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo, TCoreType coreType) {
+        assert(coreType == TCoreType::CUBE || coreType == TCoreType::VECTOR);
+
+        auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
+        auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+        assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
+        auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
+        assert(parentScopeOp != nullptr);
+
+        // Insert the synthetic op directly after `anchorBefore` so the solver
+        // sees it in the position the original interval would occupy.
+        auto &body = parentScopeOp->body;
+        auto it = std::find_if(body.begin(), body.end(),
+                               [anchorBeforeOp](const auto &item) {
+                                 return item.get() == anchorBeforeOp;
+                               });
+        assert(it != body.end());
+
+        auto selectedAnchorInfo =
+            coreType == TCoreType::CUBE ? cubeAnchorInfo : vectorAnchorInfo;
+        auto *curOp = selectedAnchorInfo.anchorBefore;
+        while (curOp != selectedAnchorInfo.anchorAfter) {
+          assert(curOp != nullptr);
+          auto *nxtOp = getNextOperation(curOp);
+          assert(curOp->parentOp == nxtOp->parentOp);
+          auto rwOps = getAllRWOperationsBetweenAnchors(curOp, nxtOp,
+                                                        /*includeOpEnd=*/true);
+          if (rwOps.empty()) {
+            curOp = nxtOp;
+            continue;
+          }
+
+          auto mergedRWOperation =
+              createMergedRWOperation(parentScopeOp, coreType, rwOps);
+          mergedRWOperation->mixAnchorInfo = mixAnchorInfo;
+          mergedRWOperation->cubeAnchorInfo = cubeAnchorInfo;
+          mergedRWOperation->vectorAnchorInfo = vectorAnchorInfo;
+
+          if (coreType == TCoreType::CUBE) {
+            mergedRWOperation->cubeAnchorInfo = AnchorInfo(nxtOp);
+          } else {
+            mergedRWOperation->vectorAnchorInfo = AnchorInfo(nxtOp);
+          }
+
+          it = body.insert(it + 1, std::move(mergedRWOperation));
+          curOp = nxtOp;
+        }
+      };
+
   auto createRWOperation = [&](int64_t anchorId, AnchorInfo mixAnchorInfo,
                                AnchorInfo cubeAnchorInfo,
                                AnchorInfo vectorAnchorInfo) {
@@ -320,29 +398,26 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
       return;
     }
 
-    // Synthetic core type:
-    //   - cube-only ops -> CUBE
-    //   - vector-only ops -> VECTOR
-    //   - both sides non-empty -> CUBE_AND_VECTOR (handled by the else-branch
-    //     defensively; in practice the third case is the common cross-core
-    //     hazard).
     TCoreType coreType;
-    if (!cubeRWOps.empty()) {
+    if (vectorRWOps.empty()) {
       coreType = TCoreType::CUBE;
-    } else if (!vectorRWOps.empty()) {
+      createRWOperations(mixAnchorInfo, cubeAnchorInfo, vectorAnchorInfo,
+                         coreType);
+      return;
+    } else if (cubeRWOps.empty()) {
       coreType = TCoreType::VECTOR;
+      createRWOperations(mixAnchorInfo, cubeAnchorInfo, vectorAnchorInfo,
+                         coreType);
+      return;
     } else {
       coreType = TCoreType::CUBE_AND_VECTOR;
-    }
-
-    LLVM_DEBUG({
-      if (coreType == TCoreType::CUBE_AND_VECTOR) {
+      LLVM_DEBUG({
         llvm::dbgs() << "createRWOperation: unexpected for both cube and "
                         "vector kernels to have rw ops between given anchors, "
                         "check anchor-id="
                      << anchorId << "\n";
-      }
-    });
+      });
+    }
 
     auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
     auto anchorAfterOp = mixAnchorInfo.anchorAfter;
