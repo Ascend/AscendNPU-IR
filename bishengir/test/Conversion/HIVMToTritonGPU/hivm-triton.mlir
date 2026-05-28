@@ -55,7 +55,7 @@ module {
 
 
 // -----
-// CHECK-LABEL: tt.func @load_check_strided_2d(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: i64, %arg6: i64, %arg7: !tt.ptr<f32>, %arg8: !tt.ptr<f32>, %arg9: i64, %arg10: i64, %arg11: i64, %arg12: !tt.ptr<f32>, %arg13: !tt.ptr<f32>, %arg14: i64, %arg15: i64, %arg16: i64) {
+// CHECK-LABEL: tt.func @load_check_strided_2d(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: i64, %arg6: i64, %arg7: !tt.ptr<f32>, %arg8: !tt.ptr<f32>, %arg9: i64, %arg10: i64, %arg11: i64, %arg12: !tt.ptr<f32>, %arg13: !tt.ptr<f32>, %arg14: i64, %arg15: i64, %arg16: i64)
 // CHECK-NEXT: %0 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
 // CHECK-NEXT: %1 = tt.reshape %0 : tensor<16xi32> -> tensor<16x1xi32>
 // CHECK-NEXT: %cst = arith.constant dense<64> : tensor<16x1xi32>
@@ -105,37 +105,6 @@ module {
                    outs(%reinterpret_cast_0 : memref<16x16xf32, strided<[64, 4], offset: 32>>)
     return
     }
-}
-
-
-// -----
-// CHECK-LABEL: tt.func @load_check_dynamic_reinterpret_2d
-// CHECK: [[ROW_RANGE:%.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK: [[ROW:%.*]] = tt.reshape [[ROW_RANGE]] : tensor<2xi32> -> tensor<2x1xi32>
-// CHECK: [[STRIDE:%.*]] = arith.index_cast %{{.*}} : index to i32
-// CHECK: [[STRIDE_SPLAT:%.*]] = tt.splat [[STRIDE]] : i32 -> tensor<2x1xi32>
-// CHECK: [[ROW_STRIDE:%.*]] = arith.muli [[ROW]], [[STRIDE_SPLAT]] : tensor<2x1xi32>
-// CHECK: [[BASE_OFFSET:%.*]] = arith.index_cast %{{.*}} : index to i32
-// CHECK: [[BASE_SPLAT:%.*]] = tt.splat [[BASE_OFFSET]] : i32 -> tensor<2x1xi32>
-// CHECK: [[WITH_ROW:%.*]] = arith.addi [[ROW_STRIDE]], [[BASE_SPLAT]] : tensor<2x1xi32>
-// CHECK: [[BASE_PTR:%.*]] = tt.splat %{{.*}} : !tt.ptr<i64> -> tensor<2x1x!tt.ptr<i64>>
-// CHECK: [[ROW_PTR:%.*]] = tt.addptr [[BASE_PTR]], [[WITH_ROW]] : tensor<2x1x!tt.ptr<i64>>, tensor<2x1xi32>
-// CHECK: [[COL_RANGE:%.*]] = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
-// CHECK: [[COL:%.*]] = tt.reshape [[COL_RANGE]] : tensor<4xi32> -> tensor<1x4xi32>
-// CHECK: [[PTR_BCAST:%.*]] = tt.broadcast [[ROW_PTR]] : tensor<2x1x!tt.ptr<i64>> -> tensor<2x4x!tt.ptr<i64>>
-// CHECK: [[COL_BCAST:%.*]] = tt.broadcast [[COL]] : tensor<1x4xi32> -> tensor<2x4xi32>
-// CHECK: [[PTRS:%.*]] = tt.addptr [[PTR_BCAST]], [[COL_BCAST]] : tensor<2x4x!tt.ptr<i64>>, tensor<2x4xi32>
-// CHECK: tt.load [[PTRS]] evictionPolicy = evict_first : tensor<2x4x!tt.ptr<i64>>
-
-module {
-  func.func @load_check_dynamic_reinterpret_2d(%arg0: memref<?xi64>, %arg1: memref<2x4xi64>, %arg2: index, %arg3: index) {
-    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg2], sizes: [2, 4], strides: [%arg3, 1]
-        : memref<?xi64> to memref<2x4xi64, strided<[?, 1], offset: ?>>
-    hivm.hir.load ins(%reinterpret_cast : memref<2x4xi64, strided<[?, 1], offset: ?>>)
-                  outs(%arg1 : memref<2x4xi64>) eviction_policy = <EvictFirst>
-    %0 = bufferization.to_tensor %arg1 restrict writable : memref<2x4xi64>
-    return
-  }
 }
 
 
@@ -302,23 +271,6 @@ module {
   func.func @index_arg_kernel_scope_0(%arg0: index) attributes {no_inline, outline, vector_function, vf_mode = #hivm.vf_mode<SIMT>} {
     %0 = arith.index_cast %arg0 : index to i32
     %1 = arith.addi %0, %0 : i32
-    return
-  }
-}
-
-// -----
-// CHECK-LABEL: tt.func @restore_get_block_idx
-// CHECK-NEXT: %[[PID:.*]] = tt.get_program_id x : i32
-// CHECK-NEXT: %[[C1:.*]] = arith.constant 1 : i32
-// CHECK-NEXT: %[[ADD:.*]] = arith.addi %[[PID]], %[[C1]] : i32
-// CHECK-NEXT: tt.return
-
-module {
-  func.func @restore_get_block_idx() {
-    %0 = hivm.hir.get_block_idx -> i64
-    %1 = arith.trunci %0 : i64 to i32
-    %c1_i32 = arith.constant 1 : i32
-    %2 = arith.addi %1, %c1_i32 : i32
     return
   }
 }

@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -55,6 +56,32 @@ FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
     return failure();
   }
   return valType.getRank();
+}
+
+// Returns true if walking back through view-like / to_tensor ops finds a
+// producer tagged with `hivm.fractal_layout` matching `layout`. Used to detect
+// data already laid out in the cube's expected fractal form by an upstream op
+// (e.g. the gather shortcut in InsertCVTightCoupledBuffer).
+bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
+  StringRef layoutName = hivm::stringifyDataLayout(layout);
+  Value cur = val;
+  while (cur) {
+    Operation *def = cur.getDefiningOp();
+    if (!def)
+      return false;
+    if (auto attr = def->getAttrOfType<StringAttr>("hivm.fractal_layout"))
+      return attr.getValue() == layoutName;
+    if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+      cur = toTensor.getMemref();
+      continue;
+    }
+    if (auto vlop = dyn_cast<ViewLikeOpInterface>(def)) {
+      cur = vlop.getViewSource();
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -788,8 +815,15 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
   }
   bool isTranspose = getATranspose().has_value();
   switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND, isTranspose);
+  case kDimTwo: {
+    // If A is already in the fractal form the cube wants, the transpose is
+    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getA(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND,
+                               effectiveTranspose);
+  }
   case kDimFour: {
     auto shape = cast<ShapedType>(getA().getType()).getShape();
     // When the alloc is four-dimensional, the last two dims should be the
@@ -811,8 +845,15 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandBLayout() {
   }
   bool isTranspose = getBTranspose().has_value();
   switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND, isTranspose);
+  case kDimTwo: {
+    // If B is already in the fractal form the cube wants, the transpose is
+    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getB(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND,
+                               effectiveTranspose);
+  }
   case kDimFour: {
     auto shape = cast<ShapedType>(getB().getType()).getShape();
     // When the alloc is four-dimensional, the last two dims should be the

@@ -103,6 +103,9 @@ public:
                                       oldFuncTy.getResults());
     auto newFunc =
         rewriter.create<triton::FuncOp>(op.getLoc(), op.getName(), funcType);
+    newFunc->setAttr(hivm::TFuncCoreTypeAttr::name,
+                     hivm::TFuncCoreTypeAttr::get(newFunc->getContext(),
+                                                  hivm::TFuncCoreType::AIV));
     if (sharedIdx) {
       newFunc.setArgAttr(*sharedIdx, SharedMemoryAttr::name,
                          rewriter.getUnitAttr());
@@ -131,9 +134,8 @@ public:
         argIdx += rank;
         argMapper.map(oldArg, dataPtr1);
       } else if (isa<IndexType>(oldArg.getType())) {
-        auto narrowedArg =
-            narrowABIIndexArg(rewriter, op.getLoc(), newArgs[argIdx++],
-                              oldArg.getType());
+        auto narrowedArg = narrowABIIndexArg(
+            rewriter, op.getLoc(), newArgs[argIdx++], oldArg.getType());
         argMapper.map(oldArg, narrowedArg);
       } else {
         argMapper.map(oldArg, newArgs[argIdx++]);
