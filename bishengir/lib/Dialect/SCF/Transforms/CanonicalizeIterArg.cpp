@@ -502,6 +502,10 @@ public:
   }
 };
 
+// Operands that are structurally required by an SCF op even though they are
+// not part of its iter-arg channels (predicate of an scf.if, control operands
+// of an scf.for). These must be marked live whenever the op itself is live so
+// the rebuild stage finds the producers it needs.
 static llvm::SmallVector<Value> getSCFNeededVals(Operation *defOp) {
   llvm::SmallVector<Value> collectedVals;
   if (auto ifOp = dyn_cast<scf::IfOp>(defOp)) {
@@ -604,6 +608,10 @@ static llvm::SmallVector<Value> tracebackMemValsStep(Value val) {
   return collectedVals;
 }
 
+// BFS over values: from each rootVal walk backward via tracebackMemValsStep
+// until shouldStop accepts. Visited stop-values are returned in insertion
+// order. `onVisitStep` is called for every value popped (used to record the
+// defining ops as "needed" for the rebuild).
 template <typename StopPredicateT, typename VisitStepT>
 static llvm::SmallVector<Value>
 tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
@@ -645,6 +653,12 @@ tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
   return collectedValsSet.takeVector();
 }
 
+// Resolve `oldValue` against the rebuild mapping in two ways:
+//   1. If the rewrite has already produced a replacement, use it.
+//   2. If `oldValue` is defined in a region that strictly contains the block
+//      we are inserting into, the value is in scope and reusable as-is.
+// A return of nullptr means the caller cannot satisfy the operand and should
+// abort the rebuild for this op.
 static Value mapForRebuild(IRMapping &mapping, Value oldValue,
                            Block *builderBlock) {
   // Prefer an already-remapped value when available.
@@ -677,6 +691,9 @@ static void copyIRMapping(const IRMapping &from, IRMapping &to) {
     to.map(k, v);
 }
 
+// Filter a range by a SmallBitVector kept-mask. `kept=true` keeps elements
+// whose bit is set; `kept=false` returns the dropped elements (used to verify
+// nothing live still references them).
 template <typename RangeT>
 static auto filterByKeep(RangeT &&range, const llvm::SmallBitVector &keep,
                          bool kept = true) {
@@ -695,6 +712,20 @@ cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
                                    Operation &oldOp, IRMapping &mapping,
                                    SmallPtrSetImpl<Operation *> &neededOps);
 
+// Rebuild an scf.if while dropping iter-arg-style results that turned out to
+// be dead.
+//
+// Two-pass strategy:
+//   1. First create a result-less scf.if and clone live ops into both branches
+//      so mapForRebuild has a real block ancestry chain when checking which
+//      yield operands are reconstructable.
+//   2. Inspect the cloned bodies, decide which results survive based on
+//      yield-operand mappability, then create the final scf.if with the
+//      compacted result types and splice the cloned ops over.
+//
+// The first-pass scf.if is then erased empty. Doing it in two passes avoids
+// having to predict yield mappability without a real IR neighborhood, which
+// is unreliable for nested control flow.
 static LogicalResult
 rebuildIfOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::IfOp oldIf,
                             IRMapping &outerMapping,
@@ -839,6 +870,15 @@ rebuildIfOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::IfOp oldIf,
   return success();
 }
 
+// Rebuild an scf.for with a compacted iter-arg channel set.
+//
+// Single-pass: the new for-op is created without a body builder so its body
+// block is attached to the IR before we populate it. That ordering matters
+// because mapForRebuild walks parent regions to validate value scoping, and
+// an unattached block would make every operand check fail.
+//
+// Returns failure() and erases the new for-op when any operand cannot be
+// remapped, preserving the original loop for the caller.
 static FailureOr<scf::ForOp>
 rebuildForOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::ForOp oldFor,
                              const llvm::SmallBitVector &keep,
@@ -957,6 +997,13 @@ rebuildForOpDroppingIterArgs(mlir::PatternRewriter &rewriter, scf::ForOp oldFor,
   return newFor;
 }
 
+// Rebuild an scf.while with compacted before/after channels.
+//
+// scf.while keeps the same channel count across inits, before-block args,
+// after-block args, and yields, so the keep-mask is shared. The before
+// region is populated first because its scf.condition feeds the after
+// region's block arguments; populating after first would break operand
+// remapping inside the before region.
 static FailureOr<scf::WhileOp> rebuildWhileOpDroppingIterArgs(
     mlir::PatternRewriter &rewriter, scf::WhileOp oldWhile,
     const llvm::SmallBitVector &keep, SmallPtrSetImpl<Operation *> &neededOps,
@@ -1148,6 +1195,14 @@ static FailureOr<scf::WhileOp> rebuildWhileOpDroppingIterArgs(
   return newWhile;
 }
 
+// Recursive driver: clone an op into the rebuilt region, recursing into nested
+// SCF ops with their own keep-masks derived from operand mappability.
+//
+// For nested scf.for/scf.while, channels whose init args cannot be remapped
+// are dropped from the nested op as well. The assert that no needed op still
+// uses a dropped result enforces an invariant the backward-trace stage was
+// supposed to establish: by the time we reach this point, every value the
+// rebuild relies on must already be live on its tied channel.
 static LogicalResult
 cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
                                    Operation &oldOp, IRMapping &outerMapping,
@@ -1318,6 +1373,25 @@ static void collectRootsFromSideEffects(Block *body,
   });
 }
 
+// Backward-trace dead-iter-arg removal for scf.for.
+//
+// Replaces the use-driven RemoveDeadIterArgPattern when the nested IR contains
+// SCF/scope ops the simple use-walk cannot reason about. Algorithm:
+//
+//   1. Seed live roots from externally-used loop results and from every
+//      side-effecting op inside the body. Side-effecting ops anchor liveness
+//      regardless of whether their results escape the loop.
+//   2. Trace backward from the roots through SCF channels until we find every
+//      loop-carried block argument that contributes to a live value, recording
+//      the producing ops as `neededOps`.
+//   3. Each newly-discovered live channel makes its tied yield operand a new
+//      root; iterate until the keep mask is stable.
+//   4. Validate that every kept yield operand is something the rebuild can
+//      reconstruct (a kept block arg or a needed op in the body).
+//   5. Rebuild the loop with only the surviving channels and redirect uses.
+//
+// If every channel turns out to be live, the pattern fails so the rewrite
+// driver can move on.
 struct RemoveDeadIterArgBackwardForPattern
     : public OpRewritePattern<scf::ForOp> {
 public:
@@ -1445,6 +1519,13 @@ public:
   }
 };
 
+// Backward-trace dead-iter-arg removal for scf.while.
+//
+// Same algorithm shape as the for-loop variant, with two extra wrinkles:
+//   - The scf.condition predicate controls termination, so values feeding it
+//     are roots even if the corresponding while result is unused.
+//   - Both the before and after regions can host side-effecting ops, so the
+//     side-effect collection runs on each region.
 struct RemoveDeadIterArgBackwardWhilePattern
     : public OpRewritePattern<scf::WhileOp> {
 public:
@@ -1590,6 +1671,9 @@ struct CanonicalizeIterArgPass
         patterns.getContext());
 
     if (enableRemoveDeadIterArgBackwardPatterns) {
+      // Vector-side functions are excluded: their later passes assume the
+      // simpler use-driven removal semantics, and the backward rebuild has
+      // been observed to interact badly with vector-only rewrites.
       if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
         patterns.insert<RemoveDeadIterArgBackwardForPattern,
                         RemoveDeadIterArgBackwardWhilePattern>(

@@ -113,7 +113,32 @@ hivmIntraCoreSyncPipeline(OpPassManager &pm,
   }
 }
 
-enum CrossCoreAutoSyncMode { CCGSS_STEP_1, CCGSS_STEP_2 };
+enum class CrossCoreAutoSyncMode {
+  // Always run the first-stage cross-core autosync work. In delayed-cross-core
+  // mode this prepares anchor/backup state for step 2; otherwise this is the
+  // only active stage and runs either cross-core-gss or inject-block-sync.
+  CCGSS_STEP_1,
+  // Only does work when delayed-cross-core GSS is enabled. Non-delayed modes
+  // ignore this stage because their autosync flow completes in step 1.
+  CCGSS_STEP_2
+};
+
+static void
+hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    InjectBlockSyncOptions blockSyncOption;
+    blockSyncOption.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  }
+}
 
 static void
 hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
@@ -132,25 +157,17 @@ hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
 static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions,
     CrossCoreAutoSyncMode mode) {
-  const bool useBlockAllWorkAround = false;
   if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
     canonicalizationHIVMPipeline(pm);
-    if (hivmPipelineOptions.enableCodeMotion) {
-      pm.addPass(createLoopInvariantCodeMotionPass());
-      pm.addPass(createLoopInvariantSubsetHoistingPass());
-    }
-    if (useBlockAllWorkAround) {
-      InjectBlockSyncOptions blockSyncOption;
-      blockSyncOption.blockAllSync = true;
-      pm.nest<func::FuncOp>().addPass(
-          createInjectBlockSyncPass(blockSyncOption));
-    } else {
-      pm.addPass(createMarkRealCoreTypePass());
-      pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
-      MarkRealCoreTypeOptions markRealCoreTypeOptions;
-      markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-      pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-    }
+    // Temporary workaround: step 1 still injects sync ops so the auto-vectorize
+    // pipeline does not merge operations that must stay separated for the
+    // delayed cross-core autosync flow. Remove this once auto-vectorize no
+    // longer depends on the presence of sync ops to preserve those boundaries.
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
     pm.addPass(createInsertAnchorsAndBackupPass());
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
@@ -162,23 +179,6 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
     insertAnchorsAndBackupOptions.cleanup = true;
     pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
-  }
-}
-
-static void
-hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
-                                 const HIVMPipelineOptions &hivmPipelineOptions,
-                                 CrossCoreAutoSyncMode mode) {
-  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
-    canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
-    InjectBlockSyncOptions blockSyncOption;
-    blockSyncOption.blockAllSync =
-        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
-    pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
   }
 }
 
