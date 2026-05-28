@@ -752,9 +752,6 @@ func.func @test_vsstb_v64_f32(%arg0 : memref<8x8xf32, affine_map<(d0, d1)[s0] ->
 // CHECK-NOT:     ave.hir.vshls
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i8) : i8
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
-// CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b16"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 16 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_5:.*]] = llvm.mlir.constant(7 : i32) : i32
 // CHECK:         %[[VAL_6:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_7:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b8"(%[[VAL_5]], %[[VAL_6]]) {mask_bit_width = 8 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
@@ -766,7 +763,7 @@ func.func @test_vsstb_v64_f32(%arg0 : memref<8x8xf32, affine_map<(d0, d1)[s0] ->
 func.func @test_vshls$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
   %false = arith.constant false
   %c7_i8 = arith.constant 7 : i8
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<128xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb8>} : vector<128xi1>
   %1 = ave.hir.vshls %arg0, %c7_i8, %0, %false : vector<128xi8>, i8, vector<128xi1>
   return %1 : vector<128xi8>
 }
@@ -777,9 +774,6 @@ func.func @test_vshls$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
 // CHECK-NOT:     ave.hir.vshrs
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i8) : i8
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
-// CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b16"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 16 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_5:.*]] = llvm.mlir.constant(7 : i32) : i32
 // CHECK:         %[[VAL_6:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_7:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b8"(%[[VAL_5]], %[[VAL_6]]) {mask_bit_width = 8 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
@@ -791,7 +785,7 @@ func.func @test_vshls$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
 func.func @test_vshrs$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
   %false = arith.constant false
   %c7_i8 = arith.constant 7 : i8
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<128xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb8>} : vector<128xi1>
   %1 = ave.hir.vshrs %arg0, %c7_i8, %0, %false : vector<128xi8>, i8, vector<128xi1>
   return %1 : vector<128xi8>
 }
@@ -802,9 +796,6 @@ func.func @test_vshrs$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
 // CHECK-NOT:     ave.hir.vshls
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i16) : i16
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
-// CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 32 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_5:.*]] = llvm.mlir.constant(7 : i32) : i32
 // CHECK:         %[[VAL_6:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_7:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b16"(%[[VAL_5]], %[[VAL_6]]) {mask_bit_width = 16 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
@@ -815,7 +806,7 @@ func.func @test_vshrs$i8$subvl(%arg0: vector<128xi8>) -> vector<128xi8> {
 func.func @test_vshls$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
   %false = arith.constant false
   %c7_i16 = arith.constant 7 : i16
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<64xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb16>} : vector<64xi1>
   %1 = ave.hir.vshls %arg0, %c7_i16, %0, %false : vector<64xi16>, i16, vector<64xi1>
   return %1 : vector<64xi16>
 }
@@ -826,9 +817,6 @@ func.func @test_vshls$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
 // CHECK-NOT:     ave.hir.vshrs
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i16) : i16
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
-// CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 32 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_5:.*]] = llvm.mlir.constant(7 : i32) : i32
 // CHECK:         %[[VAL_6:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_7:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b16"(%[[VAL_5]], %[[VAL_6]]) {mask_bit_width = 16 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
@@ -839,7 +827,7 @@ func.func @test_vshls$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
 func.func @test_vshrs$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
   %false = arith.constant false
   %c7_i16 = arith.constant 7 : i16
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<64xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb16>} : vector<64xi1>
   %1 = ave.hir.vshrs %arg0, %c7_i16, %0, %false : vector<64xi16>, i16, vector<64xi1>
   return %1 : vector<64xi16>
 }
@@ -861,7 +849,7 @@ func.func @test_vshrs$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
 func.func @test_vshls$i32$subvl(%arg0: vector<32xi32>) -> vector<32xi32> {
   %false = arith.constant false
   %c7_i32 = arith.constant 7 : i32
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<32xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb32>} : vector<32xi1>
   %1 = ave.hir.vshls %arg0, %c7_i32, %0, %false : vector<32xi32>, i32, vector<32xi1>
   return %1 : vector<32xi32>
 }
@@ -883,7 +871,7 @@ func.func @test_vshls$i32$subvl(%arg0: vector<32xi32>) -> vector<32xi32> {
 func.func @test_vshrs$i32$subvl(%arg0: vector<32xi32>) -> vector<32xi32> {
   %false = arith.constant false
   %c7_i32 = arith.constant 7 : i32
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<32xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb32>} : vector<32xi1>
   %1 = ave.hir.vshrs %arg0, %c7_i32, %0, %false : vector<32xi32>, i32, vector<32xi1>
   return %1 : vector<32xi32>
 }
@@ -903,7 +891,7 @@ func.func @test_vshrs$i32$subvl(%arg0: vector<32xi32>) -> vector<32xi32> {
 func.func @test_vshls$i8$eqvl(%arg0: vector<256xi8>) -> vector<256xi8> {
   %false = arith.constant false
   %c7_i8 = arith.constant 7 : i8
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
   %1 = ave.hir.vshls %arg0, %c7_i8, %0, %false : vector<256xi8>, i8, vector<256xi1>
   return %1 : vector<256xi8>
 }
@@ -923,7 +911,7 @@ func.func @test_vshls$i8$eqvl(%arg0: vector<256xi8>) -> vector<256xi8> {
 func.func @test_vshls$i32$eqvl(%arg0: vector<64xi32>) -> vector<64xi32> {
   %false = arith.constant false
   %c7_i32 = arith.constant 7 : i32
-  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %0 = ave.hir.pge <VL32> {mask_op_idx = 0 : i32, functionType = #ave.func_dist_type<pb8>} : vector<256xi1>
   %1 = ave.hir.vshls %arg0, %c7_i32, %0, %false : vector<64xi32>, i32, vector<256xi1>
   return %1 : vector<64xi32>
 }

@@ -1723,32 +1723,26 @@ struct HIVMPgeOpLowering : public ConvertOpToLLVMPattern<VFPgeOp> {
   matchAndRewrite(VFPgeOp pge, VFPgeOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     VectorType dstType = cast<VectorType>(pge.getRes().getType());
+    auto dstTyNumElems = cast<VectorType>(dstType).getNumElements();
     if (dstType.getRank() != 1)
       return failure();
+    auto loc = pge->getLoc();
+    PgePattern realPattern = pge.getPattern();
+    if (realPattern == PgePattern::ALL)
+      realPattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
+                                               util::PREDICATE_BITS)
+                        .value()
+                        .getValue();
+    Value pattern = rewriter.create<LLVM::ConstantOp>(
+        loc, rewriter.getI32Type(),
+        rewriter.getI32IntegerAttr(static_cast<uint32_t>(realPattern)));
 
-    int elementAlignment = -1;
-    // FIXME: if pge is inside a nested ForOp and this nested ForOp and its
-    // parent ForOp may have different elementAlignmentBitWidth, we should use
-    // elementAlignmentBitWidth of the parent ForOp. Here only handle user is
-    // MaskedStoreOp, other op also should be handled in the future.
-    if (auto store = dyn_cast<VFMaskedStoreOp>(*pge->getUsers().begin())) {
-      if (auto valOp = store.getVal().getDefiningOp()) {
-        elementAlignment = getElementAlignmentBitWidth(valOp);
-      }
-    }
-
-    // FIXME: Using attribute of op first and then parent op,
-    // this is not a best method to solve template maskStoreOp
-    // mask bitwidth.
-    if (elementAlignment == -1) {
-      elementAlignment = getOpElementAlignmentBitWidth(pge);
-    }
-    if (elementAlignment == -1) {
-      elementAlignment = getElementAlignmentBitWidth(pge);
-    }
+    int elementAlignment = getBitWidthFromAttr(pge);
     if (elementAlignment == -1)
-      elementAlignment = util::VL_BITS / dstType.getNumElements();
-    Operation *newOp = createPgeIntrinOp(rewriter, pge, elementAlignment);
+      elementAlignment = util::VL_BITS / dstTyNumElems;
+    Operation *newOp = buildPgeOp(loc, pattern, elementAlignment, rewriter);
+    newOp->setAttr(utils::maskBitWidth,
+                   rewriter.getI32IntegerAttr(elementAlignment));
     if (auto maskOpIdxAttr = pge->getAttr(utils::maskOpIdx))
       newOp->setAttr(utils::maskOpIdx, maskOpIdxAttr);
     rewriter.replaceOp(pge, newOp);
@@ -1765,44 +1759,22 @@ struct HIVMPltOpLowering : public ConvertOpToLLVMPattern<VFPltOp> {
                   ConversionPatternRewriter &rewriter) const override {
     Type dstType = plt.getResult(0).getType();
     auto dstTyNumElems = cast<VectorType>(dstType).getNumElements();
-    if (dstTyNumElems != util::PREDICATE_BITS)
-      dstType = VectorType::get(SmallVector<int64_t>{util::PREDICATE_BITS},
-                                rewriter.getI1Type());
-    dstType = LLVM::LLVMStructType::getLiteral(
-        rewriter.getContext(), {dstType, rewriter.getI32Type()});
 
     auto loc = plt->getLoc();
     Value true_shape = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getI32Type(), plt.getTrueShape());
-    Value result;
-    Operation *extractOp;
 
-    int elementAlignment = getElementAlignmentBitWidth(plt);
+    int elementAlignment = getBitWidthFromAttr(plt);
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
 
-    switch (elementAlignment) {
-    case 8:
-      result = rewriter.create<PltB8>(loc, dstType, true_shape);
-      extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
-      extractOp->setAttr(
-          utils::maskBitWidth,
-          rewriter.getIntegerAttr(rewriter.getIntegerType(32), 8));
-      break;
-    case 16:
-      result = rewriter.create<PltB16>(loc, dstType, true_shape);
-      extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
-      extractOp->setAttr(
-          utils::maskBitWidth,
-          rewriter.getIntegerAttr(rewriter.getIntegerType(32), 16));
-      break;
-    default:
-      result = rewriter.create<PltB32>(loc, dstType, true_shape);
-      extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
-      extractOp->setAttr(
-          utils::maskBitWidth,
-          rewriter.getIntegerAttr(rewriter.getIntegerType(32), 32));
-    }
+    Value result =
+        buildPltOp(loc, true_shape, elementAlignment, rewriter)->getResult(0);
+    Operation *extractOp =
+        rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
+    extractOp->setAttr(
+        utils::maskBitWidth,
+        rewriter.getIntegerAttr(rewriter.getIntegerType(32), elementAlignment));
     SmallVector<Value, 4> results;
     if (auto maskOpIdxAttr = plt->getAttr(utils::maskOpIdx))
       extractOp->setAttr(utils::maskOpIdx, maskOpIdxAttr);
@@ -1820,20 +1792,13 @@ struct HIVMPltMOpLowering : public ConvertOpToLLVMPattern<VFPltMOp> {
   LogicalResult
   matchAndRewrite(VFPltMOp pltm, VFPltMOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    Type resType = VectorType::get(SmallVector<int64_t>{util::PREDICATE_BITS},
-                                   rewriter.getI1Type());
     Type dstType = pltm.getRes().getType();
     auto dstTyNumElems = cast<VectorType>(dstType).getNumElements();
-    if (dstTyNumElems != util::PREDICATE_BITS)
-      dstType = VectorType::get(SmallVector<int64_t>{util::PREDICATE_BITS},
-                                rewriter.getI1Type());
 
     auto loc = pltm->getLoc();
-    int elementAlignment = getElementAlignmentBitWidth(pltm);
+    int elementAlignment = getBitWidthFromAttr(pltm);
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
-    if (elementAlignment > 32)
-      elementAlignment = 32;
 
     Value offset = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getI64Type(), pltm.getOffset());
@@ -1849,17 +1814,7 @@ struct HIVMPltMOpLowering : public ConvertOpToLLVMPattern<VFPltMOp> {
     auto div = rewriter.create<arith::TruncIOp>(loc, rewriter.getI16Type(),
                                                 divI64.getResult());
 
-    Operation *pltmIntr;
-    switch (elementAlignment) {
-    case 8:
-      pltmIntr = rewriter.create<PltMB8>(loc, resType, div, ub);
-      break;
-    case 16:
-      pltmIntr = rewriter.create<PltMB16>(loc, resType, div, ub);
-      break;
-    default:
-      pltmIntr = rewriter.create<PltMB32>(loc, resType, div, ub);
-    }
+    Operation *pltmIntr = buildPltMOp(loc, div, ub, elementAlignment, rewriter);
     pltmIntr->setAttr(
         utils::maskBitWidth,
         rewriter.getIntegerAttr(rewriter.getI32Type(), elementAlignment));
