@@ -34,9 +34,15 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d(
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
-vector_interleave_1d_scalar(memref_t<__ubuf__ T, 1> *src0,
+interleave_1d_scalar(memref_t<__ubuf__ T, 1> *src0,
                             memref_t<__ubuf__ T, 1> *src1,
                             memref_t<__ubuf__ T, 1> *dst);
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_interleave_1d(memref_t<__ubuf__ T, 1> *src0,
+                           memref_t<__ubuf__ T, 1> *src1,
+                           memref_t<__ubuf__ T, 1> *dst);
 
 #define DECLARE_INTERLEAVE(dim, dtype)                                         \
   __aiv__ __attribute__((always_inline)) void                                  \

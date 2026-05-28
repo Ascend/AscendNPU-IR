@@ -50,6 +50,63 @@ vector_deinterleave_1d_aligned(memref_t<__ubuf__ T, 1> *src,
   copy_ubuf_to_ubuf_2d_core<T>(&src_2d, &dst_2d);
 }
 
+// Scalar implementation for handling unaligned cases
+template <DeinterleaveMode MODE, typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
+                       memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("vector_deinterleave_1d");
+#endif
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
+  int64_t src_size0 = src->sizes[0];
+  int64_t dst_size0 = dst->sizes[0];
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_2_CHANNELS) {
+    // Extract even-indexed elements (channel 0 from 2 channels)
+    for (int64_t i = 0; i < dst_size0; ++i) {
+      dst_ptr[i * dst_stride0] = src_ptr[i * src_stride0 * 2];
+    }
+  } else if constexpr (MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
+    // Extract odd-indexed elements (channel 1 from 2 channels)
+    for (int64_t i = 0; i < dst_size0; ++i) {
+      dst_ptr[i * dst_stride0] = src_ptr[(2 * i + 1) * src_stride0];
+    }
+  } else {
+      static_assert("deinterleave op's unsupported mode");
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <DeinterleaveMode MODE, typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
+                             memref_t<__ubuf__ T, 1> *dst) {
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  int64_t src_stride0 = src->strides[0];
+  int64_t dst_stride0 = dst->strides[0];
+  int64_t src_size0 = src->sizes[0];
+  int64_t dst_size0 = dst->sizes[0];
+
+  bool is_offset_aligned = isAddress32ByteAligned<T>(src_ptr) && isAddress32ByteAligned<T>(dst_ptr);
+
+  if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_2_CHANNELS ||
+                      MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
+    return !is_offset_aligned || !(src_stride0 == 1) || !(dst_stride0 == 1);
+  } else {
+    static_assert("donnot support unaligned scene of other mode");
+    return false;
+  }
+}
+
 /// deinterleave op description:
 /// 1. deinterleave src (a,) to dst (a / 2) odd or even depending on mode,
 /// 'a' is size of src, and size of dst is always 'a' / 2
@@ -70,6 +127,13 @@ template <DeinterleaveMode MODE, typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
                        memref_t<__ubuf__ T, 1> *dst) {
+  // Check if unaligned scenario
+  if (is_unaligned_deinterleave_1d<MODE, T>(src, dst)) [[unlikely]] {
+    // Fallback to scalar implementation
+    scalar_deinterleave_1d<MODE, T>(src, dst);
+    return;
+  }
+
   // Input parameter constraints assert.
   check_inputs_of_vector_eltwise_v_1d(src, dst);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
