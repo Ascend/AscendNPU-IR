@@ -2090,8 +2090,12 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 }
 
 void CVPipelineImpl::revert() {
-  if (newLoop)
-    newLoop->erase();
+  if (!newLoop)
+    return;
+  for (auto [newRes, oldRes] :
+       llvm::zip(newLoop.getResults(), pipelineLoop.getResults()))
+    newRes.replaceAllUsesWith(oldRes);
+  newLoop->erase();
 }
 
 LogicalResult CVPipelineImpl::run() {
