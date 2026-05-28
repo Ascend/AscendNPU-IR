@@ -215,7 +215,7 @@ runExternalHIVMC(ModuleOp &module,
                                      "enable-tree-reduce-v2",
                                      "vf-fusion-mode",
                                      "disable-vf-reachable-check",
-                                     "disable-sink-dpx-load"};
+                                     "enable-sink-dpx-load"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());

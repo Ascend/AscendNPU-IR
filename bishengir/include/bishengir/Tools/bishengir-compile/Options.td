@@ -1078,8 +1078,8 @@ def DisableReorderInstruction : SIMTOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
-def DisableSinkDPXLoad : SIMTOptimizationControlOptions<
-  "Disable post-lowering instruction scheduling that reduces register pressure by interleaving load-compute-store chains",
+def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
+  "Enable post-lowering instruction scheduling that reduces register pressure by interleaving load-compute-store chains",
   "bool",
   "false"
 > {

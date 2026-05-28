@@ -305,7 +305,7 @@ void setupLowerTritonPipelineOptions(
   options.useDPX = config.getUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
-  options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();
+  options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
 #if BSPUB_DAVINCI_BISHENGIR

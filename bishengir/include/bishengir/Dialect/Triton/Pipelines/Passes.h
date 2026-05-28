@@ -43,9 +43,9 @@ struct LowerTritonPipelineOptions
   PassOptions::Option<bool> disableReorderInstruction{
       *this, "disable-reorder-instruction",
       llvm::cl::desc("disable reorder instruction"), llvm::cl::init(false)};
-  PassOptions::Option<bool> disableSinkDPXLoad{
-      *this, "disable-sink-dpx-load",
-      llvm::cl::desc("disable post-lowering instruction scheduling that "
+  PassOptions::Option<bool> enableSinkDPXLoad{
+      *this, "enable-sink-dpx-load",
+      llvm::cl::desc("enable post-lowering instruction scheduling that "
                      "reduces register pressure by interleaving "
                      "load-compute-store chains"),
       llvm::cl::init(false)};
