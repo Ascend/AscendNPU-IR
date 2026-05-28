@@ -244,6 +244,7 @@ createWrapHostFuncPass(const WrapHostFuncOptions &options = {});
 std::unique_ptr<Pass> createFoldSymbolicDimPass();
 std::unique_ptr<Pass> createUnfoldSymbolicDimPass();
 std::unique_ptr<Pass> createDropSymbolsPass();
+std::unique_ptr<Pass> createFoldExtractInsertPairPass();
 
 /// Create a pass to decompose ops that implemented AggregatedOpInterface.
 std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});

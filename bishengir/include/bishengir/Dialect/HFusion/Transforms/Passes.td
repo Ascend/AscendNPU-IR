@@ -679,4 +679,9 @@ def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let constructor = "::mlir::hfusion::createHFusionGeneralizePass()";
   let dependentDialects = ["linalg::LinalgDialect"];
 }
+
+def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::FuncOp"> {
+  let summary = "Fold Extract Insert Pair.";
+  let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
+}
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES

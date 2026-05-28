@@ -79,6 +79,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   SimplifyVFArgs.cpp
   MergeVecScope.cpp
   TreeReduceV2.cpp
+  FoldExtractInsertPair.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HFusion
