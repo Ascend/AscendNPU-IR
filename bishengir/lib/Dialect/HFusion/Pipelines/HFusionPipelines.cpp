@@ -391,6 +391,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
+  pm.addPass(createAutoVectorizeVerifierPass());
+  
   if (hfusionOptions.enableTreeReduceV2) {
  	     pm.addPass(createTreeReduceV2Pass());
   }

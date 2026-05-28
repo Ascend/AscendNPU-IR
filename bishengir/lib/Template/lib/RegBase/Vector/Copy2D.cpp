@@ -128,6 +128,7 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
   int64_t stride1_ub = dst->strides[1];
   int64_t stride0_gm = src->strides[0];
   int64_t stride0_ub = dst->strides[0];
+  bool has_padding = left_padding_num != 0;
   if (stride1_gm < 0 || stride0_gm < 0 || stride1_ub < 0 || stride0_ub < 0)
       [[unlikely]] {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
@@ -136,23 +137,31 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   if ((stride0_gm < stride1_gm || stride0_ub < stride1_ub)) {
     // Implicit transposition scenarios need to be moved through scalar
-    load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+    } else {
+      load_gm_to_ubuf_2d_by_nddma<T>(src, dst);
+    }
     return;
   }
 
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
+    if (!has_padding && !isStrideAligned<T>(stride0_ub)) {
+      load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
+      return;
+    }
     load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(
         src, dst, left_padding_num, l2_cache_ctl);
     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
       if (pad_mode == PadMode::Value) {
-        INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+        INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
         int64_t scalar = static_cast<int64_t>(pad_value);
         align_pad_for_load_b64_2d<T>(dst, scalar, left_padding_num);
-        INTRINSIC(set_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
-        INTRINSIC(wait_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+        INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
       }
     }
     return;
@@ -368,6 +377,12 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
 
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
+    // Check if stride0 is 32B aligned, otherwise use scalar path.
+    if (!isStrideAligned<T>(stride0_ub)) {
+      store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
+      set_store_atomic_none(atomic_kind);
+      return;
+    }
     store_ubuf_to_gm_2d_core_with_contiguous_last_dim<T>(src, dst);
     set_store_atomic_none(atomic_kind);
     return;
