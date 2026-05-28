@@ -945,14 +945,16 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
     emitRemark(newFunc.getLoc())
         << "Selected tiling dim might have broadcast two different axis. "
            "Automatically disables strict mode.";
-    if (!func.walk([](scf::ForOp forOp) {
-               return forOp->hasAttr(ExtractLoadStoreAttr)
-                          ? WalkResult::interrupt()
-                          : WalkResult::advance();
-             })
-             .wasInterrupted()) {
+    auto hasRestrictiveAttr =
+        func.walk([](scf::ForOp forOp) {
+              if (forOp->hasAttr(ExtractLoadStoreAttr) ||
+                  forOp->hasAttr(VgatherDecomposeAttr))
+                return WalkResult::interrupt();
+              return WalkResult::advance();
+            })
+            .wasInterrupted();
+    if (!hasRestrictiveAttr)
       strictMode = false;
-    }
   }
 
   // If all the pattern fails due to the tilingDim=-1

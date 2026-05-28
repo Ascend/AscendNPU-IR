@@ -61,6 +61,9 @@
 
 using namespace mlir;
 using namespace mlir::hfusion;
+
+static constexpr llvm::StringLiteral kVgatherDecomposeAttr = "VgatherDecompose";
+
 //===----------------------------------------------------------------------===//
 // Support for named HFusion ops defined in ods-gen.
 //===----------------------------------------------------------------------===//
@@ -2579,6 +2582,7 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
     Value iterArg =
         loopNest.empty() ? init : loopNest.back().getRegionIterArg(0);
     auto forOp = b.create<scf::ForOp>(loc, cst0, upperBound, cst1, iterArg);
+    forOp->setAttr(kVgatherDecomposeAttr, UnitAttr::get(b.getContext()));
     if (!loopNest.empty())
       b.create<scf::YieldOp>(loc, forOp.getResult(0));
     loopNest.push_back(forOp);

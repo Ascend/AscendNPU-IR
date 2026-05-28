@@ -26,6 +26,7 @@ namespace mlir {
 namespace hivm {
 
 static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+static constexpr llvm::StringLiteral VgatherDecomposeAttr = "VgatherDecompose";
 
 mlir::func::FuncOp getParentFuncOp(mlir::Value value);
 DenseSet<Operation *> getPotentialDefiners(Value v);
