@@ -1214,7 +1214,6 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
   DenseMap<Operation *, bool> hasTouchOp;
   inplaceList.insert(inplaceList.end(), inplacePairList.begin(),
                      inplacePairList.end());
-  DenseSet<Operation *> visitedInplaceVFCall;
   InplaceReuseReachableMap reachableMap;
   for (auto &operationSeq : linearOperation) {
     auto it = genKillMap.find(operationSeq.get());
@@ -1223,7 +1222,40 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
     if (hasTouchOp[operationSeq->operation]) {
       continue;
     }
-    DenseMap<std::pair<Value, Value>, bool> record;
+    Operation *op = it->first->operation;
+    bool isVFCallReusable = vfInplaceReuseInfo && hivm::isVFCall(op) &&
+                            !VFCallInplaceReuseInfo::hasAliasArgRisk(op);
+    std::optional<ValuePair> bestVFInplacePair;
+    int64_t bestVFInplaceBits = -1;
+    DenseMap<ValuePair, bool> vfReuseCache;
+    
+    auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
+      if (!isVFCallReusable ||
+          !vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
+        return false;
+      }
+
+      // use cache to avoid redundant traversal
+      ValuePair pair = {genBuffer, killBuffer};
+      auto cached = vfReuseCache.find(pair);
+      if (cached != vfReuseCache.end()) {
+        return cached->second;
+      }
+      return vfReuseCache
+          .try_emplace(pair, IsReuseVFCall(genBuffer, killBuffer, reachableMap))
+          .first->second;
+    };
+
+    auto updateBestVFInplacePair = [&](Value genBuffer, Value killBuffer,
+                                       int64_t genBits) {
+      // select gen buffer with largest bits for best inplace-reuse benefit
+      if (genBits <= bestVFInplaceBits) {
+        return;
+      }
+      bestVFInplacePair = {genBuffer, killBuffer};
+      bestVFInplaceBits = genBits;
+    };
+
     for (const Value &genBuffer : it->second.gen) {
       auto genBufferIter = bufferInfos.find(genBuffer);
       assert(genBufferIter != bufferInfos.end() &&
@@ -1241,34 +1273,27 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
           continue;
         }
 
-        bool bufferSizeMatch =
-            killBufferIter->second.constBits >= genBufferIter->second.constBits;
-        Operation *op = it->first->operation;
-        bool isReuseVFCall = false;
-        if (!VFCallInplaceReuseInfo::hasAliasArgRisk(op) &&
-            vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
-          if (record.find({genBuffer, killBuffer}) == record.end()) {
-            record.try_emplace(
-                {genBuffer, killBuffer},
-                IsReuseVFCall(genBuffer, killBuffer, reachableMap));
-          }
-          isReuseVFCall = record[{genBuffer, killBuffer}];
+        int64_t genBits = genBufferIter->second.constBits;
+        int64_t killBits = killBufferIter->second.constBits;
+        if (killBits < genBits) {
+          continue;
         }
-        bool isResuableOp =
-            IsReuseHIVMOp(op, genBuffer, killBuffer) || isReuseVFCall;
-        bool canInplace = bufferSizeMatch && isResuableOp;
-        if (canInplace) {
-          if (isReuseVFCall) {
-            if (visitedInplaceVFCall.contains(op)) {
-              break;
-            } else {
-              visitedInplaceVFCall.insert(op);
-            }
-          }
-          inplaceList.emplace_back(std::make_pair(genBuffer, killBuffer));
-          break;
+
+        if (isVFInplacePair(genBuffer, killBuffer)) {
+          updateBestVFInplacePair(genBuffer, killBuffer, genBits);
+          continue;
         }
+
+        if (!IsReuseHIVMOp(op, genBuffer, killBuffer)) {
+          continue;
+        }
+
+        inplaceList.emplace_back(genBuffer, killBuffer);
+        break;
       }
+    }
+    if (bestVFInplacePair.has_value()) {
+      inplaceList.push_back(bestVFInplacePair.value());
     }
     // Nodes in inplace are only processed once.
     hasTouchOp[operationSeq->operation] = true;
