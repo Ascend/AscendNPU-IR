@@ -37,7 +37,8 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
 
       if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
           it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: " << static_cast<int>(it->getSecond()));
+        LDBG("Checking parallelDim for broadcast two dims case: "
+             << static_cast<int>(it->getSecond()));
         return it->getSecond() == TilingDimensionKind::Parallel;
       }
       return true;
@@ -220,11 +221,11 @@ void DimensionAnalyzer::computeTilingDimImpl(
     // Each operation in a group is independent, horizontal, and totally
     // separated to other operations in a different group. In common kernels,
     // there will only be 1 group.
+    if (rank == 0)
+      return;
     auto groupIndex = solverGroup_->find(argumentsRefPointer_.at(src));
     numStoreOps[groupIndex]++;
     LDBG("Checking operation: " << op << " in group " << groupIndex);
-    if (rank == 0)
-      return;
     auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
