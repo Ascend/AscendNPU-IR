@@ -410,6 +410,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);
+  pm.addPass(createRemoveRedundantWriteAndReadPairPass());
   pm.addPass(createSCFForLoopCanonicalizationPass());
   canonicalizationPipeline(pm, hfusionOptions);
 }

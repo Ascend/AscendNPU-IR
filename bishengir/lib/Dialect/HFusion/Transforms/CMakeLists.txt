@@ -76,6 +76,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   VectorizeOps.cpp
   WrapHostFunc.cpp
   RemoveMaskFromUnalignedReductionLoop.cpp
+  RemoveRedundantWriteAndReadPair.cpp
   SimplifyVFArgs.cpp
   MergeVecScope.cpp
   TreeReduceV2.cpp

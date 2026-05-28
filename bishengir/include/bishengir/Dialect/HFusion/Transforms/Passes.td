@@ -674,6 +674,13 @@ def RemoveMaskFromUnalignedReductionLoop
   let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect"];
 }
 
+def RemoveRedundantWriteAndReadPair
+    : Pass<"remove-redundant-write-and-read-pair", "func::FuncOp"> {
+  let summary = "Remove remove redundant write and read pair";
+  let constructor = "::mlir::hfusion::createRemoveRedundantWriteAndReadPairPass()";
+  let dependentDialects = ["vector::VectorDialect"];
+}
+
 def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let summary = "convert hfusionOp to linalg.generic";
   let constructor = "::mlir::hfusion::createHFusionGeneralizePass()";

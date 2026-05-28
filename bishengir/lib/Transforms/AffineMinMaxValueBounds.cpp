@@ -387,6 +387,16 @@ static bool provesSingleIterationViaAffineMinMaxHeader(
 
 bool AffineMinMaxValueBoundsCollector::provesSingleIterationScfFor(
     scf::ForOp forOp) const {
+  if (!forOp->getAttrs().empty())
+ 	  return false;
+ 	Value lb = forOp.getLowerBound();
+ 	Value ub = forOp.getUpperBound();
+ 	Value step = forOp.getStep();
+  if (!lb.getDefiningOp() || !ub.getDefiningOp() || !step.getDefiningOp() ||
+      !isa<arith::ConstantIndexOp, affine::AffineMinOp>(lb.getDefiningOp()) ||
+ 	    !isa<arith::ConstantIndexOp, affine::AffineMinOp>(ub.getDefiningOp()) ||
+ 	    !isa<arith::ConstantIndexOp, affine::AffineMinOp>(step.getDefiningOp()))
+ 	  return false;
   int64_t tripCount = 0;
   auto tripOk = getSingleIterationTripCount(forOp, tripCount);
   if (succeeded(tripOk) && tripOk.value() && tripCount == 1)

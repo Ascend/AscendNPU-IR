@@ -1426,6 +1426,12 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         [](OpBuilder &innerBuilder, Location loc) {
           innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
         });
+    Value funcHandle = builder.create<transform::MatchOp>(
+ 	      loc, seqOp.getBodyBlock()->getArguments().front(),
+ 	      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+ 	  builder.create<transform::ApplyRegisteredPassOp>(
+ 	      loc, builder.getType<transform::AnyOpType>(), funcHandle,
+ 	      builder.getStringAttr("eliminate-single-iteration-scf-for"));
     applyCleanUp(builder, seqOp);
   }
 }
