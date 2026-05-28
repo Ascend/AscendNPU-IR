@@ -17,6 +17,7 @@
 
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
@@ -53,6 +54,26 @@ public:
     return op.hasPureTensorSemantics() && op.getFun() == linalg::BinaryFn::div;
   }
 };
+
+struct HFusionNormalizeVPowiToPowfTraits
+    : public hfusion::NormalizeTraitsBase {
+  static bool shouldNormalizeVPowi(hfusion::ElemwiseBinaryOp op) {
+    return op.getFun() == hfusion::BinaryFn::powi;
+  }
+};
+
+struct HFusionNormalizeMulExtTraits : public hfusion::NormalizeTraitsBase {
+  static bool shouldNormalizeMulExt(hfusion::MulExtOp) { return true; }
+
+  static Value getMulExtLhs(hfusion::MulExtOp op) { return op.getLhs(); }
+
+  static Value getMulExtRhs(hfusion::MulExtOp op) { return op.getRhs(); }
+
+  static Type getMulExtExtendedType(PatternRewriter &rewriter, Type inputType) {
+    return inputType.isInteger(8) ? rewriter.getI16Type() : Type();
+  }
+};
+
 } // namespace mlir
 
 namespace mlir::hfusion {
@@ -307,140 +328,17 @@ public:
   }
 };
 
-/// normalize mulext(x, y) as bellow
-/// inputs: N-bit number x, y
-/// step1: perform extension to generate 2N-bit operands from x and y
-/// step2: multiply 2N-bit x and y to get mul_res
-/// step3: get the high half of the operand by N-bit-right-shifting mul_res
-/// step4: get the low half of the operand by N-bit-left-shifting
-/// and later N-bit-right-shifting mul_res
-/// step5: cast result back to origin type
-/// outputs: the N-bit low and the N-bit high halves of the product.
-class NormalizeMulExtOp : public OpRewritePattern<hfusion::MulExtOp> {
-public:
-  using OpRewritePattern<hfusion::MulExtOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::MulExtOp op,
-                                PatternRewriter &rewriter) const override {
-    Value lhs = op.getLhs();
-    Value rhs = op.getRhs();
-    auto lhsType = getElementTypeOrSelf(lhs.getType());
-    auto rhsType = getElementTypeOrSelf(rhs.getType());
-    if (!lhsType.isInteger(8) || !rhsType.isInteger(8)) {
-      return failure();
-    }
-
-    // step1: perform extension.
-    Value lhsI16 = hfusion::castTo(rewriter, lhs, rewriter.getI16Type());
-    Value rhsI16 = hfusion::castTo(rewriter, rhs, rewriter.getI16Type());
-
-    // step2: multiply
-    auto loc = op.getLoc();
-    auto mulInit = utils::createEmptyOp(rewriter, loc, lhsI16);
-    auto mulRes =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul, ValueRange({lhsI16, rhsI16}),
-            ValueRange(mulInit))
-            ->getResult(0);
-
-    // step3: get the high half of the operand
-    auto bitWidth = lhsType.getIntOrFloatBitWidth();
-    arith::ConstantOp shiftValue = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI16Type(),
-        rewriter.getIntegerAttr(rewriter.getI16Type(), bitWidth));
-    auto shrHighBitInit = utils::createEmptyOp(rewriter, loc, lhsI16);
-    auto shrHighBit =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shrsi,
-            ValueRange{mulRes, shiftValue}, ValueRange(shrHighBitInit))
-            ->getResult(0);
-
-    // step4: get the low half of the operand
-    auto shlInit = utils::createEmptyOp(rewriter, loc, lhsI16);
-    auto shlRes =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shli,
-            ValueRange{mulRes, shiftValue}, ValueRange(shlInit))
-            ->getResult(0);
-    auto shrLowBitInit = utils::createEmptyOp(rewriter, loc, lhsI16);
-    auto shrLowBit =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shrsi,
-            ValueRange{shlRes, shiftValue}, ValueRange(shrLowBitInit))
-            ->getResult(0);
-
-    // step5: cast result back to origin type i8
-    auto roundMode = hfusion::RoundMode::TRUNCWITHOVERFLOW;
-    auto highBitI8 =
-        hfusion::castTo(rewriter, shrHighBit, rewriter.getI8Type(), roundMode);
-    auto lowBitI8 =
-        hfusion::castTo(rewriter, shrLowBit, rewriter.getI8Type(), roundMode);
-    rewriter.replaceOp(op, {lowBitI8, highBitI8});
-    return success();
-  }
-};
-
-/// Normalize Powi from I8/I16 to Powf F32
-/// Compute with F32, then cast back to I8/I16
-/// For example:
-/// result = hfusion.powi(i8 x, i8y)
-/// is legalized to
-/// x_1 = cast x from i8 to f32
-/// y_1 = cast y from i8 to f32
-/// z_1 = hfusion.powf(f32 x_1, f32 y_1)
-/// result = cast z_1 from f32 to i8
-struct NormalizeVPowiToPowf
-    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (op.getFun() != hfusion::BinaryFn::powi) {
-      return rewriter.notifyMatchFailure(op, "Doesn't match powi");
-    }
-
-    SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> outputs = op.getOutputs();
-    SmallVector<Value> newInputs;
-    SmallVector<Value> newOutputs;
-    if (allI8ElemType(inputs) && allI8ElemType(outputs)) {
-      newInputs =
-          normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs);
-      newOutputs =
-          normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, outputs);
-    } else if (allI16ElemType(inputs) && allI16ElemType(outputs)) {
-      newInputs =
-          normalizeSrcToTargetType<int16_t, Float32Type>(rewriter, inputs);
-      newOutputs =
-          normalizeSrcToTargetType<int16_t, Float32Type>(rewriter, outputs);
-    } else {
-      return rewriter.notifyMatchFailure(op, "powi type is not i8 nor i16");
-    }
-    Operation *newOp =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(rewriter, op->getLoc(),
-                                                       hfusion::BinaryFn::powf,
-                                                       newInputs, newOutputs);
-    if (allI8ElemType(outputs)) {
-      replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                     rewriter);
-    } else if (allI16ElemType(outputs)) {
-      replaceI16ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                      rewriter);
-    }
-    return success();
-  }
-};
-
 using NormalizeRSqrtOp =
     NormalizeRSqrtOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeRSqrtTraits>;
 using NormalizeMulRecOp =
     NormalizeMulRecOpTemplate<linalg::ElemwiseBinaryOp, HFusionNormalizeMulRecTraits>;
 using NormalizeDivVSToRec =
     NormalizeDivVSToRecTemplate<linalg::ElemwiseBinaryOp, HFusionNormalizeDivVSToRecTraits>;
+using NormalizeVPowiToPowf =
+    NormalizeVPowiToPowfTemplate<hfusion::ElemwiseBinaryOp,
+                                 HFusionNormalizeVPowiToPowfTraits>;
+using NormalizeMulExtOp =
+    NormalizeMulExtOpTemplate<hfusion::MulExtOp, HFusionNormalizeMulExtTraits>;
 
 void populateNormalizeMulRecPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRecOp>(patterns.getContext());

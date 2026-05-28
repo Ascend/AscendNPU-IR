@@ -186,3 +186,83 @@ func.func @test_NormalizeDivVSToRec_hivm_div_dynshape_to_hivm_rec(
   %ret = hivm.hir.vdiv ins(%cst, %src : f16, tensor<?x14336xf16>) outs(%dst : tensor<?x14336xf16>) -> tensor<?x14336xf16>
   return %ret : tensor<?x14336xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowi_hivm_vpow_i16
+// CHECK: hivm.hir.vcast ins(%arg0 : tensor<4x2x32xi16>) outs({{.*}} : tensor<4x2x32xf32>) round_mode = <trunc> -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vcast ins(%arg1 : tensor<4x2x32xi16>) outs({{.*}} : tensor<4x2x32xf32>) round_mode = <trunc> -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vpow ins({{.*}}, {{.*}} : tensor<4x2x32xf32>, tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xi32>) round_mode = <trunc> -> tensor<4x2x32xi32>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xi32>) outs({{.*}} : tensor<4x2x32xi16>) round_mode = <truncwithoverflow> -> tensor<4x2x32xi16>
+// CHECK: return
+func.func @test_NormalizeVPowi_hivm_vpow_i16(%arg0 : tensor<4x2x32xi16>, %arg1 : tensor<4x2x32xi16>) -> tensor<4x2x32xi16> {
+  %0 = tensor.empty() : tensor<4x2x32xi16>
+  %1 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<4x2x32xi16>, tensor<4x2x32xi16>) outs(%0 : tensor<4x2x32xi16>) -> tensor<4x2x32xi16>
+  return %1 : tensor<4x2x32xi16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowi_hivm_vpow_i8
+// CHECK: hivm.hir.vcast ins(%arg0 : tensor<4x2x32xi8>) outs({{.*}} : tensor<4x2x32xf16>) -> tensor<4x2x32xf16>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf16>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vcast ins(%arg1 : tensor<4x2x32xi8>) outs({{.*}} : tensor<4x2x32xf16>) -> tensor<4x2x32xf16>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf16>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vpow ins({{.*}}, {{.*}} : tensor<4x2x32xf32>, tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xi32>) round_mode = <trunc> -> tensor<4x2x32xi32>
+// CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xi32>) outs({{.*}} : tensor<4x2x32xi8>) round_mode = <truncwithoverflow> -> tensor<4x2x32xi8>
+// CHECK: return
+func.func @test_NormalizeVPowi_hivm_vpow_i8(%arg0 : tensor<4x2x32xi8>, %arg1 : tensor<4x2x32xi8>) -> tensor<4x2x32xi8> {
+  %0 = tensor.empty() : tensor<4x2x32xi8>
+  %1 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<4x2x32xi8>, tensor<4x2x32xi8>) outs(%0 : tensor<4x2x32xi8>) -> tensor<4x2x32xi8>
+  return %1 : tensor<4x2x32xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeMulExt_hivm_vmulext_i32_high_bits
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x2xi32>, %[[ARG1:.*]]: tensor<4x2xi32>)
+// CHECK: %[[C32:.*]] = arith.constant 32 : i64
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x2xi32>) outs(%[[EMPTY0]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[ARG1]] : tensor<4x2xi32>) outs(%[[EMPTY1]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[CAST0]], %[[CAST1]] : tensor<4x2xi64>, tensor<4x2xi64>) outs(%[[EMPTY2]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) round : false -> tensor<4x2xi64>
+// CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi32>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY4]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
+// CHECK: return %[[RES]]
+func.func @test_NormalizeMulExt_hivm_vmulext_i32_high_bits(%arg0: tensor<4x2xi32>, %arg1: tensor<4x2xi32>) -> tensor<4x2xi32> {
+  %0 = tensor.empty() : tensor<4x2xi32>
+  %1 = tensor.empty() : tensor<4x2xi32>
+  %2:2 = hivm.hir.vmulext ins(%arg0, %arg1 : tensor<4x2xi32>, tensor<4x2xi32>) outs(%0, %1 : tensor<4x2xi32>, tensor<4x2xi32>) -> tensor<4x2xi32>, tensor<4x2xi32>
+  return %2#1 : tensor<4x2xi32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeMulExt_hivm_vmulext_i32_low_bits
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x2xi32>, %[[ARG1:.*]]: tensor<4x2xi32>)
+// CHECK: %[[C32:.*]] = arith.constant 32 : i64
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x2xi32>) outs(%[[EMPTY0]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[ARG1]] : tensor<4x2xi32>) outs(%[[EMPTY1]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[CAST0]], %[[CAST1]] : tensor<4x2xi64>, tensor<4x2xi64>) outs(%[[EMPTY2]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[SHL:.*]] = hivm.hir.vshl ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) -> tensor<4x2xi64>
+// CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[SHL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY4]] : tensor<4x2xi64>) round : false -> tensor<4x2xi64>
+// CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<4x2xi32>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY5]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
+// CHECK: return %[[RES]]
+func.func @test_NormalizeMulExt_hivm_vmulext_i32_low_bits(%arg0: tensor<4x2xi32>, %arg1: tensor<4x2xi32>) -> tensor<4x2xi32> {
+  %0 = tensor.empty() : tensor<4x2xi32>
+  %1 = tensor.empty() : tensor<4x2xi32>
+  %2:2 = hivm.hir.vmulext ins(%arg0, %arg1 : tensor<4x2xi32>, tensor<4x2xi32>) outs(%0, %1 : tensor<4x2xi32>, tensor<4x2xi32>) -> tensor<4x2xi32>, tensor<4x2xi32>
+  return %2#0 : tensor<4x2xi32>
+}

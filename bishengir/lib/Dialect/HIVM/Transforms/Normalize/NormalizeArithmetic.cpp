@@ -51,12 +51,38 @@ public:
   }
 };
 
+struct HIVMNormalizeVPowiToPowfTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeVPowi(hivm::VPowOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+};
+
+struct HIVMNormalizeMulExtTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalizeMulExt(hivm::VMulExtOp op) {
+    return op.hasPureTensorSemantics() && op.getBroadcast().empty() &&
+           op.getTranspose().empty();
+  }
+
+  static Value getMulExtLhs(hivm::VMulExtOp op) { return op.getDpsInputs()[0]; }
+
+  static Value getMulExtRhs(hivm::VMulExtOp op) { return op.getDpsInputs()[1]; }
+
+  static Type getMulExtExtendedType(PatternRewriter &rewriter, Type inputType) {
+    return inputType.isInteger(32) ? rewriter.getI64Type() : Type();
+  }
+};
+
 using NormalizeRSqrtOp =
     NormalizeRSqrtOpTemplate<hivm::VRsqrtOp, HIVMNormalizeRSqrtTraits>;
 using NormalizeMulRecOp =
     NormalizeMulRecOpTemplate<hivm::VMulOp, HIVMNormalizeMulRecTraits>;
 using NormalizeDivVSToRec =
     NormalizeDivVSToRecTemplate<hivm::VDivOp, HIVMNormalizeDivVSToRecTraits>;
+using NormalizeVPowiToPowf =
+    NormalizeVPowiToPowfTemplate<hivm::VPowOp, HIVMNormalizeVPowiToPowfTraits>;
+using NormalizeMulExtOp =
+    NormalizeMulExtOpTemplate<hivm::VMulExtOp, HIVMNormalizeMulExtTraits>;
 
 } // namespace mlir
 
@@ -64,5 +90,7 @@ void mlir::hivm::populateNormalizeArithmeticPatterns(
     RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRecOp>(patterns.getContext());
   patterns.add<NormalizeDivVSToRec>(patterns.getContext());
+  patterns.add<NormalizeVPowiToPowf>(patterns.getContext());
   patterns.add<NormalizeRSqrtOp>(patterns.getContext());
+  patterns.add<NormalizeMulExtOp>(patterns.getContext());
 }

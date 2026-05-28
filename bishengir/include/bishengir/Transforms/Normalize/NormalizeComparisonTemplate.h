@@ -250,7 +250,8 @@ public:
         utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
                                                targetElemType);
     Value shifted = Traits::createShiftOp(rewriter, loc, castInput, castShift,
-                                          shiftedInit, op);
+                                          shiftedInit, ShiftKind::RightSigned,
+                                          op.getOperation());
     Value result = Traits::createCastOp(
         rewriter, loc, shifted, rewriter.getI8Type(),
         CastRoundKind::TruncWithOverflow, Value(), castSignKind);

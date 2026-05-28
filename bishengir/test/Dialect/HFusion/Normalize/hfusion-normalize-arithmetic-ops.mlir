@@ -353,3 +353,39 @@ func.func @test_NormalizeMulExt_mulext_i8_low_bits(%arg0: tensor<4x2xi8>, %arg1:
   %low, %high = hfusion.mulext %arg0, %arg1 : tensor<4x2xi8>
   return  %low : tensor<4x2xi8>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowiToPowf_i16
+// CHECK: %[[IN0_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf32>
+// CHECK: %[[IN0:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<4x2x32xi16>) outs(%[[IN0_EMPTY]] : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: %[[IN1_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf32>
+// CHECK: %[[IN1:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<4x2x32xi16>) outs(%[[IN1_EMPTY]] : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: %[[I16_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xi16>
+// CHECK: %[[RESULT:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<truncwithoverflow>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[I32:.*]] : tensor<4x2x32xi32>) outs(%[[I16_EMPTY]] : tensor<4x2x32xi16>) -> tensor<4x2x32xi16>
+// CHECK: return %[[RESULT]] : tensor<4x2x32xi16>
+func.func @test_NormalizeVPowiToPowf_i16(%arg0: tensor<4x2x32xi16>, %arg1: tensor<4x2x32xi16>) -> tensor<4x2x32xi16> {
+  %0 = tensor.empty() : tensor<4x2x32xi16>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powi>} ins(%arg0, %arg1 : tensor<4x2x32xi16>, tensor<4x2x32xi16>) outs(%0 : tensor<4x2x32xi16>) -> tensor<4x2x32xi16>
+  return %1 : tensor<4x2x32xi16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowiToPowf_i8
+// CHECK: %[[IN0_F16_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf16>
+// CHECK: %[[IN0_F16:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<4x2x32xi8>) outs(%[[IN0_F16_EMPTY]] : tensor<4x2x32xf16>) -> tensor<4x2x32xf16>
+// CHECK: %[[IN0_F32_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf32>
+// CHECK: %[[IN0:.*]] = hfusion.cast {{.*}} ins(%[[IN0_F16]] : tensor<4x2x32xf16>) outs(%[[IN0_F32_EMPTY]] : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: %[[IN1_F16_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf16>
+// CHECK: %[[IN1_F16:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<4x2x32xi8>) outs(%[[IN1_F16_EMPTY]] : tensor<4x2x32xf16>) -> tensor<4x2x32xf16>
+// CHECK: %[[IN1_F32_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xf32>
+// CHECK: %[[IN1:.*]] = hfusion.cast {{.*}} ins(%[[IN1_F16]] : tensor<4x2x32xf16>) outs(%[[IN1_F32_EMPTY]] : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK: %[[I8_EMPTY:.*]] = tensor.empty() : tensor<4x2x32xi8>
+// CHECK: %[[RESULT:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<truncwithoverflow>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[I32:.*]] : tensor<4x2x32xi32>) outs(%[[I8_EMPTY]] : tensor<4x2x32xi8>) -> tensor<4x2x32xi8>
+// CHECK: return %[[RESULT]] : tensor<4x2x32xi8>
+func.func @test_NormalizeVPowiToPowf_i8(%arg0: tensor<4x2x32xi8>, %arg1: tensor<4x2x32xi8>) -> tensor<4x2x32xi8> {
+  %0 = tensor.empty() : tensor<4x2x32xi8>
+  %1 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<powi>} ins(%arg0, %arg1 : tensor<4x2x32xi8>, tensor<4x2x32xi8>) outs(%0 : tensor<4x2x32xi8>) -> tensor<4x2x32xi8>
+  return %1 : tensor<4x2x32xi8>
+}

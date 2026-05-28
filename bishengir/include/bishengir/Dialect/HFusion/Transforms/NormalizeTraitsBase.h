@@ -66,8 +66,8 @@ public:
                             CastSignKind signKind = CastSignKind::Signed);
 
   static Value createShiftOp(PatternRewriter &rewriter, Location loc,
-                             Value lhs, Value rhs, Value dst,
-                             ElemwiseBinaryOp sourceOp);
+                             Value lhs, Value rhs, Value dst, ShiftKind kind,
+                             Operation *sourceOp = nullptr);
 
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);

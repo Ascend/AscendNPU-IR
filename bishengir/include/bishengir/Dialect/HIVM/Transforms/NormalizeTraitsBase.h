@@ -28,7 +28,6 @@
 namespace mlir::hivm {
 
 class VCmpOp;
-class VShROp;
 
 /// Base traits class for HIVM Normalize operations.
 /// Provides common utility methods that can be reused by specific traits.
@@ -67,8 +66,8 @@ public:
                             CastSignKind signKind = CastSignKind::Signed);
 
   static Value createShiftOp(PatternRewriter &rewriter, Location loc,
-                             Value lhs, Value rhs, Value dst,
-                             VShROp sourceOp);
+                             Value lhs, Value rhs, Value dst, ShiftKind kind,
+                             Operation *sourceOp = nullptr);
 
   static Value createFillOp(PatternRewriter &rewriter, Location loc,
                             Value input, Value dst);
