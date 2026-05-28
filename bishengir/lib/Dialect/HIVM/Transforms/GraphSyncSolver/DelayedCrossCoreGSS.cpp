@@ -78,6 +78,9 @@ private:
   // Run cross-core sync solving for a single triplet and write the resulting
   // sync ops back into the live IR.
   void crossCoreGssRunOnOperation(ModuleOp moduleOp, const CVTripletKernels &t);
+
+  // Erase old intra-block sync ops.
+  void eraseOldIntraBlockSyncOps(func::FuncOp funcOp);
 };
 } // namespace mlir
 
@@ -974,15 +977,34 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   });
 }
 
-template <typename SyncOp>
-struct EraseSyncOpPattern : public OpRewritePattern<SyncOp> {
-  using OpRewritePattern<SyncOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(SyncOp op,
-                                PatternRewriter &rewriter) const final {
-    rewriter.eraseOp(op);
-    return success();
+void DelayedCrossCoreGSSPass::eraseOldIntraBlockSyncOps(func::FuncOp funcOp) {
+  llvm::SmallVector<Operation *> toBeDeleted;
+  funcOp.walk([&](Operation *op) {
+    if (auto syncBlockSetOp = dyn_cast<hivm::SyncBlockSetOp>(op)) {
+      if (auto syncInstrMode = syncBlockSetOp.getTsyncInstrModeAttr()) {
+        if (syncInstrMode.getSyncInstrMode() ==
+            hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+          toBeDeleted.push_back(op);
+        }
+      } else {
+        toBeDeleted.push_back(op);
+      }
+    }
+    if (auto syncBlockWaitOp = dyn_cast<hivm::SyncBlockWaitOp>(op)) {
+      if (auto syncInstrMode = syncBlockWaitOp.getTsyncInstrModeAttr()) {
+        if (syncInstrMode.getSyncInstrMode() ==
+            hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+          toBeDeleted.push_back(op);
+        }
+      } else {
+        toBeDeleted.push_back(op);
+      }
+    }
+  });
+  for (Operation *op : toBeDeleted) {
+    op->erase();
   }
-};
+}
 
 void DelayedCrossCoreGSSPass::runOnOperation() {
   ModuleOp mod = getOperation();
@@ -992,21 +1014,12 @@ void DelayedCrossCoreGSSPass::runOnOperation() {
 
   auto triplets = findTriplets(mod);
   for (CVTripletKernels &t : triplets) {
-
-    // Erase legacy sync ops on the mix backup and both split kernels so the
-    // solver below sees a clean slate.
-    for (auto funcOp : {t.mixFuncOp, t.cubeFuncOp, t.vectorFuncOp}) {
-      auto *ctx = mod->getContext();
-      RewritePatternSet patterns(ctx);
-      patterns.add<EraseSyncOpPattern<hivm::SyncBlockSetOp>,
-                   EraseSyncOpPattern<hivm::SyncBlockWaitOp>,
-                   EraseSyncOpPattern<hivm::PipeBarrierOp>>(ctx);
-      if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-        signalPassFailure();
-        return;
-      }
-    }
-
+    // Erase old intra-block sync ops.
+    eraseOldIntraBlockSyncOps(t.mixFuncOp);
+    eraseOldIntraBlockSyncOps(t.cubeFuncOp);
+    eraseOldIntraBlockSyncOps(t.vectorFuncOp);
+    // Run cross-core sync solving for a single triplet and write the resulting
+    // sync ops back into the live IR.
     crossCoreGssRunOnOperation(mod, t);
   }
 }
