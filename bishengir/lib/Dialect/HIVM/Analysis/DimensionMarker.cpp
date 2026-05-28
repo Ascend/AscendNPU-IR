@@ -61,18 +61,21 @@ static bool isBTransposed(Operation *op) {
 }
 
 void DimensionAnalyzer::processBFS() {
-  SetVector<Value> argumentListForBFS;
+  SmallVector<Value> argumentListForBFS;
   LDBG("Argument List for BFS in HIVM:");
   op_->walk([&argumentListForBFS](Operation *op) {
     TypeSwitch<Operation *>(op)
         .Case([&](hivm::LoadOp loadOp) {
-          argumentListForBFS.insert(loadOp.getDst());
+          argumentListForBFS.push_back(loadOp.getDst());
         })
-        .Case<tensor::EmptyOp, memref::AllocOp>(
-            [&](auto op) { argumentListForBFS.insert(op.getResult()); })
+        .Case([&](tensor::EmptyOp emptyOp) {
+          argumentListForBFS.push_back(emptyOp.getResult());
+        })
         .Case([&](annotation::MarkOp markOp) {
-          if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name))
-            argumentListForBFS.insert(markOp.getSrc());
+          if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
+            LDBG(markOp);
+            argumentListForBFS.push_back(markOp.getSrc());
+          }
         });
   });
   std::queue<Value> bfsQueue;
@@ -524,8 +527,9 @@ void DimensionAnalyzer::processExpandShapeOpLeftmostNonUnit(
       if (outputType.getDimSize(targetIdx) == 1)
         targetIdx = outputIdx;
     }
-    if (outputType.getDimSize(targetIdx) % tilingSize != 0)
-      continue;
+    if (outputType.getDimSize(targetIdx) % tilingSize != 0) {
+      return processReshapeOp(op);
+    }
     toBeMerged.emplace_back(targetIdx, inputIdx);
   }
 
@@ -711,6 +715,19 @@ void DimensionAnalyzer::markDimensions() {
 void DimensionAnalyzer::markTransposedDim(hivm::VTransposeOp op) {
   auto src = op.getSrc();
   auto dst = op.getDst();
+  SmallVector<int64_t> srcNonUnitDims;
+  SmallVector<int64_t> dstNonUnitDims;
+  for (auto dim : utils::getShape(src.getType())) {
+    if (dim != 1)
+      srcNonUnitDims.push_back(dim);
+  }
+  for (auto dim : utils::getShape(dst.getType())) {
+    if (dim != 1)
+      dstNonUnitDims.push_back(dim);
+  }
+  if (srcNonUnitDims == dstNonUnitDims) {
+    return;
+  }
   auto srcRef = getArgumentRef(src);
   auto dstRef = getArgumentRef(dst);
   auto perm = op.getPermutation();
@@ -807,21 +824,15 @@ void DimensionAnalyzer::transferDimMarkImpl(tensor::ExpandShapeOp op) {
   auto outputArgs = getArgumentRefOrCreateDummy(output);
   auto reassoc = op.getReassociationIndices();
   LDBG("Transferring dimension marks: " << op);
-  DenseMap<int64_t, int64_t> dimMap;
-  SmallVector<std::pair<int64_t, int64_t>> toBeTransferred;
   for (auto [inputIdx, indices] : llvm::enumerate(reassoc)) {
     int64_t targetIdx = indices[0];
     for (auto outputIdx : indices) {
       if (outputType.getDimSize(targetIdx) == 1)
         targetIdx = outputIdx;
     }
-    toBeTransferred.emplace_back(inputIdx, targetIdx);
-    dimMap[inputIdx] = static_cast<int64_t>(targetIdx);
-  }
-  for (auto [inputIdx, targetIdx] : toBeTransferred) {
-    LDBG("Dim " << inputIdx << " and dim " << targetIdx << " is mapped");
     auto srcDim = inputArgs[inputIdx];
     auto resDim = outputArgs[targetIdx];
+    LDBG("Dim " << inputIdx << " and dim " << targetIdx << " is mapped");
     if (solverCollapserElem_->find(srcDim) !=
         solverCollapserElem_->find(resDim))
       continue;
@@ -831,7 +842,7 @@ void DimensionAnalyzer::transferDimMarkImpl(tensor::ExpandShapeOp op) {
                                           << resDim);
     if (auto it = transposedDimMap.find(srcDim); it != transposedDimMap.end()) {
       LDBG("Successfully moved");
-      transposedDimMap[resDim] = dimMap.at(it->second);
+      transposedDimMap[resDim] = it->second;
     }
     LDBG("Checking if dimension kind of " << srcDim << " is moved to "
                                           << resDim);
