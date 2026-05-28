@@ -25,7 +25,7 @@ func.func @read_once_and_write_once_0(
 // CHECK-DAG: %[[CONST1:.*]] = arith.constant 256 : i64
 // CHECK-DAG: hivm.hir.pointer_cast(%[[CONST0]])
 // CHECK-DAG: hivm.hir.pointer_cast(%[[CONST1]])
-// CHECK-DAG: hivm.hir.pointer_cast(%[[CONST0]])
+// CHECK-DAG: hivm.hir.pointer_cast(%[[CONST1]])
 func.func @plan_memory_vf_read_once_and_write_once_0() {
   %alloc = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
   %alloc_0 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>

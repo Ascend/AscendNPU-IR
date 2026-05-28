@@ -23,6 +23,7 @@
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include <algorithm>
 
 #define DEBUG_TYPE "hivm-plan-memory"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X)
@@ -453,17 +454,17 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
   SmallVector<Value> allocBeforeLoopBuffers;
   const auto *liveBlockInfo = live.getLiveness(loopOp->getBlock());
   assert(liveBlockInfo != nullptr);
-  auto currentLiveValues =
-      liveBlockInfo->currentlyLiveValues(loopOp.getOperation());
+
+  SetVector<Value> currentLiveValues =
+      currentlyLiveValuesOrdered(liveBlockInfo, loopOp.getOperation());
   if (currentLiveValues.empty()) {
     return allocBeforeLoopBuffers;
   }
-  // The gen buffer of the same operation must ensure the order of priority.
-  SetVector<Value> currentLiveValuesOrder;
-  for (auto buffer : currentLiveValues) {
-    currentLiveValuesOrder.insert(buffer);
-  }
-  for (const Value &operand : currentLiveValuesOrder) {
+
+  // TODO: Remove once plan-memory no longer depends on traversal order.
+  auto currentLiveValuesShuffled =
+      getShuffledRange(currentLiveValues.takeVector());
+  for (const Value &operand : currentLiveValuesShuffled) {
     auto aliasBuffers = GetAliasBuffers(operand);
     aliasBuffers.insert(operand);
     for (auto Buffer : aliasBuffers) {
@@ -771,15 +772,18 @@ void MemLivenessAnalysis::UpdateOperandGenInfo(OpInfo *opInfo, Value operand) {
 void MemLivenessAnalysis::OpKillHandle(OpInfo *opInfo, Liveness live,
                                        Block *block) {
   const auto *liveBlockInfo = live.getLiveness(block);
-  assert(liveBlockInfo != nullptr);
-  auto currentLiveValues =
-      liveBlockInfo->currentlyLiveValues(opInfo->operation);
+  assert(liveBlockInfo != nullptr && opInfo != nullptr);
+
+  SetVector<Value> currentLiveValues =
+      currentlyLiveValuesOrdered(liveBlockInfo, opInfo->operation);
   if (currentLiveValues.empty()) {
     return;
   }
-  SetVector<Value> liveValues(currentLiveValues.begin(),
-                              currentLiveValues.end());
-  for (const Value &operand : liveValues) {
+
+  // TODO: Remove once plan-memory no longer depends on traversal order.
+  auto currentLiveValuesShuffled =
+      getShuffledRange(currentLiveValues.takeVector());
+  for (const Value &operand : currentLiveValuesShuffled) {
     UpdateOpKillInfo(opInfo, operand, live);
   }
 }
@@ -1014,6 +1018,68 @@ void MemLivenessAnalysis::GenerateBufferLife() {
     }
     scopeTime++;
   }
+}
+
+//===----------------------------------------------------------------------===//
+// This file contains code from the LLVM Project.
+// Original License: Apache License v2.0 with LLVM Exceptions
+// Original Copyright: NA
+// Original Source:
+// https://github.com/llvm/llvm-project/blob/main/mlir/lib/Analysis/Liveness.cpp
+//===----------------------------------------------------------------------===//
+// Similar to Liveness::currentlyLiveValues but using SetVector instead of
+// ValueSetT=SmallPtrSet. Needed to make the pass output deterministic.
+mlir::SetVector<Value> MemLivenessAnalysis::currentlyLiveValuesOrdered(
+    const LivenessBlockInfo *livenessInfo, Operation *op) const {
+  mlir::SetVector<Value> liveSet;
+
+  // Given a value, check which ops are within its live range. For each of
+  // those ops, add the value to the set of live values as-of that op.
+  auto addValueToCurrentlyLiveSets = [&](Value value) {
+    // Determine the live range of this value inside this block.
+    Operation *startOfLiveRange = value.getDefiningOp();
+    Operation *endOfLiveRange = nullptr;
+    // If it's a live in or a block argument, then the start is the beginning
+    // of the block.
+    if (livenessInfo->isLiveIn(value) || isa<BlockArgument>(value))
+      startOfLiveRange = &livenessInfo->getBlock()->front();
+    else
+      startOfLiveRange =
+          livenessInfo->getBlock()->findAncestorOpInBlock(*startOfLiveRange);
+
+    // If it's a live out, then the end is the back of the block.
+    if (livenessInfo->isLiveOut(value))
+      endOfLiveRange = &livenessInfo->getBlock()->back();
+
+    // We must have at least a startOfLiveRange at this point. Given this, we
+    // can use the existing getEndOperation to find the end of the live range.
+    if (startOfLiveRange && !endOfLiveRange)
+      endOfLiveRange = livenessInfo->getEndOperation(value, startOfLiveRange);
+
+    assert(endOfLiveRange && "Must have endOfLiveRange at this point!");
+    // If this op is within the live range, insert the value into the set.
+    if (!(op->isBeforeInBlock(startOfLiveRange) ||
+          endOfLiveRange->isBeforeInBlock(op)))
+      liveSet.insert(value);
+  };
+
+  // Handle block arguments if any.
+  for (Value arg : livenessInfo->getBlock()->getArguments())
+    addValueToCurrentlyLiveSets(arg);
+
+  // Handle live-ins. Between the live ins and all the op results that gives us
+  // every value in the block.
+  for (Value in : livenessInfo->in())
+    addValueToCurrentlyLiveSets(in);
+
+  // Now walk the block and handle all values used in the block and values
+  // defined by the block.
+  for (Operation &walkOp :
+       llvm::make_range(livenessInfo->getBlock()->begin(), ++op->getIterator()))
+    for (auto result : walkOp.getResults())
+      addValueToCurrentlyLiveSets(result);
+
+  return liveSet;
 }
 
 std::shared_ptr<BufferLife>
@@ -1313,7 +1379,7 @@ void MemPlan::EmitPlanMemoryFailureInfo() {
 }
 
 // Plan Memory algorithm.
-LogicalResult MemPlan::plan() {
+LogicalResult MemPlan::plan(bool emitErrors) {
   // Construct StorageEntry structure.
   GenerateStorageEntry();
   // Plan memory address.
@@ -1321,7 +1387,9 @@ LogicalResult MemPlan::plan() {
                       ? PlanLocalMemAddress()
                       : PlanWorkSpaceMemAddress();
   if (as == PlanStatus::PLAN_FAILED) {
-    EmitPlanMemoryFailureInfo();
+    if (emitErrors) {
+      EmitPlanMemoryFailureInfo();
+    }
     return failure();
   }
   // Update the address information of each buffer after memory buffer.
@@ -2787,36 +2855,53 @@ std::optional<DenseMap<Value, SmallVector<uint64_t>>>
 PlanMemoryPass::PlanMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
 
-  // FIXME: Reusing tightly coupled buffer is dangerous because inter-core sync
-  // was inserted before plan memory. Currently, changing this behavior will
-  // cause many existing testcases to fail, so we added a compile option to
-  // control it for now. This needs to be fixed.
-  MemLivenessAnalysis memLiveness(funcOp, this->memMode,
-                                  this->disableTightlyCoupledBufferReuse);
-  memLiveness.build();
+  constexpr int kPlanRetryCount = 20;
+  DenseMap<Value, SmallVector<uint64_t>> plannedBuffer2Offsets;
 
-  MemPlan memPlan(this->memMode, this->enableGlobalReuse,
-                  this->enablePrintMemoryAllocatedSize,
-                  this->restrictInplaceAsISA, this->simtVFDynamicSize,
-                  this->disableVFReachableCheck);
-  if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
-    return std::nullopt;
+  // The current plan-memory algorithm is sensitive to the order in which some
+  // candidate buffers are considered. We retry planning with different
+  // deterministic shuffle seeds to improve the chance of finding a valid plan
+  // without making the pass behavior non-reproducible.
+  // TODO: Remove the retry loop once the plan-memory algorithm is improved to
+  // produce a stable valid plan in a single attempt.
+  for (int attempt = 0; attempt < kPlanRetryCount; ++attempt) {
+    LDBG("Memory planning attempt " << attempt + 1 << "/" << kPlanRetryCount
+                                    << "\n");
+
+    // FIXME: Reusing tightly coupled buffer is dangerous because inter-core
+    // sync was inserted before plan memory. Currently, changing this behavior
+    // will cause many existing testcases to fail, so we added a compile option
+    // to control it for now. This needs to be fixed.
+    MemLivenessAnalysis memLiveness(funcOp, this->memMode,
+                                    this->disableTightlyCoupledBufferReuse,
+                                    /*randomSeed=*/attempt);
+    memLiveness.build();
+
+    MemPlan memPlan(this->memMode, this->enableGlobalReuse,
+                    this->enablePrintMemoryAllocatedSize,
+                    this->restrictInplaceAsISA, this->simtVFDynamicSize,
+                    this->disableVFReachableCheck);
+    if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
+      return std::nullopt;
+    }
+    memPlan.func_ = funcOp;
+    memPlan.SetLinearOperation(memLiveness.linearOperation);
+    memPlan.SetBufferInfos(memLiveness.bufferInfos);
+    memPlan.SetBuffer2Life(memLiveness.buffer2Life);
+    memPlan.SetGenKillMap(memLiveness.genKillMap);
+    memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
+    memPlan.SetInplacePairList(memLiveness.inplacePairList);
+    memPlan.SetVFInplaceReuseInfo(
+        vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
+    memPlan.SetSyncBlockPositions(memLiveness.syncBlockPositions);
+    memPlan.SetCVMixIdReuseAllowedPairs(cvMixIdReuseAllowedPairs_);
+    
+    const bool isLastAttempt = attempt == kPlanRetryCount - 1;
+    if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
+      return make_optional(memPlan.GetBuffer2Offsets());
+    }
   }
-  memPlan.func_ = funcOp;
-  memPlan.SetLinearOperation(memLiveness.linearOperation);
-  memPlan.SetBufferInfos(memLiveness.bufferInfos);
-  memPlan.SetBuffer2Life(memLiveness.buffer2Life);
-  memPlan.SetGenKillMap(memLiveness.genKillMap);
-  memPlan.SetBuffer2MultiNum(memLiveness.buffer2MultiNum);
-  memPlan.SetInplacePairList(memLiveness.inplacePairList);
-  memPlan.SetVFInplaceReuseInfo(
-      vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
-  memPlan.SetSyncBlockPositions(memLiveness.syncBlockPositions);
-  memPlan.SetCVMixIdReuseAllowedPairs(cvMixIdReuseAllowedPairs_);
-  if (failed(memPlan.plan())) {
-    return std::nullopt;
-  }
-  return make_optional(memPlan.GetBuffer2Offsets());
+  return std::nullopt;
 }
 
 bool PlanMemoryPass::checkSimilarPointerCastOps(hivm::PointerCastOp op1,
@@ -2829,7 +2914,7 @@ bool PlanMemoryPass::checkSimilarPointerCastOps(hivm::PointerCastOp op1,
 
 LogicalResult
 PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
-  DenseMap<PointerCastOp, annotation::MarkOp> markedOps;
+  llvm::MapVector<PointerCastOp, annotation::MarkOp> markedOps;
 
   funcOp->walk<WalkOrder::PreOrder>([&](annotation::MarkOp markOp) {
     auto attrDict = markOp->getAttrDictionary();
