@@ -1018,4 +1018,17 @@ def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
   let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
   let constructor = "mlir::hivm::createWriteBackSharedPass()";
 }
+
+def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"> {
+  let summary = "Fuse linalg.transpose into hivm.hir.load by leveraging DMA on-the-fly transpose";
+  let constructor = "mlir::hivm::createFuseTransposeIntoLoadPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "hivm::HIVMDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+  ];
+}
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

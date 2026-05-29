@@ -321,6 +321,10 @@ std::unique_ptr<Pass> createAutoScopePass();
 
 std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
 std::unique_ptr<Pass> createWriteBackSharedPass();
+
+/// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
+/// on-the-fly transpose.
+std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

@@ -368,6 +368,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
+  pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
   PreVectorizationFusionOptions options;
   options.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
   options.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;

@@ -3,6 +3,7 @@ add_bishengir_library(BishengIRTestDialectUtils
   BiShengSegmenter.cpp
   InstructionMarker.cpp
   TestDimensionAnalyzer.cpp
+  TestIndexBoundAnalyzer.cpp
 
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils

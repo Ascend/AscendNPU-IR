@@ -8,6 +8,8 @@ file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadSto
 file(GLOB TILE_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/*.cpp)
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/*.cpp)
+file(GLOB NDDMA CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
 
 add_bishengir_dialect_library(MLIRHIVMTransforms
   ${ALIGN_BUFFER}
@@ -18,6 +20,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ${INSERT_LOAD_STORE_FOR_MIX_CV}
   ${TILE_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
+  ${NDDMA}
   Normalize/NormalizeMath.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp
