@@ -32,6 +32,20 @@ check_1d_ubuf_stride_align(memref_t<__ubuf__ T, 1> *ub) {
   return (isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1);
 }
 
+// Constraints: padding_num should be contained in memref.sizes and memref.offset.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+padding_value_1d_by_scalar_on_load(T padding_value, memref_t<__ubuf__ T, 1> *dst) {
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  auto padding_start = dst->aligned + dst->offset;
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    *(padding_start + i * dst->strides[0]) = padding_value;
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+}
+
 /// Rewrite padding for dst correctly in the case of b64 type by applying the
 /// padding in intervals with b32 scalars
 ///
@@ -80,13 +94,49 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
     return;
   }
 
-  // the starting address of dst is not 32byte aligned
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
-  if (!isAddress32ByteAligned(dst_ptr)) {
-    // TODO: use scalar to load first block and use dma to load others
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst, left_padding_num, pad_value);
+  auto dst_ptr = dst->aligned + dst->offset - left_padding_num * dst->strides[0];
+  if (!isAddress32ByteAligned(dst_ptr) && dst->strides[0] != 1) {
+    load_gm_to_ubuf_1d_by_scalar<T>(src, dst, left_padding_num, pad_value);	 
     return;
   }
+
+  // the starting address of dst is not 32byte aligned
+  memref_t<__gm__ T, 1> src_memref_aligned = copy_memref<__gm__ T, 1>(src);
+  memref_t<__ubuf__ T, 1> dst_memref_aligned = copy_memref<__ubuf__ T, 1>(dst);
+  if (!isAddress32ByteAligned(dst_ptr)) {
+    // use scalar to load first block and use dma to load others
+    int64_t distance = (UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) / sizeof(T);
+    memref_t<__gm__ T, 1> src_memref_unaligned_head = copy_memref<__gm__ T, 1>(src);
+    memref_t<__ubuf__ T, 1> dst_memref_unaligned_head = copy_memref<__ubuf__ T, 1>(dst);
+
+    if (distance <= left_padding_num) {
+      dst_memref_unaligned_head.sizes[0] = distance;
+      dst_memref_unaligned_head.offset -= left_padding_num;
+      broadcast_scalar<T, 1>(pad_value, &dst_memref_unaligned_head);
+      // step 2-1: update left_padding_num only.
+      left_padding_num -= distance;
+    } else {
+      int64_t load_num = distance - left_padding_num;
+      load_num = (load_num > src->sizes[0]) ? src->sizes[0] : load_num;
+      src_memref_unaligned_head.sizes[0] = load_num;
+      dst_memref_unaligned_head.sizes[0] = load_num;
+      load_gm_to_ubuf_1d_by_scalar<T>(&src_memref_unaligned_head, &dst_memref_unaligned_head, left_padding_num, pad_value);
+
+      // step 2-2: update left_padding_num and src/dst memref.
+      src_memref_aligned.offset += load_num;
+      src_memref_aligned.sizes[0] -= load_num;
+
+      dst_memref_aligned.offset += load_num;
+      dst_memref_aligned.sizes[0] -= load_num;
+      left_padding_num = 0;
+      if (dst_memref_aligned.sizes[0] <= 0) {
+        return;
+      }
+    }
+  }
+  // step 3: update memref and continue load data to aligned dst. 
+  dst = &dst_memref_aligned;
+  src = &src_memref_aligned;
 
   const int64_t stride0_gm = src->strides[0];
   const int64_t stride0_ub = dst->strides[0];
@@ -95,13 +145,22 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
   if (left_padding_num > num_per_block) {
     int padding_remainder = left_padding_num % num_per_block;
     int toBroadcast = left_padding_num - padding_remainder;
-    left_padding_num = padding_remainder;
     if (pad_mode == PadMode::Value) {
-      __ubuf__ T *dst_ptr = dst->aligned;
-      // TODO check whether we need to use barrier here
-      brc_scalar_core_1d<T>(pad_value, dst_ptr, toBroadcast);
+      memref_t<__ubuf__ T, 1> dst_padding_memref = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset - left_padding_num * stride0_ub,
+        {toBroadcast, },
+        {stride0_ub, }
+      };
+      if (stride0_ub == 1) [[likely]] {
+        broadcast_scalar<T, 1>(pad_value, &dst_padding_memref);
+      } else {
+        padding_value_1d_by_scalar_on_load<T>(pad_value, &dst_padding_memref);
+      }
     }
-    dst->offset = dst->offset - padding_remainder;
+    // no need to update offset here since we already updated padding num. 
+    left_padding_num = padding_remainder;
   }
 
   if (stride0_gm == 1 && stride0_ub == 1) [[likely]] {
@@ -122,7 +181,15 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
 #else
       int64_t scalar = static_cast<int64_t>(pad_value);
 #endif
-      align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
+    //   Use brc padding for last dimension of dst. 
+      memref_t<__ubuf__ T, 1> dst_padding_b64_memref = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset - left_padding_num, // findal stride always 1
+        {left_padding_num},
+        {stride0_ub}
+      };
+      broadcast_scalar<T, 1>(pad_value, &dst_padding_b64_memref);
     }
     return;
   }
@@ -137,14 +204,20 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
   // last dimension is not contiguous,
   // view the src (size) with stride [stride] as viewed_src (size, 1) with
   // stride [stride, 1], where last dimension of viewed_src is contiguous
+  // Additionally, we need deal with padding outside. 
+  if (left_padding_num > 0) {
+    memref_t<__ubuf__ T, 1> dst_memref_non_contiguous_padding = copy_memref<__ubuf__ T, 1>(dst);
+    dst_memref_non_contiguous_padding.offset -= left_padding_num * stride0_ub;
+    dst_memref_non_contiguous_padding.sizes[0] = left_padding_num;
+    padding_value_1d_by_scalar_on_load<T>(pad_value, &dst_memref_non_contiguous_padding);
+  }
+
   const int64_t size0 = src->sizes[0];
   memref_t<__gm__ T, 2> gm_2d = {
       src->allocated, src->aligned, src->offset, {size0, 1}, {stride0_gm, 1}};
   memref_t<__ubuf__ T, 2> ub_2d = {
       dst->allocated, dst->aligned, dst->offset, {size0, 1}, {stride0_ub, 1}};
-
-  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(&gm_2d, &ub_2d,
-                                                      left_padding_num);
+  load_gm_to_ubuf_2d_core_with_contiguous_last_dim<T>(&gm_2d, &ub_2d, 0);
 }
 
 template <typename T>

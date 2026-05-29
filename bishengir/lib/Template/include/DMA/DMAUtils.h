@@ -38,6 +38,29 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int64_t size) {
 }
 
 enum class AtomicKind : uint32_t { None = 0, Add = 1, Max = 2, Min = 3 };
+/// Returns a copy of original memref.
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) memref_t<T, DIM>
+copy_memref(memref_t<T, DIM> *src) {
+    memref_t<T, DIM> ret;
+    ret.allocated = src->allocated;
+    ret.aligned = src->aligned;
+    ret.offset = src->offset;
+
+    if constexpr (DIM >= 1) {
+        ret.sizes[0] = src->sizes[0];
+        ret.strides[0] = src->strides[0];
+    }
+    if constexpr (DIM >= 2) {
+        ret.sizes[1] = src->sizes[1];
+        ret.strides[1] = src->strides[1];
+    }
+    if constexpr (DIM >= 3) {
+        ret.sizes[2] = src->sizes[2];
+        ret.strides[2] = src->strides[2];
+    }
+    return ret;
+}
 
 /// Returns the number of elements to advance from 'offset' to reach the next
 /// alignment boundary.
@@ -255,8 +278,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
   } else if constexpr (bytes == BYTES_B64) {
     int32_t factor = 2;
     INTRINSIC(copy_gm_to_ubuf_align_b32,
-              ub_ptr + ub_offset * factor - left_padding_num * factor,
-              gm_ptr + gm_offset * factor, 0, burst_cnt, burst_len,
+              ((__ubuf__ int32_t *)ub_ptr) + ub_offset * factor - left_padding_num * factor,
+              ((__gm__ int32_t *)gm_ptr) + gm_offset * factor, 0, burst_cnt, burst_len,
               left_padding_num * factor, rightPaddingNum * factor, src_gap,
               dst_gap);
   }
@@ -340,7 +363,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   int64_t stride0_gm = gm->strides[0];
   int64_t stride0_ub = ub->strides[0];
   constexpr int32_t bytes = sizeof(T);
-  const int64_t ub_gap = calc_ub_gap<T>(stride0_ub, size1);
+  const int64_t ub_gap = calc_ub_gap<T>(stride0_ub, size1 + left_padding_num);
   const int64_t gm_gap = (stride0_gm - size1) * bytes;
 
   if (gm_gap > INTRIN_MAX_GAP || 0 > ub_gap || 0 > stride0_gm - size1)
@@ -906,7 +929,8 @@ load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
         dst->aligned + dst->offset - left_padding_num * dst->strides[0];
     INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
-    for (int i = 0; i < src->sizes[0]; ++i) {
+    // for (int i = 0; i < src->sizes[0]; ++i) {
+    for (int i = 0; i < left_padding_num; ++i) {
       *(padding_start + i * dst->strides[0]) = pad_value;
     }
     INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
@@ -959,7 +983,7 @@ load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
     INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
-      for (int j = 0; j < src->sizes[1]; ++j) {
+      for (int j = 0; j < left_padding_num; ++j) {
         *(padding_start + i * dst->strides[0] + j * dst->strides[1]) =
             pad_value;
       }
@@ -1021,7 +1045,7 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
     INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
       for (int j = 0; j < src->sizes[1]; ++j) {
-        for (int k = 0; k < src->sizes[2]; ++k) {
+        for (int k = 0; k < left_padding_num; ++k) {
           *(padding_start + i * dst->strides[0] + j * dst->strides[1] +
             k * dst->strides[2]) = pad_value;
         }
