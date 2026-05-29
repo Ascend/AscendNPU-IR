@@ -90,6 +90,65 @@ using NormalizeTanhOp = NormalizeTanhOpTemplate<hfusion::ElemwiseUnaryOp,
 } // namespace mlir
 
 namespace mlir::hfusion {
+static Value rebuildHighPrecisionRsqrtForTrig(PatternRewriter &rewriter,
+                                              Operation *trigOp, Value input) {
+  auto rsqrtOp = input.getDefiningOp<hfusion::ElemwiseUnaryOp>();
+  if (!rsqrtOp || rsqrtOp.getFun() != hfusion::UnaryFn::rsqrt ||
+      !input.hasOneUse()) {
+    return {};
+  }
+
+  auto srcElemType = getElementTypeOrSelf(rsqrtOp.getInputs()[0].getType());
+  if (!srcElemType.isF16())
+    return {};
+
+  Location loc = trigOp->getLoc();
+  Value fp32Input =
+      hfusion::castTo(rewriter, rsqrtOp.getInputs()[0], rewriter.getF32Type(),
+                      hfusion::RoundMode::ROUND);
+  Value sqrtInit = utils::createEmptyOpWithTargetElemType(
+      rewriter, loc, fp32Input, rewriter.getF32Type());
+  Value sqrtValue = NormalizeTraitsBase::createUnaryOp(
+      rewriter, loc, fp32Input, sqrtInit, UnaryKind::Sqrt);
+  Value recInit = utils::createEmptyOpWithTargetElemType(
+      rewriter, loc, sqrtValue, rewriter.getF32Type());
+  return NormalizeTraitsBase::createUnaryOp(rewriter, loc, sqrtValue, recInit,
+                                            UnaryKind::Rec);
+}
+
+static Value getPreferredHighPrecisionTrigInput(PatternRewriter &rewriter,
+                                                Operation *trigOp,
+                                                Value input) {
+  if (Value rebuiltRsqrt =
+          rebuildHighPrecisionRsqrtForTrig(rewriter, trigOp, input)) {
+    return rebuiltRsqrt;
+  }
+
+  auto castOp = input.getDefiningOp<hfusion::CastOp>();
+  if (!castOp)
+    return {};
+
+  Type srcType = getElementTypeOrSelf(castOp.getInputs()[0].getType());
+  Type dstType = getElementTypeOrSelf(castOp.getOutputs()[0].getType());
+  if (!srcType.isF32() || !dstType.isF16())
+    return {};
+
+  auto unaryOp = castOp.getInputs()[0].getDefiningOp<hfusion::ElemwiseUnaryOp>();
+  if (!unaryOp)
+    return {};
+
+  auto fun = unaryOp.getFun();
+  if (fun != hfusion::UnaryFn::rec && fun != hfusion::UnaryFn::rsqrt &&
+      fun != hfusion::UnaryFn::sqrt) {
+    return {};
+  }
+
+  // Reuse the existing f32 producer when trig consumes the result of another
+  // high-precision unary op. This avoids a transient f32->f16->f32 roundtrip
+  // before lowering sin/cos.
+  return castOp.getInputs()[0];
+}
+
 struct HighPrecisionNormalizeSinOp
     : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
 public:
@@ -111,10 +170,16 @@ public:
 
     Value input = op.getDpsInputs()[0];
     if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      // TODO: remove cast after enable automatical high precision computing
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
+      if (Value preferredInput =
+              getPreferredHighPrecisionTrigInput(rewriter, op, input)) {
+        input = preferredInput;
+      } else {
+        // for high precision, cast src to fp32 and compute and then cast it
+        // back
+        // TODO: remove cast after enable automatical high precision computing
+        input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                                hfusion::RoundMode::ROUND);
+      }
     }
     auto resOr = buildSinOrCos(rewriter, op, input, CalcMode::SIN);
     if (failed(resOr))
@@ -151,9 +216,15 @@ public:
            "only support input Type is f16 or f32");
     Value input = op.getDpsInputs()[0];
     if (inType.isF16()) {
-      // for high precision, cast src to fp32 and compute and then cast it back
-      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                              hfusion::RoundMode::ROUND);
+      if (Value preferredInput =
+              getPreferredHighPrecisionTrigInput(rewriter, op, input)) {
+        input = preferredInput;
+      } else {
+        // for high precision, cast src to fp32 and compute and then cast it
+        // back
+        input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                                hfusion::RoundMode::ROUND);
+      }
     }
 
     auto resOr = buildSinOrCos(rewriter, op, input, CalcMode::COS);

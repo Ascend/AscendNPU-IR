@@ -6,7 +6,7 @@ func.func @test_plt(%arg0: index) {
   // CHECK-NEXT: %{{.*}} = "hivm_regbaseintrins.intr.hivm.plt.b8.v300"(%{{.*}}) : (i32) -> !llvm.struct<(vector<256xi1>, i32)>
   // CHECK-NEXT: %{{.*}} = llvm.extractvalue %{{.*}}[0] {mask_bit_width = 8 : i32} : !llvm.struct<(vector<256xi1>, i32)>
   // CHECK-NEXT: %{{.*}} = llvm.extractvalue %{{.*}}[1] : !llvm.struct<(vector<256xi1>, i32)>
-  %res, %new_true_shape = ave.hir.plt %arg0 : vector<256xi1>, index
+  %res, %new_true_shape = ave.hir.plt %arg0 {functionType = #ave.func_dist_type<pb8>}: vector<256xi1>, index
   "test.test"(%res, %new_true_shape) : (vector<256xi1>, index) -> ()
   return
 }
@@ -199,7 +199,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b32_op
 func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %res, %new_true_shape = ave.hir.plt %arg0 : vector<64xi1>, index
+  %res, %new_true_shape = ave.hir.plt %arg0 {functionType = #ave.func_dist_type<pb32>}: vector<64xi1>, index
   "test.test"(%res, %new_true_shape) {element_alignment_bit_width = 32 : i32} : (vector<64xi1>, index) -> ()
   return
 }
@@ -210,7 +210,7 @@ func.func @test_plt_b8_in_top_region_used_by_b32_op(%arg0: index) attributes {hi
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_used_by_b16_op
 func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 16 : i32} : vector<64xi1>, index
+  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<pb16>} : vector<64xi1>, index
   "test.test"(%res, %new_true_shape) : (vector<64xi1>, index) -> ()
   return
 }
@@ -221,8 +221,8 @@ func.func @test_plt_b8_in_top_region_used_by_b16_op(%arg0: index) attributes {hi
 
 // CHECK-LABEL: @test_plt_b8_in_top_region_user_has_no_elem_align
 func.func @test_plt_b8_in_top_region_user_has_no_elem_align(%arg0: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
-  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 8 : i32} : vector<64xi1>, index
-  "test.test"(%res) : (vector<64xi1>) -> ()
+  %res, %new_true_shape = ave.hir.plt %arg0 {element_alignment_bit_width = 8 : i32, functionType = #ave.func_dist_type<pb8>} : vector<256xi1>, index
+  "test.test"(%res) : (vector<256xi1>) -> ()
   return
 }
 // CHECK: "hivm_regbaseintrins.intr.hivm.plt.b8.v300"

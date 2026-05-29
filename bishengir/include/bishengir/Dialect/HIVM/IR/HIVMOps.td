@@ -390,6 +390,8 @@ def EmbeddingGatherOp : HIVM_Op<"embedding_gather", [
 def GatherLoadOp : HIVM_Op<"gather_load", [
     HIVMCoreTypeInterface,
     VectorCoreTypeTrait,
+    OpPipeInterface,
+    SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
     DestinationStyleOpInterface,
     InferTypeOpAdaptor,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
@@ -489,6 +491,8 @@ def LocalLoadOp : HIVM_Op<"local_load", [
 def ScatterStoreOp : HIVM_Op<"scatter_store", [
     HIVMCoreTypeInterface,
     VectorCoreTypeTrait,
+    OpPipeInterface,
+    SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
     DestinationStyleOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     SameVariadicOperandSize,

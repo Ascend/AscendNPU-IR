@@ -1599,6 +1599,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   for (Operation *userOp : srcMemref.getUsers()) {
     // Pattern 1: This deals with the pattern: memref.alloc() ->
     // bufferization.to_tensor, with Load Op
+    if (!isa<memref::AllocOp>(srcMemref.getDefiningOp()))
+        continue;  // src must be alloc op
     if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp)) {
       LDBG("Pattern 1:\n" << loadOp);
 
@@ -1764,7 +1766,18 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         if (utils::getAnnotateOpWithAttr(memorySpaceCastOp.getResult(),
                                          kMayImplicitTransposeWithLastAxis))
           return failure();
-        // get the alloc result shape from sliceOp
+        // Only tile when cast users are to_tensor and/or marked bubble-up
+        // subviews. Other users (e.g. subview + load without mark) need a
+        // different rewrite path.
+        for (Operation *castUser :
+             memorySpaceCastOp.getResult().getUsers()) {
+          if (castUser == toTensorOp.getOperation())
+            continue;
+          auto subViewOp = dyn_cast<memref::SubViewOp>(castUser);
+          if (subViewOp && isMarkedExtractSliceOp(subViewOp))
+            continue;
+          return failure();
+        }
         auto resultType =
             dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
         auto staticShape = llvm::to_vector(resultType.getShape());
@@ -1780,7 +1793,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
         rewriter.setInsertionPoint(UbAllocOp);
         auto newUbAllocOp = rewriter.create<memref::AllocOp>(loc, newType);
 
-        // deal with the annotation.mark Op
+        // deal with the annotation.mark Op and sibling Op path
         auto oldShape = originalType.getShape();
         for (Operation *userOp :
              llvm::make_early_inc_range(UbAllocOp.getResult().getUsers())) {
@@ -1800,6 +1813,9 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                 }
               }
             });
+          } else if (!isa<memref::MemorySpaceCastOp>(userOp)){
+            // If there is a sibling user that is not memory_space_cast, we cannot tile.
+            return failure();
           }
         }
 

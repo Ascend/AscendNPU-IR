@@ -63,13 +63,11 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   if (!hivmPipelineOptions.enableMixedCV)
     options.enableLegacy = true;
   options.target = hivmPipelineOptions.target;
-  options.enableDotScaledCompile =
-      hivmPipelineOptions.enableDotScaledCompile;
+  options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
-      mlir::hivm::createInsertLoadStoreForMixCVPass(
-          options));
+      mlir::hivm::createInsertLoadStoreForMixCVPass(options));
 }
 
 static void
@@ -82,7 +80,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
-      !hivmPipelineOptions.enableDotScaledCompile) {
+             !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
@@ -92,7 +90,6 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   }
-
 }
 
 static void
@@ -113,57 +110,15 @@ hivmIntraCoreSyncPipeline(OpPassManager &pm,
   }
 }
 
-enum CrossCoreAutoSyncMode { CCGSS_STEP_1, CCGSS_STEP_2 };
-
-static void
-hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
-                                 const HIVMPipelineOptions &hivmPipelineOptions,
-                                 CrossCoreAutoSyncMode mode) {
-  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
-    canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
-    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-  }
-}
-
-static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
-    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions,
-    CrossCoreAutoSyncMode mode) {
-  const bool useBlockAllWorkAround = false;
-  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
-    canonicalizationHIVMPipeline(pm);
-    if (hivmPipelineOptions.enableCodeMotion) {
-      pm.addPass(createLoopInvariantCodeMotionPass());
-      pm.addPass(createLoopInvariantSubsetHoistingPass());
-    }
-    if (useBlockAllWorkAround) {
-      InjectBlockSyncOptions blockSyncOption;
-      blockSyncOption.blockAllSync = true;
-      pm.nest<func::FuncOp>().addPass(
-          createInjectBlockSyncPass(blockSyncOption));
-    } else {
-      pm.addPass(createMarkRealCoreTypePass());
-      pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
-      MarkRealCoreTypeOptions markRealCoreTypeOptions;
-      markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-      pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-    }
-    pm.addPass(createInsertAnchorsAndBackupPass());
-  } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
-    canonicalizationHIVMPipeline(pm);
-    pm.addPass(createMarkRealCoreTypePass());
-    pm.addPass(createDelayedCrossCoreGSSPass());
-    MarkRealCoreTypeOptions markRealCoreTypeOptions;
-    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
-    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
-    insertAnchorsAndBackupOptions.cleanup = true;
-    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
-  }
-}
+enum class CrossCoreAutoSyncMode {
+  // Always run the first-stage cross-core autosync work. In delayed-cross-core
+  // mode this prepares anchor/backup state for step 2; otherwise this is the
+  // only active stage and runs either cross-core-gss or inject-block-sync.
+  CCGSS_STEP_1,
+  // Only does work when delayed-cross-core GSS is enabled. Non-delayed modes
+  // ignore this stage because their autosync flow completes in step 1.
+  CCGSS_STEP_2
+};
 
 static void
 hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
@@ -183,14 +138,58 @@ hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
 }
 
 static void
+hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  }
+}
+
+static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions,
+    CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    // Temporary workaround: step 1 still injects sync ops so the auto-vectorize
+    // pipeline does not merge operations that must stay separated for the
+    // delayed cross-core autosync flow. Remove this once auto-vectorize no
+    // longer depends on the presence of sync ops to preserve those boundaries.
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    pm.addPass(createInsertAnchorsAndBackupPass());
+  } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
+    delayedcrossCoreGSSOptions.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
+    insertAnchorsAndBackupOptions.cleanup = true;
+    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
+  }
+}
+
+static void
 hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
                               const HIVMPipelineOptions &hivmPipelineOptions,
                               CrossCoreAutoSyncMode mode) {
   if (hivmPipelineOptions.disableAutoInjectBlockSync) {
     return;
   }
-  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS ||
-      hivmPipelineOptions.enableHIVMInjectBlockAllSync) {
+  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS) {
     hivmCrossCoreAutoSyncINJPipeline(pm, hivmPipelineOptions, mode);
   } else if (hivmPipelineOptions.enableHIVMDelayedCrossCoreGSS) {
     hivmDelayedCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
@@ -254,7 +253,6 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
 
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
-
 
   pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
@@ -320,6 +318,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -485,6 +489,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;

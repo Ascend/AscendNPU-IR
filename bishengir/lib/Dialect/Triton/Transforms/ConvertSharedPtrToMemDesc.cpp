@@ -110,11 +110,18 @@ buildMemDescType(MLIRContext *ctx, ArrayRef<int64_t> shape, Type elemType,
     auto layoutType =
         bishengir::triton_ext::symbolizeFractalLayoutType(strAttr.getValue());
     assert(layoutType && "invalid hivm.fractal_layout value");
-    // Fractal tile is always 512 bytes: M0 is fixed at 16, N0 scales with
-    // element width so that M0 * N0 * elemBytes == 512.
-    constexpr int64_t fractalM0 = 16;
-    int64_t elemBits = elemType.getIntOrFloatBitWidth();
-    int64_t fractalN0 = 512 / (fractalM0 * (elemBits / 8));
+    // Fractal tile is 512 bytes (16 elems x blk elems, blk = 32B/sizeof).
+    // fractalM0/N0 are the inner-block sizes along storage axis 0/1, so the
+    // axis the cube reads with stride 1 (K) gets `blk`, the other gets 16.
+    //   A (zN): K = axis 1 -> fM=16, fN=blk
+    //   B (nZ): K = axis 0 -> fM=blk, fN=16
+    constexpr int64_t kAlignM = 16;
+    int64_t elemBytes = elemType.getIntOrFloatBitWidth() / 8;
+    int64_t blk = 32 / elemBytes;
+    bool isZN = *layoutType ==
+                bishengir::triton_ext::FractalLayoutType::zN;
+    int64_t fractalM0 = isZN ? kAlignM : blk;
+    int64_t fractalN0 = isZN ? blk : kAlignM;
     encoding = bishengir::triton_ext::FractalSharedEncodingAttr::get(
         ctx, fractalM0, fractalN0, *layoutType, ctaLayout);
   } else {

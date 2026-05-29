@@ -139,3 +139,23 @@ scf.for %arg5 = %c0 to %c16 step %c1 {
 }
 return
 }
+
+// -----
+
+// Test for getMaxDataTypeWidths function with element_alignment_bit_width attribute
+func.func @test_element_alignment_bit_width(%arg0: memref<64xi1, #hivm.address_space<ub>>, %arg1: memref<64xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  
+  // Test case where element_alignment_bit_width is explicitly set to 32
+  // This should trigger the code path at line 1055-1058
+  %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32} : vector<64xi1>
+  
+  // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"({{.*}}, {{.*}}) : (vector<64xi32>, i32) -> vector<256xi1>
+  %res = ave.hir.vload <NORM> %arg0[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 32 : i32} : memref<64xi1, #hivm.address_space<ub>> into vector<64xi1>
+  
+  // Store result to verify the element_alignment_bit_width is correctly propagated
+  %1 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32} : vector<64xi1>
+  ave.hir.masked_store <NORM_B32> %arg1[%c0], %1, %res {element_alignment_bit_width = 32 : i32} : memref<64xi32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+  
+  return
+}

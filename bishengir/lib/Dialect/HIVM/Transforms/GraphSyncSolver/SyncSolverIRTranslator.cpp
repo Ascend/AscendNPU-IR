@@ -498,7 +498,13 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
   ModuleOp module = funcOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto calledFuncOp = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+  // Track calls to vector functions and outlined SIMT vector functions:
+  // both run on the vector core and must participate in sync analysis as
+  // PIPE_V ops so the Solver can compute correct <src_pipe, dst_pipe>
+  // pairs against neighboring producers/consumers.
+  if (!calledFuncOp ||
+      (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name) &&
+       !hivm::util::isSIMTVF(calledFuncOp))) {
     return nullptr;
   }
   llvm::SetVector<Value> readMemVals, writeMemVals;
@@ -518,9 +524,13 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     }
   };
 
-  // handle function arguments annotated with memory effect attributes
-  for (auto [i, arg] : llvm::enumerate(calledFuncOp.getArguments())) {
-    // get the attribute by name for i-th argument
+  // handle function arguments annotated with memory effect attributes.
+  // Use `getNumArguments()` (function-type based) so this also works for
+  // private declarations (e.g., outlined SIMT VFs whose body has been
+  // moved to a Triton submodule). The caller-side `callArg` is inserted
+  // directly here; the final `getMemoryOps(readMemVals.takeVector())`
+  // below traces back to the canonical memory root in the caller.
+  for (unsigned i = 0, n = calledFuncOp.getNumArguments(); i < n; ++i) {
     auto memEffectAttr =
         calledFuncOp.getArgAttr(i, hivm::MemoryEffectAttr::name);
     if (!memEffectAttr) {
@@ -528,13 +538,13 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     }
     auto effect = cast<hivm::MemoryEffectAttr>(memEffectAttr).getEffect();
     auto callArg = callOp->getOperand(i);
-    // logic based on the attribute value
-    if (effect == hivm::MemoryEffect::READ) {
-      handleRWValue(callArg, MemoryEffect::READ);
-    } else if (effect == hivm::MemoryEffect::WRITE) {
-      handleRWValue(callArg, MemoryEffect::WRITE);
-    } else if (effect == hivm::MemoryEffect::READ_WRITE) {
-      handleRWValue(callArg, MemoryEffect::READ_WRITE);
+    if (effect == hivm::MemoryEffect::READ ||
+        effect == hivm::MemoryEffect::READ_WRITE) {
+      readMemVals.insert(callArg);
+    }
+    if (effect == hivm::MemoryEffect::WRITE ||
+        effect == hivm::MemoryEffect::READ_WRITE) {
+      writeMemVals.insert(callArg);
     }
   }
 
@@ -614,23 +624,6 @@ std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   return {};
 }
 
-void IRTranslator::handleAnchorIdAttrMarkedOp(OperationBase *opBase) {
-  assert(opBase != nullptr);
-  Operation *op = opBase->op;
-  assert(op != nullptr);
-
-  if (auto intAttr =
-          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdBeforeAttr::name)) {
-    int64_t anchorId = intAttr.getInt();
-    anchorOpMap[anchorId] = opBase;
-  }
-  if (auto intAttr =
-          op->getAttrOfType<IntegerAttr>(hivm::AnchorIdAfterAttr::name)) {
-    int64_t anchorId = intAttr.getInt();
-    anchorOpMap[anchorId] = opBase;
-  }
-}
-
 void IRTranslator::updateBlockArgAliases(Block *block,
                                          OperandRange destOperands) {
   assert(block->getArguments().size() == destOperands.size());
@@ -679,7 +672,6 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto conditionOp = std::make_unique<Condition>(
             &op, parScope, std::move(trueScope), std::move(falseScope));
         conditionOp->isUnlikely = isUnlikelyCondition(conditionOp.get());
-        handleAnchorIdAttrMarkedOp(conditionOp.get());
         if (!skipEmptyScopes || !isEmptyScope(conditionOp.get())) {
           parScope->body.push_back(std::move(conditionOp));
         }
@@ -701,7 +693,6 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto afterPlaceHolderOp =
             std::make_unique<PlaceHolder>(nullptr, loopOp->parentOp);
         afterPlaceHolderOp->afterOp = loopOp.get();
-        handleAnchorIdAttrMarkedOp(loopOp.get());
         if (!skipEmptyScopes || !isEmptyScope(loopOp.get())) {
           parScope->body.push_back(std::move(beforePlaceHolderOp));
           parScope->body.push_back(std::move(loopOp));
@@ -716,7 +707,6 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));
         }
-        handleAnchorIdAttrMarkedOp(curScopeOp.get());
         scopeOp->body.push_back(std::move(curScopeOp));
         continue;
       }
@@ -735,6 +725,16 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         auto anchor = std::make_unique<Anchor>(&op, parScope, anchorOp.getId());
         anchorOpMap[anchor->anchorId] = anchor.get();
         parScope->body.push_back(std::move(anchor));
+        continue;
+      }
+      if (auto anchorBlockOp = dyn_cast<hivm::AnchorBlockOp>(op)) {
+        int64_t idStart = anchorBlockOp.getIdStart();
+        int64_t idEnd = anchorBlockOp.getIdEnd();
+        auto anchor =
+            std::make_unique<AnchorBlock>(&op, parScope, idStart, idEnd);
+        parScope->body.push_back(std::move(anchor));
+        anchorOpMap[idStart] = parScope;
+        anchorOpMap[idEnd] = parScope;
         continue;
       }
       if (!options.ignoreNonAnchorOps) {

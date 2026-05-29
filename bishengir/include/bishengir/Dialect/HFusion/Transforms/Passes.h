@@ -244,6 +244,7 @@ createWrapHostFuncPass(const WrapHostFuncOptions &options = {});
 std::unique_ptr<Pass> createFoldSymbolicDimPass();
 std::unique_ptr<Pass> createUnfoldSymbolicDimPass();
 std::unique_ptr<Pass> createDropSymbolsPass();
+std::unique_ptr<Pass> createFoldExtractInsertPairPass();
 
 /// Create a pass to decompose ops that implemented AggregatedOpInterface.
 std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
@@ -267,6 +268,9 @@ createHFusionVectorizeOpsPass(const VectorizeOpsOptions &options = {});
 
 /// Create a pass to fold unit dims in linalg ops on tensors
 std::unique_ptr<Pass> createHFusionFoldUnitDimsPass();
+
+// Create a pass to remove redundant transfer_write and transfer_read pair
+std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
 
 // Create a pass to remove mask from unaligned reduction loop
 std::unique_ptr<Pass> createRemoveMaskFromUnalignedReductionLoopPass();

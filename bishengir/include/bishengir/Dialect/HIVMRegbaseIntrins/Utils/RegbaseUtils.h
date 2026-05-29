@@ -62,9 +62,15 @@ Operation *buildVpackOp(Location loc, Value part, Value src, Type vectorType,
 
 Operation *buildVunpackOp(Location loc, Value part, Value src, Type vectorType,
                            PatternRewriter &rewriter);
-                                                  
-Operation *buildPltOp(Value count, unsigned elementBitWidth,
+
+Operation *buildPgeOp(Location loc, Value pattern, int elementAlignment,
                       PatternRewriter &rewriter);
+
+Operation *buildPltOp(Location loc, Value true_shape, int elementAlignment,
+                      PatternRewriter &rewriter);
+
+Operation *buildPltMOp(Location loc, Value div, Value ub, int elementAlignment,
+                       PatternRewriter &rewriter);
 
 Operation *buildPstuOp(Value data, Value dataPtr, PatternRewriter &rewriter,
                        int elementAlignment, Value alignData);
@@ -98,9 +104,6 @@ bool isHIVMSupportedType(Type t);
 int getVldsBrcDist(const int &dataBitWidth);
 
 VectorType adjustTypeToDavidSupportedType(VectorType vecTy);
-
-Value createPredicateVector(Operation *op, VectorType vecType,
-                            PatternRewriter &rewriter);
 
 VectorType createVLVectorType(Type elementType);
 

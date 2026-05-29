@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 namespace mlir::hfusion {
 
@@ -1359,6 +1360,17 @@ public:
   }
 };
 
+static bool isInSimtScope(Operation *op) {
+  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
+  if (!scopeOp) {
+    return false;
+  }
+  if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+    return vectorType.getValue() == "simt";
+  }
+  return false;
+}
+
 template <>
 struct NormalizeToTargetType<bool, linalg::BroadcastOp>
     : public OpRewritePattern<linalg::BroadcastOp> {
@@ -1368,6 +1380,11 @@ public:
   LogicalResult matchAndRewrite(linalg::BroadcastOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+    
+    // @TODO: Need a more general solution for skip normalize in simt scope.
+    if (isInSimtScope(op)) {
       return failure();
     }
 

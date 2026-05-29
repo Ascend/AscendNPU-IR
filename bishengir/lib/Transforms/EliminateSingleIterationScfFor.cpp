@@ -114,17 +114,17 @@ struct EliminateSingleIterationScfForPass
     : public impl::EliminateSingleIterationScfForBase<
           EliminateSingleIterationScfForPass> {
   void runOnOperation() override {
-    ModuleOp module = getOperation();
+    func::FuncOp func = getOperation();
     AffineMinMaxValueBoundsCollector bounds;
-    bounds.populate(module);
+    bounds.populate(func);
 
     if (dumpAffineMinmaxBounds)
       dumpAffineMinmaxBoundsToStderr(bounds);
 
-    IRRewriter rewriter(module.getContext());
+    IRRewriter rewriter(func.getContext());
     SmallVector<scf::ForOp> singleIter;
 
-    module.walk([&](scf::ForOp forOp) {
+    func.walk([&](scf::ForOp forOp) {
       if (bounds.provesSingleIterationScfFor(forOp))
         singleIter.push_back(forOp);
     });

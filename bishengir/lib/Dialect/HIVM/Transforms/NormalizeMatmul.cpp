@@ -49,6 +49,7 @@ namespace {
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
 constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
 constexpr StringLiteral kNormalizedInitOrBias = "normalized_init_or_bias";
+constexpr StringLiteral kMayNotExec = "may_not_exec";
 
 /// Hint that we only need to pad the k-dimension for Dot.
 constexpr llvm::StringLiteral kDotPadOnlyK = "dot_pad_only_k";
@@ -697,23 +698,26 @@ CCFInfo getResFromSingleUseChain(Operation *op) {
 }
 
 Value initCounter(PatternRewriter &rewriter, Operation &op) {
-    rewriter.setInsertionPoint(&op);
-    // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
-    // every outer iteration, so the counter resets per outer step.
-    Location loc = op.getLoc();
-    Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
-    Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-    auto storeOp = rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
-    storeOp->setAttr(hivm::TCoreTypeAttr::name, hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::CUBE_AND_VECTOR));
-    return counterBuf;
+  rewriter.setInsertionPoint(&op);
+  // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
+  // every outer iteration, so the counter resets per outer step.
+  Location loc = op.getLoc();
+  Value counterBuf = rewriter.create<memref::AllocaOp>(
+      loc, MemRefType::get({}, rewriter.getI32Type()));
+  Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  auto storeOp =
+      rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
+  storeOp->setAttr(hivm::TCoreTypeAttr::name,
+                   hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                            hivm::TCoreType::CUBE_AND_VECTOR));
+  return counterBuf;
 }
 
-template<typename T>
+template <typename T>
 Value updateInitCondition(PatternRewriter &rewriter, T op, Value counterBuf) {
   rewriter.setInsertionPoint(op);
   Location loc = op->getLoc();
-  auto loadOp =
-      rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+  auto loadOp = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   auto firstIterCond = rewriter.create<arith::CmpIOp>(
       loc, arith::CmpIPredicate::eq, loadOp.getResult(), zeroI32);
@@ -723,19 +727,18 @@ Value updateInitCondition(PatternRewriter &rewriter, T op, Value counterBuf) {
   // which is exactly what the fallback below relies on.
   rewriter.setInsertionPointAfter(op);
   Value oneI32 = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
-  Value nextCount = rewriter.create<arith::AddIOp>(loc, loadOp.getResult(), oneI32);
+  Value nextCount =
+      rewriter.create<arith::AddIOp>(loc, loadOp.getResult(), oneI32);
   rewriter.create<memref::StoreOp>(loc, nextCount, counterBuf, ValueRange{});
   return firstIterCond;
 }
 
-template<typename T>
-Value updateInitTrue(PatternRewriter &rewriter, T op) {
+template <typename T> Value updateInitTrue(PatternRewriter &rewriter, T op) {
   Value constTrue = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, 1);
   return constTrue;
 }
 
-template<typename T>
-Value getCounterBufFromInitCondition(T mmadLikeOp) {
+template <typename T> Value getCounterBufFromInitCondition(T mmadLikeOp) {
   // Attempt to get the init condition value from the operation
   Value initCond = mmadLikeOp.getInitCondition();
   if (!initCond)
@@ -759,23 +762,26 @@ Value getCounterBufFromInitCondition(T mmadLikeOp) {
   return nullptr;
 }
 
-hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type, Value operand_l, Value operand_r) {
+hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type,
+                        Value operand_l, Value operand_r) {
   auto addInit = mlir::utils::createEmptyOp(rewriter, loc, operand_l);
-  auto addOp = rewriter.create<hivm::VAddOp>(
-      loc, TypeRange{type},
-      ValueRange{operand_l, operand_r},
-      ValueRange{addInit});
+  auto addOp = rewriter.create<hivm::VAddOp>(loc, TypeRange{type},
+                                             ValueRange{operand_l, operand_r},
+                                             ValueRange{addInit});
   return addOp;
 }
 
-template<typename T>
-void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad, Value counterBuf, Value outerInVal, Value outerOutVal, bool isAdd=false) {
+template <typename T>
+void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad,
+                     Value counterBuf, Value outerInVal, Value outerOutVal,
+                     bool isAdd = false) {
   rewriter.setInsertionPointAfter(&op);
   Location loc = op.getLoc();
-  Value postCount = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+  Value postCount =
+      rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-  Value neverRan = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, postCount, zeroI32);
+  Value neverRan = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                  postCount, zeroI32);
 
   auto fallbackIf = rewriter.create<scf::IfOp>(
       loc, mmad->getResultTypes(), neverRan, /*withElseRegion=*/true);
@@ -785,20 +791,21 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad, Value cou
     OpBuilder::InsertionGuard g(rewriter);
     rewriter.setInsertionPointToStart(fallbackIf.thenBlock());
     if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
-      auto newVbrcOp = cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
+      auto newVbrcOp =
+          cast<hivm::VBrcOp>(rewriter.clone(*brcOp.getOperation()));
       rewriter.create<scf::YieldOp>(loc, ValueRange{newVbrcOp.getResult()});
     } else {
       rewriter.create<scf::YieldOp>(loc, ValueRange{outerInVal});
     }
   }
 
-
   // Else block
   {
     OpBuilder::InsertionGuard g(rewriter);
     rewriter.setInsertionPointToStart(fallbackIf.elseBlock());
     if (isAdd) {
-      auto addOp = createVadd(rewriter, loc, outerOutVal.getType(), outerInVal, outerOutVal);
+      auto addOp = createVadd(rewriter, loc, outerOutVal.getType(), outerInVal,
+                              outerOutVal);
       rewriter.create<scf::YieldOp>(loc, ValueRange{addOp.getResults()[0]});
     } else {
       rewriter.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
@@ -806,10 +813,33 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad, Value cou
   }
 
   // replace user of output of CCF
-  rewriter.replaceUsesWithIf(outerOutVal, fallbackIf.getResult(0), [&](OpOperand &operand) {
-    Operation *userOp = operand.getOwner();
-    return !fallbackIf->isAncestor(userOp);
-  });
+  rewriter.replaceUsesWithIf(outerOutVal, fallbackIf.getResult(0),
+                             [&](OpOperand &operand) {
+                               Operation *userOp = operand.getOwner();
+                               return !fallbackIf->isAncestor(userOp);
+                             });
+}
+
+// Check if previous L0C could be reuse
+bool couldReuse(Value outerInVal) {
+  // Check the user of previous L0C is only one
+  if (!outerInVal.hasOneUse())
+    return false;
+
+  // check the user of previous L0C is mmadL1
+  if (auto mmadOp = outerInVal.getDefiningOp<hivm::MmadL1Op>()) {
+    return true;
+  }
+
+  // check the user of previous L0C is output from mmadL1 in CCF
+  if (Operation *defOp = outerInVal.getDefiningOp()) {
+    if ((isa<scf::ForOp>(defOp)) && defOp->hasAttr(kNormalizedInL0C) &&
+        !defOp->hasAttr(kMayNotExec)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 struct BrcBiasInfo {
@@ -818,9 +848,15 @@ struct BrcBiasInfo {
   hivm::VAddOp addOp;
 };
 
-template<typename T>
-BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
+// Get the Bias mode
+// PerChannelAdd: Vbrc(x, [0])
+// ZeroInitNoAccumulation: Vbrc(0)
+// ReuseL0C: prev_val (mmadL1) is confrimly executed and current mayNotExec is
+//          false; TODO: mayNotExec criteria should be removed
+// NoBias: empty ElementwiseAdd: x[n, m]
+template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
   // refer to getMatmulLikeBiasMode
+  Value outerInVal = ccfinfo.inVal;
   BrcBiasInfo info;
   if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
     if (isSatisfiedBrcForPerChannel(brcOp)) {
@@ -828,11 +864,11 @@ BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
       info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
       return info;
     }
-    if (isConstZero(brcOp.getSrc())){
+    if (isConstZero(brcOp.getSrc())) {
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
       return info;
     }
-  } else if (auto preMmadOp = outerInVal.getDefiningOp<hivm::MmadL1Op>()) {
+  } else if (couldReuse(outerInVal) && (!ccfinfo.mayNotExec)) {
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
   } else if (outerInVal.hasOneUse()) {
@@ -848,15 +884,18 @@ BrcBiasInfo getBrcBiasMode(Value outerInVal, T op) {
       }
     }
   }
-  auto emptyOps = traceDefOps<tensor::EmptyOp>(outerInVal,
-                                               /*isSingleChain=*/false,
-                                               /*traceMode=*/TraceResultMode::StrictSame);
-  info.brcBiasMode = !emptyOps.empty()? MatmulBiasMode::NoBias : MatmulBiasMode::ElementwiseAdd;
+  auto emptyOps =
+      traceDefOps<tensor::EmptyOp>(outerInVal,
+                                   /*isSingleChain=*/false,
+                                   /*traceMode=*/TraceResultMode::StrictSame);
+  info.brcBiasMode = !emptyOps.empty() ? MatmulBiasMode::NoBias
+                                       : MatmulBiasMode::ElementwiseAdd;
 
   return info;
 }
 
-// Add counter and if block in the tail for the case that mmad is probably not executed
+// Add counter and if block in the tail for the case that mmad is probably not
+// executed
 template <typename T>
 struct NormalizeMmadCCFPattern : public OpRewritePattern<T> {
 public:
@@ -867,11 +906,14 @@ public:
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;
     if (moduleOp) {
-      isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
+      isDisableHfusionVectorize =
+          moduleOp->hasAttr("hfusion.disableHfusionVectorize");
     }
-    if (op->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
+    if (op->template getParentOfType<scope::ScopeOp>() ||
+        isDisableHfusionVectorize) {
       LDBG("Affinity pattern already applied");
-      return rewriter.notifyMatchFailure(op, "Affinity pattern already applied");
+      return rewriter.notifyMatchFailure(op,
+                                         "Affinity pattern already applied");
     }
 
     if (op->hasAttr(kNormalizedInL0C)) {
@@ -884,7 +926,8 @@ public:
       return rewriter.notifyMatchFailure(op, "Init condition is not zero");
     }
     // Check if in CCF
-    if (!op->template getParentOfType<scf::ForOp>() && !op->template getParentOfType<scf::IfOp>()) {
+    if (!op->template getParentOfType<scf::ForOp>() &&
+        !op->template getParentOfType<scf::IfOp>()) {
       LDBG("Not in CCF");
     } else {
       LDBG("In CCF");
@@ -901,7 +944,7 @@ public:
     bool mayNotExec = ccfInfo.mayNotExec;
     bool isUsingCounter = false;
     // get bias Info
-    BrcBiasInfo biasInfo = getBrcBiasMode<T>(outerInVal, op);
+    BrcBiasInfo biasInfo = getBrcBiasMode<T>(ccfInfo, op);
     LDBG("BiasMode:" << biasInfo.brcBiasMode);
     LDBG("skipOptimize:" << skipOptimize);
     LDBG("mayNotExec:" << mayNotExec);
@@ -911,24 +954,37 @@ public:
       counterBuf = initCounter(rewriter, *insertPointOp);
 
     // create new mmad op
-    Value newInit = mlir::utils::createEmptyOp(rewriter, insertPointOp->getLoc(), outerInVal);
+    Value newInit = mlir::utils::createEmptyOp(
+        rewriter, insertPointOp->getLoc(), outerInVal);
     auto tmpNewMmad = cast<T>(rewriter.clone(*op.getOperation()));
 
     // set init condition before mmad op
     Value initCondition;
-    if (!isa<T>(insertPointOp)){
+    if (!isa<T>(insertPointOp)) {
       initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
       isUsingCounter = true;
-      if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
+      if (biasInfo.brcBiasMode == MatmulBiasMode::ReuseL0C) {
         op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
         LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");
+
+        // Set reuse tag for the defining op of outerInVal
+        if (Operation *defOp = outerInVal.getDefiningOp()) {
+          defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+        }
+
         return success();
       }
       LDBG("initCondition using counter");
-    } else if (biasInfo.brcBiasMode==MatmulBiasMode::ReuseL0C) {
+    } else if (biasInfo.brcBiasMode == MatmulBiasMode::ReuseL0C) {
       LDBG("initCondition always false");
       LDBG("ReuseL0C no need to decompose matmul");
       op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+
+      // Set reuse tag for the defining op of outerInVal
+      if (Operation *defOp = outerInVal.getDefiningOp()) {
+        defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+      }
+
       return success();
     } else {
       rewriter.setInsertionPoint(insertPointOp);
@@ -939,14 +995,16 @@ public:
     tmpNewMmad.setInitCondition(initCondition);
 
     // Normalize the outermost init arg to tensor.empty
-    if (biasInfo.brcBiasMode != MatmulBiasMode::NoBias){
+    if (biasInfo.brcBiasMode != MatmulBiasMode::NoBias) {
       if (!isa<T>(insertPointOp) && blockArg) {
         auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
         if (forOp) {
           auto blockArgIdx = blockArg.getArgNumber() - 1;
           forOp.getInitArgsMutable()[blockArgIdx].assign(newInit);
         } else {
-          return rewriter.notifyMatchFailure(op, "expected the outermost init arg to be a block argument of a for op");
+          return rewriter.notifyMatchFailure(
+              op, "expected the outermost init arg to be a block argument of a "
+                  "for op");
         }
       } else {
         // not in the for loop
@@ -956,26 +1014,33 @@ public:
 
     // If it could be merged with bias
     if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
-          biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+        biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
       tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
       // remove vadd
       if (biasInfo.addOp) {
-        rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0], insertPointOp->getResults()[0]);
+        rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0],
+                                    insertPointOp->getResults()[0]);
       }
       tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
     }
     tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+    insertPointOp->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+    if (mayNotExec)
+      insertPointOp->setAttr(kMayNotExec, rewriter.getUnitAttr());
 
     // Add if block for the case that mmad is probably not executed
-    if (biasInfo.brcBiasMode==MatmulBiasMode::ElementwiseAdd) {
+    if (biasInfo.brcBiasMode == MatmulBiasMode::ElementwiseAdd) {
       if (mayNotExec) {
         // generate vadd + yield
-        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal, true);
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf,
+                           outerInVal, outerOutVal, true);
       } else {
         // generate vadd
         rewriter.setInsertionPointAfter(insertPointOp);
         Location loc = insertPointOp->getLoc();
-        auto addOp = createVadd(rewriter, loc, insertPointOp->getResults()[0].getType(), insertPointOp->getResults()[0], outerInVal);
+        auto addOp =
+            createVadd(rewriter, loc, insertPointOp->getResults()[0].getType(),
+                       insertPointOp->getResults()[0], outerInVal);
         mlir::DominanceInfo domInfo(op->getParentOp());
         for (auto &use : llvm::make_early_inc_range(outerOutVal.getUses())) {
           Operation *userOp = use.getOwner();
@@ -983,9 +1048,8 @@ public:
             continue;
           if (userOp == addOp)
             continue;
-          rewriter.modifyOpInPlace(userOp, [&]() {
-            use.set(addOp.getResult()[0]);
-          });
+          rewriter.modifyOpInPlace(userOp,
+                                   [&]() { use.set(addOp.getResult()[0]); });
         }
       }
       LDBG("Default: decompose matmul with elemwise add");
@@ -996,20 +1060,21 @@ public:
     } else {
       if (mayNotExec) {
         // generate yield
-        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf, outerInVal, outerOutVal);
+        addTailFallback<T>(rewriter, *insertPointOp, tmpNewMmad, counterBuf,
+                           outerInVal, outerOutVal);
       }
       LDBG("decompose matmul with other cases");
     }
 
     // replace mmad op with the new one finally
-    Operation* lastOperandDef = initCondition.getDefiningOp();
+    Operation *lastOperandDef = initCondition.getDefiningOp();
     for (auto operand : tmpNewMmad->getOperands()) {
       auto defOp = operand.getDefiningOp();
       if (!defOp)
         continue;
       if (defOp->getBlock() != lastOperandDef->getBlock())
         continue;
-      if (lastOperandDef->isBeforeInBlock(defOp)) 
+      if (lastOperandDef->isBeforeInBlock(defOp))
         lastOperandDef = defOp;
     }
     rewriter.setInsertionPointAfter(op);
@@ -1052,11 +1117,13 @@ public:
       }
       if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
         LDBG("decompose matmul with post per channel add with split k add");
-        return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter, op);
+        return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter,
+                                                                    op);
       }
       if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
         LDBG("decompose matmul with mm init per channel add with split k add");
-        return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
+        return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter,
+                                                                   op);
       }
     }
 

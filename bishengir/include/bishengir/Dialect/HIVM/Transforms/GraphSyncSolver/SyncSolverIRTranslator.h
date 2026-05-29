@@ -179,8 +179,6 @@ protected:
   bool isCVUnrolledLoop(Loop *loopOp);
 
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
-
-  void handleAnchorIdAttrMarkedOp(OperationBase *opBase);
 };
 
 class DelayedCrossCoreIRTranslator : public IRTranslator {
@@ -188,7 +186,6 @@ public:
   CVTripletKernels tripletKernels;
   std::unique_ptr<IRTranslator> cubeIRTranslator;
   std::unique_ptr<IRTranslator> vectorIRTranslator;
-  llvm::DenseMap<std::pair<Loop *, TCoreType>, Loop *> loopMap;
 
 public:
   DelayedCrossCoreIRTranslator(const CVTripletKernels &t,

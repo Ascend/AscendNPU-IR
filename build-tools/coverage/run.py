@@ -19,7 +19,7 @@ from blacklist import BLACKLIST
 # Keep the runner project-scoped. If the coverage scope changes, update this
 # constant and blacklist.py instead of adding runtime compatibility switches.
 BISHENGIR_EXTRACT_PATTERN = "*/bishengir/*"
-LCOV_IGNORE_ERRORS = "mismatch,gcov,source,graph,inconsistent,unused"
+LCOV_IGNORE_ERRORS = "gcov,source,graph"
 
 
 class CoverageError(RuntimeError):
@@ -339,7 +339,7 @@ class CoverageSession:
                 "--legend",
                 "--branch-coverage",
                 "--ignore-errors",
-                "source,inconsistent",
+                "source",
                 str(self.outputs.filtered_info),
             ]
         )

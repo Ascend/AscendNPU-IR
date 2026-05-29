@@ -80,6 +80,9 @@ Value sparseByIntlv(Value src, RewriterBase &rewriter, const Location &loc,
 Value denseByDIntlv(Value src, RewriterBase &rewriter, const Location &loc,
                     Attribute attr = mlir::Attribute());
 
+/// Get preg bit width from FunctionDistTypeAttr
+int getBitWidthFromAttr(Operation *Op);
+
 /// Checks if a Vector Store/Write operation accesses memory continuously.
 /// Logic: LoopStep * MemRefStride == VectorLength
 template <typename SourceOp>

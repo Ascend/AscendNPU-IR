@@ -103,9 +103,21 @@ int analyzeSpecialOp(Operation *op) {
   } else if (auto vgatherOp = dyn_cast<hivmave::VFGatherOp>(op)) {
     return inferenceAlignmentBitwidthByVectorLayout(vgatherOp.getMask());
   } else if (auto interleaveOp = dyn_cast<hivmave::VFInterleaveOp>(op)) {
-    return inferenceAlignmentBitwidthByVectorLayout(interleaveOp.getSrc1());
+    // Has functionType means the interleaveOp try to
+    // convert dense layout to sparse layout without type convertion
+    // So it should use result's layout as elementAlignment.
+    if (interleaveOp->getAttrOfType<hivmave::FunctionDistTypeAttr>("functionType"))
+      return inferenceAlignmentBitwidthByVectorLayout(interleaveOp.getRes1());
+    else
+      return inferenceAlignmentBitwidthByVectorLayout(interleaveOp.getSrc1());
   } else if (auto deinterleaveOp = dyn_cast<hivmave::VFDeInterleaveOp>(op)) {
-    return inferenceAlignmentBitwidthByVectorLayout(deinterleaveOp.getSrc1());
+    // Has functionType means the deinterleaveOp try to
+    // convert dense layout to sparse layout without type convertion
+    // So it should use result's layout as elementAlignment.
+    if (deinterleaveOp->getAttrOfType<hivmave::FunctionDistTypeAttr>("functionType"))
+      return inferenceAlignmentBitwidthByVectorLayout(deinterleaveOp.getRes1());
+    else
+      return inferenceAlignmentBitwidthByVectorLayout(deinterleaveOp.getSrc1());
   } else if (auto truncOp = dyn_cast<hivmave::VFTruncFOp>(op)) {
     // special case of ave-process-vsstb optimization
     return inferenceAlignmentBitwidthByVectorLayout(truncOp.getSrc());

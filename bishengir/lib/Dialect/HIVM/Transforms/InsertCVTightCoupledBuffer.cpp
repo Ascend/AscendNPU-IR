@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -28,6 +29,7 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
@@ -399,6 +401,41 @@ InsertOpHelper(PatternRewriter &rewriter,
   return InsertOpImpl<Mode, EnableND2NZ>::run(rewriter, consumerOperands);
 }
 
+/// Try to annotate a gather feeding directly into mmadL1 with the fractal
+/// layout the cube library expects in L1, so the explicit ND->NZ copy can
+/// be skipped. Returns true when the annotation is applied.
+static bool tryAnnotateGatherFractalLayoutForCubeOperand(
+    OpOperand &consumerOperand) {
+  auto mmadOp = cast<hivm::MmadL1Op>(consumerOperand.getOwner());
+  const unsigned operandNum = consumerOperand.getOperandNumber();
+  if (operandNum != 0 && operandNum != 1)
+    return false;
+  Value producerValue = consumerOperand.get();
+  auto gatherOp =
+      dyn_cast_or_null<hivm::GatherLoadOp>(producerValue.getDefiningOp());
+  if (!gatherOp)
+    return false;
+  Value gatherResult = gatherOp->getResult(0);
+  if (gatherResult.use_empty())
+    return false;
+  if (!llvm::all_of(gatherResult.getUsers(), [&](const Operation *user) {
+        return user == mmadOp.getOperation();
+      }))
+    return false;
+
+  // B uses nZ + b_transpose so the cube selects the `_tb` library variant;
+  // A keeps the default zN layout.
+  const bool isOperandB = (operandNum == 1);
+  const hivm::DataLayout layout =
+      isOperandB ? hivm::DataLayout::nZ : hivm::DataLayout::zN;
+  gatherOp->setAttr(
+      "hivm.fractal_layout",
+      StringAttr::get(gatherOp->getContext(), hivm::stringifyDataLayout(layout)));
+  if (isOperandB)
+    mmadOp.setBTranspose(true);
+  return true;
+}
+
 } // anonymous namespace
 
 //===----------------------------------------------------------------------===//
@@ -524,13 +561,9 @@ struct InsertMoveL1BetweenVectorAndCube
 
       auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
       llvm::SmallVector<OpOperand *> consumerOperands{operand};
-      bool layoutConversionOnTheFly = false;
-      if (auto gatherOp = dyn_cast_or_null<hivm::GatherLoadOp>(beforeValue.getDefiningOp())) {
-          layoutConversionOnTheFly = true;
-          StringRef layout ="zN";
-          // StringRef layout = operand->getOperandNumber() == 0 ? "zN" : "nZ";
-          gatherOp->setAttr("hivm.fractal_layout", StringAttr::get(op.getContext(), layout));
-      }
+      unsigned operandNum = operand->getOperandNumber();
+      bool layoutConversionOnTheFly =
+          tryAnnotateGatherFractalLayoutForCubeOperand(*operand);
       bool isBiasOperand = (beforeValue == op.getPerChannelBias());
       auto tensorType = mlir::dyn_cast<RankedTensorType>(beforeValue.getType());
       // Only rank-2 tensors (original ND format) need to be transposed.
@@ -548,6 +581,35 @@ struct InsertMoveL1BetweenVectorAndCube
       // In this case, we only want to rewrite the operand once, and make sure that other operand
       // is updated with the new value as well.
       Value converted = operand->get();
+
+      // Tag the new L1 alloc with the fractal layout we put the data in, so
+      // MmadL1Op::getOperand{A,B}Layout can suppress the layout-only
+      // `*_transpose` flag and InferHIVMDataLayout won't dim-swap the shape.
+      if (layoutConversionOnTheFly) {
+        auto layout = (operandNum == 1) ? hivm::DataLayout::nZ
+                                        : hivm::DataLayout::zN;
+        StringAttr layoutAttr =
+            rewriter.getStringAttr(hivm::stringifyDataLayout(layout));
+        Value cur = converted;
+        while (cur) {
+          Operation *def = cur.getDefiningOp();
+          if (!def)
+            break;
+          if (auto allocOp = dyn_cast<memref::AllocOp>(def)) {
+            allocOp->setAttr("hivm.fractal_layout", layoutAttr);
+            break;
+          }
+          if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+            cur = toTensor.getMemref();
+            continue;
+          }
+          if (auto vlop = dyn_cast<ViewLikeOpInterface>(def)) {
+            cur = vlop.getViewSource();
+            continue;
+          }
+          break;
+        }
+      }
       rewriter.modifyOpInPlace(op, [&]() {
         op->replaceUsesOfWith(beforeValue, converted);
       });

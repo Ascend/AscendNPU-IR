@@ -534,6 +534,7 @@ LogicalResult VCastOp::verify() {
       "float_to_int8_t_floormode",
       "float_to_int8_t_ceilmode",
       "float_to_int8_t_truncmode",
+      "int8_t_to_float_truncmode",
       "float_to_int16_t_truncwithoverflowmode",
       "float_to_int32_t_truncwithoverflowmode",
       "float_to_float8_e5m2_t_rintmode",

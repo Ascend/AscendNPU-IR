@@ -31,7 +31,9 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include <iterator>
 #include <memory>
 
 #define DEBUG_TYPE "hivm-delayed-cross-core-gss"
@@ -44,20 +46,49 @@ namespace mlir {
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+// Delayed cross-core auto-sync.
+//
+// Sister pass to the in-place GraphSyncSolver cross-core flow. The in-place
+// flow inserts sync ops on the mixed kernel before split-mix-kernel, which
+// means later memory rewrites (notably plan-memory) can invalidate or
+// understate the hazards the solver saw. The delayed flow defers solving
+// until *after* those rewrites, but still uses the mixed kernel as the
+// analysis source so the solver retains its high-quality hazard reasoning.
+//
+// The bridge is a backup of the mixed function plus an anchor model
+// (InsertAnchorsAndBackup pass): each consecutive anchor pair (k, k+1)
+// defines an interval whose contents on the live cube and vector functions
+// are merged into a single synthetic RW operation on the backup. Solving
+// this synthesized IR yields sync ops that are then cloned into the live
+// cube, vector, and backup functions at the matching anchors.
 namespace mlir {
 struct DelayedCrossCoreGSSPass
     : public impl::DelayedCrossCoreGSSBase<DelayedCrossCoreGSSPass> {
+
+  explicit DelayedCrossCoreGSSPass(const DelayedCrossCoreGSSOptions &options)
+      : DelayedCrossCoreGSSBase(options) {}
+
   void runOnOperation() override;
 
 private:
+  // Discover (mix-backup, vector, cube) triplets. The pass operates one
+  // triplet at a time.
   SmallVector<CVTripletKernels> findTriplets(ModuleOp mod) const;
 
+  // Run cross-core sync solving for a single triplet and write the resulting
+  // sync ops back into the live IR.
   void crossCoreGssRunOnOperation(ModuleOp moduleOp, const CVTripletKernels &t);
+
+  // Erase old intra-block sync ops.
+  void eraseOldIntraBlockSyncOps(func::FuncOp funcOp);
 };
 } // namespace mlir
 
 SmallVector<CVTripletKernels>
 DelayedCrossCoreGSSPass::findTriplets(ModuleOp mod) const {
+  // Backups are mix functions tagged by InsertAnchorsAndBackup; their original
+  // counterparts have been replaced by the cube and vector split kernels by
+  // the time this pass runs.
   SmallVector<func::FuncOp> backupFuncOps;
   mod.walk([&](func::FuncOp funcOp) {
     if (auto coreType = hivm::queryFuncCoreType(funcOp)) {
@@ -73,6 +104,9 @@ DelayedCrossCoreGSSPass::findTriplets(ModuleOp mod) const {
   for (func::FuncOp backupFuncOp : backupFuncOps) {
     StringRef funcName = backupFuncOp.getSymName();
     assert(funcName.ends_with(hivm::kFuncBackupSuffix));
+    // The backup name is the original mix-function name plus the backup
+    // suffix; the split kernels keep that original name with the cube/vector
+    // suffix appended by SplitMixKernel.
     StringRef ogFuncName = funcName.drop_back(hivm::kFuncBackupSuffix.size());
 
     auto cubeFunc = symTable.lookup<func::FuncOp>(
@@ -81,6 +115,8 @@ DelayedCrossCoreGSSPass::findTriplets(ModuleOp mod) const {
         (ogFuncName + hivm::kMixFuncAivSuffix).str());
 
     if (!vecFunc || !cubeFunc) {
+      // A backup without a complete split pair indicates an upstream pipeline
+      // mistake; warn and skip rather than fail the pipeline.
       backupFuncOp.emitWarning(
           "delayed-cross-core-gss: split kernels not found.");
       continue;
@@ -110,7 +146,8 @@ static OperationBase *getNextOperation(OperationBase *op, bool &goingIn) {
 
   auto &parentBody = parentScopeOp->body;
   if (parentBody.back().get() == op) {
-    return getNextOperation(parentScopeOp, goingIn = false);
+    goingIn = false;
+    return parentScopeOp;
   }
   goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
@@ -144,7 +181,8 @@ static OperationBase *getPrevOperation(OperationBase *op, bool &goingIn) {
 
   auto &parentBody = parentScopeOp->body;
   if (parentBody.front().get() == op) {
-    return getPrevOperation(parentScopeOp, goingIn = false);
+    goingIn = false;
+    return parentScopeOp;
   }
   goingIn = true;
   auto it = std::find_if(parentBody.begin(), parentBody.end(),
@@ -159,6 +197,9 @@ static OperationBase *getPrevOperation(OperationBase *op) {
   return getPrevOperation(op, goingIn);
 }
 
+// Look up the SyncSolver IR ops carrying the requested anchor ids on a single
+// kernel side. Anchors are registered while building the SyncSolver IR
+// (anchorOpMap), so for any pair of valid ids both must resolve.
 static AnchorInfo getAnchorInfo(IRTranslator *irTranslator, int64_t anchorId1,
                                 int64_t anchorId2) {
   auto anchorIt1 = irTranslator->anchorOpMap.find(anchorId1);
@@ -171,29 +212,58 @@ static AnchorInfo getAnchorInfo(IRTranslator *irTranslator, int64_t anchorId1,
   return AnchorInfo(anchor1, anchor2);
 }
 
+// Walk the open interval (anchorBefore, anchorAfter) and collect every
+// RWOperation reachable in pre-order, recursing into nested scopes.
 static llvm::SmallVector<RWOperation *>
-getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo) {
+getAllRWOperationsBetweenAnchors(OperationBase *opStart, OperationBase *opEnd,
+                                 bool includeOpEnd = false) {
   llvm::SmallVector<RWOperation *> collectedOps;
-  OperationBase *curOp = anchorInfo.anchorBefore;
+  OperationBase *curOp = opStart;
   curOp = getNextOperation(curOp);
   bool goingIn = true;
-  while (curOp != anchorInfo.anchorAfter) {
+  while (true) {
     assert(curOp != nullptr);
+    if (curOp == opEnd) {
+      if (!includeOpEnd) {
+        break;
+      }
+      if (isa<Scope>(curOp) && !goingIn) {
+        break;
+      }
+    }
     if (auto rwOp = dyn_cast<RWOperation>(curOp)) {
       collectedOps.push_back(rwOp);
+    }
+    if (curOp == opEnd) {
+      if (!isa<Scope>(curOp)) {
+        break;
+      }
     }
     curOp = getNextOperation(curOp, goingIn);
   }
   return collectedOps;
 }
 
+static llvm::SmallVector<RWOperation *>
+getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo,
+                                 bool includeOpEnd = false) {
+  return getAllRWOperationsBetweenAnchors(anchorInfo.anchorBefore,
+                                          anchorInfo.anchorAfter, includeOpEnd);
+}
+
+// Collapse all RW ops collected from one interval (across both cube and
+// vector sides) into a single synthetic RW op that the solver can process as
+// one node. Conservative merge policy:
+//   - read/write memory values are concatenated.
+//   - if the input ops disagree on a pipe, fall back to the scalar pipe so
+//     the solver inserts the most general waiting pipe.
 static std::unique_ptr<RWOperation>
 createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
                         const llvm::SmallVector<RWOperation *> &rwOps) {
   std::optional<hivm::PIPE> pipeRead;
   std::optional<hivm::PIPE> pipeWrite;
-  llvm::SmallVector<Value> readMemVals;
-  llvm::SmallVector<Value> writeMemVals;
+  llvm::SetVector<Value> readMemVals;
+  llvm::SetVector<Value> writeMemVals;
   for (auto *rwOp : rwOps) {
     assert(rwOp != nullptr);
     if (!pipeRead.has_value()) {
@@ -203,132 +273,158 @@ createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
       pipeWrite = rwOp->pipeWrite;
     }
     assert(pipeRead.has_value() && pipeWrite.has_value());
+    LLVM_DEBUG({
+      if (pipeRead.value() != rwOp->pipeRead ||
+          pipeWrite.value() != rwOp->pipeWrite) {
+        llvm::dbgs() << "createMergedRWOperation: unexpected rw ops with "
+                        "different read/write pipes, check sync-block-ops with "
+                        "src/dst pipe_s.\n";
+      }
+    });
     if (pipeRead.value() != rwOp->pipeRead) {
       pipeRead = hivm::PIPE::PIPE_S;
     }
     if (pipeWrite.value() != rwOp->pipeWrite) {
       pipeWrite = hivm::PIPE::PIPE_S;
     }
-    llvm::append_range(readMemVals, rwOp->readMemVals);
-    llvm::append_range(writeMemVals, rwOp->writeMemVals);
+    for (auto value : rwOp->readMemVals) {
+      readMemVals.insert(value);
+    }
+    for (auto value : rwOp->writeMemVals) {
+      writeMemVals.insert(value);
+    }
   }
   assert(pipeRead.has_value() && pipeWrite.has_value());
-  return std::make_unique<RWOperation>(nullptr, parentOp, coreType,
-                                       pipeRead.value(), pipeWrite.value(),
-                                       readMemVals, writeMemVals);
+  return std::make_unique<RWOperation>(
+      nullptr, parentOp, coreType, pipeRead.value(), pipeWrite.value(),
+      readMemVals.takeVector(), writeMemVals.takeVector());
 }
 
 void DelayedCrossCoreIRTranslator::initIRTranslators() {
+  // The cube and vector translators are full SyncSolver IR translators on the
+  // live split kernels. We hold them so the merged interval RW ops can carry
+  // pointers back to the actual anchor ops on each side, which is what
+  // codegen later uses to place sync ops on the live IR.
   cubeIRTranslator =
       std::make_unique<IRTranslator>(tripletKernels.cubeFuncOp, options);
   vectorIRTranslator =
       std::make_unique<IRTranslator>(tripletKernels.vectorFuncOp, options);
 }
 
+// Build the synthetic mix-side IR consumed by the solver.
+//
+// Strategy: walk anchor ids in order on the mix side; for each consecutive
+// pair (k, k+1) match it against the same pair on the cube and vector sides.
+// Three cases:
+//   1. The mix interval lies entirely within a single scope on every side -
+//      collect RW ops from the cube and vector sides between the anchors and
+//      synthesize one merged RW op that records anchor pointers for all three
+//      sides. Insert it right after the mix `anchorBefore`.
+//   2. The interval crosses a scope boundary on the mix side - record the
+//      partial anchor information on the *parent* scope/loop op so codegen
+//      can place sync ops at the correct nesting level on each kernel.
+//   3. Both sides empty - skip; no hazard to model.
 std::unique_ptr<OperationBase>
 DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
+  // The mix translator only needs anchor positions, not the full RW IR; the
+  // RW data comes from the cube/vector translators. Build it cheaply.
   auto mixIRTranslatorOptions = options;
   mixIRTranslatorOptions.ignoreNonAnchorOps = true;
   mixIRTranslatorOptions.buildUnrolledSyncIR = false;
   auto mixIRTranslator = std::make_unique<IRTranslator>(
       tripletKernels.mixFuncOp, mixIRTranslatorOptions);
 
+  // Anchor ids are dense within each mix function, so a simple range walk
+  // visits every interval.
   int64_t anchorIdStart = mixIRTranslator->anchorOpMap.begin()->first;
   int64_t anchorIdEnd = mixIRTranslator->anchorOpMap.rbegin()->first;
   assert(anchorIdEnd - anchorIdStart + 1 ==
          static_cast<int64_t>(mixIRTranslator->anchorOpMap.size()));
-  for (int64_t anchorId = anchorIdStart; anchorId < anchorIdEnd; anchorId++) {
-    auto mixAnchorInfo =
-        getAnchorInfo(mixIRTranslator.get(), anchorId, anchorId + 1);
-    auto cubeAnchorInfo =
-        getAnchorInfo(cubeIRTranslator.get(), anchorId, anchorId + 1);
-    auto vectorAnchorInfo =
-        getAnchorInfo(vectorIRTranslator.get(), anchorId, anchorId + 1);
 
-    if (mixAnchorInfo.anchorBefore->parentOp !=
-        mixAnchorInfo.anchorAfter->parentOp) {
-      int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
-      int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
-      if (depthBefore < depthAfter) {
-        auto *parentOp =
-            mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
-        assert(parentOp != nullptr);
-        if (!parentOp->cubeAnchorInfo.has_value()) {
-          parentOp->cubeAnchorInfo = AnchorInfo();
-        }
-        if (!parentOp->vectorAnchorInfo.has_value()) {
-          parentOp->vectorAnchorInfo = AnchorInfo();
-        }
-        parentOp->cubeAnchorInfo->anchorBefore = cubeAnchorInfo.anchorBefore;
-        parentOp->vectorAnchorInfo->anchorBefore =
-            vectorAnchorInfo.anchorBefore;
-        if (auto mixParentLoopOp = dyn_cast<Loop>(parentOp)) {
-          auto cubeParentOp = cubeAnchorInfo.anchorAfter->getNthParent(
-              depthAfter - depthBefore);
-          assert(cubeParentOp != nullptr);
-          auto cubeParentLoopOp = dyn_cast<Loop>(cubeParentOp);
-          assert(cubeParentLoopOp != nullptr);
-          loopMap[{mixParentLoopOp, TCoreType::CUBE}] = cubeParentLoopOp;
+  auto createRWOperations =
+      [&](AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo, TCoreType coreType) {
+        assert(coreType == TCoreType::CUBE || coreType == TCoreType::VECTOR);
 
-          auto vectorParentOp = vectorAnchorInfo.anchorAfter->getNthParent(
-              depthAfter - depthBefore);
-          assert(vectorParentOp != nullptr);
-          auto vectorParentLoopOp = dyn_cast<Loop>(vectorParentOp);
-          assert(vectorParentLoopOp != nullptr);
-          loopMap[{mixParentLoopOp, TCoreType::VECTOR}] = vectorParentLoopOp;
-        }
-      }
-      if (depthBefore > depthAfter) {
-        auto *parentOp =
-            mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
-        assert(parentOp != nullptr);
-        if (!parentOp->cubeAnchorInfo.has_value()) {
-          parentOp->cubeAnchorInfo = AnchorInfo();
-        }
-        if (!parentOp->vectorAnchorInfo.has_value()) {
-          parentOp->vectorAnchorInfo = AnchorInfo();
-        }
-        parentOp->cubeAnchorInfo->anchorAfter = cubeAnchorInfo.anchorAfter;
-        parentOp->vectorAnchorInfo->anchorAfter = vectorAnchorInfo.anchorAfter;
-      }
-      if (depthBefore != depthAfter) {
-        auto beforeAnchorNextOp = getNextOperation(mixAnchorInfo.anchorBefore);
-        assert(beforeAnchorNextOp != nullptr);
-        auto afterAnchorPrevOp = getPrevOperation(mixAnchorInfo.anchorAfter);
-        assert(afterAnchorPrevOp != nullptr);
-        assert(beforeAnchorNextOp != afterAnchorPrevOp);
-        if (auto placeHolderOp = dyn_cast<PlaceHolder>(beforeAnchorNextOp)) {
-          placeHolderOp->cubeAnchorInfo =
-              AnchorInfo(cubeAnchorInfo.anchorBefore);
-          placeHolderOp->vectorAnchorInfo =
-              AnchorInfo(vectorAnchorInfo.anchorBefore);
-        }
-        if (auto placeHolderOp = dyn_cast<PlaceHolder>(afterAnchorPrevOp)) {
-          placeHolderOp->cubeAnchorInfo =
-              AnchorInfo(cubeAnchorInfo.anchorAfter);
-          placeHolderOp->vectorAnchorInfo =
-              AnchorInfo(vectorAnchorInfo.anchorAfter);
-        }
-      }
-      continue;
-    }
+        auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
+        auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+        assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
+        auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
+        assert(parentScopeOp != nullptr);
 
+        // Insert the synthetic op directly after `anchorBefore` so the solver
+        // sees it in the position the original interval would occupy.
+        auto &body = parentScopeOp->body;
+        auto it = std::find_if(body.begin(), body.end(),
+                               [anchorBeforeOp](const auto &item) {
+                                 return item.get() == anchorBeforeOp;
+                               });
+        assert(it != body.end());
+
+        auto selectedAnchorInfo =
+            coreType == TCoreType::CUBE ? cubeAnchorInfo : vectorAnchorInfo;
+        auto *curOp = selectedAnchorInfo.anchorBefore;
+        while (curOp != selectedAnchorInfo.anchorAfter) {
+          assert(curOp != nullptr);
+          auto *nxtOp = getNextOperation(curOp);
+          assert(curOp->parentOp == nxtOp->parentOp);
+          auto rwOps = getAllRWOperationsBetweenAnchors(curOp, nxtOp,
+                                                        /*includeOpEnd=*/true);
+          if (rwOps.empty()) {
+            curOp = nxtOp;
+            continue;
+          }
+
+          auto mergedRWOperation =
+              createMergedRWOperation(parentScopeOp, coreType, rwOps);
+          mergedRWOperation->mixAnchorInfo = mixAnchorInfo;
+          mergedRWOperation->cubeAnchorInfo = cubeAnchorInfo;
+          mergedRWOperation->vectorAnchorInfo = vectorAnchorInfo;
+
+          if (coreType == TCoreType::CUBE) {
+            mergedRWOperation->cubeAnchorInfo = AnchorInfo(nxtOp);
+          } else {
+            mergedRWOperation->vectorAnchorInfo = AnchorInfo(nxtOp);
+          }
+
+          it = body.insert(it + 1, std::move(mergedRWOperation));
+          curOp = nxtOp;
+        }
+      };
+
+  auto createRWOperation = [&](int64_t anchorId, AnchorInfo mixAnchorInfo,
+                               AnchorInfo cubeAnchorInfo,
+                               AnchorInfo vectorAnchorInfo) {
     auto cubeRWOps = getAllRWOperationsBetweenAnchors(cubeAnchorInfo);
     auto vectorRWOps = getAllRWOperationsBetweenAnchors(vectorAnchorInfo);
     if (cubeRWOps.empty() && vectorRWOps.empty()) {
-      continue;
+      return;
     }
 
     TCoreType coreType;
-    if (!cubeRWOps.empty()) {
+    if (vectorRWOps.empty()) {
       coreType = TCoreType::CUBE;
-    } else if (!vectorRWOps.empty()) {
+      createRWOperations(mixAnchorInfo, cubeAnchorInfo, vectorAnchorInfo,
+                         coreType);
+      return;
+    } else if (cubeRWOps.empty()) {
       coreType = TCoreType::VECTOR;
+      createRWOperations(mixAnchorInfo, cubeAnchorInfo, vectorAnchorInfo,
+                         coreType);
+      return;
     } else {
       coreType = TCoreType::CUBE_AND_VECTOR;
+      LLVM_DEBUG({
+        llvm::dbgs() << "createRWOperation: unexpected for both cube and "
+                        "vector kernels to have rw ops between given anchors, "
+                        "check anchor-id="
+                     << anchorId << "\n";
+      });
     }
 
     auto anchorBeforeOp = mixAnchorInfo.anchorBefore;
+    auto anchorAfterOp = mixAnchorInfo.anchorAfter;
+    assert(anchorBeforeOp->parentOp == anchorAfterOp->parentOp);
     auto parentScopeOp = dyn_cast<Scope>(anchorBeforeOp->parentOp);
     assert(parentScopeOp != nullptr);
 
@@ -337,10 +433,14 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
     llvm::append_range(allRWOps, vectorRWOps);
     auto mergedRWOperation =
         createMergedRWOperation(parentScopeOp, coreType, allRWOps);
+    // Carry back the live anchors on every side so codegen can splice the
+    // generated sync ops into all three kernels at the right point.
     mergedRWOperation->mixAnchorInfo = mixAnchorInfo;
     mergedRWOperation->cubeAnchorInfo = cubeAnchorInfo;
     mergedRWOperation->vectorAnchorInfo = vectorAnchorInfo;
 
+    // Insert the synthetic op directly after `anchorBefore` so the solver
+    // sees it in the position the original interval would occupy.
     auto &body = parentScopeOp->body;
     auto it = std::find_if(body.begin(), body.end(),
                            [anchorBeforeOp](const auto &item) {
@@ -348,6 +448,229 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
                            });
     assert(it != body.end());
     body.insert(it + 1, std::move(mergedRWOperation));
+  };
+
+  auto createRWOperationBlockBefore = [&](int64_t anchorId,
+                                          AnchorInfo mixAnchorInfo,
+                                          AnchorInfo cubeAnchorInfo,
+                                          AnchorInfo vectorAnchorInfo) {
+    assert(isa<Anchor>(mixAnchorInfo.anchorBefore));
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    assert(depthBefore < depthAfter);
+    mixAnchorInfo.anchorAfter =
+        mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    cubeAnchorInfo.anchorAfter =
+        cubeAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    vectorAnchorInfo.anchorAfter =
+        vectorAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(mixAnchorInfo.anchorAfter))) {
+      mixAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(cubeAnchorInfo.anchorAfter))) {
+      cubeAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getPrevOperation(vectorAnchorInfo.anchorAfter))) {
+      vectorAnchorInfo.anchorAfter = placeHolderOp;
+    }
+    createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                      vectorAnchorInfo);
+  };
+
+  auto createRWOperationBlockAfter = [&](int64_t anchorId,
+                                         AnchorInfo mixAnchorInfo,
+                                         AnchorInfo cubeAnchorInfo,
+                                         AnchorInfo vectorAnchorInfo) {
+    assert(isa<Anchor>(mixAnchorInfo.anchorAfter));
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    assert(depthBefore > depthAfter);
+    mixAnchorInfo.anchorBefore =
+        mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    cubeAnchorInfo.anchorBefore =
+        cubeAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    vectorAnchorInfo.anchorBefore =
+        vectorAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(mixAnchorInfo.anchorBefore))) {
+      mixAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(cubeAnchorInfo.anchorBefore))) {
+      cubeAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    if (auto placeHolderOp = dyn_cast_if_present<PlaceHolder>(
+            getNextOperation(vectorAnchorInfo.anchorBefore))) {
+      vectorAnchorInfo.anchorBefore = placeHolderOp;
+    }
+    createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                      vectorAnchorInfo);
+  };
+
+  auto createRWOperationBlockBegin =
+      [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo) {
+        assert(isa<Anchor>(mixAnchorInfo.anchorAfter));
+        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+        assert(depthBefore < depthAfter);
+        mixAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        cubeAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        vectorAnchorInfo.anchorBefore =
+            dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                          vectorAnchorInfo);
+      };
+
+  auto createRWOperationBlockEnd =
+      [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
+          AnchorInfo vectorAnchorInfo) {
+        assert(isa<Anchor>(mixAnchorInfo.anchorBefore));
+        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+        assert(depthBefore > depthAfter);
+        mixAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        cubeAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        vectorAnchorInfo.anchorAfter =
+            dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                          vectorAnchorInfo);
+      };
+
+  for (int64_t anchorId = anchorIdStart; anchorId < anchorIdEnd; anchorId++) {
+    auto mixAnchorInfo =
+        getAnchorInfo(mixIRTranslator.get(), anchorId, anchorId + 1);
+    auto cubeAnchorInfo =
+        getAnchorInfo(cubeIRTranslator.get(), anchorId, anchorId + 1);
+    auto vectorAnchorInfo =
+        getAnchorInfo(vectorIRTranslator.get(), anchorId, anchorId + 1);
+
+    if (mixAnchorInfo.anchorBefore->parentOp ==
+        mixAnchorInfo.anchorAfter->parentOp) {
+      createRWOperation(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                        vectorAnchorInfo);
+      continue;
+    }
+
+    int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
+    int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
+    if (depthBefore < depthAfter) {
+      auto *mixParentOp =
+          mixAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      auto *cubeParentOp =
+          cubeAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      auto *vectorParentOp =
+          vectorAnchorInfo.anchorAfter->getNthParent(depthAfter - depthBefore);
+      assert(mixParentOp && cubeParentOp && vectorParentOp);
+
+      mixParentOp->cubeAnchorInfo = AnchorInfo(cubeParentOp);
+      mixParentOp->vectorAnchorInfo = AnchorInfo(vectorParentOp);
+
+      if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+        createRWOperationBlockBefore(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                     vectorAnchorInfo);
+        if (auto mixPlaceHolderOp = dyn_cast_if_present<PlaceHolder>(
+                getPrevOperation(mixParentOp))) {
+          auto *cubePlaceHolderOp = getPrevOperation(cubeParentOp);
+          auto *vectorPlaceHolderOp = getPrevOperation(vectorParentOp);
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockBegin(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+        auto *mixBlockFrontOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
+                ->body.front()
+                .get();
+        if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockFrontOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorAfter->parentOp)
+                  ->body.front()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+    }
+    if (depthBefore > depthAfter) {
+      auto *mixParentOp =
+          mixAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      auto *cubeParentOp =
+          cubeAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      auto *vectorParentOp =
+          vectorAnchorInfo.anchorBefore->getNthParent(depthBefore - depthAfter);
+      assert(mixParentOp && cubeParentOp && vectorParentOp);
+
+      mixParentOp->cubeAnchorInfo = AnchorInfo(cubeParentOp);
+      mixParentOp->vectorAnchorInfo = AnchorInfo(vectorParentOp);
+
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockAfter(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+        if (auto mixPlaceHolderOp = dyn_cast_if_present<PlaceHolder>(
+                getNextOperation(mixParentOp))) {
+          auto *cubePlaceHolderOp = getNextOperation(cubeParentOp);
+          auto *vectorPlaceHolderOp = getNextOperation(vectorParentOp);
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+
+      if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+        createRWOperationBlockEnd(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                  vectorAnchorInfo);
+        auto *mixBlockBackOp =
+            dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
+                ->body.back()
+                .get();
+        if (auto mixPlaceHolderOp = dyn_cast<PlaceHolder>(mixBlockBackOp)) {
+          auto *cubePlaceHolderOp =
+              dyn_cast<Scope>(vectorAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          auto *vectorPlaceHolderOp =
+              dyn_cast<Scope>(cubeAnchorInfo.anchorBefore->parentOp)
+                  ->body.back()
+                  .get();
+          assert(isa<PlaceHolder>(cubePlaceHolderOp));
+          assert(isa<PlaceHolder>(vectorPlaceHolderOp));
+          mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
+          mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
+        }
+      }
+    }
   }
 
   return std::move(mixIRTranslator->funcIr);
@@ -376,7 +699,12 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
   }
+  if (this->blockAllSync) {
+    options.enableBlockAllMode = true;
+  }
 
+  // Build the synthetic mix IR (consuming cube and vector translators in the
+  // process) and hand its translators off so we can talk to live IR later.
   auto mixIRTranslator =
       std::make_unique<DelayedCrossCoreIRTranslator>(t, options);
   auto cubeIRTranslator = std::move(mixIRTranslator->cubeIRTranslator);
@@ -389,24 +717,40 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     llvm::dbgs() << vectorIRTranslator->funcIr->str(0, true) << '\n';
   });
 
-  auto loopMap = std::move(mixIRTranslator->loopMap);
-  auto fixEventIdInfoMultiBufferLoops = [&loopMap](SetWaitOp *setWaitOp,
-                                                   hivm::TCoreType coreType) {
+  // The solver decides set/wait pairs in terms of the mix-side loops; codegen
+  // needs the cube/vector-side loop counterparts when materializing them.
+  auto fixEventIdInfoMultiBufferLoops = [](SetWaitOp *setWaitOp,
+                                           hivm::TCoreType coreType) {
     auto &eventIdInfo = setWaitOp->eventIdInfo;
+    auto fixLoop = [coreType](Loop *loopOp) -> Loop * {
+      if (!loopOp) {
+        return nullptr;
+      }
+      if (coreType == hivm::TCoreType::CUBE) {
+        assert(loopOp->cubeAnchorInfo.has_value());
+        auto *fixedLoopOp =
+            dyn_cast<Loop>(loopOp->cubeAnchorInfo->anchorBefore);
+        assert(fixedLoopOp != nullptr);
+        return fixedLoopOp;
+      } else if (coreType == hivm::TCoreType::VECTOR) {
+        assert(loopOp->vectorAnchorInfo.has_value());
+        auto *fixedLoopOp =
+            dyn_cast<Loop>(loopOp->vectorAnchorInfo->anchorBefore);
+        assert(fixedLoopOp != nullptr);
+        return fixedLoopOp;
+      }
+      return loopOp;
+    };
     if (eventIdInfo.multibufferLoop) {
-      auto it = loopMap.find({eventIdInfo.multibufferLoop, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferLoop = it->second;
+      eventIdInfo.multibufferLoop = fixLoop(eventIdInfo.multibufferLoop);
     }
     if (eventIdInfo.multibufferUnrollLoop1) {
-      auto it = loopMap.find({eventIdInfo.multibufferUnrollLoop1, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferUnrollLoop1 = it->second;
+      eventIdInfo.multibufferUnrollLoop1 =
+          fixLoop(eventIdInfo.multibufferUnrollLoop1);
     }
     if (eventIdInfo.multibufferUnrollLoop2) {
-      auto it = loopMap.find({eventIdInfo.multibufferUnrollLoop2, coreType});
-      assert(it != loopMap.end());
-      eventIdInfo.multibufferUnrollLoop2 = it->second;
+      eventIdInfo.multibufferUnrollLoop2 =
+          fixLoop(eventIdInfo.multibufferUnrollLoop2);
     }
   };
 
@@ -421,6 +765,10 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
   });
 
+  // Solve once on the synthetic mix IR. The result is keyed on synthetic
+  // ops whose AnchorInfos point back to the live anchors on each side; the
+  // remainder of this function fans those decisions out to all three
+  // kernels.
   mixSolver->solve();
   auto [mixSyncBeforeMap, mixSyncAfterMap] =
       mixSolver->getBeforeAfterSyncMaps();
@@ -431,7 +779,10 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   auto &[cubeBeforeMap, cubeAfterMap] = cubeSyncBeforeAfterMap;
   auto &[vectorBeforeMap, vectorAfterMap] = vectorSyncBeforeAfterMap;
 
-  // clone sync ops before
+  // Stage 1: clone "sync before" decisions onto the cube and vector kernels.
+  // Barriers fan out to both sides; set/wait ops route to the side matching
+  // their core type. Multibuffer event-id loop references are translated
+  // from mix-side loops to live-side loops via fixEventIdInfoMultiBufferLoops.
   for (auto &[op, syncOps] : mixSyncBeforeMap) {
     if (syncOps.empty()) {
       continue;
@@ -490,7 +841,8 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
   }
 
-  // clone sync ops after
+  // Stage 2: clone "sync after" decisions onto the cube and vector kernels.
+  // Symmetric to stage 1 but routes to anchorAfter instead of anchorBefore.
   for (auto &[op, syncOps] : mixSyncAfterMap) {
     if (syncOps.empty()) {
       continue;
@@ -547,7 +899,12 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
   }
 
-  // move sync ops to before/after anchors
+  // Stage 3: relocate the mix-side decisions onto the mix anchors.
+  //
+  // The solver attached sync ops to the synthetic merged RW operations, but
+  // those synthetic ops will not exist in the final IR. For RWOperation
+  // entries we re-anchor to the mix-side anchor; for non-RW entries (e.g.
+  // sync ops attached to scopes/loops directly) we keep the original key.
   for (auto &[op, syncOps] : mixSyncBeforeMap) {
     if (syncOps.empty()) {
       continue;
@@ -620,15 +977,34 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   });
 }
 
-template <typename SyncOp>
-struct EraseSyncOpPattern : public OpRewritePattern<SyncOp> {
-  using OpRewritePattern<SyncOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(SyncOp op,
-                                PatternRewriter &rewriter) const final {
-    rewriter.eraseOp(op);
-    return success();
+void DelayedCrossCoreGSSPass::eraseOldIntraBlockSyncOps(func::FuncOp funcOp) {
+  llvm::SmallVector<Operation *> toBeDeleted;
+  funcOp.walk([&](Operation *op) {
+    if (auto syncBlockSetOp = dyn_cast<hivm::SyncBlockSetOp>(op)) {
+      if (auto syncInstrMode = syncBlockSetOp.getTsyncInstrModeAttr()) {
+        if (syncInstrMode.getSyncInstrMode() ==
+            hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+          toBeDeleted.push_back(op);
+        }
+      } else {
+        toBeDeleted.push_back(op);
+      }
+    }
+    if (auto syncBlockWaitOp = dyn_cast<hivm::SyncBlockWaitOp>(op)) {
+      if (auto syncInstrMode = syncBlockWaitOp.getTsyncInstrModeAttr()) {
+        if (syncInstrMode.getSyncInstrMode() ==
+            hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION) {
+          toBeDeleted.push_back(op);
+        }
+      } else {
+        toBeDeleted.push_back(op);
+      }
+    }
+  });
+  for (Operation *op : toBeDeleted) {
+    op->erase();
   }
-};
+}
 
 void DelayedCrossCoreGSSPass::runOnOperation() {
   ModuleOp mod = getOperation();
@@ -638,24 +1014,17 @@ void DelayedCrossCoreGSSPass::runOnOperation() {
 
   auto triplets = findTriplets(mod);
   for (CVTripletKernels &t : triplets) {
-
-    for (auto funcOp : {t.mixFuncOp, t.cubeFuncOp, t.vectorFuncOp}) {
-      auto *ctx = mod->getContext();
-      RewritePatternSet patterns(ctx);
-      patterns.add<EraseSyncOpPattern<hivm::SyncBlockSetOp>,
-                   EraseSyncOpPattern<hivm::SyncBlockWaitOp>,
-                   EraseSyncOpPattern<hivm::PipeBarrierOp>>(ctx);
-      if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
-        signalPassFailure();
-        return;
-      }
-    }
-
-    // run cross-core gss
+    // Erase old intra-block sync ops.
+    eraseOldIntraBlockSyncOps(t.mixFuncOp);
+    eraseOldIntraBlockSyncOps(t.cubeFuncOp);
+    eraseOldIntraBlockSyncOps(t.vectorFuncOp);
+    // Run cross-core sync solving for a single triplet and write the resulting
+    // sync ops back into the live IR.
     crossCoreGssRunOnOperation(mod, t);
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createDelayedCrossCoreGSSPass() {
-  return std::make_unique<DelayedCrossCoreGSSPass>();
+std::unique_ptr<Pass> mlir::hivm::createDelayedCrossCoreGSSPass(
+    const DelayedCrossCoreGSSOptions &options) {
+  return std::make_unique<DelayedCrossCoreGSSPass>(options);
 }

@@ -89,6 +89,12 @@ std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
     }
   }
 
+  if (auto defOp = root.getDefiningOp()) {
+    // Tensors from HIVM arithmetic ops are always expected to land in UB？
+    if (isa<hivm::HIVMDialect>(defOp->getDialect())) {
+      return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
+    }
+  }
   return std::nullopt;
 }
 

@@ -17,13 +17,15 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <list>
+#include <random>
 
 namespace mlir {
 namespace hivm {
@@ -258,9 +260,11 @@ using BufferCondPair = std::pair<Value, bool>;
 class MemLivenessAnalysis {
 public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
-                      bool disableTightlyCoupledBufferReuse = false)
+                      bool disableTightlyCoupledBufferReuse = false,
+                      uint32_t randomSeed = 0)
       : func_(func), planMode(planMode),
-        disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse) {}
+        disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
+        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -268,7 +272,7 @@ public:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -445,6 +449,16 @@ private:
   /// e.g. for iter arg and for yield.
   void InitializeInplacePairList();
 
+  mlir::SetVector<Value>
+  currentlyLiveValuesOrdered(const LivenessBlockInfo *livenessInfo,
+                             Operation *op) const;
+
+  template <typename RangeT> RangeT getShuffledRange(const RangeT &range) {
+    RangeT rangeClone = range;
+    std::shuffle(rangeClone.begin(), rangeClone.end(), randomGenerator);
+    return rangeClone;
+  }
+
   func::FuncOp func_;
 
   /// different mode for mem plan.
@@ -457,9 +471,15 @@ private:
   DenseMap<Value, BufferStatus> buffer2status;
 
   /// map on buffer alias, and whether the alias buffer is conditional.
-  DenseMap<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
+  llvm::MapVector<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
 
   int seqIndex{0};
+
+  /// random seed for shuffle operation order in plan memory.
+  uint32_t randomSeed{0};
+
+  /// random generator for shuffle operation order in plan memory.
+  std::mt19937 randomGenerator;
 
   /// record AllocOp that don't need to plan memory. For example, in
   /// CV-separated architectures, we don't need to plan UB address in AIC func.
@@ -496,7 +516,7 @@ MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
         disableVFReachableCheck(disableVFReachableCheck),
         vfInplaceReuseInfo(nullptr) {}
 
-  LogicalResult plan();
+  LogicalResult plan(bool emitErrors = true);
 
   /// Get buffer2Offsets
   inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
@@ -508,8 +528,7 @@ MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
     linearOperation = std::move(linearOp);
   };
 
-  inline void
-  SetBufferInfos(std::map<Value, BufferInfo, utils::ValueComparator> bufsInfo) {
+  inline void SetBufferInfos(llvm::MapVector<Value, BufferInfo> bufsInfo) {
     bufferInfos = bufsInfo;
   }
 
@@ -782,7 +801,7 @@ private:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -809,10 +828,10 @@ private:
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
 
   /// map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
 
   /// map from workspace arg to its root StorageEntry.
-  DenseMap<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
+  llvm::MapVector<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
 
   /// map from buffer scope to its required size to plan rest memory without any
   /// reuse.
@@ -854,7 +873,7 @@ private:
   DenseSet<std::pair<int32_t, int32_t>> cvMixIdReuseAllowedPairs;
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
-  std::map<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+  llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
 
   /// The device's UB storage size
   int ubSpaceSize{0};

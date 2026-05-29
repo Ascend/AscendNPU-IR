@@ -120,6 +120,12 @@ void setupHIVMAVEPipelineOptions(
       config.getLimitAutoMultiBufferOfLocalBuffer();
   hivmAVEPipelineOptions.limitMixAutoMultiBufferBuffer =
       config.getLimitAutoMultiBufferBuffer();
+  hivmAVEPipelineOptions.disableMultiBufferOnUB =
+      config.getDisableMultiBufferOnUB();
+  hivmAVEPipelineOptions.disableMultiBufferOnL0C =
+      config.getDisableMultiBufferOnL0C();
+  hivmAVEPipelineOptions.disableMultiBufferOnL1 =
+      config.getDisableMultiBufferOnL1();
   hivmAVEPipelineOptions.enableAutoBindSubBlock =
       config.getEnableAutoBindSubBlock();
   hivmAVEPipelineOptions.enableAutoStorageAlign =
@@ -305,7 +311,7 @@ void setupLowerTritonPipelineOptions(
   options.useDPX = config.getUseDPX();
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
-  options.disableSinkDPXLoad = config.getDisableSinkDPXLoad();
+  options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
 #if BSPUB_DAVINCI_BISHENGIR

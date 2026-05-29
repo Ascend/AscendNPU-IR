@@ -122,9 +122,19 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_1d_core(
   }
 
   // last dimension of UB is contiguous but GM is not
-  // so use scalar
   if ((stride0_ub == 1) && (stride0_gm != 1)) {
-    load_gm_to_ubuf_1d_by_scalar<T>(src, dst);
+    load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim<T>(
+        src, dst, left_padding_num, l2_cache_ctl);
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>) {
+      if (pad_mode == PadMode::Value) {
+        INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+        int64_t scalar = static_cast<int64_t>(pad_value);
+        align_pad_for_load_b64_1d<T>(dst, scalar, left_padding_num);
+        INTRINSIC(set_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+        INTRINSIC(wait_flag, PIPE_V, PIPE_MTE3, LIB_EVENT_ID0);
+      }
+    }
     return;
   }
 

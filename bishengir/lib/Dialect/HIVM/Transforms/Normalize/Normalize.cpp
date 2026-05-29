@@ -62,6 +62,7 @@ struct NormalizeHIVMPass
     // pass extracts the single runtime value and rebuilds the broadcast.
     populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns,
                                                          archIsRegbased);
+    populateNormalizeFinalArithmeticPatterns(patterns);
     populateNormalizeCmpVnePatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();

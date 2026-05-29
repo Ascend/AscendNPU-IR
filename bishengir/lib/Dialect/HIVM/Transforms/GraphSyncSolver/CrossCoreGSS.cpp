@@ -131,6 +131,9 @@ void CrossCoreGSSPass::runOnOperation() {
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
   }
+  if (this->blockAllSync) {
+    options.enableBlockAllMode = true;
+  }
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 

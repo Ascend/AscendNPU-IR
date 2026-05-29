@@ -358,6 +358,7 @@ static void
 hfusionAutoVectorizePipeline(OpPassManager &pm,
                              const HFusionPipelineOptions &hfusionOptions) {
   canonicalizationPipeline(pm, hfusionOptions);
+  pm.nest<func::FuncOp>().addPass(createFoldExtractInsertPairPass());
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
@@ -409,6 +410,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.addPass(createSimplifyVFArgsPass());
   pm.addPass(createLoopInvariantSubsetHoistingPass());
   canonicalizationPipeline(pm, hfusionOptions);
+  pm.addPass(createRemoveRedundantWriteAndReadPairPass());
   pm.addPass(createSCFForLoopCanonicalizationPass());
   canonicalizationPipeline(pm, hfusionOptions);
 }

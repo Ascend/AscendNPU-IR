@@ -592,3 +592,24 @@ Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
     deionOp->setAttr(utils::elementAlignmentBitWidth, attr);
   return deionOp.getResult(0);
 }
+
+int hivmave::getBitWidthFromAttr(Operation *Op) {
+  auto funcDistAttr = Op->getAttrOfType<FunctionDistTypeAttr>("functionType");
+  int elementAlignment = -1;
+  if (funcDistAttr) {
+    switch (funcDistAttr.getValue()) {
+    case FunctionDistType::PB8:
+      elementAlignment = 8;
+      break;
+    case FunctionDistType::PB16:
+      elementAlignment = 16;
+      break;
+    case FunctionDistType::PB32:
+      elementAlignment = 32;
+      break;
+    default:
+      break;
+    }
+  }
+  return elementAlignment;
+}

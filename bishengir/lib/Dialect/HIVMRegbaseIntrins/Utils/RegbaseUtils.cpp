@@ -601,28 +601,83 @@ Operation *hivm_regbaseintrins::buildVunpackOp(Location loc, Value part,
   return result;
 }
 
-Operation *hivm_regbaseintrins::buildPltOp(Value count,
-                                           unsigned elementBitWidth,
+Operation *hivm_regbaseintrins::buildPgeOp(Location loc, Value pattern,
+                                           int elementAlignment,
                                            PatternRewriter &rewriter) {
-  VectorType resVecType = VectorType::get({256}, rewriter.getI1Type());
-  Value cstZero = rewriter.create<arith::ConstantOp>(
-      count.getLoc(), rewriter.getI16IntegerAttr(0));
-
-  unsigned elementByteCount = (elementBitWidth + 7) / 8;
-  Location loc = count.getLoc();
-  switch (elementByteCount) {
-  case 1:
-    return rewriter.create<hivm_regbaseintrins::PltMB8>(loc, resVecType,
-                                                        cstZero, count);
-  case 2:
-    return rewriter.create<hivm_regbaseintrins::PltMB16>(loc, resVecType,
-                                                         cstZero, count);
-  case 3:
-  case 4:
-    return rewriter.create<hivm_regbaseintrins::PltMB32>(loc, resVecType,
-                                                         cstZero, count);
+  VectorType resType =
+      VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+  Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
+                                                 rewriter.getI32IntegerAttr(0));
+  Operation *result;
+  switch (elementAlignment) {
+  case 8:
+    result = rewriter.create<hivm_regbaseintrins::PgeB8>(loc, resType, pattern,
+                                                         zero);
+    break;
+  case 16:
+    result = rewriter.create<hivm_regbaseintrins::PgeB16>(loc, resType, pattern,
+                                                          zero);
+    break;
+  case 32:
+    result = rewriter.create<hivm_regbaseintrins::PgeB32>(loc, resType, pattern,
+                                                          zero);
+    break;
+  default:
+    llvm_unreachable("Invalid element bit width for a predicate vector.");
   }
-  llvm_unreachable("Invalid element bit width for a predicate vector.");
+  return result;
+}
+
+Operation *hivm_regbaseintrins::buildPltOp(Location loc, Value true_shape,
+                                           int elementAlignment,
+                                           PatternRewriter &rewriter) {
+  VectorType resVecType =
+      VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+  Type resType = LLVM::LLVMStructType::getLiteral(
+      rewriter.getContext(), {resVecType, rewriter.getI32Type()});
+  Operation *result;
+  switch (elementAlignment) {
+  case 8:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltB8>(loc, resType, true_shape);
+    break;
+  case 16:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltB16>(loc, resType, true_shape);
+    break;
+  case 32:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltB32>(loc, resType, true_shape);
+    break;
+  default:
+    llvm_unreachable("Invalid element bit width for a predicate vector.");
+  }
+  return result;
+}
+
+Operation *hivm_regbaseintrins::buildPltMOp(Location loc, Value div, Value ub,
+                                            int elementAlignment,
+                                            PatternRewriter &rewriter) {
+  VectorType resType =
+      VectorType::get({util::PREDICATE_BITS}, rewriter.getI1Type());
+  Operation *result;
+  switch (elementAlignment) {
+  case 8:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltMB8>(loc, resType, div, ub);
+    break;
+  case 16:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltMB16>(loc, resType, div, ub);
+    break;
+  case 32:
+    result =
+        rewriter.create<hivm_regbaseintrins::PltMB32>(loc, resType, div, ub);
+    break;
+  default:
+    llvm_unreachable("Invalid element bit width for a predicate vector.");
+  }
+  return result;
 }
 
 Operation *hivm_regbaseintrins::buildPstuOp(Value data, Value dataPtr,
@@ -835,87 +890,6 @@ hivm_regbaseintrins::adjustTypeToDavidSupportedType(VectorType vecTy) {
   Type elemTy = vecTy.getElementType();
   unsigned vecSize = static_cast<unsigned>(getVectorSizeByElementType(elemTy));
   return VectorType::get(vecSize, elemTy);
-}
-
-Value hivm_regbaseintrins::createPredicateVector(Operation *op,
-                                                 VectorType vecType,
-                                                 PatternRewriter &rewriter) {
-  Operation *boundOp = nullptr;
-  Operation *afterBoundOp = nullptr;
-  Operation *pltOp = nullptr;
-  Operation *firstOp = nullptr;
-  Operation *funcOp = op;
-  Type elementType = vecType.getElementType();
-  unsigned bitwidth = 0;
-  // Use the element type to determine the bitwidth
-  bitwidth = elementType.getIntOrFloatBitWidth();
-  ArrayRef vectorDimensions = vecType.getShape();
-  unsigned numElements = 1;
-  // Use the vector shape to determine the number of elements
-  for (auto dim : vectorDimensions) {
-    // numElements should not change until the final dimension
-    assert(numElements == 1 && "Unsupported vector shape.");
-    if (dim != 1) {
-      numElements = static_cast<unsigned>(dim);
-    }
-  }
-  // Find the outermost operation (the funcOp)
-  while (funcOp && !llvm::isa<func::FuncOp>(funcOp)) {
-    funcOp = funcOp->getParentOp();
-  }
-  // Traverse funcOp to search for ops that can be reused
-  assert(funcOp != nullptr);
-  funcOp->walk<mlir::WalkOrder::PreOrder>([&](Operation *op) {
-    if (op->getNumRegions() > 0 && firstOp) {
-      // Do not try to reuse ops from within blocks/regions
-      return WalkResult::skip();
-    }
-    if (!firstOp && !isa<func::FuncOp>(op)) {
-      firstOp = op;
-    }
-    if (boundOp && !afterBoundOp) {
-      afterBoundOp = op;
-    }
-    if (arith::ConstantIndexOp cint = dyn_cast<arith::ConstantIndexOp>(op)) {
-      if (!boundOp && cint.value() == numElements) {
-        boundOp = op;
-      }
-    }
-    if (((isa<hivm_regbaseintrins::PltB8>(op) && bitwidth == 8) ||
-         (isa<hivm_regbaseintrins::PltB16>(op) && bitwidth == 16) ||
-         (isa<hivm_regbaseintrins::PltB32>(op) && bitwidth == 32)) &&
-        numElements != 1) {
-      pltOp = op;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  // If a suitable pltOp was found, reuse it
-  if (pltOp) {
-    return pltOp->getResult(0);
-  }
-  // If a boundOp was not found, create one
-  if (!boundOp) {
-    rewriter.setInsertionPoint(firstOp);
-    boundOp = rewriter.create<arith::ConstantIntOp>(
-        op->getLoc(), rewriter.getI32Type(), numElements);
-  } else {
-    // Set the rewriter to point directly after the boundOp
-    rewriter.setInsertionPoint(afterBoundOp);
-  }
-  Type srcBoundType = boundOp->getResultTypes().front();
-  // Adjust the boundOp if necessary
-  if (!srcBoundType.isInteger(32)) {
-    Operation *convertedBoundValue = rewriter.create<arith::IndexCastOp>(
-        boundOp->getLoc(), rewriter.getI32Type(), boundOp->getResult(0));
-    boundOp = convertedBoundValue;
-  }
-  // Create the pltOp
-  pltOp = buildPltOp(boundOp->getResult(0), bitwidth, rewriter);
-  // Set the rewriter to point at the original op
-  rewriter.setInsertionPoint(op);
-
-  return pltOp->getResult(0);
 }
 
 VectorType hivm_regbaseintrins::createVLVectorType(Type elementType) {

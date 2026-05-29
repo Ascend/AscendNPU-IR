@@ -2,6 +2,7 @@
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_allocate_basic
   func.func @test_mem_allocate_basic(%src : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                     %dst3 : memref<16x16x16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -33,6 +34,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_infer_mem_allocate_loop_conflict
   func.func @test_infer_mem_allocate_loop_conflict(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                                    %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                                    %alloc6 : memref<16x16x16xf16, #hivm.address_space<gm>>,
@@ -73,6 +75,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vadd_inplace
     func.func @vadd_inplace(%lhs_gm : memref<16x16xf16, #hivm.address_space<gm>>,
                              %rhs_gm :  memref<16x16xf16, #hivm.address_space<gm>>,
                              %vadd_gm :memref<16x16xf16, #hivm.address_space<gm>>) {
@@ -100,6 +103,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_2d_small_to_large_invalid
     func.func @vcast_inplace_2d_small_to_large_invalid(%arg0_gm : memref<16x16xf16, #hivm.address_space<gm>>,
                                                        %vcast_gm :memref<16x16xf32, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -122,6 +126,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_2d_equal_valid
     func.func @vcast_inplace_2d_equal_valid(%arg0_gm : memref<16x16xf16, #hivm.address_space<gm>>,
                                             %vcast_gm :memref<16x16xi16, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -143,6 +148,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_2d_large_to_small_invalid
     func.func @vcast_inplace_2d_large_to_small_invalid(%arg0_gm : memref<16x16xf32, #hivm.address_space<gm>>,
                                                        %vcast_gm :memref<16x16xf16, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -165,6 +171,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_small_to_large_invalid
     func.func @vcast_inplace_1d_small_to_large_invalid(%arg0_gm : memref<1024xf16, #hivm.address_space<gm>>,
                                                        %vcast_gm :memref<1024xf32, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -187,6 +194,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_equal_valid
     func.func @vcast_inplace_1d_equal_valid(%arg0_gm : memref<1024xf16, #hivm.address_space<gm>>,
                                             %vcast_gm :memref<1024xi16, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -208,6 +216,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_large_to_small_valid
     func.func @vcast_inplace_1d_large_to_small_valid(%arg0_gm : memref<1024xf32, #hivm.address_space<gm>>,
                                                      %vcast_gm :memref<1024xf16, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -229,6 +238,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_s2l_stride2_invalid
     func.func @vcast_inplace_1d_s2l_stride2_invalid(%arg0_gm : memref<1024xf16, strided<[2]>, #hivm.address_space<gm>>,
                                                     %vcast_gm :memref<1024xf32, strided<[2]>, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -251,6 +261,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_equal_stride2_valid
     func.func @vcast_inplace_1d_equal_stride2_valid(%arg0_gm : memref<1024xf16, strided<[2]>, #hivm.address_space<gm>>,
                                                     %vcast_gm :memref<1024xi16, strided<[2]>, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -272,6 +283,7 @@ module {
 
 // -----
 module {
+    // CHECK-LABEL: func.func @vcast_inplace_1d_l2s_stride2_invalid
     func.func @vcast_inplace_1d_l2s_stride2_invalid(%arg0_gm : memref<1024xf32, strided<[2]>, #hivm.address_space<gm>>,
                                                     %vcast_gm :memref<1024xf16, strided<[2]>, #hivm.address_space<gm>>) {
       // CHECK-NOT: memref.alloc()
@@ -295,6 +307,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_infer_plan_memory_if_yield
   func.func @test_infer_plan_memory_if_yield(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                              %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                              %alloc6 : memref<16x16x16xf16, #hivm.address_space<gm>>,
@@ -347,6 +360,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_for_result
   func.func @test_plan_memory_for_result(%arg0: memref<16x16x16xf16, #hivm.address_space<gm>>,
                                          %arg1: memref<16x16x16xf16, #hivm.address_space<gm>>,
                                          %arg2: memref<16x16x16xf16, #hivm.address_space<gm>>,
@@ -394,6 +408,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_subview
   func.func @test_plan_memory_subview(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                       %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                       %alloc6 : memref<16x2x16xf16, #hivm.address_space<gm>>) {
@@ -404,7 +419,7 @@ module {
     %alloc1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc3 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-    // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+    // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc5 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     hivm.hir.load ins(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>)
                   outs(%alloc1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -427,6 +442,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_collapse_shape
   func.func @test_plan_memory_collapse_shape(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                              %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                              %alloc6 : memref<256x16xf16, #hivm.address_space<gm>>) {
@@ -437,7 +453,7 @@ module {
     %alloc1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc3 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-    // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+    // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc5 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     hivm.hir.load ins(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>)
                   outs(%alloc1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -457,6 +473,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_expand_shape
   func.func @test_plan_memory_expand_shape(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                            %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                            %alloc6 : memref<2x8x16x16xf16, #hivm.address_space<gm>>) {
@@ -467,7 +484,7 @@ module {
     %alloc1 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc3 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
-    // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+    // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
     %alloc5 = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
     hivm.hir.load ins(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>)
                   outs(%alloc1 : memref<16x16x16xf16, #hivm.address_space<ub>>)
@@ -488,6 +505,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_temp_buffer
   func.func @test_plan_memory_temp_buffer(%arg0: memref<1x10xi16, #hivm.address_space<gm>>,
                                           %arg1: memref<8x10xi16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -515,16 +533,17 @@ module {
 #map = affine_map<()[s0] -> (s0 * 1572864)>
 #map1 = affine_map<(d0) -> ((d0 floordiv 2048) mod 2)>
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_select
   func.func @test_plan_memory_select(%arg0: memref<31457280xf32, #hivm.address_space<gm>>,
                                      %arg1: memref<31457280xf32, #hivm.address_space<gm>>,
                                      %arg2: memref<31457280xf32, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
-    // CHECK: %[[CONST5:.*]] = arith.constant 40960 : i64
+    // CHECK: %[[CONST5:.*]] = arith.constant 8192 : i64
     // CHECK: %[[CONST4:.*]] = arith.constant 32768 : i64
-    // CHECK: %[[CONST3:.*]] = arith.constant 24576 : i64
-    // CHECK: %[[CONST2:.*]] = arith.constant 16384 : i64
-    // CHECK: %[[CONST1:.*]] = arith.constant 8192 : i64
-    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    // CHECK: %[[CONST3:.*]] = arith.constant 0 : i64
+    // CHECK: %[[CONST2:.*]] = arith.constant 40960 : i64
+    // CHECK: %[[CONST1:.*]] = arith.constant 16384 : i64
+    // CHECK: %[[CONST0:.*]] = arith.constant 24576 : i64
     %c0 = arith.constant 0 : index
     %c1572864 = arith.constant 1572864 : index
     %c2048 = arith.constant 2048 : index
@@ -586,6 +605,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_plan_memory_memref_view_and_reinterpret_cast
   func.func @test_plan_memory_memref_view_and_reinterpret_cast(%arg0: memref<1x?xi16, #hivm.address_space<gm>>,
                                                                  %arg1: memref<?x1xi16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -612,6 +632,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_plan_pipe_opt
   func.func @test_mem_plan_pipe_opt(%arg1 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                     %arg2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                     %arg3 : memref<16x16x16xf16, #hivm.address_space<gm>>,
@@ -648,6 +669,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_plan_db_two_address
   func.func @test_mem_plan_db_two_address(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                           %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -671,6 +693,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_inplace_single_and_db
   func.func @test_inplace_single_and_db(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                         %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -699,6 +722,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_inplace_db_and_db
   func.func @test_mem_inplace_db_and_db(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                         %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -754,6 +778,7 @@ module {
 }
 
 // -----
+
 module {
   func.func @test_mem_plan_multi_address(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                          %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
@@ -780,6 +805,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_inplace_single_and_mb
   func.func @test_inplace_single_and_mb(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                         %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -810,6 +836,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_inplace_mb_and_mb
   func.func @test_mem_inplace_mb_and_mb(%src_gm: memref<16xf16, #hivm.address_space<gm>>,
                                         %dst_gm: memref<16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -841,6 +868,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_infer_mem_allocate_loop_conflict
   func.func @test_infer_mem_allocate_loop_conflict(%alloc2 : memref<16x16x16xf16, #hivm.address_space<gm>>,
                                                    %alloc4 : memref<16x16x16xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -870,6 +898,7 @@ module {
 module {
 memref.global @__constant_3xi64 : memref<3xi64>
 
+// CHECK-LABEL: func.func @test_plan_memory_memref_reshape
 func.func @test_plan_memory_memref_reshape(%arg0: memref<2x8xi16, #hivm.address_space<gm>>,
                                            %arg1: memref<2x2x4xi16, #hivm.address_space<gm>>) {
   %0 = memref.get_global @__constant_3xi64 : memref<3xi64>
@@ -889,6 +918,7 @@ func.func @test_plan_memory_memref_reshape(%arg0: memref<2x8xi16, #hivm.address_
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_memref_load_store
   func.func @test_mem_memref_load_store(%alloc2 : memref<1024xf16, #hivm.address_space<gm>>,
                                         %alloc4 : memref<1024xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -917,6 +947,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_enough
   func.func @test_mem_enough(%arg1 : memref<1xf32, #hivm.address_space<gm>>,
                              %arg2 : memref<1xf32, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
@@ -963,6 +994,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_mem_for_cube
   func.func @test_mem_for_cube(%arg1 : memref<16xf32, #hivm.address_space<gm>>,
                                %arg2 : memref<16xf32, #hivm.address_space<gm>>,
                                %arg3 : memref<256xf32, #hivm.address_space<gm>>) {
@@ -1028,6 +1060,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_if_else
   func.func @test_if_else(%arg1 : memref<11520xi32, #hivm.address_space<gm>>,
                           %arg2 : memref<11520xi32, #hivm.address_space<gm>>,
                           %arg3 : memref<11520xf32, #hivm.address_space<gm>>,
@@ -1070,6 +1103,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_ub_memory_without_load
   func.func @test_ub_memory_without_load(%arg0: memref<5x1xf32, #hivm.address_space<gm>>) {
     // expected-error@+1 {{'memref.alloc' op error: read before first write}}
     %alloc = memref.alloc() : memref<5x2xf32, #hivm.address_space<ub>>
@@ -1082,6 +1116,7 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_two_ub_memory_without_load
   func.func @test_two_ub_memory_without_load(%arg0: memref<5x1xf32, #hivm.address_space<gm>>, %arg1: memref<5x1xf32, #hivm.address_space<ub>>) {
     // expected-error@+1 {{'memref.alloc' op error: read before first write}}
     %alloc = memref.alloc() : memref<5x2xf32, #hivm.address_space<ub>>
@@ -1096,6 +1131,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vsub_inline_broadcast_inplace
   func.func @test_vsub_inline_broadcast_inplace(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>,
                                                 %arg2 : memref<64x1xf32, #hivm.address_space<gm>>,
                                                 %arg3 : memref<64x128xf32, #hivm.address_space<gm>>) {
@@ -1122,6 +1158,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vsub_inline_brc_inplace_second_src
   func.func @test_vsub_inline_brc_inplace_second_src(%arg1 : memref<64x1xf32, #hivm.address_space<gm>>,
                                                      %arg2 : memref<64x128xf32, #hivm.address_space<gm>>,
                                                      %arg3 : memref<64x128xf32, #hivm.address_space<gm>>) {
@@ -1148,6 +1185,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vsub_inline_brc_inplace_dim0
   func.func @test_vsub_inline_brc_inplace_dim0(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>,
                                                %arg2 : memref<1x128xf32, #hivm.address_space<gm>>,
                                                %arg3 : memref<64x128xf32, #hivm.address_space<gm>>) {
@@ -1174,6 +1212,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vadd_inline_broadcast_inplace
   func.func @test_vadd_inline_broadcast_inplace(%arg1 : memref<128xf32, #hivm.address_space<gm>>,
                                                 %arg2 : memref<1xf32, #hivm.address_space<gm>>,
                                                 %arg3 : memref<128xf32, #hivm.address_space<gm>>) {
@@ -1200,6 +1239,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_inline_broadcast_inplace
   func.func @test_vmul_inline_broadcast_inplace(%arg1 : memref<4x64x128xf32, #hivm.address_space<gm>>,
                                                 %arg2 : memref<4x1x128xf32, #hivm.address_space<gm>>,
                                                 %arg3 : memref<4x64x128xf32, #hivm.address_space<gm>>) {
@@ -1226,6 +1266,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmax_inline_broadcast_inplace
   func.func @test_vmax_inline_broadcast_inplace(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>,
                                                 %arg2 : memref<64x1xf32, #hivm.address_space<gm>>,
                                                 %arg3 : memref<64x128xf32, #hivm.address_space<gm>>) {
@@ -1252,6 +1293,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vdiv_inline_brc_inplace
   func.func @test_vdiv_inline_brc_inplace(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>,
                                           %arg2 : memref<64x1xf32, #hivm.address_space<gm>>,
                                           %arg3 : memref<64x128xf32, #hivm.address_space<gm>>) {
@@ -1278,6 +1320,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vdiv_tempbuffer_vs_inplace
   func.func @test_vdiv_tempbuffer_vs_inplace(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>,
                                              %arg2 : memref<64x128xf32, #hivm.address_space<gm>>) {
     // CHECK: %[[CONST1:.*]] = arith.constant 32768 : i64
@@ -1301,6 +1344,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vdiv_tempbuffer_samesize_inplace_diff
   func.func @test_vdiv_tempbuffer_samesize_inplace_diff(%arg1 : memref<16xf32, #hivm.address_space<gm>>,
                                                         %arg2 : memref<16xf32, #hivm.address_space<gm>>) {
     // CHECK: %[[CONST1:.*]] = arith.constant 64 : i64
@@ -1324,6 +1368,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_inline_brc_bigger_not_inplace
   func.func @test_vmul_inline_brc_bigger_not_inplace(%arg1 : memref<4x1x64xf32, #hivm.address_space<gm>>,
                                                      %arg2 : memref<4x1x64xf32, #hivm.address_space<gm>>,
                                                      %arg3 : memref<4x64x64xf32, #hivm.address_space<gm>>) {
@@ -1351,6 +1396,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_dyn_same_shape_inplace
   func.func @test_vmul_dyn_same_shape_inplace(%arg1 : memref<?xi16, #hivm.address_space<gm>>,
                                               %arg2 : memref<?xi16, #hivm.address_space<gm>>,
                                               %arg3 : memref<?xi16, #hivm.address_space<gm>>) {
@@ -1382,6 +1428,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_dyn_same_2d_shape_inplace
   func.func @test_vmul_dyn_same_2d_shape_inplace(%arg1 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                  %arg2 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                  %arg3 : memref<?x?xi16, #hivm.address_space<gm>>) {
@@ -1400,7 +1447,7 @@ module {
     %subview_0 = memref.subview %alloc_0[0, 0] [%c256, %c16] [1, 1] : memref<256x16xi16, #hivm.address_space<ub>> to memref<?x?xi16, strided<[16, 1]>, #hivm.address_space<ub>>
     hivm.hir.load ins(%arg1 : memref<?x?xi16, #hivm.address_space<gm>>) outs(%subview : memref<?x?xi16, strided<[16, 1]>, #hivm.address_space<ub>>)
     hivm.hir.load ins(%arg2 : memref<?x?xi16, #hivm.address_space<gm>>) outs(%subview_0 : memref<?x?xi16, strided<[16, 1]>, #hivm.address_space<ub>>)
-    // CHECK: hivm.hir.pointer_cast(%[[CONST0]]) : memref<256x16xi16, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.pointer_cast(%[[CONST1]]) : memref<256x16xi16, #hivm.address_space<ub>>
     // CHECK: hivm.hir.pointer_cast(%[[CONST2]]) : memref<1024xi16, #hivm.address_space<ub>>
     %alloc_1 = memref.alloc() : memref<256x16xi16, #hivm.address_space<ub>>
     %subview_1 = memref.subview %alloc_1[0, 0] [%c256, %c16] [1, 1] : memref<256x16xi16, #hivm.address_space<ub>> to memref<?x?xi16, strided<[16, 1]>, #hivm.address_space<ub>>
@@ -1415,6 +1462,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_dyn_same_2d_shape_inplace_one
   func.func @test_vmul_dyn_same_2d_shape_inplace_one(%arg1 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                      %arg2 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                      %arg3 : memref<?x?xi16, #hivm.address_space<gm>>) {
@@ -1450,6 +1498,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_dyn_diff_2d_shape_not_inplace
   func.func @test_vmul_dyn_diff_2d_shape_not_inplace(%arg1 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                      %arg2 : memref<?x?xi16, #hivm.address_space<gm>>,
                                                      %arg3 : memref<?x?xi16, #hivm.address_space<gm>>) {
@@ -1486,6 +1535,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_vmul_one_dyn_same_2d_shape_inplace_one
   func.func @test_vmul_one_dyn_same_2d_shape_inplace_one(%arg1 : memref<4x?xi16, #hivm.address_space<gm>>,
                                                          %arg2 : memref<?x64xi16, #hivm.address_space<gm>>,
                                                          %arg3 : memref<4x?xi16, #hivm.address_space<gm>>) {
@@ -1524,6 +1574,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_select_cond_alias_not_inplace
   func.func @test_select_cond_alias_not_inplace(%arg0: memref<32xf32, #hivm.address_space<gm>>,
                                                 %arg1: memref<32xf32, #hivm.address_space<gm>>,
                                                 %arg2: i1,
@@ -1560,6 +1611,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_scfwhileop
   func.func @test_scfwhileop(%arg0 : memref<16xf32, #hivm.address_space<gm>>,
                              %arg1 : memref<16xf32, #hivm.address_space<ub>>,
                              %arg2 : memref<16xf32, #hivm.address_space<gm>>) {
@@ -1593,6 +1645,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_scfwhileop_yield_inplace
   func.func @test_scfwhileop_yield_inplace(%arg0 : memref<16xf32, #hivm.address_space<gm>>,
                                            %arg1 : memref<16xf32, #hivm.address_space<gm>>,
                                            %arg2 : memref<16xf32, #hivm.address_space<gm>>,
@@ -1631,6 +1684,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_dowhile_yield_inplace
   func.func @test_dowhile_yield_inplace(%arg0 : memref<16xf32, #hivm.address_space<gm>>,
                                         %arg1 : memref<16xf32, #hivm.address_space<gm>>,
                                         %arg2 : memref<16xf32, #hivm.address_space<gm>>,
@@ -1669,6 +1723,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_branchop
   func.func @test_branchop(%arg0: memref<16xf16, #hivm.address_space<gm>>,
                           %arg1: memref<16xf16, #hivm.address_space<gm>>,
                           %arg2: memref<16xf16, #hivm.address_space<gm>>,
@@ -1709,6 +1764,7 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func.func @test_branchop_inplace
   func.func @test_branchop_inplace(%arg0: memref<16xf16, #hivm.address_space<gm>>,
                                   %arg1: memref<16xf16, #hivm.address_space<gm>>,
                                   %arg2: memref<16xf16, #hivm.address_space<gm>>,
@@ -1737,7 +1793,7 @@ module {
         outs(%alloc_3 : memref<16xf16, #hivm.address_space<ub>>)
       cf.br ^bb3(%alloc_3, %arg11 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
     ^bb3(%arg12 : memref<16xf16, #hivm.address_space<ub>>, %arg13 : memref<16xf16, #hivm.address_space<ub>>):
-      // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
       %alloc_4 = memref.alloc() : memref<16xf16, #hivm.address_space<ub>>
       hivm.hir.vadd ins(%arg12, %arg13 : memref<16xf16, #hivm.address_space<ub>>, memref<16xf16, #hivm.address_space<ub>>)
                   outs(%alloc_4 : memref<16xf16, #hivm.address_space<ub>>)

@@ -21,7 +21,6 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <mlir/IR/Attributes.h>
-#include <typeinfo>
 
 #define DEBUG_TYPE "ave-normalize-ops"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -159,7 +158,8 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
 /// Add load dist by element alignment bitwidth
 /// Change NORM to UNPK_B8/UNPK_B16/UNPK4_B8
 struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
-  AVELoadPattern(MLIRContext *context) : OpRewritePattern<VFLoadOp>(context) {}
+  explicit AVELoadPattern(MLIRContext *context)
+      : OpRewritePattern<VFLoadOp>(context) {}
   LogicalResult matchAndRewrite(VFLoadOp load,
                                 PatternRewriter &rewriter) const override {
     LDBG("process operation : " << load);
@@ -189,7 +189,7 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
 /// Add store dist by element alignment bitwidth
 /// Change NORM to PK_B16/PK_B32/PK4_B32
 struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
-  AVEStorePattern(MLIRContext *context)
+  explicit AVEStorePattern(MLIRContext *context)
       : OpRewritePattern<VFMaskedStoreOp>(context) {}
   LogicalResult matchAndRewrite(VFMaskedStoreOp store,
                                 PatternRewriter &rewriter) const override {
@@ -229,7 +229,7 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
 /// inserting dintlv ops before the store to densify the data layout.
 struct AVEStoreWithStridePattern
     : public OpRewritePattern<VFStoreWithStrideOp> {
-  AVEStoreWithStridePattern(MLIRContext *context)
+  explicit AVEStoreWithStridePattern(MLIRContext *context)
       : OpRewritePattern<VFStoreWithStrideOp>(context) {}
 
   LogicalResult matchAndRewrite(VFStoreWithStrideOp storeOp,
@@ -266,10 +266,59 @@ struct AVEStoreWithStridePattern
   }
 };
 
+/// Handle func_dist_type (INTLV2/INTLV4) on interleave/deinterleave ops by
+/// inserting intlv ops after the op to sparsify the data layout.
+template <typename IntlvOp>
+struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
+  AVEIntlvFuncDistPattern(MLIRContext *context)
+      : OpRewritePattern<IntlvOp>(context) {}
+
+  LogicalResult matchAndRewrite(IntlvOp intlvOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcDistAttr =
+        intlvOp->template getAttrOfType<FunctionDistTypeAttr>("functionType");
+    if (!funcDistAttr)
+      return failure();
+
+    int numIntlv = 0;
+    switch (funcDistAttr.getValue()) {
+    case FunctionDistType::INTLV2:
+      numIntlv = 1;
+      break;
+    case FunctionDistType::INTLV4:
+      numIntlv = 2;
+      break;
+    default:
+      return failure();
+    }
+
+    Location loc = intlvOp.getLoc();
+    auto bitWidthAttr =
+        intlvOp->getAttr(utils::elementAlignmentBitWidth);
+
+    // Both res1 and res2 share the same layout state; sparse each of them.
+    rewriter.setInsertionPointAfter(intlvOp);
+    for (Value res : {intlvOp.getRes1(), intlvOp.getRes2()}) {
+      SmallVector<Operation *> oldUsers(res.getUsers());
+      if (oldUsers.empty())
+        continue;
+
+      Value result = res;
+      for (int i = 0; i < numIntlv; ++i)
+        result = sparseByIntlv(result, rewriter, loc, bitWidthAttr);
+
+      for (Operation *user : oldUsers)
+        user->replaceUsesOfWith(res, result);
+    }
+    intlvOp->removeAttr("functionType");
+    return success();
+  }
+};
+
 /// Hardware does not support fp16-->u16
 /// Use fp16-->s32 + s32-->u16 instead.
 struct AVEFpToUIntPattern : public OpRewritePattern<VFFpToUIntOp> {
-  AVEFpToUIntPattern(MLIRContext *context)
+  explicit AVEFpToUIntPattern(MLIRContext *context)
       : OpRewritePattern<VFFpToUIntOp>(context) {}
   LogicalResult matchAndRewrite(VFFpToUIntOp cvtOp,
                                 PatternRewriter &rewriter) const override {
@@ -507,6 +556,8 @@ public:
     patterns.add<AVEStorePattern>(ctx);
     patterns.add<AVEStoreWithStridePattern>(ctx);
     patterns.add<AVEFpToUIntPattern>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFInterleaveOp>>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFDeInterleaveOp>>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       signalPassFailure();

@@ -1506,3 +1506,9 @@ void mlir::hivm::AnchorOp::getEffects(
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(), AnchorResource::get());
 }
+
+void mlir::hivm::AnchorBlockOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), AnchorResource::get());
+}

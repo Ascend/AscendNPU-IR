@@ -77,6 +77,15 @@ lookupMappedFn(const llvm::DenseMap<Kind, Fn> &kindToFn, Kind kind) {
   return it->second;
 }
 
+template <typename MapT, typename KeyT>
+static typename MapT::mapped_type lookupOrUnreachable(const MapT &map, KeyT key,
+                                                      const char *errorMessage) {
+  auto it = map.find(key);
+  if (it == map.end())
+    llvm_unreachable(errorMessage);
+  return it->second;
+}
+
 static std::optional<hfusion::UnaryFn>
 mapUnaryKindToHFusionUnaryFn(UnaryKind kind) {
   static const llvm::DenseMap<UnaryKind, hfusion::UnaryFn> kindToFn = {
@@ -124,6 +133,18 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
       {BinaryKind::ModUnsigned, hfusion::BinaryFn::modui},
       {BinaryKind::And, hfusion::BinaryFn::vand},
       {BinaryKind::Or, hfusion::BinaryFn::vor},
+      {BinaryKind::Powf, hfusion::BinaryFn::powf},
+  };
+
+  return lookupMappedFn(kindToFn, kind);
+}
+
+static std::optional<hfusion::BinaryFn>
+mapShiftKindToBinaryFn(ShiftKind kind) {
+  static const llvm::DenseMap<ShiftKind, hfusion::BinaryFn> kindToFn = {
+      {ShiftKind::Left, hfusion::BinaryFn::shli},
+      {ShiftKind::RightSigned, hfusion::BinaryFn::shrsi},
+      {ShiftKind::RightUnsigned, hfusion::BinaryFn::shrui},
   };
 
   return lookupMappedFn(kindToFn, kind);
@@ -179,12 +200,7 @@ static CompareFn mapCompareKindToCompareFn(CompareKind kind) {
       {CompareKind::LE, hfusion::CompareFn::vle}
   };
 
-  auto it = kindToFn.find(kind);
-  if (it == kindToFn.end()) {
-    llvm_unreachable("unsupported compare kind");
-  }
-
-  return it->second;
+  return lookupOrUnreachable(kindToFn, kind, "unsupported compare kind");
 }
 
 static std::optional<hfusion::RoundMode>
@@ -193,6 +209,7 @@ mapCastRoundKindToRoundMode(CastRoundKind kind) {
       kindToMode = {
           {CastRoundKind::Round, hfusion::RoundMode::ROUND},
           {CastRoundKind::Floor, hfusion::RoundMode::FLOOR},
+          {CastRoundKind::Ceil, hfusion::RoundMode::CEIL},
           {CastRoundKind::RInt, hfusion::RoundMode::RINT},
           {CastRoundKind::Trunc, hfusion::RoundMode::TRUNC},
           {CastRoundKind::TruncEnableOverflow, hfusion::RoundMode::TRUNC},
@@ -292,19 +309,20 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
-    ElemwiseBinaryOp sourceOp) {
-  static const llvm::DenseSet<hfusion::BinaryFn> supportedShiftFns = {
-      hfusion::BinaryFn::shli,
-      hfusion::BinaryFn::shrsi,
-      hfusion::BinaryFn::shrui,
-  };
-  if (!supportedShiftFns.contains(sourceOp.getFun()))
-    llvm_unreachable("unsupported shift binary kind");
-  auto *op = hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp,
-                                     hfusion::BinaryFn,
-                                     hfusion::BinaryFnAttr>(
-      rewriter, loc, sourceOp.getFun(), mlir::ValueRange{lhs, rhs},
-      mlir::ValueRange{dst});
+    ShiftKind kind, Operation *sourceOp) {
+  std::optional<hfusion::BinaryFn> binaryFn;
+  if (sourceOp)
+    binaryFn = cast<hfusion::ElemwiseBinaryOp>(sourceOp).getFun();
+  else
+    binaryFn = mapShiftKindToBinaryFn(kind);
+  if (!binaryFn)
+    llvm_unreachable("unsupported shift kind");
+
+  auto *op =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, *binaryFn, mlir::ValueRange{lhs, rhs},
+          mlir::ValueRange{dst});
   return op->getResult(0);
 }
 
@@ -420,4 +438,5 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
                          /*enableOverflow=*/true, /*enableSaturate=*/false,
                          castIntType, hfusion::UnsignedMode::SI2SI);
 }
+
 } // namespace mlir::hfusion

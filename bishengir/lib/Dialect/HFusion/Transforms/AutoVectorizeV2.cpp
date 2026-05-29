@@ -54,6 +54,68 @@ struct FusedNode {
   DenseSet<Operation *> fusedLeafNodes;
 };
 
+// When false countFusedBodyOps returns the linalg-op count (.size()).
+// SIMD functions use this to preserve the original fusion behaviour;
+// mix-mode functions use per-op body/tensor counting to guard against
+// VF stack overflow.
+static bool gCountBodyOps = true;
+
+static unsigned countFusedBodyOps(const DenseSet<Operation *> &ops) {
+  if (!gCountBodyOps) {
+    return ops.size();
+  }
+  unsigned total = 0;
+  for (auto *op : ops) {
+    if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+      for (int64_t i = 0; i < genericOp.getNumDpsInputs(); ++i) {
+        if (isa<RankedTensorType>(
+                genericOp.getDpsInputOperand(i)->get().getType()))
+          ++total;
+      }
+      for (int64_t i = 0; i < genericOp.getNumDpsInits(); ++i) {
+        if (isa<RankedTensorType>(
+                genericOp.getDpsInitOperand(i)->get().getType()))
+          ++total;
+      }
+      for (auto &bodyOp : genericOp.getBody()->without_terminator()) {
+        if (!isa<linalg::YieldOp>(bodyOp))
+          ++total;
+      }
+    } else {
+      ++total;
+    }
+  }
+  return std::max(1u, total);
+}
+
+static unsigned countFusedBodyOps(ArrayRef<Operation *> ops) {
+  if (!gCountBodyOps) {
+    return ops.size();
+  }
+  unsigned total = 0;
+  for (auto *op : ops) {
+    if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
+      for (int64_t i = 0; i < genericOp.getNumDpsInputs(); ++i) {
+        if (isa<RankedTensorType>(
+                genericOp.getDpsInputOperand(i)->get().getType()))
+          ++total;
+      }
+      for (int64_t i = 0; i < genericOp.getNumDpsInits(); ++i) {
+        if (isa<RankedTensorType>(
+                genericOp.getDpsInitOperand(i)->get().getType()))
+          ++total;
+      }
+      for (auto &bodyOp : genericOp.getBody()->without_terminator()) {
+        if (!isa<linalg::YieldOp>(bodyOp))
+          ++total;
+      }
+    } else {
+      ++total;
+    }
+  }
+  return std::max(1u, total);
+}
+
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
 // to a FusableOpInfo.
 struct FusableOpInfo {
@@ -854,7 +916,7 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
 
   auto bestFusedNode = fusableOpInfoMap[closestUser].fusedNode;
   assert(bestFusedNode);
-  if (bestFusedNode->fusedOps.size() > maxFusedOps)
+  if (countFusedBodyOps(bestFusedNode->fusedOps) > maxFusedOps)
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   SmallVector<int64_t> estimatedTileSize;
@@ -1162,7 +1224,8 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
 
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (leafNodeGroup.size() > maxFusedOps || isMemrefLinalgOp(leafNodeGroup[0]))
+      if (countFusedBodyOps(leafNodeGroup) + countFusedBodyOps(llvm::ArrayRef<Operation *>(leafNode)) > maxFusedOps ||
+          isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
@@ -1278,7 +1341,8 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
   } else {
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (leafNodeGroup.size() > maxFusedOps || isMemrefLinalgOp(leafNodeGroup[0]))
+      if (countFusedBodyOps(leafNodeGroup) + countFusedBodyOps(llvm::ArrayRef<Operation *>(producer)) > maxFusedOps ||
+          isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the common axis and do not conflict
       // with each other.
@@ -1426,6 +1490,12 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         [](OpBuilder &innerBuilder, Location loc) {
           innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
         });
+    Value funcHandle = builder.create<transform::MatchOp>(
+ 	      loc, seqOp.getBodyBlock()->getArguments().front(),
+ 	      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+ 	  builder.create<transform::ApplyRegisteredPassOp>(
+ 	      loc, builder.getType<transform::AnyOpType>(), funcHandle,
+ 	      builder.getStringAttr("eliminate-single-iteration-scf-for"));
     applyCleanUp(builder, seqOp);
   }
 }
@@ -1540,6 +1610,82 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
+static bool isSIMDFunc(func::FuncOp func) {
+  if (auto pmAttr = func->getAttrOfType<StringAttr>("parallel_mode"))
+    return pmAttr.getValue() == "simd";
+  // Fallback: scan for SIMT ops via standard codebase APIs.
+  bool hasSIMT = false;
+  func.walk([&](Operation *inner) {
+    if (hfusion::isSimtOps(inner) || hivm::util::isSIMTVF(inner)) {
+      hasSIMT = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return !hasSIMT;
+}
+
+// Minimum tensor-element count above which an intermediate result between
+// VFs is considered large enough to risk UB overflow when multiplied by
+// tt.num_stages.
+static constexpr int64_t kLargeTensorMinElements = 4096;
+
+// Inline private _fused_ calls whose return tensors are large enough to
+// overflow UB if left as cross-VF intermediate buffers.
+static DenseSet<func::FuncOp> inlineFusedCalls(func::FuncOp func,
+                                               ModuleOp moduleOp,
+                                               IRRewriter &rewriter) {
+  SmallVector<func::CallOp> callsToInline;
+  func.walk([&](func::CallOp callOp) {
+    auto callee = moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
+    if (!callee || !callee.isPrivate() ||
+        !callee.getSymName().contains("_fused_")) {
+      return;
+    }
+    bool hasLargeResult = false;
+    for (Type t : callee.getResultTypes()) {
+      if (auto tensorTy = dyn_cast<RankedTensorType>(t)) {
+        if (tensorTy.hasStaticShape() &&
+            ShapedType::getNumElements(tensorTy.getShape()) >
+                kLargeTensorMinElements) {
+          hasLargeResult = true;
+          break;
+        }
+      }
+    }
+    if (hasLargeResult) {
+      callsToInline.push_back(callOp);
+    }
+  });
+
+  DenseSet<func::FuncOp> inlinedFuncs;
+  for (auto callOp : callsToInline) {
+    auto callee = moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
+    if (!callee)
+      continue;
+
+    IRRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(callOp);
+    IRMapping mapping;
+    for (auto [arg, operand] :
+         llvm::zip(callee.getArguments(), callOp.getOperands()))
+      mapping.map(arg, operand);
+
+    for (auto &op : callee.getBody().front()) {
+      if (isa<func::ReturnOp>(op)) {
+        for (auto [result, retVal] :
+             llvm::zip(callOp->getResults(), op.getOperands()))
+          result.replaceAllUsesWith(mapping.lookup(retVal));
+      } else {
+        rewriter.clone(op, mapping);
+      }
+    }
+    rewriter.eraseOp(callOp);
+    inlinedFuncs.insert(callee);
+  }
+  return inlinedFuncs;
+}
+
 void AutoVectorizeV2::runOnOperation() {
   Operation *op = getOperation();
   MLIRContext *context = op->getContext();
@@ -1549,7 +1695,25 @@ void AutoVectorizeV2::runOnOperation() {
   SmallVector<func::FuncOp> fusableFuncList;
   collectFusableFuncInModule(op, fusableFuncList);
 
+  // Inline VFFusionPass _fused_ sub-functions with large return tensors.
+  if (auto moduleOp = dyn_cast<ModuleOp>(op)) {
+    DenseSet<func::FuncOp> allInlined;
+    for (func::FuncOp func : fusableFuncList) {
+      if (hacc::utils::isDevice(func) && isSIMDFunc(func)) {
+        auto inlined = inlineFusedCalls(func, moduleOp, rewriter);
+        allInlined.insert(inlined.begin(), inlined.end());
+      }
+    }
+    llvm::erase_if(fusableFuncList,
+                   [&](func::FuncOp f) { return allInlined.contains(f); });
+    for (auto callee : allInlined)
+      rewriter.eraseOp(callee);
+  }
+
   for (func::FuncOp func : fusableFuncList) {
+    bool savedCountBodyOps = gCountBodyOps;
+    gCountBodyOps = !isSIMDFunc(func);
+
     // Clone original func before apply transform seqence
     builder.setInsertionPointAfter(func);
     func::FuncOp clonedFunc = dyn_cast<func::FuncOp>(builder.clone(*func));
@@ -1599,6 +1763,8 @@ void AutoVectorizeV2::runOnOperation() {
           sortTopologically(block);
       });
     }
+
+    gCountBodyOps = savedCountBodyOps;
   }
 }
 

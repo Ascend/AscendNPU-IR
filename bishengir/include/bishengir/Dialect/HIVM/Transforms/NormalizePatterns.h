@@ -32,6 +32,7 @@ extern thread_local bool archisAscend310B;
 extern thread_local bool archisMembased;
 
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns);
 void populateNormalizeModPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);

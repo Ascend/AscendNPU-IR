@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -convert-hivmave-to-ave-intrin %s | FileCheck %s
+// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s | FileCheck %s
 #map = affine_map<()[s0] -> (s0 * 16)>
 #map1 = affine_map<(d0)[s0] -> (d0 + s0)>
 

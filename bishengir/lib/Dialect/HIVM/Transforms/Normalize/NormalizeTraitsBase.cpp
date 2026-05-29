@@ -30,6 +30,24 @@
 using namespace mlir;
 namespace mlir::hivm {
 
+template <typename MapT, typename KeyT>
+static typename MapT::mapped_type lookupOrUnreachable(const MapT &map, KeyT key,
+                                                      const char *errorMessage) {
+  auto it = map.find(key);
+  if (it == map.end())
+    llvm_unreachable(errorMessage);
+  return it->second;
+}
+
+template <typename MapT, typename KeyT>
+static std::optional<typename MapT::mapped_type> lookupOrNullopt(
+    const MapT &map, KeyT key) {
+  auto it = map.find(key);
+  if (it == map.end())
+    return std::nullopt;
+  return it->second;
+}
+
 static Value getPrimaryCastValue(VCastOp op) {
   return op->getResults().empty() ? op.getSingleDst() : op->getResults()[0];
 }
@@ -152,6 +170,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
     {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
     {BinaryKind::Or, createHIVMBinaryOp<hivm::VOrOp>},
+    {BinaryKind::Powf, createHIVMBinaryOp<hivm::VPowOp>},
     {BinaryKind::MinSigned, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, createHIVMBinaryOp<hivm::VMaxOp>},
 };
@@ -174,22 +193,19 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Min, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
     {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
+    {BinaryKind::Powf, matchHIVMOp<hivm::VPowOp>},
     {BinaryKind::MinSigned, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, matchHIVMOp<hivm::VMaxOp>},
 };
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, UnaryKind kind) {
-  auto it = unaryOpMatcherMap.find(kind);
-  if (it == unaryOpMatcherMap.end())
-    llvm_unreachable("unsupported unary kind");
-  return it->second(op);
+  return lookupOrUnreachable(unaryOpMatcherMap, kind, "unsupported unary kind")(
+      op);
 }
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, BinaryKind kind) {
-  auto it = binaryOpMatcherMap.find(kind);
-  if (it == binaryOpMatcherMap.end())
-    llvm_unreachable("unsupported binary kind");
-  return it->second(op);
+  return lookupOrUnreachable(binaryOpMatcherMap, kind,
+                             "unsupported binary kind")(op);
 }
 
 static CompareMode mapCompareKindToCompareMode(CompareKind kind) {
@@ -200,10 +216,7 @@ static CompareMode mapCompareKindToCompareMode(CompareKind kind) {
       {CompareKind::GT, CompareMode::GT},
       {CompareKind::GE, CompareMode::GE},
       {CompareKind::LE, CompareMode::LE}};
-  auto it = compareKindMap.find(kind);
-  if (it == compareKindMap.end())
-    llvm_unreachable("Unknown CompareKind");
-  return it->second;
+  return lookupOrUnreachable(compareKindMap, kind, "Unknown CompareKind");
 }
 
 static std::optional<hivm::RoundMode>
@@ -211,16 +224,13 @@ mapCastRoundKindToRoundMode(CastRoundKind kind) {
   static const llvm::DenseMap<CastRoundKind, hivm::RoundMode> kindToMode = {
       {CastRoundKind::Round, hivm::RoundMode::ROUND},
       {CastRoundKind::Floor, hivm::RoundMode::FLOOR},
-      {CastRoundKind::RInt, hivm::RoundMode::RINT},
+      {CastRoundKind::Ceil, hivm::RoundMode::CEIL},
       {CastRoundKind::Trunc, hivm::RoundMode::TRUNC},
+      {CastRoundKind::TruncWithOverflow, hivm::RoundMode::TRUNCWITHOVERFLOW},
+      {CastRoundKind::RInt, hivm::RoundMode::RINT},
       {CastRoundKind::TruncEnableOverflow, hivm::RoundMode::TRUNC},
-      {CastRoundKind::TruncWithOverflow,
-       hivm::RoundMode::TRUNCWITHOVERFLOW},
   };
-  auto it = kindToMode.find(kind);
-  if (it == kindToMode.end())
-    return std::nullopt;
-  return it->second;
+  return lookupOrNullopt(kindToMode, kind);
 }
 
 static std::optional<hivm::UnsignedMode>
@@ -234,10 +244,7 @@ mapCastUnsignedModeKindToUnsignedMode(CastUnsignedModeKind kind) {
            hivm::UnsignedMode::UI2UI},
       };
 
-  auto it = kindToMode.find(kind);
-  if (it == kindToMode.end())
-    return std::nullopt;
-  return it->second;
+  return lookupOrNullopt(kindToMode, kind);
 }
 
 static std::optional<hivm::TypeFn> mapCastSignKindToTypeFn(CastSignKind kind) {
@@ -246,10 +253,7 @@ static std::optional<hivm::TypeFn> mapCastSignKindToTypeFn(CastSignKind kind) {
       {CastSignKind::Unsigned, hivm::TypeFn::cast_unsigned},
   };
 
-  auto it = kindToTypeFn.find(kind);
-  if (it == kindToTypeFn.end())
-    return std::nullopt;
-  return it->second;
+  return lookupOrNullopt(kindToTypeFn, kind);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
@@ -280,33 +284,54 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createUnaryOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst,
     UnaryKind kind) {
-  auto it = unaryOpMap.find(kind);
-  if (it == unaryOpMap.end())
-    llvm_unreachable("unsupported unary kind");
-  return it->second(rewriter, loc, input, dst);
+  return lookupOrUnreachable(unaryOpMap, kind, "unsupported unary kind")(
+      rewriter, loc, input, dst);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
-  auto it = binaryOpMap.find(kind);
-  if (it == binaryOpMap.end())
-    llvm_unreachable("unsupported binary kind");
-  return it->second(rewriter, loc, lhs, rhs, dst);
+  return lookupOrUnreachable(binaryOpMap, kind, "unsupported binary kind")(
+      rewriter, loc, lhs, rhs, dst);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
-    VShROp sourceOp) {
-  return rewriter
-      .create<VShROp>(loc, TypeRange{dst.getType()}, ValueRange{lhs, rhs},
-                      ValueRange{dst}, sourceOp.getRoundAttr())
-      .getResult()[0];
+    ShiftKind kind, Operation *sourceOp) {
+  switch (kind) {
+  case ShiftKind::Left:
+    if (sourceOp && !isa<hivm::VShLOp>(sourceOp))
+      llvm_unreachable("source op shift kind mismatch");
+    return rewriter
+        .create<hivm::VShLOp>(
+            loc, TypeRange(dst.getType()), ValueRange({lhs, rhs}),
+            ValueRange({dst}),
+            rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}),
+            rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}))
+        .getResult()[0];
+  case ShiftKind::RightSigned:
+  case ShiftKind::RightUnsigned: {
+    BoolAttr round = rewriter.getBoolAttr(false);
+    if (sourceOp) {
+      auto shiftOp = cast<hivm::VShROp>(sourceOp);
+      round = shiftOp.getRoundAttr();
+    }
+    return rewriter
+        .create<hivm::VShROp>(loc, TypeRange(dst.getType()),
+                              ValueRange({lhs, rhs}), ValueRange({dst}), round,
+                              nullptr, nullptr)
+        .getResult()[0];
+  }
+  }
+  llvm_unreachable("unsupported shift kind");
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     std::optional<RoundMode> roundMode) {
+  if (!isa<ShapedType>(input.getType()))
+    return castScalarThroughTensor(rewriter, loc, input, targetElemType);
+
   if (!roundMode) {
     hivm::RoundMode defaultRoundMode =
         utils::selectRoundMode<hivm::RoundMode>(
@@ -337,6 +362,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     CastRoundKind kind, Value output, CastSignKind signKind) {
   if (signKind == CastSignKind::Preserve)
     llvm_unreachable("createCastOp does not support CastSignKind::Preserve");
+  (void)output;
+  if (!isa<ShapedType>(input.getType()))
+    return castScalarThroughTensor(rewriter, loc, input, targetElemType);
   Type srcElemType = getElementTypeOrSelf(input.getType());
   auto roundMode =
       kind == CastRoundKind::Default
@@ -444,8 +472,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createSelectOp(
     Value dst) {
   return rewriter
       .create<hivm::VSelOp>(loc, mlir::TypeRange{dst.getType()},
-                            mlir::ValueRange{cond, a, b}, mlir::ValueRange{dst},
-                            mlir::Value{}, rewriter.getDenseI64ArrayAttr({}),
+                            mlir::ValueRange{cond, a, b},
+                            mlir::ValueRange{dst}, mlir::Value{},
+                            rewriter.getDenseI64ArrayAttr({}),
                             rewriter.getDenseI64ArrayAttr({}))
       .getResults()[0];
 }

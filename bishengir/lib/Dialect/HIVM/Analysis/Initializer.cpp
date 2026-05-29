@@ -32,12 +32,13 @@ DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
 
 LogicalResult DimensionAnalyzer::initialize() {
   solverGroup_ = std::make_unique<mlir::detail::SimpleUnionFind>();
-  auto result = DimensionAnalyzerBase::initialize();
+  if (failed(DimensionAnalyzerBase::initialize()))
+    return failure();
   propagateConnection();
   spreadConnection();
   markDimensions();
   transferDimMark();
-  return result;
+  return success();
 }
 
 void DimensionAnalyzer::initializeStructures() {

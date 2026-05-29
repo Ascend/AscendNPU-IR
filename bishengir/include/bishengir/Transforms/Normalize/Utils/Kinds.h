@@ -33,7 +33,8 @@ enum class BinaryKind {
   Max,
   Or,
   MinSigned,
-  MaxSigned
+  MaxSigned,
+  Powf
 };
 enum class ShiftKind { Left, RightSigned, RightUnsigned };
 enum class CompareKind { EQ, NE, LT, GT, GE, LE };
@@ -41,6 +42,7 @@ enum class CastRoundKind {
   Default,
   Round,
   Floor,
+  Ceil,
   RInt,
   Trunc,
   TruncEnableOverflow,

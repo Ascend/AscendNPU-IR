@@ -37,6 +37,7 @@ std::string getOpTypeStr(OpType opType) {
       {OpType::OPERATION, "OperationBase"},
       {OpType::PLACE_HOLDER, "PlaceHolder"},
       {OpType::ANCHOR, "Anchor"},
+      {OpType::ANCHOR_BLOCK, "AnchorBlock"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
       {OpType::FUNCTION_BLOCK, "FunctionBlock"},
@@ -139,6 +140,18 @@ std::string Anchor::str(int indent, bool recursive) const {
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
   ret += " (anchor-id=" + std::to_string(this->anchorId) + ")";
+  return ret;
+}
+
+std::string AnchorBlock::str(int indent, bool recursive) const {
+  std::string ret =
+      std::string(indent, ' ') +
+      llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
+      std::to_string(this->id);
+  ret += " (";
+  ret += "id-start=" + std::to_string(this->idStart);
+  ret += ", id-end=" + std::to_string(this->idEnd);
+  ret += ")";
   return ret;
 }
 
