@@ -120,6 +120,12 @@ void setupHIVMAVEPipelineOptions(
       config.getLimitAutoMultiBufferOfLocalBuffer();
   hivmAVEPipelineOptions.limitMixAutoMultiBufferBuffer =
       config.getLimitAutoMultiBufferBuffer();
+  hivmAVEPipelineOptions.disableMultiBufferOnUB =
+      config.getDisableMultiBufferOnUB();
+  hivmAVEPipelineOptions.disableMultiBufferOnL0C =
+      config.getDisableMultiBufferOnL0C();
+  hivmAVEPipelineOptions.disableMultiBufferOnL1 =
+      config.getDisableMultiBufferOnL1();
   hivmAVEPipelineOptions.enableAutoBindSubBlock =
       config.getEnableAutoBindSubBlock();
   hivmAVEPipelineOptions.enableAutoStorageAlign =

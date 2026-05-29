@@ -73,6 +73,21 @@ struct HIVMAVEPipelineOptions
                                   "only-vector", "limited to vector")),
       llvm::cl::init(MultiBufferStrategy::ONLY_CUBE)};
 
+  PassOptions::Option<bool> disableMultiBufferOnUB{
+      *this, "disable-multi-buffer-on-ub",
+      llvm::cl::desc("Skip multi-buffer mark for UB (Vector) buffers"),
+      llvm::cl::init(false)};
+
+  PassOptions::Option<bool> disableMultiBufferOnL0C{
+      *this, "disable-multi-buffer-on-l0c",
+      llvm::cl::desc("Skip multi-buffer mark for L0C (Cube accumulator) buffers"),
+      llvm::cl::init(false)};
+
+  PassOptions::Option<bool> disableMultiBufferOnL1{
+      *this, "disable-multi-buffer-on-l1",
+      llvm::cl::desc("Skip multi-buffer mark for L1 (cbuf) buffers"),
+      llvm::cl::init(false)};
+
   PassOptions::Option<unsigned> workspaceMultiBufferNum{
       *this, "set-workspace-multibuffer",
       llvm::cl::desc("Set multibuffer number of workspace, defaults to 2"),

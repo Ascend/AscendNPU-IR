@@ -320,6 +320,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -485,6 +491,12 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryOptions planMemoryOption;

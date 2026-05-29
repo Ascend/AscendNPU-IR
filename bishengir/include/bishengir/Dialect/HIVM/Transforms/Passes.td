@@ -99,6 +99,18 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            "Disable multi-buffer-buffer on cube, vector Or no limit">,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"2", "Override for multibuffer number for workspace">,
+    Option<"disableMultiBufferOnUB",
+           "disable-multi-buffer-on-ub", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for UB (Vector Load/Store) buffers">,
+    Option<"disableMultiBufferOnL0C",
+           "disable-multi-buffer-on-l0c", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L0C (Cube accumulator, Fixpipe) buffers">,
+    Option<"disableMultiBufferOnL1",
+           "disable-multi-buffer-on-l1", "bool",
+           /*default=*/"false",
+           "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
   ];
 }
 

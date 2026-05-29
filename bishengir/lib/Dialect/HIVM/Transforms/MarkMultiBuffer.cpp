@@ -222,16 +222,33 @@ void MarkMultiBufferPass::runOnOperation() {
       funcCoreType.has_value() &&
       (funcCoreType.value() == TFuncCoreType::MIX ||
        funcOp->getAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name));
-  if (!isMixFuncCore ||
-      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR)) {
-    patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
+  // Per-buffer fine-grained gates (used by BiShengIRCompileMain's compile-
+  // time fallback to surgically turn off the multi-buffer of just the
+  // overflowing address space):
+  //   ND2NZ   -> L1 (cbuf)         -> disableMultiBufferOnL1
+  //   Fixpipe -> L0C (cube acc)    -> disableMultiBufferOnL0C
+  //   Load    -> UB (Vector ingress)\
+  //   Store   -> UB (Vector egress) -> disableMultiBufferOnUB
+  // These AND-combine with the existing coarse Mix-core gates
+  // (limitMixAutoMultiBufferBuffer == ONLY_VECTOR/ONLY_CUBE) and with
+  // limitAutoMultiBufferOfLocalBuffer == CUBE_NO_L0C: any single switch can
+  // disable a given group; we never re-enable.
+  const bool allowCubeGroup =
+      !isMixFuncCore ||
+      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR);
+  if (allowCubeGroup) {
+    if (!disableMultiBufferOnL1)
+      patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
     // TODO: DN2NZ
-    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C) {
+    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C &&
+        !disableMultiBufferOnL0C) {
       patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(patterns.getContext());
     }
   }
-  if (!isMixFuncCore ||
-      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_CUBE)) {
+  const bool allowVectorGroup =
+      !isMixFuncCore ||
+      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_CUBE);
+  if (allowVectorGroup && !disableMultiBufferOnUB) {
     patterns.insert<MarkMultiBuffer<hivm::LoadOp>>(patterns.getContext());
     patterns.insert<MarkMultiBuffer<hivm::StoreOp>>(patterns.getContext());
   }
