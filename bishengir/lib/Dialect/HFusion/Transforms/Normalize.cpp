@@ -2618,7 +2618,7 @@ private:
                                    Value safeMaxv) const {
     Value t =
         createBinary(rewriter, loc, linalg::BinaryFn::div, minv, safeMaxv,
-                     outLike);
+                           outLike);
     Value t2 = createBinary(rewriter, loc, linalg::BinaryFn::mul, t, t, outLike);
 
     Value c0 = f32Const(rewriter, loc, 0.99998005f);
@@ -5215,60 +5215,60 @@ static bool needToTransform(Value src, int64_t stride0) {
 // Rewrite pattern to normalize tensor.insert_slice operations with bool (i1) element type
 // Converts bool source/dest to f16 type to enable NPU hardware acceleration
 template <>
-  struct NormalizeToTargetType<bool, tensor::InsertSliceOp>
-      : public OpRewritePattern<tensor::InsertSliceOp> {
-  public:
-    using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
-  
-    LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
-                                  PatternRewriter &rewriter) const override {
-      SmallVector<Value> tensors = {op.getSource(), op.getDest()};
-      // Check if both tensors have i1 (boolean) element type
-      // If not, skip this pattern
+struct NormalizeToTargetType<bool, tensor::InsertSliceOp>
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+    // Check if both tensors have i1 (boolean) element type
+    // If not, skip this pattern
       if (!hasI1ElemType(tensors) || !needToTransform(op.getSource(), op.getStaticStrides()[0]))
-        return failure();
-  
-      SmallVector<Value> newTensors =
-          normalizeSrcToTargetType<bool, Float16Type>(rewriter, tensors);
-      auto newOp = rewriter.create<tensor::InsertSliceOp>(
-          op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
-          op.getMixedSizes(), op.getMixedStrides());
-      // Replace the original bool result with the new f16 result
-      replaceI1ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
-                                    rewriter,
-                                    /*enableOverflow*/ false);
-      return success();
-    }
-  };
+      return failure();
+
+    SmallVector<Value> newTensors =
+        normalizeSrcToTargetType<bool, Float16Type>(rewriter, tensors);
+    auto newOp = rewriter.create<tensor::InsertSliceOp>(
+        op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+        op.getMixedSizes(), op.getMixedStrides());
+    // Replace the original bool result with the new f16 result
+    replaceI1ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                   rewriter,
+                                   /*enableOverflow*/ false);
+    return success();
+  }
+};
 
 // Rewrite pattern to normalize tensor.insert_slice operations with int8 element type
 // Converts int8 source/dest to f16 type for better NPU compatibility
 template <>
-  struct NormalizeToTargetType<int8_t, tensor::InsertSliceOp>
-      : public OpRewritePattern<tensor::InsertSliceOp> {
-  public:
-    using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
-  
-    LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
-                                  PatternRewriter &rewriter) const override {
-      SmallVector<Value> tensors = {op.getSource(), op.getDest()};
-      // Check if both tensors have i8 (int8) element type
-      // If not, skip this pattern
+struct NormalizeToTargetType<int8_t, tensor::InsertSliceOp>
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+    // Check if both tensors have i8 (int8) element type
+    // If not, skip this pattern
       if (!hasI8ElemType(tensors) || !needToTransform(op.getSource(), op.getStaticStrides()[0]))
-        return failure();
-  
-      SmallVector<Value> newTensors =
-          normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, tensors);
-      auto newOp = rewriter.create<tensor::InsertSliceOp>(
-          op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
-          op.getMixedSizes(), op.getMixedStrides());
-      // Replace the original int8 result with the new f16 result 
-      replaceI8ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
-                                    rewriter,
-                                    /*enableOverflow*/ false);
-      return success();
-    }
-  };
+      return failure();
+
+    SmallVector<Value> newTensors =
+        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, tensors);
+    auto newOp = rewriter.create<tensor::InsertSliceOp>(
+        op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+        op.getMixedSizes(), op.getMixedStrides());
+    // Replace the original int8 result with the new f16 result
+    replaceI8ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                   rewriter,
+                                   /*enableOverflow*/ false);
+    return success();
+  }
+};
 
 template <>
 struct NormalizeToTargetType<bool, CompareOp>
@@ -6296,14 +6296,14 @@ public:
   }
 };
 
-/// normalize shift i8 as bellow
+/// normalize shrui i8 to i16
 /// eg.
-///   %res = shift %src : i8
+///   %res = shrui %src : i8
 /// is normalized to
 ///   %tmp0 = cast %src i8 to i16
-///   %tmp1 = shift %tmp0 : i16
+///   %tmp1 = shrui %tmp0 : i16
 ///   %res = cast %tmp1 i16 to i8
-struct NormalizeShiftI8ToI16
+struct NormalizeShruiI8ToI16
     : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -6314,8 +6314,7 @@ public:
     }
 
     auto fun = op.getFun();
-    if (!(fun == hfusion::BinaryFn::shli || fun == hfusion::BinaryFn::shrsi ||
-          fun == hfusion::BinaryFn::shrui)) {
+    if (fun != hfusion::BinaryFn::shrui) {
       return failure();
     }
 
@@ -6328,13 +6327,10 @@ public:
     auto loc = op->getLoc();
     auto targetElemType = rewriter.getI16Type();
     auto shift = op.getDpsInputs()[1];
-    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::shrui)
-                                            ? hfusion::TypeFn::cast_unsigned
-                                            : hfusion::TypeFn::cast_signed;
-    Value inputOfI16 =
-        hfusion::castTo(rewriter, input, targetElemType, cast_integer_type);
-    Value shiftOfI16 =
-        hfusion::castTo(rewriter, shift, targetElemType, cast_integer_type);
+    Value inputOfI16 = hfusion::castTo(rewriter, input, targetElemType,
+                                       hfusion::TypeFn::cast_unsigned);
+    Value shiftOfI16 = hfusion::castTo(rewriter, shift, targetElemType,
+                                       hfusion::TypeFn::cast_unsigned);
 
     auto shiftInit = utils::createEmptyOp(rewriter, loc, inputOfI16);
     Value resOfI16 =
@@ -6350,8 +6346,9 @@ public:
     auto roundMode = (fun == hfusion::BinaryFn::shli)
                          ? hfusion::RoundMode::TRUNCWITHOVERFLOW
                          : selectMode;
-    auto resOfI8 = hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
-                                   std::nullopt, true, cast_integer_type);
+    auto resOfI8 =
+        hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
+                        std::nullopt, true, hfusion::TypeFn::cast_unsigned);
 
     rewriter.replaceOp(op, resOfI8);
     return success();
@@ -7790,7 +7787,7 @@ struct NormalizeMatMulBase : public OpRewritePattern<MatmulOpType> {
 
   LogicalResult matchAndRewrite(MatmulOpType op,
                                 PatternRewriter &rewriter) const override {
-    
+
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
@@ -9082,6 +9079,259 @@ private:
   }
 };
 
+namespace {
+/// Compute mask and exp2 for valid shift
+/// outputs:
+///   mask: true        if shift_i in [0, 32) else false
+///   exp2: 2 ^ shift_i if shift_i in [0, 32) else     0
+std::tuple<Value, Value> createI32ValidExp2(PatternRewriter &rewriter,
+                                            Location loc, Value shift) {
+  Type i32 = rewriter.getI32Type();
+  Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+  Value c2 = utils::createConstantOp(rewriter, loc, i32, 2);
+  Value c32 = utils::createConstantOp(rewriter, loc, i32, 32);
+
+  // compute mask
+  Value negativeMask =
+      createCmpOp(rewriter, loc, shift, c0, CompareFn::vge)->getResult(0);
+  Value bitwidthMask =
+      createCmpOp(rewriter, loc, shift, c32, CompareFn::vlt)->getResult(0);
+
+  Value maskEmpty = utils::createEmptyOp(rewriter, loc, negativeMask);
+  Value mask =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::vand,
+          ValueRange{negativeMask, bitwidthMask}, ValueRange{maskEmpty})
+          ->getResult(0);
+
+  // compute valid shift
+  Value validShiftEmpty = utils::createEmptyOp(rewriter, loc, shift);
+  Value validShift =
+      rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange(validShiftEmpty.getType()),
+                                     ValueRange{mask, shift, c0},
+                                     ValueRange{validShiftEmpty})
+          ->getResult(0);
+
+  // compute 2 ^ valid_shift
+  Value exp2Empty = utils::createEmptyOp(rewriter, loc, validShift);
+  Value exp2 =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::powi, ValueRange{c2, validShift},
+          ValueRange{exp2Empty})
+          ->getResult(0);
+
+  return {mask, exp2};
+}
+
+/// Compute fallback result for shri with invalid shift
+/// outputs:
+///     fallback: 0 if value_i >= 0 else -1
+Value createI32ValueFallback(PatternRewriter &rewriter, Location loc,
+                             Value value) {
+  Type i32 = rewriter.getI32Type();
+  Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+  Value cn1 = utils::createConstantOp(rewriter, loc, i32, -1);
+
+  Value posValue =
+      createCmpOp(rewriter, loc, value, c0, CompareFn::vge)->getResult(0);
+
+  Value fallbackEmpty = utils::createEmptyOp(rewriter, loc, value);
+  Value fallback =
+      rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange{fallbackEmpty.getType()},
+                                     ValueRange{posValue, c0, cn1},
+                                     ValueRange{fallbackEmpty})
+          ->getResult(0);
+
+  return fallback;
+}
+
+} // namespace
+
+/// Normalize tensor shli to powi and mul for SIMD
+/// input:
+///   dst = hfusion.elemwise_binary {shli} (value, shift)
+/// range:
+///   value, shift in [i8, i16, i32]
+/// exception:
+///   result_i is 0 if shift_i < -1 or shift_i > 31
+/// detail:
+///   # 1. cast to i32
+///   shift = cast(shift) -> i32
+///   value = cast(value) -> i32
+///   # 2. compute masks for shift
+///   mask = (shift >= 0) && (shift < 32)
+///   # 3. compute for valid elems
+///   valid_shift = select(mask, shift, 0)
+///   valid_result = mul(value, pow(2, valid))
+///   # 4. merge result
+///   result = select(mask, valid_result, 0)
+///   # 5. cast back
+///   result = cast(result) -> origin [trunc-with-overflow]
+struct NormalizeShiftLeftOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::BinaryFn::shli)
+      return failure();
+
+    Location loc = op.getLoc();
+    auto inputs = op.getDpsInputs();
+    Value value = inputs[0];
+    Value shift = inputs[1];
+    Type valueElemType = getElementTypeOrSelf(value);
+    Type shiftElemType = getElementTypeOrSelf(shift);
+    if (valueElemType.isInteger(64) || shiftElemType.isInteger(64))
+      return failure();
+
+    // check tensor shape
+    auto valueType = dyn_cast<RankedTensorType>(value.getType());
+    auto shiftType = dyn_cast<RankedTensorType>(shift.getType());
+    if (!valueType || !shiftType ||
+        valueType.getShape() != shiftType.getShape()) {
+      return failure();
+    }
+
+    // cast
+    Type i32 = rewriter.getI32Type();
+    Value valueAsI32 =
+        (valueElemType == i32) ? value : hfusion::castTo(rewriter, value, i32);
+    Value shiftAsI32 =
+        (shiftElemType == i32) ? shift : hfusion::castTo(rewriter, shift, i32);
+
+    // compute 2 ^ shift for valid elems
+    auto [mask, exp2] = createI32ValidExp2(rewriter, loc, shiftAsI32);
+
+    // compute value * (2 ^ shift)
+    Value resultAsI32Empty = utils::createEmptyOp(rewriter, loc, valueAsI32);
+    Value resultAsI32 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{valueAsI32, exp2},
+            ValueRange{resultAsI32Empty})
+            ->getResult(0);
+
+    // mask result for invalid
+    Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+    Value maskedResultEmpty = utils::createEmptyOp(rewriter, loc, shiftAsI32);
+    Value maskedResult = rewriter
+                             .create<hfusion::SelectOp>(
+                                 loc, TypeRange(maskedResultEmpty.getType()),
+                                 ValueRange{mask, resultAsI32, c0},
+                                 ValueRange{maskedResultEmpty})
+                             ->getResult(0);
+
+    // cast back
+    Value result = (valueElemType == i32)
+                       ? maskedResult
+                       : hfusion::castTo(rewriter, maskedResult, valueElemType,
+                                         hfusion::RoundMode::TRUNCWITHOVERFLOW,
+                                         std::nullopt, /*enableOverflow*/ true);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  };
+};
+
+/// Normalize tensor shri to powi and div for SIMD
+/// input:
+///   dst = hfusion.elemwise_binary {shri} (value, shift)
+/// range:
+///   value, shift in [i8, i16]
+/// exceptions:
+///   result_i is  0 if (shift_i < -1 || shift_i > bitwidth) and value_i >= 0
+///   result_i is -1 if (shift_i < -1 || shift_i > bitwidth) and value_i <  0
+/// detail:
+///   # 1. cast to i32
+///   shift = cast(shift) -> i32
+///   value = cast(value) -> i32
+///   # 2. compute masks for shift
+///   mask = (shift >= 0) && (shift < 32)
+///   # 3. compute for valid elems
+///   valid_shift = select(mask, shift, 0)
+///   valid_result = floordiv(value, pow(2, valid))
+///   other_result = 0 ? value >= 0 : 1
+///   # 4. merge result
+///   result = select(mask, valid_result, other_result)
+///   # 5. cast back
+///   result = cast(result) -> origin [trunc-with-overflow]
+struct NormalizeShiftRightOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::BinaryFn::shrsi)
+      return failure();
+
+    Location loc = op.getLoc();
+    auto inputs = op.getDpsInputs();
+    Value value = inputs[0];
+    Value shift = inputs[1];
+    Type valueElemType = getElementTypeOrSelf(value);
+    Type shiftElemType = getElementTypeOrSelf(shift);
+
+    // check tensor shape
+    auto valueType = dyn_cast<RankedTensorType>(value.getType());
+    auto shiftType = dyn_cast<RankedTensorType>(shift.getType());
+    if (!valueType || !shiftType ||
+        valueType.getShape() != shiftType.getShape()) {
+      return failure();
+    }
+
+    if (valueElemType.isInteger(32) || shiftElemType.isInteger(32) ||
+        valueElemType.isInteger(64) || shiftElemType.isInteger(64)) {
+      return failure();
+    }
+
+    // cast
+    Type i32 = rewriter.getI32Type();
+    Value valueAsI32 = hfusion::castTo(rewriter, value, i32);
+    Value shiftAsI32 = hfusion::castTo(rewriter, shift, i32);
+
+    // compute 2 ^ shift for valid elems
+    auto [mask, exp2] = createI32ValidExp2(rewriter, loc, shiftAsI32);
+
+    // compute floor_div(value, exp2Shift)
+    Value resultAsI32Empty = utils::createEmptyOp(rewriter, loc, valueAsI32);
+    Value resultAsI32 =
+        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                hfusion::BinaryFnAttr>(
+            rewriter, loc, hfusion::BinaryFn::floordivsi,
+            ValueRange{valueAsI32, exp2}, ValueRange{resultAsI32Empty})
+            ->getResult(0);
+
+    // mask result for invalid
+    Value fallback = createI32ValueFallback(rewriter, loc, valueAsI32);
+    Value maskedEmpty = utils::createEmptyOp(rewriter, loc, resultAsI32);
+    Value masked =
+        rewriter
+            .create<hfusion::SelectOp>(loc, TypeRange{maskedEmpty.getType()},
+                                       ValueRange{mask, resultAsI32, fallback},
+                                       ValueRange{maskedEmpty})
+            ->getResult(0);
+
+    // cast back
+    Value result = hfusion::castTo(rewriter, masked, valueElemType,
+                                   hfusion::RoundMode::TRUNCWITHOVERFLOW,
+                                   std::nullopt, /*enableOverflow*/ true);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
 } // namespace mlir::hfusion
 
 // Normalize scalar like tensor for linalg and hfusion ops.
@@ -9183,7 +9433,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeIsInfOp>(patterns.getContext());
   patterns.add<NormalizeIsNanOp>(patterns.getContext());
   patterns.add<NormalizeXorOp>(patterns.getContext());
-  patterns.add<NormalizeShiftI8ToI16>(patterns.getContext());
+  patterns.add<NormalizeShruiI8ToI16>(patterns.getContext());
   patterns.add<NormalizeIlogbOp>(patterns.getContext());
   patterns.add<NormalizeLdexpOp>(patterns.getContext());
   patterns.add<NormalizePowfOp>(patterns.getContext());
@@ -9206,6 +9456,8 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeErfInvOp>(patterns.getContext());
   patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());
   patterns.add<NormalizeNextAfterOp>(patterns.getContext());
+  patterns.add<NormalizeShiftLeftOp>(patterns.getContext());
+  patterns.add<NormalizeShiftRightOp>(patterns.getContext());
 }
 
 namespace {
