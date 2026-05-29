@@ -21,7 +21,6 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <mlir/IR/Attributes.h>
-#include <typeinfo>
 
 #define DEBUG_TYPE "ave-normalize-ops"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -159,7 +158,8 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
 /// Add load dist by element alignment bitwidth
 /// Change NORM to UNPK_B8/UNPK_B16/UNPK4_B8
 struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
-  AVELoadPattern(MLIRContext *context) : OpRewritePattern<VFLoadOp>(context) {}
+  explicit AVELoadPattern(MLIRContext *context)
+      : OpRewritePattern<VFLoadOp>(context) {}
   LogicalResult matchAndRewrite(VFLoadOp load,
                                 PatternRewriter &rewriter) const override {
     LDBG("process operation : " << load);
@@ -189,7 +189,7 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
 /// Add store dist by element alignment bitwidth
 /// Change NORM to PK_B16/PK_B32/PK4_B32
 struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
-  AVEStorePattern(MLIRContext *context)
+  explicit AVEStorePattern(MLIRContext *context)
       : OpRewritePattern<VFMaskedStoreOp>(context) {}
   LogicalResult matchAndRewrite(VFMaskedStoreOp store,
                                 PatternRewriter &rewriter) const override {
@@ -229,7 +229,7 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
 /// inserting dintlv ops before the store to densify the data layout.
 struct AVEStoreWithStridePattern
     : public OpRewritePattern<VFStoreWithStrideOp> {
-  AVEStoreWithStridePattern(MLIRContext *context)
+  explicit AVEStoreWithStridePattern(MLIRContext *context)
       : OpRewritePattern<VFStoreWithStrideOp>(context) {}
 
   LogicalResult matchAndRewrite(VFStoreWithStrideOp storeOp,
@@ -269,7 +269,7 @@ struct AVEStoreWithStridePattern
 /// Hardware does not support fp16-->u16
 /// Use fp16-->s32 + s32-->u16 instead.
 struct AVEFpToUIntPattern : public OpRewritePattern<VFFpToUIntOp> {
-  AVEFpToUIntPattern(MLIRContext *context)
+  explicit AVEFpToUIntPattern(MLIRContext *context)
       : OpRewritePattern<VFFpToUIntOp>(context) {}
   LogicalResult matchAndRewrite(VFFpToUIntOp cvtOp,
                                 PatternRewriter &rewriter) const override {

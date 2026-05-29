@@ -46,128 +46,6 @@ using namespace mlir::hivm;
 using namespace mlir::hivmave;
 using namespace mlir::hivm_regbaseintrins;
 
-static Operation *createPgeIntrinOp(PatternRewriter &rewriter, VFPgeOp pge,
-                                    unsigned dataWidth) {
-  auto loc = pge->getLoc();
-  Type dstType = VectorType::get(SmallVector<int64_t>{util::PREDICATE_BITS},
-                                 rewriter.getI1Type());
-  auto numElems = cast<VectorType>(pge.getRes().getType()).getShape()[0];
-  PgePattern realPattern = pge.getPattern();
-  if (realPattern == PgePattern::ALL)
-    realPattern =
-        hivmave::getPgePatternAttr(rewriter, numElems, util::PREDICATE_BITS)
-            .value()
-            .getValue();
-  Value pattern = rewriter.create<LLVM::ConstantOp>(
-      loc, rewriter.getI32Type(),
-      rewriter.getI32IntegerAttr(static_cast<uint32_t>(realPattern)));
-
-  Operation *newOp;
-  Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
-                                                 rewriter.getI32IntegerAttr(0));
-  switch (dataWidth) {
-  case 1:
-  case 8:
-    newOp = rewriter.create<PgeB8>(loc, dstType, pattern, zero);
-    newOp->setAttr(utils::maskBitWidth,
-                   rewriter.getIntegerAttr(rewriter.getIntegerType(32), 8));
-    break;
-  case 16:
-    newOp = rewriter.create<PgeB16>(loc, dstType, pattern, zero);
-    newOp->setAttr(utils::maskBitWidth,
-                   rewriter.getIntegerAttr(rewriter.getIntegerType(32), 16));
-    break;
-  default:
-    newOp = rewriter.create<PgeB32>(loc, dstType, pattern, zero);
-    newOp->setAttr(utils::maskBitWidth,
-                   rewriter.getIntegerAttr(rewriter.getIntegerType(32), 32));
-  }
-  return newOp;
-}
-
-static Operation *createPltIntrinOp(PatternRewriter &rewriter, VFPltOp plt,
-                                    unsigned dataWidth) {
-  auto loc = plt->getLoc();
-  Type dstType = VectorType::get(SmallVector<int64_t>{util::PREDICATE_BITS},
-                                 rewriter.getI1Type());
-  dstType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
-                                             {dstType, rewriter.getI32Type()});
-  Value true_shape = rewriter.create<arith::IndexCastOp>(
-      loc, rewriter.getI32Type(), plt.getTrueShape());
-  Value newOp;
-  Operation *extractOp;
-  switch (dataWidth) {
-  case 1:
-  case 8:
-    newOp = rewriter.create<PltB8>(loc, dstType, true_shape);
-    extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, newOp, 0);
-    extractOp->setAttr(utils::maskBitWidth,
-                       rewriter.getIntegerAttr(rewriter.getIntegerType(32), 8));
-    break;
-  case 16:
-    newOp = rewriter.create<PltB16>(loc, dstType, true_shape);
-    extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, newOp, 0);
-    extractOp->setAttr(
-        utils::maskBitWidth,
-        rewriter.getIntegerAttr(rewriter.getIntegerType(32), 16));
-    break;
-  default:
-    newOp = rewriter.create<PltB32>(loc, dstType, true_shape);
-    extractOp = rewriter.create<LLVM::ExtractValueOp>(loc, newOp, 0);
-    extractOp->setAttr(
-        utils::maskBitWidth,
-        rewriter.getIntegerAttr(rewriter.getIntegerType(32), 32));
-  }
-  return extractOp;
-}
-
-static Value findProperMaskOrCreateOneAccordingToMaskOpIdxAttr(
-    PatternRewriter &rewriter, Value mask, unsigned dataWidth) {
-  Operation *maskOp = mask.getDefiningOp();
-  assert(maskOp != nullptr);
-  auto maskOpIdxAttr = maskOp->getAttr(utils::maskOpIdx);
-  int maskOpIdx = dyn_cast<IntegerAttr>(maskOpIdxAttr).getInt();
-
-  assert(mask.getDefiningOp() != nullptr);
-  auto funcOp = mask.getDefiningOp()->getParentOfType<func::FuncOp>();
-  bool found = false;
-  funcOp->walk([&](Operation *op) {
-    if (auto candidateMaskOpIdxAttr = op->getAttr(utils::maskOpIdx)) {
-      if (auto candidateMaskBitWidthAttr = op->getAttr(utils::maskBitWidth)) {
-        int candidateMaskOpIdx =
-            dyn_cast<IntegerAttr>(candidateMaskOpIdxAttr).getInt();
-        int candidateMaskBitWidth =
-            dyn_cast<IntegerAttr>(candidateMaskBitWidthAttr).getInt();
-        if (maskOpIdx == candidateMaskOpIdx &&
-            int(dataWidth) == candidateMaskBitWidth) {
-          found = true;
-          mask = op->getResult(0);
-          return WalkResult::interrupt();
-        }
-      }
-    }
-    return WalkResult::advance();
-  });
-  if (!found) {
-    Operation *newOp = nullptr;
-    // Insert the instruction at the original mask position to ensure the
-    // dominance relationship when the instruction is reused.
-    auto originPos = rewriter.saveInsertionPoint();
-    rewriter.setInsertionPointAfter(maskOp);
-    if (auto plt = dyn_cast<VFPltOp>(maskOp)) {
-      newOp = createPltIntrinOp(rewriter, plt, dataWidth);
-    } else if (auto pge = dyn_cast<VFPgeOp>(maskOp)) {
-      newOp = createPgeIntrinOp(rewriter, pge, dataWidth);
-    }
-    rewriter.restoreInsertionPoint(originPos);
-    if (newOp) {
-      newOp->setAttr(utils::maskOpIdx, maskOpIdxAttr);
-      mask = newOp->getResult(0);
-    }
-  }
-  return getVLRegValueOrSelf(mask, rewriter);
-}
-
 static int getParentOpElementAlignmentBitWidth(Operation *op) {
   if (op != nullptr && op->getParentOp() != nullptr) {
     if (auto elementAlignmentAttr =
@@ -217,19 +95,6 @@ static bool isAlignByElementAlignment(Operation *op) {
     }
   }
   return srcAlignment == dstAlignment && srcAlignment != -1;
-}
-
-static Value findProperMaskOrCreateOne(PatternRewriter &rewriter,
-                                       Operation *maskedOp, Value mask,
-                                       unsigned dataWidth) {
-  int elementAlignment = getElementAlignmentBitWidth(maskedOp);
-  if (mask.getDefiningOp() && mask.getDefiningOp()->getAttr(utils::maskOpIdx)) {
-    mask = findProperMaskOrCreateOneAccordingToMaskOpIdxAttr(
-        rewriter, mask, elementAlignment == -1 ? dataWidth : elementAlignment);
-  } else {
-    mask = getVLRegValueOrSelf(mask, rewriter);
-  }
-  return mask;
 }
 
 template <typename TargetTy, typename... Args>
@@ -314,7 +179,7 @@ struct BinaryLowerToIntrinsic : public OpConversionPattern<OpTy> {
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
     Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+        getVLRegValueOrSelf(op.getMask(), rewriter);
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
     if (totalSize != vlLength) {
@@ -662,7 +527,7 @@ struct UnaryLowerToIntrinsic : public OpConversionPattern<OpTy> {
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
     Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+        getVLRegValueOrSelf(op.getMask(), rewriter);
 
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;
@@ -749,8 +614,7 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
     Type elementType = vecTy.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
     Value scalar = adaptor.getSrc();
-    Value mask = findProperMaskOrCreateOne(rewriter, convertOp,
-                                           adaptor.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
     Value mode = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(1));
 
@@ -887,7 +751,7 @@ static bool isONEPTDist(Value dist) {
 static Value createMaskByPGE(PatternRewriter &rewriter, Location loc) {
   auto pgeType = VectorType::get(256, rewriter.getI1Type());
   Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
-                                                 rewriter.getI32IntegerAttr(0));
+                                                  rewriter.getI32IntegerAttr(0));
   Operation *newOp = rewriter.create<PgeB8>(loc, pgeType, zero, zero);
   Value pge = newOp->getResult(0);
   return pge;
@@ -1313,24 +1177,11 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     if (elementAlignment == -1) {
       elementAlignment = getElementAlignmentBitWidth(store);
     }
-    auto elemWidth = dElemType.getIntOrFloatBitWidth();
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
     auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
     bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
-    Value mask = store.getMask();
-    if (mask.getDefiningOp() &&
-        mask.getDefiningOp()->getAttr(utils::maskOpIdx)) {
-      if (elemWidth == 8 && elementAlignment == 32 && !archIs910_95)
-        mask = findProperMaskOrCreateOneAccordingToMaskOpIdxAttr(rewriter, mask,
-                                                                 8);
-      else
-        mask = findProperMaskOrCreateOneAccordingToMaskOpIdxAttr(
-            rewriter, mask,
-            elementAlignment == -1 ? elemWidth : elementAlignment);
-    } else {
-      mask = getVLRegValueOrSelf(mask, rewriter);
-    }
+    Value mask = getVLRegValueOrSelf(store.getMask(), rewriter);
 
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
         !isONEPTDist(dist) && !dElemType.isInteger(1)) {
@@ -1502,16 +1353,7 @@ struct HIVMStoreStrideOpLowering
     Value mode = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
 
-    int elementAlignment = getElementAlignmentBitWidth(store);
-    Value mask = store.getMask();
-    if (mask.getDefiningOp() &&
-        mask.getDefiningOp()->getAttr(utils::maskOpIdx)) {
-      mask = findProperMaskOrCreateOneAccordingToMaskOpIdxAttr(
-          rewriter, mask,
-          elementAlignment == -1 ? elemWidth : elementAlignment);
-    } else {
-      mask = getVLRegValueOrSelf(mask, rewriter);
-    }
+    Value mask = getVLRegValueOrSelf(store.getMask(), rewriter);
 
     if (dElemType.isF32()) {
       auto result = rewriter.create<VsstbV64F32InstrOp>(
@@ -1860,8 +1702,7 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
       }
     }
 
-    mask = findProperMaskOrCreateOne(rewriter, select, mask,
-                                     elementType.getIntOrFloatBitWidth());
+    mask = getVLRegValueOrSelf(mask, rewriter);
     auto trueValue = select.getTrueValue();
     auto falseValue = select.getFalseValue();
     trueValue = getVLRegValueOrSelf(trueValue, rewriter);
@@ -1897,8 +1738,7 @@ static Value cmpLowerToIntrin(VFCmpOp cmpOp,
   auto loc = cmpOp->getLoc();
   Type elementType = cast<VectorType>(lhs.getType()).getElementType();
 
-  Value mask = findProperMaskOrCreateOne(rewriter, cmpOp, cmpOp.getMask(),
-                                         elementType.getIntOrFloatBitWidth());
+  Value mask = getVLRegValueOrSelf(cmpOp.getMask(), rewriter);
 
   Value result;
   Type intrinMaskType = VectorType::get(
@@ -1930,8 +1770,7 @@ static Value cmpLowerToIntrin(VFCmpOp cmpOp,
   auto loc = cmpOp->getLoc();
   Type elementType = cast<VectorType>(lhs.getType()).getElementType();
 
-  Value mask = findProperMaskOrCreateOne(rewriter, cmpOp, cmpOp.getMask(),
-                                         elementType.getIntOrFloatBitWidth());
+  Value mask = getVLRegValueOrSelf(cmpOp.getMask(), rewriter);
 
   Value result;
   Type intrinMaskType = VectorType::get(
@@ -2013,9 +1852,7 @@ struct HIVMReductionOpLowering : public ConvertOpToLLVMPattern<ReductionOp> {
     VectorType vType = hivm_regbaseintrins::createVLVectorType(elementType);
 
     auto kind = reduction.getKind();
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, reduction, reduction.getMask(),
-                                  elementType.getIntOrFloatBitWidth());
+    Value mask = getVLRegValueOrSelf(reduction.getMask(), rewriter);
     VectorType predType = VectorType::get(
         SmallVector<int64_t>{util::PREDICATE_BITS}, rewriter.getI1Type());
     switch (kind) {
@@ -2325,8 +2162,7 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
   auto srcTy = createVLVectorType(elementType);
   src =
       rewriter.create<UnrealizedConversionCastOp>(loc, srcTy, src).getResult(0);
-  Value mask = findProperMaskOrCreateOne(rewriter, vecBrcOp, vecBrcOp.getMask(),
-                                         elementType.getIntOrFloatBitWidth());
+  Value mask = getVLRegValueOrSelf(vecBrcOp.getMask(), rewriter);
   if (elementType.isUnsignedInteger(8) || elementType.isSignedInteger(8) ||
       elementType.isSignlessInteger(8) || elementType.isUnsignedInteger(16) ||
       elementType.isSignedInteger(16) || elementType.isSignlessInteger(16) ||
@@ -2391,12 +2227,7 @@ struct HIVMTypeConvertionOpLowering
 
     Value zero = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
-    auto dataWidth =
-        outElemType.getIntOrFloatBitWidth() > inElemType.getIntOrFloatBitWidth()
-            ? outElemType.getIntOrFloatBitWidth()
-            : inElemType.getIntOrFloatBitWidth();
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, srcOp, srcOp.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(srcOp.getMask(), rewriter);
     // If the data have been arranged by ElementAlignment when load, do not need
     // to interleave/deinterleave when type cast, otherwise need.
     Operation *newOp = nullptr;
@@ -2700,8 +2531,7 @@ struct HIVMVtrcOpLowering : public ConvertOpToLLVMPattern<VFVtrcOp> {
     Value roundingMode = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(op.getRnd()));
     Operation *vtrc = nullptr;
-    Value mask = findProperMaskOrCreateOne(rewriter, op, op.getMask(),
-                                           elemResType.getIntOrFloatBitWidth());
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     if (elemResType.isF16()) {
       vtrc = rewriter.create<VtrcV128F16InstrOp>(loc, resVLVectorTy, srcCasted,
                                                  roundingMode, mask);
@@ -2780,8 +2610,7 @@ struct HIVMVShiftOpLowering : public ConvertOpToLLVMPattern<SourceOp> {
         isSigned = intAttr.getValue().getBoolValue();
       }
     }
-    Value mask = findProperMaskOrCreateOne(rewriter, op, adaptor.getMask(),
-                                           elemType.getIntOrFloatBitWidth());
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
 
     uint64_t totalSize = static_cast<uint64_t>(resType.getNumElements());
     auto dataWidth = elemType.getIntOrFloatBitWidth();
@@ -3108,10 +2937,7 @@ struct HIVMVmullOpLowering : public ConvertOpToLLVMPattern<hivmave::VFVMULLOp> {
     UnrealizedConversionCastOp src2Casted =
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecVLType, src2);
 
-    Type elementType = vecType.getElementType();
-    auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     Type vmullType = LLVM::LLVMStructType::getLiteral(
         rewriter.getContext(), {llvmVecVLType, llvmVecVLType});
 
@@ -3248,9 +3074,7 @@ struct HIVMPnotOpLowering : public ConvertOpToLLVMPattern<PregNotOp> {
     Value newsrc1 = getVLRegValueOrSelf(src1, rewriter);
     auto newOpResTy = createVLVectorType(rewriter.getI1Type());
 
-    Value mask = findProperMaskOrCreateOne(
-        rewriter, op, adaptor.getMask(),
-        resType.getElementType().getIntOrFloatBitWidth());
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
     newOp = rewriter.create<PnotB8InstrOp>(loc, newOpResTy, newsrc1, mask);
     if (resType != newOpResTy) {
       newOp = rewriter.create<UnrealizedConversionCastOp>(loc, resType,
@@ -3290,8 +3114,7 @@ struct HIVMExpdifOpLowering
       rhs = rewriter.create<UnrealizedConversionCastOp>(loc, vecType, rhs)
                 .getResult(0);
     }
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     Value cstZero =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
     Value res;
@@ -3357,8 +3180,7 @@ struct TenaryLowerToIntrinsic : public ConvertOpToLLVMPattern<OpTy> {
                  .getResult(0);
     }
 
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
     Value res;
     if (elementType.isUnsignedInteger(8)) {
       res =
@@ -3454,9 +3276,7 @@ struct HIVMPredicateBinaryLogicOpLowering
     auto loc = op.getLoc();
     VectorType resType = cast<VectorType>(op.getResult().getType());
     Operation *newOp = nullptr;
-    Value mask = findProperMaskOrCreateOne(
-        rewriter, op, adaptor.getMask(),
-        resType.getElementType().getIntOrFloatBitWidth());
+    Value mask = getVLRegValueOrSelf(adaptor.getMask(), rewriter);
 
     Value oldLhs = op.getLhs();
     Value oldRhs = op.getRhs();
@@ -3596,8 +3416,7 @@ struct BinaryVectorScalarLowerToIntrinsic : public OpConversionPattern<OpTy> {
     uint64_t totalSize = static_cast<uint64_t>(vecType.getNumElements());
     Type elementType = vecType.getElementType();
     auto dataWidth = elementType.getIntOrFloatBitWidth();
-    Value mask =
-        findProperMaskOrCreateOne(rewriter, op, op.getMask(), dataWidth);
+    Value mask = getVLRegValueOrSelf(op.getMask(), rewriter);
 
     auto vlLength = util::VL_BITS / dataWidth;
     VectorType oriVecType = vecType;

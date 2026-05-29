@@ -72,7 +72,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     call @vload_NORM_int64_t_rank1(%1, %cast, %c0_i64) : (!llvm.ptr, memref<?xi64, strided<[?], offset: ?>, #hivm.address_space<ub>>, i64) -> ()
     %2 = builtin.unrealized_conversion_cast %res : vector<64xi1> to vector<256xi1>
     // CHECK: call @_mlir_ciface_cast_uint64_t_to_uint32_t_sat(%10, %11) : (!llvm.ptr, vector<256xi1>) -> vector<64xi32>
-    // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtii.u322u16.x"(%13, %7, %15, %16) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<128xi16>
+    // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtii.u322u16.x"(%13, %{{.*}}, %{{.*}}, %{{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<128xi16>
     %3 = call @_mlir_ciface_cast_uint64_t_to_uint32_t_sat(%1, %2) : (!llvm.ptr, vector<256xi1>) -> vector<64xi32>
     %4 = ave.hir.vtrunci %3, true, %res {part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<ui2ui>} : vector<64xi32>, vector<64xi16>, vector<64xi1>
     ave.hir.masked_store <NORM_B16> %arg1[%c0], %res, %4 : memref<13xi16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi16>
