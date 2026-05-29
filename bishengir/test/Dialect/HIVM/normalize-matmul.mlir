@@ -755,7 +755,7 @@ module {
     // CHECK: scf.yield %[[MMAD]] : tensor<29x768xf32>
     // CHECK: } else {
     // CHECK: scf.yield %[[BRC]] : tensor<29x768xf32>
-    // CHECK: }
+    // CHECK: } {may_not_exec
     %res = scf.if %cond -> tensor<29x768xf32> {
       %14 = hivm.hir.mmadL1 ins(%9, %10, %false, %c29, %c128, %c768 : tensor<29x128xf16>, tensor<128x768xf16>, i1, index, index, index) outs(%outC : tensor<29x768xf32>) -> tensor<29x768xf32>
       scf.yield %14 : tensor<29x768xf32>
@@ -878,6 +878,37 @@ module {
     }
     // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<64x32xf32>
     // CHECK: hivm.hir.vadd ins(%[[FOR]], %[[C]] : tensor<64x32xf32>, tensor<64x32xf32>) outs(%[[EMPTY]] : tensor<64x32xf32>) -> tensor<64x32xf32>
+    return %0 : tensor<64x32xf32>
+  }
+}
+
+// -----
+  // CHECK-LABEL:   func.func @dot_reuse_l0c
+module {
+  func.func @dot_reuse_l0c() -> tensor<64x32xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<64x32xf32>
+    %alloc_b = memref.alloc() : memref<32x32xf32>
+    %alloc_c = memref.alloc() : memref<64x32xf32>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<64x32xf32>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<32x32xf32>
+    %a_c = bufferization.to_tensor %alloc_c restrict writable : memref<64x32xf32>
+    %c = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%a_c : tensor<64x32xf32>) -> tensor<64x32xf32>
+    %alloc_d = memref.alloc() : memref<32x32xf32>
+    %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
+    // CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c
+    // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
+    %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+      %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scf.yield %mmadL1 : tensor<64x32xf32>
+    }
+    // CHECK-NOT: hivm.hir.vadd 
     return %0 : tensor<64x32xf32>
   }
 }
