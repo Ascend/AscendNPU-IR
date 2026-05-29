@@ -63,13 +63,11 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   if (!hivmPipelineOptions.enableMixedCV)
     options.enableLegacy = true;
   options.target = hivmPipelineOptions.target;
-  options.enableDotScaledCompile =
-      hivmPipelineOptions.enableDotScaledCompile;
+  options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
-      mlir::hivm::createInsertLoadStoreForMixCVPass(
-          options));
+      mlir::hivm::createInsertLoadStoreForMixCVPass(options));
 }
 
 static void
@@ -82,7 +80,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
-      !hivmPipelineOptions.enableDotScaledCompile) {
+             !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
@@ -92,7 +90,6 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   }
-
 }
 
 static void
@@ -172,7 +169,10 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
     pm.addPass(createMarkRealCoreTypePass());
-    pm.addPass(createDelayedCrossCoreGSSPass());
+    DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
+    delayedcrossCoreGSSOptions.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;
     pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
@@ -189,8 +189,7 @@ hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.disableAutoInjectBlockSync) {
     return;
   }
-  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS ||
-      hivmPipelineOptions.enableHIVMInjectBlockAllSync) {
+  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS) {
     hivmCrossCoreAutoSyncINJPipeline(pm, hivmPipelineOptions, mode);
   } else if (hivmPipelineOptions.enableHIVMDelayedCrossCoreGSS) {
     hivmDelayedCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
@@ -254,7 +253,6 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
 
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<func::FuncOp>().addPass(createCSEPass());
-
 
   pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
