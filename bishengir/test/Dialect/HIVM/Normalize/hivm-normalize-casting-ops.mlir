@@ -165,6 +165,22 @@ func.func @test_NormalizeCastLowering_i1_cast_f32(%arg0: tensor<32xi1>) -> tenso
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_i8_to_f32
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x4xi8>) -> tensor<4x4xf32>
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<4x4xf16>
+// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x4xi8>) outs(%[[EMPTY0]] : tensor<4x4xf16>) -> tensor<4x4xf16>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<4x4xf32>
+// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[CAST0]] : tensor<4x4xf16>) outs(%[[EMPTY1]] : tensor<4x4xf32>) -> tensor<4x4xf32>
+// CHECK: return %[[CAST1]]
+func.func @test_NormalizeCastLowering_cast_i8_to_f32(%arg0: tensor<4x4xi8>) -> tensor<4x4xf32> {
+  %0 = tensor.empty() : tensor<4x4xf32>
+  %1 = hivm.hir.vcast ins(%arg0 : tensor<4x4xi8>) outs(%0 : tensor<4x4xf32>)
+      round_mode = <trunc> -> tensor<4x4xf32>
+  return %1 : tensor<4x4xf32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_i8_cast_i32
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<4x4xi8>) -> tensor<4x4xi32>
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<4x4xf16>

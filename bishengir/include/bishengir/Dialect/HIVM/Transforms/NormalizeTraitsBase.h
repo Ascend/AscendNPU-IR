@@ -1,4 +1,5 @@
-//===- NormalizeTraitsBase.h -----------------------------------------*- C++ -*-===//
+//===- NormalizeTraitsBase.h -----------------------------------------*- C++
+//-*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +38,8 @@ public:
 
   static bool matchOp(Operation *op, BinaryKind kind);
 
-  static Value createCmpOp(PatternRewriter &rewriter, Location loc,
-                           Value input, Value dst, CompareKind kind);
+  static Value createCmpOp(PatternRewriter &rewriter, Location loc, Value input,
+                           Value dst, CompareKind kind);
 
   static Value createCmpOp(PatternRewriter &rewriter, Location loc, Value lhs,
                            Value rhs, VCmpOp sourceOp);
@@ -47,8 +48,7 @@ public:
                              Value input, Value dst, UnaryKind kind);
 
   static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
-                              Value lhs, Value rhs, Value dst,
-                              BinaryKind kind);
+                              Value lhs, Value rhs, Value dst, BinaryKind kind);
 
   /// Create a dialect cast preserving the source dialect round mode when one is
   /// already available. If no round mode is provided, the dialect default is
@@ -96,25 +96,19 @@ public:
   static TypeFn mapCastSignKind(CastSignKind kind, TypeFn preserveTypeFn);
 
   static RoundMode mapCastRoundKind(CastRoundKind kind,
-                                        RoundMode defaultRoundMode);
+                                    RoundMode defaultRoundMode);
 
   static UnsignedMode mapCastUnsignedModeKind(CastUnsignedModeKind kind,
                                               UnsignedMode preserveMode);
 
   static bool archIsRegbased();
 
-  static Value createCastValueFromSourceOp(PatternRewriter &rewriter,
-                                           Location loc, VCastOp op,
-                                           Value input, Type targetElemType,
-                                           CastRoundKind executionKind =
-                                               CastRoundKind::Default,
-                                           CastSignKind signKind =
-                                               CastSignKind::Preserve,
-                                           bool enableSaturate = false,
-                                           CastUnsignedModeKind
-                                               unsignedModeKind =
-                                                   CastUnsignedModeKind::
-                                                       Preserve);
+  static Value createCastValueFromSourceOp(
+      PatternRewriter &rewriter, Location loc, VCastOp op, Value input,
+      Type targetElemType, CastRoundKind executionKind = CastRoundKind::Default,
+      CastSignKind signKind = CastSignKind::Preserve,
+      bool enableSaturate = false,
+      CastUnsignedModeKind unsignedModeKind = CastUnsignedModeKind::Preserve);
 
   static Value castScalarThroughTensor(PatternRewriter &rewriter, Location loc,
                                        Value scalar, Type dstType);

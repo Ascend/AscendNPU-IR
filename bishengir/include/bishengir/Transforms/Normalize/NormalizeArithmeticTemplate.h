@@ -20,6 +20,7 @@
 
 #include <optional>
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -339,6 +340,106 @@ public:
         rewriter, loc, high, resultType, CastRoundKind::TruncWithOverflow);
     rewriter.replaceOp(op, {lowTrunc, highTrunc});
     return success();
+  }
+};
+
+/// Normalizes `sub(s, v)` to `add(s, mul(v, -1))`.
+/// e.g.
+///   y = sub(s, x)
+///   is normalized to
+///   %mul = mul(x, -1)
+///   y = add(%mul, s)
+///
+/// When the scalar constant is zero on Ascend950, the final add is skipped.
+/// The operand order of the final add is controlled by Traits::kPlaceScalarFirstInFinalAdd.
+template <typename SubOpType, typename Traits>
+struct NormalizeSubVSToVMulAndVAddTemplate
+    : public OpRewritePattern<SubOpType> {
+public:
+  using OpRewritePattern<SubOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SubOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeSubScalarVector(op))
+      return failure();
+
+    Value scalar = Traits::getSubScalar(op);
+    Value vec = Traits::getSubVector(op);
+    Type scalarType = scalar.getType();
+    Location loc = op.getLoc();
+
+    TypedAttr negOneAttr;
+    if (auto intTy = dyn_cast<IntegerType>(scalarType)) {
+      negOneAttr = rewriter.getIntegerAttr(intTy, -1);
+    } else if (auto floatTy = dyn_cast<FloatType>(scalarType)) {
+      negOneAttr = rewriter.getFloatAttr(floatTy, -1.0);
+    } else {
+      llvm_unreachable("unsupported scalar type");
+    }
+    Value negOne = rewriter.create<arith::ConstantOp>(loc, negOneAttr);
+
+    Value mulInit = utils::createEmptyOp(rewriter, loc, vec);
+    Value mulResult = Traits::createBinaryOp(rewriter, loc, vec, negOne,
+                                             mulInit, BinaryKind::Mul);
+
+    Value result = mulResult;
+    if (!shouldSkipFinalAddForZeroScalarOnAscend950(op, scalar)) {
+      Value addLhs = mulResult;
+      Value addRhs = scalar;
+      if constexpr (Traits::kPlaceScalarFirstInFinalAdd) {
+        addLhs = scalar;
+        addRhs = mulResult;
+      }
+      result = Traits::createBinaryOp(rewriter, loc, addLhs, addRhs,
+                                      op.getDpsInits()[0], BinaryKind::Add);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  static bool shouldSkipFinalAddForZeroScalarOnAscend950(SubOpType op,
+                                                         Value scalar) {
+    auto moduleOp = op->template getParentOfType<ModuleOp>();
+    if (!moduleOp || !hacc::utils::isAscend950(moduleOp))
+      return false;
+
+    auto constOp = scalar.template getDefiningOp<arith::ConstantOp>();
+    if (!constOp)
+      return false;
+
+    Attribute attr = constOp.getValue();
+    if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+      return intAttr.getValue().isZero();
+    if (auto floatAttr = dyn_cast<FloatAttr>(attr))
+      return floatAttr.getValue().isZero();
+    return false;
+  }
+};
+
+/// Normalizes integer `div(a, b)` / `div_unsigned(a, b)`.
+/// Two rewrite paths are tried in order, controlled by the traits:
+///   membase: casts integer operands to f32, divides in f32, truncates back.
+///   regbase: widens i8 to i16, divides in i16, then casts back (with
+///            overflow correction for -128/-1 on Ascend950).
+template <typename DivOpType, typename Traits>
+struct NormalizeDivSIandDivUIOpTemplate : public OpRewritePattern<DivOpType> {
+public:
+  using OpRewritePattern<DivOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(DivOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeDivSIandDivUIOp(op))
+      return failure();
+
+    if (succeeded(Traits::rewriteDivSIandDivUIOp(op, rewriter)))
+      return success();
+
+    if (succeeded(Traits::rewriteI8IntegerDivThroughI16(op, rewriter)))
+      return success();
+
+    return failure();
   }
 };
 

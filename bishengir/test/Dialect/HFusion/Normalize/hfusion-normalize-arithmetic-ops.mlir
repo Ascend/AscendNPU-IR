@@ -99,6 +99,38 @@ func.func @test_NormalizeDivVSToRec_dyn_rec_mul(%arg0: tensor<?x4096xf16>, %arg1
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeSubVSToVMulAndVAdd_hfusion
+// CHECK: %[[NEG1:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK: %[[EMPTY_ADD:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[EMPTY_MUL:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[MUL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %[[NEG1]] : tensor<16xf32>, f32) outs(%[[EMPTY_MUL]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[ADD:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg1, %[[MUL]] : f32, tensor<16xf32>) outs(%[[EMPTY_ADD]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[ADD]]
+func.func @test_NormalizeSubVSToVMulAndVAdd_hfusion(%arg0: tensor<16xf32>, %arg1: f32) -> tensor<16xf32> {
+  %0 = tensor.empty() : tensor<16xf32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg1, %arg0 : f32, tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeSubVSToVMulAndVAdd_hfusion_zero_scalar_ascend950
+// CHECK: %[[NEG1:.*]] = arith.constant -1.000000e+00 : f32
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[MUL:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %[[NEG1]] : tensor<16xf32>, f32) outs(%[[EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK-NOT: linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+// CHECK: return %[[MUL]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeSubVSToVMulAndVAdd_hfusion_zero_scalar_ascend950(%arg0: tensor<16xf32>) -> tensor<16xf32> {
+    %c0 = arith.constant 0.000000e+00 : f32
+    %0 = tensor.empty() : tensor<16xf32>
+    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%c0, %arg0 : f32, tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
+    return %1 : tensor<16xf32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeDivSI_linalg_divi_to_divf
 // CHECK: %[[LHS:.*]] = tensor.empty() : tensor<48xf32>
 // CHECK: %[[LHSFP:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<48xi32>) outs(%[[LHS]] : tensor<48xf32>) -> tensor<48xf32>
@@ -253,6 +285,58 @@ module attributes {hacc.target = #hacc.target<"Ascend310B4">} {
     %0 = tensor.empty() : tensor<1024xi16>
     %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<div_unsigned>} ins(%arg0, %arg1 : tensor<1024xi16>, tensor<1024xi16>) outs(%0 : tensor<1024xi16>) -> tensor<1024xi16>
     return %1 : tensor<1024xi16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeDivSI_membase_i8
+// CHECK: %[[LHS_F16_EMPTY:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[LHS_F16:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1024xi8>) outs(%[[LHS_F16_EMPTY]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[LHS_F32_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LHS_F32:.*]] = hfusion.cast {{.*}} ins(%[[LHS_F16]] : tensor<1024xf16>) outs(%[[LHS_F32_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[RHS_F16_EMPTY:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[RHS_F16:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<1024xi8>) outs(%[[RHS_F16_EMPTY]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[RHS_F32_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[RHS_F32:.*]] = hfusion.cast {{.*}} ins(%[[RHS_F16]] : tensor<1024xf16>) outs(%[[RHS_F32_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[DIV:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[LHS_F32]], %[[RHS_F32]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[DIV_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[I32_EMPTY:.*]] = tensor.empty() : tensor<1024xi32>
+// CHECK: %[[I32:.*]] = hfusion.cast {{.*}} ins(%[[DIV]] : tensor<1024xf32>) outs(%[[I32_EMPTY]] : tensor<1024xi32>) -> tensor<1024xi32>
+// CHECK: %[[I8_EMPTY:.*]] = tensor.empty() : tensor<1024xi8>
+// CHECK: %[[RES:.*]] = hfusion.cast {{.*}} ins(%[[I32]] : tensor<1024xi32>) outs(%[[I8_EMPTY]] : tensor<1024xi8>) -> tensor<1024xi8>
+// CHECK: return %[[RES]]
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @test_NormalizeDivSI_membase_i8(%arg0: tensor<1024xi8>, %arg1: tensor<1024xi8>) -> tensor<1024xi8> {
+    %0 = tensor.empty() : tensor<1024xi8>
+    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%arg0, %arg1 : tensor<1024xi8>, tensor<1024xi8>) outs(%0 : tensor<1024xi8>) -> tensor<1024xi8>
+    return %1 : tensor<1024xi8>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeDivUI_membase_i8
+// CHECK: %[[LHS_F16_EMPTY:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[LHS_F16:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<1024xi8>) outs(%[[LHS_F16_EMPTY]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[LHS_F32_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[LHS_F32:.*]] = hfusion.cast {{.*}} ins(%[[LHS_F16]] : tensor<1024xf16>) outs(%[[LHS_F32_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[RHS_F16_EMPTY:.*]] = tensor.empty() : tensor<1024xf16>
+// CHECK: %[[RHS_F16:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<1024xi8>) outs(%[[RHS_F16_EMPTY]] : tensor<1024xf16>) -> tensor<1024xf16>
+// CHECK: %[[RHS_F32_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[RHS_F32:.*]] = hfusion.cast {{.*}} ins(%[[RHS_F16]] : tensor<1024xf16>) outs(%[[RHS_F32_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[DIV_EMPTY:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[DIV:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<div>} ins(%[[LHS_F32]], %[[RHS_F32]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[DIV_EMPTY]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[I32_EMPTY:.*]] = tensor.empty() : tensor<1024xi32>
+// CHECK: %[[I32:.*]] = hfusion.cast {{.*}} ins(%[[DIV]] : tensor<1024xf32>) outs(%[[I32_EMPTY]] : tensor<1024xi32>) -> tensor<1024xi32>
+// CHECK: %[[I8_EMPTY:.*]] = tensor.empty() : tensor<1024xi8>
+// CHECK: %[[RES:.*]] = hfusion.cast {{.*}} ins(%[[I32]] : tensor<1024xi32>) outs(%[[I8_EMPTY]] : tensor<1024xi8>) -> tensor<1024xi8>
+// CHECK: return %[[RES]]
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  func.func @test_NormalizeDivUI_membase_i8(%arg0: tensor<1024xi8>, %arg1: tensor<1024xi8>) -> tensor<1024xi8> {
+    %0 = tensor.empty() : tensor<1024xi8>
+    %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<div_unsigned>} ins(%arg0, %arg1 : tensor<1024xi8>, tensor<1024xi8>) outs(%0 : tensor<1024xi8>) -> tensor<1024xi8>
+    return %1 : tensor<1024xi8>
   }
 }
 

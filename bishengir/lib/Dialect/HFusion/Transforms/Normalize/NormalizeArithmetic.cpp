@@ -74,6 +74,26 @@ struct HFusionNormalizeMulExtTraits : public hfusion::NormalizeTraitsBase {
   }
 };
 
+/// normalize VSUB(s, v) to VADD(s,VMULS(v, -1)).
+struct HFusionNormalizeSubVSToVMulAndVAddTraits
+    : public hfusion::NormalizeTraitsBase {
+  // Keep the scalar in the first operand slot of the final add.
+  static constexpr bool kPlaceScalarFirstInFinalAdd = true;
+
+  static bool shouldNormalizeSubScalarVector(linalg::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() && op.getFun() == linalg::BinaryFn::sub &&
+           hfusion::isSVOp(op);
+  }
+
+  static Value getSubScalar(linalg::ElemwiseBinaryOp op) {
+    return op.getDpsInputs()[0];
+  }
+
+  static Value getSubVector(linalg::ElemwiseBinaryOp op) {
+    return op.getDpsInputs()[1];
+  }
+};
+
 } // namespace mlir
 
 namespace mlir::hfusion {
@@ -126,46 +146,57 @@ public:
 /// fb = castTo<f32>(b)
 /// fc = fa / fb
 /// c = castTo<integer>(fc, mode = TRUNC)
-struct NormalizeDivSIandDivUIOp
-    : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
+struct HFusionNormalizeDivSIandDivUIOpTraits
+    : public hfusion::NormalizeTraitsBase {
+  static bool shouldNormalizeDivSIandDivUIOp(linalg::ElemwiseBinaryOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
     if ((op.getFun() != linalg::BinaryFn::div) &&
-        (op.getFun() != linalg::BinaryFn::div_unsigned)) {
-      return failure();
-    }
+        (op.getFun() != linalg::BinaryFn::div_unsigned))
+      return false;
 
-    auto loc = op->getLoc();
     auto resTensor = op.getResultTensors()[0];
     auto resTy = dyn_cast<TensorType>(resTensor.getType());
+    if (!resTy)
+      return false;
     auto elemTySrc = getElementTypeOrSelf(resTy);
-    if (archisMembased && (!elemTySrc.isInteger())) {
+    if (archisMembased)
+      return elemTySrc.isInteger();
+    if (archIsRegbased())
+      return elemTySrc.isInteger(8);
+    return true;
+  }
+
+  static LogicalResult rewriteDivSIandDivUIOp(linalg::ElemwiseBinaryOp op,
+                                              PatternRewriter &rewriter) {
+    if (!archisMembased)
       return failure();
-    }
-    if (archIsRegbased && (!elemTySrc.isInteger(8))) {
-      return failure();
-    }
+
     rewriter.setInsertionPoint(op);
+    auto resTensor = op.getResultTensors()[0];
+    auto elemTySrc = getElementTypeOrSelf(resTensor.getType());
     auto inputs = op.getDpsInputs();
-    if (archisMembased) {
-      auto res = hfusion::divWithRoundMode(rewriter, loc, elemTySrc, inputs[0],
-                                           inputs[1], resTensor,
-                                           hfusion::RoundMode::TRUNC);
-      rewriter.replaceOp(op, res);
-      return success();
-    }
-    // cast lhs and rhs from u8/i8 to u16/i16
+    auto res = hfusion::divWithRoundMode(rewriter, op.getLoc(), elemTySrc,
+                                         inputs[0], inputs[1], resTensor,
+                                         hfusion::RoundMode::TRUNC);
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+  static LogicalResult rewriteI8IntegerDivThroughI16(
+      linalg::ElemwiseBinaryOp op, PatternRewriter &rewriter) {
+    if (archisMembased)
+      return failure();
+
+    rewriter.setInsertionPoint(op);
+    auto loc = op.getLoc();
+    auto resTensor = op.getResultTensors()[0];
+    auto elemTySrc = getElementTypeOrSelf(resTensor.getType());
+    auto inputs = op.getDpsInputs();
     hfusion::TypeFn castIntegerType =
-        (op.getFun() == linalg::BinaryFn::div_unsigned)
-            ? hfusion::TypeFn::cast_unsigned
-            : hfusion::TypeFn::cast_signed;
+        op.getFun() == linalg::BinaryFn::div ? hfusion::TypeFn::cast_signed
+                                             : hfusion::TypeFn::cast_unsigned;
+
     Value castI16X = hfusion::castTo(rewriter, inputs[0], rewriter.getI16Type(),
                                      castIntegerType);
     Value castI16Y = hfusion::castTo(rewriter, inputs[1], rewriter.getI16Type(),
@@ -179,6 +210,7 @@ public:
             rewriter, loc, op.getFun(), ValueRange{castI16X, castI16Y},
             ValueRange(divInit))
             ->getResults()[0];
+
     if (!archisAscend950) {
       Value res = hfusion::castTo(rewriter, divI16, elemTySrc,
                                   hfusion::RoundMode::TRUNC);
@@ -191,13 +223,14 @@ public:
       rewriter.replaceOp(op, res);
       return success();
     }
+
     // avoid -128/-1 overflow error in i8 with div.i16
     auto i8ExcdNum =
         utils::createConstantOp<int>(rewriter, loc, rewriter.getI16Type(), 128);
     auto i8MinNum = utils::createConstantOp<int>(rewriter, loc,
                                                  rewriter.getI16Type(), -128);
     Value exceedMask =
-        createCmpOp(rewriter, loc, divI16, i8ExcdNum, CompareFn::veq)
+        hfusion::createCmpOp(rewriter, loc, divI16, i8ExcdNum, CompareFn::veq)
             ->getResult(0);
     auto finalResult =
         rewriter
@@ -214,67 +247,6 @@ public:
                           /*enableOverflow*/ false, true, castIntegerType);
     rewriter.replaceOp(op, res);
     return success();
-  }
-};
-
-/// normalize VSUB(s, v) to VADD(s,VMULS(v, -1)).
-struct NormalizeSubVSToVMulAndVAdd
-    : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics())
-      return failure();
-
-    if (op.getFun() != linalg::BinaryFn::sub)
-      return failure();
-
-    if (!isSVOp(op))
-      return failure();
-
-    auto inputs = op.getDpsInputs();
-    Value vec = inputs[1];
-    Type scalarType = inputs[0].getType();
-    Location loc = op.getLoc();
-
-    auto negOne = utils::createConstantOp<float>(rewriter, loc, scalarType, -1);
-    Value empty = utils::createEmptyOp(rewriter, loc, vec);
-    auto *resOp = createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                 linalg::BinaryFnAttr>(
-        rewriter, loc, linalg::BinaryFn::mul, ValueRange{vec, negOne}, empty);
-
-    // Because vsubs is not a supported hardware instruction,
-    // Then vsubs(s, v) = vadds(s, vmuls(-1, v)). This computation can be
-    // simplified into vmuls(-1, v), when scalar s equals to zero. Usually we
-    // can add SimplifyOps Pass after Normalize at the end of `preProcess`
-    // function in HFusionPipelines pass, however this may cause some errors on
-    // A2/A3 platform. So this simplify process is taken here to solve this
-    // reduntant instruction in simd-vf of A5 platform only.
-    // TODO: Pls check errors from pipeline on A2/A3, and checkout detail info
-    // by issue #74, on gitcode of A2/A3.
-    auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
-    if (!(hacc::utils::isAscend950(moduleOp) && isConstantZero(inputs[0]))) {
-      resOp = createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                             linalg::BinaryFnAttr>(
-          rewriter, loc, linalg::BinaryFn::add,
-          ValueRange{inputs[0], resOp->getResult(0)}, op.getDpsInits()[0]);
-    }
-
-    rewriter.replaceAllUsesWith(op->getResults(), resOp->getResults());
-    rewriter.eraseOp(op);
-    return success();
-  }
-  bool isConstantZero(Value val) const {
-    if (auto constOp =
-            dyn_cast_or_null<arith::ConstantOp>(val.getDefiningOp())) {
-      Attribute attr = constOp.getValue();
-      if (auto intAttr = mlir::dyn_cast<IntegerAttr>(attr))
-        return intAttr.getValue().isZero();
-      if (auto floatAttr = mlir::dyn_cast<FloatAttr>(attr))
-        return floatAttr.getValue().isZero();
-    }
-    return false;
   }
 };
 
@@ -339,6 +311,12 @@ using NormalizeVPowiToPowf =
                                  HFusionNormalizeVPowiToPowfTraits>;
 using NormalizeMulExtOp =
     NormalizeMulExtOpTemplate<hfusion::MulExtOp, HFusionNormalizeMulExtTraits>;
+using NormalizeSubVSToVMulAndVAdd =
+    NormalizeSubVSToVMulAndVAddTemplate<linalg::ElemwiseBinaryOp,
+                                        HFusionNormalizeSubVSToVMulAndVAddTraits>;
+using NormalizeDivSIandDivUIOp =
+    NormalizeDivSIandDivUIOpTemplate<linalg::ElemwiseBinaryOp,
+                                     HFusionNormalizeDivSIandDivUIOpTraits>;
 
 void populateNormalizeMulRecPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRecOp>(patterns.getContext());

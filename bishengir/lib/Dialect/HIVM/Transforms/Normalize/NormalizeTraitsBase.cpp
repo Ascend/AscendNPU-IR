@@ -329,6 +329,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     std::optional<RoundMode> roundMode) {
+  if (!isa<ShapedType>(input.getType()))
+    return castScalarThroughTensor(rewriter, loc, input, targetElemType);
+
   if (!roundMode) {
     hivm::RoundMode defaultRoundMode =
         utils::selectRoundMode<hivm::RoundMode>(
@@ -359,6 +362,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     CastRoundKind kind, Value output, CastSignKind signKind) {
   if (signKind == CastSignKind::Preserve)
     llvm_unreachable("createCastOp does not support CastSignKind::Preserve");
+  (void)output;
+  if (!isa<ShapedType>(input.getType()))
+    return castScalarThroughTensor(rewriter, loc, input, targetElemType);
   Type srcElemType = getElementTypeOrSelf(input.getType());
   auto roundMode =
       kind == CastRoundKind::Default
