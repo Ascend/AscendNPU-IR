@@ -83,6 +83,8 @@ module {
     }
 }
 
+// -----
+
 // CHECK-LABEL: func.func @loop_dominance_2d_with_constant_dim
 func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg1: tensor<2x8xf32>, %arg2: tensor<2x8xf16>) -> tensor<2x8xf16> attributes {hivm.vector_function} {
   %c8 = arith.constant 8 : index
@@ -121,4 +123,34 @@ func.func @loop_dominance_2d_with_constant_dim(%arg0: tensor<2x8x1024xf16>, %arg
     scf.yield %inserted_slice : tensor<2x8xf16>
   }
   return %1 : tensor<2x8xf16>
+}
+
+// -----
+// CHECK-LABEL: func.func @loop_dominance_2_loop_1_usedloop
+// CHECK-NOT: memref.copy
+#map = affine_map<(d0) -> (d0 * 64)>
+module {
+  func.func @loop_dominance_2_loop_1_usedloop(%arg0: memref<64xf32>) {
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %false = arith.constant false
+    scf.for %arg3 = %c0 to %c4 step %c1 {
+      %0 = tensor.empty() : tensor<256xf32>
+      %1 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%0 : tensor<256xf32>) -> tensor<256xf32>
+      scf.for %arg4 = %c0 to %c4 step %c1  {
+        %3 = affine.apply #map(%arg4)  // 0, 64, 128, 192
+        %extracted_slice = tensor.extract_slice %1[%3] [64] [1] : tensor<256xf32> to tensor<64xf32>
+        %4 = tensor.empty() : tensor<64xf32>
+        %5 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%4 : tensor<64xf32>) -> tensor<64xf32>
+        %6 = tensor.empty() : tensor<64xf32>
+        %7 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%6 : tensor<64xf32>) -> tensor<64xf32>
+        %8 = hivm.hir.mmadL1 ins(%7, %5, %false, %c0, %c0, %c0 : tensor<64xf32>, tensor<64xf32>, i1, index, index, index) outs(%extracted_slice : tensor<64xf32>) -> tensor<64xf32>
+        hivm.hir.store ins(%8 : tensor<64xf32>) outs(%arg0 : memref<64xf32>)
+      }
+    }
+    return
+  }
 }
