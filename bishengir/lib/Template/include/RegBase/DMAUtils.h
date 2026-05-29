@@ -502,6 +502,40 @@ load_gm_to_ubuf_1d_core_with_contiguous_last_dim(memref_t<__gm__ T, 1> *gm,
                               left_padding_num, 0, 0, l2_cache_ctl);
 }
 
+/// `load_gm_to_ubuf_intrin_core` with `numBurst = size[0], burst_len =
+/// dtypeBytes` Prerequisites: `strideUB[0] == 1, strideGM[0] != 1`
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+load_gm_to_ubuf_1d_core_with_ubuf_contiguous_last_dim(
+    memref_t<__gm__ T, 1> *gm, memref_t<__ubuf__ T, 1> *ub,
+    int64_t left_padding_num, uint8_t l2_cache_ctl) {
+  auto src_ptr = gm->aligned + gm->offset;
+  auto dst_ptr = ub->aligned + ub->offset;
+  const int64_t size0 = gm->sizes[0];
+  constexpr int bytes = sizeof(T);
+
+  const int64_t stride0_gm = gm->strides[0];
+  const int64_t dma_copy_size = FLOOR_FACTOR(size0, (UB_ALIGN_BYTES / bytes));
+  load_gm_to_ubuf_intrin_core(src_ptr, 0, dst_ptr, 0, dma_copy_size, bytes,
+                              left_padding_num, (stride0_gm - 1) * bytes, 0,
+                              l2_cache_ctl);
+  const int64_t scalar_copy_size = size0 - dma_copy_size;
+  if (scalar_copy_size) {
+    // Use scalar loop to handle the remaining unaligned tail section.
+    memref_t<__gm__ T, 1> gm_scalar = {gm->allocated,
+                                       gm->aligned,
+                                       gm->offset + stride0_gm * dma_copy_size,
+                                       {scalar_copy_size},
+                                       {stride0_gm}};
+    memref_t<__ubuf__ T, 1> ub_scalar = {ub->allocated,
+                                         ub->aligned,
+                                         ub->offset + dma_copy_size,
+                                         {scalar_copy_size},
+                                         {1}};
+    load_gm_to_ubuf_1d_by_scalar<T>(&gm_scalar, &ub_scalar);
+  }
+}
+
 /// `store_ubuf_to_gm_intrin_core` with `numBurst = 1, burst_len = size[0] *
 /// dtypeBytes` Prerequisites: `strideUB[0] == strideGM[0] == 1`
 template <typename T>
