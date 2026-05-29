@@ -132,3 +132,48 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   func.func private @vload_NORM_int64_t_rank1(!llvm.ptr, memref<?xi64, strided<[?], offset: ?>, #hivm.address_space<ub>>, i64) attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface}
   func.func private @_mlir_ciface_cast_int64_t_to_int32_t(!llvm.ptr, vector<256xi1>) -> vector<64xi32> attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface}
 }
+
+// -----
+// CHECK-LABEL: @test_dintlv_two_loads
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<AIV>} {
+  func.func @test_dintlv_two_loads(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64x16xf32, #hivm.address_space<ub>>, %arg2: memref<64x16xbf16, #hivm.address_space<ub>>, %arg3: memref<64x8x2xbf16, #hivm.address_space<ub>>, %arg4: memref<64x8x1xf32, #hivm.address_space<ub>>, %arg5: memref<64x8x1xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %c8 = arith.constant 8 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    scf.for %arg6 = %c0 to %c64 step %c1 {
+      scf.for %arg7 = %c0 to %c8 step %c1 {
+        %subview = memref.subview %arg4[%arg6, %arg7, 0] [1, 1, 1] [1, 1, 1] : memref<64x8x1xf32, #hivm.address_space<ub>> to memref<1x1x1xf32, strided<[8, 1, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %arg3[%arg6, %arg7, 0] [1, 1, 2] [1, 1, 1] : memref<64x8x2xbf16, #hivm.address_space<ub>> to memref<1x1x2xbf16, strided<[16, 2, 1], offset: ?>, #hivm.address_space<ub>>
+        %res = ave.hir.vload <NORM> %subview_0[%c0, %c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1x2xbf16, strided<[16, 2, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
+        %res_1 = ave.hir.vload <NORM> %subview_0[%c0, %c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1x2xbf16, strided<[16, 2, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
+        %res1, %res2 = ave.hir.vdintlv %res, %res_1 : vector<128xbf16>, vector<128xbf16>
+        %0 = builtin.unrealized_conversion_cast %res1 : vector<128xbf16> to vector<1x1x128xbf16>
+        %1 = ave.hir.pge <VL1> : vector<64xi1>
+        %2 = builtin.unrealized_conversion_cast %0 : vector<1x1x128xbf16> to vector<1x1x64xbf16>
+        %3 = builtin.unrealized_conversion_cast %2 : vector<1x1x64xbf16> to vector<64xbf16>
+        %4 = ave.hir.pge <ALL> : vector<64xi1>
+        %5 = ave.hir.vextf %3, <part_even>, %4 : vector<64xbf16>, vector<64xf32>, vector<64xi1>
+        ave.hir.masked_store <ONEPT_B32> %subview[%c0, %c0, %c0], %1, %5 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1x1xf32, strided<[8, 1, 1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.bf16"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.bf16"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vdintlv"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vintlv"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vintlv"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b32"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b32"
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vcvtff.bf162f32.x"
+        // CHECK: llvm.mlir.constant(5 : i32) : i32
+        // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v64f32"
+        %subview_2 = memref.subview %arg5[%arg6, %arg7, 0] [1, 1, 1] [1, 1, 1] : memref<64x8x1xf32, #hivm.address_space<ub>> to memref<1x1x1xf32, strided<[8, 1, 1], offset: ?>, #hivm.address_space<ub>>
+        %6 = builtin.unrealized_conversion_cast %res2 : vector<128xbf16> to vector<1x1x128xbf16>
+        %7 = builtin.unrealized_conversion_cast %6 : vector<1x1x128xbf16> to vector<1x1x64xbf16>
+        %8 = builtin.unrealized_conversion_cast %7 : vector<1x1x64xbf16> to vector<64xbf16>
+        %9 = ave.hir.pge <ALL> : vector<64xi1>
+        %10 = ave.hir.vextf %8, <part_even>, %9 : vector<64xbf16>, vector<64xf32>, vector<64xi1>
+        ave.hir.masked_store <ONEPT_B32> %subview_2[%c0, %c0, %c0], %1, %10 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x1x1xf32, strided<[8, 1, 1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+      }
+    }
+    return
+  }
+}

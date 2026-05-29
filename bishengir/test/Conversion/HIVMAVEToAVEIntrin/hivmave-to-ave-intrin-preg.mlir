@@ -1,6 +1,6 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 \
 // RUN: -analyze-vector-layout -analyze-alignment-bitwidth -remove-vector-layout-attr \
-// RUN: -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
+// RUN: -ave-normalize-ops -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @test_preg_arith_op_lowering
 func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<ub>>, %arg1: memref<8x8xi1, strided<[256, 1]>, #hivm.address_space<ub>>, %arg2: memref<8x8xi32, #hivm.address_space<ub>>, %arg3: memref<i32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -37,21 +37,21 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
     %18 = ave.hir.broadcast %c0_i16, %17 : i16, vector<256xi1> -> vector<256xi8>
     %19 = ave.hir.vor %13, %18, %16 : vector<256xi8>, vector<256xi1>
     %20 = ave.hir.pge <ALL> : vector<256xi1>
-    %res1, %res2 = ave.hir.vintlv %19, %18 : vector<256xi8>, vector<256xi8>
+    %res1, %res2 = ave.hir.vintlv %19, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %21 = ave.hir.vxor %res1, %res2, %20 : vector<256xi8>, vector<256xi1>
-    %res1_5, %res2_6 = ave.hir.vintlv %21, %18 : vector<256xi8>, vector<256xi8>
+    %res1_5, %res2_6 = ave.hir.vintlv %21, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %22 = ave.hir.vxor %res1_5, %res2_6, %20 : vector<256xi8>, vector<256xi1>
-    %res1_7, %res2_8 = ave.hir.vintlv %22, %18 : vector<256xi8>, vector<256xi8>
+    %res1_7, %res2_8 = ave.hir.vintlv %22, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %23 = ave.hir.vxor %res1_7, %res2_8, %20 : vector<256xi8>, vector<256xi1>
-    %res1_9, %res2_10 = ave.hir.vintlv %23, %18 : vector<256xi8>, vector<256xi8>
+    %res1_9, %res2_10 = ave.hir.vintlv %23, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %24 = ave.hir.vxor %res1_9, %res2_10, %20 : vector<256xi8>, vector<256xi1>
-    %res1_11, %res2_12 = ave.hir.vintlv %24, %18 : vector<256xi8>, vector<256xi8>
+    %res1_11, %res2_12 = ave.hir.vintlv %24, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %25 = ave.hir.vxor %res1_11, %res2_12, %20 : vector<256xi8>, vector<256xi1>
-    %res1_13, %res2_14 = ave.hir.vintlv %25, %18 : vector<256xi8>, vector<256xi8>
+    %res1_13, %res2_14 = ave.hir.vintlv %25, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %26 = ave.hir.vxor %res1_13, %res2_14, %20 : vector<256xi8>, vector<256xi1>
-    %res1_15, %res2_16 = ave.hir.vintlv %26, %18 : vector<256xi8>, vector<256xi8>
+    %res1_15, %res2_16 = ave.hir.vintlv %26, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %27 = ave.hir.vxor %res1_15, %res2_16, %20 : vector<256xi8>, vector<256xi1>
-    %res1_17, %res2_18 = ave.hir.vintlv %27, %18 : vector<256xi8>, vector<256xi8>
+    %res1_17, %res2_18 = ave.hir.vintlv %27, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %28 = ave.hir.vxor %res1_17, %res2_18, %20 : vector<256xi8>, vector<256xi1>
     %29 = ave.hir.vector_broadcast %28, %14, true : vector<256xi8>, vector<256xi1> -> vector<256xi8>
     %30 = ave.hir.scalar_broadcast %c0_i8 : i8 -> vector<256xi8>

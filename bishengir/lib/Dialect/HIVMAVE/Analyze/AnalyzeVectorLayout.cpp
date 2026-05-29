@@ -293,7 +293,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                        << getState(res);
         } else { llvm::dbgs() << "====Find solve: " << probS; });
     DBG(llvm::dbgs() << "========Inputs: [\n";
-        for (auto [v, sv] : newIns) llvm::dbgs()
+        for (auto [v, sv]
+             : newIns) llvm::dbgs()
         << "========\t" << sv << "->" << v << "\n";
         llvm::dbgs() << "]";);
     DenseMap<Value, State> ins;
@@ -356,18 +357,18 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   hivmave::VFBroadcastVectorOp, hivmave::VFXorOp,
                   hivmave::VFAndOp, hivmave::VFOrOp, hivmave::ReductionOp,
                   hivmave::VFModOp, hivmave::VFModUIOp, hivmave::VFExpOp,
-                  hivmave::VFShlOp, hivmave::VFShrOp, hivmave::VFShrsOp, hivmave::VFShlsOp,
-                  hivmave::VFMinOp, hivmave::VFMaxOp, hivmave::VFMinsOp, hivmave::VFMaxsOp,
-                  hivmave::VMinSIOp, hivmave::VMaxSIOp,
-                  hivmave::VFAbsOp, hivmave::VFNegOp, hivmave::VFNotOp,
-                  hivmave::VFSqrtOp, hivmave::VFRsqrtOp, hivmave::VFLnOp, hivmave::VFReluOp,
-                  hivmave::VFDivfOp, hivmave::VFDivFHPOp, hivmave::VFAbsDiffOp,
-                  hivmave::VFSaddOp, hivmave::VFSsubOp, hivmave::VFRndOp, hivmave::VFPReluOp,
+                  hivmave::VFShlOp, hivmave::VFShrOp, hivmave::VFShrsOp,
+                  hivmave::VFShlsOp, hivmave::VFMinOp, hivmave::VFMaxOp,
+                  hivmave::VFMinsOp, hivmave::VFMaxsOp, hivmave::VMinSIOp,
+                  hivmave::VMaxSIOp, hivmave::VFAbsOp, hivmave::VFNegOp,
+                  hivmave::VFNotOp, hivmave::VFSqrtOp, hivmave::VFRsqrtOp,
+                  hivmave::VFLnOp, hivmave::VFReluOp, hivmave::VFDivfOp,
+                  hivmave::VFDivFHPOp, hivmave::VFAbsDiffOp, hivmave::VFSaddOp,
+                  hivmave::VFSsubOp, hivmave::VFRndOp, hivmave::VFPReluOp,
                   hivmave::VFExpdifOp, hivmave::VFVMULLOp, hivmave::VFMulaOp,
-                  hivmave::VMaxUIOp, hivmave::VMinUIOp,
-                  hivmave::VFLRelusOp, hivmave::VMaxsSIOp, hivmave::VMinsSIOp,
-                  hivmave::VMaxsUIOp, hivmave::VMinsUIOp,
-                  hivmave::VFCmpS>(
+                  hivmave::VMaxUIOp, hivmave::VMinUIOp, hivmave::VFLRelusOp,
+                  hivmave::VMaxsSIOp, hivmave::VMinsSIOp, hivmave::VMaxsUIOp,
+                  hivmave::VMinsUIOp, hivmave::VFCmpS>(
                 [&](auto op) { return solveMaskProblem(op); })
             .Case<hivmave::VFCmpOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFStoreWithStrideOp>(
@@ -657,15 +658,15 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     auto srcElemWidth = elemBitwidthOf(src);
     // Special optimization in ave-process-vsstb(trunc[even] + trunc[odd] + vor)
     if (op->getAttr(hivmave::Layout_ChangeAttr::getMnemonic())) {
-      switch(getState(res)) {
-        case State::B16:
-          return {wrapThis(FunctionType::C2C,
-                           {{src, State::B32}, {mask, State::B32}})};
-        case State::B8:
-          return {wrapThis(FunctionType::C2C,
-                           {{src, State::B16}, {mask, State::B16}})};
-        default:
-          return {};
+      switch (getState(res)) {
+      case State::B16:
+        return {wrapThis(FunctionType::C2C,
+                         {{src, State::B32}, {mask, State::B32}})};
+      case State::B8:
+        return {wrapThis(FunctionType::C2C,
+                         {{src, State::B16}, {mask, State::B16}})};
+      default:
+        return {};
       }
     }
     switch (COMB_CASE(srcElemWidth, getState(res))) {
@@ -785,24 +786,32 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     auto res = op.getRes();
     SmallVector<std::pair<Value, State>> newIns;
     switch (COMB_CASE(elemBitwidthOf(index), getState(res))) {
-      case COMB_CASE(16, State::B8_2VL): return {
-        wrapThis(FunctionType::NONE, {{mask, State::B8}, {index, State::B16}}),
-        wrapThis(FunctionType::NONE, {{mask, State::B16}, {index, State::B16}})
+    case COMB_CASE(16, State::B8_2VL):
+      return {wrapThis(FunctionType::NONE,
+                       {{mask, State::B8}, {index, State::B16}}),
+              wrapThis(FunctionType::NONE,
+                       {{mask, State::B16}, {index, State::B16}})};
+    case COMB_CASE(16, State::B16):
+      return {wrapThis(FunctionType::NONE,
+                       {{mask, State::B16}, {index, State::B16}})};
+    case COMB_CASE(16, State::B16_2VL):
+      return {
+          wrapThis(FunctionType::NONE,
+                   {{mask, State::B16}, {index, State::B16}}),
+          wrapThis(
+              FunctionType::NONE,
+              {{mask, State::B32},
+               {index,
+                State::B16_2VL}}) // This is better, for vci cannot fit layout
       };
-      case COMB_CASE(16, State::B16): return {
-        wrapThis(FunctionType::NONE, {{mask, State::B16}, {index, State::B16}})
-      };
-      case COMB_CASE(16, State::B16_2VL): return {
-        wrapThis(FunctionType::NONE, {{mask, State::B16}, {index, State::B16}}),
-        wrapThis(FunctionType::NONE, {{mask, State::B32}, {index, State::B16_2VL}}) //This is better, for vci cannot fit layout
-      };
-      case COMB_CASE(32, State::B16_2VL): return {
-        wrapThis(FunctionType::NONE, {{mask, State::B32}, {index, State::B32}})
-      };
-      case COMB_CASE(32, State::B32): return {
-        wrapThis(FunctionType::NONE, {{mask, State::B32}, {index, State::B32}})
-      };
-      default : return {};
+    case COMB_CASE(32, State::B16_2VL):
+      return {wrapThis(FunctionType::NONE,
+                       {{mask, State::B32}, {index, State::B32}})};
+    case COMB_CASE(32, State::B32):
+      return {wrapThis(FunctionType::NONE,
+                       {{mask, State::B32}, {index, State::B32}})};
+    default:
+      return {};
     }
   }
 
@@ -815,8 +824,33 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     auto layoutChange = op.getLayoutChange();
     if (getState(res1) != getState(res2))
       return {};
-    if (!layoutChange.has_value() ||
-        layoutChange.value() == hivmave::Layout_Change::UNCHANGED)
+    // Treat as original op lowered from triton
+    if (!layoutChange) {
+      switch (COMB_CASE(elemBitwidthOf(src1), getState(res1))) {
+      case (COMB_CASE(8, State::B8)):
+        return {wrapThis(FunctionType::NONE,
+                         {{src1, State::B8}, {src2, State::B8}})};
+      case (COMB_CASE(16, State::B16)):
+        return {wrapThis(FunctionType::NONE,
+                         {{src1, State::B16}, {src2, State::B16}})};
+      case (COMB_CASE(32, State::B32)):
+        return {wrapThis(FunctionType::NONE,
+                         {{src1, State::B32}, {src2, State::B32}})};
+      case (COMB_CASE(8, State::B8_2VL)):
+        return {wrapThis(FunctionType::INTLV2,
+                         {{src1, State::B8}, {src2, State::B8}})};
+      case (COMB_CASE(8, State::B8_4VL)):
+        return {wrapThis(FunctionType::INTLV4,
+                         {{src1, State::B8}, {src2, State::B8}})};
+      case (COMB_CASE(16, State::B16_2VL)):
+        return {wrapThis(FunctionType::INTLV2,
+                         {{src1, State::B16}, {src2, State::B16}})};
+      default:
+        return {};
+      }
+    }
+    
+    if (layoutChange.value() == hivmave::Layout_Change::UNCHANGED)
       return solveProblemDefault(op);
 
     switch (COMB_CASE(layoutChange.value(), getState(res1))) {
@@ -922,8 +956,9 @@ public:
     if (noUserVecValues.empty())
       return {std::make_shared<TreeSolve>()};
 
-    // For each dangling vector, enumerate all possible states by element bitwidth
-    // and compute Cartesian product to form all possible input combinations.
+    // For each dangling vector, enumerate all possible states by element
+    // bitwidth and compute Cartesian product to form all possible input
+    // combinations.
     std::vector<SmallVector<std::pair<Value, State>>> allInsCombine;
     for (auto vec : noUserVecValues) {
       auto bitwidth = cast<VectorType>(vec.getType()).getElementTypeBitWidth();
@@ -974,8 +1009,7 @@ public:
       DenseMap<Value, State> inputs;
       for (auto [v, s] : insCombine)
         inputs.insert({v, s});
-      solves.push_back(
-          std::make_shared<TreeSolve>(std::move(inputs), nullptr));
+      solves.push_back(std::make_shared<TreeSolve>(std::move(inputs), nullptr));
     }
     return solves;
   }

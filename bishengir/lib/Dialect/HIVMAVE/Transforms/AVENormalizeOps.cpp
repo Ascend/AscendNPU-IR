@@ -266,6 +266,55 @@ struct AVEStoreWithStridePattern
   }
 };
 
+/// Handle func_dist_type (INTLV2/INTLV4) on interleave/deinterleave ops by
+/// inserting intlv ops after the op to sparsify the data layout.
+template <typename IntlvOp>
+struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
+  AVEIntlvFuncDistPattern(MLIRContext *context)
+      : OpRewritePattern<IntlvOp>(context) {}
+
+  LogicalResult matchAndRewrite(IntlvOp intlvOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcDistAttr =
+        intlvOp->template getAttrOfType<FunctionDistTypeAttr>("functionType");
+    if (!funcDistAttr)
+      return failure();
+
+    int numIntlv = 0;
+    switch (funcDistAttr.getValue()) {
+    case FunctionDistType::INTLV2:
+      numIntlv = 1;
+      break;
+    case FunctionDistType::INTLV4:
+      numIntlv = 2;
+      break;
+    default:
+      return failure();
+    }
+
+    Location loc = intlvOp.getLoc();
+    auto bitWidthAttr =
+        intlvOp->getAttr(utils::elementAlignmentBitWidth);
+
+    // Both res1 and res2 share the same layout state; sparse each of them.
+    rewriter.setInsertionPointAfter(intlvOp);
+    for (Value res : {intlvOp.getRes1(), intlvOp.getRes2()}) {
+      SmallVector<Operation *> oldUsers(res.getUsers());
+      if (oldUsers.empty())
+        continue;
+
+      Value result = res;
+      for (int i = 0; i < numIntlv; ++i)
+        result = sparseByIntlv(result, rewriter, loc, bitWidthAttr);
+
+      for (Operation *user : oldUsers)
+        user->replaceUsesOfWith(res, result);
+    }
+    intlvOp->removeAttr("functionType");
+    return success();
+  }
+};
+
 /// Hardware does not support fp16-->u16
 /// Use fp16-->s32 + s32-->u16 instead.
 struct AVEFpToUIntPattern : public OpRewritePattern<VFFpToUIntOp> {
@@ -507,6 +556,8 @@ public:
     patterns.add<AVEStorePattern>(ctx);
     patterns.add<AVEStoreWithStridePattern>(ctx);
     patterns.add<AVEFpToUIntPattern>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFInterleaveOp>>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFDeInterleaveOp>>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       signalPassFailure();
