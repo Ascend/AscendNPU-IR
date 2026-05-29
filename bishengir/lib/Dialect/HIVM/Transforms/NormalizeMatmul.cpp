@@ -969,7 +969,7 @@ public:
 
         // Set reuse tag for the defining op of outerInVal
         if (Operation *defOp = outerInVal.getDefiningOp()) {
-          defOp->setAttr(hivm::kRemainInL0CAttrName, rewriter.getUnitAttr());
+          defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
         }
 
         return success();
@@ -982,7 +982,7 @@ public:
 
       // Set reuse tag for the defining op of outerInVal
       if (Operation *defOp = outerInVal.getDefiningOp()) {
-        defOp->setAttr(hivm::kRemainInL0CAttrName, rewriter.getUnitAttr());
+        defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
       }
 
       return success();

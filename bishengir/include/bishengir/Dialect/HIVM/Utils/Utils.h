@@ -69,9 +69,6 @@ static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
 static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
     "MayImplicitTransposeWithLastAxis";
 
-static constexpr llvm::StringLiteral kRemainInL0CAttrName =
-    "remain_in_l0c";
-
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr int VBITSORT_NUM_PER_REPEAT = 32;
 
