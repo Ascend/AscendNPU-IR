@@ -299,6 +299,56 @@ void printScoreMatrix(const llvm::SmallVector<llvm::SmallVector<int>> &matrix) {
   }
 }
 
+enum class VFResultExtractKind {
+  NotExtracted,
+  Extracted,
+  Mixed,
+};
+
+static bool isDirectlyExtracted(Value result) {
+  return llvm::any_of(result.getUsers(), [](Operation *user) {
+    return isa<tensor::ExtractOp>(user);
+  });
+}
+
+static VFResultExtractKind getVFResultExtractKind(func::CallOp call) {
+  bool hasExtractedResult = false;
+  bool hasNonExtractedResult = false;
+
+  for (Value result : call.getResults()) {
+    if (isDirectlyExtracted(result)) {
+      hasExtractedResult = true;
+    } else {
+      hasNonExtractedResult = true;
+    }
+
+    if (hasExtractedResult && hasNonExtractedResult) {
+      return VFResultExtractKind::Mixed;
+    }
+  }
+
+  if (hasExtractedResult) {
+    return VFResultExtractKind::Extracted;
+  }
+
+  return VFResultExtractKind::NotExtracted;
+}
+
+static bool hasCompatibleResultExtractKind(func::CallOp call1,
+                                           func::CallOp call2) {
+  VFResultExtractKind kind1 = getVFResultExtractKind(call1);
+  VFResultExtractKind kind2 = getVFResultExtractKind(call2);
+
+  // Be conservative for multi-result VFs where some results are extracted
+  // and some are not. This prevents creating mixed merged VFs.
+  if (kind1 == VFResultExtractKind::Mixed ||
+      kind2 == VFResultExtractKind::Mixed) {
+    return false;
+  }
+
+  return kind1 == kind2;
+}
+
 void MergeVecScopePass::runOnOperation() {
   if (mergeLevel == 0) {
     return;
@@ -721,6 +771,16 @@ bool MergeVecScopePass::tryMerge(func::FuncOp root, func::FuncOp vf1,
 
   if (!call1 || !call2)
     return false;
+
+  // Only merge VFs whose result are all extract or none extract.
+  // If one vf's result is extracted the other is not, extracted result
+  // will be converted V->S wait, which will prevent double buffering.
+  if (!hasCompatibleResultExtractKind(call1, call2)) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "Result extract kind mismatch prevents VF merge: "
+               << vf1.getName() << " <-> " << vf2.getName() << "\n";);
+    return false;
+  }
 
   if (call1->getParentRegion() != call2->getParentRegion()) {
     // in different control regions (e.g., different scf.if/scf.for blocks)
