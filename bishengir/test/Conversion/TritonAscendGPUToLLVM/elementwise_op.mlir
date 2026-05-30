@@ -823,14 +823,14 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     tt.return
   }
 
-  // CHECK-LABEL: @test_fast_dividef_fp32
+  // CHECK-LABEL: @test_fast_divide_fp32
   // CHECK: ascend_dpx.fast_dividef {{.*}} : (f32, f32) -> f32
-  tt.func public @test_fast_dividef_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+  tt.func public @test_fast_divide_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: !tt.ptr<f32>, %arg3: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg5: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
     %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
     %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
     %2 = tt.splat %arg2 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
     %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
-    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_fast_dividef_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %4 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_fast_divide_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
     %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
     tt.store %5, %4 : tensor<1x!tt.ptr<f32>, #blocked>
     tt.return
